@@ -39,6 +39,7 @@ struct SettingsView: View {
                     bridgesSection       // Stage 2A — multi-bridge management
                     bridgeSection
                     accountSection
+                    developerSection     // Demo Mode toggle — always accessible
                     appSection
                 }
                 .padding(.horizontal, 20)
@@ -202,6 +203,50 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
             }
             .padding(.vertical, 2)
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Developer Section
+    // ──────────────────────────────────────────────
+
+    private var developerSection: some View {
+        settingsGroup(header: "DEVELOPER") {
+            Button {
+                if orchestrator.isDemoMode {
+                    NotificationCenter.default.post(name: .hueDemoExited, object: nil)
+                } else {
+                    orchestrator.enterDemoMode()
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    iconCircle(
+                        orchestrator.isDemoMode ? "sparkles.slash" : "sparkles",
+                        color: orchestrator.isDemoMode ? .orange : glowColor
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(orchestrator.isDemoMode ? "Exit Demo Mode" : "Preview Demo Mode")
+                            .font(.subheadline)
+                            .foregroundStyle(orchestrator.isDemoMode ? .orange : .white)
+                        Text(orchestrator.isDemoMode
+                             ? "Resume real bridge connection"
+                             : "Explore the app with mock data")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                    Spacer()
+                    // Live indicator
+                    if orchestrator.isDemoMode {
+                        Text("LIVE")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(.orange.opacity(0.15)))
+                    }
+                }
+            }
+            .buttonStyle(.plain)
         }
     }
 
