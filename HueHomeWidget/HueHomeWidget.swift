@@ -1,0 +1,806 @@
+// HueHomeWidget.swift
+// HueHome Pro — Epic 5 / Widget
+//
+// Home screen widget showing live room states.
+// Sizes: Small (summary), Medium (room grid), Large (full list).
+//
+// Data flow:
+//   getTimeline() → reads WidgetDataStore (UserDefaults / App Group)
+//               → fires ONE grouped_light API call to refresh on/off states
+//               → returns 15-minute timeline
+//
+// Design: dark ambient background, amber glow for ON rooms,
+// matching the main app's glassmorphic language.
+
+import WidgetKit
+import SwiftUI
+
+// MARK: - Timeline Entry
+
+struct HueWidgetEntry: TimelineEntry {
+    let date:     Date
+    let rooms:    [WidgetRoomSnapshot]
+    let isPaired: Bool
+    var isStale:  Bool    = false
+    var selectedRoomID: String? = nil   // nil = all-rooms summary
+
+    var onCount:    Int { rooms.filter(\.isOn).count }
+    var totalCount: Int { rooms.count }
+
+    /// The pinned room (if the user configured one and it exists in the data).
+    var selectedRoom: WidgetRoomSnapshot? {
+        guard let id = selectedRoomID else { return nil }
+        return rooms.first { $0.id == id }
+    }
+
+    /// Rooms to show: just the pinned room, or all rooms.
+    var displayRooms: [WidgetRoomSnapshot] {
+        selectedRoom.map { [$0] } ?? rooms
+    }
+}
+
+// MARK: - Timeline Provider
+
+struct HueWidgetProvider: AppIntentTimelineProvider {
+
+    // ── Placeholder (shown while widget loads for the first time) ──
+    func placeholder(in context: Context) -> HueWidgetEntry {
+        HueWidgetEntry(date: .now, rooms: previewRooms, isPaired: true)
+    }
+
+    // ── Snapshot (shown in widget gallery picker) ──
+    func snapshot(for configuration: SelectRoomIntent,
+                  in context: Context) async -> HueWidgetEntry {
+        if context.isPreview {
+            return HueWidgetEntry(date: .now, rooms: previewRooms, isPaired: true,
+                                  selectedRoomID: configuration.room?.id)
+        }
+        let store = WidgetDataStore.shared
+        return HueWidgetEntry(date: .now,
+                              rooms: store.rooms,
+                              isPaired: store.isPaired,
+                              selectedRoomID: configuration.room?.id)
+    }
+
+    // ── Timeline (called on schedule + after WidgetCenter.reloadAll) ──
+    func timeline(for configuration: SelectRoomIntent,
+                  in context: Context) async -> Timeline<HueWidgetEntry> {
+        let store = WidgetDataStore.shared
+        let nextRefresh = Calendar.current.date(byAdding: .minute, value: 15, to: .now)!
+        let selectedID  = configuration.room?.id
+
+        guard store.isPaired,
+              let ip    = store.bridgeIP,
+              let token = store.token else {
+            let entry = HueWidgetEntry(date: .now, rooms: [], isPaired: false,
+                                       selectedRoomID: selectedID)
+            return Timeline(entries: [entry], policy: .never)
+        }
+
+        // Try to refresh room states with a single grouped_light call
+        var snapshots = store.rooms
+
+        if let freshGL = try? await WidgetAPIClient.fetchGroupedLights(ip: ip, token: token) {
+            let glMap = Dictionary(uniqueKeysWithValues: freshGL.map { ($0.id, $0) })
+            snapshots = snapshots.map { room in
+                var r = room
+                if let gl = room.groupedLightId.flatMap({ glMap[$0] }) {
+                    r.isOn       = gl.on.on
+                    r.brightness = gl.dimming?.brightness ?? r.brightness
+                }
+                return r
+            }
+            store.write(rooms: snapshots)
+        }
+
+        let entry = HueWidgetEntry(
+            date:           .now,
+            rooms:          snapshots,
+            isPaired:       true,
+            isStale:        snapshots.isEmpty,
+            selectedRoomID: selectedID
+        )
+        return Timeline(entries: [entry], policy: .after(nextRefresh))
+    }
+
+    // ── Preview data ──
+    private var previewRooms: [WidgetRoomSnapshot] {[
+        WidgetRoomSnapshot(id:"1", name:"Living Room", archetype:"living_room",  isOn:true,  brightness:85, lightCount:3, groupedLightId:nil),
+        WidgetRoomSnapshot(id:"2", name:"Kitchen",     archetype:"kitchen",      isOn:false, brightness:100,lightCount:2, groupedLightId:nil),
+        WidgetRoomSnapshot(id:"3", name:"Bedroom",     archetype:"bedroom",      isOn:false, brightness:60, lightCount:1, groupedLightId:nil),
+        WidgetRoomSnapshot(id:"4", name:"Office",      archetype:"office",       isOn:true,  brightness:70, lightCount:2, groupedLightId:nil),
+    ]}
+}
+
+// MARK: - Entry View (dispatcher)
+
+struct HueHomeWidgetEntryView: View {
+    var entry: HueWidgetEntry
+    @Environment(\.widgetFamily) var family
+
+    var body: some View {
+        switch family {
+        // ── Lock screen ──────────────────────────
+        case .accessoryCircular:    AccessoryCircularView(entry: entry)
+        case .accessoryRectangular: AccessoryRectangularView(entry: entry)
+        case .accessoryInline:      AccessoryInlineView(entry: entry)
+        // ── Home screen ──────────────────────────
+        default:
+            if let room = entry.selectedRoom {
+                switch family {
+                case .systemSmall:  FocusedSmallWidgetView(room: room, entry: entry)
+                case .systemMedium: FocusedMediumWidgetView(room: room, entry: entry)
+                default:            LargeWidgetView(entry: entry)
+                }
+            } else {
+                switch family {
+                case .systemSmall:  SmallWidgetView(entry: entry)
+                case .systemMedium: MediumWidgetView(entry: entry)
+                default:            LargeWidgetView(entry: entry)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Small Widget  (2 × 2)
+
+struct SmallWidgetView: View {
+    let entry: HueWidgetEntry
+    private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack(spacing: 5) {
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(amber)
+                Text("HueHome")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+
+            Spacer()
+
+            if !entry.isPaired {
+                // Not paired state
+                Image(systemName: "link.badge.plus")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.white.opacity(0.4))
+                Text("Open app to pair")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .padding(.top, 4)
+            } else {
+                // Big count
+                HStack(alignment: .lastTextBaseline, spacing: 3) {
+                    Text("\(entry.onCount)")
+                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                        .foregroundStyle(entry.onCount > 0 ? amber : .white.opacity(0.3))
+                    Text("on")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .padding(.bottom, 2)
+                }
+
+                Text(entry.onCount == 0
+                     ? "All lights off"
+                     : "of \(entry.totalCount) rooms")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.40))
+                    .padding(.bottom, 8)
+
+                // Top ON room names
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(entry.rooms.filter(\.isOn).prefix(2)) { room in
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(amber)
+                                .frame(width: 5, height: 5)
+                                .shadow(color: amber.opacity(0.9), radius: 3)
+                            Text(room.name)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.75))
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .widgetBackground(amber: amber)
+    }
+}
+
+// MARK: - Medium Widget  (4 × 2)
+
+struct MediumWidgetView: View {
+    let entry: HueWidgetEntry
+    private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header bar
+            HStack {
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(amber)
+                Text("HueHome Pro")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.8))
+                Spacer()
+                // On count badge
+                if entry.isPaired {
+                    HStack(spacing: 4) {
+                        Text("\(entry.onCount) on")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(entry.onCount > 0 ? amber : .white.opacity(0.35))
+                        Circle()
+                            .fill(entry.onCount > 0 ? amber : Color.white.opacity(0.2))
+                            .frame(width: 7, height: 7)
+                            .shadow(color: entry.onCount > 0 ? amber.opacity(0.9) : .clear, radius: 5)
+                    }
+                }
+            }
+
+            if !entry.isPaired {
+                Spacer()
+                Label("Open app to connect", systemImage: "link.badge.plus")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.4))
+                Spacer()
+            } else {
+                // Room grid — up to 4 rooms in 2 × 2
+                let displayed = Array(entry.rooms.prefix(4))
+                let chunked   = stride(from: 0, to: displayed.count, by: 2).map {
+                    Array(displayed[$0 ..< min($0 + 2, displayed.count)])
+                }
+                VStack(spacing: 8) {
+                    ForEach(chunked.indices, id: \.self) { rowIdx in
+                        HStack(spacing: 8) {
+                            ForEach(chunked[rowIdx]) { room in
+                                MediumRoomCell(room: room, amber: amber)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .widgetBackground(amber: amber)
+    }
+}
+
+struct MediumRoomCell: View {
+    let room: WidgetRoomSnapshot
+    let amber: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Archetype icon
+            Image(systemName: widgetArchetypeIcon(room.archetype))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(room.isOn ? amber : .white.opacity(0.3))
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(room.name)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(room.isOn ? .white : .white.opacity(0.45))
+                    .lineLimit(1)
+
+                if room.isOn {
+                    // Brightness bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.white.opacity(0.1))
+                                .frame(height: 3)
+                            Capsule()
+                                .fill(amber.opacity(0.8))
+                                .frame(width: geo.size.width * CGFloat(room.brightness / 100), height: 3)
+                        }
+                    }
+                    .frame(height: 3)
+                } else {
+                    Text("Off")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white.opacity(0.25))
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(room.isOn
+                      ? amber.opacity(0.12)
+                      : Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(room.isOn ? amber.opacity(0.3) : Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Large Widget  (4 × 4)
+
+struct LargeWidgetView: View {
+    let entry: HueWidgetEntry
+    private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header
+            HStack {
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(amber)
+                Text("HueHome Pro")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                Spacer()
+                if entry.isPaired {
+                    Text("\(entry.onCount) / \(entry.totalCount) on")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(entry.onCount > 0 ? amber : .white.opacity(0.35))
+                }
+            }
+
+            Divider()
+                .background(Color.white.opacity(0.1))
+
+            if !entry.isPaired {
+                Spacer()
+                Label("Open app to connect your Hue Bridge", systemImage: "link.badge.plus")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.4))
+                Spacer()
+            } else {
+                // All rooms (up to 8)
+                VStack(spacing: 6) {
+                    ForEach(entry.rooms.prefix(8)) { room in
+                        LargeRoomRow(room: room, amber: amber)
+                    }
+                }
+
+                Spacer()
+
+                // Footer timestamp
+                if let updated = WidgetDataStore.shared.lastUpdated {
+                    Text("Updated \(updated, style: .relative) ago")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white.opacity(0.25))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+        }
+        .widgetBackground(amber: amber)
+    }
+}
+
+struct LargeRoomRow: View {
+    let room: WidgetRoomSnapshot
+    let amber: Color
+
+    var body: some View {
+        HStack(spacing: 10) {
+            // Icon
+            Image(systemName: widgetArchetypeIcon(room.archetype))
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(room.isOn ? amber : .white.opacity(0.25))
+                .frame(width: 20)
+
+            // Name
+            Text(room.name)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(room.isOn ? .white : .white.opacity(0.4))
+                .lineLimit(1)
+                .frame(maxWidth: 110, alignment: .leading)
+
+            Spacer()
+
+            if room.isOn {
+                // Brightness bar
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.08)).frame(height: 4)
+                        Capsule()
+                            .fill(LinearGradient(
+                                colors: [amber.opacity(0.6), amber],
+                                startPoint: .leading, endPoint: .trailing
+                            ))
+                            .frame(width: geo.size.width * CGFloat(room.brightness / 100), height: 4)
+                    }
+                }
+                .frame(height: 4)
+
+                Text("\(Int(room.brightness))%")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(amber.opacity(0.7))
+                    .frame(width: 32, alignment: .trailing)
+            } else {
+                Text("Off")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.2))
+                    .frame(width: 32, alignment: .trailing)
+            }
+        }
+    }
+}
+
+// MARK: - Focused Small Widget (single pinned room)
+
+struct FocusedSmallWidgetView: View {
+    let room:  WidgetRoomSnapshot
+    let entry: HueWidgetEntry
+    private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 5) {
+                Image(systemName: widgetArchetypeIcon(room.archetype))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(room.isOn ? amber : .white.opacity(0.4))
+                Text(room.name)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            HStack(alignment: .lastTextBaseline, spacing: 3) {
+                Text(room.isOn ? "\(Int(room.brightness))%" : "Off")
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .foregroundStyle(room.isOn ? amber : .white.opacity(0.3))
+            }
+
+            Text("\(room.lightCount) bulb\(room.lightCount == 1 ? "" : "s")")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.4))
+                .padding(.top, 2)
+
+            if room.isOn {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.08)).frame(height: 3)
+                        Capsule()
+                            .fill(LinearGradient(colors: [amber.opacity(0.6), amber],
+                                                 startPoint: .leading, endPoint: .trailing))
+                            .frame(width: geo.size.width * CGFloat(room.brightness / 100), height: 3)
+                    }
+                }
+                .frame(height: 3)
+                .padding(.top, 6)
+            }
+        }
+        .widgetBackground(amber: room.isOn ? amber : .white)
+    }
+}
+
+// MARK: - Focused Medium Widget (single pinned room, expanded)
+
+struct FocusedMediumWidgetView: View {
+    let room:  WidgetRoomSnapshot
+    let entry: HueWidgetEntry
+    private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(room.isOn
+                          ? RadialGradient(colors: [amber.opacity(0.4), .clear],
+                                           center: .center, startRadius: 0, endRadius: 44)
+                          : RadialGradient(colors: [Color.white.opacity(0.06), .clear],
+                                           center: .center, startRadius: 0, endRadius: 44))
+                    .frame(width: 88, height: 88)
+                Image(systemName: widgetArchetypeIcon(room.archetype))
+                    .font(.system(size: 30, weight: .medium))
+                    .foregroundStyle(room.isOn ? amber : .white.opacity(0.25))
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(room.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+
+                Text(room.isOn ? "\(Int(room.brightness))% brightness" : "Lights off")
+                    .font(.system(size: 13))
+                    .foregroundStyle(room.isOn ? amber.opacity(0.9) : .white.opacity(0.35))
+
+                Text("\(room.lightCount) bulb\(room.lightCount == 1 ? "" : "s")")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.35))
+
+                if room.isOn {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.1)).frame(height: 4)
+                            Capsule()
+                                .fill(LinearGradient(colors: [amber.opacity(0.6), amber],
+                                                     startPoint: .leading, endPoint: .trailing))
+                                .frame(width: geo.size.width * CGFloat(room.brightness / 100), height: 4)
+                        }
+                    }
+                    .frame(height: 4)
+                }
+            }
+
+            Spacer()
+        }
+        .widgetBackground(amber: room.isOn ? amber : .white)
+    }
+}
+
+// MARK: - Widget Declaration
+
+struct HueHomeWidget: Widget {
+    let kind = "com.huehome.pro.HueHomeWidget"
+
+    var body: some WidgetConfiguration {
+        AppIntentConfiguration(
+            kind: kind,
+            intent: SelectRoomIntent.self,
+            provider: HueWidgetProvider()
+        ) { entry in
+            HueHomeWidgetEntryView(entry: entry)
+                .widgetURL(URL(string: "huehome://dashboard"))
+        }
+        .configurationDisplayName("HueHome Pro")
+        .description("Pin a room or show all lights at a glance.")
+        .supportedFamilies([
+            .systemSmall, .systemMedium, .systemLarge,
+            .accessoryCircular, .accessoryRectangular, .accessoryInline
+        ])
+    }
+}
+
+// MARK: - Background helper (iOS 17 containerBackground vs padding/background)
+
+extension View {
+    func widgetBackground(amber: Color) -> some View {
+        if #available(iOS 17.0, *) {
+            return self
+                .padding(14)
+                .containerBackground(for: .widget) {
+                    ZStack {
+                        Color(red: 0.055, green: 0.055, blue: 0.08)
+                        // Ambient amber orb (top left)
+                        Circle()
+                            .fill(RadialGradient(
+                                colors: [amber.opacity(0.22), .clear],
+                                center: .center, startRadius: 0, endRadius: 100
+                            ))
+                            .frame(width: 160)
+                            .offset(x: -60, y: -60)
+                            .blur(radius: 14)
+                    }
+                }
+                .eraseToAnyView()
+        } else {
+            return self
+                .padding(14)
+                .background(
+                    ZStack {
+                        Color(red: 0.055, green: 0.055, blue: 0.08)
+                        Circle()
+                            .fill(amber.opacity(0.15))
+                            .frame(width: 140)
+                            .offset(x: -50, y: -50)
+                            .blur(radius: 14)
+                    }
+                )
+                .eraseToAnyView()
+        }
+    }
+
+    func eraseToAnyView() -> AnyView { AnyView(self) }
+}
+
+// MARK: - Archetype Icon (widget-local copy — no UIKit dependency)
+
+func widgetArchetypeIcon(_ archetype: String?) -> String {
+    switch archetype?.lowercased() {
+    case "living_room":          return "sofa.fill"
+    case "kitchen":              return "fork.knife"
+    case "dining":               return "fork.knife.circle.fill"
+    case "bedroom", "kids_bedroom": return "bed.double.fill"
+    case "bathroom":             return "shower.fill"
+    case "office", "computer":   return "desktopcomputer"
+    case "gym":                  return "dumbbell.fill"
+    case "hallway":              return "door.left.hand.open"
+    case "garage":               return "car.fill"
+    case "terrace", "garden":    return "leaf.fill"
+    case "recreation":           return "gamecontroller.fill"
+    case "lounge":               return "chair.fill"
+    case "tv":                   return "tv.fill"
+    case "studio", "music":      return "music.note"
+    case "laundry_room":         return "washer.fill"
+    case "balcony", "porch":     return "sun.horizon.fill"
+    default:                     return "lightbulb.fill"
+    }
+}
+// MARK: - Lock Screen: Accessory Circular
+
+/// Shown as a circular complication on the iOS lock screen.
+/// Displays a Gauge arc filled by the fraction of rooms that are on,
+/// with the lightbulb icon in the center. When a room is pinned it
+/// shows that room's brightness gauge instead.
+struct AccessoryCircularView: View {
+    let entry: HueWidgetEntry
+
+    var body: some View {
+        if let room = entry.selectedRoom {
+            // Pinned room — show brightness gauge
+            Gauge(value: room.brightness / 100) {
+                Image(systemName: widgetArchetypeIcon(room.archetype))
+                    .widgetAccentable()
+            } currentValueLabel: {
+                Text("\(Int(room.brightness))%")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+            }
+            .gaugeStyle(.accessoryCircularCapacity)
+            .widgetAccentable()
+        } else {
+            // All rooms — on/off fraction
+            let fraction = entry.totalCount > 0
+                ? Double(entry.onCount) / Double(entry.totalCount)
+                : 0
+            Gauge(value: fraction) {
+                Image(systemName: "lightbulb.fill")
+                    .widgetAccentable()
+            } currentValueLabel: {
+                Text("\(entry.onCount)")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+            }
+            .gaugeStyle(.accessoryCircularCapacity)
+            .widgetAccentable()
+        }
+    }
+}
+
+// MARK: - Lock Screen: Accessory Rectangular
+
+/// Wide rectangle on the lock screen — fits 3 compact room rows.
+/// When a room is pinned it shows that room's name, status, and brightness bar.
+struct AccessoryRectangularView: View {
+    let entry: HueWidgetEntry
+
+    var body: some View {
+        if let room = entry.selectedRoom {
+            // Pinned room
+            VStack(alignment: .leading, spacing: 3) {
+                Label(room.name, systemImage: widgetArchetypeIcon(room.archetype))
+                    .font(.system(size: 13, weight: .semibold))
+                    .widgetAccentable()
+                    .lineLimit(1)
+
+                Text(room.isOn ? "\(Int(room.brightness))% brightness" : "Lights off")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
+                if room.isOn {
+                    // Compact brightness bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(.secondary.opacity(0.3)).frame(height: 3)
+                            Capsule()
+                                .fill(.primary)
+                                .frame(width: geo.size.width * CGFloat(room.brightness / 100), height: 3)
+                                .widgetAccentable()
+                        }
+                    }
+                    .frame(height: 3)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            // All rooms — top 3 by on-state
+            let display = entry.rooms.sorted { $0.isOn && !$1.isOn }.prefix(3)
+            VStack(alignment: .leading, spacing: 2) {
+                Label("HueHome • \(entry.onCount) on", systemImage: "lightbulb.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .widgetAccentable()
+                ForEach(display) { room in
+                    HStack {
+                        Image(systemName: widgetArchetypeIcon(room.archetype))
+                            .font(.system(size: 9))
+                            .foregroundStyle(room.isOn ? .primary : .secondary)
+                            .widgetAccentable(room.isOn)
+                        Text(room.name)
+                            .font(.system(size: 11))
+                            .foregroundStyle(room.isOn ? .primary : .secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(room.isOn ? "\(Int(room.brightness))%" : "—")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Lock Screen: Accessory Inline
+
+/// Single line of text at the very top of the lock screen.
+struct AccessoryInlineView: View {
+    let entry: HueWidgetEntry
+
+    var body: some View {
+        if let room = entry.selectedRoom {
+            Label(
+                room.isOn ? "\(room.name) \(Int(room.brightness))%" : "\(room.name) off",
+                systemImage: widgetArchetypeIcon(room.archetype)
+            )
+            .widgetAccentable(room.isOn)
+        } else {
+            Label(
+                entry.onCount == 0
+                    ? "All lights off"
+                    : "\(entry.onCount) room\(entry.onCount == 1 ? "" : "s") on",
+                systemImage: entry.onCount > 0 ? "lightbulb.fill" : "lightbulb.slash.fill"
+            )
+            .widgetAccentable(entry.onCount > 0)
+        }
+    }
+}
+
+// MARK: - Previews
+
+#Preview("Small", as: .systemSmall) {
+    HueHomeWidget()
+} timeline: {
+    HueWidgetEntry(date: .now,
+                   rooms: [
+                    WidgetRoomSnapshot(id:"1", name:"Living Room", archetype:"living_room", isOn:true,  brightness:85, lightCount:3, groupedLightId:nil),
+                    WidgetRoomSnapshot(id:"2", name:"Office",      archetype:"office",      isOn:true,  brightness:70, lightCount:2, groupedLightId:nil),
+                    WidgetRoomSnapshot(id:"3", name:"Bedroom",     archetype:"bedroom",     isOn:false, brightness:60, lightCount:1, groupedLightId:nil),
+                   ], isPaired: true)
+}
+
+#Preview("Medium", as: .systemMedium) {
+    HueHomeWidget()
+} timeline: {
+    HueWidgetEntry(date: .now,
+                   rooms: [
+                    WidgetRoomSnapshot(id:"1", name:"Living Room", archetype:"living_room", isOn:true,  brightness:85, lightCount:3, groupedLightId:nil),
+                    WidgetRoomSnapshot(id:"2", name:"Kitchen",     archetype:"kitchen",     isOn:false, brightness:100,lightCount:2, groupedLightId:nil),
+                    WidgetRoomSnapshot(id:"3", name:"Bedroom",     archetype:"bedroom",     isOn:false, brightness:60, lightCount:1, groupedLightId:nil),
+                    WidgetRoomSnapshot(id:"4", name:"Office",      archetype:"office",      isOn:true,  brightness:70, lightCount:2, groupedLightId:nil),
+                   ], isPaired: true)
+}
+
+private let previewSnapshot = HueWidgetEntry(
+    date: .now,
+    rooms: [
+        WidgetRoomSnapshot(id:"1", name:"Living Room", archetype:"living_room", isOn:true,  brightness:85, lightCount:3, groupedLightId:nil),
+        WidgetRoomSnapshot(id:"2", name:"Kitchen",     archetype:"kitchen",     isOn:false, brightness:100,lightCount:2, groupedLightId:nil),
+        WidgetRoomSnapshot(id:"3", name:"Bedroom",     archetype:"bedroom",     isOn:false, brightness:60, lightCount:1, groupedLightId:nil),
+        WidgetRoomSnapshot(id:"4", name:"Office",      archetype:"office",      isOn:true,  brightness:70, lightCount:2, groupedLightId:nil),
+    ],
+    isPaired: true
+)
+
+#Preview("Lock Screen: Circular", as: .accessoryCircular) {
+    HueHomeWidget()
+} timeline: { previewSnapshot }
+
+#Preview("Lock Screen: Rectangular", as: .accessoryRectangular) {
+    HueHomeWidget()
+} timeline: { previewSnapshot }
+
+#Preview("Lock Screen: Inline", as: .accessoryInline) {
+    HueHomeWidget()
+} timeline: { previewSnapshot }
