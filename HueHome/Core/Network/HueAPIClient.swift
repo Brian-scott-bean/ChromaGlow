@@ -33,11 +33,26 @@ enum HueAPIError: LocalizedError {
 
 // MARK: - HueAPIClient
 
-final class HueAPIClient: @unchecked Sendable {
+class HueAPIClient: @unchecked Sendable {
 
-    // MARK: Singleton
+    // MARK: Singleton (single-bridge legacy path)
     static let shared = HueAPIClient()
-    init() {}   // internal so tests can instantiate directly too
+
+    // MARK: Explicit credentials (multi-bridge path — set in init, never nil if provided)
+    private let explicitIP:    String?
+    private let explicitToken: String?
+
+    /// Legacy init — reads credentials from Keychain via `credentials()`.
+    init() {
+        explicitIP    = nil
+        explicitToken = nil
+    }
+
+    /// Multi-bridge init — uses explicit credentials, no Keychain read needed.
+    init(ip: String, token: String) {
+        explicitIP    = ip
+        explicitToken = token
+    }
 
     // MARK: Logger
     private let log = Logger(subsystem: "com.huehome.pro", category: "API")
@@ -52,8 +67,12 @@ final class HueAPIClient: @unchecked Sendable {
     // MARK: - Bootstrap
     // ──────────────────────────────────────────────
 
-    /// Load Bridge IP + token from Keychain. Throws HueAPIError.missingCredentials if either is absent.
+    /// Returns (ip, token). Uses explicit values if set, otherwise reads from Keychain.
     func credentials() throws -> (ip: String, token: String) {
+        if let ip = explicitIP, let token = explicitToken,
+           !ip.isEmpty, !token.isEmpty {
+            return (ip, token)
+        }
         guard let ip    = try? KeychainManager.shared.loadBridgeIP(),
               let token = try? KeychainManager.shared.loadAPIToken(),
               !ip.isEmpty, !token.isEmpty else {

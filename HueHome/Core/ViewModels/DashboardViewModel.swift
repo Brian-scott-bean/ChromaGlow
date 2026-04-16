@@ -20,6 +20,8 @@ struct RoomDisplayItem: Identifiable, Hashable {
     var brightness: Double   // 1–100 (Bridge rejects 0; use on=false to turn off)
     let groupedLightID: String?
     var lightCount: Int
+    /// Which bridge owns this room — nil only for legacy paths. Set by UnifiedOrchestrator.
+    var bridgeID: String?
     /// Raw child resource refs — used by RoomDetailViewModel to match individual lights.
     /// Contains entries with rtype "light" (newer firmware) or "device" (older firmware).
     let childResourceRefs: [(rid: String, rtype: String)]
@@ -99,6 +101,7 @@ final class DashboardViewModel {
                     brightness:         brightness,
                     groupedLightID:     room.groupedLightID,
                     lightCount:         lightCountMap[room.id] ?? 0,
+                    bridgeID:           nil,   // single-bridge path — nil here, set by UnifiedOrchestrator
                     childResourceRefs:  room.children.map { ($0.rid, $0.rtype) }
                 ))
             }

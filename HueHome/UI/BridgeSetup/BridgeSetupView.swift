@@ -13,11 +13,18 @@ import SwiftUI
 
 struct BridgeSetupView: View {
 
-    /// Called by parent (AppRootView via SplashView) after successful pairing.
+    /// Called by AppRootView (via SplashView) after the FIRST pairing — takes user to dashboard.
     var onPaired: (() -> Void)? = nil
+
+    /// Set to true when adding a second/third bridge from BridgeManagerView.
+    var isAddingAdditional: Bool = false
+
+    /// Called when adding an additional bridge — passes the new BridgeRecord to the caller.
+    var onBridgeAdded: ((BridgeRecord) -> Void)? = nil
 
     @State private var vm = BridgeDiscoveryViewModel()
     @State private var navigateToDashboard = false
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         NavigationStack {
@@ -199,15 +206,29 @@ struct BridgeSetupView: View {
                 .foregroundStyle(.secondary)
 
             Button {
-                // If we have a callback (new flow), call it.
-                // Otherwise fall back to internal navigation (legacy).
-                if let onPaired {
+                if isAddingAdditional, case .paired(let ip, let token) = vm.phase {
+                    // Multi-bridge path: create BridgeRecord in SwiftData, then call onBridgeAdded
+                    let bridgeID = UUID().uuidString
+                    let record = BridgeRecord(
+                        id: bridgeID,
+                        name: "Bridge \(bridgeID.prefix(4).uppercased())",
+                        host: ip,
+                        sortOrder: 999
+                    )
+                    modelContext.insert(record)
+                    try? modelContext.save()
+                    // Credentials already saved by BridgeDiscoveryViewModel into legacy keys;
+                    // migrate them to the new per-bridge keyed slot
+                    _ = KeychainManager.shared.migrateLegacyCredentials(to: bridgeID)
+                    onBridgeAdded?(record)
+                } else if let onPaired {
                     onPaired()
                 } else {
                     navigateToDashboard = true
                 }
             } label: {
-                Label("Go to Dashboard", systemImage: "lightbulb.fill")
+                Label(isAddingAdditional ? "Add to HueHome Pro" : "Go to Dashboard",
+                      systemImage: isAddingAdditional ? "plus.circle.fill" : "lightbulb.fill")
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
             }

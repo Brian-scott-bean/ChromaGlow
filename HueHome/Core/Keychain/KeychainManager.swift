@@ -44,9 +44,13 @@ final class KeychainManager: @unchecked Sendable {
 
     // MARK: Keys
     private enum Keys {
-        static let apiToken     = "hue_api_token"
-        static let bridgeIP     = "hue_bridge_ip"
+        static let apiToken     = "hue_api_token"    // legacy single-bridge
+        static let bridgeIP     = "hue_bridge_ip"    // legacy single-bridge
         static let serviceName  = "com.huehome.pro"
+        // Multi-bridge keys are namespaced: hue_bridge_<uuid>_ip / hue_bridge_<uuid>_token
+        static func ip(for bridgeID: String)    -> String { "hue_bridge_\(bridgeID)_ip" }
+        static func token(for bridgeID: String) -> String { "hue_bridge_\(bridgeID)_token" }
+        static func clientKey(for bridgeID: String) -> String { "hue_bridge_\(bridgeID)_clientkey" }
     }
 
     // ──────────────────────────────────────────────
@@ -87,6 +91,68 @@ final class KeychainManager: @unchecked Sendable {
     func deleteBridgeIP() throws {
         log.info("🗑️ Deleting Bridge IP from Keychain.")
         try delete(for: Keys.bridgeIP)
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Multi-Bridge Credential API (Stage 2A)
+    // ──────────────────────────────────────────────
+
+    /// Store credentials for a specific bridge by its UUID.
+    func saveCredentials(ip: String, token: String, clientKey: String? = nil, for bridgeID: String) throws {
+        log.info("💾 Saving credentials for bridge \(bridgeID).")
+        try save(value: ip,    for: Keys.ip(for: bridgeID))
+        try save(value: token, for: Keys.token(for: bridgeID))
+        if let ck = clientKey, !ck.isEmpty {
+            try save(value: ck, for: Keys.clientKey(for: bridgeID))
+        }
+    }
+
+    /// Retrieve ip + token for a specific bridge UUID.
+    func loadCredentials(for bridgeID: String) throws -> (ip: String, token: String) {
+        let ip    = try load(for: Keys.ip(for: bridgeID))
+        let token = try load(for: Keys.token(for: bridgeID))
+        return (ip, token)
+    }
+
+    /// Load entertainment client key for a bridge.
+    func loadClientKey(for bridgeID: String) -> String? {
+        try? load(for: Keys.clientKey(for: bridgeID))
+    }
+
+    /// Remove all credentials for a bridge.
+    func deleteCredentials(for bridgeID: String) {
+        try? delete(for: Keys.ip(for: bridgeID))
+        try? delete(for: Keys.token(for: bridgeID))
+        try? delete(for: Keys.clientKey(for: bridgeID))
+        log.info("🗑️ Deleted credentials for bridge \(bridgeID).")
+    }
+
+    /// Migrate legacy single-bridge Keychain entries into a new BridgeRecord.
+    /// Returns the migrated (ip, token) pair if found, nil if already migrated or missing.
+    /// Call once on first launch after Stage 2A upgrade.
+    func migrateLegacyCredentials(to bridgeID: String) -> (ip: String, token: String)? {
+        guard let ip    = try? load(for: Keys.bridgeIP),
+              let token = try? load(for: Keys.apiToken),
+              !ip.isEmpty, !token.isEmpty else {
+            log.info("ℹ️  No legacy credentials found to migrate.")
+            return nil
+        }
+        do {
+            try saveCredentials(ip: ip, token: token, for: bridgeID)
+            // Transfer client key if present
+            if let ck = try? load(for: "hue_client_key") {
+                try save(value: ck, for: Keys.clientKey(for: bridgeID))
+            }
+            // Delete legacy keys
+            try? delete(for: Keys.apiToken)
+            try? delete(for: Keys.bridgeIP)
+            try? delete(for: "hue_client_key")
+            log.info("✅ Migrated legacy credentials to bridge ID \(bridgeID).")
+            return (ip, token)
+        } catch {
+            log.error("❌ Migration failed: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     // ──────────────────────────────────────────────

@@ -1,10 +1,54 @@
 // HueDataModels.swift
-// HueHome Pro — Stage 1 SwiftData Model Layer
+// HueHome Pro — Stage 1 + Stage 2A SwiftData Model Layer
 // Local-only metadata and logs — nothing here is sent to the Bridge.
 // Bridge truth lives in the API. Local models are user overrides + history.
 
 import SwiftUI
 import SwiftData
+
+// MARK: - Bridge Registry (Stage 2A)
+
+/// One registered Philips Hue Bridge. The app supports N bridges simultaneously.
+/// Credentials (ip + token) are stored in Keychain keyed by bridge.id;
+/// this model stores everything else (name, order, accent color, last-seen stats).
+@Model
+final class BridgeRecord {
+    @Attribute(.unique) var id: String    // UUID — also the Keychain credential key
+    var name:            String           // user-given name (e.g. "Main Bridge")
+    var host:            String           // IP address on local network
+    var port:            Int              // 443 (HTTPS) or 80 (HTTP)
+    var locationLabel:   String?          // "Living Area", "Garage", etc.
+    var accentHex:       String?          // per-bridge accent color shown in UI
+    var sortOrder:       Int
+    var isActive:        Bool             // enabled/disabled — disabled = no SSE, no fetch
+    var deviceCount:     Int             // last-known device count from Bridge
+    var firmwareVersion: String?         // last-seen firmware
+    var addedAt:         Date
+    var lastSeenAt:      Date?
+
+    init(
+        id: String = UUID().uuidString,
+        name: String,
+        host: String,
+        port: Int = 443,
+        locationLabel: String? = nil,
+        accentHex: String? = nil,
+        sortOrder: Int = 999,
+        isActive: Bool = true
+    ) {
+        self.id            = id
+        self.name          = name
+        self.host          = host
+        self.port          = port
+        self.locationLabel = locationLabel
+        self.accentHex     = accentHex
+        self.sortOrder     = sortOrder
+        self.isActive      = isActive
+        self.deviceCount   = 0
+        self.addedAt       = Date()
+        self.lastSeenAt    = nil
+    }
+}
 
 // MARK: - Local Room Metadata
 
@@ -12,6 +56,7 @@ import SwiftData
 @Model
 final class HueLocalRoom {
     @Attribute(.unique) var roomID: String   // matches Bridge room.id
+    var bridgeID:     String?               // which bridge this room belongs to (nil = legacy single-bridge)
     var nameOverride:  String?               // custom display name
     var iconOverride:  String?               // SF Symbol name override
     var sortOrder:     Int                   // user-defined order (lower = first)
@@ -24,6 +69,7 @@ final class HueLocalRoom {
 
     init(
         roomID: String,
+        bridgeID: String? = nil,
         nameOverride: String? = nil,
         iconOverride: String? = nil,
         sortOrder: Int = 999,
@@ -33,6 +79,7 @@ final class HueLocalRoom {
         groupTag: String? = nil
     ) {
         self.roomID       = roomID
+        self.bridgeID     = bridgeID
         self.nameOverride = nameOverride
         self.iconOverride = iconOverride
         self.sortOrder    = sortOrder
