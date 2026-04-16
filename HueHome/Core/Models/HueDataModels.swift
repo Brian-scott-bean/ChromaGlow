@@ -1,0 +1,188 @@
+// HueDataModels.swift
+// HueHome Pro — Stage 1 SwiftData Model Layer
+// Local-only metadata and logs — nothing here is sent to the Bridge.
+// Bridge truth lives in the API. Local models are user overrides + history.
+
+import SwiftUI
+import SwiftData
+
+// MARK: - Local Room Metadata
+
+/// User customizations for a Bridge room — stored locally, never synced to Bridge
+@Model
+final class HueLocalRoom {
+    @Attribute(.unique) var roomID: String   // matches Bridge room.id
+    var nameOverride:  String?               // custom display name
+    var iconOverride:  String?               // SF Symbol name override
+    var sortOrder:     Int                   // user-defined order (lower = first)
+    var isPinned:      Bool                  // pinned rooms appear at top
+    var isHidden:      Bool                  // hidden rooms don't show on dashboard
+    var accentHex:     String?               // per-room color override (future)
+    var groupTag:      String?               // custom room group label
+    var createdAt:     Date
+    var updatedAt:     Date
+
+    init(
+        roomID: String,
+        nameOverride: String? = nil,
+        iconOverride: String? = nil,
+        sortOrder: Int = 999,
+        isPinned: Bool = false,
+        isHidden: Bool = false,
+        accentHex: String? = nil,
+        groupTag: String? = nil
+    ) {
+        self.roomID       = roomID
+        self.nameOverride = nameOverride
+        self.iconOverride = iconOverride
+        self.sortOrder    = sortOrder
+        self.isPinned     = isPinned
+        self.isHidden     = isHidden
+        self.accentHex    = accentHex
+        self.groupTag     = groupTag
+        self.createdAt    = Date()
+        self.updatedAt    = Date()
+    }
+}
+
+// MARK: - Local Scene Metadata
+
+@Model
+final class HueLocalScene {
+    @Attribute(.unique) var sceneID: String   // matches Bridge scene.id
+    var swatchHex:        String?             // color swatch override
+    var sceneDescription: String?            // user description (not 'description' — conflicts with @Model)
+    var sortOrder:        Int
+    var isFavourite:      Bool
+    var updatedAt:        Date
+
+    init(sceneID: String, swatchHex: String? = nil, sceneDescription: String? = nil, sortOrder: Int = 999, isFavourite: Bool = false) {
+        self.sceneID          = sceneID
+        self.swatchHex        = swatchHex
+        self.sceneDescription = sceneDescription
+        self.sortOrder        = sortOrder
+        self.isFavourite      = isFavourite
+        self.updatedAt        = Date()
+    }
+}
+
+// MARK: - Effect Preset
+
+/// A saved effect engine configuration — named, sharable
+@Model
+final class EffectPreset {
+    var id:          String
+    var name:        String
+    var emoji:       String
+    var engineType:  String    // e.g. "rhythm.heartbeat", "chaos.candle"
+    var paramsJSON:  String    // encoded param dictionary
+    var isFavourite: Bool
+    var isBuiltIn:   Bool      // system presets are read-only
+    var createdAt:   Date
+    var lastUsedAt:  Date?
+
+    init(id: String = UUID().uuidString, name: String, emoji: String, engineType: String, paramsJSON: String, isFavourite: Bool = false, isBuiltIn: Bool = false) {
+        self.id          = id
+        self.name        = name
+        self.emoji       = emoji
+        self.engineType  = engineType
+        self.paramsJSON  = paramsJSON
+        self.isFavourite = isFavourite
+        self.isBuiltIn   = isBuiltIn
+        self.createdAt   = Date()
+        self.lastUsedAt  = nil
+    }
+}
+
+// MARK: - Favourite Color Swatch
+
+@Model
+final class FavouriteColor {
+    var id:         String
+    var hex:        String
+    var name:       String?
+    var sortOrder:  Int
+    var lastUsedAt: Date?
+
+    init(id: String = UUID().uuidString, hex: String, name: String? = nil, sortOrder: Int = 999) {
+        self.id         = id
+        self.hex        = hex
+        self.name       = name
+        self.sortOrder  = sortOrder
+        self.lastUsedAt = nil
+    }
+}
+
+// MARK: - Activity Event (SSE Log)
+
+/// One logged event from the Bridge SSE stream
+@Model
+final class ActivityEvent {
+    var id:           String
+    var timestamp:    Date
+    var resourceType: String    // e.g. "grouped_light", "light", "motion"
+    var resourceID:   String
+    var eventType:    String    // "update", "add", "delete"
+    var roomName:     String?   // denormalized for display
+    var detail:       String    // human-readable summary
+
+    init(id: String = UUID().uuidString, resourceType: String, resourceID: String, eventType: String, roomName: String? = nil, detail: String) {
+        self.id           = id
+        self.timestamp    = Date()
+        self.resourceType = resourceType
+        self.resourceID   = resourceID
+        self.eventType    = eventType
+        self.roomName     = roomName
+        self.detail       = detail
+    }
+}
+
+// MARK: - Energy Snapshot
+
+/// Daily energy estimate per room
+@Model
+final class EnergySnapshot {
+    var id:          String
+    var date:        Date        // start of day
+    var roomID:      String
+    var roomName:    String
+    var estimatedWh: Double      // watt-hours
+
+    init(id: String = UUID().uuidString, date: Date, roomID: String, roomName: String, estimatedWh: Double) {
+        self.id          = id
+        self.date        = date
+        self.roomID      = roomID
+        self.roomName    = roomName
+        self.estimatedWh = estimatedWh
+    }
+}
+
+// MARK: - App Settings (single row)
+
+@Model
+final class AppSettings {
+    @Attribute(.unique) var singleton: String = "main"
+    var themeMode:      String   // "dark", "light", "system"
+    var accentColor:    String   // "amber", "indigo", "teal", "rose", "violet", "mint", "graphite"
+    var cardStyle:      String   // "glassmorphic", "solid", "minimal", "neon"
+    var animationSpeed: String   // "fast", "normal", "slow", "none"
+    var hapticsLevel:   String   // "off", "subtle", "normal", "strong"
+    var brightnessUnit: String   // "percent", "raw"
+    var tempUnit:       String   // "kelvin", "label"
+    var tempScale:      String   // "fahrenheit", "celsius"
+    var dashboardLayout: String  // "grid2", "grid3", "grid4", "list", "compact"
+    var isPro:          Bool     // StoreKit local cache
+
+    init() {
+        self.themeMode       = "system"
+        self.accentColor     = "amber"
+        self.cardStyle       = "glassmorphic"
+        self.animationSpeed  = "normal"
+        self.hapticsLevel    = "normal"
+        self.brightnessUnit  = "percent"
+        self.tempUnit        = "kelvin"
+        self.tempScale       = "fahrenheit"
+        self.dashboardLayout = "grid2"
+        self.isPro           = false
+    }
+}

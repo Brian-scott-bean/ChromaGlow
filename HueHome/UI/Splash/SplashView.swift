@@ -1,185 +1,147 @@
 // SplashView.swift
-// HueHome Pro — Splash Screen
-//
-// Shown during app cold-start. Provides visual feedback during Swift runtime
-// initialization. Transitions to BridgeSetupView once the animation completes.
-//
-// Intentionally kept render-lightweight — no heavy GeometryReader or async work
-// during this window.
+// HueHome Pro — Stage 1
+// Shown on cold start. Checks Keychain, then calls onPaired or routes to BridgeSetupView.
+// Upgraded to use HueTokens design system.
 
 import SwiftUI
 
 struct SplashView: View {
+    var onPaired: (() -> Void)? = nil   // called by AppRootView when pairing confirmed
 
-    @State private var iconScale: CGFloat       = 0.4
-    @State private var iconOpacity: Double      = 0.0
-    @State private var titleOpacity: Double     = 0.0
+    @State private var iconScale:       CGFloat = 0.4
+    @State private var iconOpacity:     Double  = 0.0
+    @State private var titleOpacity:    Double  = 0.0
     @State private var subtitleOpacity: Double  = 0.0
-    @State private var barProgress: CGFloat     = 0.0
-    @State private var barOpacity: Double       = 0.0
-    @State private var showMain: Bool           = false
-    @State private var alreadyPaired: Bool      = false  // set during animation, drives destination
+    @State private var barProgress:     CGFloat = 0.0
+    @State private var barOpacity:      Double  = 0.0
+    @State private var showSetup:       Bool    = false
+
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
-        if showMain {
-            if alreadyPaired {
-                NavigationStack {
-                    DashboardView()
-                }
+        if showSetup {
+            BridgeSetupView(onPaired: onPaired)
                 .transition(.asymmetric(
                     insertion: .opacity.combined(with: .move(edge: .bottom)),
-                    removal:   .opacity
+                    removal: .opacity
                 ))
-            } else {
-                BridgeSetupView()
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .move(edge: .bottom)),
-                        removal:   .opacity
-                    ))
-            }
         } else {
             splashContent
         }
     }
 
-    // ──────────────────────────────────────────────
     // MARK: - Splash Layout
-    // ──────────────────────────────────────────────
 
     private var splashContent: some View {
         ZStack {
-            // Background
-            Color(uiColor: .systemBackground).ignoresSafeArea()
+            (colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background)
+                .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 Spacer()
 
-                // ── Icon ─────────────────────────────────
+                // Icon
                 ZStack {
-                    // Pulsing glow ring
-                    Circle()
-                        .fill(Color.yellow.opacity(0.18))
-                        .frame(width: 110, height: 110)
-                        .scaleEffect(iconScale * 1.3)
-                        .animation(
-                            .easeInOut(duration: 1.2).repeatForever(autoreverses: true).delay(0.4),
-                            value: iconScale
-                        )
+                    AmberRadialGlow(radius: 70)
 
-                    // Icon circle
                     Circle()
-                        .fill(Color.yellow.opacity(0.15))
+                        .fill(HuePalette.amber.opacity(0.15))
                         .frame(width: 90, height: 90)
 
                     Image(systemName: "lightbulb.fill")
                         .font(.system(size: 42, weight: .medium))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [.yellow, .orange],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                        .foregroundStyle(LinearGradient.hueAmberVertical)
                 }
                 .scaleEffect(iconScale)
                 .opacity(iconOpacity)
 
                 Spacer().frame(height: 28)
 
-                // ── Title ────────────────────────────────
-                Text("HueHome")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
-                    .opacity(titleOpacity)
+                // Title
+                VStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Text("HueHome")
+                            .font(.system(size: 34, weight: .bold, design: .rounded))
+                            .foregroundStyle(colorScheme == .dark
+                                             ? HuePalette.Noir.textPrimary
+                                             : HuePalette.Estate.textPrimary)
 
-                Text("Pro")
-                    .font(.system(size: 34, weight: .thin, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .opacity(titleOpacity)
+                        Text("Pro")
+                            .font(.system(size: 34, weight: .thin, design: .rounded))
+                            .foregroundStyle(HuePalette.amber)
+                    }
 
-                Spacer().frame(height: 8)
-
-                Text("Connecting to your light ecosystem")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .opacity(subtitleOpacity)
+                    Text("Your lighting ecosystem")
+                        .font(HueFont.caption)
+                        .foregroundStyle(colorScheme == .dark
+                                         ? HuePalette.Noir.textTertiary
+                                         : HuePalette.Estate.textTertiary)
+                }
+                .opacity(titleOpacity)
 
                 Spacer()
 
-                // ── Progress Bar ─────────────────────────
+                // Progress bar
                 VStack(spacing: 10) {
-                    loadingBar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(colorScheme == .dark
+                                      ? HuePalette.Noir.sliderTrack
+                                      : HuePalette.Estate.sliderTrack)
+                                .frame(height: 4)
+
+                            Capsule()
+                                .fill(LinearGradient.hueAmberFill)
+                                .frame(width: geo.size.width * barProgress, height: 4)
+                        }
+                    }
+                    .frame(height: 4)
+
                     Text("Starting up…")
-                        .font(.caption2)
-                        .foregroundStyle(.quaternary)
+                        .font(HueFont.micro)
+                        .foregroundStyle(colorScheme == .dark
+                                         ? HuePalette.Noir.textTertiary
+                                         : HuePalette.Estate.textTertiary)
                 }
                 .opacity(barOpacity)
                 .padding(.bottom, 60)
+                .padding(.horizontal, 40)
             }
             .padding(.horizontal, 40)
         }
         .onAppear(perform: runAnimation)
     }
 
-    // ── Loading Bar ───────────────────────────────
-    private var loadingBar: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                // Track
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(Color.primary.opacity(0.08))
-                    .frame(height: 4)
-
-                // Fill
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(
-                        LinearGradient(
-                            colors: [.yellow, .orange],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: geo.size.width * barProgress, height: 4)
-            }
-        }
-        .frame(height: 4)
-    }
-
-    // ──────────────────────────────────────────────
     // MARK: - Animation Sequence
-    // ──────────────────────────────────────────────
 
     private func runAnimation() {
-        // Step 1 — icon bounces in (0.0s)
         withAnimation(.spring(response: 0.55, dampingFraction: 0.65)) {
             iconScale   = 1.0
             iconOpacity = 1.0
         }
-
-        // Step 2 — title fades up (0.25s)
         withAnimation(.easeOut(duration: 0.35).delay(0.25)) {
             titleOpacity = 1.0
         }
-
-        // Step 3 — subtitle + bar appear (0.5s)
         withAnimation(.easeOut(duration: 0.3).delay(0.5)) {
             subtitleOpacity = 1.0
             barOpacity      = 1.0
         }
-
-        // Step 4 — progress bar fills over 1.4s (0.6s → 2.0s)
         withAnimation(.easeInOut(duration: 1.4).delay(0.6)) {
             barProgress = 1.0
         }
 
-        // Step 5 — check Keychain for existing credentials, then transition (2.1s)
-        // Keychain reads are synchronous and fast — safe to call on main thread.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) {
             let ip    = try? KeychainManager.shared.loadBridgeIP()
             let token = try? KeychainManager.shared.loadAPIToken()
-            alreadyPaired = (ip?.isEmpty == false) && (token?.isEmpty == false)
+            let isPaired = (ip?.isEmpty == false) && (token?.isEmpty == false)
 
             withAnimation(.easeInOut(duration: 0.4)) {
-                showMain = true
+                if isPaired {
+                    onPaired?()   // AppRootView transitions to MainTabView
+                } else {
+                    showSetup = true
+                }
             }
         }
     }

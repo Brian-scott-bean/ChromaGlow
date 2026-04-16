@@ -164,7 +164,7 @@ struct RoomDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(vm.scenes) { scene in
-                        SceneChip(scene: scene) {
+                        RoomSceneChip(scene: scene) {
                             vm.activateScene(scene)
                         }
                         .contextMenu {

@@ -13,6 +13,9 @@ import SwiftUI
 
 struct BridgeSetupView: View {
 
+    /// Called by parent (AppRootView via SplashView) after successful pairing.
+    var onPaired: (() -> Void)? = nil
+
     @StateObject private var vm = BridgeDiscoveryViewModel()
     @State private var navigateToDashboard = false
 
@@ -196,7 +199,13 @@ struct BridgeSetupView: View {
                 .foregroundStyle(.secondary)
 
             Button {
-                navigateToDashboard = true
+                // If we have a callback (new flow), call it.
+                // Otherwise fall back to internal navigation (legacy).
+                if let onPaired {
+                    onPaired()
+                } else {
+                    navigateToDashboard = true
+                }
             } label: {
                 Label("Go to Dashboard", systemImage: "lightbulb.fill")
                     .frame(maxWidth: .infinity)

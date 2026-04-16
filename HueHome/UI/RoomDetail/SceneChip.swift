@@ -1,13 +1,12 @@
 // SceneChip.swift
-// HueHome Pro — Epic 4 / Story 4.1
+// HueHome Pro — Stage 1 (renamed RoomSceneChip to avoid conflict with HueComponents.SceneChip)
 //
-// Individual scene tile in the horizontal scene strip.
-// Glassmorphic pill card: icon + name, accent border + glow when active.
-// Pressing activates the scene via onTap closure.
+// Full-featured scene tile for Room Detail's horizontal scene strip.
+// Takes a SceneDisplayItem with isActive state and accent color.
 
 import SwiftUI
 
-struct SceneChip: View {
+struct RoomSceneChip: View {
 
     let scene: SceneDisplayItem
     let onTap: () -> Void
