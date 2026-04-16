@@ -6,6 +6,7 @@
 // Presented as a .sheet from the Dashboard toolbar ⚙ button.
 
 import SwiftUI
+import SwiftData
 
 // MARK: - SettingsView
 
@@ -13,61 +14,65 @@ struct SettingsView: View {
 
     let onForget: () -> Void          // caller handles dismiss after clearing Keychain
 
+    @Environment(\.modelContext)           private var modelContext
+    @Environment(\.dismiss)               private var dismiss
+    @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Query private var bridges: [BridgeRecord]
+
     // Loaded from Keychain on appear
     @State private var bridgeIP     = "—"
     @State private var tokenPreview = "—"
     @State private var pingStatus: PingStatus = .unknown
 
     @State private var showForgetAlert = false
-    @Environment(\.dismiss) private var dismiss
 
     private let glowColor = Color(red: 1.0, green: 0.76, blue: 0.2)
 
     // MARK: - Body
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                ambientBackground
+        ZStack {
+            ambientBackground
 
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 24) {
-                        bridgeSection
-                        accountSection
-                        appSection
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 24)
-                    .padding(.bottom, 48)
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 24) {
+                    bridgesSection       // Stage 2A — multi-bridge management
+                    bridgeSection
+                    accountSection
+                    appSection
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+                .padding(.bottom, 80)  // extra bottom pad for tab bar
             }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(glowColor)
-                        .fontWeight(.semibold)
-                }
-            }
-            .preferredColorScheme(.dark)
-            .alert("Forget Bridge?", isPresented: $showForgetAlert) {
-                Button("Forget", role: .destructive) {
-                    // Clear Keychain directly in the non-escaping button action
-                    try? KeychainManager.shared.deleteAPIToken()
-                    try? KeychainManager.shared.deleteBridgeIP()
-                    try? KeychainManager.shared.delete(for: "hue_client_key")
-                    dismiss()     // close this sheet
-                    onForget()    // signal parent to pop nav stack back to pairing
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("The saved Bridge IP and API token will be removed. You'll need to press the link button again to re-pair.")
-            }
-            .onAppear { loadCredentials() }
         }
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .preferredColorScheme(.dark)
+        .alert("Forget All Bridges?", isPresented: $showForgetAlert) {
+            Button("Forget All", role: .destructive) {
+                // 1. Wipe all per-bridge Keychain credentials
+                for bridge in bridges {
+                    KeychainManager.shared.deleteCredentials(for: bridge.id)
+                    modelContext.delete(bridge)
+                }
+                // 2. Wipe legacy single-bridge Keychain keys
+                try? KeychainManager.shared.deleteAPIToken()
+                try? KeychainManager.shared.deleteBridgeIP()
+                try? KeychainManager.shared.delete(for: "hue_client_key")
+                // 3. Save SwiftData changes
+                try? modelContext.save()
+                // 4. Stop SSE connections
+                orchestrator.stopSSE()
+                onForget()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("All \(bridges.count) bridge(s) will be removed. You'll need to press the link button on each bridge to re-pair.")
+        }
+        .onAppear { loadCredentials() }
     }
 
     // ──────────────────────────────────────────────
@@ -95,6 +100,33 @@ struct SettingsView: View {
                 .blur(radius: 20)
         }
         .ignoresSafeArea()
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Bridges Section (Stage 2A)
+    // ──────────────────────────────────────────────
+
+    private var bridgesSection: some View {
+        settingsGroup(header: "BRIDGES") {
+            NavigationLink(destination: BridgeManagerView()) {
+                HStack(spacing: 12) {
+                    iconCircle("network", color: glowColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Manage Bridges")
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+                        Text("\(bridges.count) registered  ·  \(orchestrator.activeBridgeCount) active")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.30))
+                }
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -165,14 +197,14 @@ struct SettingsView: View {
 
             Divider().background(Color.white.opacity(0.08))
 
-            // Forget Bridge — destructive
+            // Forget All Bridges — destructive
             Button {
                 showForgetAlert = true
             } label: {
                 HStack(spacing: 12) {
                     iconCircle("link.badge.minus", color: .red)
 
-                    Text("Forget Bridge")
+                    Text("Forget All Bridges")
                         .font(.subheadline)
                         .foregroundStyle(.red)
 

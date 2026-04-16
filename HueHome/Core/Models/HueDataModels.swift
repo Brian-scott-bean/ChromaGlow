@@ -67,6 +67,17 @@ final class HueLocalRoom {
     var createdAt:     Date
     var updatedAt:     Date
 
+    // ──────────────────────────────────────────────
+    // MARK: - Instant-startup cache (Stage 2A perf)
+    // Written after each successful loadAll(). Read on launch to show
+    // the dashboard immediately without waiting for the first API response.
+    // ──────────────────────────────────────────────
+    var cachedName:       String?   // last-seen room name from Bridge
+    var lastIsOn:         Bool      // last-known on/off state
+    var lastBrightness:   Double    // last-known brightness (1–100)
+    var cachedLightCount: Int       // last-known light count
+    var cachedArchetype:  String?   // last-seen archetype for icon
+
     init(
         roomID: String,
         bridgeID: String? = nil,
@@ -78,17 +89,23 @@ final class HueLocalRoom {
         accentHex: String? = nil,
         groupTag: String? = nil
     ) {
-        self.roomID       = roomID
-        self.bridgeID     = bridgeID
-        self.nameOverride = nameOverride
-        self.iconOverride = iconOverride
-        self.sortOrder    = sortOrder
-        self.isPinned     = isPinned
-        self.isHidden     = isHidden
-        self.accentHex    = accentHex
-        self.groupTag     = groupTag
-        self.createdAt    = Date()
-        self.updatedAt    = Date()
+        self.roomID            = roomID
+        self.bridgeID          = bridgeID
+        self.nameOverride      = nameOverride
+        self.iconOverride      = iconOverride
+        self.sortOrder         = sortOrder
+        self.isPinned          = isPinned
+        self.isHidden          = isHidden
+        self.accentHex         = accentHex
+        self.groupTag          = groupTag
+        self.createdAt         = Date()
+        self.updatedAt         = Date()
+        // Cache defaults
+        self.cachedName        = nil
+        self.lastIsOn          = false
+        self.lastBrightness    = 100
+        self.cachedLightCount  = 0
+        self.cachedArchetype   = nil
     }
 }
 

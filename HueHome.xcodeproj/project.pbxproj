@@ -58,6 +58,7 @@
 		E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */; };
 		EBD402E37AF2043D8391E87F /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A54B6A1F1A2CC5FAF3CEE /* SplashView.swift */; };
 		EEDFBC6DA4FD471455B1517A /* DashboardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0D7C75585D5858EE0162DF /* DashboardViewModel.swift */; };
+		F2903EB080E11603E73CED60 /* ShimmerComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 471A0EDBCE4C17624925EAB6 /* ShimmerComponents.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -107,6 +108,7 @@
 		4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WidgetDataStore.swift; path = HueHome/Core/Network/WidgetDataStore.swift; sourceTree = "<group>"; };
 		42D8A158EFAE9D6D53696D3E /* MainTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MainTabView.swift; path = ./HueHome/UI/Navigation/MainTabView.swift; sourceTree = "<group>"; };
 		42E682D174C75541F8F57CFC /* HueAPIClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueAPIClientTests.swift; path = HueHomeTests/HueAPIClientTests.swift; sourceTree = "<group>"; };
+		471A0EDBCE4C17624925EAB6 /* ShimmerComponents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShimmerComponents.swift; path = HueHome/UI/Components/ShimmerComponents.swift; sourceTree = "<group>"; };
 		4E53201A81D93BB2967E3651 /* HueTokens.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueTokens.swift; path = ./HueHome/UI/Components/HueTokens.swift; sourceTree = "<group>"; };
 		5DA4F44D15C88C91CEB5C798 /* AutomationsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationsView.swift; path = HueHome/UI/Automations/AutomationsView.swift; sourceTree = "<group>"; };
 		6278B21D6E2592BB36A4CB8F /* BridgeDiscoveryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeDiscoveryService.swift; path = HueHome/Core/Network/BridgeDiscoveryService.swift; sourceTree = "<group>"; };
@@ -305,6 +307,7 @@
 				4E53201A81D93BB2967E3651 /* HueTokens.swift */,
 				304818D054AC8B4EFCF2AC92 /* HueTypography.swift */,
 				BE943A83FCAB08B4D0A0AD77 /* HueComponents.swift */,
+				471A0EDBCE4C17624925EAB6 /* ShimmerComponents.swift */,
 			);
 			name = Components;
 			sourceTree = "<group>";
@@ -597,6 +600,7 @@
 				CB70C04CB7E8C3323F671045 /* BridgeAPIClient.swift in Sources */,
 				46B962AE1942EC354D5CD0A4 /* UnifiedOrchestrator.swift in Sources */,
 				1B67F13F56DA56C5ACA65D66 /* BridgeManagerView.swift in Sources */,
+				F2903EB080E11603E73CED60 /* ShimmerComponents.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -140,16 +140,83 @@ final class UnifiedOrchestrator {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Instant Startup Cache (Stage 2A Perf)
+    // ──────────────────────────────────────────────
+
+    /// Synchronously populate allRooms from SwiftData cache.
+    /// Call this BEFORE the first network fetch so the dashboard is
+    /// populated immediately on launch — zero flicker, zero spinner.
+    func preloadCached(from cachedRooms: [HueLocalRoom]) {
+        guard allRooms.isEmpty, !cachedRooms.isEmpty else { return }
+        let items = cachedRooms
+            .filter { !$0.isHidden && $0.cachedName != nil }
+            .sorted { ($0.cachedName ?? "") < ($1.cachedName ?? "") }
+            .map { local -> RoomDisplayItem in
+                RoomDisplayItem(
+                    id:                local.roomID,
+                    name:              local.nameOverride ?? local.cachedName ?? local.roomID,
+                    archetype:         local.cachedArchetype,
+                    isOn:              local.lastIsOn,
+                    brightness:        local.lastBrightness,
+                    groupedLightID:    nil,   // unknown until live fetch
+                    lightCount:        local.cachedLightCount,
+                    bridgeID:          local.bridgeID,
+                    childResourceRefs: []
+                )
+            }
+        if !items.isEmpty {
+            allRooms = items
+            log.info("Preloaded \(items.count) rooms from SwiftData cache")
+        }
+    }
+
+    /// Write current live room states back to SwiftData for next-launch preload.
+    /// Called after every successful loadAll(). Non-blocking — errors are silently discarded.
+    func writeCache(to context: ModelContext) {
+        do {
+            for room in allRooms {
+                let id = room.id
+                let descriptor = FetchDescriptor<HueLocalRoom>(
+                    predicate: #Predicate { $0.roomID == id }
+                )
+                if let existing = try context.fetch(descriptor).first {
+                    existing.cachedName       = room.name
+                    existing.lastIsOn         = room.isOn
+                    existing.lastBrightness   = room.brightness
+                    existing.cachedLightCount = room.lightCount
+                    existing.cachedArchetype  = room.archetype
+                    existing.bridgeID         = room.bridgeID
+                    existing.updatedAt        = Date()
+                } else {
+                    let local = HueLocalRoom(roomID: id, bridgeID: room.bridgeID)
+                    local.cachedName       = room.name
+                    local.lastIsOn         = room.isOn
+                    local.lastBrightness   = room.brightness
+                    local.cachedLightCount = room.lightCount
+                    local.cachedArchetype  = room.archetype
+                    context.insert(local)
+                }
+            }
+            try context.save()
+        } catch {
+            log.error("writeCache failed: \(error.localizedDescription)")
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Load All (Parallel)
     // ──────────────────────────────────────────────
 
     /// Fetch rooms from every active bridge concurrently; merge results.
-    func loadAll() async {
+    /// Pass `cacheContext` to auto-write cache on success (nil = skip cache write).
+    func loadAll(cacheContext: ModelContext? = nil) async {
         guard !clients.isEmpty else {
             allRooms = []
             return
         }
-        isLoading = true
+        // Only show loading indicator if we have no cached data to show yet
+        let hadCachedData = !allRooms.isEmpty
+        if !hadCachedData { isLoading = true }
         errorMessage = nil
         defer { isLoading = false }
 
@@ -211,11 +278,12 @@ final class UnifiedOrchestrator {
         }
 
         rebuildAllRooms()
+        // Persist state for instant next-launch startup
+        if let ctx = cacheContext { writeCache(to: ctx) }
     }
 
     // ──────────────────────────────────────────────
     // MARK: - Room Mutations
-    // ──────────────────────────────────────────────
 
     func toggleRoom(_ item: RoomDisplayItem) {
         guard let glID = item.groupedLightID,
@@ -309,12 +377,15 @@ final class UnifiedOrchestrator {
         request.setValue(creds.token, forHTTPHeaderField: "hue-application-key")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
+        // Use the same cert-trust strategy as HueAPIClient — delegate trusts Hue's self-signed cert.
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest  = 0
         config.timeoutIntervalForResource = 0
-        config.protocolClasses = [HueCertTrustProtocol.self]
-
-        let session = URLSession(configuration: config)
+        let session = URLSession(
+            configuration: config,
+            delegate: HueCertTrustDelegate(),   // ← real cert trust, not a dummy URLProtocol
+            delegateQueue: nil
+        )
 
         do {
             let (stream, _) = try await session.bytes(for: request)
@@ -419,14 +490,4 @@ final class UnifiedOrchestrator {
 private struct SSEEvent: Decodable {
     let type: String
     let data: [SSEResourceUpdate]
-}
-
-// MARK: - HueCertTrustProtocol
-// Allows SSE URLSession to trust Hue Bridge self-signed cert
-
-private final class HueCertTrustProtocol: URLProtocol {
-    override class func canInit(with request: URLRequest) -> Bool { false } // passthrough — delegate handles trust
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() { client?.urlProtocolDidFinishLoading(self) }
-    override func stopLoading() {}
 }

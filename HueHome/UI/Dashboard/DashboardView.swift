@@ -6,16 +6,18 @@
 // Toggles remain the control surface; drag gestures land in Story 2.2.
 
 import SwiftUI
+import SwiftData
 
 // MARK: - DashboardView
 
 struct DashboardView: View {
 
-    @State private var vm = DashboardViewModel()
+    @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @State private var vm = DashboardViewModel()     // kept for console log lines only
     @State private var showLog         = false
-    @State private var showSettings     = false
-    @State private var showAutomations  = false
-    @Environment(\.dismiss) private var dismiss
+    @State private var showSettings    = false
+    @Query private var localRooms: [HueLocalRoom]
+    @Environment(\.modelContext) private var modelContext
 
     // Ambient background orb positions (stable, no GeometryReader jitter)
     private let orb1Offset = CGPoint(x: -80, y: -180)
@@ -23,14 +25,13 @@ struct DashboardView: View {
 
     var body: some View {
         ZStack {
-            // ── Background ────────────────────────────────
             ambientBackground
 
-            // ── Content ───────────────────────────────────
             Group {
-                if vm.isLoading && vm.rooms.isEmpty {
-                    loadingView
-                } else if let error = vm.errorMessage, vm.rooms.isEmpty {
+                if orchestrator.isLoading && orchestrator.allRooms.isEmpty {
+                    // Show shimmer skeleton while waiting for first real data
+                    shimmerView
+                } else if let error = orchestrator.errorMessage, orchestrator.allRooms.isEmpty {
                     errorView(error)
                 } else {
                     roomScrollView
@@ -44,20 +45,27 @@ struct DashboardView: View {
         .toolbar { toolbarItems }
         .sheet(isPresented: $showLog)      { logSheet }
         .sheet(isPresented: $showSettings) {
-            SettingsView {
-                // Keychain is already cleared inside SettingsView.
-                // Just pop the NavigationStack back to the pairing screen.
-                dismiss()
+            // SettingsView needs its own NavigationStack when shown as sheet
+            NavigationStack {
+                SettingsView(onForget: {
+                    NotificationCenter.default.post(name: .hueBridgeUnpaired, object: nil)
+                })
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showSettings = false }
+                            .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.2))
+                            .fontWeight(.semibold)
+                    }
+                }
             }
-        }
-        .navigationDestination(isPresented: $showAutomations) {
-            AutomationsView()
         }
         .task {
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await vm.loadAll() }
-                group.addTask { await vm.runSSE() }
-            }
+            // 1. Instantly show cached data (synchronous — no flicker)
+            orchestrator.preloadCached(from: localRooms)
+            // 2. Fetch live data in background (won't show loading indicator if cache loaded)
+            await orchestrator.loadAll(cacheContext: modelContext)
+            // 3. Keep SSE alive for real-time updates
+            orchestrator.startSSE()
         }
         .preferredColorScheme(.dark)
     }
@@ -106,21 +114,27 @@ struct DashboardView: View {
     private var roomScrollView: some View {
         ScrollView {
             VStack(spacing: 0) {
-                // Summary header
                 summaryHeader
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
                     .padding(.bottom, 16)
 
-                // Cards
                 LazyVStack(spacing: 14) {
-                    ForEach($vm.rooms) { $room in
-                        RoomCard(room: $room, onToggle: {
-                            HapticManager.shared.light()
-                            vm.toggleRoom(room)
-                        }, onBrightness: { brightness in
-                            vm.setBrightness(brightness, for: room)
-                        })
+                    ForEach(orchestrator.allRooms.indices, id: \.self) { i in
+                        let room = orchestrator.allRooms[i]
+                        RoomCard(
+                            room: Binding(
+                                get: { orchestrator.allRooms[safe: i] ?? room },
+                                set: { _ in }
+                            ),
+                            onToggle: {
+                                HapticManager.shared.light()
+                                orchestrator.toggleRoom(room)
+                            },
+                            onBrightness: { brightness in
+                                orchestrator.setBrightness(brightness, for: room)
+                            }
+                        )
                         .padding(.horizontal, 20)
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .bottom)),
@@ -128,14 +142,16 @@ struct DashboardView: View {
                         ))
                     }
                 }
-                .padding(.bottom, 32)
-                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: vm.rooms.count)
+                .padding(.bottom, 100)   // clear custom tab bar
+                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allRooms.count)
             }
         }
         .navigationDestination(for: RoomDisplayItem.self) { room in
             RoomDetailView(room: room)
         }
-        .refreshable { await vm.loadAll() }
+        .refreshable {
+            await orchestrator.loadAll(cacheContext: modelContext)
+        }
         .scrollIndicators(.hidden)
     }
 
@@ -145,21 +161,20 @@ struct DashboardView: View {
     private var summaryHeader: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                let onCount = vm.rooms.filter { $0.isOn }.count
+                let onCount = orchestrator.allRooms.filter { $0.isOn }.count
                 Text(onCount == 0
                      ? "All lights off"
                      : "\(onCount) room\(onCount == 1 ? "" : "s") on")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.white.opacity(0.9))
 
-                Text("\(vm.rooms.count) room\(vm.rooms.count == 1 ? "" : "s") connected")
+                Text("\(orchestrator.allRooms.count) room\(orchestrator.allRooms.count == 1 ? "" : "s") connected")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.45))
             }
             Spacer()
 
-            // Global on/off indicator
-            let anyOn = vm.rooms.contains { $0.isOn }
+            let anyOn = orchestrator.allRooms.contains { $0.isOn }
             Circle()
                 .fill(anyOn ? Color.yellow : Color.white.opacity(0.2))
                 .frame(width: 9, height: 9)
@@ -180,13 +195,16 @@ struct DashboardView: View {
             }
         }
         ToolbarItem(placement: .navigationBarTrailing) {
-            if vm.isLoading {
+            // Only show refresh spinner if no cached data displayed yet
+            if orchestrator.isLoading {
                 ProgressView()
                     .progressViewStyle(.circular)
                     .tint(.white)
                     .scaleEffect(0.8)
             } else {
-                Button { Task { await vm.loadAll() } } label: {
+                Button {
+                    Task { await orchestrator.loadAll(cacheContext: modelContext) }
+                } label: {
                     Image(systemName: "arrow.clockwise")
                         .foregroundStyle(.white.opacity(0.7))
                 }
@@ -198,17 +216,38 @@ struct DashboardView: View {
                     .foregroundStyle(.white.opacity(0.7))
             }
         }
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Button { showAutomations = true } label: {
-                Image(systemName: "bolt.fill")
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-        }
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Loading / Error
+    // MARK: - Shimmer Skeleton
     // ──────────────────────────────────────────────
+
+    private var shimmerView: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                // Skeleton header
+                HStack {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ShimmerBar(width: 120, height: 14)
+                        ShimmerBar(width: 80, height: 11)
+                    }
+                    Spacer()
+                    ShimmerBar(width: 9, height: 9, cornerRadius: 5)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+
+                LazyVStack(spacing: 14) {
+                    ForEach(0..<6, id: \.self) { _ in
+                        ShimmerCard()
+                            .padding(.horizontal, 20)
+                    }
+                }
+                .padding(.bottom, 100)
+            }
+        }
+        .scrollIndicators(.hidden)
+    }
 
     private var loadingView: some View {
         VStack(spacing: 20) {
@@ -233,7 +272,7 @@ struct DashboardView: View {
                 .foregroundStyle(.white.opacity(0.6))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
-            Button("Retry") { Task { await vm.loadAll() } }
+            Button("Retry") { Task { await orchestrator.loadAll(cacheContext: modelContext) } }
                 .buttonStyle(.borderedProminent)
                 .tint(.orange)
         }

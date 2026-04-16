@@ -104,50 +104,12 @@ struct DevicesTabView: View {
 // MARK: - Settings Tab
 
 struct SettingsTabView: View {
-    @Environment(\.colorScheme) var colorScheme
-    @Environment(UnifiedOrchestrator.self) private var orchestrator
-
     var body: some View {
-        ZStack {
-            (colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background)
-                .ignoresSafeArea()
-
-            List {
-                // MARK: Bridge Management (Stage 2A)
-                Section {
-                    NavigationLink(destination: BridgeManagerView()) {
-                        HStack(spacing: HueSpacing.md) {
-                            Image(systemName: "network")
-                                .foregroundStyle(HuePalette.amber)
-                                .frame(width: 28)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Bridges")
-                                    .font(HueFont.body)
-                                Text("\(orchestrator.activeBridgeCount) active · \(orchestrator.totalDeviceCount) lights")
-                                    .font(HueFont.caption)
-                                    .foregroundStyle(
-                                        colorScheme == .dark
-                                        ? HuePalette.Noir.textSecondary
-                                        : HuePalette.Estate.textSecondary
-                                    )
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Connectivity")
-                }
-
-                // MARK: Existing Settings
-                Section {
-                    SettingsView(onForget: {
-                        NotificationCenter.default.post(name: .hueBridgeUnpaired, object: nil)
-                    })
-                }
-            }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-        }
-        .navigationTitle("Settings")
-        .navigationBarTitleDisplayMode(.large)
+        // SettingsView owns its own background and nav modifiers.
+        // MainTabView provides the surrounding NavigationStack
+        // so BridgeManagerView NavigationLink pushes correctly.
+        SettingsView(onForget: {
+            NotificationCenter.default.post(name: .hueBridgeUnpaired, object: nil)
+        })
     }
 }
