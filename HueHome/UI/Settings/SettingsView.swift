@@ -107,25 +107,49 @@ struct SettingsView: View {
     // ──────────────────────────────────────────────
 
     private var bridgesSection: some View {
-        settingsGroup(header: "BRIDGES") {
-            NavigationLink(destination: BridgeManagerView()) {
-                HStack(spacing: 12) {
-                    iconCircle("network", color: glowColor)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Manage Bridges")
-                            .font(.subheadline)
-                            .foregroundStyle(.white)
-                        Text("\(bridges.count) registered  ·  \(orchestrator.activeBridgeCount) active")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.45))
+        settingsGroup(header: orchestrator.isDemoMode ? "DEMO MODE" : "BRIDGES") {
+            if orchestrator.isDemoMode {
+                // Demo mode: show exit option instead of bridge management
+                Button {
+                    NotificationCenter.default.post(name: .hueDemoExited, object: nil)
+                } label: {
+                    HStack(spacing: 12) {
+                        iconCircle("sparkles", color: glowColor)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Exit Demo Mode")
+                                .font(.subheadline)
+                                .foregroundStyle(.white)
+                            Text("Connect to a real Hue Bridge")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.45))
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(glowColor.opacity(0.5))
                     }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.30))
                 }
+                .buttonStyle(.plain)
+            } else {
+                NavigationLink(destination: BridgeManagerView()) {
+                    HStack(spacing: 12) {
+                        iconCircle("network", color: glowColor)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Manage Bridges")
+                                .font(.subheadline)
+                                .foregroundStyle(.white)
+                            Text("\(bridges.count) registered  ·  \(orchestrator.activeBridgeCount) active")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.45))
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.30))
+                    }
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
     }
 

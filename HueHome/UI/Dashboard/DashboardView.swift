@@ -38,7 +38,7 @@ struct DashboardView: View {
                 }
             }
         }
-        .navigationTitle("My Lights")
+        .navigationTitle(orchestrator.isDemoMode ? "My Lights  ✦ Demo" : "My Lights")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.ultraThinMaterial, for: .navigationBar)

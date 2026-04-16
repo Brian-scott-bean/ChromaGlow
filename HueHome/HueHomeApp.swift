@@ -50,30 +50,41 @@ struct AppRootView: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Query private var bridges: [BridgeRecord]
 
-    @State private var isPaired: Bool = false
+    @State private var isPaired:    Bool = false
+    @State private var isDemoMode:  Bool = false
 
     var body: some View {
         Group {
-            if isPaired {
+            if isPaired || isDemoMode {
                 MainTabView()
                     .task {
-                        // Configure orchestrator on every foreground entry
-                        orchestrator.configure(bridges: bridges, modelContext: modelContext)
-                        await orchestrator.loadAll()
-                        orchestrator.startSSE()
+                        if isDemoMode {
+                            // Demo: just load mock data, no real network
+                            orchestrator.enterDemoMode()
+                        } else {
+                            orchestrator.configure(bridges: bridges, modelContext: modelContext)
+                            await orchestrator.loadAll(cacheContext: modelContext)
+                            orchestrator.startSSE()
+                        }
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .hueBridgeUnpaired)) { _ in
                         orchestrator.stopSSE()
-                        isPaired = false
+                        orchestrator.exitDemoMode()
+                        isPaired   = false
+                        isDemoMode = false
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .hueDemoExited)) { _ in
+                        orchestrator.exitDemoMode()
+                        isDemoMode = false
                     }
             } else {
-                SplashView(onPaired: { isPaired = true })
+                SplashView(
+                    onPaired:  { isPaired   = true },
+                    onDemo:    { isDemoMode = true }
+                )
             }
         }
         .onAppear {
-            // Determine if already paired:
-            // 1. Have BridgeRecords with valid credentials, OR
-            // 2. Have legacy single-bridge Keychain entry (will be migrated)
             let hasNewStyle = !bridges.isEmpty
             let hasLegacy   = (try? KeychainManager.shared.loadAPIToken()) != nil
             isPaired = hasNewStyle || hasLegacy
@@ -85,4 +96,5 @@ struct AppRootView: View {
 
 extension Notification.Name {
     static let hueBridgeUnpaired = Notification.Name("hueBridgeUnpaired")
+    static let hueDemoExited     = Notification.Name("hueDemoExited")
 }

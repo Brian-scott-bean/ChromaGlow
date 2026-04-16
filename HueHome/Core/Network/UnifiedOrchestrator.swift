@@ -37,7 +37,6 @@ final class UnifiedOrchestrator {
     // MARK: - Public State
 
     /// All rooms across every active bridge, sorted alphabetically.
-    /// Use bridgeID on RoomDisplayItem to attribute rooms to their bridge.
     var allRooms: [RoomDisplayItem] = []
 
     /// Per-bridge SSE connection status  (bridgeID → status)
@@ -51,6 +50,10 @@ final class UnifiedOrchestrator {
 
     /// Whether to group rooms by bridge in the UI (user toggle).
     var groupByBridge: Bool = false
+
+    /// Demo mode — true when exploring the app without a real Bridge.
+    /// All state changes work locally; no network calls are made.
+    var isDemoMode: Bool = false
 
     // MARK: - Internal
 
@@ -69,6 +72,37 @@ final class UnifiedOrchestrator {
     // MARK: - Init
 
     init() {}
+
+    // ──────────────────────────────────────────────
+    // MARK: - Demo Mode
+    // ──────────────────────────────────────────────
+
+    /// Enter demo mode: loads mock data, marks as demo. No network access.
+    func enterDemoMode() {
+        isDemoMode = true
+        loadDemoData()
+        log.info("Demo mode activated")
+    }
+
+    /// Exit demo mode and reset all state.
+    func exitDemoMode() {
+        isDemoMode = false
+        allRooms = []
+        roomsByBridge = [:]
+        connectionStatus = [:]
+        clients = [:]
+        sseTasks.values.forEach { $0.cancel() }
+        sseTasks = [:]
+        log.info("Demo mode deactivated")
+    }
+
+    private func loadDemoData() {
+        allRooms = DemoDataProvider.rooms
+        // Populate roomsByBridge for turnAllOff support in demo
+        roomsByBridge[DemoDataProvider.bridgeMainID]  = allRooms.filter { $0.bridgeID == DemoDataProvider.bridgeMainID }
+        roomsByBridge[DemoDataProvider.bridgeGuestID] = allRooms.filter { $0.bridgeID == DemoDataProvider.bridgeGuestID }
+        connectionStatus = DemoDataProvider.connectionStatuses
+    }
 
     // ──────────────────────────────────────────────
     // MARK: - Bridge Registry Management
@@ -210,6 +244,11 @@ final class UnifiedOrchestrator {
     /// Fetch rooms from every active bridge concurrently; merge results.
     /// Pass `cacheContext` to auto-write cache on success (nil = skip cache write).
     func loadAll(cacheContext: ModelContext? = nil) async {
+        // Demo mode: load mock data synchronously, never hit the network
+        if isDemoMode {
+            loadDemoData()
+            return
+        }
         guard !clients.isEmpty else {
             allRooms = []
             return
@@ -286,6 +325,11 @@ final class UnifiedOrchestrator {
     // MARK: - Room Mutations
 
     func toggleRoom(_ item: RoomDisplayItem) {
+        // Demo mode: update local state only, no network
+        if isDemoMode {
+            updateRoom(item.id, isOn: !item.isOn)
+            return
+        }
         guard let glID = item.groupedLightID,
               let client = clients[item.bridgeID ?? ""] else { return }
 
@@ -304,6 +348,12 @@ final class UnifiedOrchestrator {
     }
 
     func setBrightness(_ brightness: Double, for item: RoomDisplayItem) {
+        // Demo mode: update local state only, no network
+        if isDemoMode {
+            let clamped = max(1, min(100, brightness))
+            updateRoom(item.id, isOn: true, brightness: clamped)
+            return
+        }
         guard let glID = item.groupedLightID,
               let client = clients[item.bridgeID ?? ""] else { return }
 
@@ -355,6 +405,7 @@ final class UnifiedOrchestrator {
 
     /// Start SSE connections for all active clients.
     func startSSE() {
+        guard !isDemoMode else { return }  // no SSE in demo mode
         for (bridgeID, client) in clients {
             guard sseTasks[bridgeID] == nil else { continue }
             sseTasks[bridgeID] = Task { [weak self, bridgeID, client] in

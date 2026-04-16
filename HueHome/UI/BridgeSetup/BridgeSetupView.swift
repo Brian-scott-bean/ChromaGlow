@@ -16,6 +16,9 @@ struct BridgeSetupView: View {
     /// Called by AppRootView (via SplashView) after the FIRST pairing — takes user to dashboard.
     var onPaired: (() -> Void)? = nil
 
+    /// Called when user taps Explore Demo from setup screen.
+    var onDemo: (() -> Void)? = nil
+
     /// Set to true when adding a second/third bridge from BridgeManagerView.
     var isAddingAdditional: Bool = false
 
@@ -106,6 +109,28 @@ struct BridgeSetupView: View {
                     .padding(.vertical, 10)
             }
             .buttonStyle(.borderedProminent)
+
+            // Demo shortcut
+            if onDemo != nil {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.3)) { onDemo?() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("Explore Demo instead")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(.yellow.opacity(0.7))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background {
+                        Capsule()
+                            .strokeBorder(.yellow.opacity(0.2), lineWidth: 1)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding()
         .frame(maxWidth: .infinity)
