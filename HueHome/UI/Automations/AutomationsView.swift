@@ -12,7 +12,7 @@ import SwiftUI
 
 struct AutomationsView: View {
 
-    @StateObject private var vm = AutomationsViewModel()
+    @State private var vm = AutomationsViewModel()
     @State private var showLog = false
 
     private let amber  = Color(red: 1.0, green: 0.76, blue: 0.20)

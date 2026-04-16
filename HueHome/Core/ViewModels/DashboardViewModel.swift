@@ -30,14 +30,15 @@ struct RoomDisplayItem: Identifiable, Hashable {
 
 // MARK: - DashboardViewModel
 
+@Observable
 @MainActor
-final class DashboardViewModel: ObservableObject {
+final class DashboardViewModel {
 
-    // MARK: Published State
-    @Published var rooms: [RoomDisplayItem] = []
-    @Published var isLoading: Bool = false
-    @Published var errorMessage: String? = nil
-    @Published var logLines: [String] = []
+    // MARK: State
+    var rooms: [RoomDisplayItem] = []
+    var isLoading: Bool = false
+    var errorMessage: String? = nil
+    var logLines: [String] = []
 
     // MARK: Dependencies
     private let api: HueAPIClient

@@ -16,7 +16,7 @@ struct BridgeSetupView: View {
     /// Called by parent (AppRootView via SplashView) after successful pairing.
     var onPaired: (() -> Void)? = nil
 
-    @StateObject private var vm = BridgeDiscoveryViewModel()
+    @State private var vm = BridgeDiscoveryViewModel()
     @State private var navigateToDashboard = false
 
     var body: some View {

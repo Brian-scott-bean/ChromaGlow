@@ -12,13 +12,13 @@ import SwiftUI
 struct RoomDetailView: View {
 
     let room: RoomDisplayItem
-    @StateObject private var vm: RoomDetailViewModel
+    @State private var vm: RoomDetailViewModel
     @State private var showLog         = false
     @State private var showCreateScene = false
 
     init(room: RoomDisplayItem) {
         self.room = room
-        _vm = StateObject(wrappedValue: RoomDetailViewModel(room: room))
+        _vm = State(initialValue: RoomDetailViewModel(room: room))
     }
 
     var body: some View {

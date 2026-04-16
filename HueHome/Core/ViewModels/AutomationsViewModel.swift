@@ -8,15 +8,15 @@ import Foundation
 import OSLog
 import SwiftUI
 
+@Observable
 @MainActor
-final class AutomationsViewModel: ObservableObject {
+final class AutomationsViewModel {
 
-    // MARK: - Published State
-
-    @Published var automations: [AutomationDisplayItem] = []
-    @Published var isLoading:    Bool    = false
-    @Published var errorMessage: String? = nil
-    @Published var logLines:     [String] = []
+    // MARK: State
+    var automations: [AutomationDisplayItem] = []
+    var isLoading:    Bool    = false
+    var errorMessage: String? = nil
+    var logLines:     [String] = []
 
     // MARK: - Dependencies
 

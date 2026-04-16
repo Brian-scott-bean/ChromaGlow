@@ -9,15 +9,16 @@ import Foundation
 import OSLog
 import SwiftUI
 
+@Observable
 @MainActor
-final class RoomDetailViewModel: ObservableObject {
+final class RoomDetailViewModel {
 
-    // MARK: Published State
-    @Published var lights:  [LightDisplayItem] = []
-    @Published var scenes:  [SceneDisplayItem] = []
-    @Published var isLoading: Bool = false
-    @Published var errorMessage: String? = nil
-    @Published var logLines: [String] = []
+    // MARK: State
+    var lights:  [LightDisplayItem] = []
+    var scenes:  [SceneDisplayItem] = []
+    var isLoading: Bool = false
+    var errorMessage: String? = nil
+    var logLines: [String] = []
 
     // MARK: Room context
     let room: RoomDisplayItem

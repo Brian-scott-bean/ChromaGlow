@@ -73,12 +73,13 @@ private final class BridgeCertTrustDelegate: NSObject, URLSessionDelegate {
 
 // MARK: - BridgeDiscoveryViewModel
 
+@Observable
 @MainActor
-final class BridgeDiscoveryViewModel: ObservableObject {
+final class BridgeDiscoveryViewModel {
 
-    // MARK: Published State
-    @Published var phase: DiscoveryPhase = .idle
-    @Published var logLines: [String] = []
+    // MARK: State
+    var phase: DiscoveryPhase = .idle
+    var logLines: [String] = []
 
     // MARK: Services
     let discovery = BridgeDiscoveryService()

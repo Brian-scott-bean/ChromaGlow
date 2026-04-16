@@ -11,7 +11,7 @@ import SwiftUI
 
 struct DashboardView: View {
 
-    @StateObject private var vm = DashboardViewModel()
+    @State private var vm = DashboardViewModel()
     @State private var showLog         = false
     @State private var showSettings     = false
     @State private var showAutomations  = false
