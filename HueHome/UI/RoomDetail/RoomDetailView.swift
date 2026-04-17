@@ -112,8 +112,10 @@ struct RoomDetailView: View {
                 }
 
                 LazyVStack(spacing: 14) {
-                    ForEach($vm.lights) { $light in
-                        LightCard(light: $light, onToggle: {
+                    // Value-type ForEach — no @Binding chain to vm.lights during drag.
+                    // LightCard fires onBrightness once at drag end via vm callback.
+                    ForEach(vm.lights, id: \.id) { light in
+                        LightCard(light: light, onToggle: {
                             HapticManager.shared.light()
                             vm.toggleLight(light)
                         }, onBrightness: { brightness in
@@ -307,9 +309,9 @@ struct RoomDetailView: View {
 
 struct LightCard: View {
 
-    @Binding var light: LightDisplayItem
+    let light: LightDisplayItem          // value type — no @Binding
     let onToggle:     () -> Void
-    let onBrightness: (Double) -> Void
+    let onBrightness: (Double) -> Void   // called once at drag end
 
     private var glowColor: Color { Color(red: 1.0, green: 0.76, blue: 0.2) }
 
@@ -320,9 +322,9 @@ struct LightCard: View {
                     lightHeaderContent
                     if light.isOn {
                         BrightnessRow(
-                            brightness: $light.brightness,
+                            brightness: light.brightness,   // read-only snapshot
                             glowColor: glowColor,
-                            onCommit: { onBrightness(light.brightness) }
+                            onCommit: { onBrightness($0) }  // fired once on release
                         )
                         .padding(.top, 6)
                     }

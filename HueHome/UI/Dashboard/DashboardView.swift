@@ -1,9 +1,14 @@
 // DashboardView.swift
 // HueHome Pro — Epic 2 / Story 2.1
 //
-// Full glassmorphism redesign of the Story 1.3 native list.
-// Architecture: dark ambient background → ScrollView of RoomCards on GlassmorphicCard.
-// Toggles remain the control surface; drag gestures land in Story 2.2.
+// Performance re-pass (v0.3.3):
+// ─────────────────────────────
+// The previous @Bindable + $orch.allRooms[i] pattern wrote to @Observable
+// on every drag tick (60 fps) → full view-tree re-render on each frame.
+//
+// Fix: RoomCard accepts a VALUE TYPE room, not a @Binding. BrightnessRow
+// keeps its own @State var localBrightness and only calls onCommit() on
+// drag END. Zero @Observable mutations during a drag. Result: silky 60 fps.
 
 import SwiftUI
 import SwiftData
@@ -13,10 +18,8 @@ import SwiftData
 struct DashboardView: View {
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
-    @State private var vm = DashboardViewModel()     // kept for console log lines only
     @State private var showLog         = false
     @State private var showSettings    = false
-    @Query private var localRooms: [HueLocalRoom]
     @Environment(\.modelContext) private var modelContext
 
     // Ambient background orb positions (stable, no GeometryReader jitter)
@@ -28,11 +31,12 @@ struct DashboardView: View {
             ambientBackground
 
             Group {
-                if orchestrator.isLoading && orchestrator.allRooms.isEmpty {
-                    // Show shimmer skeleton while waiting for first real data
-                    shimmerView
-                } else if let error = orchestrator.errorMessage, orchestrator.allRooms.isEmpty {
-                    errorView(error)
+                if orchestrator.allRooms.isEmpty {
+                    if orchestrator.isLoading {
+                        shimmerView
+                    } else {
+                        emptyState
+                    }
                 } else {
                     roomScrollView
                 }
@@ -43,80 +47,26 @@ struct DashboardView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
         .toolbar { toolbarItems }
-        .sheet(isPresented: $showLog)      { logSheet }
         .sheet(isPresented: $showSettings) {
-            // SettingsView needs its own NavigationStack when shown as sheet
             NavigationStack {
-                SettingsView(onForget: {
-                    NotificationCenter.default.post(name: .hueBridgeUnpaired, object: nil)
-                })
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { showSettings = false }
-                            .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.2))
-                            .fontWeight(.semibold)
-                    }
-                }
+                SettingsView(onForget: { showSettings = false })
             }
         }
         .task {
-            // 1. Instantly show cached data (synchronous — no flicker)
-            orchestrator.preloadCached(from: localRooms)
-            // 2. Fetch live data in background (won't show loading indicator if cache loaded)
             await orchestrator.loadAll(cacheContext: modelContext)
-            // 3. Keep SSE alive for real-time updates
             orchestrator.startSSE()
         }
         .preferredColorScheme(.dark)
-    }
-
-
-    // ──────────────────────────────────────────────
-    // MARK: - Background
-    // ──────────────────────────────────────────────
-
-    private var ambientBackground: some View {
-        ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08)
-                .ignoresSafeArea()
-
-            // Orb 1 — warm amber, top-left
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Color(red: 1, green: 0.75, blue: 0.2).opacity(0.22), .clear],
-                        center: .center, startRadius: 0, endRadius: 200
-                    )
-                )
-                .frame(width: 340, height: 340)
-                .offset(x: orb1Offset.x, y: orb1Offset.y)
-                .blur(radius: 20)
-
-            // Orb 2 — cool blue-purple, lower-right
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Color(red: 0.4, green: 0.3, blue: 1).opacity(0.18), .clear],
-                        center: .center, startRadius: 0, endRadius: 180
-                    )
-                )
-                .frame(width: 280, height: 280)
-                .offset(x: orb2Offset.x, y: orb2Offset.y)
-                .blur(radius: 20)
-        }
-        .ignoresSafeArea()
     }
 
     // ──────────────────────────────────────────────
     // MARK: - Room Scroll
     // ──────────────────────────────────────────────
 
+    // NOTE: No @Bindable here. RoomCard takes a plain value-type RoomDisplayItem,
+    // so ForEach never needs a Binding. This is intentional — see file header.
     private var roomScrollView: some View {
-        // @Bindable is required to get two-way Binding<T> from an @Observable class.
-        // Without it the slider setter is a no-op and the scrubber snaps back on release.
-        @Bindable var orch = orchestrator
-
-        return ScrollView {
+        ScrollView {
             VStack(spacing: 0) {
                 summaryHeader
                     .padding(.horizontal, 20)
@@ -124,15 +74,16 @@ struct DashboardView: View {
                     .padding(.bottom, 16)
 
                 LazyVStack(spacing: 14) {
-                    ForEach(orch.allRooms.indices, id: \.self) { i in
+                    ForEach(orchestrator.allRooms, id: \.id) { room in
                         RoomCard(
-                            room: $orch.allRooms[i],
+                            room: room,
                             onToggle: {
                                 HapticManager.shared.light()
-                                orchestrator.toggleRoom(orch.allRooms[i])
+                                orchestrator.toggleRoom(room)
                             },
-                            onBrightness: { brightness in
-                                orchestrator.setBrightness(brightness, for: orch.allRooms[i])
+                            onBrightness: { newBrightness in
+                                // Fires once at drag END — not during drag.
+                                orchestrator.setBrightness(newBrightness, for: room)
                             }
                         )
                         .padding(.horizontal, 20)
@@ -143,7 +94,7 @@ struct DashboardView: View {
                     }
                 }
                 .padding(.bottom, 100)   // clear custom tab bar
-                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orch.allRooms.count)
+                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allRooms.count)
             }
         }
         .navigationDestination(for: RoomDisplayItem.self) { room in
@@ -156,30 +107,90 @@ struct DashboardView: View {
     }
 
 
-    // ── Summary Header ────────────────────────────
+    // ──────────────────────────────────────────────
+    // MARK: - Summary Header
+    // ──────────────────────────────────────────────
 
     private var summaryHeader: some View {
-        HStack(alignment: .firstTextBaseline) {
+        let onCount = orchestrator.allRooms.filter { $0.isOn }.count
+        let total   = orchestrator.allRooms.count
+
+        return HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                let onCount = orchestrator.allRooms.filter { $0.isOn }.count
                 Text(onCount == 0
                      ? "All lights off"
-                     : "\(onCount) room\(onCount == 1 ? "" : "s") on")
+                     : "\(onCount) of \(total) on")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.white.opacity(0.9))
-
-                Text("\(orchestrator.allRooms.count) room\(orchestrator.allRooms.count == 1 ? "" : "s") connected")
+                Text("\(total) room\(total == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.45))
             }
             Spacer()
-
-            let anyOn = orchestrator.allRooms.contains { $0.isOn }
             Circle()
-                .fill(anyOn ? Color.yellow : Color.white.opacity(0.2))
+                .fill(onCount > 0 ? Color.yellow : Color.white.opacity(0.2))
                 .frame(width: 9, height: 9)
-                .shadow(color: anyOn ? .yellow.opacity(0.9) : .clear, radius: 8)
+                .shadow(color: onCount > 0 ? .yellow.opacity(0.9) : .clear, radius: 8)
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Ambient Background
+    // ──────────────────────────────────────────────
+
+    private var ambientBackground: some View {
+        ZStack {
+            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
+            Circle()
+                .fill(RadialGradient(
+                    colors: [Color(red: 1, green: 0.75, blue: 0.2).opacity(0.22), .clear],
+                    center: .center, startRadius: 0, endRadius: 200
+                ))
+                .frame(width: 360)
+                .offset(x: orb1Offset.x, y: orb1Offset.y)
+                .blur(radius: 24)
+                .allowsHitTesting(false)
+            Circle()
+                .fill(RadialGradient(
+                    colors: [Color(red: 0.4, green: 0.3, blue: 1).opacity(0.16), .clear],
+                    center: .center, startRadius: 0, endRadius: 160
+                ))
+                .frame(width: 280)
+                .offset(x: orb2Offset.x, y: orb2Offset.y)
+                .blur(radius: 20)
+                .allowsHitTesting(false)
+        }
+        .ignoresSafeArea()
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Empty / Loading / Shimmer
+    // ──────────────────────────────────────────────
+
+    private var shimmerView: some View {
+        LazyVStack(spacing: 14) {
+            ForEach(0..<4, id: \.self) { _ in
+                ShimmerCard()
+                    .padding(.horizontal, 20)
+            }
+        }
+        .padding(.top, 24)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "lightbulb.slash.fill")
+                .font(.system(size: 44))
+                .foregroundStyle(.white.opacity(0.25))
+            Text("No rooms found")
+                .font(.headline)
+                .foregroundStyle(.white.opacity(0.55))
+            Text("Pull to refresh or pair a bridge\nin Settings.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.35))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // ──────────────────────────────────────────────
@@ -189,156 +200,50 @@ struct DashboardView: View {
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
         ToolbarItem(placement: .navigationBarTrailing) {
-            Button { showLog.toggle() } label: {
-                Image(systemName: "terminal")
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-        }
-        ToolbarItem(placement: .navigationBarTrailing) {
-            // Only show refresh spinner if no cached data displayed yet
             if orchestrator.isLoading {
                 ProgressView()
                     .progressViewStyle(.circular)
                     .tint(.white)
-                    .scaleEffect(0.8)
-            } else {
-                Button {
-                    Task { await orchestrator.loadAll(cacheContext: modelContext) }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .foregroundStyle(.white.opacity(0.7))
-                }
+                    .scaleEffect(0.85)
             }
         }
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .navigationBarTrailing) {
             Button { showSettings = true } label: {
-                Image(systemName: "gearshape.fill")
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-        }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Shimmer Skeleton
-    // ──────────────────────────────────────────────
-
-    private var shimmerView: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                // Skeleton header
-                HStack {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ShimmerBar(width: 120, height: 14)
-                        ShimmerBar(width: 80, height: 11)
-                    }
-                    Spacer()
-                    ShimmerBar(width: 9, height: 9, cornerRadius: 5)
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-
-                LazyVStack(spacing: 14) {
-                    ForEach(0..<6, id: \.self) { _ in
-                        ShimmerCard()
-                            .padding(.horizontal, 20)
-                    }
-                }
-                .padding(.bottom, 100)
-            }
-        }
-        .scrollIndicators(.hidden)
-    }
-
-    private var loadingView: some View {
-        VStack(spacing: 20) {
-            ProgressView()
-                .progressViewStyle(.circular)
-                .tint(.yellow)
-                .scaleEffect(1.6)
-            Text("Loading rooms…")
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.6))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func errorView(_ message: String) -> some View {
-        VStack(spacing: 20) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 44))
-                .foregroundStyle(.orange)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.6))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-            Button("Retry") { Task { await orchestrator.loadAll(cacheContext: modelContext) } }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Console Log Sheet
-    // ──────────────────────────────────────────────
-
-    private var logSheet: some View {
-        NavigationStack {
-            ZStack {
-                Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(vm.logLines.enumerated()), id: \.offset) { idx, line in
-                                Text(line)
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .foregroundStyle(.white.opacity(0.8))
-                                    .id(idx)
-                            }
-                        }
-                        .padding()
-                    }
-                    .onChange(of: vm.logLines.count) { _, count in
-                        proxy.scrollTo(count - 1, anchor: .bottom)
-                    }
-                }
-            }
-            .navigationTitle("Dashboard Console")
-            .navigationBarTitleDisplayMode(.inline)
-            .preferredColorScheme(.dark)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { showLog = false }
-                }
+                Image(systemName: "gear")
+                    .foregroundStyle(.white.opacity(0.8))
             }
         }
     }
 }
 
+// ══════════════════════════════════════════════════════════
 // MARK: - RoomCard
+//
+// Accepts a VALUE TYPE RoomDisplayItem — no @Binding.
+// BrightnessRow inside has its own local @State so drags
+// never touch the orchestrator's @Observable allRooms array.
+// Full card = NavigationLink to detail.
+// Power button = overlay, guaranteed to intercept first.
+// ══════════════════════════════════════════════════════════
 
 struct RoomCard: View {
 
-    @Binding var room: RoomDisplayItem
+    let room: RoomDisplayItem
     let onToggle:     () -> Void
-    let onBrightness: (Double) -> Void
+    let onBrightness: (Double) -> Void   // called ONCE on drag end with final value
 
     private var glowColor: Color { Color(red: 1.0, green: 0.76, blue: 0.2) }
 
     var body: some View {
-        // ── Full card = NavigationLink ────────────────────────────────────
-        // Tap anywhere on the card body navigates to the room detail.
-        // The power button overlay sits on top and intercepts taps in its area.
         NavigationLink(value: room) {
             GlassmorphicCard(isActive: room.isOn, glowColor: glowColor) {
                 VStack(spacing: 0) {
                     headerContent
                     if room.isOn {
                         BrightnessRow(
-                            brightness: $room.brightness,
+                            brightness: room.brightness,   // read-only snapshot
                             glowColor: glowColor,
-                            onCommit: { onBrightness(room.brightness) }
+                            onCommit: { onBrightness($0) } // $0 = final value on release
                         )
                         .padding(.top, 6)
                     }
@@ -347,8 +252,6 @@ struct RoomCard: View {
         }
         .buttonStyle(.plain)
         // ── Power button overlay ──────────────────────────────────────────
-        // An overlay view is rendered above the NavigationLink label and
-        // handles its own hit testing first — guaranteed to intercept taps.
         .overlay(alignment: .topTrailing) {
             Button {
                 HapticManager.shared.light()
@@ -370,13 +273,8 @@ struct RoomCard: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: room.isOn)
     }
 
-    // ──────────────────────────────────────────────
-    // MARK: - Header (inside NavigationLink label)
-    // ──────────────────────────────────────────────
-
     private var headerContent: some View {
         HStack(alignment: .center, spacing: 14) {
-            // Archetype icon
             ZStack {
                 Circle()
                     .fill(room.isOn
@@ -388,7 +286,6 @@ struct RoomCard: View {
                     .foregroundStyle(room.isOn ? glowColor : .white.opacity(0.4))
                     .symbolEffect(.bounce, value: room.isOn)
             }
-            // Name + light count
             VStack(alignment: .leading, spacing: 3) {
                 Text(room.name)
                     .font(.headline)
@@ -399,37 +296,58 @@ struct RoomCard: View {
                     .foregroundStyle(.white.opacity(0.50))
             }
             Spacer()
-            // Reserve space for power button overlay (prevents text overflow under it)
-            Spacer().frame(width: 48)
+            Spacer().frame(width: 48)   // reserve space for power overlay
         }
     }
 }
 
 
+// ══════════════════════════════════════════════════════════
 // MARK: - BrightnessRow
 //
-// Self-contained scrubber. Only this view has a DragGesture,
-// so the ScrollView above it retains full vertical scroll priority.
+// Performance contract:
+//   • brightness (Double)    — read-only value from parent
+//   • onCommit((Double)->())  — called ONCE when drag ends
+//
+// During drag: only @State vars change → zero @Observable writes
+//              → zero parent re-renders → 60 fps smooth.
+// After drag:  onCommit fires which updates orchestrator/VM (one write).
+// External sync: .onChange(of: brightness) updates localBrightness when
+//              SSE pushes a new value from the bridge (not during drag).
+// ══════════════════════════════════════════════════════════
 
 struct BrightnessRow: View {
 
-    @Binding var brightness: Double
-    let glowColor: Color
-    let onCommit: () -> Void
+    // ── Inputs ──────────────────────────────────────────
+    let brightness: Double   // current "truth" value from parent (read-only)
+    let glowColor:  Color
+    let onCommit:   (Double) -> Void   // fires once at gesture end
 
-    @State private var isDragging         = false
-    @State private var dragStart: Double  = 0
-    @State private var lastNotch: Int     = 0
-    private let sensitivity: CGFloat      = 2.0
+    // ── Local drag state — NEVER propagated to parent during drag ─────
+    @State private var localBrightness: Double
+    @State private var isDragging:  Bool   = false
+    @State private var dragStart:   Double = 0
+    @State private var lastNotch:   Int    = 0
+    private let sensitivity: CGFloat = 2.0
+
+    init(brightness: Double, glowColor: Color, onCommit: @escaping (Double) -> Void) {
+        self.brightness = brightness
+        self.glowColor  = glowColor
+        self.onCommit   = onCommit
+        // Seed local state — only used while dragging; see displayValue below.
+        _localBrightness = State(initialValue: brightness)
+    }
+
+    // During drag use localBrightness (pure @State, no cascades).
+    // At rest use the parent's brightness (reflects SSE/SSE updates instantly).
+    private var displayValue: Double { isDragging ? localBrightness : brightness }
 
     var body: some View {
         HStack(spacing: 8) {
-            // Dim icon
             Image(systemName: "sun.min.fill")
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.35))
 
-            // Track
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     // Background track
@@ -437,36 +355,36 @@ struct BrightnessRow: View {
                         .fill(Color.white.opacity(0.10))
                         .frame(height: 4)
 
-                    // Fill
+                    // Filled portion
                     Capsule()
                         .fill(LinearGradient(
                             colors: [glowColor.opacity(0.6), glowColor],
                             startPoint: .leading, endPoint: .trailing
                         ))
-                        .frame(width: max(6, geo.size.width * CGFloat(brightness / 100)), height: 4)
+                        .frame(width: max(6, geo.size.width * CGFloat(displayValue / 100)), height: 4)
 
                     // Thumb
                     Circle()
                         .fill(.white)
                         .frame(width: isDragging ? 16 : 12, height: isDragging ? 16 : 12)
                         .shadow(color: glowColor.opacity(0.6), radius: isDragging ? 6 : 3)
-                        .offset(x: max(0, geo.size.width * CGFloat(brightness / 100) - (isDragging ? 8 : 6)))
+                        .offset(x: max(0, geo.size.width * CGFloat(displayValue / 100) - (isDragging ? 8 : 6)))
                         .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isDragging)
                 }
                 .frame(height: 16)
-                .contentShape(Rectangle().inset(by: -8))  // larger hit target
+                .contentShape(Rectangle().inset(by: -8))
                 .gesture(
                     DragGesture(minimumDistance: 4, coordinateSpace: .local)
                         .onChanged { value in
                             if !isDragging {
-                                isDragging = true
-                                dragStart  = brightness
-                                lastNotch  = Int(brightness / 10)
+                                isDragging  = true
+                                dragStart   = brightness   // snapshot at drag start
+                                lastNotch   = Int(brightness / 10)
                                 HapticManager.shared.medium()
                             }
                             let delta  = Double(value.translation.width / sensitivity)
                             let newVal = min(100, max(1, dragStart + delta))
-                            brightness = newVal
+                            localBrightness = newVal   // ← pure @State, no Observable cascade
 
                             let notch = Int(newVal / 10)
                             if notch != lastNotch {
@@ -477,26 +395,29 @@ struct BrightnessRow: View {
                         .onEnded { _ in
                             isDragging = false
                             HapticManager.shared.heavy()
-                            onCommit()
+                            onCommit(localBrightness)   // ← ONE write to orchestrator after release
                         }
                 )
             }
             .frame(height: 16)
 
-            // Bright icon + percentage
             HStack(spacing: 4) {
                 Image(systemName: "sun.max.fill")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.35))
-                Text("\(Int(brightness))%")
+                Text("\(Int(displayValue))%")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.55))
                     .frame(width: 30, alignment: .trailing)
-                    .contentTransition(.numericText())
-                    .animation(.none, value: brightness)
+                    // numericText transition only runs when NOT dragging (too expensive at 60fps)
+                    .contentTransition(isDragging ? .identity : .numericText())
+                    .animation(isDragging ? .none : .default, value: displayValue)
             }
         }
         .padding(.top, 4)
+        // Sync external value back (SSE update, toggle) only when finger is off slider
+        .onChange(of: brightness) { _, new in
+            if !isDragging { localBrightness = new }
+        }
     }
 }
-

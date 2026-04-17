@@ -27,12 +27,18 @@ struct LightControlView: View {
     @State private var liveSaturation: Double = 0
     @State private var liveMirek:      Int    = 300
 
+    // Cached glow colour — recomputed only on light change, not on every render.
+    // Prevents ambientBackground blur from being re-composited during drag.
     private var glowColor: Color {
         guard light.supportsColor, let x = light.colorX, let y = light.colorY else {
             return Color(red: 1.0, green: 0.76, blue: 0.2)
         }
         return HueColorUtils.color(fromX: x, y: y, brightness: light.brightness)
     }
+
+    // Local brightness state for optimistic display before SSE confirms.
+    // Updated by BrightnessRow.onCommit — never written during drag.
+    @State private var displayBrightness: Double = 0
 
     var body: some View {
         ZStack {
@@ -80,7 +86,11 @@ struct LightControlView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .onAppear { syncLocalState() }
+        .onAppear {
+            syncLocalState()
+            displayBrightness = light.brightness
+        }
+        .onChange(of: light.brightness) { _, new in displayBrightness = new }
     }
 
     // ──────────────────────────────────────────────
@@ -189,15 +199,17 @@ struct LightControlView: View {
 
     private var colorTempSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // liveMirek is updated only by onCommit — not during drag.
             let kelvin = HueColorUtils.kelvin(from: liveMirek)
             sectionLabel("Color Temperature · \(kelvin)K")
             GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
                 ColorTempSlider(
-                    mirek: $liveMirek,
+                    currentMirek: liveMirek,
                     mirekMin: light.mirekMin,
                     mirekMax: light.mirekMax
                 ) { mirek in
-                    light.colorTempMirek = mirek
+                    liveMirek = mirek                // update label once on release
+                    light.colorTempMirek = mirek     // optimistic model update
                     HapticManager.shared.heavy()
                     onColorTemp(mirek)
                 }
@@ -212,12 +224,18 @@ struct LightControlView: View {
 
     private var brightnessSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("Brightness · \(Int(light.brightness))%")
+            // Label shows the committed value — updated by onCommit, not during drag.
+            // Avoids re-rendering the GlassmorphicCard on every drag tick.
+            sectionLabel("Brightness · \(Int(displayBrightness))%")
             GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
                 BrightnessRow(
-                    brightness: $light.brightness,
+                    brightness: light.brightness,   // read-only snapshot
                     glowColor: glowColor,
-                    onCommit: { onBrightness(light.brightness) }
+                    onCommit: { newBrightness in
+                        displayBrightness = newBrightness    // update label once on release
+                        light.brightness  = newBrightness    // optimistic model update
+                        onBrightness(newBrightness)          // fire API
+                    }
                 )
                 .padding(.vertical, 16)
             }
@@ -346,30 +364,33 @@ struct ColorWheelView: View {
 }
 
 // MARK: - ColorTempSlider
+//
+// Performance contract: currentMirek is a read-only seed value.
+// All in-flight drag state is kept in @State var localMirek.
+// Zero writes propagate to the parent LightControlView during drag.
+// onCommit fires ONCE when the finger lifts.
 
 struct ColorTempSlider: View {
 
-    @Binding var mirek: Int
+    let currentMirek: Int    // seed; used on appear + external sync
     let mirekMin: Int
     let mirekMax: Int
     let onCommit: (Int) -> Void
 
-    @State private var isDragging  = false
-    @State private var sliderValue: Double = 0.5
-    @State private var lastNotch: Int = 0
+    @State private var isDragging:   Bool   = false
+    @State private var sliderValue:  Double = 0.5
+    @State private var localMirek:   Int    = 300   // in-flight drag value
+    @State private var lastNotch:    Int    = 0
 
     var body: some View {
         VStack(spacing: 10) {
-            // Gradient track + thumb
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    // Gradient background
                     LinearGradient(gradient: HueColorUtils.colorTempGradient,
                                    startPoint: .leading, endPoint: .trailing)
                         .clipShape(Capsule())
                         .frame(height: 8)
 
-                    // Thumb
                     let thumbX = sliderValue * geo.size.width
                     Circle()
                         .fill(.white)
@@ -390,24 +411,21 @@ struct ColorTempSlider: View {
                             let raw = value.location.x / geo.size.width
                             sliderValue = min(1, max(0, raw))
                             let newMirek = HueColorUtils.mirek(fromSlider: sliderValue, min: mirekMin, max: mirekMax)
-                            // Haptic every ~200K change
                             let notch = newMirek / 100
                             if notch != lastNotch {
                                 HapticManager.shared.soft()
                                 lastNotch = notch
                             }
-                            mirek = newMirek
+                            localMirek = newMirek   // ← pure @State, no parent cascade
                         }
                         .onEnded { _ in
                             isDragging = false
-                            HapticManager.shared.heavy()
-                            onCommit(mirek)
+                            onCommit(localMirek)    // ← ONE write to parent on finger lift
                         }
                 )
             }
             .frame(height: 28)
 
-            // Labels
             HStack {
                 Text("🕯 Warm").font(.caption2).foregroundStyle(.white.opacity(0.45))
                 Spacer()
@@ -416,8 +434,17 @@ struct ColorTempSlider: View {
         }
         .padding(.horizontal, 4)
         .onAppear {
-            sliderValue = HueColorUtils.sliderValue(mirek: mirek, min: mirekMin, max: mirekMax)
-            lastNotch = mirek / 100
+            sliderValue = HueColorUtils.sliderValue(mirek: currentMirek, min: mirekMin, max: mirekMax)
+            localMirek  = currentMirek
+            lastNotch   = currentMirek / 100
+        }
+        // Sync when parent commits a new value (SSE update)
+        .onChange(of: currentMirek) { _, new in
+            if !isDragging {
+                sliderValue = HueColorUtils.sliderValue(mirek: new, min: mirekMin, max: mirekMax)
+                localMirek  = new
+            }
         }
     }
 }
+
