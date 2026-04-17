@@ -43,6 +43,10 @@ final class UnifiedOrchestrator {
     /// Per-bridge SSE connection status  (bridgeID → status)
     var connectionStatus: [String: BridgeConnectionStatus] = [:]
 
+    /// Brief error message for the UI toast (auto-cleared after 3 s).
+    /// Set on API failure; nil when no error is pending.
+    var toastMessage: String? = nil
+
     /// True while an initial full-load is in flight for any bridge.
     var isLoading: Bool = false
 
@@ -82,6 +86,12 @@ final class UnifiedOrchestrator {
     /// @ObservationIgnored: purely infrastructure, no UI reads this.
     @ObservationIgnored
     private var sseTasks: [String: Task<Void, Never>] = [:]
+
+    /// Continuation for the orchestrator light-event bus.
+    /// RoomDetailViewModel subscribes here instead of opening its own SSE connection.
+    /// @ObservationIgnored: infrastructure — views never read this directly.
+    @ObservationIgnored
+    private var lightEventContinuation: AsyncStream<[SSEResourceUpdate]>.Continuation?
 
     /// One shared URL session for all SSE streams.
     /// Created lazily so the cert delegate is retained for the orchestrator's lifetime.
@@ -161,11 +171,20 @@ final class UnifiedOrchestrator {
             }
         }
 
-        // Build/update clients for active bridges
+        // Build/update clients for active bridges (deduplicated by host IP).
+        // If the same physical bridge is registered under two BridgeRecord entries
+        // (same IP, different UUIDs — common after debug re-pairing), only the first
+        // matching record gets a client. This prevents dual SSE streams and duplicate
+        // room fetches from the same bridge.
+        var seenHostIPs = Set<String>()
         for bridge in bridges where bridge.isActive {
             guard let creds = try? keychain.loadCredentials(for: bridge.id) else {
                 log.warning("No credentials for bridge \(bridge.id) — skipping")
                 connectionStatus[bridge.id] = .error("No credentials found")
+                continue
+            }
+            guard seenHostIPs.insert(creds.ip).inserted else {
+                log.warning("Bridge \(bridge.id) (\(bridge.name)) skipped — duplicate IP \(creds.ip)")
                 continue
             }
             let client = BridgeAPIClient(
@@ -420,6 +439,7 @@ final class UnifiedOrchestrator {
                 // Rollback: revert to the opposite of what we tried
                 updateRoom(item.id, isOn: !desiredState)
                 log.error("setRoom failed for \(item.id): \(error.localizedDescription)")
+                showToast("Couldn't reach bridge — \(item.name) reverted")
             }
         }
     }
@@ -453,10 +473,23 @@ final class UnifiedOrchestrator {
 
     /// Turn off every light on every active bridge simultaneously.
     func turnAllOff() async {
+        // Optimistic update FIRST — cards flip instantly without waiting for network.
+        // Each card's .onChange(of: room.isOn) syncs localIsOn when allRooms updates.
+        allRooms = allRooms.map { room in
+            var r = room; r.isOn = false; return r
+        }
+        // Sync roomsByBridge cache so applySSEEvent sees consistent state
+        for bridgeID in roomsByBridge.keys {
+            guard var rooms = roomsByBridge[bridgeID] else { continue }
+            rooms = rooms.map { room in var r = room; r.isOn = false; return r }
+            roomsByBridge[bridgeID] = rooms
+        }
+        log.info("All Off: optimistic update applied, firing API calls…")
+        // Fire API calls concurrently across all bridges
         await withTaskGroup(of: Void.self) { group in
             for (bridgeID, roomItems) in roomsByBridge {
                 guard let client = clients[bridgeID] else { continue }
-                for room in roomItems where room.isOn {
+                for room in roomItems {
                     guard let glID = room.groupedLightID else { continue }
                     group.addTask {
                         try? await client.setGroupedLight(id: glID, on: false)
@@ -464,18 +497,33 @@ final class UnifiedOrchestrator {
                 }
             }
         }
-        // Optimistic: mark all as off
-        allRooms = allRooms.map { room in
-            var r = room
-            r.isOn = false
-            return r
-        }
         log.info("All Off fired across \(self.clients.count) bridge(s)")
     }
 
     // ──────────────────────────────────────────────
     // MARK: - SSE (one per bridge)
     // ──────────────────────────────────────────────
+
+    /// Returns an AsyncStream of raw SSE light-level updates from the orchestrator's
+    /// existing bridge connections. Use this in RoomDetailViewModel instead of opening
+    /// a second SSE connection to the same bridge.
+    ///
+    /// Only one subscriber at a time is supported (iPhone single-window constraint).
+    /// Returns nil in demo mode (no SSE). The stream ends when the view disappears
+    /// (SwiftUI .task cancellation propagates correctly).
+    func subscribeToLightEvents() -> AsyncStream<[SSEResourceUpdate]>? {
+        guard !isDemoMode else { return nil }
+        return AsyncStream { [weak self] continuation in
+            self?.lightEventContinuation = continuation
+            // onTermination is called from a Sendable context (off main actor).
+            // Hop back to MainActor to safely nil the @MainActor-isolated property.
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.lightEventContinuation = nil
+                }
+            }
+        }
+    }
 
     /// Start SSE connections for all active clients.
     func startSSE() {
@@ -567,6 +615,12 @@ final class UnifiedOrchestrator {
                         // Rebuild allRooms ONCE per SSE message, not once per event.
                         // Prevents burst of 3 events triggering 3 separate view re-renders.
                         if mutated { rebuildAllRooms() }
+                        // Forward raw updates to RoomDetailViewModel (light-event bus).
+                        // This eliminates the need for a second SSE stream per room view.
+                        let rawUpdates = events.flatMap { $0.data }
+                        if !rawUpdates.isEmpty {
+                            lightEventContinuation?.yield(rawUpdates)
+                        }
                     }
                 }
                 // Stream ended cleanly (bridge closed connection) — reconnect once.
@@ -600,6 +654,19 @@ final class UnifiedOrchestrator {
             }
         }
         return mutated
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Toast
+    // ──────────────────────────────────────────────
+
+    /// Shows a brief error toast in the UI, then clears it after 3 seconds.
+    func showToast(_ message: String) {
+        toastMessage = message
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if toastMessage == message { toastMessage = nil }
+        }
     }
 
     // ──────────────────────────────────────────────

@@ -16,9 +16,13 @@ final class RoomDetailViewModel {
     // MARK: State
     var lights:  [LightDisplayItem] = []
     var scenes:  [SceneDisplayItem] = []
+    /// ID of scene currently being activated — drives spinner on RoomSceneChip.
+    var activatingSceneID: String? = nil
     var isLoading: Bool = false
     var errorMessage: String? = nil
     var logLines: [String] = []
+    /// Brief error for UI toast — auto-cleared after 3 s.
+    var toastMessage: String? = nil
 
     // MARK: Room context
     let room: RoomDisplayItem
@@ -126,29 +130,6 @@ final class RoomDetailViewModel {
     // ──────────────────────────────────────────────
     // MARK: - Toggle
     // ──────────────────────────────────────────────
-
-    func toggleLight(_ item: LightDisplayItem) {
-        let newState = !item.isOn
-        mutateLight(id: item.id) { $0.isOn = newState }
-        appendLog("🔄 Toggling '\(item.name)' → \(newState ? "ON" : "OFF")")
-
-        // Demo mode: local state update is all we need
-        if isDemoMode { return }
-
-        Task {
-            do {
-                try await api?.setLight(id: item.id, on: newState)
-                appendLog("✅ '\(item.name)' → \(newState ? "ON" : "OFF")")
-                log.info("RoomDetail: '\(item.name, privacy: .public)' set to \(newState, privacy: .public).")
-            } catch {
-                appendLog("❌ Toggle failed for '\(item.name)': \(error.localizedDescription)")
-                log.error("RoomDetail: \(error.localizedDescription, privacy: .public)")
-                mutateLight(id: item.id) { $0.isOn = !newState }   // rollback
-            }
-        }
-    }
-
-    // ──────────────────────────────────────────────
     // MARK: - Brightness
     // ──────────────────────────────────────────────
 
@@ -166,7 +147,16 @@ final class RoomDetailViewModel {
             } catch {
                 appendLog("❌ Set failed for '\(item.name)': \(error.localizedDescription)")
                 mutateLight(id: item.id) { $0.isOn = !isOn }   // rollback
+                showToast("Couldn't reach bridge — \(item.name) reverted")
             }
+        }
+    }
+
+    func showToast(_ message: String) {
+        toastMessage = message
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if toastMessage == message { toastMessage = nil }
         }
     }
 
@@ -296,6 +286,7 @@ final class RoomDetailViewModel {
     }
 
     func activateScene(_ item: SceneDisplayItem) {
+        guard activatingSceneID == nil else { return }   // prevent double-tap
         // Optimistic: full-array map → reliably triggers @Observable on iOS 17
         scenes = scenes.map { s in var c = s; c.isActive = (s.id == item.id); return c }
         appendLog("🎬 Activating scene '\(item.name)'…")
@@ -307,6 +298,7 @@ final class RoomDetailViewModel {
             return
         }
 
+        activatingSceneID = item.id
         Task {
             do {
                 try await api?.activateScene(id: item.id)
@@ -314,9 +306,12 @@ final class RoomDetailViewModel {
                 log.info("RoomDetail: scene '\(item.name, privacy: .public)' activated.")
             } catch {
                 appendLog("❌ Scene activation failed: \(error.localizedDescription)")
-                // Rollback: clear all active states (actual state unknown after failure)
                 scenes = scenes.map { s in var c = s; c.isActive = false; return c }
+                showToast("Couldn't activate scene '\(item.name)'")
             }
+            // Brief hold so user sees the active state before spinner clears
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            activatingSceneID = nil
         }
     }
 
@@ -380,34 +375,25 @@ final class RoomDetailViewModel {
     // ──────────────────────────────────────────────
 
     /// Long-running — call from a SwiftUI .task{} so it auto-cancels on view disappear.
-    /// Subscribes to "light" type SSE events and patches individual bulb state.
-    func runSSE() async {
-        guard !isDemoMode else { return }  // no SSE in demo mode
-        guard let creds = try? api?.credentials() else {
-            appendLog("⚠️ SSE: No credentials — skipping live sync.")
+    ///
+    /// Subscribes to the ORCHESTRATOR's light-event bus instead of opening a second
+    /// SSE connection to the bridge. The orchestrator's existing runSSE() already
+    /// receives all event types (grouped_light + light); it forwards raw updates here
+    /// via AsyncStream<[SSEResourceUpdate]>. This eliminates the dual-SSE problem.
+    ///
+    /// Fallback: if eventStream is nil (demo mode or no orchestrator), returns immediately.
+    func runSSE(eventStream: AsyncStream<[SSEResourceUpdate]>?) async {
+        guard !isDemoMode else { return }
+        guard let stream = eventStream else {
+            appendLog("⚠️ SSE: No event stream — skipping live sync.")
             return
         }
-
-        var backoffNs: UInt64 = 1_000_000_000
-
-        while !Task.isCancelled {
-            do {
-                appendLog("📡 SSE: Subscribed to light events for '\(room.name)'…")
-                for try await updates in HueSSEService.shared.events(ip: creds.ip, token: creds.token) {
-                    guard !Task.isCancelled else { return }
-                    applySSEUpdates(updates)
-                    backoffNs = 1_000_000_000
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                appendLog("⚠️ SSE: \(error.localizedDescription) — retry in \(backoffNs / 1_000_000_000)s…")
-                log.warning("SSE: \(error.localizedDescription, privacy: .public)")
-            }
-
+        appendLog("📡 SSE: Subscribed via orchestrator event bus for '\(room.name)'…")
+        for await updates in stream {
             guard !Task.isCancelled else { return }
-            try? await Task.sleep(nanoseconds: backoffNs)
-            backoffNs = min(backoffNs * 2, 30_000_000_000)
+            applySSEUpdates(updates)
         }
+        appendLog("📡 SSE: Event stream ended for '\(room.name)'.")
     }
 
     /// Applies SSE light-state updates as a single full-array swap.
@@ -448,15 +434,14 @@ final class RoomDetailViewModel {
     // ──────────────────────────────────────────────
 
     private func appendLog(_ message: String) {
+        #if DEBUG
         let ts   = DateFormatter.logTime.string(from: Date())
         let line = "[\(ts)] \(message)"
         // Cap at 150 entries — prevents unbounded memory growth from SSE events.
         // Oldest entries are dropped FIFO; the log view only shows recent activity anyway.
         if logLines.count >= 150 { logLines.removeFirst() }
         logLines.append(line)
-#if DEBUG
-        print(line)
-#endif
+        #endif  // DEBUG — logLines growth is debug-only; OSLog handles prod logging
     }
 }
 

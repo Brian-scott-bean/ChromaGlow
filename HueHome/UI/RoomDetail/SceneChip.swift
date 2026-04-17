@@ -3,12 +3,14 @@
 //
 // Full-featured scene tile for Room Detail's horizontal scene strip.
 // Takes a SceneDisplayItem with isActive state and accent color.
+// isActivating: true while API call is in flight → shows spinner, disables double-tap.
 
 import SwiftUI
 
 struct RoomSceneChip: View {
 
     let scene: SceneDisplayItem
+    let isActivating: Bool   // true while API call is in flight → shows spinner
     let onTap: () -> Void
 
     @State private var isPressed = false
@@ -16,7 +18,7 @@ struct RoomSceneChip: View {
     var body: some View {
         Button(action: onTap) {
             VStack(spacing: 8) {
-                // ── Icon circle ───────────────────────────
+                // ── Icon circle (spinner when activating) ──────────────────────────
                 ZStack {
                     Circle()
                         .fill(scene.isActive
@@ -24,12 +26,19 @@ struct RoomSceneChip: View {
                               : Color.white.opacity(0.08))
                         .frame(width: 44, height: 44)
 
-                    Image(systemName: scene.icon)
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(scene.isActive
-                                         ? scene.accentColor
-                                         : .white.opacity(0.50))
-                        .symbolEffect(.bounce, value: scene.isActive)
+                    if isActivating {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(scene.accentColor)
+                            .scaleEffect(0.7)
+                    } else {
+                        Image(systemName: scene.icon)
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(scene.isActive
+                                             ? scene.accentColor
+                                             : .white.opacity(0.50))
+                            .symbolEffect(.bounce, value: scene.isActive)
+                    }
                 }
 
                 // ── Name ─────────────────────────────────
@@ -69,6 +78,9 @@ struct RoomSceneChip: View {
             .scaleEffect(isPressed ? 0.93 : 1.0)
         }
         .buttonStyle(.plain)
+        .disabled(isActivating)   // prevent double-tap during activation
+        .accessibilityLabel(Text("\(scene.name) scene\(scene.isActive ? ", active" : "")"))
+        .accessibilityHint(Text(isActivating ? "Activating…" : "Tap to activate"))
         // Press + release spring animation
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
@@ -84,5 +96,6 @@ struct RoomSceneChip: View {
                 }
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: scene.isActive)
+        .animation(.easeInOut(duration: 0.2), value: isActivating)
     }
 }

@@ -60,10 +60,23 @@ struct RoomDetailView: View {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask { await vm.loadLights() }
                 group.addTask { await vm.loadScenes() }
-                group.addTask { await vm.runSSE() }
+                // Subscribe to orchestrator's event bus instead of opening a new SSE
+                // connection — eliminates dual-SSE stream to the same bridge.
+                group.addTask { await vm.runSSE(eventStream: orchestrator.subscribeToLightEvents()) }
             }
         }
         .preferredColorScheme(.dark)
+        .overlay(alignment: .top) {
+            if let msg = vm.toastMessage {
+                HueToastView(message: msg)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .animation(.spring(response: 0.4, dampingFraction: 0.75), value: vm.toastMessage)
+                    .allowsHitTesting(false)
+                    .zIndex(10)
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: vm.toastMessage)
     }
 
     // ──────────────────────────────────────────────
@@ -177,7 +190,10 @@ struct RoomDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(vm.scenes) { scene in
-                        RoomSceneChip(scene: scene) {
+                        RoomSceneChip(
+                            scene: scene,
+                            isActivating: vm.activatingSceneID == scene.id
+                        ) {
                             vm.activateScene(scene)
                         }
                         .contextMenu {
@@ -358,10 +374,13 @@ struct LightCard: View {
                     .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
                     .frame(width: 52, height: 52)
                     .contentShape(Rectangle())
+                    .symbolEffect(.bounce, value: localIsOn)
             }
             .buttonStyle(.plain)
             .padding(.top, 18)
             .padding(.trailing, 14)
+            .accessibilityLabel(Text("Turn \(light.name) \(localIsOn ? "off" : "on")"))
+            .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
         }
         .frame(minHeight: 80)
         .opacity(localIsOn ? 1.0 : 0.72)

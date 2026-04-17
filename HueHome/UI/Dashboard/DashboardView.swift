@@ -100,6 +100,17 @@ struct DashboardView: View {
                 .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allRooms.count)
             }
         }
+        .overlay(alignment: .top) {
+            if let msg = orchestrator.toastMessage {
+                HueToastView(message: msg)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .animation(.spring(response: 0.4, dampingFraction: 0.75), value: orchestrator.toastMessage)
+                    .allowsHitTesting(false)
+                    .zIndex(10)
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: orchestrator.toastMessage)
         .navigationDestination(for: RoomDisplayItem.self) { room in
             RoomDetailView(room: room)
         }
@@ -282,10 +293,13 @@ struct RoomCard: View {
                     .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
                     .frame(width: 52, height: 52)
                     .contentShape(Rectangle())
+                    .symbolEffect(.bounce, value: localIsOn)
             }
             .buttonStyle(.plain)
             .padding(.top, 18)
             .padding(.trailing, 14)
+            .accessibilityLabel(Text("Turn \(room.name) \(localIsOn ? "off" : "on")"))
+            .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
         }
         .frame(minHeight: 88)
         .opacity(localIsOn ? 1.0 : 0.72)

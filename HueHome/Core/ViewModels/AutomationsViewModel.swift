@@ -114,7 +114,9 @@ final class AutomationsViewModel {
         let line = "[\(ts)] \(message)"
         logLines.append(line)
 #if DEBUG
+        #if DEBUG
         print(line)
+        #endif
 #endif
     }
 }

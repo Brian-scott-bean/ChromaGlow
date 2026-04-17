@@ -174,7 +174,9 @@ struct BridgeManagerView: View {
         do {
             try modelContext.save()
         } catch {
+            #if DEBUG
             print("[BridgeManagerView] modelContext.save() failed: \(error)")
+            #endif
         }
     }
 
