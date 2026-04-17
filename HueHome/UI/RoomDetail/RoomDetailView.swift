@@ -115,9 +115,10 @@ struct RoomDetailView: View {
                     // Value-type ForEach — no @Binding chain to vm.lights during drag.
                     // LightCard fires onBrightness once at drag end via vm callback.
                     ForEach(vm.lights, id: \.id) { light in
-                        LightCard(light: light, onToggle: {
-                            HapticManager.shared.light()
-                            vm.toggleLight(light)
+                        LightCard(light: light, onToggle: { desiredOn in
+                            // desiredOn comes from LightCard.localIsOn (post-flip),
+                            // bypassing the stale captured 'light.isOn' value.
+                            vm.setLight(light, isOn: desiredOn)
                         }, onBrightness: { brightness in
                             vm.setBrightness(brightness, for: light)
                         })
@@ -137,7 +138,7 @@ struct RoomDetailView: View {
                 LightControlView(
                     light: binding,
                     // Read binding.wrappedValue at call time — never a stale snapshot.
-                    onToggle:     { vm.toggleLight(binding.wrappedValue) },
+                    onToggle:     { desiredOn in vm.setLight(binding.wrappedValue, isOn: desiredOn) },
                     onBrightness: { vm.setBrightness($0, for: binding.wrappedValue) },
                     onColor:      { x, y in vm.setColor(x: x, y: y, for: binding.wrappedValue) },
                     onColorTemp:  { vm.setColorTemp(mirek: $0, for: binding.wrappedValue) }
@@ -310,17 +311,31 @@ struct RoomDetailView: View {
 struct LightCard: View {
 
     let light: LightDisplayItem          // value type — no @Binding
-    let onToggle:     () -> Void
+    let onToggle:     (Bool) -> Void     // Bool = desired new on-state
     let onBrightness: (Double) -> Void   // called once at drag end
+
+    // ── Local optimistic state ────────────────────────────────────────────────
+    // Same pattern as RoomCard: flips instantly on tap, syncs from vm.lights
+    // via .onChange when the @Observable chain confirms the change.
+    @State private var localIsOn: Bool
+
+    init(light: LightDisplayItem,
+         onToggle: @escaping (Bool) -> Void,
+         onBrightness: @escaping (Double) -> Void) {
+        self.light        = light
+        self.onToggle     = onToggle
+        self.onBrightness = onBrightness
+        _localIsOn = State(initialValue: light.isOn)
+    }
 
     private var glowColor: Color { Color(red: 1.0, green: 0.76, blue: 0.2) }
 
     var body: some View {
         NavigationLink(value: light) {
-            GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
+            GlassmorphicCard(isActive: localIsOn, glowColor: glowColor) {
                 VStack(spacing: 0) {
                     lightHeaderContent
-                    if light.isOn {
+                    if localIsOn {
                         BrightnessRow(
                             brightness: light.brightness,   // read-only snapshot
                             glowColor: glowColor,
@@ -335,11 +350,12 @@ struct LightCard: View {
         .overlay(alignment: .topTrailing) {
             Button {
                 HapticManager.shared.light()
-                onToggle()
+                localIsOn.toggle()          // instant — no @Observable dependency
+                onToggle(localIsOn)         // pass desired state, not !stale.isOn
             } label: {
-                Image(systemName: light.isOn ? "power.circle.fill" : "power.circle")
+                Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 22))
-                    .foregroundStyle(light.isOn ? glowColor : .white.opacity(0.35))
+                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
                     .frame(width: 52, height: 52)
                     .contentShape(Rectangle())
             }
@@ -348,30 +364,38 @@ struct LightCard: View {
             .padding(.trailing, 14)
         }
         .frame(minHeight: 80)
-        .opacity(light.isOn ? 1.0 : 0.72)
-        .scaleEffect(light.isOn ? 1.0 : 0.982)
-        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: light.isOn)
+        .opacity(localIsOn ? 1.0 : 0.72)
+        .scaleEffect(localIsOn ? 1.0 : 0.982)
+        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: localIsOn)
+        // Sync from vm when confirmed (SSE, loadLights, API rollback)
+        .onChange(of: light.isOn) { _, confirmed in
+            if localIsOn != confirmed {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                    localIsOn = confirmed
+                }
+            }
+        }
     }
 
     private var lightHeaderContent: some View {
         HStack(alignment: .center, spacing: 14) {
             ZStack {
                 Circle()
-                    .fill(light.isOn ? glowColor.opacity(0.22) : Color.white.opacity(0.07))
+                    .fill(localIsOn ? glowColor.opacity(0.22) : Color.white.opacity(0.07))
                     .frame(width: 44, height: 44)
                 Image(systemName: archetypeIcon(for: light.archetype))
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(light.isOn ? glowColor : .white.opacity(0.4))
-                    .symbolEffect(.bounce, value: light.isOn)
+                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.4))
+                    .symbolEffect(.bounce, value: localIsOn)
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(light.name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                Text(light.isOn ? "\(Int(light.brightness))%" : "Off")
+                Text(localIsOn ? "\(Int(light.brightness))%" : "Off")
                     .font(.caption)
-                    .foregroundStyle(light.isOn ? glowColor.opacity(0.8) : .white.opacity(0.40))
+                    .foregroundStyle(localIsOn ? glowColor.opacity(0.8) : .white.opacity(0.40))
             }
             Spacer()
             // Capability badge (visual only)

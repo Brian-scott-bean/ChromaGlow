@@ -17,7 +17,7 @@ import SwiftUI
 struct LightControlView: View {
 
     @Binding var light: LightDisplayItem
-    let onToggle:    () -> Void
+    let onToggle:    (Bool) -> Void   // Bool = desired new on-state
     let onBrightness: (Double) -> Void
     let onColor:      (Double, Double) -> Void      // x, y
     let onColorTemp:  (Int) -> Void                 // mirek
@@ -76,7 +76,7 @@ struct LightControlView: View {
                 // Power toggle in toolbar — always reliable, no clipping/gesture conflicts.
                 Button {
                     HapticManager.shared.medium()
-                    onToggle()
+                    onToggle(!light.isOn)   // light is @Binding — reads current vm.lights[idx]
                 } label: {
                     Image(systemName: light.isOn ? "power.circle.fill" : "power.circle")
                         .font(.system(size: 22))

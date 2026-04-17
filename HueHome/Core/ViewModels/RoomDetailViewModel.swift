@@ -152,6 +152,24 @@ final class RoomDetailViewModel {
     // MARK: - Brightness
     // ──────────────────────────────────────────────
 
+    /// Explicitly set on-state for a single light.
+    /// Accepts the desired state directly — avoids the stale-capture bug where
+    /// toggleLight(_:) computes !item.isOn from a frozen ForEach value type.
+    func setLight(_ item: LightDisplayItem, isOn: Bool) {
+        mutateLight(id: item.id) { $0.isOn = isOn }
+        appendLog("🔄 Setting '\(item.name)' → \(isOn ? "ON" : "OFF")")
+        if isDemoMode { return }
+        Task {
+            do {
+                try await api?.setLight(id: item.id, on: isOn)
+                appendLog("✅ '\(item.name)' → \(isOn ? "ON" : "OFF")")
+            } catch {
+                appendLog("❌ Set failed for '\(item.name)': \(error.localizedDescription)")
+                mutateLight(id: item.id) { $0.isOn = !isOn }   // rollback
+            }
+        }
+    }
+
     func setBrightness(_ brightness: Double, for item: LightDisplayItem) {
         let clamped  = min(100, max(1, brightness))
         let previous = item.brightness
