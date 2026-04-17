@@ -230,6 +230,22 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "PUT /light/\(id) brightness=\(clamped)")
     }
 
+    /// Set on-state + brightness in a single PUT — avoids the two-call flash.
+    /// Use instead of setLight + setLightBrightness when both values need updating.
+    func setLightState(id: String, on: Bool, brightness: Double) async throws {
+        let (ip, token) = try credentials()
+        let clamped = min(100, max(1, brightness))
+        let body: [String: Any] = [
+            "on":      ["on": on],
+            "dimming": ["brightness": clamped],
+        ]
+        let data = try await put(
+            path: "/clip/v2/resource/light/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /light/\(id) on=\(on) brightness=\(clamped)")
+    }
+
     /// Set colour (CIE 1931 xy) for a colour-capable light.
     func setLightColor(id: String, x: Double, y: Double) async throws {
         let (ip, token) = try credentials()
@@ -308,9 +324,11 @@ class HueAPIClient: @unchecked Sendable {
     // ──────────────────────────────────────────────
 
     private func logRaw(_ data: Data, label: String) {
+#if DEBUG
         guard let raw = String(data: data, encoding: .utf8) else { return }
         log.debug("API [\(label, privacy: .public)] raw: \(raw, privacy: .public)")
         print("[HueAPIClient] \(label) — \(raw)")
+#endif
     }
 }
 

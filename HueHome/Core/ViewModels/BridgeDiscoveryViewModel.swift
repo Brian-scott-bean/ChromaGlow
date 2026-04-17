@@ -277,7 +277,9 @@ final class BridgeDiscoveryViewModel {
         let timestamp = DateFormatter.logTime.string(from: Date())
         let line = "[\(timestamp)] \(message)"
         logLines.append(line)
+#if DEBUG
         print(line)
+#endif
     }
 
     // ──────────────────────────────────────────────

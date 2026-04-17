@@ -514,8 +514,14 @@ final class UnifiedOrchestrator {
                     let jsonStr = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
                     guard !jsonStr.isEmpty, let data = jsonStr.data(using: .utf8) else { continue }
 
-                    if let events = try? JSONDecoder().decode([SSEEvent].self, from: data) {
-                        for event in events { applySSEEvent(event, bridgeID: bridgeID) }
+                    if let events = try? Self.sseDecoder.decode([SSEEvent].self, from: data) {
+                        var mutated = false
+                        for event in events {
+                            if applySSEEvent(event, bridgeID: bridgeID) { mutated = true }
+                        }
+                        // Rebuild allRooms ONCE per SSE message, not once per event.
+                        // Prevents burst of 3 events triggering 3 separate view re-renders.
+                        if mutated { rebuildAllRooms() }
                     }
                 }
                 // Stream ended cleanly (bridge closed connection) — reconnect once.
@@ -534,17 +540,21 @@ final class UnifiedOrchestrator {
         }
     }
 
-    private func applySSEEvent(_ event: SSEEvent, bridgeID: String) {
+    /// Returns true if any room state was mutated (used to gate rebuildAllRooms).
+    @discardableResult
+    private func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> Bool {
+        var mutated = false
         for update in event.data {
             guard update.type == "grouped_light" else { continue }
             guard var rooms = roomsByBridge[bridgeID] else { continue }
             if let idx = rooms.firstIndex(where: { $0.groupedLightID == update.id }) {
-                if let on = update.on?.on        { rooms[idx].isOn       = on }
+                if let on  = update.on?.on           { rooms[idx].isOn        = on  }
                 if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
                 roomsByBridge[bridgeID] = rooms
-                rebuildAllRooms()
+                mutated = true
             }
         }
+        return mutated
     }
 
     // ──────────────────────────────────────────────
@@ -673,6 +683,13 @@ final class UnifiedOrchestrator {
 }
 
 // MARK: - SSE Event Models
+
+/// Shared JSON decoder for SSE message parsing.
+/// Allocated once — avoids heap churn from JSONDecoder() per SSE line.
+/// Safe: @MainActor serialisation means decode() is never called concurrently.
+private extension UnifiedOrchestrator {
+    static let sseDecoder = JSONDecoder()
+}
 
 private struct SSEEvent: Decodable {
     let type: String

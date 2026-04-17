@@ -113,7 +113,9 @@ final class AutomationsViewModel {
         let ts   = DateFormatter.logTime.string(from: Date())
         let line = "[\(ts)] \(message)"
         logLines.append(line)
+#if DEBUG
         print(line)
+#endif
     }
 }
 

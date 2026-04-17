@@ -152,10 +152,9 @@ final class RoomDetailViewModel {
 
         Task {
             do {
-                if !item.isOn {
-                    try await api?.setLight(id: item.id, on: true)
-                }
-                try await api?.setLightBrightness(id: item.id, brightness: clamped)
+                // Single API call: turn on + set brightness together
+                // (avoids the flash where light turns on at old brightness first)
+                try await api?.setLightState(id: item.id, on: true, brightness: clamped)
                 appendLog("✅ '\(item.name)' brightness set to \(Int(clamped))%.")
                 log.info("RoomDetail: '\(item.name, privacy: .public)' brightness \(Int(clamped), privacy: .public)%.")
             } catch {
@@ -427,8 +426,13 @@ final class RoomDetailViewModel {
     private func appendLog(_ message: String) {
         let ts   = DateFormatter.logTime.string(from: Date())
         let line = "[\(ts)] \(message)"
+        // Cap at 150 entries — prevents unbounded memory growth from SSE events.
+        // Oldest entries are dropped FIFO; the log view only shows recent activity anyway.
+        if logLines.count >= 150 { logLines.removeFirst() }
         logLines.append(line)
+#if DEBUG
         print(line)
+#endif
     }
 }
 

@@ -220,7 +220,7 @@ enum DemoDataProvider {
     // Mirrors the per-room scene data as GlobalSceneItems so the Scenes tab
     // works in demo mode. Room IDs match DemoDataProvider.rooms.
 
-    static var globalScenes: [GlobalSceneItem] {
+    static let globalScenes: [GlobalSceneItem] = {
         let b = bridgeMainID
         let g = bridgeGuestID
         return [
@@ -250,5 +250,5 @@ enum DemoDataProvider {
             if $0.isActive != $1.isActive { return $0.isActive }
             return $0.name.localizedCompare($1.name) == .orderedAscending
         }
-    }
+    }()
 }
