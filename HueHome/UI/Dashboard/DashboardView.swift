@@ -234,14 +234,30 @@ struct RoomCard: View {
     let onToggle:     () -> Void
     let onBrightness: (Double) -> Void   // called ONCE on drag end with final value
 
+    // ── Local optimistic state ────────────────────────────────────────────────
+    // localIsOn flips INSTANTLY on tap — no dependency on the @Observable chain.
+    // Seeds from room.isOn on first appear; .onChange keeps it in sync when the
+    // orchestrator confirms state (SSE, loadAll, API rollback).
+    @State private var localIsOn: Bool
+
+    init(room: RoomDisplayItem,
+         onToggle: @escaping () -> Void,
+         onBrightness: @escaping (Double) -> Void) {
+        self.room         = room
+        self.onToggle     = onToggle
+        self.onBrightness = onBrightness
+        // @State is seeded ONCE per view identity — SwiftUI preserves it across rerenders.
+        _localIsOn = State(initialValue: room.isOn)
+    }
+
     private var glowColor: Color { Color(red: 1.0, green: 0.76, blue: 0.2) }
 
     var body: some View {
         NavigationLink(value: room) {
-            GlassmorphicCard(isActive: room.isOn, glowColor: glowColor) {
+            GlassmorphicCard(isActive: localIsOn, glowColor: glowColor) {
                 VStack(spacing: 0) {
                     headerContent
-                    if room.isOn {
+                    if localIsOn {
                         BrightnessRow(
                             brightness: room.brightness,   // read-only snapshot
                             glowColor: glowColor,
@@ -253,15 +269,16 @@ struct RoomCard: View {
             }
         }
         .buttonStyle(.plain)
-        // ── Power button overlay ──────────────────────────────────────────
+        // ── Power button overlay ──────────────────────────────────────────────
         .overlay(alignment: .topTrailing) {
             Button {
                 HapticManager.shared.light()
+                localIsOn.toggle()   // instant — never waits for @Observable
                 onToggle()
             } label: {
-                Image(systemName: room.isOn ? "power.circle.fill" : "power.circle")
+                Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 24))
-                    .foregroundStyle(room.isOn ? glowColor : .white.opacity(0.35))
+                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
                     .frame(width: 52, height: 52)
                     .contentShape(Rectangle())
             }
@@ -270,23 +287,32 @@ struct RoomCard: View {
             .padding(.trailing, 14)
         }
         .frame(minHeight: 88)
-        .opacity(room.isOn ? 1.0 : 0.72)
-        .scaleEffect(room.isOn ? 1.0 : 0.982)
-        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: room.isOn)
+        .opacity(localIsOn ? 1.0 : 0.72)
+        .scaleEffect(localIsOn ? 1.0 : 0.982)
+        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: localIsOn)
+        // ── Bridge-truth sync ─────────────────────────────────────────────────
+        // Fires when room.isOn changes (SSE, loadAll, pull-to-refresh, API rollback).
+        .onChange(of: room.isOn) { _, confirmed in
+            if localIsOn != confirmed {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                    localIsOn = confirmed
+                }
+            }
+        }
     }
 
     private var headerContent: some View {
         HStack(alignment: .center, spacing: 14) {
             ZStack {
                 Circle()
-                    .fill(room.isOn
+                    .fill(localIsOn
                           ? glowColor.opacity(0.22)
                           : Color.white.opacity(0.07))
                     .frame(width: 48, height: 48)
                 Image(systemName: archetypeIcon(for: room.archetype))
                     .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(room.isOn ? glowColor : .white.opacity(0.4))
-                    .symbolEffect(.bounce, value: room.isOn)
+                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.4))
+                    .symbolEffect(.bounce, value: localIsOn)
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(room.name)
