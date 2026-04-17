@@ -116,14 +116,25 @@ class HueAPIClient: @unchecked Sendable {
     }
 
     /// Activate a scene by its V2 resource UUID.
-    func activateScene(id: String) async throws {
+    /// Activate a scene on the Bridge.
+    ///
+    /// - Parameters:
+    ///   - id:        Bridge scene UUID.
+    ///   - speed:     Optional dynamics speed (0.0–1.0). Only meaningful for dynamic
+    ///                palette scenes; ignored by the Bridge for static scenes.
+    func activateScene(id: String, speed: Double? = nil) async throws {
         let (ip, token) = try credentials()
-        let body: [String: Any] = ["recall": ["action": "active"]]
+        var recall: [String: Any] = ["action": "active"]
+        if let speed {
+            // Clamp to valid range — Bridge rejects values outside [0, 1].
+            recall["dynamics"] = ["speed": min(max(speed, 0.0), 1.0)]
+        }
+        let body: [String: Any] = ["recall": recall]
         let data = try await put(
             path: "/clip/v2/resource/scene/\(id)",
             body: body, ip: ip, token: token
         )
-        logRaw(data, label: "PUT /scene/\(id) recall=active")
+        logRaw(data, label: "PUT /scene/\(id) speed=\(speed.map { String(format: "%.2f", $0) } ?? "default")")
     }
 
     /// Create a new scene on the Bridge with the given name and per-light actions.

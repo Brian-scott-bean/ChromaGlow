@@ -225,27 +225,27 @@ enum DemoDataProvider {
         let g = bridgeGuestID
         return [
             // Living Room
-            GlobalSceneItem(id: "\(b):ds-lv-1", bridgeSceneID: "ds-lv-1", name: "Relax",       roomID: "demo-room-living",   bridgeID: b, isActive: false),
-            GlobalSceneItem(id: "\(b):ds-lv-2", bridgeSceneID: "ds-lv-2", name: "Energize",    roomID: "demo-room-living",   bridgeID: b, isActive: false),
-            GlobalSceneItem(id: "\(b):ds-lv-3", bridgeSceneID: "ds-lv-3", name: "Movie Night", roomID: "demo-room-living",   bridgeID: b, isActive: true),
-            GlobalSceneItem(id: "\(b):ds-lv-4", bridgeSceneID: "ds-lv-4", name: "Sunset",      roomID: "demo-room-living",   bridgeID: b, isActive: false),
-            GlobalSceneItem(id: "\(b):ds-lv-5", bridgeSceneID: "ds-lv-5", name: "Romance",     roomID: "demo-room-living",   bridgeID: b, isActive: false),
+            GlobalSceneItem(id: "\(b):ds-lv-1", bridgeSceneID: "ds-lv-1", name: "Relax",       roomID: "demo-room-living",   bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-lv-2", bridgeSceneID: "ds-lv-2", name: "Energize",    roomID: "demo-room-living",   bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-lv-3", bridgeSceneID: "ds-lv-3", name: "Movie Night", roomID: "demo-room-living",   bridgeID: b, isActive: true,  isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-lv-4", bridgeSceneID: "ds-lv-4", name: "Sunset",      roomID: "demo-room-living",   bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-lv-5", bridgeSceneID: "ds-lv-5", name: "Romance",     roomID: "demo-room-living",   bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
             // Kitchen
-            GlobalSceneItem(id: "\(b):ds-kt-1", bridgeSceneID: "ds-kt-1", name: "Bright",      roomID: "demo-room-kitchen",  bridgeID: b, isActive: true),
-            GlobalSceneItem(id: "\(b):ds-kt-2", bridgeSceneID: "ds-kt-2", name: "Cooking",     roomID: "demo-room-kitchen",  bridgeID: b, isActive: false),
-            GlobalSceneItem(id: "\(b):ds-kt-3", bridgeSceneID: "ds-kt-3", name: "Dimmed",      roomID: "demo-room-kitchen",  bridgeID: b, isActive: false),
+            GlobalSceneItem(id: "\(b):ds-kt-1", bridgeSceneID: "ds-kt-1", name: "Bright",      roomID: "demo-room-kitchen",  bridgeID: b, isActive: true,  isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-kt-2", bridgeSceneID: "ds-kt-2", name: "Cooking",     roomID: "demo-room-kitchen",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-kt-3", bridgeSceneID: "ds-kt-3", name: "Dimmed",      roomID: "demo-room-kitchen",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
             // Bedroom
-            GlobalSceneItem(id: "\(b):ds-bd-1", bridgeSceneID: "ds-bd-1", name: "Sleep",       roomID: "demo-room-bedroom",  bridgeID: b, isActive: false),
-            GlobalSceneItem(id: "\(b):ds-bd-2", bridgeSceneID: "ds-bd-2", name: "Wake Up",     roomID: "demo-room-bedroom",  bridgeID: b, isActive: false),
-            GlobalSceneItem(id: "\(b):ds-bd-3", bridgeSceneID: "ds-bd-3", name: "Read",        roomID: "demo-room-bedroom",  bridgeID: b, isActive: false),
-            GlobalSceneItem(id: "\(b):ds-bd-4", bridgeSceneID: "ds-bd-4", name: "Night Light", roomID: "demo-room-bedroom",  bridgeID: b, isActive: false),
+            GlobalSceneItem(id: "\(b):ds-bd-1", bridgeSceneID: "ds-bd-1", name: "Sleep",       roomID: "demo-room-bedroom",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-bd-2", bridgeSceneID: "ds-bd-2", name: "Wake Up",     roomID: "demo-room-bedroom",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-bd-3", bridgeSceneID: "ds-bd-3", name: "Read",        roomID: "demo-room-bedroom",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-bd-4", bridgeSceneID: "ds-bd-4", name: "Night Light", roomID: "demo-room-bedroom",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
             // Office
-            GlobalSceneItem(id: "\(b):ds-of-1", bridgeSceneID: "ds-of-1", name: "Focus",       roomID: "demo-room-office",   bridgeID: b, isActive: true),
-            GlobalSceneItem(id: "\(b):ds-of-2", bridgeSceneID: "ds-of-2", name: "Relax",       roomID: "demo-room-office",   bridgeID: b, isActive: false),
-            // Patio (Guest Bridge)
-            GlobalSceneItem(id: "\(g):ds-pt-1", bridgeSceneID: "ds-pt-1", name: "Warm Glow",   roomID: "demo-room-patio",    bridgeID: g, isActive: true),
-            GlobalSceneItem(id: "\(g):ds-pt-2", bridgeSceneID: "ds-pt-2", name: "Party",       roomID: "demo-room-patio",    bridgeID: g, isActive: false),
-            GlobalSceneItem(id: "\(g):ds-pt-3", bridgeSceneID: "ds-pt-3", name: "Galaxy",      roomID: "demo-room-patio",    bridgeID: g, isActive: false),
+            GlobalSceneItem(id: "\(b):ds-of-1", bridgeSceneID: "ds-of-1", name: "Focus",       roomID: "demo-room-office",   bridgeID: b, isActive: true,  isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-of-2", bridgeSceneID: "ds-of-2", name: "Relax",       roomID: "demo-room-office",   bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            // Patio (Guest Bridge) — Party & Galaxy are dynamic palette scenes
+            GlobalSceneItem(id: "\(g):ds-pt-1", bridgeSceneID: "ds-pt-1", name: "Warm Glow",   roomID: "demo-room-patio",    bridgeID: g, isActive: true,  isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(g):ds-pt-2", bridgeSceneID: "ds-pt-2", name: "Party",       roomID: "demo-room-patio",    bridgeID: g, isActive: false, isDynamic: true,  speed: 0.6),
+            GlobalSceneItem(id: "\(g):ds-pt-3", bridgeSceneID: "ds-pt-3", name: "Galaxy",      roomID: "demo-room-patio",    bridgeID: g, isActive: false, isDynamic: true,  speed: 0.4),
         ].sorted {
             if $0.isActive != $1.isActive { return $0.isActive }
             return $0.name.localizedCompare($1.name) == .orderedAscending

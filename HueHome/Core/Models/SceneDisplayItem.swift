@@ -102,7 +102,9 @@ struct GlobalSceneItem: Identifiable, Hashable {
     let roomID:        String   // Hue room/zone UUID on this bridge
     let bridgeID:      String   // which bridge owns this scene
 
-    var isActive: Bool
+    var isActive:   Bool
+    var isDynamic:  Bool        // true = Hue dynamic palette scene (colours auto-cycle)
+    var speed:      Double      // recall dynamics.speed 0.0–1.0; default 0.5
 
     // Reuse per-room colour + icon logic
     var accentColor: Color { SceneDisplayItem.color(for: name) }

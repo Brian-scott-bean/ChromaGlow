@@ -12,6 +12,13 @@ struct HueScene: Decodable, Identifiable {
     let group: SceneGroup           // links scene to a room or zone
     let status: SceneStatus?        // current activation state (may be absent on older firmware)
     let speed: Double?              // transition speed 0.0–1.0
+    let type: String?               // "static" | "dynamic" (CLIP v2 resource type field)
+
+    /// True when this is a Hue dynamic palette scene (colours auto-cycle).
+    /// Falls back to checking status.active for older firmware that omits `type`.
+    var isDynamic: Bool {
+        type == "dynamic" || status?.active == "dynamic_palette"
+    }
 }
 
 struct SceneMetadata: Decodable {

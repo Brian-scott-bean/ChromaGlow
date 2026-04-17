@@ -1038,6 +1038,9 @@ final class UnifiedOrchestrator {
                             roomID:        scene.group.rid,
                             bridgeID:      bridgeID,
                             isActive:      scene.status?.active == "active"
+                                        || scene.status?.active == "dynamic_palette",
+                            isDynamic:     scene.isDynamic,
+                            speed:         scene.speed ?? 0.5
                         )
                     }
                 }
@@ -1070,14 +1073,22 @@ final class UnifiedOrchestrator {
 
         guard let client = clients[scene.bridgeID] else { return }
         Task {
-            try? await client.activateScene(id: scene.bridgeSceneID)
-            log.info("Activated scene '\(scene.name)' on bridge \(scene.bridgeID)")
-            // Give the bridge 1.5 s to settle all light transitions, then
-            // re-derive dominant colors so glows update even when the bridge
-            // omits color fields from the burst of scene SSE events.
+            // Pass speed only for dynamic scenes; static scenes ignore the dynamics block.
+            let speed: Double? = scene.isDynamic ? scene.speed : nil
+            try? await client.activateScene(id: scene.bridgeSceneID, speed: speed)
+            log.info("Activated scene '\(scene.name)' \(scene.isDynamic ? "@ speed \(String(format: "%.2f", scene.speed))" : "") on bridge \(scene.bridgeID)")
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             refreshDominantColors(for: scene.bridgeID)
         }
+    }
+
+    /// Persist a new speed value for a dynamic scene.
+    /// Full array swap so @Observable notifies SwiftUI immediately.
+    func setSceneSpeed(_ scene: GlobalSceneItem, speed: Double) {
+        var updated = globalScenes
+        guard let idx = updated.firstIndex(where: { $0.id == scene.id }) else { return }
+        updated[idx].speed = min(max(speed, 0.0), 1.0)
+        globalScenes = updated
     }
 }
 
