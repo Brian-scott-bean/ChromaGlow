@@ -674,7 +674,6 @@ final class UnifiedOrchestrator {
 
     /// Returns true if any room state was mutated (used to gate rebuildAllRooms).
     @discardableResult
-    @discardableResult
     func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> Bool {
         var mutated = false
         for update in event.data {
