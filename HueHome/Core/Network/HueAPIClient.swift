@@ -141,7 +141,12 @@ class HueAPIClient: @unchecked Sendable {
     func createScene(_ request: CreateSceneRequest) async throws {
         let (ip, token) = try credentials()
         var req = try buildRequest(method: "POST", path: "/clip/v2/resource/scene", ip: ip, token: token)
-        req.httpBody = try JSONEncoder().encode(request)
+        let encoded = try JSONEncoder().encode(request)
+        req.httpBody = encoded
+        // Log outgoing body for debugging — remove noisy on-disk logging once stable.
+        if let bodyStr = String(data: encoded, encoding: .utf8) {
+            log.debug("POST /scene body: \(bodyStr, privacy: .public)")
+        }
         let data = try await execute(req)
         logRaw(data, label: "POST /scene '\(request.metadata.name)'")
     }

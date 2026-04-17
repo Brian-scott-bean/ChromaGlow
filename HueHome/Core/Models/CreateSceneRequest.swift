@@ -10,10 +10,13 @@ import Foundation
 
 struct CreateSceneRequest: Encodable {
 
+    // CLIP v2 requires "type": "scene" in every POST /resource/scene body.
+    // Omitting it causes an immediate HTTP 400 regardless of other fields.
+    let type:     String = "scene"
     let metadata: Metadata
     let group:    GroupRef
     let actions:  [SceneAction]
-    var speed:    Double = 0.5
+    // Note: speed/dynamics are only valid in PUT (recall), not POST (create).
 
     struct Metadata: Encodable {
         let name: String
