@@ -72,10 +72,10 @@ final class UnifiedOrchestrator {
     private var clients: [String: BridgeAPIClient] = [:]
 
     /// Rooms per bridge — used for merge.  keyed by BridgeRecord.id
-    /// @ObservationIgnored: views observe allRooms (the merged, sorted output).
-    /// Marking this prevents every SSE write to roomsByBridge from triggering
-    /// a redundant observation scan across all @Observable subscribers.
-    @ObservationIgnored
+    /// Note: NOT @ObservationIgnored — the @Observable macro's subscript write-back
+    /// behavior for @ObservationIgnored properties is subtly different across Swift
+    /// toolchain versions. Views observe allRooms (the merged output), not this dict
+    /// directly, so observation overhead here is negligible.
     private var roomsByBridge: [String: [RoomDisplayItem]] = [:]
 
     /// SSE tasks per bridge — cancelled when bridge is removed.
@@ -595,30 +595,35 @@ final class UnifiedOrchestrator {
             .filter { seen.insert($0.id).inserted }
     }
 
-    /// Update a room's state and trigger a view re-render.
+    /// Update a room's state and trigger an immediate view re-render.
     ///
-    /// IMPORTANT — do NOT use allRooms[i].property = value here.
-    /// @Observable in iOS 17 uses _modify coroutines for subscript access;
-    /// nested _modify (array subscript inside @Observable _modify) does not
-    /// reliably fire the observation registrar. Only a FULL ARRAY ASSIGNMENT
-    /// (allRooms = newArray) is guaranteed to trigger SwiftUI re-renders.
-    /// We achieve that by updating roomsByBridge (local dict, not observed
-    /// by views) then calling rebuildAllRooms() which assigns allRooms = [...].
+    /// Design: directly maps allRooms (the @Observable property SwiftUI watches)
+    /// rather than routing through roomsByBridge → rebuildAllRooms → allRooms.
+    /// The 3-link chain proved fragile across multiple Swift @Observable versions.
+    ///
+    /// allRooms = allRooms.map{} is a single full-array assignment — the most
+    /// reliable @Observable notification pattern in Swift 5.9+.
+    /// roomsByBridge is synced afterward to keep SSE and loadAll consistent.
     private func updateRoom(_ id: String, isOn: Bool? = nil, brightness: Double? = nil) {
         var anyChanged = false
+        // Step 1: direct allRooms update — guaranteed @Observable notification
+        allRooms = allRooms.map { room in
+            guard room.id == id else { return room }
+            var updated = room
+            if let on  = isOn       { updated.isOn       = on;  anyChanged = true }
+            if let bri = brightness { updated.brightness = bri; anyChanged = true }
+            return updated
+        }
+        guard anyChanged else { return }
+        // Step 2: sync roomsByBridge cache so SSE events and future loadAll merges
+        // see consistent data. This is secondary — allRooms is already correct.
         for bridgeID in roomsByBridge.keys {
-            // IMPORTANT: dict["key"]! returns a VALUE-TYPE COPY in Swift.
-            // Mutating through ! does NOT write back to the dictionary.
-            // Use copy-modify-assign (same pattern as applySSEEvent) so the
-            // change actually persists and rebuildAllRooms() sees updated data.
             guard var rooms = roomsByBridge[bridgeID],
                   let i = rooms.firstIndex(where: { $0.id == id }) else { continue }
-            if let on  = isOn       { rooms[i].isOn       = on;  anyChanged = true }
-            if let bri = brightness { rooms[i].brightness = bri; anyChanged = true }
-            roomsByBridge[bridgeID] = rooms   // write back — critical
+            if let on  = isOn       { rooms[i].isOn       = on  }
+            if let bri = brightness { rooms[i].brightness = bri }
+            roomsByBridge[bridgeID] = rooms
         }
-        // Full-array assignment via rebuildAllRooms — guaranteed to notify @Observable
-        if anyChanged { rebuildAllRooms() }
     }
 
     // ──────────────────────────────────────────────
