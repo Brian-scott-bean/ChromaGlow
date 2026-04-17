@@ -597,9 +597,15 @@ final class UnifiedOrchestrator {
     private func updateRoom(_ id: String, isOn: Bool? = nil, brightness: Double? = nil) {
         var anyChanged = false
         for bridgeID in roomsByBridge.keys {
-            guard let i = roomsByBridge[bridgeID]?.firstIndex(where: { $0.id == id }) else { continue }
-            if let on  = isOn       { roomsByBridge[bridgeID]![i].isOn       = on;  anyChanged = true }
-            if let bri = brightness { roomsByBridge[bridgeID]![i].brightness = bri; anyChanged = true }
+            // IMPORTANT: dict["key"]! returns a VALUE-TYPE COPY in Swift.
+            // Mutating through ! does NOT write back to the dictionary.
+            // Use copy-modify-assign (same pattern as applySSEEvent) so the
+            // change actually persists and rebuildAllRooms() sees updated data.
+            guard var rooms = roomsByBridge[bridgeID],
+                  let i = rooms.firstIndex(where: { $0.id == id }) else { continue }
+            if let on  = isOn       { rooms[i].isOn       = on;  anyChanged = true }
+            if let bri = brightness { rooms[i].brightness = bri; anyChanged = true }
+            roomsByBridge[bridgeID] = rooms   // write back — critical
         }
         // Full-array assignment via rebuildAllRooms — guaranteed to notify @Observable
         if anyChanged { rebuildAllRooms() }
