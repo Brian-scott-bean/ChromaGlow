@@ -63,10 +63,10 @@ struct MainTabView: View {
                         .tag(tab)
                 }
             }
-            // Hide native tab bar — we render our own
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .ignoresSafeArea(.all, edges: .bottom)
-            // Swap back to default TabView rendering but hide bar
+            // Default TabView style: only the active tab renders,
+            // NavigationStack push/pop animations are not interrupted,
+            // and the back-swipe gesture is not stolen by the paging recognizer.
+            // Native tab bar hidden — HueTabBar below provides the visual.
             .toolbar(.hidden, for: .tabBar)
 
             HueTabBar(selectedTab: $selectedTab)
