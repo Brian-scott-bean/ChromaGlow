@@ -28,26 +28,32 @@ struct BridgeManagerView: View {
             if bridges.isEmpty {
                 emptyState
             } else {
-                List {
+            List {
                     ForEach(bridges) { bridge in
                         BridgeRow(bridge: bridge, orchestrator: orchestrator)
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            .contextMenu {
+                                // Long-press context menu: backup delete path
                                 Button(role: .destructive) {
                                     bridgeToDelete = bridge
                                     showDeleteAlert = true
                                 } label: {
-                                    Label("Remove", systemImage: "trash")
+                                    Label("Remove Bridge", systemImage: "trash")
                                 }
-
                                 Button {
                                     editingBridge = bridge
                                 } label: {
                                     Label("Rename", systemImage: "pencil")
                                 }
-                                .tint(HuePalette.amber)
                             }
+                    }
+                    .onDelete { indexSet in
+                        // Standard iOS swipe-to-delete — fires before custom alert
+                        if let idx = indexSet.first {
+                            bridgeToDelete = bridges[idx]
+                            showDeleteAlert = true
+                        }
                     }
                     .onMove(perform: reorder)
 
@@ -165,7 +171,11 @@ struct BridgeManagerView: View {
     private func delete(_ bridge: BridgeRecord) {
         orchestrator.removeBridge(id: bridge.id)
         modelContext.delete(bridge)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            print("[BridgeManagerView] modelContext.save() failed: \(error)")
+        }
     }
 
     private func reorder(from source: IndexSet, to destination: Int) {
