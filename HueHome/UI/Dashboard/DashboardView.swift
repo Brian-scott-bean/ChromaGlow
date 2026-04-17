@@ -263,7 +263,18 @@ struct RoomCard: View {
         _localIsOn = State(initialValue: room.isOn)
     }
 
-    private var glowColor: Color { Color(red: 1.0, green: 0.76, blue: 0.2) }
+    /// Derive glow color from the room's currently dominant light.
+    /// Computed from dominantColorXY / dominantMirek set by loadAll().
+    /// Falls back to warm amber for rooms with no color capability or all-off state.
+    private var glowColor: Color {
+        if let x = room.dominantColorX, let y = room.dominantColorY {
+            return HueColorUtils.color(fromX: x, y: y, brightness: max(room.brightness, 50))
+        }
+        if let mirek = room.dominantMirek {
+            return HueColorUtils.color(fromMirek: mirek)
+        }
+        return Color(red: 1.0, green: 0.76, blue: 0.2)  // warm amber fallback
+    }
 
     var body: some View {
         NavigationLink(value: room) {

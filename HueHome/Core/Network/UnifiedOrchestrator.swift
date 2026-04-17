@@ -380,11 +380,36 @@ final class UnifiedOrchestrator {
                                 brightness = max(1, raw)
                             }
 
-                            let lightCount = lights.filter { light in
+                            // Lights belonging to this room (matched by light.id or device owner id)
+                            let roomLights = lights.filter { light in
                                 room.children.contains { ref in
                                     ref.rid == light.id || ref.rid == (light.owner?.rid ?? "")
                                 }
-                            }.count
+                            }
+                            let lightCount = roomLights.count
+
+                            // ── Dominant color ───────────────────────────────────────────
+                            // Pick the brightest ON light with color support as the room's
+                            // tint. Falls back to colorTemp mirek if no color lights are on.
+                            // This powers RoomCard.glowColor without any extra API calls.
+                            var dominantColorXY: (x: Double, y: Double)? = nil
+                            var dominantMirek:   Int?                     = nil
+
+                            if isOn {
+                                let onLights = roomLights.filter { $0.on.on }
+                                // Prefer color-capable lights; pick the brightest ON one as dominant.
+                                if let best = onLights
+                                    .filter({ $0.color != nil })
+                                    .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }) {
+                                    let xy = best.color!.xy
+                                    dominantColorXY = (xy.x, xy.y)
+                                } else if let best = onLights
+                                    .filter({ $0.color_temperature?.mirek != nil })
+                                    .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }),
+                                   let mirek = best.color_temperature?.mirek {
+                                    dominantMirek = mirek
+                                }
+                            }
 
                             items.append(RoomDisplayItem(
                                 id:                room.id,
@@ -395,7 +420,10 @@ final class UnifiedOrchestrator {
                                 groupedLightID:    room.groupedLightID,
                                 lightCount:        lightCount,
                                 bridgeID:          bridgeID,
-                                childResourceRefs: room.children.map { ($0.rid, $0.rtype) }
+                                childResourceRefs: room.children.map { ($0.rid, $0.rtype) },
+                                dominantColorX:    dominantColorXY?.x,
+                                dominantColorY:    dominantColorXY?.y,
+                                dominantMirek:     dominantMirek
                             ))
                         }
                         await MainActor.run {
