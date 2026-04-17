@@ -31,6 +31,11 @@ final class RoomDetailViewModel {
     private let api: HueAPIClient?
     private let isDemoMode: Bool
     private let log = Logger(subsystem: "com.huehome.pro", category: "RoomDetail")
+    /// Called after a color/CT commit succeeds — injected by RoomDetailView
+    /// to trigger orchestrator.refreshDominantColors(for: bridgeID).
+    var onColorCommitted: (() -> Void)? = nil
+    /// Debounce task — cancelled and replaced on every rapid color change.
+    private var colorRefreshTask: Task<Void, Never>? = nil
 
     // MARK: Init
     /// - Parameters:
@@ -238,6 +243,7 @@ final class RoomDetailViewModel {
             do {
                 try await api?.setLightColor(id: item.id, x: x, y: y)
                 appendLog("✅ '\(item.name)' color committed.")
+                scheduleColorRefresh()
             } catch {
                 appendLog("❌ Color failed: \(error.localizedDescription)")
                 mutateLight(id: item.id) { $0.colorX = item.colorX; $0.colorY = item.colorY }
@@ -257,10 +263,27 @@ final class RoomDetailViewModel {
             do {
                 try await api?.setLightColorTemp(id: item.id, mirek: mirek)
                 appendLog("✅ '\(item.name)' color temp committed.")
+                scheduleColorRefresh()
             } catch {
                 appendLog("❌ Color temp failed: \(error.localizedDescription)")
                 mutateLight(id: item.id) { $0.colorTempMirek = item.colorTempMirek }
             }
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Glow refresh helper
+    // ──────────────────────────────────────────────
+
+    /// Debounced: cancels any pending refresh and schedules a new one 1.5 s
+    /// from now — same delay as scene activation. Prevents rapid slider drags
+    /// from firing many bridge fetches while the user is still adjusting.
+    private func scheduleColorRefresh() {
+        colorRefreshTask?.cancel()
+        colorRefreshTask = Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            onColorCommitted?()
         }
     }
 

@@ -875,9 +875,9 @@ final class UnifiedOrchestrator {
     /// Re-derives dominant colors for every room and zone on `bridgeID`
     /// by fetching only /resource/light (cheap — no room/scene data needed).
     ///
-    /// Called after scene activation (1.5 s delay) to guarantee glow updates
-    /// even when the bridge omits color fields from scene SSE events.
-    private func refreshDominantColors(for bridgeID: String) {
+    /// Called after scene activation (1.5 s delay) and after individual light
+    /// color/CT commits to guarantee glow updates even when SSE is slow.
+    func refreshDominantColors(for bridgeID: String) {
         guard let client = clients[bridgeID] else { return }
         Task {
             guard let lights = try? await client.fetchLights() else { return }

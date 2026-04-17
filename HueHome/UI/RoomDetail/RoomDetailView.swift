@@ -57,6 +57,12 @@ struct RoomDetailView: View {
                 api: orchestrator.hueClient(for: room.bridgeID),
                 isDemoMode: orchestrator.isDemoMode
             )
+            // Wire the glow-refresh callback so color changes propagate to dashboard cards.
+            let bridgeID = room.bridgeID ?? ""
+            vm.onColorCommitted = { [weak orchestrator] in
+                guard let orchestrator, !bridgeID.isEmpty else { return }
+                orchestrator.refreshDominantColors(for: bridgeID)
+            }
             await withTaskGroup(of: Void.self) { group in
                 group.addTask { await vm.loadLights() }
                 group.addTask { await vm.loadScenes() }
