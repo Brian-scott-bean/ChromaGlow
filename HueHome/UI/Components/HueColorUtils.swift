@@ -99,6 +99,20 @@ enum HueColorUtils {
         return Swift.min(Swift.max(raw, min), max)
     }
 
+    /// Approximate SwiftUI display Color for a mirek value.
+    /// Used for glow/card-tint where CIE xy is unavailable (white-ambiance bulbs).
+    /// Linearly interpolates between 2000K amber and 6500K cool daylight.
+    static func color(fromMirek mirek: Int) -> Color {
+        let lo = 153.0, hi = 500.0
+        let t = (Double(mirek).clamped(lo, hi) - lo) / (hi - lo)  // 0=cool, 1=warm
+        // Warm anchor: 2700K amber;  Cool anchor: 6500K daylight blue
+        let rW = 1.0, gW = 0.78, bW = 0.35
+        let rC = 0.82, gC = 0.88, bC = 1.0
+        return Color(red:   rW * t + rC * (1 - t),
+                     green: gW * t + gC * (1 - t),
+                     blue:  bW * t + bC * (1 - t))
+    }
+
     /// Gradient colours for a color-temperature slider (warm → cool).
     static let colorTempGradient = Gradient(colors: [
         Color(red: 1.0, green: 0.67, blue: 0.26),   // 2000K candlelight
@@ -119,5 +133,12 @@ enum HueColorUtils {
     private static func delinearise(_ v: Double) -> Double {
         let c = Swift.max(0, v)
         return c <= 0.0031308 ? 12.92 * c : 1.055 * pow(c, 1.0 / 2.4) - 0.055
+    }
+}
+
+// MARK: - Double clamping helper (HueColorUtils internal use)
+private extension Double {
+    func clamped(_ lo: Double, _ hi: Double) -> Double {
+        Swift.min(Swift.max(self, lo), hi)
     }
 }

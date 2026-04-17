@@ -323,7 +323,18 @@ struct LightCard: View {
         _localIsOn = State(initialValue: light.isOn)
     }
 
-    private var glowColor: Color { Color(red: 1.0, green: 0.76, blue: 0.2) }
+    /// Derive glow color from the light's current state.
+    /// Priority: CIE xy (full color) → color temperature → warm amber fallback.
+    /// This makes TV backlights glow purple, sunset scenes glow orange, etc.
+    private var glowColor: Color {
+        if light.supportsColor, let x = light.colorX, let y = light.colorY {
+            return HueColorUtils.color(fromX: x, y: y, brightness: max(light.brightness, 50))
+        }
+        if light.supportsColorTemp, let mirek = light.colorTempMirek {
+            return HueColorUtils.color(fromMirek: mirek)
+        }
+        return Color(red: 1.0, green: 0.76, blue: 0.2)  // warm amber fallback
+    }
 
     var body: some View {
         NavigationLink(value: light) {

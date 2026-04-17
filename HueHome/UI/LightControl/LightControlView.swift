@@ -26,6 +26,7 @@ struct LightControlView: View {
     @State private var liveHue:        Double = 0
     @State private var liveSaturation: Double = 0
     @State private var liveMirek:      Int    = 300
+    @State private var selectedSwatch: Int?   = nil  // index into ColorSwatch.presets
 
     // Cached glow colour — recomputed only on light change, not on every render.
     // Prevents ambientBackground blur from being re-composited during drag.
@@ -174,22 +175,67 @@ struct LightControlView: View {
         VStack(alignment: .leading, spacing: 12) {
             sectionLabel("Color")
             GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
-                ColorWheelView(
-                    hue: $liveHue,
-                    saturation: $liveSaturation
-                ) { h, s in
-                    // Commit: convert HSB → xy and call API
-                    let (x, y) = HueColorUtils.xyFrom(hue: h, saturation: s, brightness: 1)
-                    // Optimistic: update light model's xy
-                    light.colorX = x
-                    light.colorY = y
-                    HapticManager.shared.heavy()
-                    onColor(x, y)
+                VStack(spacing: 20) {
+                    ColorWheelView(
+                        hue: $liveHue,
+                        saturation: $liveSaturation
+                    ) { h, s in
+                        // Commit: convert HSB → xy and call API
+                        let (x, y) = HueColorUtils.xyFrom(hue: h, saturation: s, brightness: 1)
+                        light.colorX = x
+                        light.colorY = y
+                        selectedSwatch = ColorSwatch.nearest(hue: h, saturation: s)
+                        HapticManager.shared.heavy()
+                        onColor(x, y)
+                    }
+                    .frame(width: 220, height: 220)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 12)
+
+                    // ── Quick color presets ─────────────────────
+                    Divider().background(Color.white.opacity(0.08))
+                    colorSwatchRow
+                        .padding(.bottom, 12)
                 }
-                .frame(width: 220, height: 220)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
             }
+        }
+    }
+
+    private var colorSwatchRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(Array(ColorSwatch.presets.enumerated()), id: \.offset) { i, swatch in
+                    Button {
+                        HapticManager.shared.medium()
+                        liveHue        = swatch.hue
+                        liveSaturation = swatch.saturation
+                        selectedSwatch = i
+                        let (x, y) = HueColorUtils.xyFrom(
+                            hue: swatch.hue, saturation: swatch.saturation, brightness: 1
+                        )
+                        light.colorX = x
+                        light.colorY = y
+                        HapticManager.shared.heavy()
+                        onColor(x, y)
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(swatch.color)
+                                .frame(width: 32, height: 32)
+                                .shadow(color: swatch.color.opacity(0.6), radius: 4)
+                            if selectedSwatch == i {
+                                Circle()
+                                    .stroke(.white, lineWidth: 2.5)
+                                    .frame(width: 36, height: 36)
+                            }
+                        }
+                        .frame(width: 40, height: 40)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(swatch.name)
+                }
+            }
+            .padding(.horizontal, 16)
         }
     }
 
@@ -258,6 +304,7 @@ struct LightControlView: View {
             let (h, s, _) = HueColorUtils.hsb(fromX: x, y: y, brightness: light.brightness)
             liveHue = h
             liveSaturation = s
+            selectedSwatch = ColorSwatch.nearest(hue: h, saturation: s)
         }
         liveMirek = light.colorTempMirek ?? ((light.mirekMin + light.mirekMax) / 2)
     }
@@ -448,3 +495,51 @@ struct ColorTempSlider: View {
     }
 }
 
+
+
+// MARK: - Color Swatches
+
+/// Named HSB color presets for the quick-pick tray in LightControlView.
+/// hue/saturation drive both the UI swatch circle and the API call via xyFrom().
+struct ColorSwatch {
+    let name: String
+    let hue: Double         // SwiftUI 0–1
+    let saturation: Double  // 0–1
+
+    var color: Color { Color(hue: hue, saturation: saturation, brightness: 1.0) }
+
+    static let presets: [ColorSwatch] = [
+        ColorSwatch(name: "Red",        hue: 0.0,    saturation: 1.0),
+        ColorSwatch(name: "Orange",     hue: 0.067,  saturation: 1.0),
+        ColorSwatch(name: "Yellow",     hue: 0.135,  saturation: 1.0),
+        ColorSwatch(name: "Lime",       hue: 0.225,  saturation: 1.0),
+        ColorSwatch(name: "Green",      hue: 0.330,  saturation: 1.0),
+        ColorSwatch(name: "Teal",       hue: 0.490,  saturation: 1.0),
+        ColorSwatch(name: "Blue",       hue: 0.625,  saturation: 1.0),
+        ColorSwatch(name: "Indigo",     hue: 0.700,  saturation: 1.0),
+        ColorSwatch(name: "Purple",     hue: 0.765,  saturation: 1.0),
+        ColorSwatch(name: "Magenta",    hue: 0.850,  saturation: 1.0),
+        ColorSwatch(name: "Pink",       hue: 0.920,  saturation: 0.70),
+        ColorSwatch(name: "White",      hue: 0.110,  saturation: 0.06),
+    ]
+
+    /// Returns the index of the nearest preset to the given hue/saturation.
+    /// Used to highlight the matching swatch after the user commits a wheel pick.
+    static func nearest(hue: Double, saturation: Double) -> Int? {
+        guard saturation > 0.05 else {
+            // Near-white → highlight "White" swatch
+            return presets.firstIndex { $0.name == "White" }
+        }
+        var bestIdx: Int? = nil
+        var bestDist = Double.infinity
+        for (i, s) in presets.enumerated() {
+            guard s.name != "White" else { continue }
+            // Hue distance on a circle (wraps at 0/1)
+            let d = min(abs(s.hue - hue), 1.0 - abs(s.hue - hue))
+            let dist = d * d + (s.saturation - saturation) * (s.saturation - saturation) * 0.1
+            if dist < bestDist { bestDist = dist; bestIdx = i }
+        }
+        // Only highlight if within 15° of a preset
+        return bestDist < 0.02 ? bestIdx : nil
+    }
+}
