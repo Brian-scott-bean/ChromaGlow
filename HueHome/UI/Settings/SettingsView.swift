@@ -271,7 +271,7 @@ struct SettingsView: View {
                 showForgetAlert = true
             } label: {
                 HStack(spacing: 12) {
-                    iconCircle("link.badge.minus", color: .red)
+                    iconCircle("minus.circle.fill", color: .red)
 
                     Text("Forget All Bridges")
                         .font(.subheadline)

@@ -497,9 +497,14 @@ final class UnifiedOrchestrator {
     // ──────────────────────────────────────────────
 
     private func rebuildAllRooms() {
+        // Deduplicate by Hue resource ID — if the same physical bridge is registered
+        // under multiple BridgeRecord entries (same IP, different UUID), each room still
+        // appears only once. The first occurrence wins (sorted alphabetically overall).
+        var seen = Set<String>()
         allRooms = roomsByBridge.values
             .flatMap { $0 }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+            .filter { seen.insert($0.id).inserted }
     }
 
     private func updateRoom(_ id: String, isOn: Bool? = nil, brightness: Double? = nil) {

@@ -112,7 +112,11 @@ struct DashboardView: View {
     // ──────────────────────────────────────────────
 
     private var roomScrollView: some View {
-        ScrollView {
+        // @Bindable is required to get two-way Binding<T> from an @Observable class.
+        // Without it the slider setter is a no-op and the scrubber snaps back on release.
+        @Bindable var orch = orchestrator
+
+        return ScrollView {
             VStack(spacing: 0) {
                 summaryHeader
                     .padding(.horizontal, 20)
@@ -120,19 +124,15 @@ struct DashboardView: View {
                     .padding(.bottom, 16)
 
                 LazyVStack(spacing: 14) {
-                    ForEach(orchestrator.allRooms.indices, id: \.self) { i in
-                        let room = orchestrator.allRooms[i]
+                    ForEach(orch.allRooms.indices, id: \.self) { i in
                         RoomCard(
-                            room: Binding(
-                                get: { orchestrator.allRooms[safe: i] ?? room },
-                                set: { _ in }
-                            ),
+                            room: $orch.allRooms[i],
                             onToggle: {
                                 HapticManager.shared.light()
-                                orchestrator.toggleRoom(room)
+                                orchestrator.toggleRoom(orch.allRooms[i])
                             },
                             onBrightness: { brightness in
-                                orchestrator.setBrightness(brightness, for: room)
+                                orchestrator.setBrightness(brightness, for: orch.allRooms[i])
                             }
                         )
                         .padding(.horizontal, 20)
@@ -143,7 +143,7 @@ struct DashboardView: View {
                     }
                 }
                 .padding(.bottom, 100)   // clear custom tab bar
-                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allRooms.count)
+                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orch.allRooms.count)
             }
         }
         .navigationDestination(for: RoomDisplayItem.self) { room in
