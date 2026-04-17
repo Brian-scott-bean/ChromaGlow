@@ -24,19 +24,6 @@ struct GlassmorphicCard<Content: View>: View {
 
     var body: some View {
         ZStack {
-            // ── Ambient glow halo ─────────────────────────
-            // Shadow-based glow: visually equivalent to blur at normal size,
-            // but composited by Core Animation without a CALayer backing store.
-            // Each blur() forces an off-screen GPU texture allocation;
-            // shadow avoids that overhead entirely.
-            if isActive {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(glowColor.opacity(0.45))
-                    .scaleEffect(x: 1.12, y: 1.06)
-                    .shadow(color: glowColor.opacity(0.65), radius: glowRadius * 0.55, x: 0, y: 4)
-                    .allowsHitTesting(false)
-            }
-
             // ── Glass surface ─────────────────────────────
             RoundedRectangle(cornerRadius: cornerRadius)
                 .fill(.ultraThinMaterial)
@@ -59,6 +46,16 @@ struct GlassmorphicCard<Content: View>: View {
             content()
                 .padding(padding)
         }
+        // ── Glow halo via shadow — stays within layout bounds ─────────────────
+        // Using .shadow on the ZStack instead of an oversized fill rectangle:
+        //   ✓ Never overflows card bounds into adjacent cards or screen edges
+        //   ✓ No off-screen GPU render texture (no .blur())
+        //   ✓ Composited by Core Animation at the layer level
+        .shadow(
+            color: isActive ? glowColor.opacity(0.55) : .clear,
+            radius: glowRadius * 0.5,
+            x: 0, y: 6
+        )
         .animation(.spring(response: 0.38, dampingFraction: 0.72), value: isActive)
     }
 }

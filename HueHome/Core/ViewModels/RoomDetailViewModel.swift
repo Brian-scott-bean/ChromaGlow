@@ -77,10 +77,29 @@ final class RoomDetailViewModel {
         }
 
         do {
-            let allLights = try await api.fetchLights()
+            async let lightsFetch  = api.fetchLights()
+            // If childResourceRefs were not cached (room loaded from preloadCached before
+            // loadAll() completed), concurrently fetch the latest room children from the bridge.
+            // This is the common "fast cold-start" path: cached room → tap → loadLights.
+            let needsFallback = room.childResourceRefs.isEmpty
+            async let roomsFetch: [HueRoom]? = needsFallback ? api.fetchRooms() : nil
+
+            let allLights = try await lightsFetch
             appendLog("✅ Total lights from Bridge: \(allLights.count)")
 
-            let roomLights = allLights.filter { lightBelongsToRoom($0) }
+            // Resolve the effective child refs — prefer cached, fall back to live fetch.
+            var effectiveRefs = room.childResourceRefs
+            if effectiveRefs.isEmpty {
+                if let liveRooms = try? await roomsFetch,
+                   let liveRoom = liveRooms.first(where: { $0.id == room.id }) {
+                    effectiveRefs = liveRoom.children.map { ($0.rid, $0.rtype) }
+                    appendLog("✅ Fetched \(effectiveRefs.count) child refs from bridge (refs were empty)")
+                } else {
+                    appendLog("⚠️ Could not resolve child refs — room may show no lights")
+                }
+            }
+
+            let roomLights = allLights.filter { lightBelongsToRoom($0, refs: effectiveRefs) }
             appendLog("💡 '\(room.name)' → \(roomLights.count) light(s) matched")
 
             lights = roomLights.map { hl in
@@ -193,8 +212,12 @@ final class RoomDetailViewModel {
     ///   - Newer: room.children contains {rtype:"light", rid: light.id}
     ///   - Older: room.children contains {rtype:"device", rid: device_id}
     ///            and light.owner.rid == device_id
-    private func lightBelongsToRoom(_ light: HueLight) -> Bool {
-        for ref in room.childResourceRefs {
+    /// Returns true if `light` belongs to this room.
+    /// Accepts an explicit `refs` array so the caller can pass live-fetched children when
+    /// `room.childResourceRefs` is empty (cached room pre-loadAll).
+    private func lightBelongsToRoom(_ light: HueLight,
+                                    refs: [(rid: String, rtype: String)]) -> Bool {
+        for ref in refs {
             if ref.rtype == "light" && ref.rid == light.id { return true }
             if ref.rtype == "device",
                let ownerID = light.owner?.rid,
