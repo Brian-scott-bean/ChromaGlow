@@ -574,18 +574,24 @@ final class UnifiedOrchestrator {
             .filter { seen.insert($0.id).inserted }
     }
 
+    /// Update a room's state and trigger a view re-render.
+    ///
+    /// IMPORTANT — do NOT use allRooms[i].property = value here.
+    /// @Observable in iOS 17 uses _modify coroutines for subscript access;
+    /// nested _modify (array subscript inside @Observable _modify) does not
+    /// reliably fire the observation registrar. Only a FULL ARRAY ASSIGNMENT
+    /// (allRooms = newArray) is guaranteed to trigger SwiftUI re-renders.
+    /// We achieve that by updating roomsByBridge (local dict, not observed
+    /// by views) then calling rebuildAllRooms() which assigns allRooms = [...].
     private func updateRoom(_ id: String, isOn: Bool? = nil, brightness: Double? = nil) {
-        if let i = allRooms.firstIndex(where: { $0.id == id }) {
-            if let on  = isOn       { allRooms[i].isOn       = on }
-            if let bri = brightness { allRooms[i].brightness = bri }
-        }
-        // Also update per-bridge cache
+        var anyChanged = false
         for bridgeID in roomsByBridge.keys {
-            if let i = roomsByBridge[bridgeID]?.firstIndex(where: { $0.id == id }) {
-                if let on  = isOn       { roomsByBridge[bridgeID]![i].isOn       = on }
-                if let bri = brightness { roomsByBridge[bridgeID]![i].brightness = bri }
-            }
+            guard let i = roomsByBridge[bridgeID]?.firstIndex(where: { $0.id == id }) else { continue }
+            if let on  = isOn       { roomsByBridge[bridgeID]![i].isOn       = on;  anyChanged = true }
+            if let bri = brightness { roomsByBridge[bridgeID]![i].brightness = bri; anyChanged = true }
         }
+        // Full-array assignment via rebuildAllRooms — guaranteed to notify @Observable
+        if anyChanged { rebuildAllRooms() }
     }
 
     // ──────────────────────────────────────────────
@@ -668,13 +674,14 @@ final class UnifiedOrchestrator {
     /// Activate a scene. Optimistic: marks it active locally, clears others
     /// in the same room, then fires the API call asynchronously.
     func activateGlobalScene(_ scene: GlobalSceneItem) {
-        // Optimistic update
-        for i in globalScenes.indices {
-            if globalScenes[i].roomID == scene.roomID &&
-               globalScenes[i].bridgeID == scene.bridgeID {
-                globalScenes[i].isActive = (globalScenes[i].id == scene.id)
+        // Optimistic update via full-array replacement — avoids @Observable subscript bug
+        var updated = globalScenes
+        for i in updated.indices {
+            if updated[i].roomID == scene.roomID && updated[i].bridgeID == scene.bridgeID {
+                updated[i].isActive = (updated[i].id == scene.id)
             }
         }
+        globalScenes = updated   // full assignment — reliably triggers @Observable
 
         guard let client = clients[scene.bridgeID] else { return }
         Task {

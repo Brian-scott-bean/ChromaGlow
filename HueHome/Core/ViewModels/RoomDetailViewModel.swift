@@ -105,14 +105,31 @@ final class RoomDetailViewModel {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Safe @Observable mutation helper
+    // ──────────────────────────────────────────────
+
+    /// Mutate a single light by ID via copy-mutate-assign.
+    ///
+    /// @Observable in iOS 17 uses _modify coroutines for subscript access.
+    /// Nested _modify (array[i].property = value inside @Observable _modify)
+    /// does NOT reliably fire the observation registrar on iOS 17, causing
+    /// SwiftUI to skip re-renders after optimistic state changes.
+    /// A full property assignment (lights = newArray) always fires the
+    /// observation registrar, so we use this pattern everywhere.
+    private func mutateLight(id: String, _ mutation: (inout LightDisplayItem) -> Void) {
+        guard let idx = lights.firstIndex(where: { $0.id == id }) else { return }
+        var arr = lights
+        mutation(&arr[idx])
+        lights = arr    // full assignment — guaranteed @Observable notification
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Toggle
     // ──────────────────────────────────────────────
 
     func toggleLight(_ item: LightDisplayItem) {
         let newState = !item.isOn
-        if let idx = lights.firstIndex(where: { $0.id == item.id }) {
-            lights[idx].isOn = newState
-        }
+        mutateLight(id: item.id) { $0.isOn = newState }
         appendLog("🔄 Toggling '\(item.name)' → \(newState ? "ON" : "OFF")")
 
         // Demo mode: local state update is all we need
@@ -126,9 +143,7 @@ final class RoomDetailViewModel {
             } catch {
                 appendLog("❌ Toggle failed for '\(item.name)': \(error.localizedDescription)")
                 log.error("RoomDetail: \(error.localizedDescription, privacy: .public)")
-                if let idx = lights.firstIndex(where: { $0.id == item.id }) {
-                    lights[idx].isOn = !newState   // rollback
-                }
+                mutateLight(id: item.id) { $0.isOn = !newState }   // rollback
             }
         }
     }
@@ -141,10 +156,7 @@ final class RoomDetailViewModel {
         let clamped  = min(100, max(1, brightness))
         let previous = item.brightness
 
-        if let idx = lights.firstIndex(where: { $0.id == item.id }) {
-            lights[idx].brightness = clamped
-            if !lights[idx].isOn { lights[idx].isOn = true }
-        }
+        mutateLight(id: item.id) { $0.brightness = clamped; $0.isOn = true }
         appendLog("🌓 '\(item.name)' brightness → \(Int(clamped))%")
 
         // Demo mode: local state update is all we need
@@ -159,10 +171,7 @@ final class RoomDetailViewModel {
                 log.info("RoomDetail: '\(item.name, privacy: .public)' brightness \(Int(clamped), privacy: .public)%.")
             } catch {
                 appendLog("❌ Brightness failed for '\(item.name)': \(error.localizedDescription)")
-                if let idx = lights.firstIndex(where: { $0.id == item.id }) {
-                    lights[idx].brightness = previous
-                    lights[idx].isOn = item.isOn
-                }
+                mutateLight(id: item.id) { $0.brightness = previous; $0.isOn = item.isOn }
             }
         }
     }
@@ -191,10 +200,7 @@ final class RoomDetailViewModel {
     // ──────────────────────────────────────────────
 
     func setColor(x: Double, y: Double, for item: LightDisplayItem) {
-        if let idx = lights.firstIndex(where: { $0.id == item.id }) {
-            lights[idx].colorX = x
-            lights[idx].colorY = y
-        }
+        mutateLight(id: item.id) { $0.colorX = x; $0.colorY = y }
         appendLog("🎨 '\(item.name)' color → xy(\(String(format: "%.3f", x)), \(String(format: "%.3f", y)))")
         if isDemoMode { return }
         Task {
@@ -203,10 +209,7 @@ final class RoomDetailViewModel {
                 appendLog("✅ '\(item.name)' color committed.")
             } catch {
                 appendLog("❌ Color failed: \(error.localizedDescription)")
-                if let idx = lights.firstIndex(where: { $0.id == item.id }) {
-                    lights[idx].colorX = item.colorX
-                    lights[idx].colorY = item.colorY
-                }
+                mutateLight(id: item.id) { $0.colorX = item.colorX; $0.colorY = item.colorY }
             }
         }
     }
@@ -216,9 +219,7 @@ final class RoomDetailViewModel {
     // ──────────────────────────────────────────────
 
     func setColorTemp(mirek: Int, for item: LightDisplayItem) {
-        if let idx = lights.firstIndex(where: { $0.id == item.id }) {
-            lights[idx].colorTempMirek = mirek
-        }
+        mutateLight(id: item.id) { $0.colorTempMirek = mirek }
         appendLog("🌡️ '\(item.name)' color temp → \(mirek) mirek (\(HueColorUtils.kelvin(from: mirek))K)")
         if isDemoMode { return }
         Task {
@@ -227,9 +228,7 @@ final class RoomDetailViewModel {
                 appendLog("✅ '\(item.name)' color temp committed.")
             } catch {
                 appendLog("❌ Color temp failed: \(error.localizedDescription)")
-                if let idx = lights.firstIndex(where: { $0.id == item.id }) {
-                    lights[idx].colorTempMirek = item.colorTempMirek
-                }
+                mutateLight(id: item.id) { $0.colorTempMirek = item.colorTempMirek }
             }
         }
     }
@@ -279,10 +278,8 @@ final class RoomDetailViewModel {
     }
 
     func activateScene(_ item: SceneDisplayItem) {
-        // Optimistic: mark this scene active, all others inactive
-        for idx in scenes.indices {
-            scenes[idx].isActive = (scenes[idx].id == item.id)
-        }
+        // Optimistic: full-array map → reliably triggers @Observable on iOS 17
+        scenes = scenes.map { s in var c = s; c.isActive = (s.id == item.id); return c }
         appendLog("🎬 Activating scene '\(item.name)'…")
         HapticManager.shared.medium()
 
@@ -300,7 +297,7 @@ final class RoomDetailViewModel {
             } catch {
                 appendLog("❌ Scene activation failed: \(error.localizedDescription)")
                 // Rollback: clear all active states (actual state unknown after failure)
-                for idx in scenes.indices { scenes[idx].isActive = false }
+                scenes = scenes.map { s in var c = s; c.isActive = false; return c }
             }
         }
     }
@@ -395,28 +392,37 @@ final class RoomDetailViewModel {
         }
     }
 
+    /// Applies SSE light-state updates as a single full-array swap.
+    /// Batch all mutations into one new array then assign once —
+    /// guarantees exactly one @Observable notification per SSE event.
     private func applySSEUpdates(_ updates: [SSEResourceUpdate]) {
-        for update in updates {
-            if update.type == "light",
-               let idx = lights.firstIndex(where: { $0.id == update.id }) {
-                let name = lights[idx].name
-                if let on = update.on {
-                    lights[idx].isOn = on.on
-                    appendLog("🔴 SSE: '\(name)' → \(on.on ? "ON" : "OFF")")
-                }
-                if let dimming = update.dimming {
-                    lights[idx].brightness = dimming.brightness
-                    appendLog("🌓 SSE: '\(name)' → \(Int(dimming.brightness))%")
-                }
-                if let color = update.color {
-                    lights[idx].colorX = color.xy.x
-                    lights[idx].colorY = color.xy.y
-                }
-                if let ct = update.colorTemp {
-                    lights[idx].colorTempMirek = ct.mirek
-                }
+        var arr = lights
+        var changed = false
+        for update in updates where update.type == "light" {
+            guard let idx = arr.firstIndex(where: { $0.id == update.id }) else { continue }
+            let name = arr[idx].name
+            if let on = update.on {
+                arr[idx].isOn = on.on
+                appendLog("🔴 SSE: '\(name)' → \(on.on ? "ON" : "OFF")")
+                changed = true
+            }
+            if let dimming = update.dimming {
+                arr[idx].brightness = dimming.brightness
+                appendLog("🌓 SSE: '\(name)' → \(Int(dimming.brightness))%")
+                changed = true
+            }
+            if let color = update.color {
+                arr[idx].colorX = color.xy.x
+                arr[idx].colorY = color.xy.y
+                changed = true
+            }
+            if let ct = update.colorTemp {
+                arr[idx].colorTempMirek = ct.mirek
+                changed = true
             }
         }
+        // Single full-array assignment — one @Observable notification for entire batch
+        if changed { lights = arr }
     }
 
     // ──────────────────────────────────────────────
