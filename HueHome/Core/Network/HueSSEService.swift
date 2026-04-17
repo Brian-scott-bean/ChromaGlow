@@ -54,6 +54,8 @@ final class HueSSEService: @unchecked Sendable {
     private init() {}
 
     private let log = Logger(subsystem: "com.huehome.pro", category: "SSE")
+    /// Shared decoder — JSONDecoder is stateless/thread-safe; reuse avoids heap churn on every SSE frame.
+    private static let decoder = JSONDecoder()
 
     // URLSession with no read/resource timeout — required for indefinite SSE streaming.
     // certDelegate is stored explicitly so it is retained for the lifetime of this service.
@@ -109,7 +111,7 @@ final class HueSSEService: @unchecked Sendable {
                               let payload = jsonStr.data(using: .utf8) else { continue }
 
                         do {
-                            let envelopes = try JSONDecoder().decode([SSEEnvelope].self, from: payload)
+                            let envelopes = try Self.decoder.decode([SSEEnvelope].self, from: payload)
                             for env in envelopes where env.type == "update" {
                                 continuation.yield(env.data)
                             }

@@ -67,12 +67,20 @@ final class UnifiedOrchestrator {
     // MARK: - Internal
 
     /// Active bridge clients.  keyed by BridgeRecord.id
+    /// @ObservationIgnored: views read allRooms, never clients directly.
+    @ObservationIgnored
     private var clients: [String: BridgeAPIClient] = [:]
 
     /// Rooms per bridge — used for merge.  keyed by BridgeRecord.id
+    /// @ObservationIgnored: views observe allRooms (the merged, sorted output).
+    /// Marking this prevents every SSE write to roomsByBridge from triggering
+    /// a redundant observation scan across all @Observable subscribers.
+    @ObservationIgnored
     private var roomsByBridge: [String: [RoomDisplayItem]] = [:]
 
     /// SSE tasks per bridge — cancelled when bridge is removed.
+    /// @ObservationIgnored: purely infrastructure, no UI reads this.
+    @ObservationIgnored
     private var sseTasks: [String: Task<Void, Never>] = [:]
 
     /// One shared URL session for all SSE streams.
@@ -243,34 +251,29 @@ final class UnifiedOrchestrator {
         log.info("Preloaded \(items.count) rooms from SwiftData cache (\(byBridge.keys.count) bridge(s))")
     }
 
-    /// Write current live room states back to SwiftData for next-launch preload.
-    /// Called after every successful loadAll(). Non-blocking — errors are silently discarded.
     func writeCache(to context: ModelContext) {
         do {
+            // Fetch ALL cached rooms in ONE query — avoids the N+1 pattern of one
+            // FetchDescriptor per room inside the loop (previously O(N) round-trips).
+            let existing = try context.fetch(FetchDescriptor<HueLocalRoom>())
+            var existingByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.roomID, $0) })
+            let now = Date()
+
             for room in allRooms {
-                let id = room.id
-                let descriptor = FetchDescriptor<HueLocalRoom>(
-                    predicate: #Predicate { $0.roomID == id }
-                )
-                if let existing = try context.fetch(descriptor).first {
-                    existing.cachedName          = room.name
-                    existing.lastIsOn            = room.isOn
-                    existing.lastBrightness      = room.brightness
-                    existing.cachedLightCount    = room.lightCount
-                    existing.cachedArchetype     = room.archetype
-                    existing.cachedGroupedLightID = room.groupedLightID   // persist for instant toggle on next launch
-                    existing.bridgeID            = room.bridgeID
-                    existing.updatedAt           = Date()
-                } else {
-                    let local = HueLocalRoom(roomID: id, bridgeID: room.bridgeID)
-                    local.cachedName             = room.name
-                    local.lastIsOn               = room.isOn
-                    local.lastBrightness         = room.brightness
-                    local.cachedLightCount       = room.lightCount
-                    local.cachedArchetype        = room.archetype
-                    local.cachedGroupedLightID   = room.groupedLightID   // persist for instant toggle on next launch
-                    context.insert(local)
-                }
+                let record = existingByID[room.id] ?? {
+                    let r = HueLocalRoom(roomID: room.id, bridgeID: room.bridgeID)
+                    context.insert(r)
+                    existingByID[room.id] = r
+                    return r
+                }()
+                record.cachedName          = room.name
+                record.lastIsOn            = room.isOn
+                record.lastBrightness      = room.brightness
+                record.cachedLightCount    = room.lightCount
+                record.cachedArchetype     = room.archetype
+                record.cachedGroupedLightID = room.groupedLightID
+                record.bridgeID            = room.bridgeID
+                record.updatedAt           = now
             }
             try context.save()
         } catch {
