@@ -791,7 +791,11 @@ final class UnifiedOrchestrator {
                         rooms[idx].dominantMirek  = nil
                         roomsByBridge[bridgeID]   = rooms
                         mutated = true
-                    } else if let mirek = update.colorTemp?.mirek, rooms[idx].dominantColorX == nil {
+                    } else if let mirek = update.colorTemp?.mirek {
+                        // Always apply CT updates — even when a color dominant was stored.
+                        // Allows warm-white scenes to correctly override a colour glow.
+                        rooms[idx].dominantColorX = nil   // clear colour when CT takes over
+                        rooms[idx].dominantColorY = nil
                         rooms[idx].dominantMirek  = mirek
                         roomsByBridge[bridgeID]   = rooms
                         mutated = true
@@ -806,7 +810,9 @@ final class UnifiedOrchestrator {
                         zones[idx].dominantMirek  = nil
                         zonesByBridge[bridgeID]   = zones
                         mutated = true
-                    } else if let mirek = update.colorTemp?.mirek, zones[idx].dominantColorX == nil {
+                    } else if let mirek = update.colorTemp?.mirek {
+                        zones[idx].dominantColorX = nil
+                        zones[idx].dominantColorY = nil
                         zones[idx].dominantMirek  = mirek
                         zonesByBridge[bridgeID]   = zones
                         mutated = true
@@ -864,6 +870,82 @@ final class UnifiedOrchestrator {
             .flatMap { $0 }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
             .filter { seen.insert($0.id).inserted }
+    }
+
+    /// Re-derives dominant colors for every room and zone on `bridgeID`
+    /// by fetching only /resource/light (cheap — no room/scene data needed).
+    ///
+    /// Called after scene activation (1.5 s delay) to guarantee glow updates
+    /// even when the bridge omits color fields from scene SSE events.
+    private func refreshDominantColors(for bridgeID: String) {
+        guard let client = clients[bridgeID] else { return }
+        Task {
+            guard let lights = try? await client.fetchLights() else { return }
+            await MainActor.run {
+                // ── Rooms ──────────────────────────────────────────
+                if var rooms = roomsByBridge[bridgeID] {
+                    for idx in rooms.indices {
+                        let room = rooms[idx]
+                        guard room.isOn else {
+                            rooms[idx].dominantColorX = nil
+                            rooms[idx].dominantColorY = nil
+                            rooms[idx].dominantMirek  = nil
+                            continue
+                        }
+                        // Lights that belong to this room (using the existing reverse map)
+                        let roomLights = lights.filter { lightIDToRoomID[$0.id] == room.id }
+                        let onLights   = roomLights.filter { $0.on.on }
+                        if let best = onLights
+                            .filter({ $0.color != nil })
+                            .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }) {
+                            rooms[idx].dominantColorX = best.color!.xy.x
+                            rooms[idx].dominantColorY = best.color!.xy.y
+                            rooms[idx].dominantMirek  = nil
+                        } else if let best = onLights
+                            .filter({ $0.color_temperature?.mirek != nil })
+                            .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }),
+                            let mirek = best.color_temperature?.mirek {
+                            rooms[idx].dominantColorX = nil
+                            rooms[idx].dominantColorY = nil
+                            rooms[idx].dominantMirek  = mirek
+                        }
+                    }
+                    roomsByBridge[bridgeID] = rooms
+                }
+                // ── Zones ──────────────────────────────────────────
+                if var zones = zonesByBridge[bridgeID] {
+                    for idx in zones.indices {
+                        let zone = zones[idx]
+                        guard zone.isOn else {
+                            zones[idx].dominantColorX = nil
+                            zones[idx].dominantColorY = nil
+                            zones[idx].dominantMirek  = nil
+                            continue
+                        }
+                        let zoneLights = lights.filter { lightIDToZoneID[$0.id] == zone.id }
+                        let onLights   = zoneLights.filter { $0.on.on }
+                        if let best = onLights
+                            .filter({ $0.color != nil })
+                            .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }) {
+                            zones[idx].dominantColorX = best.color!.xy.x
+                            zones[idx].dominantColorY = best.color!.xy.y
+                            zones[idx].dominantMirek  = nil
+                        } else if let best = onLights
+                            .filter({ $0.color_temperature?.mirek != nil })
+                            .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }),
+                            let mirek = best.color_temperature?.mirek {
+                            zones[idx].dominantColorX = nil
+                            zones[idx].dominantColorY = nil
+                            zones[idx].dominantMirek  = mirek
+                        }
+                    }
+                    zonesByBridge[bridgeID] = zones
+                }
+                rebuildAllRooms()
+                rebuildAllZones()
+                log.info("refreshDominantColors: done for bridge \(bridgeID)")
+            }
+        }
     }
 
     /// Update a room's state and trigger an immediate view re-render.
@@ -990,6 +1072,11 @@ final class UnifiedOrchestrator {
         Task {
             try? await client.activateScene(id: scene.bridgeSceneID)
             log.info("Activated scene '\(scene.name)' on bridge \(scene.bridgeID)")
+            // Give the bridge 1.5 s to settle all light transitions, then
+            // re-derive dominant colors so glows update even when the bridge
+            // omits color fields from the burst of scene SSE events.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            refreshDominantColors(for: scene.bridgeID)
         }
     }
 }

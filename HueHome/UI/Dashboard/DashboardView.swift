@@ -409,12 +409,14 @@ struct RoomCard: View {
             }
         }
         // ── Glow color sync (same pattern as isOn above) ─────────────────────
-        // dominantColorX changes when:
-        //   • SSE "light" event arrives after a color wheel commit
-        //   • loadAll() refreshes the room's dominant light
-        // dominantMirek changes for white-ambiance only rooms.
-        // Both update localGlowColor with an animated transition.
+        // Watch both CIE components: a scene can shift Y without changing X.
+        // dominantMirek fires for warm/cool-only rooms (no colour capable lights).
         .onChange(of: room.dominantColorX) { _, _ in
+            withAnimation(.easeInOut(duration: 0.4)) {
+                localGlowColor = Self.resolveGlowColor(for: room)
+            }
+        }
+        .onChange(of: room.dominantColorY) { _, _ in
             withAnimation(.easeInOut(duration: 0.4)) {
                 localGlowColor = Self.resolveGlowColor(for: room)
             }
