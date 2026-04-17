@@ -38,6 +38,11 @@ final class UnifiedOrchestrator {
     // MARK: - Public State
 
     /// All rooms across every active bridge, sorted alphabetically.
+    /// Reverse map: light UUID → room ID. Rebuilt on every loadAll().
+    /// applySSEEvent("light") uses this instead of scanning childResourceRefs
+    /// (which stores device refs on older firmware, not light refs).
+    private var lightIDToRoomID: [String: String] = [:]
+
     var allRooms: [RoomDisplayItem] = []
 
     /// Per-bridge SSE connection status  (bridgeID → status)
@@ -348,7 +353,7 @@ final class UnifiedOrchestrator {
         defer { isLoading = false }
 
         // Parallel fetch using TaskGroup
-        await withTaskGroup(of: (String, [RoomDisplayItem]).self) { group in
+        await withTaskGroup(of: (String, [RoomDisplayItem], [String: String]).self) { group in
             for (bridgeID, client) in clients {
                 group.addTask { [client, bridgeID] in
                     do {
@@ -367,6 +372,7 @@ final class UnifiedOrchestrator {
                         )
 
                         var items: [RoomDisplayItem] = []
+                        var bridgeLightMap: [String: String] = [:]  // lightID → roomID
                         for room in rooms {
                             var brightness = 100.0
                             var isOn = false
@@ -411,6 +417,12 @@ final class UnifiedOrchestrator {
                                 }
                             }
 
+                            // Build per-room light UUID → room ID entries.
+                            // Accumulated into bridgeLightMap per-bridge below.
+                            for light in roomLights {
+                                bridgeLightMap[light.id] = room.id
+                            }
+
                             items.append(RoomDisplayItem(
                                 id:                room.id,
                                 name:              room.metadata.name,
@@ -430,19 +442,23 @@ final class UnifiedOrchestrator {
                             self.connectionStatus[bridgeID] = .connected
                             self.log.info("Bridge \(bridgeID): loaded \(items.count) rooms")
                         }
-                        return (bridgeID, items)
+                        return (bridgeID, items, bridgeLightMap)
                     } catch {
                         await MainActor.run {
                             self.connectionStatus[bridgeID] = .error(error.localizedDescription)
                             self.log.error("Bridge \(bridgeID) load failed: \(error.localizedDescription)")
                         }
-                        return (bridgeID, [])
+                        return (bridgeID, [], [:])
                     }
                 }
             }
 
-            for await (bridgeID, rooms) in group {
+            for await (bridgeID, rooms, lightMap) in group {
                 roomsByBridge[bridgeID] = rooms
+                // Merge this bridge's lightID→roomID entries into the global reverse map.
+                for (lightID, roomID) in lightMap {
+                    lightIDToRoomID[lightID] = roomID
+                }
             }
         }
 
@@ -731,12 +747,11 @@ final class UnifiedOrchestrator {
             // including after our own PUT from LightControlView.
             case "light":
                 guard var rooms = roomsByBridge[bridgeID] else { continue }
-                // Find the room that owns this light UUID via childResourceRefs.
-                guard let idx = rooms.firstIndex(where: { room in
-                    room.childResourceRefs.contains { ref in
-                        ref.rtype == "light" && ref.rid == update.id
-                    }
-                }) else { continue }
+                // lightIDToRoomID is built by loadAll() and maps lightUUID → roomID.
+                // This is correct for both "light" refs (new firmware) and "device" refs
+                // (older firmware) because it's built from the actual lights match in loadAll().
+                guard let roomID = lightIDToRoomID[update.id],
+                      let idx = rooms.firstIndex(where: { $0.id == roomID }) else { continue }
 
                 // Respect on-state: if the light is being turned off, leave the
                 // existing dominant color as-is. The room card glows correctly
