@@ -24,13 +24,17 @@ final class RoomDetailViewModel {
     let room: RoomDisplayItem
 
     // MARK: Dependencies
-    private let api: HueAPIClient
+    private let api: HueAPIClient?
+    private let isDemoMode: Bool
     private let log = Logger(subsystem: "com.huehome.pro", category: "RoomDetail")
 
     // MARK: Init
-    init(room: RoomDisplayItem, api: HueAPIClient = .shared) {
-        self.room = room
-        self.api  = api
+    /// - Parameters:
+    ///   - api: The HueAPIClient for this room's bridge. Pass nil to run in demo mode.
+    init(room: RoomDisplayItem, api: HueAPIClient? = nil, isDemoMode: Bool = false) {
+        self.room       = room
+        self.api        = api
+        self.isDemoMode = isDemoMode || (api == nil)
     }
 
     // ──────────────────────────────────────────────
@@ -51,7 +55,22 @@ final class RoomDetailViewModel {
         guard !isLoading else { return }
         isLoading = true
         errorMessage = nil
+
+        // Demo mode: load mock data instantly, no network
+        if isDemoMode {
+            appendLog("✦ Demo: loading mock lights for '\(room.name)'")
+            lights = DemoDataProvider.lights(for: room.id)
+            appendLog("✅ Demo: \(lights.count) light(s) loaded")
+            isLoading = false
+            return
+        }
+
         appendLog("📡 Fetching lights for '\(room.name)'…")
+        guard let api else {
+            errorMessage = "No bridge client available"
+            isLoading = false
+            return
+        }
 
         do {
             let allLights = try await api.fetchLights()
@@ -96,9 +115,12 @@ final class RoomDetailViewModel {
         }
         appendLog("🔄 Toggling '\(item.name)' → \(newState ? "ON" : "OFF")")
 
+        // Demo mode: local state update is all we need
+        if isDemoMode { return }
+
         Task {
             do {
-                try await api.setLight(id: item.id, on: newState)
+                try await api?.setLight(id: item.id, on: newState)
                 appendLog("✅ '\(item.name)' → \(newState ? "ON" : "OFF")")
                 log.info("RoomDetail: '\(item.name, privacy: .public)' set to \(newState, privacy: .public).")
             } catch {
@@ -125,12 +147,15 @@ final class RoomDetailViewModel {
         }
         appendLog("🌓 '\(item.name)' brightness → \(Int(clamped))%")
 
+        // Demo mode: local state update is all we need
+        if isDemoMode { return }
+
         Task {
             do {
                 if !item.isOn {
-                    try await api.setLight(id: item.id, on: true)
+                    try await api?.setLight(id: item.id, on: true)
                 }
-                try await api.setLightBrightness(id: item.id, brightness: clamped)
+                try await api?.setLightBrightness(id: item.id, brightness: clamped)
                 appendLog("✅ '\(item.name)' brightness set to \(Int(clamped))%.")
                 log.info("RoomDetail: '\(item.name, privacy: .public)' brightness \(Int(clamped), privacy: .public)%.")
             } catch {
@@ -172,9 +197,10 @@ final class RoomDetailViewModel {
             lights[idx].colorY = y
         }
         appendLog("🎨 '\(item.name)' color → xy(\(String(format: "%.3f", x)), \(String(format: "%.3f", y)))")
+        if isDemoMode { return }
         Task {
             do {
-                try await api.setLightColor(id: item.id, x: x, y: y)
+                try await api?.setLightColor(id: item.id, x: x, y: y)
                 appendLog("✅ '\(item.name)' color committed.")
             } catch {
                 appendLog("❌ Color failed: \(error.localizedDescription)")
@@ -195,9 +221,10 @@ final class RoomDetailViewModel {
             lights[idx].colorTempMirek = mirek
         }
         appendLog("🌡️ '\(item.name)' color temp → \(mirek) mirek (\(HueColorUtils.kelvin(from: mirek))K)")
+        if isDemoMode { return }
         Task {
             do {
-                try await api.setLightColorTemp(id: item.id, mirek: mirek)
+                try await api?.setLightColorTemp(id: item.id, mirek: mirek)
                 appendLog("✅ '\(item.name)' color temp committed.")
             } catch {
                 appendLog("❌ Color temp failed: \(error.localizedDescription)")
@@ -213,7 +240,16 @@ final class RoomDetailViewModel {
     // ──────────────────────────────────────────────
 
     func loadScenes() async {
+        // Demo mode: load mock scenes instantly
+        if isDemoMode {
+            appendLog("✦ Demo: loading mock scenes for '\(room.name)'")
+            scenes = DemoDataProvider.scenes(for: room.id)
+            appendLog("✅ Demo: \(scenes.count) scene(s) loaded")
+            return
+        }
+
         appendLog("🎬 Fetching scenes for '\(room.name)' (room.id = \(room.id))…")
+        guard let api else { return }
         do {
             let all = try await api.fetchScenes()
             appendLog("🎬 Total scenes on Bridge: \(all.count)")
@@ -251,9 +287,15 @@ final class RoomDetailViewModel {
         appendLog("🎬 Activating scene '\(item.name)'…")
         HapticManager.shared.medium()
 
+        // Demo mode: local state update only
+        if isDemoMode {
+            appendLog("✦ Demo: scene '\(item.name)' activated")
+            return
+        }
+
         Task {
             do {
-                try await api.activateScene(id: item.id)
+                try await api?.activateScene(id: item.id)
                 appendLog("✅ Scene '\(item.name)' activated.")
                 log.info("RoomDetail: scene '\(item.name, privacy: .public)' activated.")
             } catch {
@@ -270,6 +312,13 @@ final class RoomDetailViewModel {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, !lights.isEmpty else { return false }
 
+        // Demo mode: pretend scene was created
+        if isDemoMode {
+            appendLog("✦ Demo: scene '\(trimmed)' created locally")
+            scenes.append(SceneDisplayItem(id: UUID().uuidString, name: trimmed, isActive: false))
+            return true
+        }
+
         appendLog("✨ Creating scene '\(trimmed)' with \(lights.count) light(s)…")
 
         let request = CreateSceneRequest.fromCurrentLights(
@@ -279,7 +328,7 @@ final class RoomDetailViewModel {
         )
 
         do {
-            try await api.createScene(request)
+            try await api?.createScene(request)
             appendLog("✅ Scene '\(trimmed)' saved to Bridge.")
             log.info("RoomDetail: scene '\(trimmed, privacy: .public)' created.")
             await loadScenes()   // reload strip so new chip appears immediately
@@ -296,9 +345,14 @@ final class RoomDetailViewModel {
         scenes.removeAll { $0.id == item.id }
         appendLog("🗑 Deleting scene '\(item.name)'…")
 
+        if isDemoMode {
+            appendLog("✦ Demo: scene '\(item.name)' removed locally")
+            return
+        }
+
         Task {
             do {
-                try await api.deleteScene(id: item.id)
+                try await api?.deleteScene(id: item.id)
                 appendLog("✅ Scene '\(item.name)' deleted.")
             } catch {
                 appendLog("❌ Delete failed: \(error.localizedDescription)")
@@ -314,7 +368,8 @@ final class RoomDetailViewModel {
     /// Long-running — call from a SwiftUI .task{} so it auto-cancels on view disappear.
     /// Subscribes to "light" type SSE events and patches individual bulb state.
     func runSSE() async {
-        guard let creds = try? api.credentials() else {
+        guard !isDemoMode else { return }  // no SSE in demo mode
+        guard let creds = try? api?.credentials() else {
             appendLog("⚠️ SSE: No credentials — skipping live sync.")
             return
         }

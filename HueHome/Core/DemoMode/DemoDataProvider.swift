@@ -127,6 +127,85 @@ enum DemoDataProvider {
         return [main, guest]
     }
 
+    // MARK: - Mock Lights (per room)
+
+    static func lights(for roomID: String) -> [LightDisplayItem] {
+        switch roomID {
+        case "demo-room-living":
+            return [
+                LightDisplayItem(id: "dl-lv-1", name: "Floor Lamp",    archetype: "floor_lantern",    isOn: true,  brightness: 78,  colorX: 0.45, colorY: 0.41, colorTempMirek: 370, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-lv-2", name: "Sofa Lamp",     archetype: "table_shade",      isOn: true,  brightness: 55,  colorX: 0.48, colorY: 0.40, colorTempMirek: 400, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-lv-3", name: "TV Backlight",  archetype: "hue_lightstrip",   isOn: true,  brightness: 90,  colorX: 0.16, colorY: 0.10, colorTempMirek: nil, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-lv-4", name: "Ceiling 1",     archetype: "sultan_bulb",      isOn: false, brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: 300, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-lv-5", name: "Ceiling 2",     archetype: "sultan_bulb",      isOn: false, brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: 300, mirekMin: 153, mirekMax: 500),
+            ]
+        case "demo-room-kitchen":
+            return [
+                LightDisplayItem(id: "dl-kt-1", name: "Counter Strip", archetype: "hue_lightstrip",   isOn: true,  brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: 233, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-kt-2", name: "Island Light",  archetype: "pendant_round",    isOn: true,  brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: 200, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-kt-3", name: "Spot 1",        archetype: "sultan_bulb",      isOn: true,  brightness: 90,  colorX: nil,  colorY: nil,  colorTempMirek: 220, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-kt-4", name: "Spot 2",        archetype: "sultan_bulb",      isOn: true,  brightness: 90,  colorX: nil,  colorY: nil,  colorTempMirek: 220, mirekMin: 153, mirekMax: 500),
+            ]
+        case "demo-room-bedroom":
+            return [
+                LightDisplayItem(id: "dl-bd-1", name: "Bedside Left",  archetype: "table_shade",      isOn: false, brightness: 30,  colorX: 0.55, colorY: 0.40, colorTempMirek: 450, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-bd-2", name: "Bedside Right", archetype: "table_shade",      isOn: false, brightness: 30,  colorX: 0.55, colorY: 0.40, colorTempMirek: 450, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-bd-3", name: "Overhead",      archetype: "sultan_bulb",      isOn: false, brightness: 80,  colorX: nil,  colorY: nil,  colorTempMirek: 300, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-bd-4", name: "Closet",        archetype: "single_bulb",      isOn: false, brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: nil, mirekMin: 153, mirekMax: 500),
+            ]
+        case "demo-room-office":
+            return [
+                LightDisplayItem(id: "dl-of-1", name: "Desk Lamp",     archetype: "table_shade",      isOn: true,  brightness: 55,  colorX: nil,  colorY: nil,  colorTempMirek: 200, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-of-2", name: "Monitor Light", archetype: "hue_lightstrip",   isOn: true,  brightness: 40,  colorX: nil,  colorY: nil,  colorTempMirek: 167, mirekMin: 153, mirekMax: 500),
+            ]
+        case "demo-room-patio":
+            return [
+                LightDisplayItem(id: "dl-pt-1", name: "String Lights", archetype: "hue_lightstrip",   isOn: true,  brightness: 90,  colorX: 0.48, colorY: 0.41, colorTempMirek: nil, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-pt-2", name: "Post Light 1",  archetype: "floor_lantern",    isOn: true,  brightness: 85,  colorX: nil,  colorY: nil,  colorTempMirek: 370, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-pt-3", name: "Post Light 2",  archetype: "floor_lantern",    isOn: true,  brightness: 85,  colorX: nil,  colorY: nil,  colorTempMirek: 370, mirekMin: 153, mirekMax: 500),
+            ]
+        default:
+            return [
+                LightDisplayItem(id: "dl-gen-1", name: "Main Light",   archetype: "sultan_bulb",      isOn: false, brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: 300, mirekMin: 153, mirekMax: 500),
+            ]
+        }
+    }
+
+    // MARK: - Mock Scenes (per room)
+
+    static func scenes(for roomID: String) -> [SceneDisplayItem] {
+        switch roomID {
+        case "demo-room-living":
+            return [
+                SceneDisplayItem(id: "ds-lv-1", name: "Relax",      isActive: false),
+                SceneDisplayItem(id: "ds-lv-2", name: "Energize",   isActive: false),
+                SceneDisplayItem(id: "ds-lv-3", name: "Movie Night",isActive: true),
+                SceneDisplayItem(id: "ds-lv-4", name: "Sunset",     isActive: false),
+            ]
+        case "demo-room-kitchen":
+            return [
+                SceneDisplayItem(id: "ds-kt-1", name: "Bright",     isActive: true),
+                SceneDisplayItem(id: "ds-kt-2", name: "Cooking",    isActive: false),
+                SceneDisplayItem(id: "ds-kt-3", name: "Dimmed",     isActive: false),
+            ]
+        case "demo-room-bedroom":
+            return [
+                SceneDisplayItem(id: "ds-bd-1", name: "Sleep",      isActive: false),
+                SceneDisplayItem(id: "ds-bd-2", name: "Wake Up",    isActive: false),
+                SceneDisplayItem(id: "ds-bd-3", name: "Read",       isActive: false),
+            ]
+        case "demo-room-office":
+            return [
+                SceneDisplayItem(id: "ds-of-1", name: "Focus",      isActive: true),
+                SceneDisplayItem(id: "ds-of-2", name: "Relax",      isActive: false),
+            ]
+        default:
+            return [
+                SceneDisplayItem(id: "ds-gen-1", name: "Default",   isActive: false),
+            ]
+        }
+    }
+
     // MARK: - Mock Connection Statuses
 
     static var connectionStatuses: [String: BridgeConnectionStatus] {

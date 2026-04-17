@@ -15,9 +15,12 @@ struct RoomDetailView: View {
     @State private var vm: RoomDetailViewModel
     @State private var showLog         = false
     @State private var showCreateScene = false
+    @Environment(UnifiedOrchestrator.self) private var orchestrator
 
     init(room: RoomDisplayItem) {
         self.room = room
+        // vm is placeholder — will be replaced with correct client in .onAppear
+        // We use a temp init here; proper injection happens via updateVM()
         _vm = State(initialValue: RoomDetailViewModel(room: room))
     }
 
@@ -47,6 +50,13 @@ struct RoomDetailView: View {
             }
         }
         .task {
+            // Re-build vm with the right bridge client now that orchestrator is available.
+            // This replaces the placeholder vm created in init() with one that has correct credentials.
+            vm = RoomDetailViewModel(
+                room: room,
+                api: orchestrator.hueClient(for: room.bridgeID),
+                isDemoMode: orchestrator.isDemoMode
+            )
             await withTaskGroup(of: Void.self) { group in
                 group.addTask { await vm.loadLights() }
                 group.addTask { await vm.loadScenes() }

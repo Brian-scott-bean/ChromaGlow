@@ -524,6 +524,13 @@ final class UnifiedOrchestrator {
 
     var totalDeviceCount: Int { allRooms.reduce(0) { $0 + $1.lightCount } }
 
+    /// Returns the HueAPIClient for a specific bridge ID — used by RoomDetailViewModel
+    /// to ensure the correct bridge credentials are used for per-light operations.
+    func hueClient(for bridgeID: String?) -> HueAPIClient? {
+        guard let id = bridgeID else { return nil }
+        return clients[id]
+    }
+
     var overallConnectionStatus: BridgeConnectionStatus {
         let statuses = connectionStatus.values
         if statuses.allSatisfy({ if case .connected = $0 { return true }; return false }) { return .connected }
