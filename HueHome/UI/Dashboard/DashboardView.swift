@@ -253,20 +253,31 @@ struct RoomCard: View {
     // orchestrator confirms state (SSE, loadAll, API rollback).
     @State private var localIsOn: Bool
 
+    // ── Glow color state ─────────────────────────────────────────────────────
+    // localGlowColor mirrors localIsOn's pattern: it's a @State seeded from the
+    // room's dominant color at init, then synced via .onChange when SSE events
+    // update dominantColorX/Y or dominantMirek.
+    //
+    // WHY @State instead of a computed property:
+    // Computed properties on non-Equatable struct views can silently miss SwiftUI
+    // re-renders depending on runtime version and rendering context. Making it
+    // @State means any SSE color update triggers a guaranteed first-class @State
+    // mutation — which always drives a body re-render plus an animated transition.
+    @State private var localGlowColor: Color
+
     init(room: RoomDisplayItem,
          onToggle: @escaping (Bool) -> Void,
          onBrightness: @escaping (Double) -> Void) {
         self.room         = room
         self.onToggle     = onToggle
         self.onBrightness = onBrightness
-        // @State is seeded ONCE per view identity — SwiftUI preserves it across rerenders.
-        _localIsOn = State(initialValue: room.isOn)
+        _localIsOn       = State(initialValue: room.isOn)
+        _localGlowColor  = State(initialValue: Self.resolveGlowColor(for: room))
     }
 
-    /// Derive glow color from the room's currently dominant light.
-    /// Computed from dominantColorXY / dominantMirek set by loadAll().
-    /// Falls back to warm amber for rooms with no color capability or all-off state.
-    private var glowColor: Color {
+    /// Resolve the room card's glow color from its dominant light state.
+    /// Static so it can be called from init() before self is fully initialised.
+    static func resolveGlowColor(for room: RoomDisplayItem) -> Color {
         if let x = room.dominantColorX, let y = room.dominantColorY {
             return HueColorUtils.color(fromX: x, y: y, brightness: max(room.brightness, 50))
         }
@@ -278,13 +289,13 @@ struct RoomCard: View {
 
     var body: some View {
         NavigationLink(value: room) {
-            GlassmorphicCard(isActive: localIsOn, glowColor: glowColor) {
+            GlassmorphicCard(isActive: localIsOn, glowColor: localGlowColor) {
                 VStack(spacing: 0) {
                     headerContent
                     if localIsOn {
                         BrightnessRow(
                             brightness: room.brightness,   // read-only snapshot
-                            glowColor: glowColor,
+                            glowColor: localGlowColor,
                             onCommit: { onBrightness($0) } // $0 = final value on release
                         )
                         .padding(.top, 6)
@@ -302,7 +313,7 @@ struct RoomCard: View {
             } label: {
                 Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 24))
-                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
+                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
                     .frame(width: 52, height: 52)
                     .contentShape(Rectangle())
                     .symbolEffect(.bounce, value: localIsOn)
@@ -326,6 +337,22 @@ struct RoomCard: View {
                 }
             }
         }
+        // ── Glow color sync (same pattern as isOn above) ─────────────────────
+        // dominantColorX changes when:
+        //   • SSE "light" event arrives after a color wheel commit
+        //   • loadAll() refreshes the room's dominant light
+        // dominantMirek changes for white-ambiance only rooms.
+        // Both update localGlowColor with an animated transition.
+        .onChange(of: room.dominantColorX) { _, _ in
+            withAnimation(.easeInOut(duration: 0.4)) {
+                localGlowColor = Self.resolveGlowColor(for: room)
+            }
+        }
+        .onChange(of: room.dominantMirek) { _, _ in
+            withAnimation(.easeInOut(duration: 0.4)) {
+                localGlowColor = Self.resolveGlowColor(for: room)
+            }
+        }
     }
 
     private var headerContent: some View {
@@ -333,12 +360,12 @@ struct RoomCard: View {
             ZStack {
                 Circle()
                     .fill(localIsOn
-                          ? glowColor.opacity(0.22)
+                          ? localGlowColor.opacity(0.22)
                           : Color.white.opacity(0.07))
                     .frame(width: 48, height: 48)
                 Image(systemName: archetypeIcon(for: room.archetype))
                     .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.4))
+                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.4))
                     .symbolEffect(.bounce, value: localIsOn)
             }
             VStack(alignment: .leading, spacing: 3) {

@@ -313,6 +313,7 @@ struct LightCard: View {
     // Same pattern as RoomCard: flips instantly on tap, syncs from vm.lights
     // via .onChange when the @Observable chain confirms the change.
     @State private var localIsOn: Bool
+    @State private var localGlowColor: Color   // seeded in init; synced via .onChange
 
     init(light: LightDisplayItem,
          onToggle: @escaping (Bool) -> Void,
@@ -320,13 +321,14 @@ struct LightCard: View {
         self.light        = light
         self.onToggle     = onToggle
         self.onBrightness = onBrightness
-        _localIsOn = State(initialValue: light.isOn)
+        _localIsOn       = State(initialValue: light.isOn)
+        _localGlowColor  = State(initialValue: Self.resolveGlowColor(for: light))
     }
 
-    /// Derive glow color from the light's current state.
     /// Priority: CIE xy (full color) → color temperature → warm amber fallback.
-    /// This makes TV backlights glow purple, sunset scenes glow orange, etc.
-    private var glowColor: Color {
+    /// Static so it can be called from init() before self is available.
+    /// Used by both the seed and the .onChange handlers.
+    static func resolveGlowColor(for light: LightDisplayItem) -> Color {
         if light.supportsColor, let x = light.colorX, let y = light.colorY {
             return HueColorUtils.color(fromX: x, y: y, brightness: max(light.brightness, 50))
         }
@@ -338,13 +340,13 @@ struct LightCard: View {
 
     var body: some View {
         NavigationLink(value: light) {
-            GlassmorphicCard(isActive: localIsOn, glowColor: glowColor) {
+            GlassmorphicCard(isActive: localIsOn, glowColor: localGlowColor) {
                 VStack(spacing: 0) {
                     lightHeaderContent
                     if localIsOn {
                         BrightnessRow(
                             brightness: light.brightness,   // read-only snapshot
-                            glowColor: glowColor,
+                            glowColor: localGlowColor,
                             onCommit: { onBrightness($0) }  // fired once on release
                         )
                         .padding(.top, 6)
@@ -361,7 +363,7 @@ struct LightCard: View {
             } label: {
                 Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 22))
-                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
+                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
                     .frame(width: 52, height: 52)
                     .contentShape(Rectangle())
                     .symbolEffect(.bounce, value: localIsOn)
@@ -384,17 +386,28 @@ struct LightCard: View {
                 }
             }
         }
+        // Sync glow color when light's color or CT changes via SSE or loadLights
+        .onChange(of: light.colorX) { _, _ in
+            withAnimation(.easeInOut(duration: 0.4)) {
+                localGlowColor = Self.resolveGlowColor(for: light)
+            }
+        }
+        .onChange(of: light.colorTempMirek) { _, _ in
+            withAnimation(.easeInOut(duration: 0.4)) {
+                localGlowColor = Self.resolveGlowColor(for: light)
+            }
+        }
     }
 
     private var lightHeaderContent: some View {
         HStack(alignment: .center, spacing: 14) {
             ZStack {
                 Circle()
-                    .fill(localIsOn ? glowColor.opacity(0.22) : Color.white.opacity(0.07))
+                    .fill(localIsOn ? localGlowColor.opacity(0.22) : Color.white.opacity(0.07))
                     .frame(width: 44, height: 44)
                 Image(systemName: archetypeIcon(for: light.archetype))
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.4))
+                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.4))
                     .symbolEffect(.bounce, value: localIsOn)
             }
             VStack(alignment: .leading, spacing: 3) {
@@ -404,7 +417,7 @@ struct LightCard: View {
                     .lineLimit(1)
                 Text(localIsOn ? "\(Int(light.brightness))%" : "Off")
                     .font(.caption)
-                    .foregroundStyle(localIsOn ? glowColor.opacity(0.8) : .white.opacity(0.40))
+                    .foregroundStyle(localIsOn ? localGlowColor.opacity(0.8) : .white.opacity(0.40))
             }
             Spacer()
             // Capability badge (visual only)
