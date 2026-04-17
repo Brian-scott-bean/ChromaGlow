@@ -53,8 +53,10 @@ struct DashboardView: View {
             }
         }
         .task {
-            await orchestrator.loadAll(cacheContext: modelContext)
-            orchestrator.startSSE()
+            // AppRootView owns the initial loadAll() + startSSE() lifecycle.
+            // Calling loadAll() here races against in-flight optimistic toggles
+            // (every navigation-back fires .task again). Pull-to-refresh below
+            // handles user-initiated data refreshes.
         }
         .preferredColorScheme(.dark)
     }

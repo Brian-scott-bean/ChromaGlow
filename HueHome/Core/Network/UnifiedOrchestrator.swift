@@ -284,6 +284,13 @@ final class UnifiedOrchestrator {
             allRooms = []
             return
         }
+        // Guard against concurrent calls: two simultaneous loadAll() runs
+        // (one from AppRootView, one from DashboardView) can race against an
+        // in-flight optimistic toggle and overwrite it with stale bridge data.
+        guard !isLoading else {
+            log.info("loadAll: concurrent call suppressed (fetch already in flight)")
+            return
+        }
         // Only show loading indicator if we have no cached data to show yet
         let hadCachedData = !allRooms.isEmpty
         if !hadCachedData { isLoading = true }
@@ -306,7 +313,11 @@ final class UnifiedOrchestrator {
                             if let glID = room.groupedLightID,
                                let gl = try? await client.fetchGroupedLight(id: glID) {
                                 isOn       = gl.on.on
-                                brightness = gl.dimming?.brightness ?? 100
+                                // Bridge reports brightness:0.0 for off grouped_lights.
+                                // Clamp to 1 so we never store 0% — turning a room on
+                                // from 0% brightness would make lights appear unresponsive.
+                                let raw = gl.dimming?.brightness ?? 100
+                                brightness = max(1, raw)
                             }
 
                             let lightCount = lights.filter { light in

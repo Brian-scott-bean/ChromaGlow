@@ -63,6 +63,10 @@ struct AppRootView: View {
                             orchestrator.enterDemoMode()
                         } else {
                             orchestrator.configure(bridges: bridges, modelContext: modelContext)
+                            // Show cached rooms instantly (including groupedLightID) so
+                            // toggles work before the first network fetch completes.
+                            let cachedRooms = (try? modelContext.fetch(FetchDescriptor<HueLocalRoom>())) ?? []
+                            orchestrator.preloadCached(from: cachedRooms)
                             await orchestrator.loadAll(cacheContext: modelContext)
                             orchestrator.startSSE()
                         }
