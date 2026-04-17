@@ -220,17 +220,27 @@ final class UnifiedOrchestrator {
                     name:              local.nameOverride ?? local.cachedName ?? local.roomID,
                     archetype:         local.cachedArchetype,
                     isOn:              local.lastIsOn,
-                    brightness:        local.lastBrightness,
-                    groupedLightID:    local.cachedGroupedLightID,   // non‑nil from 2nd launch onwards
+                    brightness:        max(1, local.lastBrightness),   // clamp cached 0 to 1
+                    groupedLightID:    local.cachedGroupedLightID,
                     lightCount:        local.cachedLightCount,
                     bridgeID:          local.bridgeID,
                     childResourceRefs: []
                 )
             }
-        if !items.isEmpty {
-            allRooms = items
-            log.info("Preloaded \(items.count) rooms from SwiftData cache")
+        guard !items.isEmpty else { return }
+        allRooms = items
+        // CRITICAL: also populate roomsByBridge so updateRoom() and applySSEEvent()
+        // can find rooms during the startup window before loadAll() completes.
+        // Without this, toggles and SSE events silently do nothing because both
+        // functions iterate/lookup roomsByBridge which would otherwise be empty.
+        var byBridge: [String: [RoomDisplayItem]] = [:]
+        for item in items {
+            if let bid = item.bridgeID {
+                byBridge[bid, default: []].append(item)
+            }
         }
+        roomsByBridge = byBridge
+        log.info("Preloaded \(items.count) rooms from SwiftData cache (\(byBridge.keys.count) bridge(s))")
     }
 
     /// Write current live room states back to SwiftData for next-launch preload.
@@ -390,7 +400,6 @@ final class UnifiedOrchestrator {
     }
 
     func setBrightness(_ brightness: Double, for item: RoomDisplayItem) {
-        // Demo mode: update local state only, no network
         if isDemoMode {
             let clamped = max(1, min(100, brightness))
             updateRoom(item.id, isOn: true, brightness: clamped)
@@ -404,10 +413,8 @@ final class UnifiedOrchestrator {
 
         Task {
             do {
-                try await client.setGroupedLightBrightness(id: glID, brightness: clamped)
-                if !item.isOn {
-                    try await client.setGroupedLight(id: glID, on: true)
-                }
+                // Single PUT: on=true + brightness together — no "flash" at old brightness
+                try await client.setGroupedLightState(id: glID, on: true, brightness: clamped)
             } catch {
                 updateRoom(item.id, isOn: item.isOn, brightness: item.brightness)
                 log.error("Brightness failed for room \(item.id): \(error.localizedDescription)")

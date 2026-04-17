@@ -195,16 +195,31 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "PUT /grouped_light/\(id) on=\(on)")
     }
 
-    /// Set brightness (0–100) for a grouped_light resource.
     func setGroupedLightBrightness(id: String, brightness: Double) async throws {
         let (ip, token) = try credentials()
-        let clamped = min(100, max(1, brightness))   // Bridge rejects 0; use on=false instead
+        let clamped = (min(100, max(1, brightness))).rounded()   // round to avoid float noise in logs
         let body: [String: Any] = ["dimming": ["brightness": clamped]]
         let data = try await put(
             path: "/clip/v2/resource/grouped_light/\(id)",
             body: body, ip: ip, token: token
         )
-        logRaw(data, label: "PUT /grouped_light/\(id) brightness=\(clamped)")
+        logRaw(data, label: "PUT /grouped_light/\(id) brightness=\(Int(clamped))")
+    }
+
+    /// Set on-state + brightness in a single PUT for a grouped_light — avoids the two-call flash
+    /// where lights turn on at old brightness before new brightness is applied.
+    func setGroupedLightState(id: String, on: Bool, brightness: Double) async throws {
+        let (ip, token) = try credentials()
+        let clamped = (min(100, max(1, brightness))).rounded()
+        let body: [String: Any] = [
+            "on":      ["on": on],
+            "dimming": ["brightness": clamped],
+        ]
+        let data = try await put(
+            path: "/clip/v2/resource/grouped_light/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /grouped_light/\(id) on=\(on) brightness=\(Int(clamped))")
     }
 
     /// Toggle an individual light on or off.
@@ -309,10 +324,11 @@ class HueAPIClient: @unchecked Sendable {
     // MARK: - Decoding
     // ──────────────────────────────────────────────
 
+    private static let sharedDecoder = JSONDecoder()
+
     func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do {
-            let decoded = try JSONDecoder().decode(type, from: data)
-            return decoded
+            return try Self.sharedDecoder.decode(type, from: data)
         } catch {
             log.error("API: Decode error — \(error.localizedDescription, privacy: .public)")
             throw HueAPIError.decodingFailed(error.localizedDescription)
