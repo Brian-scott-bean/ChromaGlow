@@ -701,17 +701,68 @@ final class UnifiedOrchestrator {
     }
 
     /// Returns true if any room state was mutated (used to gate rebuildAllRooms).
+    ///
+    /// Handles two resource types:
+    ///   "grouped_light" → room-level on/off + brightness (existing behaviour)
+    ///   "light"         → individual bulb color/temp → updates room's dominant color
+    ///
+    /// The "light" branch matches the light UUID into room.childResourceRefs, so it
+    /// works for firmware that stores refs as rtype:"light" (v1.50+). On older firmware
+    /// that uses rtype:"device" refs the match will miss — loadAll() corrects at the next
+    /// stale-while-revalidate interval (max 120 s). This is an acceptable trade-off vs
+    /// carrying a full lightID→roomID reverse map across the SSE lifecycle.
     @discardableResult
     func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> Bool {
         var mutated = false
         for update in event.data {
-            guard update.type == "grouped_light" else { continue }
-            guard var rooms = roomsByBridge[bridgeID] else { continue }
-            if let idx = rooms.firstIndex(where: { $0.groupedLightID == update.id }) {
-                if let on  = update.on?.on           { rooms[idx].isOn        = on  }
+            switch update.type {
+
+            // ── Room-level state (existing) ───────────────────────────────────
+            case "grouped_light":
+                guard var rooms = roomsByBridge[bridgeID] else { continue }
+                guard let idx = rooms.firstIndex(where: { $0.groupedLightID == update.id }) else { continue }
+                if let on  = update.on?.on              { rooms[idx].isOn       = on  }
                 if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
                 roomsByBridge[bridgeID] = rooms
                 mutated = true
+
+            // ── Individual light color change ────────────────────────────────
+            // Fired by the bridge when a light's color or CT changes —
+            // including after our own PUT from LightControlView.
+            case "light":
+                guard var rooms = roomsByBridge[bridgeID] else { continue }
+                // Find the room that owns this light UUID via childResourceRefs.
+                guard let idx = rooms.firstIndex(where: { room in
+                    room.childResourceRefs.contains { ref in
+                        ref.rtype == "light" && ref.rid == update.id
+                    }
+                }) else { continue }
+
+                // Respect on-state: if the light is being turned off, leave the
+                // existing dominant color as-is. The room card glows correctly
+                // while other lights remain on, and loadAll() recomputes cleanly.
+                let isNowOn = update.on?.on ?? true   // nil on-state = pure color/CT event
+
+                guard isNowOn else { continue }
+
+                // Color takes priority over temperature.
+                if let xy = update.color?.xy {
+                    rooms[idx].dominantColorX = xy.x
+                    rooms[idx].dominantColorY = xy.y
+                    rooms[idx].dominantMirek  = nil   // CIE xy overrides any CT tint
+                    roomsByBridge[bridgeID]   = rooms
+                    mutated = true
+                } else if let mirek = update.colorTemp?.mirek,
+                          rooms[idx].dominantColorX == nil {
+                    // Only update mirek when no active color dominant exists —
+                    // avoids overwriting a coloured light's tint with a white CT.
+                    rooms[idx].dominantMirek  = mirek
+                    roomsByBridge[bridgeID]   = rooms
+                    mutated = true
+                }
+
+            default:
+                continue
             }
         }
         return mutated
