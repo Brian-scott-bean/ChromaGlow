@@ -56,13 +56,15 @@ final class HueSSEService: @unchecked Sendable {
     private let log = Logger(subsystem: "com.huehome.pro", category: "SSE")
 
     // URLSession with no read/resource timeout — required for indefinite SSE streaming.
+    // certDelegate is stored explicitly so it is retained for the lifetime of this service.
+    private let certDelegate = HueCertTrustDelegate()
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest  = .infinity
         config.timeoutIntervalForResource = .infinity
         return URLSession(
             configuration: config,
-            delegate: HueCertTrustDelegate(),   // reuse bridge self-signed cert trust
+            delegate: self.certDelegate,  // retained by certDelegate property above
             delegateQueue: nil
         )
     }()
