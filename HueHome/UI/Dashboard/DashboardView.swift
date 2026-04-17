@@ -23,7 +23,8 @@ struct DashboardView: View {
     @Environment(\.modelContext)         private var modelContext
     @Environment(\.scenePhase)           private var scenePhase
     @Environment(\.horizontalSizeClass)  private var sizeClass
-
+    /// Persist zones section open/closed state across launches.
+    @AppStorage("dashboard.zonesExpanded") private var zonesExpanded: Bool = true
 
 
     /// Minimum seconds between auto-refreshes triggered by navigation or foregrounding.
@@ -122,8 +123,42 @@ struct DashboardView: View {
                     }
                 }
                 .padding(.horizontal, sizeClass == .regular ? 20 : 0)
-                .padding(.bottom, 100)   // clear custom tab bar
                 .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allRooms.count)
+
+                // ── Zones section ─────────────────────────────────────────────
+                // Zones share RoomCard / RoomDetailView / LightCard with rooms.
+                // Only rendered when the bridge reports at least one zone.
+                if !orchestrator.allZones.isEmpty {
+                    zonesSectionHeader
+                        .padding(.horizontal, 20)
+                        .padding(.top, 24)
+                        .padding(.bottom, 8)
+
+                    if zonesExpanded {
+                        LazyVGrid(columns: columns, spacing: 14) {
+                            ForEach(orchestrator.allZones, id: \.id) { zone in
+                                RoomCard(
+                                    room: zone,
+                                    onToggle: { desiredOn in
+                                        orchestrator.setRoom(zone, isOn: desiredOn)
+                                    },
+                                    onBrightness: { newBrightness in
+                                        orchestrator.setBrightness(newBrightness, for: zone)
+                                    }
+                                )
+                                .padding(.horizontal, sizeClass == .regular ? 0 : 20)
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .move(edge: .bottom)),
+                                    removal:   .opacity
+                                ))
+                            }
+                        }
+                        .padding(.horizontal, sizeClass == .regular ? 20 : 0)
+                        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allZones.count)
+                    }
+                }
+
+                Color.clear.frame(height: 100)  // clear custom tab bar
             }
         }
         .overlay(alignment: .top) {
@@ -172,6 +207,42 @@ struct DashboardView: View {
                 .frame(width: 9, height: 9)
                 .shadow(color: onCount > 0 ? .yellow.opacity(0.9) : .clear, radius: 8)
         }
+    }
+
+    // ── Zones section header ── collapsible, persisted via @AppStorage ────────
+    private var zonesSectionHeader: some View {
+        Button {
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
+                zonesExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "square.3.layers.3d")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+
+                Text("Zones")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+
+                // Zone count badge
+                let zCount = orchestrator.allZones.count
+                Text("\(zCount)")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.black.opacity(0.7))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(.white.opacity(0.25)))
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .rotationEffect(.degrees(zonesExpanded ? 90 : 0))
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // ── ambientBackground moved to DashboardAmbientBackground struct (see below) ─

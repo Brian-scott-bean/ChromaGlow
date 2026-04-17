@@ -39,9 +39,11 @@ final class UnifiedOrchestrator {
 
     /// All rooms across every active bridge, sorted alphabetically.
     /// Reverse map: light UUID → room ID. Rebuilt on every loadAll().
-    /// applySSEEvent("light") uses this instead of scanning childResourceRefs
-    /// (which stores device refs on older firmware, not light refs).
     private var lightIDToRoomID: [String: String] = [:]
+
+    /// Reverse map: light UUID → zone ID. Parallel to lightIDToRoomID.
+    /// A light may appear in both maps (member of a room AND a zone).
+    private var lightIDToZoneID: [String: String] = [:]
 
     var allRooms: [RoomDisplayItem] = []
 
@@ -77,6 +79,12 @@ final class UnifiedOrchestrator {
     /// True while a scenes fetch is in flight.
     var isLoadingScenes: Bool = false
 
+    // ── Zones (Stage 2B) ──────────────────────────────────────
+
+    /// All zones across every active bridge, sorted alphabetically.
+    /// Populated by loadAll(); updated via rebuildAllZones().
+    var allZones: [RoomDisplayItem] = []
+
     // MARK: - Internal
 
     /// Active bridge clients.  keyed by BridgeRecord.id
@@ -85,11 +93,10 @@ final class UnifiedOrchestrator {
     private var clients: [String: BridgeAPIClient] = [:]
 
     /// Rooms per bridge — used for merge.  keyed by BridgeRecord.id
-    /// Note: NOT @ObservationIgnored — the @Observable macro's subscript write-back
-    /// behavior for @ObservationIgnored properties is subtly different across Swift
-    /// toolchain versions. Views observe allRooms (the merged output), not this dict
-    /// directly, so observation overhead here is negligible.
     private var roomsByBridge: [String: [RoomDisplayItem]] = [:]
+
+    /// Zones per bridge — parallel to roomsByBridge.
+    private var zonesByBridge: [String: [RoomDisplayItem]] = [:]
 
     /// SSE tasks per bridge — cancelled when bridge is removed.
     /// @ObservationIgnored: purely infrastructure, no UI reads this.
@@ -355,88 +362,64 @@ final class UnifiedOrchestrator {
         errorMessage = nil
         defer { isLoading = false }
 
-        // Use Optional<[RoomDisplayItem]> as a sentinel:
-        //   • nil   → fetch threw; keep roomsByBridge unchanged (preserve last-known state)
-        //   • .some → success; overwrite roomsByBridge with fresh data
-        // This prevents a transient bridge unreachability during pull-to-refresh from
-        // wiping all rooms and showing "no rooms found" for a bridge that was fine before.
-        await withTaskGroup(of: (String, [RoomDisplayItem]?, [String: String]).self) { group in
+        // Return type: (bridgeID, rooms?, zones?, roomLightMap, zoneLightMap)
+        // nil rooms/zones = fetch failed; keep existing data (stale-while-revalidate).
+        await withTaskGroup(
+            of: (String, [RoomDisplayItem]?, [RoomDisplayItem]?, [String: String], [String: String]).self
+        ) { group in
             for (bridgeID, client) in clients {
                 group.addTask { [client, bridgeID] in
                     do {
-                        // Parallel fetch: rooms + lights + ALL grouped_lights in 3 concurrent
-                        // requests instead of 1 + N (one per room). Eliminates the N+1 pattern
-                        // that caused high energy usage with large room counts.
+                        // 4 concurrent requests per bridge — eliminates N+1 pattern.
                         async let roomsFetch   = client.fetchRooms()
+                        async let zonesFetch   = client.fetchZones()
                         async let lightsFetch  = client.fetchLights()
                         async let glFetch      = client.fetchGroupedLights()
 
-                        let (rooms, lights, groupedLights) = try await (roomsFetch, lightsFetch, glFetch)
+                        let (rooms, zones, lights, groupedLights) =
+                            try await (roomsFetch, zonesFetch, lightsFetch, glFetch)
 
-                        // Build lookup: groupedLightID → HueGroupedLight
                         let glByID = Dictionary(uniqueKeysWithValues:
                             groupedLights.map { ($0.id, $0) }
                         )
 
-                        var items: [RoomDisplayItem] = []
-                        var bridgeLightMap: [String: String] = [:]  // lightID → roomID
+                        // ── Build room items ───────────────────────────────────────────
+                        var roomItems: [RoomDisplayItem] = []
+                        var roomLightMap: [String: String] = [:]  // lightID → roomID
                         for room in rooms {
-                            var brightness = 100.0
                             var isOn = false
-
+                            var brightness = 100.0
                             if let glID = room.groupedLightID, let gl = glByID[glID] {
                                 isOn = gl.on.on
-                                // Bridge reports brightness:0.0 for off grouped_lights.
-                                // Clamp to 1 so we never store 0% — turning a room on
-                                // from 0% brightness would make lights appear unresponsive.
-                                let raw = gl.dimming?.brightness ?? 100
-                                brightness = max(1, raw)
+                                brightness = max(1, gl.dimming?.brightness ?? 100)
                             }
-
-                            // Lights belonging to this room (matched by light.id or device owner id)
                             let roomLights = lights.filter { light in
                                 room.children.contains { ref in
                                     ref.rid == light.id || ref.rid == (light.owner?.rid ?? "")
                                 }
                             }
-                            let lightCount = roomLights.count
-
-                            // ── Dominant color ───────────────────────────────────────────
-                            // Pick the brightest ON light with color support as the room's
-                            // tint. Falls back to colorTemp mirek if no color lights are on.
-                            // This powers RoomCard.glowColor without any extra API calls.
                             var dominantColorXY: (x: Double, y: Double)? = nil
-                            var dominantMirek:   Int?                     = nil
-
+                            var dominantMirek: Int? = nil
                             if isOn {
                                 let onLights = roomLights.filter { $0.on.on }
-                                // Prefer color-capable lights; pick the brightest ON one as dominant.
-                                if let best = onLights
-                                    .filter({ $0.color != nil })
+                                if let best = onLights.filter({ $0.color != nil })
                                     .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }) {
-                                    let xy = best.color!.xy
-                                    dominantColorXY = (xy.x, xy.y)
-                                } else if let best = onLights
-                                    .filter({ $0.color_temperature?.mirek != nil })
+                                    dominantColorXY = (best.color!.xy.x, best.color!.xy.y)
+                                } else if let best = onLights.filter({ $0.color_temperature?.mirek != nil })
                                     .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }),
-                                   let mirek = best.color_temperature?.mirek {
+                                    let mirek = best.color_temperature?.mirek {
                                     dominantMirek = mirek
                                 }
                             }
-
-                            // Build per-room light UUID → room ID entries.
-                            for light in roomLights {
-                                bridgeLightMap[light.id] = room.id
-                            }
-
-                            items.append(RoomDisplayItem(
+                            for light in roomLights { roomLightMap[light.id] = room.id }
+                            roomItems.append(RoomDisplayItem(
                                 id:                room.id,
                                 name:              room.metadata.name,
                                 archetype:         room.metadata.archetype,
                                 isOn:              isOn,
                                 brightness:        brightness,
                                 groupedLightID:    room.groupedLightID,
-                                lightCount:        lightCount,
+                                lightCount:        roomLights.count,
                                 bridgeID:          bridgeID,
                                 childResourceRefs: room.children.map { ($0.rid, $0.rtype) },
                                 dominantColorX:    dominantColorXY?.x,
@@ -444,37 +427,84 @@ final class UnifiedOrchestrator {
                                 dominantMirek:     dominantMirek
                             ))
                         }
+
+                        // ── Build zone items ───────────────────────────────────────────
+                        // Zone children are direct light refs (rtype:"light") —
+                        // no device-owner fallback needed.
+                        var zoneItems: [RoomDisplayItem] = []
+                        var zoneLightMap: [String: String] = [:]  // lightID → zoneID
+                        for zone in zones {
+                            var isOn = false
+                            var brightness = 100.0
+                            if let glID = zone.groupedLightID, let gl = glByID[glID] {
+                                isOn = gl.on.on
+                                brightness = max(1, gl.dimming?.brightness ?? 100)
+                            }
+                            let zoneLights = lights.filter { light in
+                                zone.children.contains { $0.rid == light.id }
+                            }
+                            var dominantColorXY: (x: Double, y: Double)? = nil
+                            var dominantMirek: Int? = nil
+                            if isOn {
+                                let onLights = zoneLights.filter { $0.on.on }
+                                if let best = onLights.filter({ $0.color != nil })
+                                    .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }) {
+                                    dominantColorXY = (best.color!.xy.x, best.color!.xy.y)
+                                } else if let best = onLights.filter({ $0.color_temperature?.mirek != nil })
+                                    .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }),
+                                    let mirek = best.color_temperature?.mirek {
+                                    dominantMirek = mirek
+                                }
+                            }
+                            for light in zoneLights { zoneLightMap[light.id] = zone.id }
+                            var item = RoomDisplayItem(
+                                id:                zone.id,
+                                name:              zone.metadata.name,
+                                archetype:         zone.metadata.archetype,
+                                isOn:              isOn,
+                                brightness:        brightness,
+                                groupedLightID:    zone.groupedLightID,
+                                lightCount:        zoneLights.count,
+                                bridgeID:          bridgeID,
+                                childResourceRefs: zone.children.map { ($0.rid, $0.rtype) },
+                                dominantColorX:    dominantColorXY?.x,
+                                dominantColorY:    dominantColorXY?.y,
+                                dominantMirek:     dominantMirek
+                            )
+                            item.kind = .zone
+                            zoneItems.append(item)
+                        }
+
                         await MainActor.run {
                             self.connectionStatus[bridgeID] = .connected
-                            self.log.info("Bridge \(bridgeID): loaded \(items.count) rooms")
+                            self.log.info("Bridge \(bridgeID): \(roomItems.count) rooms, \(zoneItems.count) zones")
                         }
-                        return (bridgeID, items, bridgeLightMap)   // ← non-nil = success
+                        return (bridgeID, roomItems, zoneItems, roomLightMap, zoneLightMap)
                     } catch {
                         await MainActor.run {
                             self.connectionStatus[bridgeID] = .error(error.localizedDescription)
                             self.log.error("Bridge \(bridgeID) load failed: \(error.localizedDescription)")
                         }
-                        return (bridgeID, nil, [:])   // ← nil = failure; keep existing rooms
+                        return (bridgeID, nil, nil, [:], [:])  // keep existing data
                     }
                 }
             }
 
-            for await (bridgeID, rooms, lightMap) in group {
+            for await (bridgeID, rooms, zones, roomLightMap, zoneLightMap) in group {
                 if let rooms {
-                    // Success: overwrite with fresh data.
                     roomsByBridge[bridgeID] = rooms
-                    for (lightID, roomID) in lightMap {
-                        lightIDToRoomID[lightID] = roomID
-                    }
+                    for (k, v) in roomLightMap { lightIDToRoomID[k] = v }
                 }
-                // Failure (nil): leave roomsByBridge[bridgeID] untouched so existing
-                // cards stay visible. The SSE stream continues; the bridge may recover.
+                if let zones {
+                    zonesByBridge[bridgeID] = zones
+                    for (k, v) in zoneLightMap { lightIDToZoneID[k] = v }
+                }
             }
         }
 
         rebuildAllRooms()
-        lastLoadedAt = Date()   // mark freshness — DashboardView reads this for debounce
-        // Persist state for instant next-launch startup
+        rebuildAllZones()
+        lastLoadedAt = Date()
         if let ctx = cacheContext { writeCache(to: ctx) }
     }
 
@@ -699,18 +729,13 @@ final class UnifiedOrchestrator {
                         for event in events {
                             if applySSEEvent(event, bridgeID: bridgeID) { mutated = true }
                         }
-                        // Rebuild allRooms ONCE per SSE message, not once per event.
-                        // Prevents burst of 3 events triggering 3 separate view re-renders.
-                        if mutated { rebuildAllRooms() }
-                        // Forward raw updates to RoomDetailViewModel (light-event bus).
-                        // This eliminates the need for a second SSE stream per room view.
+                        if mutated { rebuildAllRooms(); rebuildAllZones() }
                         let rawUpdates = events.flatMap { $0.data }
                         if !rawUpdates.isEmpty {
                             lightEventContinuation?.yield(rawUpdates)
                         }
                     }
                 }
-                // Stream ended cleanly (bridge closed connection) — reconnect once.
                 log.info("SSE: Stream ended cleanly on \(bridgeID)")
 
             } catch {
@@ -719,71 +744,73 @@ final class UnifiedOrchestrator {
                 log.error("SSE error [\(bridgeID)]: \(error.localizedDescription, privacy: .public)")
             }
 
-            // Exponential backoff before reconnect (applies to both error and clean-end)
             log.info("SSE: Reconnecting \(bridgeID) in \(retryDelay / 1_000_000_000)s")
             try? await Task.sleep(nanoseconds: retryDelay)
-            retryDelay = min(retryDelay * 2, maxDelay)   // 5 → 10 → 20 → 40 → 60 → 60…
+            retryDelay = min(retryDelay * 2, maxDelay)
         }
     }
 
-    /// Returns true if any room state was mutated (used to gate rebuildAllRooms).
+    /// Returns true if any room/zone state was mutated (gates rebuildAllRooms/rebuildAllZones).
     ///
-    /// Handles two resource types:
-    ///   "grouped_light" → room-level on/off + brightness (existing behaviour)
-    ///   "light"         → individual bulb color/temp → updates room's dominant color
-    ///
-    /// The "light" branch matches the light UUID into room.childResourceRefs, so it
-    /// works for firmware that stores refs as rtype:"light" (v1.50+). On older firmware
-    /// that uses rtype:"device" refs the match will miss — loadAll() corrects at the next
-    /// stale-while-revalidate interval (max 120 s). This is an acceptable trade-off vs
-    /// carrying a full lightID→roomID reverse map across the SSE lifecycle.
+    /// "grouped_light" → room AND zone on/off + brightness
+    /// "light"         → room AND zone dominant color via lightIDToRoomID / lightIDToZoneID
     @discardableResult
     func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> Bool {
         var mutated = false
         for update in event.data {
             switch update.type {
 
-            // ── Room-level state (existing) ───────────────────────────────────
+            // ── grouped_light ──────────────────────────────────────────────────
             case "grouped_light":
-                guard var rooms = roomsByBridge[bridgeID] else { continue }
-                guard let idx = rooms.firstIndex(where: { $0.groupedLightID == update.id }) else { continue }
-                if let on  = update.on?.on              { rooms[idx].isOn       = on  }
-                if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
-                roomsByBridge[bridgeID] = rooms
-                mutated = true
+                if var rooms = roomsByBridge[bridgeID],
+                   let idx = rooms.firstIndex(where: { $0.groupedLightID == update.id }) {
+                    if let on  = update.on?.on              { rooms[idx].isOn       = on  }
+                    if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
+                    roomsByBridge[bridgeID] = rooms
+                    mutated = true
+                }
+                if var zones = zonesByBridge[bridgeID],
+                   let idx = zones.firstIndex(where: { $0.groupedLightID == update.id }) {
+                    if let on  = update.on?.on              { zones[idx].isOn       = on  }
+                    if let bri = update.dimming?.brightness { zones[idx].brightness = bri }
+                    zonesByBridge[bridgeID] = zones
+                    mutated = true
+                }
 
-            // ── Individual light color change ────────────────────────────────
-            // Fired by the bridge when a light's color or CT changes —
-            // including after our own PUT from LightControlView.
+            // ── light (dominant color) ─────────────────────────────────────────
             case "light":
-                guard var rooms = roomsByBridge[bridgeID] else { continue }
-                // lightIDToRoomID is built by loadAll() and maps lightUUID → roomID.
-                // This is correct for both "light" refs (new firmware) and "device" refs
-                // (older firmware) because it's built from the actual lights match in loadAll().
-                guard let roomID = lightIDToRoomID[update.id],
-                      let idx = rooms.firstIndex(where: { $0.id == roomID }) else { continue }
-
-                // Respect on-state: if the light is being turned off, leave the
-                // existing dominant color as-is. The room card glows correctly
-                // while other lights remain on, and loadAll() recomputes cleanly.
-                let isNowOn = update.on?.on ?? true   // nil on-state = pure color/CT event
-
+                let isNowOn = update.on?.on ?? true
                 guard isNowOn else { continue }
 
-                // Color takes priority over temperature.
-                if let xy = update.color?.xy {
-                    rooms[idx].dominantColorX = xy.x
-                    rooms[idx].dominantColorY = xy.y
-                    rooms[idx].dominantMirek  = nil   // CIE xy overrides any CT tint
-                    roomsByBridge[bridgeID]   = rooms
-                    mutated = true
-                } else if let mirek = update.colorTemp?.mirek,
-                          rooms[idx].dominantColorX == nil {
-                    // Only update mirek when no active color dominant exists —
-                    // avoids overwriting a coloured light's tint with a white CT.
-                    rooms[idx].dominantMirek  = mirek
-                    roomsByBridge[bridgeID]   = rooms
-                    mutated = true
+                if var rooms = roomsByBridge[bridgeID],
+                   let roomID = lightIDToRoomID[update.id],
+                   let idx = rooms.firstIndex(where: { $0.id == roomID }) {
+                    if let xy = update.color?.xy {
+                        rooms[idx].dominantColorX = xy.x
+                        rooms[idx].dominantColorY = xy.y
+                        rooms[idx].dominantMirek  = nil
+                        roomsByBridge[bridgeID]   = rooms
+                        mutated = true
+                    } else if let mirek = update.colorTemp?.mirek, rooms[idx].dominantColorX == nil {
+                        rooms[idx].dominantMirek  = mirek
+                        roomsByBridge[bridgeID]   = rooms
+                        mutated = true
+                    }
+                }
+                if var zones = zonesByBridge[bridgeID],
+                   let zoneID = lightIDToZoneID[update.id],
+                   let idx = zones.firstIndex(where: { $0.id == zoneID }) {
+                    if let xy = update.color?.xy {
+                        zones[idx].dominantColorX = xy.x
+                        zones[idx].dominantColorY = xy.y
+                        zones[idx].dominantMirek  = nil
+                        zonesByBridge[bridgeID]   = zones
+                        mutated = true
+                    } else if let mirek = update.colorTemp?.mirek, zones[idx].dominantColorX == nil {
+                        zones[idx].dominantMirek  = mirek
+                        zonesByBridge[bridgeID]   = zones
+                        mutated = true
+                    }
                 }
 
             default:
@@ -811,17 +838,12 @@ final class UnifiedOrchestrator {
     // ──────────────────────────────────────────────
 
     private func rebuildAllRooms() {
-        // Deduplicate by Hue resource ID — if the same physical bridge is registered
-        // under multiple BridgeRecord entries (same IP, different UUID), each room still
-        // appears only once. The first occurrence wins (sorted alphabetically overall).
         var seen = Set<String>()
         allRooms = roomsByBridge.values
             .flatMap { $0 }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
             .filter { seen.insert($0.id).inserted }
 
-        // Keep widget in sync on every state change (SSE events and loadAll).
-        // Widget reads this via App Group UserDefaults; write is O(N) JSON encode.
         let snapshots = allRooms.map { r in
             WidgetRoomSnapshot(
                 id:             r.id,
@@ -834,6 +856,14 @@ final class UnifiedOrchestrator {
             )
         }
         WidgetDataStore.shared.write(rooms: snapshots)
+    }
+
+    private func rebuildAllZones() {
+        var seen = Set<String>()
+        allZones = zonesByBridge.values
+            .flatMap { $0 }
+            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+            .filter { seen.insert($0.id).inserted }
     }
 
     /// Update a room's state and trigger an immediate view re-render.

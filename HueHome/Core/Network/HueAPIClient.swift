@@ -94,6 +94,13 @@ class HueAPIClient: @unchecked Sendable {
         return try decode(HueV2Response<HueRoom>.self, from: data).data
     }
 
+    func fetchZones() async throws -> [HueZone] {
+        let (ip, token) = try credentials()
+        let data = try await get(path: "/clip/v2/resource/zone", ip: ip, token: token)
+        logRaw(data, label: "GET /zone")
+        return try decode(HueV2Response<HueZone>.self, from: data).data
+    }
+
     func fetchLights() async throws -> [HueLight] {
         let (ip, token) = try credentials()
         let data = try await get(path: "/clip/v2/resource/light", ip: ip, token: token)

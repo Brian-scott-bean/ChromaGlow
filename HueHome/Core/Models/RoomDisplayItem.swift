@@ -1,15 +1,25 @@
 // RoomDisplayItem.swift
 // HueHome Pro
 //
-// Value-type display model for a single Hue room/zone.
-// Created when DashboardViewModel.swift was removed and the type was extracted
-// so it can be imported by UnifiedOrchestrator, DashboardView, and RoomDetailViewModel.
+// Value-type display model for a single Hue room or zone.
+// Shared by DashboardView (room grid + zone section), RoomDetailView, and
+// UnifiedOrchestrator. The Kind field distinguishes rooms from zones;
+// all existing call sites that don't specify kind default to .room.
 
 import Foundation
 
 // MARK: - RoomDisplayItem
 
 struct RoomDisplayItem: Identifiable, Hashable {
+
+    // ── What this item represents ────────────────────────────────────────────
+    enum Kind: String, Codable {
+        case room
+        case zone
+    }
+    /// Defaults to .room so all existing initialisers require no changes.
+    var kind: Kind = .room
+
     let id:             String
     let name:           String
     let archetype:      String?
@@ -21,22 +31,17 @@ struct RoomDisplayItem: Identifiable, Hashable {
     let groupedLightID: String?
     var lightCount:     Int
 
-    /// Which bridge owns this room — nil only for legacy paths. Set by UnifiedOrchestrator.
+    /// Which bridge owns this room/zone — nil only for legacy paths.
     var bridgeID:       String?
 
     /// Raw child resource refs — used by RoomDetailViewModel to match individual lights.
-    /// Contains entries with rtype "light" (newer firmware) or "device" (older firmware).
+    /// Rooms:  rtype "device" (older firmware) or "light" (newer firmware)
+    /// Zones:  always rtype "light" (direct light UUID refs)
     let childResourceRefs: [(rid: String, rtype: String)]
 
     // ── Dominant color (trailing defaults — all existing call sites omit these) ─
-    // CIE xy of the brightest ON color-capable light in the room.
-    // Computed by loadAll(); updated on every full fetch.
-    // nil = no color lights are on, room is off, or lights are white-only.
     var dominantColorX: Double? = nil
     var dominantColorY: Double? = nil
-
-    // mirek of the brightest ON white-ambiance light when no color lights are active.
-    // Drives warm/cool tint on rooms with temperature-capable but non-color bulbs.
     var dominantMirek:  Int?    = nil
 
     static func == (lhs: RoomDisplayItem, rhs: RoomDisplayItem) -> Bool { lhs.id == rhs.id }
