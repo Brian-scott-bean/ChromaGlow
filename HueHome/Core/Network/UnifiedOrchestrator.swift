@@ -78,6 +78,8 @@ final class UnifiedOrchestrator {
     /// One shared URL session for all SSE streams.
     /// Created lazily so the cert delegate is retained for the orchestrator's lifetime.
     /// NOT recreated on reconnect — reusing a session avoids resource leaks.
+    /// @ObservationIgnored: infrastructure state, not UI state.
+    @ObservationIgnored
     private lazy var sseSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest  = .infinity   // required for indefinite SSE
@@ -90,6 +92,7 @@ final class UnifiedOrchestrator {
     }()
 
     /// Whether the app-lifecycle observer has been set up (guard against double-register).
+    @ObservationIgnored
     private var lifecycleObserverStarted = false
 
     private let keychain = KeychainManager.shared
