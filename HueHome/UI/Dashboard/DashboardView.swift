@@ -21,10 +21,15 @@ struct DashboardView: View {
     @State private var showLog         = false
     @State private var showSettings    = false
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase)   private var scenePhase
 
     // Ambient background orb positions (stable, no GeometryReader jitter)
     private let orb1Offset = CGPoint(x: -80, y: -180)
     private let orb2Offset = CGPoint(x: 130, y: 80)
+
+    /// Minimum seconds between auto-refreshes triggered by navigation or foregrounding.
+    /// Pull-to-refresh always fires immediately regardless.
+    private let refreshDebounceInterval: TimeInterval = 20
 
     var body: some View {
         ZStack {
@@ -53,10 +58,23 @@ struct DashboardView: View {
             }
         }
         .task {
-            // AppRootView owns the initial loadAll() + startSSE() lifecycle.
-            // Calling loadAll() here races against in-flight optimistic toggles
-            // (every navigation-back fires .task again). Pull-to-refresh below
-            // handles user-initiated data refreshes.
+            // Stale-while-revalidate: trigger a background loadAll() on every
+            // dashboard appearance (startup, navigation-back from a room) if
+            // data is older than refreshDebounceInterval seconds.
+            // AppRootView already fires loadAll() at startup — the isLoading
+            // guard inside loadAll() will suppress that concurrent initial call.
+            let staleness = Date().timeIntervalSince(orchestrator.lastLoadedAt)
+            guard staleness >= refreshDebounceInterval else { return }
+            await orchestrator.loadAll(cacheContext: modelContext)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // When app returns to foreground, refresh if data is stale.
+            if newPhase == .active {
+                let staleness = Date().timeIntervalSince(orchestrator.lastLoadedAt)
+                if staleness >= refreshDebounceInterval {
+                    Task { await orchestrator.loadAll(cacheContext: modelContext) }
+                }
+            }
         }
         .preferredColorScheme(.dark)
     }

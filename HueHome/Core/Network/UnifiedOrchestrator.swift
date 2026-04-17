@@ -53,6 +53,10 @@ final class UnifiedOrchestrator {
     /// Non-nil during a full-load error (transient — cleared on next successful load).
     var errorMessage: String? = nil
 
+    /// Timestamp of the last successful loadAll() completion.
+    /// Read by DashboardView to decide whether a background refresh is needed.
+    var lastLoadedAt: Date = .distantPast
+
     /// Whether to group rooms by bridge in the UI (user toggle).
     var groupByBridge: Bool = false
 
@@ -319,13 +323,15 @@ final class UnifiedOrchestrator {
         // Guard against concurrent calls: two simultaneous loadAll() runs
         // (one from AppRootView, one from DashboardView) can race against an
         // in-flight optimistic toggle and overwrite it with stale bridge data.
+        // NOTE: isLoading is ALWAYS set to true below so this guard reliably fires.
         guard !isLoading else {
             log.info("loadAll: concurrent call suppressed (fetch already in flight)")
             return
         }
-        // Only show loading indicator if we have no cached data to show yet
-        let hadCachedData = !allRooms.isEmpty
-        if !hadCachedData { isLoading = true }
+        // Always set isLoading = true so the concurrent guard above works correctly.
+        // Shimmer only shows when allRooms.isEmpty — existing rooms are shown while
+        // refreshing in the background, giving immediate feedback without a jarring flash.
+        isLoading = true
         errorMessage = nil
         defer { isLoading = false }
 
@@ -391,6 +397,7 @@ final class UnifiedOrchestrator {
         }
 
         rebuildAllRooms()
+        lastLoadedAt = Date()   // mark freshness — DashboardView reads this for debounce
         // Persist state for instant next-launch startup
         if let ctx = cacheContext { writeCache(to: ctx) }
     }
