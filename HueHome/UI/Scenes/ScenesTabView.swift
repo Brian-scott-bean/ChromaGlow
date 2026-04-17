@@ -311,125 +311,116 @@ struct SceneMoodCard: View {
     let scene:       GlobalSceneItem
     let roomName:    String
     let onActivate:  () -> Void
-    let onLongPress: () -> Void
+    let onLongPress: () -> Void   // opens speed sheet (called by LIVE badge tap)
 
     @State private var isPressed = false
 
     var body: some View {
-        Button {
-            onActivate()
-        } label: {
-            ZStack {
-                // ── Background gradient ───────────────────
+        ZStack {
+            // ── Background gradient ────────────────────────
+            RoundedRectangle(cornerRadius: 20)
+                .fill(LinearGradient(
+                    colors: [
+                        scene.accentColor.opacity(0.38),
+                        scene.accentColor.opacity(0.14),
+                        Color(red: 0.07, green: 0.07, blue: 0.11),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint:   .bottomTrailing
+                ))
+
+            // ── Active glow border ─────────────────────────
+            if scene.isActive {
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(LinearGradient(
+                    .stroke(scene.accentColor.opacity(0.75), lineWidth: 1.5)
+                    .blur(radius: 2)
+            }
+
+            // ── Glass border ───────────────────────────────
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(
+                    LinearGradient(
                         colors: [
-                            scene.accentColor.opacity(0.38),
-                            scene.accentColor.opacity(0.14),
-                            Color(red: 0.07, green: 0.07, blue: 0.11),
+                            .white.opacity(scene.isActive ? 0.45 : 0.18),
+                            .clear,
                         ],
                         startPoint: .topLeading,
                         endPoint:   .bottomTrailing
-                    ))
+                    ),
+                    lineWidth: 1
+                )
 
-                // ── Active glow border ────────────────────
-                if scene.isActive {
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(scene.accentColor.opacity(0.75), lineWidth: 1.5)
-                        .blur(radius: 2)
-                }
+            // ── Content ────────────────────────────────────
+            VStack(alignment: .leading, spacing: 0) {
 
-                // ── Glass border ─────────────────────────
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                .white.opacity(scene.isActive ? 0.45 : 0.18),
-                                .clear,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint:   .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-
-                // ── Content ───────────────────────────────
-                VStack(alignment: .leading, spacing: 0) {
-
-                    // Top row: room badge + active dot
-                    HStack(alignment: .top, spacing: 4) {
-                        Text(roomName)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.50))
-                            .lineLimit(1)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(
-                                Capsule().fill(Color.white.opacity(0.09))
-                            )
-                        Spacer()
-                        if scene.isDynamic {
-                            // Dynamic badge — indicates colour-cycle scene
-                            HStack(spacing: 3) {
-                                Image(systemName: "bolt.fill")
-                                    .font(.system(size: 7, weight: .bold))
-                                Text("LIVE")
-                                    .font(.system(size: 7, weight: .bold))
-                            }
-                            .foregroundStyle(.black.opacity(0.75))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(scene.accentColor))
-                        }
-                        if scene.isActive {
-                            Circle()
-                                .fill(scene.accentColor)
-                                .frame(width: 8, height: 8)
-                                .shadow(color: scene.accentColor, radius: 6)
-                                .symbolEffect(.pulse)
-                        }
-                    }
+                // Top row: room badge + dynamic speed button + active dot
+                HStack(alignment: .top, spacing: 4) {
+                    Text(roomName)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.50))
+                        .lineLimit(1)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.white.opacity(0.09)))
 
                     Spacer()
 
-                    // Centre icon
-                    Image(systemName: scene.icon)
-                        .font(.system(size: 30, weight: .light))
-                        .foregroundStyle(scene.accentColor)
-                        .frame(maxWidth: .infinity)
-                        .padding(.bottom, 10)
-
-                    // Scene name
-                    Text(scene.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    // Dynamic hint
                     if scene.isDynamic {
-                        Text("Hold to set speed")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.35))
-                            .padding(.top, 2)
+                        // ⚡ LIVE badge IS the speed control — tap it to open the sheet
+                        Button(action: onLongPress) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 7, weight: .bold))
+                                Text("SPEED")
+                                    .font(.system(size: 7, weight: .bold))
+                            }
+                            .foregroundStyle(.black.opacity(0.85))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(scene.accentColor))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if scene.isActive {
+                        Circle()
+                            .fill(scene.accentColor)
+                            .frame(width: 8, height: 8)
+                            .shadow(color: scene.accentColor, radius: 6)
+                            .symbolEffect(.pulse)
                     }
                 }
-                .padding(14)
+
+                Spacer()
+
+                // Centre icon
+                Image(systemName: scene.icon)
+                    .font(.system(size: 30, weight: .light))
+                    .foregroundStyle(scene.accentColor)
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 10)
+
+                // Scene name
+                Text(scene.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .aspectRatio(0.88, contentMode: .fit)
+            .padding(14)
         }
-        .buttonStyle(.plain)
+        .aspectRatio(0.88, contentMode: .fit)
+        .contentShape(RoundedRectangle(cornerRadius: 20))
         .scaleEffect(isPressed ? 0.96 : 1.0)
         .animation(.spring(response: 0.22, dampingFraction: 0.65), value: isPressed)
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: scene.isActive)
+        // Tap the card body to activate; tap the ⚡ SPEED badge to open speed sheet
+        .onTapGesture { onActivate() }
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in isPressed = true }
                 .onEnded   { _ in isPressed = false }
         )
-        .onLongPressGesture(minimumDuration: 0.5) {
-            onLongPress()
-        }
     }
 }
 
