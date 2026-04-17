@@ -169,6 +169,7 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "PUT /behavior_instance/\(id) enabled=\(enabled)")
     }
 
+    /// Fetch a single grouped_light by ID.
     func fetchGroupedLight(id: String) async throws -> HueGroupedLight {
         let (ip, token) = try credentials()
         let data = try await get(path: "/clip/v2/resource/grouped_light/\(id)", ip: ip, token: token)
@@ -178,6 +179,15 @@ class HueAPIClient: @unchecked Sendable {
             throw HueAPIError.decodingFailed("Empty grouped_light response for id \(id)")
         }
         return first
+    }
+
+    /// Fetch ALL grouped lights in a single request — O(1) vs N fetchGroupedLight calls.
+    /// Use this in loadAll() to avoid N+1 network fetches per room.
+    func fetchGroupedLights() async throws -> [HueGroupedLight] {
+        let (ip, token) = try credentials()
+        let data = try await get(path: "/clip/v2/resource/grouped_light", ip: ip, token: token)
+        logRaw(data, label: "GET /grouped_light")
+        return try decode(HueV2Response<HueGroupedLight>.self, from: data).data
     }
 
     // ──────────────────────────────────────────────

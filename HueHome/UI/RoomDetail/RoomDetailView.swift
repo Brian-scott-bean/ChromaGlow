@@ -26,7 +26,7 @@ struct RoomDetailView: View {
 
     var body: some View {
         ZStack {
-            ambientBackground
+            RoomDetailAmbientBackground()
 
             Group {
                 if vm.isLoading && vm.lights.isEmpty {
@@ -82,29 +82,8 @@ struct RoomDetailView: View {
     // ──────────────────────────────────────────────
     // MARK: - Background
     // ──────────────────────────────────────────────
-
-    private var ambientBackground: some View {
-        ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-            Circle()
-                .fill(RadialGradient(
-                    colors: [Color(red: 1, green: 0.75, blue: 0.2).opacity(0.18), .clear],
-                    center: .center, startRadius: 0, endRadius: 200
-                ))
-                .frame(width: 340)
-                .offset(x: 80, y: -160)
-                .blur(radius: 20)
-            Circle()
-                .fill(RadialGradient(
-                    colors: [Color(red: 0.4, green: 0.3, blue: 1).opacity(0.14), .clear],
-                    center: .center, startRadius: 0, endRadius: 160
-                ))
-                .frame(width: 260)
-                .offset(x: -100, y: 120)
-                .blur(radius: 20)
-        }
-        .ignoresSafeArea()
-    }
+    // ambientBackground moved to RoomDetailAmbientBackground struct (bottom of file).
+    // Separated so SSE / vm changes don't trigger blur re-renders.
 
     // ──────────────────────────────────────────────
     // MARK: - Light Scroll
@@ -430,5 +409,37 @@ struct LightCard: View {
             // Reserve space for power overlay
             Spacer().frame(width: 44)
         }
+    }
+}
+
+
+// MARK: - Ambient Background (isolated — zero @Observable dependencies)
+
+/// Same reasoning as DashboardAmbientBackground: extracting the blur-orb
+/// background into its own View struct prevents vm.lights / vm.scenes
+/// changes from triggering repeated CoreImage blur passes.
+private struct RoomDetailAmbientBackground: View {
+    var body: some View {
+        ZStack {
+            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
+            Circle()
+                .fill(RadialGradient(
+                    colors: [Color(red: 1, green: 0.75, blue: 0.2).opacity(0.18), .clear],
+                    center: .center, startRadius: 0, endRadius: 200
+                ))
+                .frame(width: 340)
+                .offset(x: 80, y: -160)
+                .blur(radius: 20)
+            Circle()
+                .fill(RadialGradient(
+                    colors: [Color(red: 0.4, green: 0.3, blue: 1).opacity(0.14), .clear],
+                    center: .center, startRadius: 0, endRadius: 160
+                ))
+                .frame(width: 260)
+                .offset(x: -100, y: 120)
+                .blur(radius: 20)
+        }
+        .ignoresSafeArea()
+        .drawingGroup()   // rasterizes into a single Metal texture after first render
     }
 }

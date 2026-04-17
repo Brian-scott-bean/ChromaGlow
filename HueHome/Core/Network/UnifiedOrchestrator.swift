@@ -340,17 +340,27 @@ final class UnifiedOrchestrator {
             for (bridgeID, client) in clients {
                 group.addTask { [client, bridgeID] in
                     do {
-                        let rooms = try await client.fetchRooms()
-                        let lights = try await client.fetchLights()
+                        // Parallel fetch: rooms + lights + ALL grouped_lights in 3 concurrent
+                        // requests instead of 1 + N (one per room). Eliminates the N+1 pattern
+                        // that caused high energy usage with large room counts.
+                        async let roomsFetch   = client.fetchRooms()
+                        async let lightsFetch  = client.fetchLights()
+                        async let glFetch      = client.fetchGroupedLights()
+
+                        let (rooms, lights, groupedLights) = try await (roomsFetch, lightsFetch, glFetch)
+
+                        // Build lookup: groupedLightID → HueGroupedLight
+                        let glByID = Dictionary(uniqueKeysWithValues:
+                            groupedLights.map { ($0.id, $0) }
+                        )
 
                         var items: [RoomDisplayItem] = []
                         for room in rooms {
                             var brightness = 100.0
                             var isOn = false
 
-                            if let glID = room.groupedLightID,
-                               let gl = try? await client.fetchGroupedLight(id: glID) {
-                                isOn       = gl.on.on
+                            if let glID = room.groupedLightID, let gl = glByID[glID] {
+                                isOn = gl.on.on
                                 // Bridge reports brightness:0.0 for off grouped_lights.
                                 // Clamp to 1 so we never store 0% — turning a room on
                                 // from 0% brightness would make lights appear unresponsive.

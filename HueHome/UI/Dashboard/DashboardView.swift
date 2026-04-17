@@ -23,17 +23,16 @@ struct DashboardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase)   private var scenePhase
 
-    // Ambient background orb positions (stable, no GeometryReader jitter)
-    private let orb1Offset = CGPoint(x: -80, y: -180)
-    private let orb2Offset = CGPoint(x: 130, y: 80)
+
 
     /// Minimum seconds between auto-refreshes triggered by navigation or foregrounding.
+    /// SSE handles real-time updates; this is a staleness fallback only.
     /// Pull-to-refresh always fires immediately regardless.
-    private let refreshDebounceInterval: TimeInterval = 20
+    private let refreshDebounceInterval: TimeInterval = 120
 
     var body: some View {
         ZStack {
-            ambientBackground
+            DashboardAmbientBackground()
 
             Group {
                 if orchestrator.allRooms.isEmpty {
@@ -166,34 +165,9 @@ struct DashboardView: View {
         }
     }
 
-    // ──────────────────────────────────────────────
-    // MARK: - Ambient Background
-    // ──────────────────────────────────────────────
-
-    private var ambientBackground: some View {
-        ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-            Circle()
-                .fill(RadialGradient(
-                    colors: [Color(red: 1, green: 0.75, blue: 0.2).opacity(0.22), .clear],
-                    center: .center, startRadius: 0, endRadius: 200
-                ))
-                .frame(width: 360)
-                .offset(x: orb1Offset.x, y: orb1Offset.y)
-                .blur(radius: 24)
-                .allowsHitTesting(false)
-            Circle()
-                .fill(RadialGradient(
-                    colors: [Color(red: 0.4, green: 0.3, blue: 1).opacity(0.16), .clear],
-                    center: .center, startRadius: 0, endRadius: 160
-                ))
-                .frame(width: 280)
-                .offset(x: orb2Offset.x, y: orb2Offset.y)
-                .blur(radius: 20)
-                .allowsHitTesting(false)
-        }
-        .ignoresSafeArea()
-    }
+    // ── ambientBackground moved to DashboardAmbientBackground struct (see below) ─
+    // Extracting to a dedicated View struct ensures SwiftUI never re-renders the
+    // blur-heavy orbs when orchestrator.allRooms changes due to SSE events.
 
     // ──────────────────────────────────────────────
     // MARK: - Empty / Loading / Shimmer
@@ -483,5 +457,51 @@ struct BrightnessRow: View {
         .onChange(of: brightness) { _, new in
             if !isDragging { localBrightness = new }
         }
+    }
+}
+
+
+// MARK: - Ambient Background (isolated View — zero @Observable dependencies)
+
+/// Renders the two blur-orb background gradient circles.
+///
+/// Isolated as its own View struct so SwiftUI's view-identity system treats it
+/// as an OPAQUE, STABLE component. It has no @Environment(orchestrator) reads,
+/// so SSE events that update allRooms do NOT cause this view to re-evaluate —
+/// avoiding repeated off-screen CoreImage/blur render passes on every event.
+///
+/// Rule of thumb: anything with .blur() or complex gradients should live in its
+/// own View with zero observed dependencies.
+private struct DashboardAmbientBackground: View {
+    private let orb1Offset = CGPoint(x: -80, y: -180)
+    private let orb2Offset = CGPoint(x: 130, y: 80)
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
+            Circle()
+                .fill(RadialGradient(
+                    colors: [Color(red: 1, green: 0.75, blue: 0.2).opacity(0.22), .clear],
+                    center: .center, startRadius: 0, endRadius: 200
+                ))
+                .frame(width: 360)
+                .offset(x: orb1Offset.x, y: orb1Offset.y)
+                .blur(radius: 24)
+                .allowsHitTesting(false)
+            Circle()
+                .fill(RadialGradient(
+                    colors: [Color(red: 0.4, green: 0.3, blue: 1).opacity(0.16), .clear],
+                    center: .center, startRadius: 0, endRadius: 160
+                ))
+                .frame(width: 280)
+                .offset(x: orb2Offset.x, y: orb2Offset.y)
+                .blur(radius: 20)
+                .allowsHitTesting(false)
+        }
+        .ignoresSafeArea()
+        // drawingGroup() flattens the two blurred circles into a single Metal-composited
+        // texture after first render. Subsequent passes re-use the cached texture instead
+        // of re-running the CIGaussianBlur filter chain each time.
+        .drawingGroup()
     }
 }
