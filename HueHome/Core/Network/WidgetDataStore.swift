@@ -71,6 +71,22 @@ final class WidgetDataStore {
     var token:       String? { ud?.string(forKey: Key.token) }
     var lastUpdated: Date?   { ud?.object(forKey: Key.updatedAt) as? Date }
     var isPaired:    Bool    { !(bridgeIP?.isEmpty ?? true) }
+
+    // ──────────────────────────────────────────────
+    // MARK: - TTL
+    // ──────────────────────────────────────────────
+
+    /// Seconds since the last successful write. `.infinity` if never written.
+    var staleness: TimeInterval {
+        guard let last = lastUpdated else { return .infinity }
+        return Date().timeIntervalSince(last)
+    }
+
+    /// Returns true if the stored snapshot is older than `interval` seconds.
+    /// The widget extension calls this to decide whether to show a "stale" badge.
+    func isStale(olderThan interval: TimeInterval = 300) -> Bool {
+        staleness > interval
+    }
 }
 
 // MARK: - WidgetAPIClient

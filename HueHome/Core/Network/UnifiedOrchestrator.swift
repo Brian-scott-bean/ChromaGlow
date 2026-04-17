@@ -125,6 +125,18 @@ final class UnifiedOrchestrator {
     init() {}
 
     // ──────────────────────────────────────────────
+    // MARK: - Test Injection (debug only)
+    // ──────────────────────────────────────────────
+
+    #if DEBUG
+    /// Directly inject pre-built BridgeAPIClient instances — bypasses configure() and Keychain.
+    /// Call this from unit tests to provide a TestableAPIClient without touching SwiftData.
+    func injectForTesting(clients testClients: [String: BridgeAPIClient]) {
+        clients = testClients
+    }
+    #endif
+
+    // ──────────────────────────────────────────────
     // MARK: - Demo Mode
     // ──────────────────────────────────────────────
 
@@ -415,6 +427,10 @@ final class UnifiedOrchestrator {
     // ──────────────────────────────────────────────
     // MARK: - Room Mutations
 
+    /// - Note: Prefer `setRoom(_:isOn:)` — it accepts an explicit desired state,
+    ///   avoiding the stale-capture bug where `item.isOn` may have changed since
+    ///   the ForEach closure captured it (optimistic updates).
+    @available(*, deprecated, renamed: "setRoom(_:isOn:)")
     func toggleRoom(_ item: RoomDisplayItem) {
         // Demo mode: update local state only, no network
         if isDemoMode {
@@ -658,7 +674,8 @@ final class UnifiedOrchestrator {
 
     /// Returns true if any room state was mutated (used to gate rebuildAllRooms).
     @discardableResult
-    private func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> Bool {
+    @discardableResult
+    func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> Bool {
         var mutated = false
         for update in event.data {
             guard update.type == "grouped_light" else { continue }
@@ -699,6 +716,21 @@ final class UnifiedOrchestrator {
             .flatMap { $0 }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
             .filter { seen.insert($0.id).inserted }
+
+        // Keep widget in sync on every state change (SSE events and loadAll).
+        // Widget reads this via App Group UserDefaults; write is O(N) JSON encode.
+        let snapshots = allRooms.map { r in
+            WidgetRoomSnapshot(
+                id:             r.id,
+                name:           r.name,
+                archetype:      r.archetype,
+                isOn:           r.isOn,
+                brightness:     r.brightness,
+                lightCount:     r.lightCount,
+                groupedLightId: r.groupedLightID
+            )
+        }
+        WidgetDataStore.shared.write(rooms: snapshots)
     }
 
     /// Update a room's state and trigger an immediate view re-render.

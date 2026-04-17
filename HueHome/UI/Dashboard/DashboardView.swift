@@ -20,8 +20,9 @@ struct DashboardView: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var showLog         = false
     @State private var showSettings    = false
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.scenePhase)   private var scenePhase
+    @Environment(\.modelContext)         private var modelContext
+    @Environment(\.scenePhase)           private var scenePhase
+    @Environment(\.horizontalSizeClass)  private var sizeClass
 
 
 
@@ -92,7 +93,14 @@ struct DashboardView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 16)
 
-                LazyVStack(spacing: 14) {
+                // Adaptive layout: 1-column on iPhone, 2-column grid on iPad.
+                // LazyVGrid with a single flexible column is functionally identical to
+                // LazyVStack but lets us switch columns without restructuring the ForEach.
+                let columns: [GridItem] = sizeClass == .regular
+                    ? [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+                    : [GridItem(.flexible())]
+
+                LazyVGrid(columns: columns, spacing: 14) {
                     ForEach(orchestrator.allRooms, id: \.id) { room in
                         RoomCard(
                             room: room,
@@ -106,13 +114,14 @@ struct DashboardView: View {
                                 orchestrator.setBrightness(newBrightness, for: room)
                             }
                         )
-                        .padding(.horizontal, 20)
+                        .padding(.horizontal, sizeClass == .regular ? 0 : 20)
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .bottom)),
                             removal:   .opacity
                         ))
                     }
                 }
+                .padding(.horizontal, sizeClass == .regular ? 20 : 0)
                 .padding(.bottom, 100)   // clear custom tab bar
                 .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allRooms.count)
             }
@@ -456,6 +465,21 @@ struct BrightnessRow: View {
         // Sync external value back (SSE update, toggle) only when finger is off slider
         .onChange(of: brightness) { _, new in
             if !isDragging { localBrightness = new }
+        }
+        // VoiceOver: treat the whole row as an adjustable element.
+        // Users can swipe up/down to nudge brightness by 10% steps.
+        .accessibilityLabel("Brightness")
+        .accessibilityValue("\(Int(displayValue)) percent")
+        .accessibilityAdjustableAction { direction in
+            let step: Double = 10
+            let newVal: Double
+            switch direction {
+            case .increment: newVal = min(100, localBrightness + step)
+            case .decrement: newVal = max(1,   localBrightness - step)
+            @unknown default: return
+            }
+            localBrightness = newVal
+            onCommit(newVal)
         }
     }
 }
