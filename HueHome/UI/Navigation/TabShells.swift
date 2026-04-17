@@ -1,48 +1,9 @@
 // TabShells.swift
 // HueHome Pro — Stage 1
-// Placeholder NavigationStack shells for tabs 2–5.
-// Each will be filled out in their respective stages.
+// Placeholder shells for tabs 3–5 (Automations, Devices, Settings).
+// Scenes tab moved to UI/Scenes/ScenesTabView.swift (Stage 2B).
 
 import SwiftUI
-
-// MARK: - Scenes Tab
-
-struct ScenesTabView: View {
-    @Environment(\.colorScheme) var colorScheme
-
-    var body: some View {
-        ZStack {
-            (colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background)
-                .ignoresSafeArea()
-
-            VStack(spacing: HueSpacing.xxl) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 48))
-                    .foregroundStyle(HuePalette.amber.opacity(0.6))
-
-                Text("Scenes")
-                    .font(HueFont.displayMedium)
-                    .foregroundStyle(
-                        colorScheme == .dark
-                            ? HuePalette.Noir.textPrimary
-                            : HuePalette.Estate.textPrimary
-                    )
-
-                Text("Full scene manager coming in Stage 2")
-                    .font(HueFont.body)
-                    .foregroundStyle(
-                        colorScheme == .dark
-                            ? HuePalette.Noir.textSecondary
-                            : HuePalette.Estate.textSecondary
-                    )
-                    .multilineTextAlignment(.center)
-            }
-            .padding(HueSpacing.section)
-        }
-        .navigationTitle("Scenes")
-        .navigationBarTitleDisplayMode(.large)
-    }
-}
 
 // MARK: - Automations Tab
 

@@ -55,6 +55,14 @@ final class UnifiedOrchestrator {
     /// All state changes work locally; no network calls are made.
     var isDemoMode: Bool = false
 
+    // ── Scenes (Stage 2B) ────────────────────────────────────
+
+    /// All scenes across every active bridge, active-first then alphabetical.
+    var globalScenes: [GlobalSceneItem] = []
+
+    /// True while a scenes fetch is in flight.
+    var isLoadingScenes: Bool = false
+
     // MARK: - Internal
 
     /// Active bridge clients.  keyed by BridgeRecord.id
@@ -545,6 +553,75 @@ final class UnifiedOrchestrator {
 
     func rooms(for bridgeID: String) -> [RoomDisplayItem] {
         roomsByBridge[bridgeID] ?? []
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Scenes (Stage 2B)
+    // ──────────────────────────────────────────────
+
+    /// Fetch all scenes from all active bridges in parallel.
+    /// Results are merged, deduplicated (same room across duplicate bridges
+    /// is fine — Hue scene UUIDs are bridge-local), and sorted:
+    ///   active first → then alphabetical by name.
+    func loadAllScenes() async {
+        if isDemoMode {
+            globalScenes = DemoDataProvider.globalScenes
+            return
+        }
+
+        guard !clients.isEmpty else { return }
+
+        isLoadingScenes = true
+        defer { isLoadingScenes = false }
+
+        var result: [GlobalSceneItem] = []
+
+        await withTaskGroup(of: [GlobalSceneItem].self) { group in
+            for (bridgeID, client) in clients {
+                group.addTask {
+                    guard let scenes = try? await client.fetchScenes() else { return [] }
+                    return scenes.map { scene in
+                        GlobalSceneItem(
+                            id:            "\(bridgeID):\(scene.id)",
+                            bridgeSceneID: scene.id,
+                            name:          scene.metadata.name,
+                            roomID:        scene.group.rid,
+                            bridgeID:      bridgeID,
+                            isActive:      scene.status?.active == "active"
+                        )
+                    }
+                }
+            }
+            for await items in group {
+                result.append(contentsOf: items)
+            }
+        }
+
+        // Active first, then alphabetical
+        globalScenes = result.sorted {
+            if $0.isActive != $1.isActive { return $0.isActive }
+            return $0.name.localizedCompare($1.name) == .orderedAscending
+        }
+
+        log.info("Loaded \(self.globalScenes.count) scenes across \(self.clients.count) bridge(s)")
+    }
+
+    /// Activate a scene. Optimistic: marks it active locally, clears others
+    /// in the same room, then fires the API call asynchronously.
+    func activateGlobalScene(_ scene: GlobalSceneItem) {
+        // Optimistic update
+        for i in globalScenes.indices {
+            if globalScenes[i].roomID == scene.roomID &&
+               globalScenes[i].bridgeID == scene.bridgeID {
+                globalScenes[i].isActive = (globalScenes[i].id == scene.id)
+            }
+        }
+
+        guard let client = clients[scene.bridgeID] else { return }
+        Task {
+            try? await client.activateScene(id: scene.bridgeSceneID)
+            log.info("Activated scene '\(scene.name)' on bridge \(scene.bridgeID)")
+        }
     }
 }
 

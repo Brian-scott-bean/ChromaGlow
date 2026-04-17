@@ -1,9 +1,14 @@
 // SceneDisplayItem.swift
 // HueHome Pro — Epic 4 / Story 4.1
 //
-// UI-ready scene model. Derived from HueScene after filtering to the current room.
+// SceneDisplayItem  — per-room scene chip (used in RoomDetailView scene strip)
+// GlobalSceneItem   — cross-bridge scene with room context (used in ScenesTabView grid)
 
 import SwiftUI
+
+// ══════════════════════════════════════════════════════════
+// MARK: - SceneDisplayItem  (per-room)
+// ══════════════════════════════════════════════════════════
 
 struct SceneDisplayItem: Identifiable, Hashable {
     let id: String
@@ -77,5 +82,32 @@ struct SceneDisplayItem: Identifiable, Hashable {
     }
 
     static func == (lhs: SceneDisplayItem, rhs: SceneDisplayItem) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
+// ══════════════════════════════════════════════════════════
+// MARK: - GlobalSceneItem  (cross-bridge, used by ScenesTabView)
+//
+// Carries room + bridge context so the Scenes tab can display
+// room labels, activate via the correct bridge client, and
+// support cross-bridge deduplication.
+//
+// id = "\(bridgeID):\(bridgeSceneID)" — globally unique.
+// ══════════════════════════════════════════════════════════
+
+struct GlobalSceneItem: Identifiable, Hashable {
+    let id:            String   // globally unique composite key
+    let bridgeSceneID: String   // real Hue scene UUID (used for API calls)
+    let name:          String
+    let roomID:        String   // Hue room/zone UUID on this bridge
+    let bridgeID:      String   // which bridge owns this scene
+
+    var isActive: Bool
+
+    // Reuse per-room colour + icon logic
+    var accentColor: Color { SceneDisplayItem.color(for: name) }
+    var icon:        String { SceneDisplayItem.icon(for: name) }
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
