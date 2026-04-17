@@ -16,6 +16,7 @@
 // Cross-bridge "All Off": fires simultaneously on every active bridge.
 
 import Foundation
+import SwiftUI
 import SwiftData
 import OSLog
 
@@ -73,6 +74,23 @@ final class UnifiedOrchestrator {
 
     /// SSE tasks per bridge — cancelled when bridge is removed.
     private var sseTasks: [String: Task<Void, Never>] = [:]
+
+    /// One shared URL session for all SSE streams.
+    /// Created lazily so the cert delegate is retained for the orchestrator's lifetime.
+    /// NOT recreated on reconnect — reusing a session avoids resource leaks.
+    private lazy var sseSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest  = .infinity   // required for indefinite SSE
+        config.timeoutIntervalForResource = .infinity
+        return URLSession(
+            configuration: config,
+            delegate: HueCertTrustDelegate(),
+            delegateQueue: nil
+        )
+    }()
+
+    /// Whether the app-lifecycle observer has been set up (guard against double-register).
+    private var lifecycleObserverStarted = false
 
     private let keychain = KeychainManager.shared
     private let log = Logger(subsystem: "com.huehome.pro", category: "UnifiedOrchestrator")
@@ -420,6 +438,11 @@ final class UnifiedOrchestrator {
                 await self?.runSSE(bridgeID: bridgeID, client: client)
             }
         }
+        // Register one-time app-lifecycle observer (background → suspend, foreground → resume)
+        if !lifecycleObserverStarted {
+            lifecycleObserverStarted = true
+            observeAppLifecycle()
+        }
     }
 
     func stopSSE() {
@@ -427,63 +450,84 @@ final class UnifiedOrchestrator {
         sseTasks.removeAll()
     }
 
-    private func runSSE(bridgeID: String, client: BridgeAPIClient) async {
-        guard let creds = try? client.credentials() else { return }
-        let urlStr = "https://\(creds.ip)/clip/v2/resource"
-        guard let url = URL(string: urlStr) else { return }
-
-        var request = URLRequest(url: url)
-        request.setValue(creds.token, forHTTPHeaderField: "hue-application-key")
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-
-        // Use the same cert-trust strategy as HueAPIClient — delegate trusts Hue's self-signed cert.
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest  = 0
-        config.timeoutIntervalForResource = 0
-        let session = URLSession(
-            configuration: config,
-            delegate: HueCertTrustDelegate(),   // ← real cert trust, not a dummy URLProtocol
-            delegateQueue: nil
-        )
-
-        do {
-            let (stream, _) = try await session.bytes(for: request)
-            connectionStatus[bridgeID] = .connected
-
-            var buffer = ""
-            for try await byte in stream {
-                guard !Task.isCancelled else { break }
-                let char = String(bytes: [byte], encoding: .utf8) ?? ""
-                buffer += char
-
-                if buffer.hasSuffix("\n\n") || buffer.hasSuffix("\r\n\r\n") {
-                    processSSEChunk(buffer, bridgeID: bridgeID)
-                    buffer = ""
-                }
+    /// Observe UIApplication lifecycle via NotificationCenter to suspend SSE when backgrounded.
+    /// Runs indefinitely for the lifetime of the orchestrator — do NOT call more than once.
+    private func observeAppLifecycle() {
+        Task { @MainActor [weak self] in
+            for await _ in NotificationCenter.default.notifications(
+                named: UIApplication.didEnterBackgroundNotification) {
+                self?.log.info("App backgrounded — suspending SSE to reduce radio/CPU")
+                self?.stopSSE()
             }
-        } catch {
-            if !Task.isCancelled {
-                connectionStatus[bridgeID] = .error(error.localizedDescription)
-                log.error("SSE error on bridge \(bridgeID): \(error.localizedDescription)")
-                // Retry after 5 seconds
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                await runSSE(bridgeID: bridgeID, client: client)
+        }
+        Task { @MainActor [weak self] in
+            for await _ in NotificationCenter.default.notifications(
+                named: UIApplication.willEnterForegroundNotification) {
+                self?.log.info("App foregrounded — resuming SSE")
+                self?.startSSE()
             }
         }
     }
 
-    private func processSSEChunk(_ chunk: String, bridgeID: String) {
-        let lines = chunk.components(separatedBy: .newlines)
-        for line in lines {
-            guard line.hasPrefix("data:") else { continue }
-            let jsonStr = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            guard let data = jsonStr.data(using: .utf8) else { continue }
+    /// Run a persistent SSE connection for one bridge.
+    ///
+    /// Key energy improvements over the previous implementation:
+    ///   • Uses shared `sseSession` (no URLSession leak per reconnect)
+    ///   • Correct endpoint: /eventstream/clip/v2
+    ///   • Lines via `bytes.lines` (no per-byte String allocation)
+    ///   • While loop, not recursion (no stack growth on reconnect)
+    ///   • Exponential backoff: 5s → 10s → 20s → 40s → 60s (capped)
+    private func runSSE(bridgeID: String, client: BridgeAPIClient) async {
+        guard let creds = try? client.credentials() else { return }
 
-            if let events = try? JSONDecoder().decode([SSEEvent].self, from: data) {
-                for event in events {
-                    applySSEEvent(event, bridgeID: bridgeID)
+        // Correct Hue CLIP v2 SSE endpoint
+        let urlStr = "https://\(creds.ip)/eventstream/clip/v2"
+        guard let url = URL(string: urlStr) else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(creds.token, forHTTPHeaderField: "hue-application-key")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+
+        var retryDelay: UInt64 = 5_000_000_000   // 5 s initial
+        let maxDelay:   UInt64 = 60_000_000_000  // 60 s ceiling
+
+        while !Task.isCancelled {
+            do {
+                connectionStatus[bridgeID] = .connecting
+                log.info("SSE: Connecting to \(urlStr, privacy: .public)")
+
+                let (bytes, _) = try await sseSession.bytes(for: request)
+                connectionStatus[bridgeID] = .connected
+                retryDelay = 5_000_000_000   // reset on successful connection
+
+                // ── Line-by-line processing ─────────────────────────────────────────
+                // URLSession buffers internally and delivers complete lines.
+                // Zero per-byte String allocations; CPU is idle between events.
+                for try await line in bytes.lines {
+                    guard !Task.isCancelled else { return }
+                    guard line.hasPrefix("data:") else { continue }
+
+                    let jsonStr = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                    guard !jsonStr.isEmpty, let data = jsonStr.data(using: .utf8) else { continue }
+
+                    if let events = try? JSONDecoder().decode([SSEEvent].self, from: data) {
+                        for event in events { applySSEEvent(event, bridgeID: bridgeID) }
+                    }
                 }
+                // Stream ended cleanly (bridge closed connection) — reconnect once.
+                log.info("SSE: Stream ended cleanly on \(bridgeID)")
+
+            } catch {
+                guard !Task.isCancelled else { return }
+                connectionStatus[bridgeID] = .error(error.localizedDescription)
+                log.error("SSE error [\(bridgeID)]: \(error.localizedDescription, privacy: .public)")
             }
+
+            // Exponential backoff before reconnect (applies to both error and clean-end)
+            log.info("SSE: Reconnecting \(bridgeID) in \(retryDelay / 1_000_000_000)s")
+            try? await Task.sleep(nanoseconds: retryDelay)
+            retryDelay = min(retryDelay * 2, maxDelay)   // 5 → 10 → 20 → 40 → 60 → 60…
         }
     }
 
