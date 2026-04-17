@@ -865,11 +865,11 @@ final class UnifiedOrchestrator {
 /// Shared JSON decoder for SSE message parsing.
 /// Allocated once — avoids heap churn from JSONDecoder() per SSE line.
 /// Safe: @MainActor serialisation means decode() is never called concurrently.
-private extension UnifiedOrchestrator {
+extension UnifiedOrchestrator {
     static let sseDecoder = JSONDecoder()
 }
 
-private struct SSEEvent: Decodable {
+struct SSEEvent: Decodable {
     let type: String
     let data: [SSEResourceUpdate]
 }
