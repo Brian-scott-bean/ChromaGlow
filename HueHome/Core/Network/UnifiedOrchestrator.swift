@@ -334,7 +334,10 @@ final class UnifiedOrchestrator {
             return
         }
         guard !clients.isEmpty else {
-            allRooms = []
+            // No bridges configured yet — keep whatever rooms are already showing.
+            // Do NOT clear allRooms: isLoading stays false so the dashboard would
+            // instantly flip to "no rooms found" even though rooms are on screen.
+            log.info("loadAll: no active bridge clients — skipping fetch, keeping cached state")
             return
         }
         // Guard against concurrent calls: two simultaneous loadAll() runs
@@ -352,8 +355,12 @@ final class UnifiedOrchestrator {
         errorMessage = nil
         defer { isLoading = false }
 
-        // Parallel fetch using TaskGroup
-        await withTaskGroup(of: (String, [RoomDisplayItem], [String: String]).self) { group in
+        // Use Optional<[RoomDisplayItem]> as a sentinel:
+        //   • nil   → fetch threw; keep roomsByBridge unchanged (preserve last-known state)
+        //   • .some → success; overwrite roomsByBridge with fresh data
+        // This prevents a transient bridge unreachability during pull-to-refresh from
+        // wiping all rooms and showing "no rooms found" for a bridge that was fine before.
+        await withTaskGroup(of: (String, [RoomDisplayItem]?, [String: String]).self) { group in
             for (bridgeID, client) in clients {
                 group.addTask { [client, bridgeID] in
                     do {
@@ -418,7 +425,6 @@ final class UnifiedOrchestrator {
                             }
 
                             // Build per-room light UUID → room ID entries.
-                            // Accumulated into bridgeLightMap per-bridge below.
                             for light in roomLights {
                                 bridgeLightMap[light.id] = room.id
                             }
@@ -442,23 +448,27 @@ final class UnifiedOrchestrator {
                             self.connectionStatus[bridgeID] = .connected
                             self.log.info("Bridge \(bridgeID): loaded \(items.count) rooms")
                         }
-                        return (bridgeID, items, bridgeLightMap)
+                        return (bridgeID, items, bridgeLightMap)   // ← non-nil = success
                     } catch {
                         await MainActor.run {
                             self.connectionStatus[bridgeID] = .error(error.localizedDescription)
                             self.log.error("Bridge \(bridgeID) load failed: \(error.localizedDescription)")
                         }
-                        return (bridgeID, [], [:])
+                        return (bridgeID, nil, [:])   // ← nil = failure; keep existing rooms
                     }
                 }
             }
 
             for await (bridgeID, rooms, lightMap) in group {
-                roomsByBridge[bridgeID] = rooms
-                // Merge this bridge's lightID→roomID entries into the global reverse map.
-                for (lightID, roomID) in lightMap {
-                    lightIDToRoomID[lightID] = roomID
+                if let rooms {
+                    // Success: overwrite with fresh data.
+                    roomsByBridge[bridgeID] = rooms
+                    for (lightID, roomID) in lightMap {
+                        lightIDToRoomID[lightID] = roomID
+                    }
                 }
+                // Failure (nil): leave roomsByBridge[bridgeID] untouched so existing
+                // cards stay visible. The SSE stream continues; the bridge may recover.
             }
         }
 
