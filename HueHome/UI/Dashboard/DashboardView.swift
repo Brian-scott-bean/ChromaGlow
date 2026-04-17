@@ -79,9 +79,10 @@ struct DashboardView: View {
                     ForEach(orchestrator.allRooms, id: \.id) { room in
                         RoomCard(
                             room: room,
-                            onToggle: {
-                                HapticManager.shared.light()
-                                orchestrator.toggleRoom(room)
+                            onToggle: { desiredOn in
+                                // desiredOn is passed from RoomCard's localIsOn (post-flip),
+                                // avoiding stale room.isOn captured from ForEach closure.
+                                orchestrator.setRoom(room, isOn: desiredOn)
                             },
                             onBrightness: { newBrightness in
                                 // Fires once at drag END — not during drag.
@@ -231,7 +232,7 @@ struct DashboardView: View {
 struct RoomCard: View {
 
     let room: RoomDisplayItem
-    let onToggle:     () -> Void
+    let onToggle:     (Bool) -> Void   // Bool = desired new on-state
     let onBrightness: (Double) -> Void   // called ONCE on drag end with final value
 
     // ── Local optimistic state ────────────────────────────────────────────────
@@ -241,7 +242,7 @@ struct RoomCard: View {
     @State private var localIsOn: Bool
 
     init(room: RoomDisplayItem,
-         onToggle: @escaping () -> Void,
+         onToggle: @escaping (Bool) -> Void,
          onBrightness: @escaping (Double) -> Void) {
         self.room         = room
         self.onToggle     = onToggle
@@ -274,7 +275,7 @@ struct RoomCard: View {
             Button {
                 HapticManager.shared.light()
                 localIsOn.toggle()   // instant — never waits for @Observable
-                onToggle()
+                onToggle(localIsOn)   // pass the NEW state — avoids stale room.isOn capture
             } label: {
                 Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 24))

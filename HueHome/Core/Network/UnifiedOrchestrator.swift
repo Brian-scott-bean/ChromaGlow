@@ -402,6 +402,28 @@ final class UnifiedOrchestrator {
         }
     }
 
+    /// Explicitly set on-state for a room.
+    /// Unlike toggleRoom (which computes !item.isOn from a potentially stale capture),
+    /// this takes the desired state directly — used by RoomCard's local @State onToggle.
+    func setRoom(_ item: RoomDisplayItem, isOn desiredState: Bool) {
+        if isDemoMode {
+            updateRoom(item.id, isOn: desiredState)
+            return
+        }
+        guard let glID = item.groupedLightID,
+              let client = clients[item.bridgeID ?? ""] else { return }
+        updateRoom(item.id, isOn: desiredState)
+        Task {
+            do {
+                try await client.setGroupedLight(id: glID, on: desiredState)
+            } catch {
+                // Rollback: revert to the opposite of what we tried
+                updateRoom(item.id, isOn: !desiredState)
+                log.error("setRoom failed for \(item.id): \(error.localizedDescription)")
+            }
+        }
+    }
+
     func setBrightness(_ brightness: Double, for item: RoomDisplayItem) {
         if isDemoMode {
             let clamped = max(1, min(100, brightness))
