@@ -348,6 +348,10 @@ class HueAPIClient: @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else { return data }
         log.info("API: HTTP \(http.statusCode, privacy: .public) ← \(request.url?.path ?? "", privacy: .public)")
         guard (200...299).contains(http.statusCode) else {
+            // Log the bridge's error body BEFORE throwing — it contains the exact reason.
+            if let errorBody = String(data: data, encoding: .utf8) {
+                log.error("API: Bridge error body: \(errorBody, privacy: .public)")
+            }
             throw HueAPIError.httpError(http.statusCode)
         }
         return data

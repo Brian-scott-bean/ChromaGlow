@@ -59,27 +59,36 @@ struct CreateSceneRequest: Encodable {
 
 extension CreateSceneRequest {
 
-    /// Build a CreateSceneRequest from a room's current light states.
+    /// Build a CreateSceneRequest from a room's (or zone's) current light states.
+    ///
+    /// - Parameters:
+    ///   - name:       Human-readable scene name.
+    ///   - groupID:    Hue room or zone UUID.
+    ///   - groupRtype: `"room"` or `"zone"` — must match what the bridge has for this ID.
+    ///   - lights:     Current light states to snapshot.
     static func fromCurrentLights(
-        name:   String,
-        roomID: String,
-        lights: [LightDisplayItem]
+        name:       String,
+        groupID:    String,
+        groupRtype: String = "room",
+        lights:     [LightDisplayItem]
     ) -> CreateSceneRequest {
         let actions: [SceneAction] = lights.map { light in
             let action = SceneAction.Action(
                 on:      .init(on: light.isOn),
-                dimming: light.isOn ? .init(brightness: max(1, light.brightness)) : nil,
+                // Only send dimming for on lights — bridge ignores dimming for off lights
+                // in a scene, but some firmware versions reject it with 400.
+                dimming: light.isOn ? .init(brightness: max(1.0, min(100.0, light.brightness))) : nil,
                 color:   {
-                    if let x = light.colorX, let y = light.colorY {
-                        return .init(xy: .init(x: x, y: y))
-                    }
-                    return nil
+                    guard let x = light.colorX, let y = light.colorY else { return nil }
+                    // CIE xy values must be in [0, 1] — clamp defensively.
+                    return .init(xy: .init(x: max(0, min(1, x)), y: max(0, min(1, y))))
                 }(),
                 color_temperature: {
-                    if light.colorX == nil, let mirek = light.colorTempMirek {
-                        return .init(mirek: mirek)
-                    }
-                    return nil
+                    // Only send CT when there's no colour data (mutually exclusive).
+                    guard light.colorX == nil, let mirek = light.colorTempMirek else { return nil }
+                    // Clamp to the light's valid mirek range (default 153–500 = 6500K–2000K).
+                    let clamped = max(light.mirekMin, min(light.mirekMax, mirek))
+                    return .init(mirek: clamped)
                 }()
             )
             return SceneAction(
@@ -90,7 +99,7 @@ extension CreateSceneRequest {
 
         return CreateSceneRequest(
             metadata: .init(name: name),
-            group:    .init(rid: roomID, rtype: "room"),
+            group:    .init(rid: groupID, rtype: groupRtype),
             actions:  actions
         )
     }

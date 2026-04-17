@@ -354,9 +354,10 @@ final class RoomDetailViewModel {
         appendLog("✨ Creating scene '\(trimmed)' with \(lights.count) light(s)…")
 
         let request = CreateSceneRequest.fromCurrentLights(
-            name:   trimmed,
-            roomID: room.id,
-            lights: lights
+            name:       trimmed,
+            groupID:    room.id,
+            groupRtype: room.kind == .zone ? "zone" : "room",
+            lights:     lights
         )
 
         do {
