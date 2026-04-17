@@ -263,8 +263,14 @@ struct ScenesTabView: View {
                 Task { await orchestrator.loadAllScenes() }
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .foregroundStyle(.white.opacity(0.8))
-                    .symbolEffect(.rotate, value: orchestrator.isLoadingScenes)
+                    .foregroundStyle(.white.opacity(orchestrator.isLoadingScenes ? 0.4 : 0.8))
+                    .rotationEffect(.degrees(orchestrator.isLoadingScenes ? 360 : 0))
+                    .animation(
+                        orchestrator.isLoadingScenes
+                            ? .linear(duration: 1).repeatForever(autoreverses: false)
+                            : .default,
+                        value: orchestrator.isLoadingScenes
+                    )
             }
             .disabled(orchestrator.isLoadingScenes)
         }
