@@ -72,11 +72,12 @@ final class HueLocalRoom {
     // Written after each successful loadAll(). Read on launch to show
     // the dashboard immediately without waiting for the first API response.
     // ──────────────────────────────────────────────
-    var cachedName:       String?   // last-seen room name from Bridge
-    var lastIsOn:         Bool      // last-known on/off state
-    var lastBrightness:   Double    // last-known brightness (1–100)
-    var cachedLightCount: Int       // last-known light count
-    var cachedArchetype:  String?   // last-seen archetype for icon
+    var cachedName:          String?   // last-seen room name from Bridge
+    var lastIsOn:            Bool      // last-known on/off state
+    var lastBrightness:      Double    // last-known brightness (1–100)
+    var cachedLightCount:    Int       // last-known light count
+    var cachedArchetype:     String?   // last-seen archetype for icon
+    var cachedGroupedLightID: String?  // last-seen grouped_light UUID — needed for instant toggle on cold start
 
     init(
         roomID: String,
@@ -101,11 +102,12 @@ final class HueLocalRoom {
         self.createdAt         = Date()
         self.updatedAt         = Date()
         // Cache defaults
-        self.cachedName        = nil
-        self.lastIsOn          = false
-        self.lastBrightness    = 100
-        self.cachedLightCount  = 0
-        self.cachedArchetype   = nil
+        self.cachedName            = nil
+        self.lastIsOn              = false
+        self.lastBrightness        = 100
+        self.cachedLightCount      = 0
+        self.cachedArchetype       = nil
+        self.cachedGroupedLightID  = nil
     }
 }
 

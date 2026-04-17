@@ -221,7 +221,7 @@ final class UnifiedOrchestrator {
                     archetype:         local.cachedArchetype,
                     isOn:              local.lastIsOn,
                     brightness:        local.lastBrightness,
-                    groupedLightID:    nil,   // unknown until live fetch
+                    groupedLightID:    local.cachedGroupedLightID,   // non‑nil from 2nd launch onwards
                     lightCount:        local.cachedLightCount,
                     bridgeID:          local.bridgeID,
                     childResourceRefs: []
@@ -243,20 +243,22 @@ final class UnifiedOrchestrator {
                     predicate: #Predicate { $0.roomID == id }
                 )
                 if let existing = try context.fetch(descriptor).first {
-                    existing.cachedName       = room.name
-                    existing.lastIsOn         = room.isOn
-                    existing.lastBrightness   = room.brightness
-                    existing.cachedLightCount = room.lightCount
-                    existing.cachedArchetype  = room.archetype
-                    existing.bridgeID         = room.bridgeID
-                    existing.updatedAt        = Date()
+                    existing.cachedName          = room.name
+                    existing.lastIsOn            = room.isOn
+                    existing.lastBrightness      = room.brightness
+                    existing.cachedLightCount    = room.lightCount
+                    existing.cachedArchetype     = room.archetype
+                    existing.cachedGroupedLightID = room.groupedLightID   // persist for instant toggle on next launch
+                    existing.bridgeID            = room.bridgeID
+                    existing.updatedAt           = Date()
                 } else {
                     let local = HueLocalRoom(roomID: id, bridgeID: room.bridgeID)
-                    local.cachedName       = room.name
-                    local.lastIsOn         = room.isOn
-                    local.lastBrightness   = room.brightness
-                    local.cachedLightCount = room.lightCount
-                    local.cachedArchetype  = room.archetype
+                    local.cachedName             = room.name
+                    local.lastIsOn               = room.isOn
+                    local.lastBrightness         = room.brightness
+                    local.cachedLightCount       = room.lightCount
+                    local.cachedArchetype        = room.archetype
+                    local.cachedGroupedLightID   = room.groupedLightID   // persist for instant toggle on next launch
                     context.insert(local)
                 }
             }

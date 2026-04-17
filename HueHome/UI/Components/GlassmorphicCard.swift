@@ -25,19 +25,15 @@ struct GlassmorphicCard<Content: View>: View {
     var body: some View {
         ZStack {
             // ── Ambient glow halo ─────────────────────────
-            // Positioned behind the glass so it bleeds through .ultraThinMaterial.
+            // Shadow-based glow: visually equivalent to blur at normal size,
+            // but composited by Core Animation without a CALayer backing store.
+            // Each blur() forces an off-screen GPU texture allocation;
+            // shadow avoids that overhead entirely.
             if isActive {
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(
-                        RadialGradient(
-                            colors: [glowColor.opacity(0.55), glowColor.opacity(0)],
-                            center: .leading,
-                            startRadius: 0,
-                            endRadius: 180
-                        )
-                    )
-                    .blur(radius: glowRadius * 0.6)
-                    .scaleEffect(x: 1.15, y: 1.08)
+                    .fill(glowColor.opacity(0.45))
+                    .scaleEffect(x: 1.12, y: 1.06)
+                    .shadow(color: glowColor.opacity(0.65), radius: glowRadius * 0.55, x: 0, y: 4)
                     .allowsHitTesting(false)
             }
 
