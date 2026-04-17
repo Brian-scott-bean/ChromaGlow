@@ -338,9 +338,12 @@ struct BrightnessRow: View {
         _localBrightness = State(initialValue: brightness)
     }
 
-    // During drag use localBrightness (pure @State, no cascades).
-    // At rest use the parent's brightness (reflects SSE/SSE updates instantly).
-    private var displayValue: Double { isDragging ? localBrightness : brightness }
+    // Always display localBrightness — never conditionally switch back to the parent
+    // value mid-gesture. The snap-back bug was caused by setting isDragging=false
+    // in onEnded (switching display to parent's stale value) before the parent
+    // re-rendered with the committed value. onChange(of: brightness) syncs
+    // localBrightness from SSE/parent updates when finger is off the slider.
+    private var displayValue: Double { localBrightness }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -378,8 +381,8 @@ struct BrightnessRow: View {
                         .onChanged { value in
                             if !isDragging {
                                 isDragging  = true
-                                dragStart   = brightness   // snapshot at drag start
-                                lastNotch   = Int(brightness / 10)
+                                dragStart   = localBrightness  // use live local value, not stale parent prop
+                                lastNotch   = Int(localBrightness / 10)
                                 HapticManager.shared.medium()
                             }
                             let delta  = Double(value.translation.width / sensitivity)
