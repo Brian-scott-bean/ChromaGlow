@@ -24,6 +24,16 @@ final class RoomDetailViewModel {
     /// Brief error for UI toast — auto-cleared after 3 s.
     var toastMessage: String? = nil
 
+    // MARK: Multi-select state
+    /// True while the user is in light-selection mode.
+    var isSelecting: Bool = false
+    /// IDs of lights currently checked in select mode.
+    var selectedLightIDs: Set<String> = []
+    /// Convenience: the LightDisplayItem objects for all checked IDs.
+    var selectedLights: [LightDisplayItem] {
+        lights.filter { selectedLightIDs.contains($0.id) }
+    }
+
     // MARK: Room context
     let room: RoomDisplayItem
 
@@ -285,6 +295,44 @@ final class RoomDetailViewModel {
             guard !Task.isCancelled else { return }
             onColorCommitted?()
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Multi-select
+    // ──────────────────────────────────────────────
+
+    /// Enter select mode, optionally pre-selecting one light (e.g. long-press).
+    func enterSelectMode(preselecting id: String? = nil) {
+        selectedLightIDs = id.map { [$0] } ?? []
+        withAnimation(.spring(response: 0.3)) { isSelecting = true }
+        HapticManager.shared.medium()
+    }
+
+    func exitSelectMode() {
+        withAnimation(.spring(response: 0.3)) { isSelecting = false }
+        selectedLightIDs.removeAll()
+    }
+
+    func toggleSelection(id: String) {
+        if selectedLightIDs.contains(id) {
+            selectedLightIDs.remove(id)
+        } else {
+            selectedLightIDs.insert(id)
+        }
+        HapticManager.shared.light()
+    }
+
+    func selectAll()     { selectedLightIDs = Set(lights.map(\.id)) }
+    func clearSelection() { selectedLightIDs.removeAll() }
+
+    /// Turn all selected lights on or off.
+    func setSelectedLightsOn(_ on: Bool) {
+        for light in selectedLights { setLight(light, isOn: on) }
+    }
+
+    /// Set brightness on all selected lights.
+    func setSelectedLightsBrightness(_ pct: Double) {
+        for light in selectedLights { setBrightness(pct, for: light) }
     }
 
     // ──────────────────────────────────────────────

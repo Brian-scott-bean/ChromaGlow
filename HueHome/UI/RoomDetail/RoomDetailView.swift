@@ -13,8 +13,9 @@ struct RoomDetailView: View {
 
     let room: RoomDisplayItem
     @State private var vm: RoomDetailViewModel
-    @State private var showLog         = false
-    @State private var showCreateScene = false
+    @State private var showLog          = false
+    @State private var showCreateScene  = false
+    @State private var showBulkScene    = false   // CreateSceneView from BulkActionBar
     @Environment(UnifiedOrchestrator.self) private var orchestrator
 
     init(room: RoomDisplayItem) {
@@ -37,6 +38,18 @@ struct RoomDetailView: View {
                     lightScrollView
                 }
             }
+
+            // BulkActionBar — slides up from bottom in select mode
+            if vm.isSelecting {
+                VStack {
+                    Spacer()
+                    BulkActionBar(vm: vm) { showBulkScene = true }
+                        .padding(.bottom, 12)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .zIndex(5)
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: vm.isSelecting)
+            }
         }
         .navigationTitle(room.name)
         .navigationBarTitleDisplayMode(.large)
@@ -47,6 +60,15 @@ struct RoomDetailView: View {
         .sheet(isPresented: $showCreateScene) {
             CreateSceneView(lights: vm.lights) { name, selectedLights in
                 await vm.createScene(name: name, lights: selectedLights)
+            }
+        }
+        // CreateSceneView launched from BulkActionBar — pre-filtered to selection
+        .sheet(isPresented: $showBulkScene) {
+            let prefiltered = vm.selectedLights
+            CreateSceneView(lights: prefiltered.isEmpty ? vm.lights : prefiltered) { name, selectedLights in
+                let success = await vm.createScene(name: name, lights: selectedLights)
+                if success { vm.exitSelectMode() }
+                return success
             }
         }
         .task {
@@ -110,16 +132,17 @@ struct RoomDetailView: View {
                 }
 
                 LazyVStack(spacing: 14) {
-                    // Value-type ForEach — no @Binding chain to vm.lights during drag.
-                    // LightCard fires onBrightness once at drag end via vm callback.
                     ForEach(vm.lights, id: \.id) { light in
-                        LightCard(light: light, onToggle: { desiredOn in
-                            // desiredOn comes from LightCard.localIsOn (post-flip),
-                            // bypassing the stale captured 'light.isOn' value.
-                            vm.setLight(light, isOn: desiredOn)
-                        }, onBrightness: { brightness in
-                            vm.setBrightness(brightness, for: light)
-                        })
+                        let isSelected = vm.selectedLightIDs.contains(light.id)
+                        LightCard(
+                            light:          light,
+                            isSelecting:    vm.isSelecting,
+                            isSelected:     isSelected,
+                            onToggle:       { desiredOn in vm.setLight(light, isOn: desiredOn) },
+                            onBrightness:   { brightness in vm.setBrightness(brightness, for: light) },
+                            onToggleSelect: { vm.toggleSelection(id: light.id) },
+                            onLongPress:    { vm.enterSelectMode(preselecting: light.id) }
+                        )
                         .padding(.horizontal, 20)
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .bottom)),
@@ -127,7 +150,7 @@ struct RoomDetailView: View {
                         ))
                     }
                 }
-                .padding(.bottom, 32)
+                .padding(.bottom, vm.isSelecting ? 120 : 32)  // extra room for action bar
                 .animation(.spring(response: 0.45, dampingFraction: 0.8), value: vm.lights.count)
             }
         }
@@ -241,6 +264,16 @@ struct RoomDetailView: View {
                 }
             }
         }
+        // Select / Done button
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button(vm.isSelecting ? "Done" : "Select") {
+                if vm.isSelecting { vm.exitSelectMode() } else { vm.enterSelectMode() }
+            }
+            .font(.system(size: 14, weight: vm.isSelecting ? .semibold : .regular))
+            .foregroundStyle(vm.isSelecting
+                             ? Color(red: 1.0, green: 0.76, blue: 0.20)
+                             : .white.opacity(0.7))
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -306,34 +339,42 @@ struct RoomDetailView: View {
 // MARK: - LightCard
 //
 // Individual bulb card.
-// Full card = NavigationLink to LightControlView.
-// Power button = overlay, guaranteed to intercept taps before the NavigationLink label.
+// Normal mode: tap = NavigationLink → LightControlView; long-press = enter select mode.
+// Select mode:  tap = toggle checkbox; no navigation; power button hidden.
 
 struct LightCard: View {
 
-    let light: LightDisplayItem          // value type — no @Binding
-    let onToggle:     (Bool) -> Void     // Bool = desired new on-state
-    let onBrightness: (Double) -> Void   // called once at drag end
+    let light:          LightDisplayItem
+    let isSelecting:    Bool
+    let isSelected:     Bool
+    let onToggle:       (Bool)   -> Void
+    let onBrightness:   (Double) -> Void
+    let onToggleSelect: ()       -> Void
+    let onLongPress:    ()       -> Void
 
-    // ── Local optimistic state ────────────────────────────────────────────────
-    // Same pattern as RoomCard: flips instantly on tap, syncs from vm.lights
-    // via .onChange when the @Observable chain confirms the change.
-    @State private var localIsOn: Bool
-    @State private var localGlowColor: Color   // seeded in init; synced via .onChange
+    @State private var localIsOn:      Bool
+    @State private var localGlowColor: Color
 
-    init(light: LightDisplayItem,
-         onToggle: @escaping (Bool) -> Void,
-         onBrightness: @escaping (Double) -> Void) {
-        self.light        = light
-        self.onToggle     = onToggle
-        self.onBrightness = onBrightness
-        _localIsOn       = State(initialValue: light.isOn)
-        _localGlowColor  = State(initialValue: Self.resolveGlowColor(for: light))
+    init(
+        light:          LightDisplayItem,
+        isSelecting:    Bool             = false,
+        isSelected:     Bool             = false,
+        onToggle:       @escaping (Bool)   -> Void,
+        onBrightness:   @escaping (Double) -> Void,
+        onToggleSelect: @escaping ()       -> Void = {},
+        onLongPress:    @escaping ()       -> Void = {}
+    ) {
+        self.light          = light
+        self.isSelecting    = isSelecting
+        self.isSelected     = isSelected
+        self.onToggle       = onToggle
+        self.onBrightness   = onBrightness
+        self.onToggleSelect = onToggleSelect
+        self.onLongPress    = onLongPress
+        _localIsOn          = State(initialValue: light.isOn)
+        _localGlowColor     = State(initialValue: Self.resolveGlowColor(for: light))
     }
 
-    /// Priority: CIE xy (full color) → color temperature → warm amber fallback.
-    /// Static so it can be called from init() before self is available.
-    /// Used by both the seed and the .onChange handlers.
     static func resolveGlowColor(for light: LightDisplayItem) -> Color {
         if light.supportsColor, let x = light.colorX, let y = light.colorY {
             return HueColorUtils.color(fromX: x, y: y, brightness: max(light.brightness, 50))
@@ -341,66 +382,84 @@ struct LightCard: View {
         if light.supportsColorTemp, let mirek = light.colorTempMirek {
             return HueColorUtils.color(fromMirek: mirek)
         }
-        return Color(red: 1.0, green: 0.76, blue: 0.2)  // warm amber fallback
+        return Color(red: 1.0, green: 0.76, blue: 0.2)
     }
 
     var body: some View {
-        NavigationLink(value: light) {
-            GlassmorphicCard(isActive: localIsOn, glowColor: localGlowColor) {
-                VStack(spacing: 0) {
-                    lightHeaderContent
-                    if localIsOn {
-                        BrightnessRow(
-                            brightness: light.brightness,   // read-only snapshot
-                            glowColor: localGlowColor,
-                            onCommit: { onBrightness($0) }  // fired once on release
-                        )
-                        .padding(.top, 6)
-                    }
-                }
+        ZStack(alignment: .topLeading) {
+            // ── Card content (NavigationLink in normal mode, plain tap in select mode) ──
+            if isSelecting {
+                Button { onToggleSelect() } label: { cardContent }
+                    .buttonStyle(.plain)
+            } else {
+                NavigationLink(value: light) { cardContent }
+                    .buttonStyle(.plain)
+                    .onLongPressGesture(minimumDuration: 0.45) { onLongPress() }
+            }
+
+            // ── Checkbox overlay (top-leading, animated in/out) ──────────────────────
+            if isSelecting {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(isSelected ? localGlowColor : .white.opacity(0.35))
+                    .padding(14)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    .animation(.spring(response: 0.3), value: isSelected)
             }
         }
-        .buttonStyle(.plain)
+        // ── Power button (hidden in select mode) ────────────────────────────────────
         .overlay(alignment: .topTrailing) {
-            Button {
-                HapticManager.shared.light()
-                localIsOn.toggle()          // instant — no @Observable dependency
-                onToggle(localIsOn)         // pass desired state, not !stale.isOn
-            } label: {
-                Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
-                    .font(.system(size: 22))
-                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
-                    .frame(width: 52, height: 52)
-                    .contentShape(Rectangle())
-                    .symbolEffect(.bounce, value: localIsOn)
+            if !isSelecting {
+                Button {
+                    HapticManager.shared.light()
+                    localIsOn.toggle()
+                    onToggle(localIsOn)
+                } label: {
+                    Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
+                        .font(.system(size: 22))
+                        .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
+                        .frame(width: 52, height: 52)
+                        .contentShape(Rectangle())
+                        .symbolEffect(.bounce, value: localIsOn)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 18)
+                .padding(.trailing, 14)
+                .accessibilityLabel(Text("Turn \(light.name) \(localIsOn ? "off" : "on")"))
+                .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
             }
-            .buttonStyle(.plain)
-            .padding(.top, 18)
-            .padding(.trailing, 14)
-            .accessibilityLabel(Text("Turn \(light.name) \(localIsOn ? "off" : "on")"))
-            .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
         }
         .frame(minHeight: 80)
-        .opacity(localIsOn ? 1.0 : 0.72)
-        .scaleEffect(localIsOn ? 1.0 : 0.982)
+        .opacity(isSelecting ? (isSelected ? 1.0 : 0.58) : (localIsOn ? 1.0 : 0.72))
+        .scaleEffect(localIsOn && !isSelecting ? 1.0 : 0.982)
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: localIsOn)
-        // Sync from vm when confirmed (SSE, loadLights, API rollback)
+        .animation(.spring(response: 0.3), value: isSelecting)
+        .animation(.spring(response: 0.25), value: isSelected)
         .onChange(of: light.isOn) { _, confirmed in
             if localIsOn != confirmed {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
-                    localIsOn = confirmed
-                }
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) { localIsOn = confirmed }
             }
         }
-        // Sync glow color when light's color or CT changes via SSE or loadLights
         .onChange(of: light.colorX) { _, _ in
-            withAnimation(.easeInOut(duration: 0.4)) {
-                localGlowColor = Self.resolveGlowColor(for: light)
-            }
+            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = Self.resolveGlowColor(for: light) }
         }
         .onChange(of: light.colorTempMirek) { _, _ in
-            withAnimation(.easeInOut(duration: 0.4)) {
-                localGlowColor = Self.resolveGlowColor(for: light)
+            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = Self.resolveGlowColor(for: light) }
+        }
+    }
+
+    private var cardContent: some View {
+        GlassmorphicCard(isActive: localIsOn, glowColor: localGlowColor) {
+            VStack(spacing: 0) {
+                lightHeaderContent
+                if localIsOn && !isSelecting {
+                    BrightnessRow(
+                        brightness: light.brightness,
+                        glowColor:  localGlowColor,
+                        onCommit:   { onBrightness($0) }
+                    )
+                    .padding(.top, 6)
+                }
             }
         }
     }
@@ -426,7 +485,6 @@ struct LightCard: View {
                     .foregroundStyle(localIsOn ? localGlowColor.opacity(0.8) : .white.opacity(0.40))
             }
             Spacer()
-            // Capability badge (visual only)
             if light.supportsColor {
                 Image(systemName: "paintpalette.fill")
                     .font(.system(size: 11))
@@ -436,11 +494,12 @@ struct LightCard: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.35))
             }
-            // Reserve space for power overlay
-            Spacer().frame(width: 44)
+            // Reserve space for power button overlay in normal mode
+            if !isSelecting { Spacer().frame(width: 44) }
         }
     }
 }
+
 
 
 // MARK: - Ambient Background (isolated — zero @Observable dependencies)
