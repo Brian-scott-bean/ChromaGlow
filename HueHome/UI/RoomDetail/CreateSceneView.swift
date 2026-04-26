@@ -1,5 +1,5 @@
 // CreateSceneView.swift
-// HueHome Pro — Story 4.2
+// HueHome Pro — Story 4.2 (updated: multi-select light picker)
 //
 // Glassmorphic sheet for saving the current room's light state as a named scene.
 // Presented from the "+" button in the scene strip.
@@ -7,8 +7,9 @@
 // Flow:
 //  1. User arranges lights to the desired look in RoomDetailView.
 //  2. Taps "+" → this sheet slides up.
-//  3. Types a scene name → taps "Save Scene".
-//  4. Bridge stores the scene; strip reloads showing the new chip.
+//  3. All lights start selected (✓). Tap any row to exclude it from the scene.
+//  4. Types a scene name → taps "Save Scene".
+//  5. Bridge stores only the checked lights; strip reloads showing the new chip.
 
 import SwiftUI
 
@@ -16,16 +17,30 @@ struct CreateSceneView: View {
 
     // Injected from parent
     let lights: [LightDisplayItem]
-    let onSave: (String) async -> Bool   // returns true on success
+    /// Called with (sceneName, selectedLights) — returns true on success.
+    let onSave: (String, [LightDisplayItem]) async -> Bool
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var sceneName:   String = ""
-    @State private var isSaving:    Bool   = false
-    @State private var saveFailed:  Bool   = false
+    @State private var sceneName:   String     = ""
+    @State private var selectedIDs: Set<String> = []
+    @State private var isSaving:    Bool        = false
+    @State private var saveFailed:  Bool        = false
     @FocusState private var nameFocused: Bool
 
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+
+    // MARK: - Computed helpers
+
+    private var selectedLights: [LightDisplayItem] {
+        lights.filter { selectedIDs.contains($0.id) }
+    }
+
+    private var canSave: Bool {
+        !sceneName.trimmingCharacters(in: .whitespaces).isEmpty && !selectedLights.isEmpty
+    }
+
+    private var allSelected: Bool { selectedIDs.count == lights.count }
 
     // MARK: - Body
 
@@ -37,7 +52,7 @@ struct CreateSceneView: View {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 24) {
                         nameField
-                        lightPreview
+                        lightPicker
                         saveButton
                     }
                     .padding(.horizontal, 20)
@@ -56,13 +71,15 @@ struct CreateSceneView: View {
                 }
             }
             .preferredColorScheme(.dark)
-            .onAppear { nameFocused = true }
+            .onAppear {
+                nameFocused = true
+                // All lights selected by default
+                selectedIDs = Set(lights.map(\.id))
+            }
         }
     }
 
-    // ──────────────────────────────────────────────
     // MARK: - Background
-    // ──────────────────────────────────────────────
 
     private var ambientBackground: some View {
         ZStack {
@@ -79,9 +96,7 @@ struct CreateSceneView: View {
         .ignoresSafeArea()
     }
 
-    // ──────────────────────────────────────────────
     // MARK: - Name Field
-    // ──────────────────────────────────────────────
 
     private var nameField: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -125,54 +140,110 @@ struct CreateSceneView: View {
         }
     }
 
-    // ──────────────────────────────────────────────
-    // MARK: - Light Preview
-    // ──────────────────────────────────────────────
+    // MARK: - Light Picker
 
-    private var lightPreview: some View {
+    private var lightPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("LIGHT STATES TO CAPTURE")
+
+            // Section header with count + Select All/None
+            HStack {
+                Text("INCLUDED LIGHTS")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+
+                Text("(\(selectedIDs.count)/\(lights.count))")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(amber.opacity(0.8))
+
+                Spacer()
+
+                Button(allSelected ? "Select None" : "Select All") {
+                    withAnimation(.spring(response: 0.3)) {
+                        if allSelected {
+                            selectedIDs.removeAll()
+                        } else {
+                            selectedIDs = Set(lights.map(\.id))
+                        }
+                    }
+                }
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
+                .foregroundStyle(amber)
+                .buttonStyle(.plain)
+            }
+
+            // Warning when nothing selected
+            if selectedIDs.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                    Text("Select at least one light to save a scene.")
+                        .font(.caption)
+                }
+                .foregroundStyle(.orange.opacity(0.85))
+                .padding(.bottom, 2)
+            }
 
             GlassmorphicCard(isActive: false, glowColor: amber) {
                 VStack(spacing: 0) {
-                    let built = previewRows
-                    built
+                    ForEach(Array(lights.enumerated()), id: \.element.id) { idx, light in
+                        pickerRow(light: light, isLast: idx == lights.count - 1)
+                    }
                 }
             }
         }
     }
 
-    private var previewRows: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(lights.enumerated()), id: \.element.id) { idx, light in
+    private func pickerRow(light: LightDisplayItem, isLast: Bool) -> some View {
+        let isSelected = selectedIDs.contains(light.id)
+
+        return Button {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                if isSelected {
+                    selectedIDs.remove(light.id)
+                } else {
+                    selectedIDs.insert(light.id)
+                }
+            }
+        } label: {
+            VStack(spacing: 0) {
                 HStack(spacing: 12) {
-                    // Color swatch / on indicator
+
+                    // Checkmark / empty circle
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 20))
+                        .foregroundStyle(isSelected ? amber : .white.opacity(0.25))
+                        .animation(.spring(response: 0.25), value: isSelected)
+
+                    // Color swatch
                     ZStack {
                         Circle()
                             .fill(light.isOn
                                   ? swatchColor(for: light).opacity(0.28)
                                   : Color.white.opacity(0.06))
-                            .frame(width: 36, height: 36)
+                            .frame(width: 34, height: 34)
                         Image(systemName: archetypeIcon(for: light.archetype))
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(light.isOn
                                              ? swatchColor(for: light)
-                                             : .white.opacity(0.25))
+                                             : .white.opacity(0.2))
                     }
 
+                    // Name + state
                     VStack(alignment: .leading, spacing: 2) {
                         Text(light.name)
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(light.isOn ? .white : .white.opacity(0.45))
+                            .foregroundStyle(isSelected
+                                             ? (light.isOn ? .white : .white.opacity(0.55))
+                                             : .white.opacity(0.25))
                             .lineLimit(1)
 
                         Text(light.isOn
                              ? "\(Int(light.brightness))% · \(lightStateLabel(light))"
                              : "Off — will be off in scene")
                             .font(.caption)
-                            .foregroundStyle(.white.opacity(0.40))
+                            .foregroundStyle(isSelected
+                                             ? .white.opacity(0.38)
+                                             : .white.opacity(0.18))
                     }
 
                     Spacer()
@@ -180,29 +251,33 @@ struct CreateSceneView: View {
                     // On/Off pill
                     Text(light.isOn ? "ON" : "OFF")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(light.isOn ? amber : .white.opacity(0.2))
+                        .foregroundStyle(isSelected
+                                         ? (light.isOn ? amber : .white.opacity(0.2))
+                                         : .white.opacity(0.12))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(
                             Capsule()
-                                .fill(light.isOn ? amber.opacity(0.15) : Color.white.opacity(0.06))
+                                .fill(isSelected
+                                      ? (light.isOn ? amber.opacity(0.15) : Color.white.opacity(0.06))
+                                      : Color.white.opacity(0.04))
                         )
                 }
-                .padding(.vertical, 10)
+                .padding(.vertical, 11)
+                .contentShape(Rectangle())
 
-                if idx < lights.count - 1 {
+                if !isLast {
                     Divider()
                         .background(Color.white.opacity(0.07))
                 }
             }
         }
+        .buttonStyle(.plain)
+        .opacity(isSelected ? 1.0 : 0.55)
+        .animation(.easeInOut(duration: 0.2), value: isSelected)
     }
 
-    // ──────────────────────────────────────────────
     // MARK: - Save Button
-    // ──────────────────────────────────────────────
-
-    private var canSave: Bool { !sceneName.trimmingCharacters(in: .whitespaces).isEmpty }
 
     private var saveButton: some View {
         Button {
@@ -228,7 +303,9 @@ struct CreateSceneView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 15, weight: .semibold))
-                        Text("Save Scene")
+                        Text(selectedLights.isEmpty
+                             ? "Select lights to save"
+                             : "Save Scene (\(selectedLights.count) light\(selectedLights.count == 1 ? "" : "s"))")
                             .font(.headline)
                     }
                     .foregroundStyle(canSave
@@ -240,20 +317,19 @@ struct CreateSceneView: View {
         .buttonStyle(.plain)
         .disabled(!canSave || isSaving)
         .animation(.spring(response: 0.3), value: canSave)
+        .animation(.spring(response: 0.3), value: selectedLights.count)
     }
 
-    // ──────────────────────────────────────────────
     // MARK: - Actions
-    // ──────────────────────────────────────────────
 
     private func save() async {
         let name = sceneName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
+        guard !name.isEmpty, !selectedLights.isEmpty else { return }
 
         isSaving   = true
         saveFailed = false
 
-        let success = await onSave(name)
+        let success = await onSave(name, selectedLights)
 
         if success {
             HapticManager.shared.success()
@@ -265,9 +341,7 @@ struct CreateSceneView: View {
         }
     }
 
-    // ──────────────────────────────────────────────
     // MARK: - Helpers
-    // ──────────────────────────────────────────────
 
     private func swatchColor(for light: LightDisplayItem) -> Color {
         if let x = light.colorX, let y = light.colorY {

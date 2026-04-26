@@ -45,8 +45,8 @@ struct RoomDetailView: View {
         .toolbar { toolbarItems }
         .sheet(isPresented: $showLog) { logSheet }
         .sheet(isPresented: $showCreateScene) {
-            CreateSceneView(lights: vm.lights) { name in
-                await vm.createScene(name: name)
+            CreateSceneView(lights: vm.lights) { name, selectedLights in
+                await vm.createScene(name: name, lights: selectedLights)
             }
         }
         .task {

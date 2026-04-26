@@ -363,9 +363,9 @@ final class RoomDetailViewModel {
 
     /// Capture current light states and save as a new named scene on the Bridge.
     /// Returns true on success (caller dismisses the sheet).
-    func createScene(name: String) async -> Bool {
+    func createScene(name: String, lights selectedLights: [LightDisplayItem]) async -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, !lights.isEmpty else { return false }
+        guard !trimmed.isEmpty, !selectedLights.isEmpty else { return false }
 
         // Demo mode: pretend scene was created
         if isDemoMode {
@@ -374,13 +374,13 @@ final class RoomDetailViewModel {
             return true
         }
 
-        appendLog("✨ Creating scene '\(trimmed)' with \(lights.count) light(s)…")
+        appendLog("✨ Creating scene '\(trimmed)' with \(selectedLights.count) light(s)…")
 
         let request = CreateSceneRequest.fromCurrentLights(
             name:       trimmed,
             groupID:    room.id,
             groupRtype: room.kind == .zone ? "zone" : "room",
-            lights:     lights
+            lights:     selectedLights
         )
 
         do {
