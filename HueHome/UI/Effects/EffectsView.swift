@@ -10,7 +10,7 @@ import SwiftUI
 
 struct EffectsView: View {
 
-    @State private var vm = EffectsViewModel()
+    @StateObject private var vm = EffectsViewModel()
     @Environment(UnifiedOrchestrator.self) private var orchestrator
 
     // Accent colours

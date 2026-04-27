@@ -12,7 +12,7 @@ import SwiftUI
 struct EffectControlsView: View {
 
     let effect: HueEffect
-    @Bindable var vm: EffectsViewModel
+    @ObservedObject var vm: EffectsViewModel
 
     @State private var showColorPicker: String? = nil   // key of open color picker
     @State private var isActivating = false
