@@ -330,6 +330,52 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "PUT /light/\(id) mirek=\(mirek)")
     }
 
+    /// Comprehensive single-call light state setter for the Effects engine.
+    /// Pass nil for parameters you don't want to change.
+    /// `duration` is the transition time in milliseconds (0 = instant).
+    func setLightEffect(
+        id:         String,
+        on:         Bool?,
+        brightness: Double?,
+        xy:         (Double, Double)?,
+        mirek:      Int?,
+        duration:   Int
+    ) async throws {
+        let (ip, token) = try credentials()
+        var body: [String: Any] = [:]
+
+        if let on = on         { body["on"]      = ["on": on] }
+        if let b  = brightness { body["dimming"]  = ["brightness": min(100, max(0, b))] }
+        if let xy = xy         { body["color"]    = ["xy": ["x": xy.0, "y": xy.1]] }
+        if let m  = mirek      { body["color_temperature"] = ["mirek": m] }
+        if duration > 0        { body["dynamics"] = ["duration": duration] }
+
+        let data = try await put(
+            path: "/clip/v2/resource/light/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /light/\(id) effect on=\(String(describing: on)) dur=\(duration)ms")
+    }
+
+    /// Set a native bridge effect (colorloop, candle, fire, prism, sparkle, opal, glisten).
+    /// These persist on the bridge even after the app closes.
+    /// Pass "no_effect" to stop the native effect.
+    func setLightNativeEffect(id: String, effect: String) async throws {
+        let (ip, token) = try credentials()
+        let body: [String: Any] = ["effects": ["effect": effect]]
+        let data = try await put(
+            path: "/clip/v2/resource/light/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /light/\(id) native effect=\(effect)")
+    }
+
+    /// Stop all effects on a light and return to neutral state.
+    func stopLightEffects(id: String) async throws {
+        try await setLightNativeEffect(id: id, effect: "no_effect")
+    }
+
+
 
     // ──────────────────────────────────────────────
     // MARK: - Private HTTP

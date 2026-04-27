@@ -9,29 +9,26 @@ import SwiftUI
 // MARK: - Tab Definition
 
 enum HueTab: Int, CaseIterable {
-    case home        = 0
-    case scenes      = 1
-    case automations = 2
-    case devices     = 3
-    case settings    = 4
+    case home     = 0
+    case scenes   = 1
+    case effects  = 2
+    case settings = 3
 
     var icon: String {
         switch self {
-        case .home:        return "house.fill"
-        case .scenes:      return "sparkles"
-        case .automations: return "bolt.fill"
-        case .devices:     return "sensor.fill"
-        case .settings:    return "gearshape.fill"
+        case .home:     return "house.fill"
+        case .scenes:   return "sparkles"
+        case .effects:  return "wand.and.stars"
+        case .settings: return "gearshape.fill"
         }
     }
 
     var label: String {
         switch self {
-        case .home:        return "Home"
-        case .scenes:      return "Scenes"
-        case .automations: return "Automate"
-        case .devices:     return "Devices"
-        case .settings:    return "Settings"
+        case .home:     return "Home"
+        case .scenes:   return "Scenes"
+        case .effects:  return "Effects"
+        case .settings: return "Settings"
         }
     }
 }
@@ -45,10 +42,8 @@ struct MainTabView: View {
 
     var body: some View {
         if sizeClass == .regular {
-            // iPad: NavigationSplitView
             iPadLayout
         } else {
-            // iPhone: Custom Tab Bar
             iPhoneLayout
         }
     }
@@ -63,10 +58,6 @@ struct MainTabView: View {
                         .tag(tab)
                 }
             }
-            // Default TabView style: only the active tab renders,
-            // NavigationStack push/pop animations are not interrupted,
-            // and the back-swipe gesture is not stolen by the paging recognizer.
-            // Native tab bar hidden — HueTabBar below provides the visual.
             .toolbar(.hidden, for: .tabBar)
 
             HueTabBar(selectedTab: $selectedTab)
@@ -110,25 +101,13 @@ struct MainTabView: View {
     private func tabContent(for tab: HueTab) -> some View {
         switch tab {
         case .home:
-            NavigationStack {
-                DashboardView()
-            }
+            NavigationStack { DashboardView() }
         case .scenes:
-            NavigationStack {
-                ScenesTabView()
-            }
-        case .automations:
-            NavigationStack {
-                AutomationsTabView()
-            }
-        case .devices:
-            NavigationStack {
-                DevicesTabView()
-            }
+            NavigationStack { ScenesTabView() }
+        case .effects:
+            NavigationStack { EffectsTabView() }
         case .settings:
-            NavigationStack {
-                SettingsTabView()
-            }
+            NavigationStack { SettingsTabView() }
         }
     }
 }

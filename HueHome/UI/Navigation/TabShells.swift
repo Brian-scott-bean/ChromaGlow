@@ -1,9 +1,15 @@
 // TabShells.swift
-// HueHome Pro — Stage 1
-// Placeholder shells for tabs 3–5 (Automations, Devices, Settings).
-// Scenes tab moved to UI/Scenes/ScenesTabView.swift (Stage 2B).
+// HueHome Pro — Navigation shells for tab-routed views.
 
 import SwiftUI
+
+// MARK: - Effects Tab
+
+struct EffectsTabView: View {
+    var body: some View {
+        EffectsView()
+    }
+}
 
 // MARK: - Automations Tab
 
