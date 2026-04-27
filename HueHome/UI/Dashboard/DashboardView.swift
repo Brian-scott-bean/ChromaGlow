@@ -25,6 +25,8 @@ struct DashboardView: View {
     @Environment(\.horizontalSizeClass)  private var sizeClass
     /// Persist zones section open/closed state across launches.
     @AppStorage("dashboard.zonesExpanded") private var zonesExpanded: Bool = true
+    @State private var presetToast:         String?  = nil
+    @State private var activePreset:        String?  = nil
 
 
     /// Minimum seconds between auto-refreshes triggered by navigation or foregrounding.
@@ -46,6 +48,24 @@ struct DashboardView: View {
                 } else {
                     roomScrollView
                 }
+            }
+
+            // ── Preset toast ───────────────────────────────────────
+            if let msg = presetToast {
+                VStack {
+                    Spacer()
+                    Text(msg)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 11)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
+                        .padding(.bottom, 104)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: presetToast)
             }
         }
         .navigationTitle(orchestrator.isDemoMode ? "My Lights  ✦ Demo" : "My Lights")
@@ -92,6 +112,10 @@ struct DashboardView: View {
                 summaryHeader
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
+                    .padding(.bottom, 12)
+
+                presetsBar
+                    .padding(.horizontal, 20)
                     .padding(.bottom, 16)
 
                 // Adaptive layout: 1-column on iPhone, 2-column grid on iPad.
@@ -183,6 +207,90 @@ struct DashboardView: View {
 
 
     // ──────────────────────────────────────────────
+    // MARK: - Presets Bar
+
+    private struct LightPreset {
+        let name:   String
+        let icon:   String
+        let brightness: Double
+        let mirek:  Int
+        let color:  Color
+    }
+
+    private let presets: [LightPreset] = [
+        LightPreset(name: "Energize", icon: "bolt.fill",       brightness: 100, mirek: 156, color: Color(hue: 0.58, saturation: 0.7,  brightness: 1.0)),
+        LightPreset(name: "Read",     icon: "book.fill",       brightness: 75,  mirek: 280, color: Color(hue: 0.12, saturation: 0.6,  brightness: 1.0)),
+        LightPreset(name: "Relax",    icon: "moon.stars.fill", brightness: 40,  mirek: 420, color: Color(hue: 0.09, saturation: 0.8,  brightness: 0.9)),
+        LightPreset(name: "Sleep",    icon: "zzz",             brightness: 6,   mirek: 490, color: Color(hue: 0.07, saturation: 0.7,  brightness: 0.7)),
+    ]
+
+    private var presetsBar: some View {
+        HStack(spacing: 10) {
+            ForEach(presets, id: \.name) { preset in
+                Button {
+                    applyPreset(preset)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: preset.icon)
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(preset.name)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(activePreset == preset.name ? .black : preset.color)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        Capsule()
+                            .fill(activePreset == preset.name
+                                  ? preset.color
+                                  : preset.color.opacity(0.12))
+                    )
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(preset.color.opacity(activePreset == preset.name ? 0 : 0.3), lineWidth: 1)
+                    )
+                    .scaleEffect(activePreset == preset.name ? 0.96 : 1.0)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: activePreset)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func applyPreset(_ preset: LightPreset) {
+        HapticManager.shared.medium()
+        withAnimation { activePreset = preset.name }
+
+        Task {
+            guard let api = orchestrator.primaryAPIClient else {
+                presetToast = "⚠ No bridge connection"
+                return
+            }
+            let rooms = orchestrator.allRooms.compactMap(\.groupedLightID)
+            await withTaskGroup(of: Void.self) { group in
+                for id in rooms {
+                    group.addTask {
+                        try? await api.setGroupedLightEffect(
+                            id: id, on: true,
+                            brightness: preset.brightness,
+                            xy: nil, mirek: preset.mirek,
+                            duration: 800
+                        )
+                    }
+                }
+            }
+            await MainActor.run {
+                presetToast = "\(preset.name) applied to all rooms"
+                withAnimation { activePreset = nil }
+            }
+            try? await Task.sleep(for: .seconds(3))
+            await MainActor.run {
+                if presetToast?.contains(preset.name) == true { presetToast = nil }
+            }
+        }
+    }
+
     // MARK: - Summary Header
     // ──────────────────────────────────────────────
 
