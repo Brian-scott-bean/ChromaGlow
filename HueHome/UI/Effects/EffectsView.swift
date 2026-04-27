@@ -73,6 +73,24 @@ struct EffectsView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.selectedEffect?.id)
             }
+
+            // ── Status toast ──────────────────────────────────────
+            if let msg = vm.statusMessage {
+                VStack {
+                    Spacer()
+                    Text(msg)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 11)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
+                        .padding(.bottom, 110)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.statusMessage)
+            }
         }
         .navigationTitle("Effects")
         .navigationBarTitleDisplayMode(.large)

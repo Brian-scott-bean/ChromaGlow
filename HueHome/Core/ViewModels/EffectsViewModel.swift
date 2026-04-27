@@ -103,6 +103,18 @@ final class EffectsViewModel: ObservableObject {
         return EffectLibrary.all.filter { $0.category == cat }
     }
 
+    // MARK: - Status Toast
+
+    @MainActor
+    func showStatus(_ message: String, autoClear: Bool = true) {
+        statusMessage = message
+        guard autoClear else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            if statusMessage == message { statusMessage = nil }
+        }
+    }
+
     // MARK: - Activate
 
     @MainActor
@@ -112,19 +124,19 @@ final class EffectsViewModel: ObservableObject {
         // ── Demo Mode ─────────────────────────────────────────────────────────
         if isDemoMode {
             let roomName = selectedRoom?.name ?? "all rooms"
-            statusMessage     = "✦ Demo: '\(effect.name)' applied to \(roomName)"
+            showStatus("✦ Demo: '\(effect.name)' applied to \(roomName)")
             isRunning         = effect.requiresForeground
             runningEffectName = isRunning ? effect.name : nil
             return
         }
 
         guard let api else {
-            statusMessage = "⚠ No active bridge connection"
+            showStatus("⚠ No bridge connection — open Settings to re-pair")
             return
         }
 
         guard let room = selectedRoom, let groupedLightID = room.groupedLightID else {
-            statusMessage = "⚠ Select a room to apply effects"
+            showStatus("⚠ Select a room first")
             return
         }
 
