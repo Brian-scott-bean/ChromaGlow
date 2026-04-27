@@ -40,7 +40,7 @@ final class RoomDetailViewModel {
     // MARK: Dependencies
     private let api: HueAPIClient?
     private let isDemoMode: Bool
-    private let log = Logger(subsystem: "com.huehome.pro", category: "RoomDetail")
+    private let log = Logger(subsystem: "com.lightshade.app", category: "RoomDetail")
     /// Called after a color/CT commit succeeds — injected by RoomDetailView
     /// to trigger orchestrator.refreshDominantColors(for: bridgeID).
     var onColorCommitted: (() -> Void)? = nil

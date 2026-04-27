@@ -21,7 +21,7 @@ final class DevicesViewModel {
     // MARK: - Dependencies
     private var bridgeClients: [(id: String, api: HueAPIClient)] = []
     private var isDemoMode:    Bool = false
-    private let log = Logger(subsystem: "com.huehome.pro", category: "Devices")
+    private let log = Logger(subsystem: "com.lightshade.app", category: "Devices")
 
     // MARK: - Init
     init() {}

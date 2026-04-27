@@ -55,7 +55,7 @@ class HueAPIClient: @unchecked Sendable {
     }
 
     // MARK: Logger
-    private let log = Logger(subsystem: "com.huehome.pro", category: "API")
+    private let log = Logger(subsystem: "com.lightshade.app", category: "API")
 
     // MARK: URLSession (cert-trust for Hue self-signed)
     // certDelegate retained explicitly — URLSession holds a strong ref internally

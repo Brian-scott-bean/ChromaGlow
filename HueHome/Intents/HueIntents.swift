@@ -77,7 +77,7 @@ enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .noBridgeConnection:
-            return "HueHome couldn't reach your bridge. Open the app and try again."
+            return "LightShade couldn't reach your bridge. Open the app and try again."
         case .noGroupedLight(let name):
             return "Couldn't find light controls for \(name). Open HueHome to refresh."
         }

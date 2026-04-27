@@ -297,7 +297,7 @@ struct BridgeSetupView: View {
                 Text("You're all set!")
                     .font(.system(size: 28, weight: .bold))
                     .foregroundStyle(.white)
-                Text("HueHome Pro is paired with your bridge and ready to go.")
+                Text("LightShade is paired with your bridge and ready to go.")
                     .font(.system(size: 15))
                     .foregroundStyle(.white.opacity(0.55))
                     .multilineTextAlignment(.center)
@@ -316,7 +316,7 @@ struct BridgeSetupView: View {
             .background(Capsule().fill(.green.opacity(0.10)))
 
             primaryButton(
-                isAddingAdditional ? "Add to HueHome Pro" : "Go to Dashboard",
+                isAddingAdditional ? "Add to LightShade" : "Go to Dashboard",
                 icon: isAddingAdditional ? "plus.circle.fill" : "lightbulb.fill"
             ) {
                 handlePairedAction(ip: ip, token: token)

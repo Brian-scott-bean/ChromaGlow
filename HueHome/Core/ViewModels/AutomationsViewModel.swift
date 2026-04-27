@@ -23,7 +23,7 @@ final class AutomationsViewModel {
     // Nil client = demo mode for that slot (unused; demo uses the isDemoMode flag).
     private var bridgeClients: [(id: String, api: HueAPIClient)] = []
     private var isDemoMode:    Bool = false
-    private let log = Logger(subsystem: "com.huehome.pro", category: "Automations")
+    private let log = Logger(subsystem: "com.lightshade.app", category: "Automations")
 
     // MARK: - Init
 

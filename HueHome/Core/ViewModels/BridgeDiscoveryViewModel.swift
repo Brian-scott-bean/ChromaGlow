@@ -84,7 +84,7 @@ final class BridgeDiscoveryViewModel {
     // MARK: Services
     let discovery = BridgeDiscoveryService()
     private var cancellables = Set<AnyCancellable>()
-    private let log = Logger(subsystem: "com.huehome.pro", category: "ViewModel.Discovery")
+    private let log = Logger(subsystem: "com.lightshade.app", category: "ViewModel.Discovery")
 
     // MARK: Init
     init() {

@@ -53,7 +53,7 @@ final class HueSSEService: @unchecked Sendable {
     static let shared = HueSSEService()
     private init() {}
 
-    private let log = Logger(subsystem: "com.huehome.pro", category: "SSE")
+    private let log = Logger(subsystem: "com.lightshade.app", category: "SSE")
     /// Shared decoder — JSONDecoder is stateless/thread-safe; reuse avoids heap churn on every SSE frame.
     private static let decoder = JSONDecoder()
 

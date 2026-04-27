@@ -130,7 +130,7 @@ final class UnifiedOrchestrator {
     private var lifecycleObserverStarted = false
 
     private let keychain = KeychainManager.shared
-    private let log = Logger(subsystem: "com.huehome.pro", category: "UnifiedOrchestrator")
+    private let log = Logger(subsystem: "com.lightshade.app", category: "UnifiedOrchestrator")
 
     // MARK: - Init
 

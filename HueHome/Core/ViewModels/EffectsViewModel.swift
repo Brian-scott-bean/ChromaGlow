@@ -56,7 +56,7 @@ final class EffectsViewModel: ObservableObject {
     private var api:              HueAPIClient? = nil
     private var isDemoMode:       Bool          = false
     private let engine            = EffectEngine()
-    private let log               = Logger(subsystem: "com.huehome.pro", category: "Effects")
+    private let log               = Logger(subsystem: "com.lightshade.app", category: "Effects")
     private var cancellables      = Set<AnyCancellable>()
     private var reactivationTask: Task<Void, Never>? = nil
 

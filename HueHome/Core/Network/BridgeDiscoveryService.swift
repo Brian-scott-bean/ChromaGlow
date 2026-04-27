@@ -34,8 +34,8 @@ final class BridgeDiscoveryService: ObservableObject {
 
     // MARK: Private
     private var browser: NWBrowser?
-    private let log = Logger(subsystem: "com.huehome.pro", category: "mDNS")
-    private let queue = DispatchQueue(label: "com.huehome.pro.mdns", qos: .userInitiated)
+    private let log = Logger(subsystem: "com.lightshade.app", category: "mDNS")
+    private let queue = DispatchQueue(label: "com.lightshade.app.mdns", qos: .userInitiated)
 
     // MARK: mDNS Service Type
     // Philips Hue Bridge advertises itself as _hue._tcp on port 80 / 443.

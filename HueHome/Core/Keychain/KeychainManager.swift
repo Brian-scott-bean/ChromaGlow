@@ -40,7 +40,7 @@ final class KeychainManager: @unchecked Sendable {
     private init() {}
 
     // MARK: Logger
-    private let log = Logger(subsystem: "com.huehome.pro", category: "Keychain")
+    private let log = Logger(subsystem: "com.lightshade.app", category: "Keychain")
 
     // MARK: Keys
     private enum Keys {
