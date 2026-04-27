@@ -251,4 +251,18 @@ enum DemoDataProvider {
             return $0.name.localizedCompare($1.name) == .orderedAscending
         }
     }()
+
+    // MARK: - Demo Automations
+
+    static let automations: [AutomationDisplayItem] = [
+        AutomationDisplayItem(id: "da-1", name: "Good Morning",       enabled: true,  category: .wakeUp,    status: "running"),
+        AutomationDisplayItem(id: "da-2", name: "Bedtime Wind Down",   enabled: true,  category: .sleep,     status: "waiting"),
+        AutomationDisplayItem(id: "da-3", name: "Natural Light Cycle", enabled: false, category: .circadian, status: "stopped"),
+        AutomationDisplayItem(id: "da-4", name: "Movie Night at 8pm",  enabled: true,  category: .schedule,  status: "waiting"),
+        AutomationDisplayItem(id: "da-5", name: "Dinner Scene",        enabled: false, category: .schedule,  status: nil),
+        AutomationDisplayItem(id: "da-6", name: "15-min Sleep Timer",  enabled: false, category: .timer,     status: nil),
+        AutomationDisplayItem(id: "da-7", name: "Tap: All Off",        enabled: true,  category: .tapToRun,  status: nil),
+        AutomationDisplayItem(id: "da-8", name: "Away Mode",           enabled: false, category: .other,     status: nil),
+    ]
 }
+

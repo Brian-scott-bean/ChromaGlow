@@ -994,6 +994,10 @@ final class UnifiedOrchestrator {
         return clients[id]
     }
 
+    /// All active bridge IDs — used by tabs (Automations, Devices) that need
+    /// to fetch from every bridge and aggregate results.
+    var allBridgeIDs: [String] { Array(clients.keys) }
+
     var overallConnectionStatus: BridgeConnectionStatus {
         let statuses = connectionStatus.values
         if statuses.allSatisfy({ if case .connected = $0 { return true }; return false }) { return .connected }

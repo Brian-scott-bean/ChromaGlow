@@ -36,11 +36,38 @@ struct BehaviorStatus: Decodable {
 // MARK: - Display Model
 
 struct AutomationDisplayItem: Identifiable {
-    let id:       String
-    let name:     String
-    var enabled:  Bool
-    let category: AutomationCategory
-    let status:   String?   // "running" | "waiting" | "stopped" | nil
+    let id:                 String    // globally unique: "bridgeID:automationID" or demo ID
+    let name:               String
+    var enabled:            Bool
+    let category:           AutomationCategory
+    let status:             String?   // "running" | "waiting" | "stopped" | nil
+    let bridgeAutomationID: String?   // raw ID on the bridge (nil for demo items)
+    let bridgeID:           String?   // which bridge this came from (nil for demo items)
+
+    /// Convenience init for demo items (no bridge context needed).
+    init(id: String, name: String, enabled: Bool,
+         category: AutomationCategory, status: String?) {
+        self.id                 = id
+        self.name               = name
+        self.enabled            = enabled
+        self.category           = category
+        self.status             = status
+        self.bridgeAutomationID = nil
+        self.bridgeID           = nil
+    }
+
+    /// Full init used by the ViewModel when parsing live bridge data.
+    init(id: String, name: String, enabled: Bool,
+         category: AutomationCategory, status: String?,
+         bridgeAutomationID: String, bridgeID: String) {
+        self.id                 = id
+        self.name               = name
+        self.enabled            = enabled
+        self.category           = category
+        self.status             = status
+        self.bridgeAutomationID = bridgeAutomationID
+        self.bridgeID           = bridgeID
+    }
 
     enum AutomationCategory: String {
         case wakeUp     = "Wake-up"

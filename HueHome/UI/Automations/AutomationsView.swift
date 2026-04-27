@@ -14,6 +14,7 @@ struct AutomationsView: View {
 
     @State private var vm = AutomationsViewModel()
     @State private var showLog = false
+    @Environment(UnifiedOrchestrator.self) private var orchestrator
 
     private let amber  = Color(red: 1.0, green: 0.76, blue: 0.20)
     private let purple = Color(red: 0.55, green: 0.35, blue: 1.00)
@@ -38,7 +39,13 @@ struct AutomationsView: View {
         .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
         .toolbar { toolbarItems }
         .sheet(isPresented: $showLog) { logSheet }
-        .task { await vm.loadAutomations() }
+        .task {
+            // Inject orchestrator clients each time the tab appears.
+            // For demo mode, orchestrator.allBridgeIDs will be empty — that's fine,
+            // AutomationsViewModel.loadAutomations() checks isDemoMode first.
+            vm.configure(bridgeIDs: orchestrator.allBridgeIDs, orchestrator: orchestrator)
+            await vm.loadAutomations()
+        }
         .refreshable { await vm.loadAutomations() }
         .preferredColorScheme(.dark)
     }

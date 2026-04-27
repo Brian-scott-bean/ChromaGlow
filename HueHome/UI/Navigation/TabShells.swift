@@ -8,18 +8,10 @@ import SwiftUI
 // MARK: - Automations Tab
 
 struct AutomationsTabView: View {
-    @Environment(\.colorScheme) var colorScheme
-
     var body: some View {
-        ZStack {
-            (colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background)
-                .ignoresSafeArea()
-
-            // Temporary — existing AutomationsView content will be moved here in Stage 4
-            AutomationsView()
-        }
-        .navigationTitle("Automate")
-        .navigationBarTitleDisplayMode(.large)
+        // AutomationsView reads @Environment(UnifiedOrchestrator.self) itself —
+        // same pattern as ScenesTabView. No wrapper needed.
+        AutomationsView()
     }
 }
 
