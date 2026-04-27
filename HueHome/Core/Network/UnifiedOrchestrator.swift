@@ -994,6 +994,18 @@ final class UnifiedOrchestrator {
         return clients[id]
     }
 
+    /// Returns the first available working API client.
+    /// Tries multi-bridge clients first (explicit credentials), then falls back
+    /// to the legacy single-bridge keychain client.
+    var primaryAPIClient: HueAPIClient? {
+        // Multi-bridge: return first registered client (has explicit credentials)
+        if let firstClient = clients.values.first {
+            return firstClient
+        }
+        // Legacy single-bridge fallback: credentials loaded from keychain per-call
+        return HueAPIClient()
+    }
+
     /// All active bridge IDs — used by tabs (Automations, Devices) that need
     /// to fetch from every bridge and aggregate results.
     var allBridgeIDs: [String] { Array(clients.keys) }

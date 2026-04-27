@@ -63,10 +63,13 @@ final class EffectsViewModel: ObservableObject {
     @MainActor
     func configure(orchestrator: UnifiedOrchestrator) {
         isDemoMode = orchestrator.isDemoMode
-        api = orchestrator.hueClient(for: orchestrator.allBridgeIDs.first)
+        api = orchestrator.primaryAPIClient
         if selectedRoom == nil {
             selectedRoom = orchestrator.allRooms.first
         }
+        let apiStatus = api != nil ? "set" : "nil"
+        let roomName  = selectedRoom?.name ?? "none"
+        log.info("[EffectsVM] configure done — api=\(apiStatus) room=\(roomName) demo=\(self.isDemoMode)")
     }
 
     // MARK: - Effect Selection
