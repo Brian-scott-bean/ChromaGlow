@@ -164,6 +164,20 @@ class HueAPIClient: @unchecked Sendable {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Devices (/clip/v2/resource/device)
+    // ──────────────────────────────────────────────
+
+    /// Raw Data so the caller can do resilient per-item parsing.
+    /// GET /clip/v2/resource/device returns all paired devices:
+    /// bulbs, sensors, buttons, the bridge itself.
+    func fetchDevicesRaw() async throws -> Data {
+        let (ip, token) = try credentials()
+        let data = try await get(path: "/clip/v2/resource/device", ip: ip, token: token)
+        logRaw(data, label: "GET /device")
+        return data
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Automations (behavior_instance)
     // ──────────────────────────────────────────────
 

@@ -264,5 +264,35 @@ enum DemoDataProvider {
         AutomationDisplayItem(id: "da-7", name: "Tap: All Off",        enabled: true,  category: .tapToRun,  status: nil),
         AutomationDisplayItem(id: "da-8", name: "Away Mode",           enabled: false, category: .other,     status: nil),
     ]
+
+    // MARK: - Demo Devices
+
+    static let devices: [DeviceDisplayItem] = {
+        let b = bridgeMainID
+        let g = bridgeGuestID
+        return [
+            // Lights — Living Room
+            DeviceDisplayItem(id: "\(b):dd-l1", name: "Couch Left",      productName: "Hue color lamp",    modelID: "LCA001", firmwareVersion: "1.104.2", deviceType: .light,   bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-l2", name: "Couch Right",     productName: "Hue color lamp",    modelID: "LCA001", firmwareVersion: "1.104.2", deviceType: .light,   bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-l3", name: "Floor Lamp",      productName: "Hue white ambiance",modelID: "LWA001", firmwareVersion: "1.104.2", deviceType: .light,   bridgeID: b),
+            // Lights — Bedroom
+            DeviceDisplayItem(id: "\(b):dd-l4", name: "Bedside Left",    productName: "Hue color lamp",    modelID: "LCA003", firmwareVersion: "1.101.2", deviceType: .light,   bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-l5", name: "Bedside Right",   productName: "Hue color lamp",    modelID: "LCA003", firmwareVersion: "1.101.2", deviceType: .light,   bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-l6", name: "Ceiling",         productName: "Hue white lamp",    modelID: "LWB010", firmwareVersion: "1.88.1",  deviceType: .light,   bridgeID: b),
+            // Lights — Kitchen / Office
+            DeviceDisplayItem(id: "\(b):dd-l7", name: "Counter",         productName: "Hue GU10 color",    modelID: "LCG002", firmwareVersion: "1.104.2", deviceType: .light,   bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-l8", name: "Desk",            productName: "Hue color lamp",    modelID: "LCA001", firmwareVersion: "1.104.2", deviceType: .light,   bridgeID: b),
+            // Controls
+            DeviceDisplayItem(id: "\(b):dd-c1", name: "Living Room Tap", productName: "Hue Tap Switch",    modelID: "ZGPSWITCH", firmwareVersion: "6.1.1.28576", deviceType: .control, bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-c2", name: "Bedroom Remote",  productName: "Hue dimmer switch", modelID: "RWL022",    firmwareVersion: "2.44.0",      deviceType: .control, bridgeID: b),
+            // Sensors
+            DeviceDisplayItem(id: "\(b):dd-s1", name: "Hallway Motion",  productName: "Hue motion sensor", modelID: "SML001",    firmwareVersion: "1.1.27575",   deviceType: .sensor,  bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-s2", name: "Outdoor Motion",  productName: "Hue motion sensor", modelID: "SML002",    firmwareVersion: "1.1.27575",   deviceType: .sensor,  bridgeID: b),
+            // Guest bridge — Patio
+            DeviceDisplayItem(id: "\(g):dd-l9", name: "Patio String",    productName: "Hue Lightstrip",    modelID: "LST002",    firmwareVersion: "1.50.1",      deviceType: .light,   bridgeID: g),
+            DeviceDisplayItem(id: "\(g):dd-la", name: "Patio Spot 1",    productName: "Hue color lamp",    modelID: "LCA001",    firmwareVersion: "1.104.2",     deviceType: .light,   bridgeID: g),
+            DeviceDisplayItem(id: "\(g):dd-c3", name: "Patio Remote",    productName: "Hue dimmer switch", modelID: "RWL022",    firmwareVersion: "2.44.0",      deviceType: .control, bridgeID: g),
+        ]
+    }()
 }
 

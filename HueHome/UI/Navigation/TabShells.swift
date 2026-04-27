@@ -18,39 +18,8 @@ struct AutomationsTabView: View {
 // MARK: - Devices Tab
 
 struct DevicesTabView: View {
-    @Environment(\.colorScheme) var colorScheme
-
     var body: some View {
-        ZStack {
-            (colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background)
-                .ignoresSafeArea()
-
-            VStack(spacing: HueSpacing.xxl) {
-                Image(systemName: "sensor.fill")
-                    .font(.system(size: 48))
-                    .foregroundStyle(HuePalette.amber.opacity(0.6))
-
-                Text("Devices")
-                    .font(HueFont.displayMedium)
-                    .foregroundStyle(
-                        colorScheme == .dark
-                            ? HuePalette.Noir.textPrimary
-                            : HuePalette.Estate.textPrimary
-                    )
-
-                Text("Sensors, buttons, and firmware viewer coming in Stage 3")
-                    .font(HueFont.body)
-                    .foregroundStyle(
-                        colorScheme == .dark
-                            ? HuePalette.Noir.textSecondary
-                            : HuePalette.Estate.textSecondary
-                    )
-                    .multilineTextAlignment(.center)
-            }
-            .padding(HueSpacing.section)
-        }
-        .navigationTitle("Devices")
-        .navigationBarTitleDisplayMode(.large)
+        DevicesView()
     }
 }
 
