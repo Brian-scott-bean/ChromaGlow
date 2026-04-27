@@ -152,17 +152,34 @@ final class EffectsViewModel: ObservableObject {
             let useColor   = color != .white
             let xy         = useColor ? color.toCIExy() : nil
 
-            statusMessage     = "Applying '\(effect.name)'…"
+            statusMessage = "Applying '\(effect.name)'…"
             isRunning         = false
             runningEffectName = nil
 
+            // Step 1: brightness + CT (or nothing if color) via grouped_light
+            // Note: grouped_light does NOT support color.xy — must use per-light calls.
             try? await api.setGroupedLightEffect(
                 id: groupedLightID, on: true,
                 brightness: brightness,
-                xy: xy, mirek: useColor ? nil : Int(mirekRaw),
+                xy: nil,
+                mirek: useColor ? nil : Int(mirekRaw),
                 duration: fade
             )
-            statusMessage = "'\(effect.name)' applied ✓"
+
+            // Step 2: if a color is selected, set xy on each light individually
+            if let xy {
+                let lightIDs = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []
+                await withTaskGroup(of: Void.self) { group in
+                    for id in lightIDs {
+                        group.addTask {
+                            try? await api.setLightColor(id: id, x: xy.0, y: xy.1)
+                        }
+                    }
+                }
+            }
+
+            showStatus("'\(effect.name)' applied ✓")
+
 
         case .bridgeNative(let effectName):
             isRunning         = false
