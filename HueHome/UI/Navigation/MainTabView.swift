@@ -87,7 +87,7 @@ struct MainTabView: View {
                     )
                 }
             }
-            .navigationTitle("HueHome Pro")
+            .navigationTitle("LightShade")
             .scrollContentBackground(.hidden)
             .background(colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background)
         } detail: {
