@@ -1,9 +1,9 @@
 // EffectControlsView.swift
 // HueHome Pro — Effects Tab
 //
-// Dynamically renders controls (sliders, colour pickers, toggles, segmented,
-// duration pickers, colour palettes) from an effect's param schema.
-// Also owns the Activate button.
+// Dynamically renders fine-tuning controls (sliders, colour pickers, toggles,
+// segmented, duration pickers, colour palettes) from an effect's param schema.
+// Changes apply live via the debounced Combine sink in EffectsViewModel.
 
 import SwiftUI
 
@@ -14,8 +14,12 @@ struct EffectControlsView: View {
     let effect: HueEffect
     @ObservedObject var vm: EffectsViewModel
 
-    @State private var showColorPicker: String? = nil   // key of open color picker
-    @State private var isActivating = false
+    @State private var showColorPicker: String? = nil
+
+    private var isBridgeNative: Bool {
+        if case .bridgeNative = effect.strategy { return true }
+        return false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -29,25 +33,25 @@ struct EffectControlsView: View {
             // ── Controls ────────────────────────────────────
             GlassmorphicCard(isActive: true, glowColor: effect.accentColor) {
                 VStack(spacing: 0) {
-                    ForEach(Array(effect.params.enumerated()), id: \.element.id) { idx, param in
+                    ForEach(Array(visibleParams.enumerated()), id: \.element.id) { idx, param in
                         paramControl(param)
-                        if idx < effect.params.count - 1 {
+                        if idx < visibleParams.count - 1 {
                             Divider().background(Color.white.opacity(0.07)).padding(.vertical, 2)
                         }
                     }
+                    // Bridge-native note (color is bridge-controlled)
+                    if isBridgeNative {
+                        bridgeColorNote
+                    }
                 }
             }
-
-            // ── Activate button ─────────────────────────────
-            activateButton
-                .padding(.top, 16)
 
             // ── Status message ──────────────────────────────
             if let msg = vm.statusMessage {
                 Text(msg)
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.50))
-                    .padding(.top, 8)
+                    .padding(.top, 12)
                     .transition(.opacity)
             }
         }
@@ -173,50 +177,34 @@ struct EffectControlsView: View {
                 accentColor: effect.accentColor
             )
             .padding(.vertical, 10)
+        }   // end switch in paramControl
+    }   // end paramControl
+
+    // MARK: - Helpers
+
+    // Params visible for this strategy
+    private var visibleParams: [EffectParam] {
+        guard isBridgeNative else { return effect.params }
+        return effect.params.filter {
+            if case .colorSwatch = $0 { return false }
+            return true
         }
     }
 
-    // MARK: - Activate Button
-
-    private var activateButton: some View {
-        let roomLabel = vm.selectedRoom.map { "\($0.name)" } ?? "All Rooms"
-
-        return Button {
-            isActivating = true
-            HapticManager.shared.heavy()
-            Task {
-                await vm.activate()
-                withAnimation { isActivating = false }
-            }
-        } label: {
-            HStack(spacing: 10) {
-                if isActivating {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(.black)
-                        .scaleEffect(0.75)
-                } else {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 14, weight: .bold))
-                }
-                Text(isActivating ? "Applying…" : "Activate — \(roomLabel)")
-                    .font(.system(size: 15, weight: .semibold))
-            }
-            .foregroundStyle(.black)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 17)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(isActivating
-                          ? effect.accentColor.opacity(0.6)
-                          : effect.accentColor)
-                    .shadow(color: effect.accentColor.opacity(0.45), radius: 16, x: 0, y: 6)
-            )
+    // Info note for bridge-native effects
+    private var bridgeColorNote: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11))
+                .foregroundStyle(.yellow.opacity(0.7))
+            Text("Color is animated by the bridge — adjust brightness above")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.40))
         }
-        .buttonStyle(.plain)
-        .disabled(isActivating)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
     }
-}
+}   // end EffectControlsView
 
 // MARK: - SliderRow
 
