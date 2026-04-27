@@ -215,7 +215,7 @@ final class UnifiedOrchestrator {
                 log.warning("Bridge \(bridge.id) (\(bridge.name)) skipped — duplicate IP \(creds.ip)")
                 continue
             }
-            let client = BridgeAPIClient(
+             let client = BridgeAPIClient(
                 bridgeID:   bridge.id,
                 bridgeName: bridge.name,
                 ip:         creds.ip,
@@ -223,6 +223,9 @@ final class UnifiedOrchestrator {
             )
             clients[bridge.id] = client
             connectionStatus[bridge.id] = .connecting
+            // Write credentials to App Group so Siri Intents and widgets can reach them
+            // without going through the main app process.
+            WidgetDataStore.shared.write(ip: creds.ip, token: creds.token)
         }
 
         // Mark disabled bridges
