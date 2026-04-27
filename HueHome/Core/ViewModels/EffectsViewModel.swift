@@ -81,9 +81,11 @@ final class EffectsViewModel {
     // MARK: - Effect Selection
 
     func select(_ effect: HueEffect) {
+        print("[EffectsVM] select called: \(effect.name), current: \(String(describing: selectedEffect?.name))")
         selectedEffect = effect
         paramState     = EffectParamState()
         paramState.load(from: effect.params)
+        print("[EffectsVM] selectedEffect is now: \(String(describing: selectedEffect?.name))")
     }
 
     // MARK: - Filtered List

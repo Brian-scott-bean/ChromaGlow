@@ -207,6 +207,7 @@ struct EffectsView: View {
                            isSelected: vm.selectedEffect?.id == effect.id,
                            isRunning:  vm.isRunning && vm.runningEffectName == effect.name)
                 {
+                    print("[EffectCard] tapped: \(effect.name)")
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                         if vm.selectedEffect?.id == effect.id {
                             vm.selectedEffect = nil
@@ -321,8 +322,9 @@ struct EffectCard: View {
                     radius: 12, x: 0, y: 4)
         }
         .buttonStyle(ScaleButtonStyle())
-    }
-}
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+    }   // end body
+}   // end EffectCard
 
 // MARK: - ScaleButtonStyle (reused)
 private struct ScaleButtonStyle: ButtonStyle {
