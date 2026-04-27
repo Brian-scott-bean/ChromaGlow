@@ -1,345 +1,529 @@
 // BridgeSetupView.swift
-// HueHome Pro — Epic 1 / Story 1.1 (rev 2)
+// HueHome Pro — Onboarding
 //
-// Phase-driven UI matching the DiscoveryPhase state machine:
-//   idle         → "Scan for Bridge" button
-//   scanning     → spinner + live mDNS console
-//   bridgeFound  → bridge info card + "Pair" button (press physical button first)
-//   pairing      → progress indicator + console
-//   paired       → success summary
-//   error        → error message + retry
+// Premium step-driven onboarding flow.
+// Phases: idle → scanning → bridgeFound → pairing → paired → error
+// Developer console is hidden behind a DEBUG-only toggle.
 
 import SwiftUI
 
+// MARK: - BridgeSetupView
+
 struct BridgeSetupView: View {
 
-    /// Called by AppRootView (via SplashView) after the FIRST pairing — takes user to dashboard.
-    var onPaired: (() -> Void)? = nil
+    var onPaired:        (() -> Void)? = nil
+    var onDemo:          (() -> Void)? = nil
+    var isAddingAdditional: Bool       = false
+    var onBridgeAdded:   ((BridgeRecord) -> Void)? = nil
 
-    /// Called when user taps Explore Demo from setup screen.
-    var onDemo: (() -> Void)? = nil
-
-    /// Set to true when adding a second/third bridge from BridgeManagerView.
-    var isAddingAdditional: Bool = false
-
-    /// Called when adding an additional bridge — passes the new BridgeRecord to the caller.
-    var onBridgeAdded: ((BridgeRecord) -> Void)? = nil
-
-    @State private var vm = BridgeDiscoveryViewModel()
-    @State private var navigateToDashboard = false
+    @State private var vm              = BridgeDiscoveryViewModel()
+    @State private var showManualEntry = false
+    @State private var showDebugLog    = false
+    @State private var manualIP        = ""
     @Environment(\.modelContext) private var modelContext
 
+    // Pulse animation for bridge icon
+    @State private var pulsing = false
+
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 0) {
-                phaseCard
-                    .padding([.horizontal, .top])
+        ZStack {
+            // ── Background gradient ──────────────────────────────
+            LinearGradient(
+                colors: [
+                    Color(red: 0.05, green: 0.05, blue: 0.12),
+                    Color(red: 0.08, green: 0.06, blue: 0.16),
+                    Color(red: 0.05, green: 0.05, blue: 0.12)
+                ],
+                startPoint: .topLeading,
+                endPoint:   .bottomTrailing
+            )
+            .ignoresSafeArea()
 
-                Divider()
-                    .padding(.vertical, 8)
+            // Subtle ambient glow behind icon
+            Circle()
+                .fill(accentColor.opacity(0.08))
+                .frame(width: 320, height: 320)
+                .blur(radius: 60)
+                .offset(y: -80)
 
-                consoleLog
-                    .padding(.horizontal)
-                    .padding(.bottom)
+            VStack(spacing: 0) {
+                // ── Top: logo / step icon ────────────────────────
+                Spacer()
+                bridgeIcon
+                    .padding(.bottom, 32)
+
+                // ── Phase content card ───────────────────────────
+                phaseContent
+                    .padding(.horizontal, 28)
+
+                Spacer()
+                Spacer()
+
+                // ── Debug log (DEBUG builds only) ────────────────
+                #if DEBUG
+                debugToggle
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 8)
+                #endif
             }
-            .navigationTitle("HueHome Pro")
+        }
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $showManualEntry) { manualIPSheet }
+        .onAppear { pulsing = true }
+    }
+
+    // MARK: - Accent per phase
+
+    private var accentColor: Color {
+        switch vm.phase {
+        case .idle:          return Color(hue: 0.11, saturation: 0.9, brightness: 0.95)
+        case .scanning:      return .cyan
+        case .bridgeFound:   return .green
+        case .pairing:       return .orange
+        case .paired:        return Color(hue: 0.11, saturation: 0.9, brightness: 0.95)
+        case .error:         return .red
+        }
+    }
+
+    // MARK: - Bridge Icon
+
+    private var bridgeIcon: some View {
+        ZStack {
+            // Outer pulse ring
+            Circle()
+                .strokeBorder(accentColor.opacity(pulsing ? 0.0 : 0.35), lineWidth: 1.5)
+                .frame(width: 110, height: 110)
+                .scaleEffect(pulsing ? 1.45 : 1.0)
+                .animation(
+                    isPulsing ? .easeOut(duration: 1.6).repeatForever(autoreverses: false) : .default,
+                    value: pulsing
+                )
+
+            // Inner glow disc
+            Circle()
+                .fill(accentColor.opacity(0.12))
+                .frame(width: 88, height: 88)
+
+            // Icon
+            Image(systemName: phaseIcon)
+                .font(.system(size: 38, weight: .medium))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [accentColor, accentColor.opacity(0.7)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                .symbolEffect(.bounce, value: vm.phase == .idle ? 0 : 1)
+        }
+        .animation(.spring(response: 0.5, dampingFraction: 0.7), value: phaseIcon)
+    }
+
+    private var isPulsing: Bool {
+        switch vm.phase {
+        case .scanning, .pairing: return true
+        default: return false
+        }
+    }
+
+    private var phaseIcon: String {
+        switch vm.phase {
+        case .idle:           return "network"
+        case .scanning:       return "antenna.radiowaves.left.and.right"
+        case .bridgeFound:    return "checkmark.circle"
+        case .pairing:        return "link.circle"
+        case .paired:         return "checkmark.seal.fill"
+        case .error:          return "exclamationmark.triangle"
+        }
+    }
+
+    // MARK: - Phase Content
+
+    @ViewBuilder
+    private var phaseContent: some View {
+        switch vm.phase {
+        case .idle:
+            idleContent
+        case .scanning:
+            scanningContent
+        case .bridgeFound(let bridge):
+            bridgeFoundContent(bridge: bridge)
+        case .pairing(let bridge):
+            pairingContent(bridge: bridge)
+        case .paired(let ip, let token):
+            pairedContent(ip: ip, token: token)
+        case .error(let msg):
+            errorContent(message: msg)
+        }
+    }
+
+    // MARK: - Idle
+
+    private var idleContent: some View {
+        VStack(spacing: 24) {
+            VStack(spacing: 10) {
+                Text("Connect Your Bridge")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+
+                Text("Make sure your iPhone and Hue Bridge are on the same Wi-Fi network.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .multilineTextAlignment(.center)
+            }
+
+            VStack(spacing: 12) {
+                // Primary CTA
+                primaryButton("Scan for Bridge", icon: "magnifyingglass") {
+                    vm.startScan()
+                }
+
+                // Manual fallback
+                secondaryButton("Enter IP Manually", icon: "keyboard") {
+                    showManualEntry = true
+                }
+
+                // Demo
+                if onDemo != nil {
+                    demoButton
+                }
+            }
+        }
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    // MARK: - Scanning
+
+    private var scanningContent: some View {
+        VStack(spacing: 24) {
+            VStack(spacing: 10) {
+                Text("Searching…")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+
+                Text("Looking for a Hue Bridge on your Wi-Fi. This usually takes a few seconds.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .multilineTextAlignment(.center)
+            }
+
+            // Can't find it?
+            secondaryButton("Enter IP Manually", icon: "keyboard") {
+                vm.resetToIdle()
+                showManualEntry = true
+            }
+        }
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    // MARK: - Bridge Found
+
+    private func bridgeFoundContent(bridge: BridgeEndpoint) -> some View {
+        VStack(spacing: 24) {
+            VStack(spacing: 10) {
+                Text("Bridge Found!")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+
+                // Bridge info pill
+                HStack(spacing: 8) {
+                    Image(systemName: "wifi")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(accentColor)
+                    Text("\(bridge.name)  ·  \(bridge.host)")
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.75))
+                }
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(Capsule().fill(.white.opacity(0.08)))
+            }
+
+            // Link-button instruction card
+            HStack(alignment: .top, spacing: 14) {
+                ZStack {
+                    Circle().fill(.orange.opacity(0.18)).frame(width: 40, height: 40)
+                    Image(systemName: "hand.tap.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.orange)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Press the bridge button")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Push the round button on top of your Hue Bridge, then tap Pair below. You have about 30 seconds.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+            }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.orange.opacity(0.2), lineWidth: 1))
+
+            VStack(spacing: 12) {
+                primaryButton("Pair with Bridge", icon: "link") {
+                    vm.pairWithBridge(bridge)
+                }
+                secondaryButton("Scan Again", icon: "arrow.clockwise") {
+                    vm.resetToIdle()
+                    vm.startScan()
+                }
+            }
+        }
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    // MARK: - Pairing
+
+    private func pairingContent(bridge: BridgeEndpoint) -> some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 10) {
+                Text("Connecting…")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                Text("Pairing with \(bridge.name). Don't close the app.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    // MARK: - Paired ✅
+
+    private func pairedContent(ip: String, token: String) -> some View {
+        VStack(spacing: 24) {
+            VStack(spacing: 10) {
+                Text("You're all set!")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                Text("HueHome Pro is paired with your bridge and ready to go.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .multilineTextAlignment(.center)
+            }
+
+            // Bridge summary pill
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.system(size: 13))
+                Text(ip)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.75))
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(Capsule().fill(.green.opacity(0.10)))
+
+            primaryButton(
+                isAddingAdditional ? "Add to HueHome Pro" : "Go to Dashboard",
+                icon: isAddingAdditional ? "plus.circle.fill" : "lightbulb.fill"
+            ) {
+                handlePairedAction(ip: ip, token: token)
+            }
+        }
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    // MARK: - Error
+
+    private func errorContent(message: String) -> some View {
+        VStack(spacing: 24) {
+            VStack(spacing: 10) {
+                Text("Something went wrong")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                Text(message)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .multilineTextAlignment(.center)
+            }
+
+            VStack(spacing: 12) {
+                primaryButton("Try Again", icon: "arrow.clockwise") {
+                    vm.resetToIdle()
+                }
+                secondaryButton("Enter IP Manually", icon: "keyboard") {
+                    vm.resetToIdle()
+                    showManualEntry = true
+                }
+            }
+        }
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    // MARK: - Reusable Button Styles
+
+    private func primaryButton(_ label: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            .foregroundStyle(Color(red: 0.05, green: 0.05, blue: 0.12))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 17)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(accentColor)
+                    .shadow(color: accentColor.opacity(0.4), radius: 18, x: 0, y: 6)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func secondaryButton(_ label: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                Text(label)
+                    .font(.system(size: 14, weight: .medium))
+            }
+            .foregroundStyle(.white.opacity(0.60))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(.white.opacity(0.07))
+                    .overlay(RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(.white.opacity(0.10), lineWidth: 1))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var demoButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.3)) { onDemo?() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles").font(.system(size: 12))
+                Text("Explore Demo")
+                    .font(.system(size: 14, weight: .medium))
+            }
+            .foregroundStyle(accentColor.opacity(0.75))
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 4)
+    }
+
+    // MARK: - Manual IP Sheet
+
+    private var manualIPSheet: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.06, green: 0.06, blue: 0.13).ignoresSafeArea()
+                VStack(spacing: 24) {
+                    VStack(spacing: 8) {
+                        Text("Enter Bridge IP")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(.white)
+                        Text("Find your bridge IP in the Philips Hue app under Settings → My Hue System → Hue Bridges.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.white.opacity(0.5))
+                            .multilineTextAlignment(.center)
+                    }
+
+                    TextField("192.168.1.100", text: $manualIP)
+                        .keyboardType(.decimalPad)
+                        .font(.system(size: 17, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .padding(14)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.08)))
+                        .overlay(RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(.white.opacity(0.15), lineWidth: 1))
+
+                    Button {
+                        let ip = manualIP.trimmingCharacters(in: .whitespaces)
+                        guard !ip.isEmpty else { return }
+                        let bridge = BridgeEndpoint(name: "Hue Bridge", host: ip, port: 443)
+                        showManualEntry = false
+                        vm.phase = .bridgeFound(bridge)
+                    } label: {
+                        Text("Connect")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color(red: 0.05, green: 0.05, blue: 0.12))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(accentColor))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(manualIP.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    Spacer()
+                }
+                .padding(28)
+            }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if case .paired = vm.phase { } else {
-                        Button("Reset") { vm.resetToIdle() }
-                            .font(.caption)
-                    }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showManualEntry = false }
+                        .foregroundStyle(.white.opacity(0.6))
                 }
             }
-            .navigationDestination(isPresented: $navigateToDashboard) {
-                DashboardView()
-            }
         }
+        .preferredColorScheme(.dark)
     }
 
-    // ──────────────────────────────────────────────
-    // MARK: - Phase Card
-    // ──────────────────────────────────────────────
+    // MARK: - Debug Log (DEBUG only)
 
-    @ViewBuilder
-    private var phaseCard: some View {
-        switch vm.phase {
-
-        case .idle:
-            idleView
-
-        case .scanning:
-            scanningView
-
-        case .bridgeFound(let bridge):
-            bridgeFoundView(bridge: bridge)
-
-        case .pairing(let bridge):
-            pairingView(bridge: bridge)
-
-        case .paired(let ip, let token):
-            pairedView(ip: ip, token: token)
-
-        case .error(let msg):
-            errorView(message: msg)
-        }
-    }
-
-    // ── Idle ─────────────────────────────────────
-    private var idleView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "lightbulb.circle")
-                .font(.system(size: 48))
-                .foregroundStyle(.yellow)
-
-            Text("Find Your Hue Bridge")
-                .font(.headline)
-
-            Text("Make sure your iPhone and the Hue Bridge are on the same Wi-Fi network.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
+    #if DEBUG
+    private var debugToggle: some View {
+        VStack(alignment: .leading, spacing: 0) {
             Button {
-                vm.startScan()
+                withAnimation(.easeInOut(duration: 0.2)) { showDebugLog.toggle() }
             } label: {
-                Label("Scan for Bridge", systemImage: "magnifyingglass.circle.fill")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-
-            // Demo shortcut
-            if onDemo != nil {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.3)) { onDemo?() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("Explore Demo instead")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundStyle(.yellow.opacity(0.7))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background {
-                        Capsule()
-                            .strokeBorder(.yellow.opacity(0.2), lineWidth: 1)
-                    }
+                HStack(spacing: 6) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 11))
+                    Text("Debug log (\(vm.logLines.count) events)")
+                        .font(.system(size: 11, design: .monospaced))
+                    Spacer()
+                    Image(systemName: showDebugLog ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10))
                 }
-                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.25))
             }
-        }
-        .padding()
-        .frame(maxWidth: .infinity)
-    }
+            .buttonStyle(.plain)
 
-    // ── Scanning ──────────────────────────────────
-    private var scanningView: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                Text("Scanning for Hue Bridge…")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text("Searching for _hue._tcp on your local Wi-Fi.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-        }
-        .padding()
-        .frame(maxWidth: .infinity)
-    }
-
-    // ── Bridge Found ──────────────────────────────
-    private func bridgeFoundView(bridge: BridgeEndpoint) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Bridge Discovered!", systemImage: "checkmark.circle.fill")
-                .font(.headline)
-                .foregroundStyle(.green)
-
-            VStack(alignment: .leading, spacing: 4) {
-                infoRow(label: "Name", value: bridge.name)
-                infoRow(label: "IP",   value: bridge.host)
-                infoRow(label: "Port", value: "\(bridge.port)")
-            }
-            .padding(10)
-            .background(Color(uiColor: .secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Label("Next step:", systemImage: "hand.point.up.fill")
-                    .font(.subheadline.weight(.semibold))
-                Text("Press the **round link button** on the top of your Hue Bridge, then tap Pair below. You have ~30 seconds.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Button {
-                vm.pairWithBridge(bridge)
-            } label: {
-                Label("Pair with Bridge", systemImage: "link.circle.fill")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.orange)
-        }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // ── Pairing In-Flight ─────────────────────────
-    private func pairingView(bridge: BridgeEndpoint) -> some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                Text("Pairing with \(bridge.name)…")
-                    .font(.subheadline)
-            }
-            Text("Sending POST to http://\(bridge.host)/api")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-        .padding()
-        .frame(maxWidth: .infinity)
-    }
-
-    // ── Paired ────────────────────────────────────
-    private func pairedView(ip: String, token: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Paired Successfully!", systemImage: "checkmark.seal.fill")
-                .font(.headline)
-                .foregroundStyle(.green)
-
-            VStack(alignment: .leading, spacing: 4) {
-                infoRow(label: "Bridge IP", value: ip)
-                infoRow(label: "Token",     value: String(token.prefix(12)) + "…")
-            }
-            .padding(10)
-            .background(Color(uiColor: .secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-
-            Text("Both values are saved to Keychain.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Button {
-                if isAddingAdditional, case .paired(let ip, let token) = vm.phase {
-                    // Multi-bridge path: create BridgeRecord in SwiftData, then call onBridgeAdded
-                    let bridgeID = UUID().uuidString
-                    let record = BridgeRecord(
-                        id: bridgeID,
-                        name: "Bridge \(bridgeID.prefix(4).uppercased())",
-                        host: ip,
-                        sortOrder: 999
-                    )
-                    modelContext.insert(record)
-                    try? modelContext.save()
-                    // Credentials already saved by BridgeDiscoveryViewModel into legacy keys;
-                    // migrate them to the new per-bridge keyed slot
-                    _ = KeychainManager.shared.migrateLegacyCredentials(to: bridgeID)
-                    onBridgeAdded?(record)
-                } else if let onPaired {
-                    onPaired()
-                } else {
-                    navigateToDashboard = true
-                }
-            } label: {
-                Label(isAddingAdditional ? "Add to HueHome Pro" : "Go to Dashboard",
-                      systemImage: isAddingAdditional ? "plus.circle.fill" : "lightbulb.fill")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.yellow)
-        }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // ── Error ─────────────────────────────────────
-    private func errorView(message: String) -> some View {
-        VStack(spacing: 12) {
-            Label("Something went wrong", systemImage: "exclamationmark.triangle.fill")
-                .font(.headline)
-                .foregroundStyle(.red)
-
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            Button {
-                vm.resetToIdle()
-            } label: {
-                Label("Try Again", systemImage: "arrow.clockwise")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-        }
-        .padding()
-        .frame(maxWidth: .infinity)
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Console Log
-    // ──────────────────────────────────────────────
-
-    @ViewBuilder
-    private var consoleLog: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("mDNS / Pairing Console")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("\(vm.logLines.count) events")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-
-            ScrollViewReader { proxy in
-                ScrollView(.vertical) {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(vm.logLines.enumerated()), id: \.offset) { index, line in
+            if showDebugLog {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(Array(vm.logLines.enumerated()), id: \.offset) { _, line in
                             Text(line)
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.primary)
-                                .id(index)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.5))
                         }
                     }
                     .padding(8)
                 }
-                .background(Color(uiColor: .secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .frame(maxHeight: .infinity)
-                .onChange(of: vm.logLines.count) { _, newCount in
-                    proxy.scrollTo(newCount - 1, anchor: .bottom)
-                }
+                .frame(height: 120)
+                .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.05)))
             }
         }
     }
+    #endif
 
-    // ──────────────────────────────────────────────
-    // MARK: - Helpers
-    // ──────────────────────────────────────────────
+    // MARK: - Paired Action
 
-    private func infoRow(label: String, value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 50, alignment: .leading)
-            Text(value)
-                .font(.system(.caption, design: .monospaced))
+    private func handlePairedAction(ip: String, token: String) {
+        if isAddingAdditional {
+            let bridgeID = UUID().uuidString
+            let record = BridgeRecord(
+                id: bridgeID,
+                name: "Bridge \(bridgeID.prefix(4).uppercased())",
+                host: ip,
+                sortOrder: 999
+            )
+            modelContext.insert(record)
+            try? modelContext.save()
+            _ = KeychainManager.shared.migrateLegacyCredentials(to: bridgeID)
+            onBridgeAdded?(record)
+        } else {
+            onPaired?()
         }
     }
 }
