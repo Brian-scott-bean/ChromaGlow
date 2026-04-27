@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="circle-clip">
+      <circle cx="512" cy="512" r="450"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" fill="#0a0d1a"/>
+
+  <!-- All panels clipped to circle -->
+  <g clip-path="url(#circle-clip)" stroke="#0a0d1a" stroke-width="5" stroke-linejoin="round">
+
+    <!-- OUTER RING panels (r=215 to r=450), 6 segments of 60° each -->
+    <!-- Segment 1: -90° to -30° — Amber -->
+    <path d="M512,297 L512,62 A450,450 0 0,1 902,287 L706,407 A215,215 0 0,0 512,297 Z" fill="#C97D2A"/>
+    <!-- Segment 2: -30° to 30° — Ruby -->
+    <path d="M706,407 L902,287 A450,450 0 0,1 902,737 L706,617 A215,215 0 0,0 706,407 Z" fill="#9B2335"/>
+    <!-- Segment 3: 30° to 90° — Teal -->
+    <path d="M706,617 L902,737 A450,450 0 0,1 512,962 L512,727 A215,215 0 0,0 706,617 Z" fill="#0B6B6B"/>
+    <!-- Segment 4: 90° to 150° — Cobalt -->
+    <path d="M512,727 L512,962 A450,450 0 0,1 122,737 L318,617 A215,215 0 0,0 512,727 Z" fill="#1A3A8A"/>
+    <!-- Segment 5: 150° to 210° — Violet -->
+    <path d="M318,617 L122,737 A450,450 0 0,1 122,287 L318,407 A215,215 0 0,0 318,617 Z" fill="#4A1D7A"/>
+    <!-- Segment 6: 210° to 270° — Forest -->
+    <path d="M318,407 L122,287 A450,450 0 0,1 512,62 L512,297 A215,215 0 0,0 318,407 Z" fill="#1A5C3A"/>
+
+    <!-- INNER RING panels (r=80 to r=215), 6 segments -->
+    <!-- Segment 1: Warm gold -->
+    <path d="M512,432 L512,297 A215,215 0 0,1 706,407 L578,475 A80,80 0 0,0 512,432 Z" fill="#E8A83A"/>
+    <!-- Segment 2: Rose -->
+    <path d="M578,475 L706,407 A215,215 0 0,1 706,617 L578,549 A80,80 0 0,0 578,475 Z" fill="#C45070"/>
+    <!-- Segment 3: Aqua -->
+    <path d="M578,549 L706,617 A215,215 0 0,1 512,727 L512,592 A80,80 0 0,0 578,549 Z" fill="#1A9090"/>
+    <!-- Segment 4: Sky blue -->
+    <path d="M512,592 L512,727 A215,215 0 0,1 318,617 L446,549 A80,80 0 0,0 512,592 Z" fill="#2D60C8"/>
+    <!-- Segment 5: Lavender -->
+    <path d="M446,549 L318,617 A215,215 0 0,1 318,407 L446,475 A80,80 0 0,0 446,549 Z" fill="#7B4DC0"/>
+    <!-- Segment 6: Sage -->
+    <path d="M446,475 L318,407 A215,215 0 0,1 512,297 L512,432 A80,80 0 0,0 446,475 Z" fill="#2A8050"/>
+
+    <!-- Leading lines (radial spokes) -->
+    <line x1="512" y1="432" x2="512" y2="62"   stroke="#0a0d1a" stroke-width="6"/>
+    <line x1="578" y1="475" x2="902" y2="287"   stroke="#0a0d1a" stroke-width="6"/>
+    <line x1="578" y1="549" x2="902" y2="737"   stroke="#0a0d1a" stroke-width="6"/>
+    <line x1="512" y1="592" x2="512" y2="962"   stroke="#0a0d1a" stroke-width="6"/>
+    <line x1="446" y1="549" x2="122" y2="737"   stroke="#0a0d1a" stroke-width="6"/>
+    <line x1="446" y1="475" x2="122" y2="287"   stroke="#0a0d1a" stroke-width="6"/>
+
+    <!-- Ring outlines -->
+    <circle cx="512" cy="512" r="215" fill="none" stroke="#0a0d1a" stroke-width="6"/>
+    <circle cx="512" cy="512" r="450" fill="none" stroke="#0a0d1a" stroke-width="6"/>
+
+    <!-- Center canopy cap (dark) -->
+    <circle cx="512" cy="512" r="80" fill="#0a0d1a"/>
+    <!-- Canopy detail ring -->
+    <circle cx="512" cy="512" r="60" fill="none" stroke="#2a2a3a" stroke-width="3"/>
+    <circle cx="512" cy="512" r="30" fill="#141428"/>
+  </g>
+
+  <!-- Outer dark rim border -->
+  <circle cx="512" cy="512" r="450" fill="none" stroke="#0a0d1a" stroke-width="20"/>
+</svg>
