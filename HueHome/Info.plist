@@ -25,7 +25,7 @@
     <string>_hue._tcp</string>
   </array>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>HueHome needs local network access to discover your Philips Hue Bridge via mDNS.</string>
+  <string>LightShade needs local network access to discover your Philips Hue Bridge via mDNS.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <!-- Allow HTTP to local network hosts (e.g. Hue Bridge at 192.168.x.x) -->

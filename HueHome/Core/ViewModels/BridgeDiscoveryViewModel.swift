@@ -163,7 +163,7 @@ final class BridgeDiscoveryViewModel {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
-            "devicetype": "huehome#pro",
+            "devicetype": "lightshade#app",
             "generateclientkey": true       // Needed for Entertainment API (Epic 4)
         ]
 

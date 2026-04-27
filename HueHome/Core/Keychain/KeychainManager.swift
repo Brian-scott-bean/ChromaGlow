@@ -46,7 +46,7 @@ final class KeychainManager: @unchecked Sendable {
     private enum Keys {
         static let apiToken     = "hue_api_token"    // legacy single-bridge
         static let bridgeIP     = "hue_bridge_ip"    // legacy single-bridge
-        static let serviceName  = "com.huehome.pro"
+        static let serviceName  = "com.lightshade.app"
         // Multi-bridge keys are namespaced: hue_bridge_<uuid>_ip / hue_bridge_<uuid>_token
         static func ip(for bridgeID: String)    -> String { "hue_bridge_\(bridgeID)_ip" }
         static func token(for bridgeID: String) -> String { "hue_bridge_\(bridgeID)_token" }
