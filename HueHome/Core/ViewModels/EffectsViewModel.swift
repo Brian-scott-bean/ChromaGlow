@@ -41,7 +41,6 @@ struct EffectParamState {
 
 // MARK: - EffectsViewModel
 
-@MainActor
 final class EffectsViewModel: ObservableObject {
 
     // MARK: Published State — drives SwiftUI re-renders
@@ -61,6 +60,7 @@ final class EffectsViewModel: ObservableObject {
 
     // MARK: - Configure
 
+    @MainActor
     func configure(orchestrator: UnifiedOrchestrator) {
         isDemoMode = orchestrator.isDemoMode
         api = orchestrator.hueClient(for: orchestrator.allBridgeIDs.first)
@@ -71,6 +71,7 @@ final class EffectsViewModel: ObservableObject {
 
     // MARK: - Effect Selection
 
+    @MainActor
     func select(_ effect: HueEffect) {
         selectedEffect = effect
         paramState     = EffectParamState()
@@ -86,6 +87,7 @@ final class EffectsViewModel: ObservableObject {
 
     // MARK: - Activate
 
+    @MainActor
     func activate() async {
         guard let effect = selectedEffect else { return }
 
@@ -242,6 +244,7 @@ final class EffectsViewModel: ObservableObject {
 
     // MARK: - Stop
 
+    @MainActor
     func stop() async {
         await engine.stop()
         isRunning         = false

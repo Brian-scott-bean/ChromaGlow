@@ -207,12 +207,17 @@ struct EffectsView: View {
                            isSelected: vm.selectedEffect?.id == effect.id,
                            isRunning:  vm.isRunning && vm.runningEffectName == effect.name)
                 {
-                    print("[EffectCard] tapped: \(effect.name)")
+                    let effectID  = effect.id
+                    let currentID = vm.selectedEffect?.id
+                    print("[Tap] card=\(effect.name) currentSelectedID=\(String(describing: currentID)) match=\(currentID == effectID)")
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                        if vm.selectedEffect?.id == effect.id {
+                        if vm.selectedEffect?.id == effectID {
+                            print("[Tap] → deselecting")
                             vm.selectedEffect = nil
                         } else {
+                            print("[Tap] → calling select(\(effect.name))")
                             vm.select(effect)
+                            print("[Tap] → select returned, selectedEffect=\(String(describing: vm.selectedEffect?.name))")
                         }
                     }
                     HapticManager.shared.medium()
