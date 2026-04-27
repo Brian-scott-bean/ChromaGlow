@@ -51,8 +51,7 @@ struct EffectsView: View {
 
                     // ── Controls panel ──────────────────────────
                     if let effect = vm.selectedEffect {
-                        EffectControlsView(effect: effect, vm: vm,
-                                           lights: lightsForSelectedRoom)
+                        EffectControlsView(effect: effect, vm: vm)
                             .padding(.horizontal, 20)
                             .padding(.top, 20)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -72,7 +71,7 @@ struct EffectsView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.selectedEffect?.id)
         .animation(.easeInOut(duration: 0.2), value: vm.selectedCategory)
         .onAppear {
-            vm.configure(bridgeIDs: orchestrator.allBridgeIDs, orchestrator: orchestrator)
+            vm.configure(orchestrator: orchestrator)
         }
     }
 
@@ -133,7 +132,6 @@ struct EffectsView: View {
     private var roomSelector: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
-                // "All Rooms" chip
                 roomChip(id: nil, name: "All Rooms", icon: "house.fill")
 
                 ForEach(rooms, id: \.id) { room in
@@ -148,10 +146,10 @@ struct EffectsView: View {
     }
 
     private func roomChip(id: String?, name: String, icon: String) -> some View {
-        let isSelected = vm.selectedRoomID == id
+        let isSelected = vm.selectedRoom?.id == id || (id == nil && vm.selectedRoom == nil)
         return Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                vm.selectedRoomID = id
+                vm.selectedRoom = id == nil ? nil : rooms.first(where: { $0.id == id })
             }
             HapticManager.shared.light()
         } label: {
@@ -229,7 +227,7 @@ struct EffectsView: View {
         ToolbarItem(placement: .navigationBarTrailing) {
             if vm.isRunning {
                 Button {
-                    Task { await vm.stop(lights: lightsForSelectedRoom) }
+                    Task { await vm.stop() }
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "stop.fill").font(.system(size: 12))
@@ -245,38 +243,19 @@ struct EffectsView: View {
 
     // MARK: - Helpers
 
-    /// Build a minimal LightDisplayItem list from childResourceRefs for per-light effects.
-    private var lightsForSelectedRoom: [LightDisplayItem] {
-        let sourceRooms: [RoomDisplayItem]
-        if let roomID = vm.selectedRoomID {
-            sourceRooms = orchestrator.allRooms.filter { $0.id == roomID }
-        } else {
-            sourceRooms = orchestrator.allRooms
-        }
-        return sourceRooms
-            .flatMap { $0.childResourceRefs }
-            .filter { $0.rtype == "light" }
-            .map { ref in
-                LightDisplayItem(id: ref.rid, name: "Light", archetype: nil,
-                                 isOn: true, brightness: 100,
-                                 colorX: 0.32, colorY: 0.33,
-                                 colorTempMirek: 300, mirekMin: 153, mirekMax: 500)
-            }
-    }
-
     private func archetypeIcon(_ archetype: String?) -> String {
         switch archetype {
-        case "living_room":   return "sofa.fill"
-        case "bedroom":       return "bed.double.fill"
-        case "kitchen":       return "refrigerator.fill"
-        case "bathroom":      return "shower.fill"
-        case "office":        return "desktopcomputer"
-        case "gym":           return "dumbbell.fill"
-        case "hallway":       return "door.left.hand.open"
-        case "outdoor":       return "leaf.fill"
-        case "dining_room":   return "fork.knife"
-        case "garage":        return "car.fill"
-        default:              return "lightbulb.fill"
+        case "living_room":  return "sofa.fill"
+        case "bedroom":      return "bed.double.fill"
+        case "kitchen":      return "refrigerator.fill"
+        case "bathroom":     return "shower.fill"
+        case "office":       return "desktopcomputer"
+        case "gym":          return "dumbbell.fill"
+        case "hallway":      return "door.left.hand.open"
+        case "outdoor":      return "leaf.fill"
+        case "dining_room":  return "fork.knife"
+        case "garage":       return "car.fill"
+        default:             return "lightbulb.fill"
         }
     }
 }

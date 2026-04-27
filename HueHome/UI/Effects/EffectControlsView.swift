@@ -12,8 +12,7 @@ import SwiftUI
 struct EffectControlsView: View {
 
     let effect: HueEffect
-    @Bindable var vm: EffectsViewModel     // must be @Observable
-    let lights: [LightDisplayItem]
+    @Bindable var vm: EffectsViewModel
 
     @State private var showColorPicker: String? = nil   // key of open color picker
     @State private var isActivating = false
@@ -180,15 +179,13 @@ struct EffectControlsView: View {
     // MARK: - Activate Button
 
     private var activateButton: some View {
-        let roomLabel = vm.selectedRoomID == nil
-            ? "All Rooms (\(lights.count) lights)"
-            : "Selected Room (\(lights.count) lights)"
+        let roomLabel = vm.selectedRoom.map { "\($0.name)" } ?? "All Rooms"
 
         return Button {
             isActivating = true
             HapticManager.shared.heavy()
             Task {
-                await vm.activate(lights: lights)
+                await vm.activate()
                 withAnimation { isActivating = false }
             }
         } label: {
@@ -217,7 +214,7 @@ struct EffectControlsView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isActivating || lights.isEmpty)
+        .disabled(isActivating)
     }
 }
 

@@ -3,49 +3,45 @@
 //
 // Manages selected effect, live parameter state, room targeting,
 // and delegates to EffectEngine for app-driven loops.
+//
+// Room targeting strategy:
+//   • Atmosphere + Gradual   → grouped_light API (one call, all bulbs in room)
+//   • Bridge-Native effects  → fetch per-light IDs from bridge, set effect on each
+//   • App-driven loops       → fetch per-light IDs, loop via EffectEngine
 
 import SwiftUI
 import OSLog
 
 // MARK: - EffectParamState
 
-/// Mutable live state for all parameter types.
-/// Keyed by EffectParam.key.
+/// Mutable live state for all parameter types. Keyed by EffectParam.key.
 struct EffectParamState {
-    var sliders:       [String: Double]   = [:]
-    var colors:        [String: Color]    = [:]
-    var palettes:      [String: [Color]]  = [:]
-    var toggles:       [String: Bool]     = [:]
-    var segmented:     [String: Int]      = [:]
-    var durations:     [String: Int]      = [:]
-    var presetIndex:   [String: Int]      = [:]
+    var sliders:   [String: Double]  = [:]
+    var colors:    [String: Color]   = [:]
+    var palettes:  [String: [Color]] = [:]
+    var toggles:   [String: Bool]    = [:]
+    var segmented: [String: Int]     = [:]
+    var durations: [String: Int]     = [:]
 
-    /// Load defaults from an effect's param schema
     mutating func load(from params: [EffectParam]) {
         for param in params {
             switch param {
-            case .slider(let k, _, let v, _, _, _):
-                sliders[k] = v
-            case .colorSwatch(let k, _, let c):
-                colors[k] = c
-            case .colorPalette(let k, _, let cs, _):
-                palettes[k] = cs
-            case .toggle(let k, _, let v):
-                toggles[k] = v
-            case .segmented(let k, _, _, let i):
-                segmented[k] = i
-            case .durationPicker(let k, _, let s, _, _):
-                durations[k] = s
+            case .slider(let k, _, let v, _, _, _):         sliders[k]   = v
+            case .colorSwatch(let k, _, let c):             colors[k]    = c
+            case .colorPalette(let k, _, let cs, _):        palettes[k]  = cs
+            case .toggle(let k, _, let v):                  toggles[k]   = v
+            case .segmented(let k, _, _, let i):            segmented[k] = i
+            case .durationPicker(let k, _, let s, _, _):    durations[k] = s
             }
         }
     }
 
-    func sliderValue(_ key: String, default d: Double = 0) -> Double { sliders[key] ?? d }
-    func boolValue(_ key: String, default d: Bool = false) -> Bool { toggles[key] ?? d }
-    func colorValue(_ key: String, default d: Color = .white) -> Color { colors[key] ?? d }
-    func paletteValue(_ key: String) -> [Color] { palettes[key] ?? [] }
-    func segmentIndex(_ key: String, default d: Int = 0) -> Int { segmented[key] ?? d }
-    func durationValue(_ key: String, default d: Int = 900) -> Int { durations[key] ?? d }
+    func sliderValue(_ key: String, default d: Double = 0)  -> Double { sliders[key]   ?? d }
+    func boolValue  (_ key: String, default d: Bool = false) -> Bool  { toggles[key]   ?? d }
+    func colorValue (_ key: String, default d: Color = .white) -> Color { colors[key]  ?? d }
+    func paletteValue(_ key: String)                         -> [Color] { palettes[key] ?? [] }
+    func segmentIndex(_ key: String, default d: Int = 0)    -> Int    { segmented[key] ?? d }
+    func durationValue(_ key: String, default d: Int = 900)  -> Int   { durations[key] ?? d }
 }
 
 // MARK: - EffectsViewModel
@@ -55,27 +51,30 @@ struct EffectParamState {
 final class EffectsViewModel {
 
     // MARK: State
-    var selectedEffect:   HueEffect? = nil
-    var selectedCategory: EffectCategory? = nil   // nil = show all
-    var selectedRoomID:   String? = nil            // nil = all rooms on orchestrator
-    var paramState:       EffectParamState = EffectParamState()
-    var isRunning:        Bool = false
-    var runningEffectName: String? = nil
-    var statusMessage:    String? = nil
+    var selectedEffect:    HueEffect?       = nil
+    var selectedCategory:  EffectCategory?  = nil   // nil = show all
+    var selectedRoom:      RoomDisplayItem? = nil   // nil = first available room
+    var paramState:        EffectParamState = EffectParamState()
+    var isRunning:         Bool             = false
+    var runningEffectName: String?          = nil
+    var statusMessage:     String?          = nil
 
     // MARK: Dependencies
-    private var bridgeClients: [(id: String, api: HueAPIClient)] = []
-    private var isDemoMode:    Bool = false
-    private let engine  = EffectEngine()
-    private let log     = Logger(subsystem: "com.huehome.pro", category: "Effects")
+    private var api:        HueAPIClient?   = nil
+    private var isDemoMode: Bool            = false
+    private let engine      = EffectEngine()
+    private let log         = Logger(subsystem: "com.huehome.pro", category: "Effects")
 
     // MARK: - Configure
 
-    func configure(bridgeIDs: [String], orchestrator: UnifiedOrchestrator) {
-        isDemoMode    = orchestrator.isDemoMode
-        bridgeClients = bridgeIDs.compactMap { id in
-            guard let api = orchestrator.hueClient(for: id) else { return nil }
-            return (id: id, api: api)
+    func configure(orchestrator: UnifiedOrchestrator) {
+        isDemoMode = orchestrator.isDemoMode
+        // Use the first active bridge client (multi-bridge routing is a future improvement)
+        let bridgeID = orchestrator.allBridgeIDs.first
+        api = orchestrator.hueClient(for: bridgeID)
+        // Pre-select first room if none chosen
+        if selectedRoom == nil {
+            selectedRoom = orchestrator.allRooms.first
         }
     }
 
@@ -96,149 +95,173 @@ final class EffectsViewModel {
 
     // MARK: - Activate
 
-    func activate(lights: [LightDisplayItem]) async {
+    func activate() async {
         guard let effect = selectedEffect else { return }
 
+        // ── Demo Mode ─────────────────────────────────────────────────────────
         if isDemoMode {
-            statusMessage    = "✦ Demo: '\(effect.name)' activated on \(lights.count) light(s)"
-            isRunning        = effect.requiresForeground
+            let roomName = selectedRoom?.name ?? "all rooms"
+            statusMessage     = "✦ Demo: '\(effect.name)' applied to \(roomName)"
+            isRunning         = effect.requiresForeground
             runningEffectName = isRunning ? effect.name : nil
             log.info("Effects demo: \(effect.name, privacy: .public)")
             return
         }
 
-        guard !bridgeClients.isEmpty else {
-            statusMessage = "No active bridge"
+        guard let api else {
+            statusMessage = "⚠ No active bridge connection"
             return
         }
 
-        // Stop any existing effect first
-        await stop(lights: lights)
+        guard let room = selectedRoom, let groupedLightID = room.groupedLightID else {
+            statusMessage = "⚠ Select a room to apply effects"
+            return
+        }
 
-        let api = bridgeClients.first!.api   // TODO: multi-bridge routing per light
+        // Stop any running effect first
+        await stop()
 
         switch effect.strategy {
 
-        // ── One-Shot ─────────────────────────────────────
+        // ── One-Shot (grouped_light) ───────────────────────────────────────────
         case .oneShot:
             let brightness = paramState.sliderValue("brightness", default: 70)
             let mirekRaw   = paramState.sliderValue("mirek",      default: 300)
             let fade       = Int(paramState.sliderValue("fade",   default: 1000))
             let color      = paramState.colorValue("color")
-            let xy         = color.toCIExy()
+            let useColor   = color != .white
+            let xy         = useColor ? color.toCIExy() : nil
 
+            statusMessage    = "Applying '\(effect.name)'…"
             isRunning        = false
             runningEffectName = nil
-            statusMessage    = "Applying '\(effect.name)'…"
 
-            let capturedState = self.paramState
-            await withTaskGroup(of: Void.self) { group in
-                for light in lights {
-                    group.addTask {
-                        let useColor = light.supportsColor && color != .white
-                        try? await api.setLightEffect(
-                            id:         light.id,
-                            on:         true,
-                            brightness: brightness,
-                            xy:         useColor ? xy : nil,
-                            mirek:      useColor ? nil : (light.supportsColorTemp ? Int(mirekRaw) : nil),
-                            duration:   fade
-                        )
-                    }
-                }
-            }
-            _ = capturedState  // suppress unused warning
+            try? await api.setGroupedLightEffect(
+                id:         groupedLightID,
+                on:         true,
+                brightness: brightness,
+                xy:         xy,
+                mirek:      useColor ? nil : Int(mirekRaw),
+                duration:   fade
+            )
             statusMessage = "'\(effect.name)' applied ✓"
 
-        // ── Bridge Native ─────────────────────────────────
+        // ── Bridge Native (per-light, persists on bridge) ─────────────────────
         case .bridgeNative(let effectName):
+            statusMessage    = "Fetching lights…"
             isRunning        = false
             runningEffectName = nil
-            statusMessage    = "Applying '\(effect.name)' on bridge…"
 
-            let nativeBrightness = paramState.sliderValue("brightness", default: 70)
+            // Fetch actual light IDs from bridge and set native effect on each
+            let lightIDs = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []
+            if lightIDs.isEmpty {
+                // Fallback: set speed via grouped_light dynamics as best we can
+                let brightness = paramState.sliderValue("brightness", default: 70)
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: true,
+                    brightness: brightness, xy: nil, mirek: nil, duration: 0
+                )
+                statusMessage = "'\(effect.name)' applied (limited — per-light IDs unavailable)"
+                return
+            }
+
+            let brightness = paramState.sliderValue("brightness", default: 70)
+            statusMessage  = "Applying '\(effect.name)' to \(lightIDs.count) light(s)…"
+
             await withTaskGroup(of: Void.self) { group in
-                for light in lights {
+                for id in lightIDs {
                     group.addTask {
-                        try? await api.setLightNativeEffect(id: light.id, effect: effectName)
-                        if nativeBrightness != 70 {
-                            try? await api.setLightBrightness(id: light.id, brightness: nativeBrightness)
+                        try? await api.setLightNativeEffect(id: id, effect: effectName)
+                        if brightness != 70 {
+                            try? await api.setLightBrightness(id: id, brightness: brightness)
                         }
                     }
                 }
             }
-            statusMessage = "'\(effect.name)' running on bridge ✓ (persists after closing app)"
+            statusMessage = "'\(effect.name)' running on bridge ✓ — persists after closing app"
 
-        // ── Gradual ───────────────────────────────────────
+        // ── Gradual (grouped_light with dynamics.duration) ────────────────────
         case .gradual:
-            let durationSec  = paramState.durationValue("duration", default: 1800)
-            let durationMs   = durationSec * 1000
+            let durationSec   = paramState.durationValue("duration", default: 1800)
+            let durationMs    = durationSec * 1000
             let endBrightness = paramState.sliderValue("endBrightness", default: 90)
-            let endMirek      = Int(paramState.sliderValue("endMirek", default: 230))
+            let endMirek      = Int(paramState.sliderValue("endMirek",  default: 230))
             let turnOff       = paramState.boolValue("turnOff")
 
-            isRunning        = false
+            isRunning         = false
             runningEffectName = nil
-            statusMessage    = "'\(effect.name)' ramping over \(durationSec / 60)min…"
+            statusMessage     = "'\(effect.name)' ramping over \(durationSec / 60) min…"
 
-            await withTaskGroup(of: Void.self) { group in
-                for light in lights {
-                    group.addTask {
-                        try? await api.setLightEffect(
-                            id:         light.id,
-                            on:         true,
-                            brightness: endBrightness,
-                            xy:         nil,
-                            mirek:      light.supportsColorTemp ? endMirek : nil,
-                            duration:   durationMs
-                        )
-                    }
-                }
-            }
-            statusMessage = "'\(effect.name)' running on bridge ✓ (persists after closing app)"
+            try? await api.setGroupedLightEffect(
+                id:         groupedLightID,
+                on:         true,
+                brightness: endBrightness,
+                xy:         nil,
+                mirek:      endMirek,
+                duration:   durationMs
+            )
+            statusMessage = "'\(effect.name)' running ✓ — persists after closing app"
 
             if turnOff {
+                let capturedAPI    = api
+                let capturedGLID   = groupedLightID
                 Task {
                     try? await Task.sleep(nanoseconds: UInt64(durationSec) * 1_000_000_000)
-                    await withTaskGroup(of: Void.self) { g in
-                        for light in lights { g.addTask { try? await api.setLight(id: light.id, on: false) } }
-                    }
+                    try? await capturedAPI.setGroupedLight(id: capturedGLID, on: false)
                 }
             }
 
-        // ── App Driven ────────────────────────────────────
+        // ── App-Driven (EffectEngine loop, needs per-light IDs) ───────────────
         case .appDriven:
-            let palette   = buildPalette(for: effect.id)
+            statusMessage = "Fetching lights for '\(effect.name)'…"
+
+            let lightIDs = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []
+            if lightIDs.isEmpty {
+                statusMessage = "⚠ Could not fetch light IDs for live effect"
+                return
+            }
+
+            // Build minimal LightDisplayItem list for EffectLoops
+            let lights = lightIDs.map { id in
+                LightDisplayItem(id: id, name: "Light", archetype: nil,
+                                 isOn: true, brightness: 100,
+                                 colorX: 0.32, colorY: 0.33,
+                                 colorTempMirek: 300, mirekMin: 153, mirekMax: 500)
+            }
+
+            // Capture all params before entering non-isolated context
+            let palette   = buildPalette()
             let sync      = paramState.boolValue("sync")
             let flash     = paramState.boolValue("flash")
-            let bpm       = paramState.sliderValue("bpm",       default: 120)
-            let dutyCycle = paramState.sliderValue("dutyCycle", default: 50) / 100.0
-            let speed     = paramState.sliderValue("speed",     default: 5)
-            let offDim    = paramState.sliderValue("offDim",    default: 0)
+            let bpm       = paramState.sliderValue("bpm",             default: 120)
+            let dutyCycle = paramState.sliderValue("dutyCycle",       default: 50) / 100.0
+            let speed     = paramState.sliderValue("speed",           default: 5)
+            let offDim    = paramState.sliderValue("offDim",          default: 0)
             let freqIdx   = paramState.segmentIndex("frequency")
-            let baseColor = paramState.colorValue("baseColor",  default: Color(hue: 0.6, saturation: 0.4, brightness: 0.25))
-            let flashColor = paramState.colorValue("flashColor", default: .white)
+            let baseXY    = paramState.colorValue("baseColor",        default: Color(hue: 0.6, saturation: 0.4, brightness: 0.25)).toCIExy()
+            let flashXY   = paramState.colorValue("flashColor",       default: .white).toCIExy()
+            let baseB     = paramState.sliderValue("baseBrightness",  default: 15)
+            let onXY      = paramState.colorValue("color",            default: .white).toCIExy()
 
-            isRunning        = true
+            isRunning         = true
             runningEffectName = effect.name
-            statusMessage    = "'\(effect.name)' running — live effect"
+            statusMessage     = "'\(effect.name)' running — keep app open"
 
             let loop: @Sendable () async throws -> Void
 
             switch effect.id {
             case "strobe":
-                let onXY  = paramState.colorValue("color", default: .white).toCIExy()
                 loop = EffectLoops.strobe(lights: lights, api: api, bpm: bpm,
-                                          dutyCycle: dutyCycle, onXY: onXY, offBrightness: offDim)
+                                          dutyCycle: dutyCycle, onXY: onXY,
+                                          offBrightness: offDim)
             case "party":
                 loop = EffectLoops.party(lights: lights, api: api, speed: speed,
                                          palette: palette, sync: sync, flash: flash)
             case "thunderstorm":
-                loop = EffectLoops.thunderstorm(
-                    lights: lights, api: api, frequencyIndex: freqIdx,
-                    baseXY: baseColor.toCIExy(), flashXY: flashColor.toCIExy(),
-                    baseBrightness: paramState.sliderValue("baseBrightness", default: 15)
-                )
+                loop = EffectLoops.thunderstorm(lights: lights, api: api,
+                                                frequencyIndex: freqIdx,
+                                                baseXY: baseXY, flashXY: flashXY,
+                                                baseBrightness: baseB)
             default:
                 statusMessage = "Unknown app-driven effect: \(effect.id)"
                 isRunning     = false
@@ -251,26 +274,21 @@ final class EffectsViewModel {
 
     // MARK: - Stop
 
-    func stop(lights: [LightDisplayItem]) async {
+    func stop() async {
         await engine.stop()
-        isRunning        = false
+        isRunning         = false
         runningEffectName = nil
-        statusMessage    = nil
+        statusMessage     = nil
     }
 
     // MARK: - Palette Helper
 
-    private func buildPalette(for effectID: String) -> [(Double, Double)] {
-        // Use custom palette if set, otherwise fall back to preset
-        let colors: [Color]
-        if let custom = paramState.palettes["palette"], !custom.isEmpty {
-            let presetIdx = paramState.segmentIndex("preset")
-            // If preset != Custom, override with preset
-            let preset = PresetPalette.allCases[safe: presetIdx] ?? .aurora
-            colors = (preset == .custom) ? custom : preset.colors
-        } else {
-            colors = PresetPalette.aurora.colors
-        }
+    private func buildPalette() -> [(Double, Double)] {
+        let presetIdx = paramState.segmentIndex("preset")
+        let preset    = PresetPalette.allCases[safeIndex: presetIdx] ?? .aurora
+        let colors    = (preset == .custom)
+            ? (paramState.palettes["palette"] ?? PresetPalette.aurora.colors)
+            : preset.colors
         return colors.map { $0.toCIExy() }
     }
 }
@@ -279,21 +297,20 @@ final class EffectsViewModel {
 
 extension Color {
     /// Approximate CIE 1931 xy from SwiftUI Color (via UIColor).
-    /// Not colour-managed but good enough for Hue API calls.
     func toCIExy() -> (Double, Double) {
         let ui = UIColor(self)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         ui.getRed(&r, green: &g, blue: &b, alpha: &a)
 
-        // Gamma correction
-        let rLin = r > 0.04045 ? pow((r + 0.055) / 1.055, 2.4) : r / 12.92
-        let gLin = g > 0.04045 ? pow((g + 0.055) / 1.055, 2.4) : g / 12.92
-        let bLin = b > 0.04045 ? pow((b + 0.055) / 1.055, 2.4) : b / 12.92
+        let lin: (CGFloat) -> Double = { c in
+            let c = Double(c)
+            return c > 0.04045 ? pow((c + 0.055) / 1.055, 2.4) : c / 12.92
+        }
+        let rL = lin(r), gL = lin(g), bL = lin(b)
 
-        // Wide-gamut D65
-        let X = rLin * 0.664511 + gLin * 0.154324 + bLin * 0.162028
-        let Y = rLin * 0.283881 + gLin * 0.668433 + bLin * 0.047685
-        let Z = rLin * 0.000088 + gLin * 0.072310 + bLin * 0.986039
+        let X = rL * 0.664511 + gL * 0.154324 + bL * 0.162028
+        let Y = rL * 0.283881 + gL * 0.668433 + bL * 0.047685
+        let Z = rL * 0.000088 + gL * 0.072310 + bL * 0.986039
 
         let sum = X + Y + Z
         guard sum > 0 else { return (0.32, 0.33) }
@@ -301,4 +318,10 @@ extension Color {
     }
 }
 
-// (safe subscript is declared in another file)
+// MARK: - Safe Array subscript
+
+private extension Array {
+    subscript(safeIndex index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}

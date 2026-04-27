@@ -269,6 +269,40 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "PUT /grouped_light/\(id) on=\(on) brightness=\(Int(clamped))")
     }
 
+    /// Comprehensive grouped_light effect setter for the Effects engine.
+    /// Uses grouped_light/{id} — one call controls all lights in a room simultaneously.
+    /// Pass nil for parameters you don't want to change.
+    /// `duration` is the transition time in milliseconds (0 = instant).
+    func setGroupedLightEffect(
+        id:         String,
+        on:         Bool?,
+        brightness: Double?,
+        xy:         (Double, Double)?,
+        mirek:      Int?,
+        duration:   Int
+    ) async throws {
+        let (ip, token) = try credentials()
+        var body: [String: Any] = [:]
+        if let on = on         { body["on"]      = ["on": on] }
+        if let b  = brightness { body["dimming"]  = ["brightness": min(100, max(0, b))] }
+        if let xy = xy         { body["color"]    = ["xy": ["x": xy.0, "y": xy.1]] }
+        if let m  = mirek      { body["color_temperature"] = ["mirek": m] }
+        if duration > 0        { body["dynamics"] = ["duration": duration] }
+        let data = try await put(
+            path: "/clip/v2/resource/grouped_light/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /grouped_light/\(id) effect dur=\(duration)ms")
+    }
+
+    /// Fetch all light resource IDs from the bridge.
+    /// Used by bridge-native and app-driven effects that must be set per-light.
+    /// Note: returns ALL lights — callers should filter by room if needed.
+    func fetchLightIDsForGroup(groupedLightID: String) async throws -> [String] {
+        let lights = try await fetchLights()
+        return lights.map { $0.id }
+    }
+
     /// Toggle an individual light on or off.
     func setLight(id: String, on: Bool) async throws {
         let (ip, token) = try credentials()
