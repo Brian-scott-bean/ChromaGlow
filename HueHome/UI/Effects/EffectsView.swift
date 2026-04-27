@@ -61,6 +61,18 @@ struct EffectsView: View {
                     Color.clear.frame(height: 120)
                 }
             }
+
+            // ── Floating pill for app-driven effects ──────────────
+            if let effect = vm.selectedEffect, effect.requiresForeground {
+                VStack {
+                    Spacer()
+                    floatingPill(effect: effect)
+                        .padding(.bottom, 104)
+                }
+                .ignoresSafeArea(edges: .bottom)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.selectedEffect?.id)
+            }
         }
         .navigationTitle("Effects")
         .navigationBarTitleDisplayMode(.large)
@@ -207,17 +219,16 @@ struct EffectsView: View {
                            isSelected: vm.selectedEffect?.id == effect.id,
                            isRunning:  vm.isRunning && vm.runningEffectName == effect.name)
                 {
-                    let effectID  = effect.id
-                    let currentID = vm.selectedEffect?.id
-                    print("[Tap] card=\(effect.name) currentSelectedID=\(String(describing: currentID)) match=\(currentID == effectID)")
+                    let isAlreadySelected = vm.selectedEffect?.id == effect.id
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                        if vm.selectedEffect?.id == effectID {
-                            print("[Tap] → deselecting")
+                        if isAlreadySelected {
                             vm.selectedEffect = nil
                         } else {
-                            print("[Tap] → calling select(\(effect.name))")
                             vm.select(effect)
-                            print("[Tap] → select returned, selectedEffect=\(String(describing: vm.selectedEffect?.name))")
+                            // Auto-apply instantly for non-looping effects
+                            if !effect.requiresForeground {
+                                Task { await vm.activate() }
+                            }
                         }
                     }
                     HapticManager.shared.medium()
@@ -226,7 +237,44 @@ struct EffectsView: View {
         }
     }
 
-    // MARK: - Toolbar
+    // MARK: - Floating Pill (app-driven effects)
+
+    private func floatingPill(effect: HueEffect) -> some View {
+        HStack(spacing: 14) {
+            if vm.isRunning && vm.runningEffectName == effect.name {
+                // Stop button
+                Button { Task { await vm.stop() } } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "stop.fill").font(.system(size: 13, weight: .bold))
+                        Text("Stop \(effect.name)").font(.system(size: 15, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 28).padding(.vertical, 14)
+                    .background(Capsule().fill(.red.opacity(0.85)))
+                    .shadow(color: .red.opacity(0.4), radius: 12, x: 0, y: 4)
+                }
+                .buttonStyle(.plain)
+            } else {
+                // Start button
+                Button {
+                    HapticManager.shared.heavy()
+                    Task { await vm.activate() }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "play.fill").font(.system(size: 13, weight: .bold))
+                        Text("Start \(effect.name)").font(.system(size: 15, weight: .semibold))
+                    }
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 28).padding(.vertical, 14)
+                    .background(Capsule().fill(effect.accentColor))
+                    .shadow(color: effect.accentColor.opacity(0.5), radius: 14, x: 0, y: 5)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: vm.isRunning)
+    }
+
 
     @ToolbarContentBuilder
     private var stopToolbarItem: some ToolbarContent {
