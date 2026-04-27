@@ -194,7 +194,7 @@ final class EffectsViewModel: ObservableObject {
                     id: groupedLightID, on: true,
                     brightness: brightness, xy: nil, mirek: nil, duration: 0
                 )
-                statusMessage = "'\(effect.name)' applied (limited)"
+                showStatus("'\(effect.name)' applied (limited)")
                 return
             }
 
@@ -209,24 +209,51 @@ final class EffectsViewModel: ObservableObject {
                     }
                 }
             }
-            statusMessage = "'\(effect.name)' running on bridge ✓ — persists after closing app"
+            showStatus("'\(effect.name)' running on bridge ✓ — persists after closing app")
 
         case .gradual:
-            let durationSec   = paramState.durationValue("duration", default: 1800)
-            let endBrightness = paramState.sliderValue("endBrightness", default: 90)
-            let endMirek      = Int(paramState.sliderValue("endMirek",  default: 230))
-            let turnOff       = paramState.boolValue("turnOff")
+            let durationSec    = paramState.durationValue("duration",       default: 1800)
+            let startBrightness = paramState.sliderValue("startBrightness", default: 1)
+            let endBrightness  = paramState.sliderValue("endBrightness",    default: 90)
+            let startMirek     = Int(paramState.sliderValue("startMirek",   default: 490))
+            let endMirek       = Int(paramState.sliderValue("endMirek",     default: 230))
+            let turnOff        = paramState.boolValue("turnOff")
 
             isRunning         = false
             runningEffectName = nil
-            statusMessage     = "'\(effect.name)' ramping over \(durationSec / 60) min…"
+            statusMessage     = "Preparing '\(effect.name)'…"
 
+            // Step 1: clear any running native bridge effect per-light so the ramp can take over
+            let lightIDs = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []
+            if !lightIDs.isEmpty {
+                await withTaskGroup(of: Void.self) { group in
+                    for id in lightIDs {
+                        group.addTask { try? await api.setLightNativeEffect(id: id, effect: "no_effect") }
+                    }
+                }
+            }
+
+            // Step 2: snap to start state immediately (instant, no duration)
+            let hasStart = paramState.sliderValue("startBrightness", default: -1) >= 0
+                        || paramState.sliderValue("startMirek",      default: -1) >= 0
+            if hasStart {
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: true,
+                    brightness: startBrightness, xy: nil, mirek: startMirek,
+                    duration: 0
+                )
+                // Small pause so bridge registers start before ramp begins
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+
+            // Step 3: ramp to end state over full duration
+            statusMessage = "'\(effect.name)' ramping over \(durationSec / 60) min…"
             try? await api.setGroupedLightEffect(
                 id: groupedLightID, on: true,
                 brightness: endBrightness, xy: nil, mirek: endMirek,
                 duration: durationSec * 1000
             )
-            statusMessage = "'\(effect.name)' running ✓ — persists after closing app"
+            showStatus("'\(effect.name)' running ✓ — persists after closing app")
 
             if turnOff {
                 let capturedAPI  = api
