@@ -53,10 +53,12 @@ final class EffectsViewModel: ObservableObject {
     @Published var statusMessage:     String?          = nil
 
     // MARK: Dependencies
-    private var api:        HueAPIClient? = nil
-    private var isDemoMode: Bool          = false
-    private let engine      = EffectEngine()
-    private let log         = Logger(subsystem: "com.huehome.pro", category: "Effects")
+    private var api:              HueAPIClient? = nil
+    private var isDemoMode:       Bool          = false
+    private let engine            = EffectEngine()
+    private let log               = Logger(subsystem: "com.huehome.pro", category: "Effects")
+    private var cancellables      = Set<AnyCancellable>()
+    private var reactivationTask: Task<Void, Never>? = nil
 
     // MARK: - Configure
 
@@ -70,6 +72,19 @@ final class EffectsViewModel: ObservableObject {
         let apiStatus = api != nil ? "set" : "nil"
         let roomName  = selectedRoom?.name ?? "none"
         log.info("[EffectsVM] configure done — api=\(apiStatus) room=\(roomName) demo=\(self.isDemoMode)")
+
+        // Live re-apply: whenever paramState changes (slider/color/toggle),
+        // debounce 350ms then re-apply the current effect to the lights.
+        $paramState
+            .dropFirst()
+            .debounce(for: .milliseconds(350), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self,
+                      let effect = self.selectedEffect,
+                      !effect.requiresForeground else { return }
+                Task { await self.activate() }
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Effect Selection
