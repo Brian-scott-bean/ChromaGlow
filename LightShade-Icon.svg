@@ -1,63 +1,84 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <clipPath id="circle-clip">
-      <circle cx="512" cy="512" r="450"/>
-    </clipPath>
+    <!-- Background: dark navy, lighter center -->
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0%"   stop-color="#1e2d48"/>
+      <stop offset="100%" stop-color="#08101e"/>
+    </radialGradient>
+    <!-- Warm ambient glow below shade -->
+    <radialGradient id="glow" cx="50%" cy="15%" r="80%">
+      <stop offset="0%"   stop-color="#FFB020" stop-opacity="0.60"/>
+      <stop offset="45%"  stop-color="#D07808" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#C06000" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Inner bottom opening -->
+    <radialGradient id="rim" cx="50%" cy="50%" r="60%">
+      <stop offset="0%"   stop-color="#FFE060"/>
+      <stop offset="60%"  stop-color="#F09010"/>
+      <stop offset="100%" stop-color="#A05800"/>
+    </radialGradient>
   </defs>
 
-  <!-- Background -->
-  <rect width="1024" height="1024" fill="#0a0d1a"/>
+  <!-- ── Background ── -->
+  <rect width="1024" height="1024" fill="url(#bg)"/>
 
-  <!-- All panels clipped to circle -->
-  <g clip-path="url(#circle-clip)" stroke="#0a0d1a" stroke-width="5" stroke-linejoin="round">
+  <!-- ── Ambient glow pool below shade ── -->
+  <ellipse cx="512" cy="848" rx="295" ry="105" fill="url(#glow)"/>
 
-    <!-- OUTER RING panels (r=215 to r=450), 6 segments of 60° each -->
-    <!-- Segment 1: -90° to -30° — Amber -->
-    <path d="M512,297 L512,62 A450,450 0 0,1 902,287 L706,407 A215,215 0 0,0 512,297 Z" fill="#C97D2A"/>
-    <!-- Segment 2: -30° to 30° — Ruby -->
-    <path d="M706,407 L902,287 A450,450 0 0,1 902,737 L706,617 A215,215 0 0,0 706,407 Z" fill="#9B2335"/>
-    <!-- Segment 3: 30° to 90° — Teal -->
-    <path d="M706,617 L902,737 A450,450 0 0,1 512,962 L512,727 A215,215 0 0,0 706,617 Z" fill="#0B6B6B"/>
-    <!-- Segment 4: 90° to 150° — Cobalt -->
-    <path d="M512,727 L512,962 A450,450 0 0,1 122,737 L318,617 A215,215 0 0,0 512,727 Z" fill="#1A3A8A"/>
-    <!-- Segment 5: 150° to 210° — Violet -->
-    <path d="M318,617 L122,737 A450,450 0 0,1 122,287 L318,407 A215,215 0 0,0 318,617 Z" fill="#4A1D7A"/>
-    <!-- Segment 6: 210° to 270° — Forest -->
-    <path d="M318,407 L122,287 A450,450 0 0,1 512,62 L512,297 A215,215 0 0,0 318,407 Z" fill="#1A5C3A"/>
+  <!-- ── Cord ── -->
+  <line x1="512" y1="0" x2="512" y2="92" stroke="#243040" stroke-width="8" stroke-linecap="round"/>
 
-    <!-- INNER RING panels (r=80 to r=215), 6 segments -->
-    <!-- Segment 1: Warm gold -->
-    <path d="M512,432 L512,297 A215,215 0 0,1 706,407 L578,475 A80,80 0 0,0 512,432 Z" fill="#E8A83A"/>
-    <!-- Segment 2: Rose -->
-    <path d="M578,475 L706,407 A215,215 0 0,1 706,617 L578,549 A80,80 0 0,0 578,475 Z" fill="#C45070"/>
-    <!-- Segment 3: Aqua -->
-    <path d="M578,549 L706,617 A215,215 0 0,1 512,727 L512,592 A80,80 0 0,0 578,549 Z" fill="#1A9090"/>
-    <!-- Segment 4: Sky blue -->
-    <path d="M512,592 L512,727 A215,215 0 0,1 318,617 L446,549 A80,80 0 0,0 512,592 Z" fill="#2D60C8"/>
-    <!-- Segment 5: Lavender -->
-    <path d="M446,549 L318,617 A215,215 0 0,1 318,407 L446,475 A80,80 0 0,0 446,549 Z" fill="#7B4DC0"/>
-    <!-- Segment 6: Sage -->
-    <path d="M446,475 L318,407 A215,215 0 0,1 512,297 L512,432 A80,80 0 0,0 446,475 Z" fill="#2A8050"/>
+  <!--
+    KEY VERTICES
+    Apex  A  = (512, 92)
+    Upper ring (widest, y varies for 3-D):
+      UL=(174,405) U1=(258,360) U2=(340,336) U3=(422,322) UC=(512,318) U5=(602,322) U6=(684,336) U7=(766,360) UR=(850,405)
+    Mid ring (y varies):
+      ML=(212,558) M1=(296,522) M2=(376,500) M3=(450,492) MC=(512,490) M5=(574,492) M6=(648,500) M7=(728,522) MR=(812,558)
+    Bottom rim:
+      BL=(248,700) B1=(320,712) B2=(392,720) B3=(454,724) BC=(512,726) B5=(570,724) B6=(632,720) B7=(704,712) BR=(776,700)
+  -->
 
-    <!-- Leading lines (radial spokes) -->
-    <line x1="512" y1="432" x2="512" y2="62"   stroke="#0a0d1a" stroke-width="6"/>
-    <line x1="578" y1="475" x2="902" y2="287"   stroke="#0a0d1a" stroke-width="6"/>
-    <line x1="578" y1="549" x2="902" y2="737"   stroke="#0a0d1a" stroke-width="6"/>
-    <line x1="512" y1="592" x2="512" y2="962"   stroke="#0a0d1a" stroke-width="6"/>
-    <line x1="446" y1="549" x2="122" y2="737"   stroke="#0a0d1a" stroke-width="6"/>
-    <line x1="446" y1="475" x2="122" y2="287"   stroke="#0a0d1a" stroke-width="6"/>
+  <!-- ═══════════════════════════════════
+       UPPER BAND — 8 triangles from Apex
+       ═══════════════════════════════════ -->
+  <polygon points="512,92  174,405 258,360" fill="#12C8C0" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="512,92  258,360 340,336" fill="#F07818" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="512,92  340,336 422,322" fill="#2860DC" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="512,92  422,322 512,318" fill="#F0D018" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="512,92  512,318 602,322" fill="#28C060" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="512,92  602,322 684,336" fill="#9040DC" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="512,92  684,336 766,360" fill="#E02828" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="512,92  766,360 850,405" fill="#16B0C0" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
 
-    <!-- Ring outlines -->
-    <circle cx="512" cy="512" r="215" fill="none" stroke="#0a0d1a" stroke-width="6"/>
-    <circle cx="512" cy="512" r="450" fill="none" stroke="#0a0d1a" stroke-width="6"/>
+  <!-- ═══════════════════════════════════
+       MID BAND — 8 trapezoids upper→mid
+       ═══════════════════════════════════ -->
+  <polygon points="174,405 258,360  296,522 212,558" fill="#E04820" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="258,360 340,336  376,500 296,522" fill="#1248C0" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="340,336 422,322  450,492 376,500" fill="#6820C0" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="422,322 512,318  512,490 450,492" fill="#D08808" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="512,318 602,322  574,492 512,490" fill="#109858" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="602,322 684,336  648,500 574,492" fill="#0890A0" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="684,336 766,360  728,522 648,500" fill="#B02020" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="766,360 850,405  812,558 728,522" fill="#1238B0" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
 
-    <!-- Center canopy cap (dark) -->
-    <circle cx="512" cy="512" r="80" fill="#0a0d1a"/>
-    <!-- Canopy detail ring -->
-    <circle cx="512" cy="512" r="60" fill="none" stroke="#2a2a3a" stroke-width="3"/>
-    <circle cx="512" cy="512" r="30" fill="#141428"/>
-  </g>
+  <!-- ═══════════════════════════════════
+       LOWER BAND — 8 trapezoids mid→rim
+       ═══════════════════════════════════ -->
+  <polygon points="212,558 296,522  320,712 248,700" fill="#0C7070" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="296,522 376,500  392,720 320,712" fill="#481090" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="376,500 450,492  454,724 392,720" fill="#0C2CB0" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="450,492 512,490  512,726 454,724" fill="#108840" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="512,490 574,492  570,724 512,726" fill="#B07000" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="574,492 648,500  632,720 570,724" fill="#981818" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="648,500 728,522  704,712 632,720" fill="#3C1080" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
+  <polygon points="728,522 812,558  776,700 704,712" fill="#087080" stroke="#0a1422" stroke-width="5.5" stroke-linejoin="round"/>
 
-  <!-- Outer dark rim border -->
-  <circle cx="512" cy="512" r="450" fill="none" stroke="#0a0d1a" stroke-width="20"/>
+  <!-- ── Outer silhouette dark border ── -->
+  <path d="M512,92 L174,405 L212,558 L248,700 L776,700 L812,558 L850,405 Z"
+        fill="none" stroke="#0a1422" stroke-width="10" stroke-linejoin="round"/>
+
+  <!-- ── Bottom opening inner glow ── -->
+  <ellipse cx="512" cy="714" rx="134" ry="18" fill="url(#rim)"/>
 </svg>
