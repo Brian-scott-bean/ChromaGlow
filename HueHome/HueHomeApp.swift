@@ -116,7 +116,7 @@ extension Notification.Name {
 
 import WatchConnectivity
 
-final class WatchSessionManager: NSObject, WCSessionDelegate {
+final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendable {
 
     static let shared = WatchSessionManager()
 

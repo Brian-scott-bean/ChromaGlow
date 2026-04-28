@@ -102,16 +102,16 @@ struct ContentView: View {
             .navigationTitle("LightShade")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .onAppear { store.loadFromCache() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { store.loadFromCache() }
+        .onAppear { store.loadFromLocalCache() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { store.loadFromLocalCache() }
         }
-        // Poll every 5 s while rooms are empty so we pick up iPhone app writes automatically
+        // Poll every 5 s while rooms are empty so we pick up iPhone pushes automatically
         .task(id: store.rooms.isEmpty) {
             guard store.rooms.isEmpty else { return }
             while store.rooms.isEmpty {
                 try? await Task.sleep(for: .seconds(5))
-                store.loadFromCache()
+                store.loadFromLocalCache()
             }
         }
     }
