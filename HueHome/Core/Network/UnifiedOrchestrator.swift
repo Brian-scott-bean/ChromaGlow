@@ -85,6 +85,19 @@ final class UnifiedOrchestrator {
     /// Populated by loadAll(); updated via rebuildAllZones().
     var allZones: [RoomDisplayItem] = []
 
+    // ── Active Effect (Now Playing) ───────────────────────────
+
+    /// Name of the currently active effect, or nil if none running.
+    /// Written by EffectsViewModel; read by DashboardView's Now Playing bar.
+    var activeEffectName: String? = nil
+
+    /// SF Symbol icon for the active effect.
+    var activeEffectIcon: String? = nil
+
+    /// True when the effect requires the app to stay open (appDriven).
+    /// False for bridgeNative/oneShot/gradual effects which persist on the bridge.
+    var activeEffectIsAppDriven: Bool = false
+
     // MARK: - Internal
 
     /// Active bridge clients.  keyed by BridgeRecord.id

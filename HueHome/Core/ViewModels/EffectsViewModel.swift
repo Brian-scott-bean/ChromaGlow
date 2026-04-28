@@ -53,17 +53,19 @@ final class EffectsViewModel: ObservableObject {
     @Published var statusMessage:     String?          = nil
 
     // MARK: Dependencies
-    private var api:              HueAPIClient? = nil
-    private var isDemoMode:       Bool          = false
+    private var api:              HueAPIClient?        = nil
+    private var isDemoMode:       Bool                 = false
+    private weak var orchestrator: UnifiedOrchestrator? = nil
     private let engine            = EffectEngine()
     private let log               = Logger(subsystem: "com.lightshade.app", category: "Effects")
     private var cancellables      = Set<AnyCancellable>()
-    private var reactivationTask: Task<Void, Never>? = nil
+    private var reactivationTask: Task<Void, Never>?   = nil
 
     // MARK: - Configure
 
     @MainActor
     func configure(orchestrator: UnifiedOrchestrator) {
+        self.orchestrator = orchestrator
         isDemoMode = orchestrator.isDemoMode
         api = orchestrator.primaryAPIClient
         if selectedRoom == nil {
@@ -179,6 +181,7 @@ final class EffectsViewModel: ObservableObject {
             }
 
             showStatus("'\(effect.name)' applied ✓")
+            setNowPlaying(effect)
 
 
         case .bridgeNative(let effectName):
@@ -210,6 +213,7 @@ final class EffectsViewModel: ObservableObject {
                 }
             }
             showStatus("'\(effect.name)' running on bridge ✓ — persists after closing app")
+            setNowPlaying(effect)
 
         case .gradual:
             let durationSec    = paramState.durationValue("duration",       default: 1800)
@@ -254,6 +258,7 @@ final class EffectsViewModel: ObservableObject {
                 duration: durationSec * 1000
             )
             showStatus("'\(effect.name)' running ✓ — persists after closing app")
+            setNowPlaying(effect)
 
             if turnOff {
                 let capturedAPI  = api
@@ -295,6 +300,7 @@ final class EffectsViewModel: ObservableObject {
             isRunning         = true
             runningEffectName = effect.name
             statusMessage     = "'\(effect.name)' running — keep app open"
+            setNowPlaying(effect)
 
             let loop: @Sendable () async throws -> Void
             switch effect.id {
@@ -324,6 +330,23 @@ final class EffectsViewModel: ObservableObject {
         isRunning         = false
         runningEffectName = nil
         statusMessage     = nil
+        clearNowPlaying()
+    }
+
+    // MARK: - Now Playing Helpers
+
+    @MainActor
+    private func setNowPlaying(_ effect: HueEffect) {
+        orchestrator?.activeEffectName      = effect.name
+        orchestrator?.activeEffectIcon      = effect.icon
+        orchestrator?.activeEffectIsAppDriven = effect.requiresForeground
+    }
+
+    @MainActor
+    private func clearNowPlaying() {
+        orchestrator?.activeEffectName      = nil
+        orchestrator?.activeEffectIcon      = nil
+        orchestrator?.activeEffectIsAppDriven = false
     }
 
     // MARK: - Palette

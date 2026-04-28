@@ -115,8 +115,16 @@ struct DashboardView: View {
                     .padding(.bottom, 12)
 
                 presetsBar
-                    .padding(.leading, 20)   // right edge intentionally open — scrollable
-                    .padding(.bottom, 16)
+                    .padding(.leading, 20)
+                    .padding(.bottom, orchestrator.activeEffectName != nil ? 10 : 16)
+
+                // ── Now Playing strip ────────────────────────────
+                if orchestrator.activeEffectName != nil {
+                    nowPlayingBar
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 16)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
 
                 // Adaptive layout: 1-column on iPhone, 2-column grid on iPad.
                 // LazyVGrid with a single flexible column is functionally identical to
@@ -205,6 +213,79 @@ struct DashboardView: View {
         .scrollIndicators(.hidden)
     }
 
+
+    // ──────────────────────────────────────────────
+    // MARK: - Now Playing Bar
+
+    private var nowPlayingBar: some View {
+        HStack(spacing: 12) {
+            // Pulsing indicator dot
+            Circle()
+                .fill(orchestrator.activeEffectIsAppDriven ? Color.cyan : Color.green)
+                .frame(width: 8, height: 8)
+                .overlay(
+                    Circle()
+                        .fill(orchestrator.activeEffectIsAppDriven ? Color.cyan.opacity(0.35) : Color.green.opacity(0.35))
+                        .frame(width: 16)
+                )
+
+            if let icon = orchestrator.activeEffectIcon {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+
+            Text(orchestrator.activeEffectName ?? "")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+
+            if orchestrator.activeEffectIsAppDriven {
+                Text("\u2014 keep app open")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+
+            Spacer()
+
+            Button {
+                stopActiveEffect()
+            } label: {
+                Text("Stop")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(.white.opacity(0.9)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.1), lineWidth: 1))
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: orchestrator.activeEffectName)
+    }
+
+    private func stopActiveEffect() {
+        HapticManager.shared.medium()
+        Task {
+            guard let api = orchestrator.primaryAPIClient else { return }
+            // Clear bridge-native effects from all lights in all rooms
+            let allLightIDs = orchestrator.allRooms.compactMap(\.groupedLightID)
+            await withTaskGroup(of: Void.self) { group in
+                for id in allLightIDs {
+                    group.addTask {
+                        try? await api.setGroupedLight(id: id, on: true) // keeps lights on but stops effect
+                    }
+                }
+            }
+            await MainActor.run {
+                orchestrator.activeEffectName       = nil
+                orchestrator.activeEffectIcon       = nil
+                orchestrator.activeEffectIsAppDriven = false
+            }
+        }
+    }
 
     // ──────────────────────────────────────────────
     // MARK: - Presets Bar
