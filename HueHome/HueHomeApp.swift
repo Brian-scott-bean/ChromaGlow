@@ -129,13 +129,15 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
 
     // MARK: - Push to Watch
 
-    func push(rooms: [WidgetRoomSnapshot], ip: String, token: String) {
+    func push(rooms: [WidgetRoomSnapshot], zones: [WidgetRoomSnapshot], ip: String, token: String) {
         guard WCSession.default.activationState == .activated,
               WCSession.default.isPaired,
               WCSession.default.isWatchAppInstalled else { return }
-        guard let roomsData = try? JSONEncoder().encode(rooms) else { return }
+        guard let roomsData = try? JSONEncoder().encode(rooms),
+              let zonesData = try? JSONEncoder().encode(zones) else { return }
         let context: [String: Any] = [
             "wc_rooms_v1" : roomsData,
+            "wc_zones_v1" : zonesData,
             "wc_bridge_ip": ip,
             "wc_token"    : token
         ]

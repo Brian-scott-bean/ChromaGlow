@@ -878,10 +878,15 @@ final class UnifiedOrchestrator {
             )
         }
         WidgetDataStore.shared.write(rooms: snapshots)
-        // Push to Apple Watch via WatchConnectivity
+        // Push rooms + latest zones to Apple Watch via WatchConnectivity
         if let ip    = WidgetDataStore.shared.bridgeIP,
            let token = WidgetDataStore.shared.token {
-            WatchSessionManager.shared.push(rooms: snapshots, ip: ip, token: token)
+            let zoneSnapshots = allZones.map { z in
+                WidgetRoomSnapshot(id: z.id, name: z.name, archetype: z.archetype,
+                                   isOn: z.isOn, brightness: z.brightness,
+                                   lightCount: z.lightCount, groupedLightId: z.groupedLightID)
+            }
+            WatchSessionManager.shared.push(rooms: snapshots, zones: zoneSnapshots, ip: ip, token: token)
         }
     }
 
@@ -891,6 +896,21 @@ final class UnifiedOrchestrator {
             .flatMap { $0 }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
             .filter { seen.insert($0.id).inserted }
+        // Re-push watch payload so zone changes are reflected immediately
+        if let ip    = WidgetDataStore.shared.bridgeIP,
+           let token = WidgetDataStore.shared.token {
+            let roomSnapshots = allRooms.map { r in
+                WidgetRoomSnapshot(id: r.id, name: r.name, archetype: r.archetype,
+                                   isOn: r.isOn, brightness: r.brightness,
+                                   lightCount: r.lightCount, groupedLightId: r.groupedLightID)
+            }
+            let zoneSnapshots = allZones.map { z in
+                WidgetRoomSnapshot(id: z.id, name: z.name, archetype: z.archetype,
+                                   isOn: z.isOn, brightness: z.brightness,
+                                   lightCount: z.lightCount, groupedLightId: z.groupedLightID)
+            }
+            WatchSessionManager.shared.push(rooms: roomSnapshots, zones: zoneSnapshots, ip: ip, token: token)
+        }
     }
 
     /// Re-derives dominant colors for every room and zone on `bridgeID`

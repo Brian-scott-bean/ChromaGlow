@@ -98,6 +98,17 @@ struct ContentView: View {
                         }
                     }
                 }
+
+                // ── Zone list ──
+                if !store.zones.isEmpty {
+                    Section("Zones") {
+                        ForEach(store.zones) { zone in
+                            NavigationLink(destination: RoomDetailView(room: zone)) {
+                                RoomRowView(room: zone, isZone: true)
+                            }
+                        }
+                    }
+                }
             }
             .navigationTitle("LightShade")
             .navigationBarTitleDisplayMode(.inline)
@@ -121,22 +132,34 @@ struct ContentView: View {
 
 struct RoomRowView: View {
     let room: WatchRoom
+    var isZone: Bool = false
     @StateObject private var store = WatchStore.shared
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
 
     var body: some View {
         HStack(spacing: 10) {
             // Icon with glow when on
-            ZStack {
-                if room.isOn {
-                    Circle()
-                        .fill(amber.opacity(0.2))
+            ZStack(alignment: .bottomTrailing) {
+                ZStack {
+                    if room.isOn {
+                        Circle()
+                            .fill(amber.opacity(0.2))
+                            .frame(width: 30, height: 30)
+                    }
+                    Image(systemName: watchRoomIcon(room.archetype))
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(room.isOn ? amber : .secondary)
                         .frame(width: 30, height: 30)
                 }
-                Image(systemName: watchRoomIcon(room.archetype))
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(room.isOn ? amber : .secondary)
-                    .frame(width: 30, height: 30)
+                // Zone badge
+                if isZone {
+                    Image(systemName: "square.3.layers.3d")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(2)
+                        .background(Circle().fill(Color.blue.opacity(0.8)))
+                        .offset(x: 3, y: 3)
+                }
             }
 
             VStack(alignment: .leading, spacing: 2) {

@@ -85,6 +85,7 @@ final class WatchStore: NSObject, ObservableObject {
     static let shared = WatchStore()
 
     @Published var rooms:     [WatchRoom] = []
+    @Published var zones:     [WatchRoom] = []
     @Published var isPaired:  Bool        = false
     @Published var isLoading: Bool        = false
     @Published var errorMsg:  String?     = nil
@@ -116,10 +117,14 @@ final class WatchStore: NSObject, ObservableObject {
     // MARK: - Local Cache
 
     func loadFromLocalCache() {
-        guard let data    = UserDefaults.standard.data(forKey: CacheKey.rooms),
-              let decoded = try? JSONDecoder().decode([WatchRoom].self, from: data)
-        else { return }
-        rooms    = decoded
+        if let data    = UserDefaults.standard.data(forKey: CacheKey.rooms),
+           let decoded = try? JSONDecoder().decode([WatchRoom].self, from: data) {
+            rooms = decoded
+        }
+        if let data    = UserDefaults.standard.data(forKey: "wc_zones_v1"),
+           let decoded = try? JSONDecoder().decode([WatchRoom].self, from: data) {
+            zones = decoded
+        }
         isPaired = !(bridgeIP?.isEmpty ?? true)
     }
 
@@ -243,14 +248,27 @@ extension WatchStore: WCSessionDelegate {
         let ip    = applicationContext["wc_bridge_ip"] as? String ?? ""
         let token = applicationContext["wc_token"]     as? String ?? ""
 
+        // Decode zones (optional — older payloads may not include them)
+        let decodedZones: [WatchRoom]
+        if let zonesData = applicationContext["wc_zones_v1"] as? Data,
+           let z = try? JSONDecoder().decode([WatchRoom].self, from: zonesData) {
+            decodedZones = z
+        } else {
+            decodedZones = []
+        }
+
         // UserDefaults is thread-safe — write directly from any thread
         UserDefaults.standard.set(roomsData, forKey: "wc_rooms_v1")
+        if let zonesData = applicationContext["wc_zones_v1"] as? Data {
+            UserDefaults.standard.set(zonesData, forKey: "wc_zones_v1")
+        }
         if !ip.isEmpty    { UserDefaults.standard.set(ip,    forKey: "wc_bridge_ip") }
         if !token.isEmpty { UserDefaults.standard.set(token, forKey: "wc_token") }
 
         // Update published properties on MainActor
         Task { @MainActor [weak self] in
             self?.rooms    = decoded
+            self?.zones    = decodedZones
             self?.isPaired = !ip.isEmpty
         }
     }
