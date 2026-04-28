@@ -4,9 +4,15 @@
 
 import SwiftUI
 import SwiftData
+import WatchConnectivity
 
 @main
 struct HueHomeApp: App {
+
+    init() {
+        // Activate WCSession early so the first room write can push to watch
+        _ = WatchSessionManager.shared
+    }
 
     // MARK: SwiftData Container (includes BridgeRecord from Stage 2A)
     let modelContainer: ModelContainer = {

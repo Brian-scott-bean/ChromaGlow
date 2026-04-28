@@ -1,13 +1,23 @@
 // WatchStore.swift
 // LightShadeWatchApp — Observable data layer for the full watchOS app.
 //
-// Reads cached room state from App Group UserDefaults (written by the iOS app).
-// Writes (toggle, preset, all-off) go directly to the Hue bridge via WiFi/LTE.
-// Falls back gracefully when bridge is unreachable.
+// PRIMARY sync:  WatchConnectivity (WCSession) — iPhone pushes rooms via
+//                updateApplicationContext whenever WidgetDataStore.write(rooms:) fires.
+//                applicationContext is delivered as soon as the watch app comes to the
+//                foreground, even if the phone was not reachable at write time.
+//
+// SECONDARY:     watch-local UserDefaults cache so data survives watch app restarts.
+//
+// WRITE path:    iPhone app → WidgetDataStore.write(rooms:)
+//                           → WatchSessionManager.push(rooms:ip:token:)
+//                           → WCSession.updateApplicationContext
+//                           → WatchStore.session(_:didReceiveApplicationContext:)
+//                           → rooms published + saved to local cache
 
 import SwiftUI
 import Foundation
 import Combine
+import WatchConnectivity
 
 // MARK: - Room Model
 
@@ -71,7 +81,7 @@ enum WatchPreset: String, CaseIterable {
 // MARK: - WatchStore
 
 @MainActor
-final class WatchStore: ObservableObject {
+final class WatchStore: NSObject, ObservableObject {
     static let shared = WatchStore()
 
     @Published var rooms:     [WatchRoom] = []
@@ -79,44 +89,65 @@ final class WatchStore: ObservableObject {
     @Published var isLoading: Bool        = false
     @Published var errorMsg:  String?     = nil
 
-    private let suiteName = "group.com.lightshade.app"
-    private var ud: UserDefaults? { UserDefaults(suiteName: suiteName) }
+    // Watch-local cache keys (UserDefaults.standard on the WATCH device)
+    private enum CacheKey {
+        static let rooms    = "wc_rooms_v1"
+        static let bridgeIP = "wc_bridge_ip"
+        static let token    = "wc_token"
+    }
 
-    private var bridgeIP: String? { ud?.string(forKey: "hue_widget_bridge_ip") }
-    private var token:    String? { ud?.string(forKey: "hue_widget_token") }
+    private var bridgeIP: String? { UserDefaults.standard.string(forKey: CacheKey.bridgeIP) }
+    private var token:    String? { UserDefaults.standard.string(forKey: CacheKey.token) }
 
-    private init() { loadFromCache() }
+    private override init() {
+        super.init()
+        loadFromLocalCache()
+        activateWCSession()
+    }
 
-    // MARK: - Cache
+    // MARK: - WatchConnectivity
 
-    func loadFromCache() {
-        guard let data = ud?.data(forKey: "hue_widget_rooms_v1"),
+    private func activateWCSession() {
+        guard WCSession.isSupported() else { return }
+        WCSession.default.delegate = self
+        WCSession.default.activate()
+    }
+
+    // MARK: - Local Cache
+
+    func loadFromLocalCache() {
+        guard let data    = UserDefaults.standard.data(forKey: CacheKey.rooms),
               let decoded = try? JSONDecoder().decode([WatchRoom].self, from: data)
         else { return }
         rooms    = decoded
         isPaired = !(bridgeIP?.isEmpty ?? true)
     }
 
+    private func saveToLocalCache() {
+        guard let data = try? JSONEncoder().encode(rooms) else { return }
+        UserDefaults.standard.set(data, forKey: CacheKey.rooms)
+    }
+
     // MARK: - Toggle Room
 
     func toggleRoom(_ room: WatchRoom) async {
         guard let glID = room.groupedLightId,
-              let ip = bridgeIP, let tok = token else { return }
+              let ip   = bridgeIP,
+              let tok  = token else { return }
         let newState = !room.isOn
-        // Optimistic update
         if let idx = rooms.firstIndex(where: { $0.id == room.id }) {
             rooms[idx].isOn = newState
         }
-        let body: [String: Any] = ["on": ["on": newState]]
-        await patch(id: glID, body: body, ip: ip, token: tok)
-        saveToCache()
+        await patch(id: glID, body: ["on": ["on": newState]], ip: ip, token: tok)
+        saveToLocalCache()
     }
 
     // MARK: - Set Brightness
 
     func setBrightness(_ brightness: Double, for room: WatchRoom) async {
         guard let glID = room.groupedLightId,
-              let ip = bridgeIP, let tok = token else { return }
+              let ip   = bridgeIP,
+              let tok  = token else { return }
         if let idx = rooms.firstIndex(where: { $0.id == room.id }) {
             rooms[idx].brightness = brightness
             rooms[idx].isOn       = brightness > 0
@@ -126,18 +157,19 @@ final class WatchStore: ObservableObject {
             "dimming": ["brightness": brightness]
         ]
         await patch(id: glID, body: body, ip: ip, token: tok)
-        saveToCache()
+        saveToLocalCache()
     }
 
     // MARK: - Apply Preset (all rooms)
 
     func applyPreset(_ preset: WatchPreset) async {
-        guard let ip = bridgeIP, let tok = token else { return }
+        guard let ip  = bridgeIP,
+              let tok = token else { return }
         let body: [String: Any] = [
-            "on":               ["on": true],
-            "dimming":          ["brightness": preset.brightness],
+            "on":                ["on": true],
+            "dimming":           ["brightness": preset.brightness],
             "color_temperature": ["mirek": preset.mirek],
-            "dynamics":         ["duration": 800]
+            "dynamics":          ["duration": 800]
         ]
         for i in rooms.indices {
             rooms[i].isOn       = true
@@ -150,13 +182,14 @@ final class WatchStore: ObservableObject {
                 group.addTask { await self.patch(id: gid, body: body, ip: ip, token: tok) }
             }
         }
-        saveToCache()
+        saveToLocalCache()
     }
 
     // MARK: - All Off
 
     func allOff() async {
-        guard let ip = bridgeIP, let tok = token else { return }
+        guard let ip  = bridgeIP,
+              let tok = token else { return }
         for i in rooms.indices { rooms[i].isOn = false }
         let body: [String: Any] = ["on": ["on": false]]
         await withTaskGroup(of: Void.self) { group in
@@ -166,15 +199,10 @@ final class WatchStore: ObservableObject {
                 group.addTask { await self.patch(id: gid, body: body, ip: ip, token: tok) }
             }
         }
-        saveToCache()
+        saveToLocalCache()
     }
 
-    // MARK: - Helpers
-
-    private func saveToCache() {
-        guard let data = try? JSONEncoder().encode(rooms) else { return }
-        ud?.set(data, forKey: "hue_widget_rooms_v1")
-    }
+    // MARK: - Network
 
     private func patch(id: String, body: [String: Any], ip: String, token: String) async {
         guard let url = URL(string: "https://\(ip)/clip/v2/resource/grouped_light/\(id)") else { return }
@@ -183,15 +211,58 @@ final class WatchStore: ObservableObject {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(token,              forHTTPHeaderField: "hue-application-key")
         req.httpBody  = try? JSONSerialization.data(withJSONObject: body)
-        let session   = URLSession(configuration: .default, delegate: TrustAll(), delegateQueue: nil)
-        _ = try? await session.data(for: req)
+        _ = try? await URLSession(configuration: .default,
+                                  delegate: TrustAll(),
+                                  delegateQueue: nil).data(for: req)
     }
 
     private final class TrustAll: NSObject, URLSessionDelegate, @unchecked Sendable {
-        func urlSession(_ s: URLSession, didReceive c: URLAuthenticationChallenge,
-                        completionHandler h: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        func urlSession(_ s: URLSession,
+                        didReceive c: URLAuthenticationChallenge,
+                        completionHandler h: @escaping (URLSession.AuthChallengeDisposition,
+                                                        URLCredential?) -> Void) {
             if let t = c.protectionSpace.serverTrust { h(.useCredential, URLCredential(trust: t)) }
             else { h(.performDefaultHandling, nil) }
+        }
+    }
+}
+
+// MARK: - WCSessionDelegate (watch side)
+
+extension WatchStore: WCSessionDelegate {
+
+    /// Called when the iPhone pushes a new applicationContext.
+    /// Fires immediately if the watch app is active; delivered on next
+    /// launch if the watch app was not running at send time.
+    nonisolated func session(_ session: WCSession,
+                             didReceiveApplicationContext applicationContext: [String: Any]) {
+        guard let roomsData = applicationContext["wc_rooms_v1"] as? Data,
+              let decoded   = try? JSONDecoder().decode([WatchRoom].self, from: roomsData)
+        else { return }
+
+        let ip    = applicationContext["wc_bridge_ip"] as? String ?? ""
+        let token = applicationContext["wc_token"]     as? String ?? ""
+
+        // Persist to watch-local cache
+        UserDefaults.standard.set(roomsData, forKey: CacheKey.rooms)
+        if !ip.isEmpty    { UserDefaults.standard.set(ip,    forKey: CacheKey.bridgeIP) }
+        if !token.isEmpty { UserDefaults.standard.set(token, forKey: CacheKey.token) }
+
+        // Update published properties on MainActor
+        Task { @MainActor in
+            self.rooms    = decoded
+            self.isPaired = !ip.isEmpty
+        }
+    }
+
+    nonisolated func session(_ session: WCSession,
+                             activationDidCompleteWith activationState: WCSessionActivationState,
+                             error: Error?) {
+        if let error { print("WatchStore WCSession: activation error — \(error)") }
+        // Replay any context delivered while the app was not running
+        let ctx = session.receivedApplicationContext
+        if !ctx.isEmpty {
+            self.session(session, didReceiveApplicationContext: ctx)
         }
     }
 }
@@ -202,15 +273,15 @@ func watchRoomIcon(_ archetype: String?) -> String {
     switch archetype?.lowercased() {
     case "living_room":             return "sofa.fill"
     case "kitchen":                 return "fork.knife"
-    case "bedroom","kids_bedroom":  return "bed.double.fill"
+    case "bedroom", "kids_bedroom": return "bed.double.fill"
     case "bathroom":                return "shower.fill"
-    case "office","computer":       return "desktopcomputer"
+    case "office", "computer":      return "desktopcomputer"
     case "gym":                     return "dumbbell.fill"
     case "hallway":                 return "door.left.hand.open"
     case "garage":                  return "car.fill"
-    case "terrace","garden":        return "leaf.fill"
+    case "terrace", "garden":       return "leaf.fill"
     case "tv":                      return "tv.fill"
-    case "studio","music":          return "music.note"
+    case "studio", "music":         return "music.note"
     default:                        return "lightbulb.fill"
     }
 }

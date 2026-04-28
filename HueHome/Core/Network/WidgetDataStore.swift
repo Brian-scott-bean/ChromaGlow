@@ -12,6 +12,7 @@
 // to fetch a fresh grouped_light state in a single network call.
 
 import Foundation
+import WatchConnectivity
 
 // MARK: - Shared Room Model
 
@@ -49,6 +50,11 @@ final class WidgetDataStore {
         guard let data = try? JSONEncoder().encode(rooms) else { return }
         ud?.set(data, forKey: Key.rooms)
         ud?.set(Date(), forKey: Key.updatedAt)
+        // Push to Apple Watch via WCSession (App Groups are device-local;
+        // WatchConnectivity is required for iPhone → Watch delivery).
+        if let ip = bridgeIP, let token = token {
+            WatchSessionManager.shared.push(rooms: rooms, ip: ip, token: token)
+        }
     }
 
     func write(ip: String, token: String) {
