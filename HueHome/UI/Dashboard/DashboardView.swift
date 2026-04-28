@@ -240,7 +240,7 @@ struct DashboardView: View {
                 .foregroundStyle(.white)
 
             if orchestrator.activeEffectIsAppDriven {
-                Text("\u2014 keep app open")
+                Text("— keep app open")
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.5))
             }
