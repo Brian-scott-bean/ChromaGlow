@@ -14,26 +14,26 @@
 
 import WidgetKit
 import SwiftUI
+import AppIntents
 
 // MARK: - Timeline Entry
 
 struct HueWidgetEntry: TimelineEntry {
-    let date:     Date
-    let rooms:    [WidgetRoomSnapshot]
-    let isPaired: Bool
-    var isStale:  Bool    = false
-    var selectedRoomID: String? = nil   // nil = all-rooms summary
+    let date:         Date
+    let rooms:        [WidgetRoomSnapshot]
+    let isPaired:     Bool
+    var isStale:      Bool    = false
+    var selectedRoomID: String? = nil
+    var showPresets:  Bool    = true
 
     var onCount:    Int { rooms.filter(\.isOn).count }
     var totalCount: Int { rooms.count }
 
-    /// The pinned room (if the user configured one and it exists in the data).
     var selectedRoom: WidgetRoomSnapshot? {
         guard let id = selectedRoomID else { return nil }
         return rooms.first { $0.id == id }
     }
 
-    /// Rooms to show: just the pinned room, or all rooms.
     var displayRooms: [WidgetRoomSnapshot] {
         selectedRoom.map { [$0] } ?? rooms
     }
@@ -48,18 +48,17 @@ struct HueWidgetProvider: AppIntentTimelineProvider {
         HueWidgetEntry(date: .now, rooms: previewRooms, isPaired: true)
     }
 
-    // ── Snapshot (shown in widget gallery picker) ──
     func snapshot(for configuration: SelectRoomIntent,
                   in context: Context) async -> HueWidgetEntry {
         if context.isPreview {
             return HueWidgetEntry(date: .now, rooms: previewRooms, isPaired: true,
-                                  selectedRoomID: configuration.room?.id)
+                                  selectedRoomID: configuration.room?.id,
+                                  showPresets: configuration.showPresets)
         }
         let store = WidgetDataStore.shared
-        return HueWidgetEntry(date: .now,
-                              rooms: store.rooms,
-                              isPaired: store.isPaired,
-                              selectedRoomID: configuration.room?.id)
+        return HueWidgetEntry(date: .now, rooms: store.rooms, isPaired: store.isPaired,
+                              selectedRoomID: configuration.room?.id,
+                              showPresets: configuration.showPresets)
     }
 
     // ── Timeline (called on schedule + after WidgetCenter.reloadAll) ──
@@ -94,11 +93,9 @@ struct HueWidgetProvider: AppIntentTimelineProvider {
         }
 
         let entry = HueWidgetEntry(
-            date:           .now,
-            rooms:          snapshots,
-            isPaired:       true,
-            isStale:        snapshots.isEmpty,
-            selectedRoomID: selectedID
+            date: .now, rooms: snapshots, isPaired: true,
+            isStale: snapshots.isEmpty, selectedRoomID: selectedID,
+            showPresets: configuration.showPresets
         )
         return Timeline(entries: [entry], policy: .after(nextRefresh))
     }
@@ -156,7 +153,7 @@ struct SmallWidgetView: View {
                 Image(systemName: "lightbulb.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(amber)
-                Text("HueHome")
+                Text("LightShade")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.7))
             }
@@ -189,7 +186,23 @@ struct SmallWidgetView: View {
                      : "of \(entry.totalCount) rooms")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.40))
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 6)
+
+                // All Off button (interactive — iOS 17)
+                Button(intent: AllOffIntent()) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "power")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("All Off")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(amber))
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 4)
 
                 // Top ON room names
                 VStack(alignment: .leading, spacing: 3) {
@@ -228,7 +241,7 @@ struct MediumWidgetView: View {
                 Image(systemName: "lightbulb.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(amber)
-                Text("HueHome Pro")
+                Text("LightShade")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.8))
                 Spacer()
@@ -258,13 +271,17 @@ struct MediumWidgetView: View {
                 let chunked   = stride(from: 0, to: displayed.count, by: 2).map {
                     Array(displayed[$0 ..< min($0 + 2, displayed.count)])
                 }
-                VStack(spacing: 8) {
+                VStack(spacing: 6) {
                     ForEach(chunked.indices, id: \.self) { rowIdx in
                         HStack(spacing: 8) {
                             ForEach(chunked[rowIdx]) { room in
                                 MediumRoomCell(room: room, amber: amber)
                             }
                         }
+                    }
+                    // Preset chips strip
+                    if entry.showPresets {
+                        WidgetPresetStrip(amber: amber)
                     }
                 }
             }
@@ -342,7 +359,7 @@ struct LargeWidgetView: View {
                 Image(systemName: "lightbulb.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(amber)
-                Text("HueHome Pro")
+                Text("LightShade")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.85))
                 Spacer()
@@ -363,21 +380,25 @@ struct LargeWidgetView: View {
                     .foregroundStyle(.white.opacity(0.4))
                 Spacer()
             } else {
-                // All rooms (up to 8)
-                VStack(spacing: 6) {
-                    ForEach(entry.rooms.prefix(8)) { room in
+                VStack(spacing: 5) {
+                    ForEach(entry.rooms.prefix(6)) { room in
                         LargeRoomRow(room: room, amber: amber)
                     }
                 }
 
                 Spacer()
 
-                // Footer timestamp
+                if entry.showPresets {
+                    WidgetPresetStrip(amber: amber)
+                        .padding(.top, 4)
+                }
+
                 if let updated = WidgetDataStore.shared.lastUpdated {
                     Text("Updated \(updated, style: .relative) ago")
                         .font(.system(size: 9))
                         .foregroundStyle(.white.opacity(0.25))
                         .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.top, 2)
                 }
             }
         }
@@ -391,45 +412,71 @@ struct LargeRoomRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // Icon
             Image(systemName: widgetArchetypeIcon(room.archetype))
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(room.isOn ? amber : .white.opacity(0.25))
-                .frame(width: 20)
+                .frame(width: 18)
 
-            // Name
             Text(room.name)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(room.isOn ? .white : .white.opacity(0.4))
                 .lineLimit(1)
-                .frame(maxWidth: 110, alignment: .leading)
 
             Spacer()
 
             if room.isOn {
-                // Brightness bar
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.08)).frame(height: 4)
-                        Capsule()
-                            .fill(LinearGradient(
-                                colors: [amber.opacity(0.6), amber],
-                                startPoint: .leading, endPoint: .trailing
-                            ))
-                            .frame(width: geo.size.width * CGFloat(room.brightness / 100), height: 4)
-                    }
-                }
-                .frame(height: 4)
-
                 Text("\(Int(room.brightness))%")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(amber.opacity(0.7))
-                    .frame(width: 32, alignment: .trailing)
             } else {
                 Text("Off")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.2))
-                    .frame(width: 32, alignment: .trailing)
+            }
+
+            // Interactive toggle button
+            Button(intent: ToggleRoomIntent(roomID: room.id, currentlyOn: room.isOn)) {
+                Image(systemName: room.isOn ? "power.circle.fill" : "power.circle")
+                    .font(.system(size: 16))
+                    .foregroundStyle(room.isOn ? amber : .white.opacity(0.3))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+// MARK: - Preset Strip (shared by Medium + Large)
+
+struct WidgetPresetStrip: View {
+    let amber: Color
+
+    private struct Preset {
+        let id: String; let icon: String; let label: String; let color: Color
+    }
+    private let presets: [Preset] = [
+        Preset(id: "energize", icon: "bolt.fill",       label: "Energize", color: Color(hue:0.58,saturation:0.7,brightness:1.0)),
+        Preset(id: "read",     icon: "book.fill",       label: "Read",     color: Color(hue:0.12,saturation:0.6,brightness:1.0)),
+        Preset(id: "relax",    icon: "moon.stars.fill", label: "Relax",    color: Color(hue:0.09,saturation:0.8,brightness:0.9)),
+        Preset(id: "sleep",    icon: "zzz",             label: "Sleep",    color: Color(hue:0.07,saturation:0.7,brightness:0.7)),
+    ]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(presets, id: \.id) { p in
+                Button(intent: ApplyPresetIntent(presetID: p.id)) {
+                    HStack(spacing: 3) {
+                        Image(systemName: p.icon)
+                            .font(.system(size: 8, weight: .semibold))
+                        Text(p.label)
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundStyle(p.color)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(p.color.opacity(0.15)))
+                    .overlay(Capsule().strokeBorder(p.color.opacity(0.3), lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -544,7 +591,7 @@ struct FocusedMediumWidgetView: View {
 // MARK: - Widget Declaration
 
 struct HueHomeWidget: Widget {
-    let kind = "com.huehome.pro.HueHomeWidget"
+    let kind = "com.lightshade.app.HueHomeWidget"
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(
@@ -553,10 +600,10 @@ struct HueHomeWidget: Widget {
             provider: HueWidgetProvider()
         ) { entry in
             HueHomeWidgetEntryView(entry: entry)
-                .widgetURL(URL(string: "huehome://dashboard"))
+                .widgetURL(URL(string: "lightshade://dashboard"))
         }
-        .configurationDisplayName("HueHome Pro")
-        .description("Pin a room or show all lights at a glance.")
+        .configurationDisplayName("LightShade")
+        .description("Control lights, apply presets, and monitor rooms right from your home screen.")
         .supportedFamilies([
             .systemSmall, .systemMedium, .systemLarge,
             .accessoryCircular, .accessoryRectangular, .accessoryInline
