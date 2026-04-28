@@ -27,6 +27,9 @@ struct DashboardView: View {
     @AppStorage("dashboard.zonesExpanded") private var zonesExpanded: Bool = true
     @State private var presetToast:         String?  = nil
     @State private var activePreset:        String?  = nil
+    @State private var currentHour:         Int      = Calendar.current.component(.hour, from: Date())
+    @State private var allOffWorking:       Bool     = false
+    private let clockTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
 
     /// Minimum seconds between auto-refreshes triggered by navigation or foregrounding.
@@ -36,7 +39,7 @@ struct DashboardView: View {
 
     var body: some View {
         ZStack {
-            DashboardAmbientBackground()
+            DashboardAmbientBackground(hour: currentHour)
 
             Group {
                 if orchestrator.allRooms.isEmpty {
@@ -77,6 +80,9 @@ struct DashboardView: View {
             NavigationStack {
                 SettingsView(onForget: { showSettings = false })
             }
+        }
+        .onReceive(clockTimer) { _ in
+            currentHour = Calendar.current.component(.hour, from: Date())
         }
         .task {
             // Stale-while-revalidate: trigger a background loadAll() on every
@@ -380,20 +386,29 @@ struct DashboardView: View {
     // MARK: - Summary Header
     // ──────────────────────────────────────────────
 
+    private var timeGreeting: String {
+        switch currentHour {
+        case 5..<12:  return "Good morning"
+        case 12..<17: return "Good afternoon"
+        case 17..<21: return "Good evening"
+        default:      return "Good night"
+        }
+    }
+
     private var summaryHeader: some View {
         let onCount = orchestrator.allRooms.filter { $0.isOn }.count
         let total   = orchestrator.allRooms.count
 
         return HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
+                Text(timeGreeting)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
                 Text(onCount == 0
                      ? "All lights off"
                      : "\(onCount) of \(total) on")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.9))
-                Text("\(total) room\(total == 1 ? "" : "s")")
                     .font(.caption)
-                    .foregroundStyle(.white.opacity(0.45))
+                    .foregroundStyle(.white.opacity(0.5))
             }
             Spacer()
             Circle()
@@ -488,9 +503,47 @@ struct DashboardView: View {
             }
         }
         ToolbarItem(placement: .navigationBarTrailing) {
+            // All Off button — only shows when at least one room is on
+            if orchestrator.allRooms.contains(where: { $0.isOn }) {
+                Button {
+                    turnAllOff()
+                } label: {
+                    if allOffWorking {
+                        ProgressView().tint(.white).scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "power")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                }
+            }
+        }
+        ToolbarItem(placement: .navigationBarTrailing) {
             Button { showSettings = true } label: {
                 Image(systemName: "gear")
                     .foregroundStyle(.white.opacity(0.8))
+            }
+        }
+    }
+
+    private func turnAllOff() {
+        HapticManager.shared.heavy()
+        allOffWorking = true
+        Task {
+            guard let api = orchestrator.primaryAPIClient else { allOffWorking = false; return }
+            let rooms = orchestrator.allRooms.compactMap(\.groupedLightID)
+            await withTaskGroup(of: Void.self) { group in
+                for id in rooms {
+                    group.addTask { try? await api.setGroupedLight(id: id, on: false) }
+                }
+            }
+            await MainActor.run {
+                allOffWorking = false
+                presetToast   = "All lights off"
+            }
+            try? await Task.sleep(for: .seconds(2))
+            await MainActor.run {
+                if presetToast == "All lights off" { presetToast = nil }
             }
         }
     }
@@ -802,6 +855,28 @@ struct BrightnessRow: View {
 /// Rule of thumb: anything with .blur() or complex gradients should live in its
 /// own View with zero observed dependencies.
 private struct DashboardAmbientBackground: View {
+    let hour: Int   // injected so orb colors shift with time of day
+
+    private var orb1Color: Color {
+        switch hour {
+        case 5..<10:  return Color(red: 1.0, green: 0.70, blue: 0.15)  // warm gold — morning
+        case 10..<15: return Color(red: 0.35, green: 0.65, blue: 1.0)  // cool blue — midday
+        case 15..<18: return Color(red: 1.0, green: 0.55, blue: 0.20)  // peach — late afternoon
+        case 18..<22: return Color(red: 1.0, green: 0.45, blue: 0.15)  // amber — evening
+        default:      return Color(red: 0.25, green: 0.20, blue: 0.75) // deep indigo — night
+        }
+    }
+
+    private var orb2Color: Color {
+        switch hour {
+        case 5..<10:  return Color(red: 0.85, green: 0.50, blue: 1.0)  // lavender — morning
+        case 10..<15: return Color(red: 0.30, green: 0.85, blue: 0.85) // teal — midday
+        case 15..<18: return Color(red: 0.55, green: 0.35, blue: 1.00) // purple — afternoon
+        case 18..<22: return Color(red: 0.55, green: 0.25, blue: 0.90) // violet — evening
+        default:      return Color(red: 0.15, green: 0.10, blue: 0.55) // dark blue — night
+        }
+    }
+
     private let orb1Offset = CGPoint(x: -80, y: -180)
     private let orb2Offset = CGPoint(x: 130, y: 80)
 
@@ -810,27 +885,26 @@ private struct DashboardAmbientBackground: View {
             Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
             Circle()
                 .fill(RadialGradient(
-                    colors: [Color(red: 1, green: 0.75, blue: 0.2).opacity(0.22), .clear],
+                    colors: [orb1Color.opacity(0.22), .clear],
                     center: .center, startRadius: 0, endRadius: 200
                 ))
                 .frame(width: 360)
                 .offset(x: orb1Offset.x, y: orb1Offset.y)
                 .blur(radius: 24)
                 .allowsHitTesting(false)
+                .animation(.easeInOut(duration: 2.0), value: hour)
             Circle()
                 .fill(RadialGradient(
-                    colors: [Color(red: 0.4, green: 0.3, blue: 1).opacity(0.16), .clear],
+                    colors: [orb2Color.opacity(0.16), .clear],
                     center: .center, startRadius: 0, endRadius: 160
                 ))
                 .frame(width: 280)
                 .offset(x: orb2Offset.x, y: orb2Offset.y)
                 .blur(radius: 20)
                 .allowsHitTesting(false)
+                .animation(.easeInOut(duration: 2.0), value: hour)
         }
         .ignoresSafeArea()
-        // drawingGroup() flattens the two blurred circles into a single Metal-composited
-        // texture after first render. Subsequent passes re-use the cached texture instead
-        // of re-running the CIGaussianBlur filter chain each time.
         .drawingGroup()
     }
 }
