@@ -116,10 +116,3 @@ enum AutomationAction: Equatable {
     }
 }
 
-// MARK: - Safe Array subscript (local copy — avoids redeclaration if already global)
-
-private extension Array {
-    subscript(safeIndex index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
-    }
-}
