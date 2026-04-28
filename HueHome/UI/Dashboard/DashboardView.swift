@@ -115,7 +115,7 @@ struct DashboardView: View {
                     .padding(.bottom, 12)
 
                 presetsBar
-                    .padding(.horizontal, 20)
+                    .padding(.leading, 20)   // right edge intentionally open — scrollable
                     .padding(.bottom, 16)
 
                 // Adaptive layout: 1-column on iPhone, 2-column grid on iPad.
@@ -209,58 +209,63 @@ struct DashboardView: View {
     // ──────────────────────────────────────────────
     // MARK: - Presets Bar
 
-    private struct LightPreset {
-        let name:   String
-        let icon:   String
+    // Each preset gets a stable id — ready for future drag-to-reorder / add-remove customization
+    private struct LightPreset: Identifiable {
+        let id:         String
+        let name:       String
+        let icon:       String
         let brightness: Double
-        let mirek:  Int
-        let color:  Color
+        let mirek:      Int
+        let color:      Color
     }
 
     private let presets: [LightPreset] = [
-        LightPreset(name: "Energize", icon: "bolt.fill",       brightness: 100, mirek: 156, color: Color(hue: 0.58, saturation: 0.7,  brightness: 1.0)),
-        LightPreset(name: "Read",     icon: "book.fill",       brightness: 75,  mirek: 280, color: Color(hue: 0.12, saturation: 0.6,  brightness: 1.0)),
-        LightPreset(name: "Relax",    icon: "moon.stars.fill", brightness: 40,  mirek: 420, color: Color(hue: 0.09, saturation: 0.8,  brightness: 0.9)),
-        LightPreset(name: "Sleep",    icon: "zzz",             brightness: 6,   mirek: 490, color: Color(hue: 0.07, saturation: 0.7,  brightness: 0.7)),
+        LightPreset(id: "energize", name: "Energize", icon: "bolt.fill",       brightness: 100, mirek: 156, color: Color(hue: 0.58, saturation: 0.7,  brightness: 1.0)),
+        LightPreset(id: "read",     name: "Read",     icon: "book.fill",       brightness: 75,  mirek: 280, color: Color(hue: 0.12, saturation: 0.6,  brightness: 1.0)),
+        LightPreset(id: "relax",    name: "Relax",    icon: "moon.stars.fill", brightness: 40,  mirek: 420, color: Color(hue: 0.09, saturation: 0.8,  brightness: 0.9)),
+        LightPreset(id: "sleep",    name: "Sleep",    icon: "zzz",             brightness: 6,   mirek: 490, color: Color(hue: 0.07, saturation: 0.7,  brightness: 0.7)),
     ]
 
     private var presetsBar: some View {
-        HStack(spacing: 10) {
-            ForEach(presets, id: \.name) { preset in
-                Button {
-                    applyPreset(preset)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: preset.icon)
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(preset.name)
-                            .font(.system(size: 13, weight: .semibold))
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(presets) { preset in
+                    Button {
+                        applyPreset(preset)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: preset.icon)
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(preset.name)
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(activePreset == preset.id ? .black : preset.color)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(
+                            Capsule()
+                                .fill(activePreset == preset.id
+                                      ? preset.color
+                                      : preset.color.opacity(0.12))
+                        )
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(preset.color.opacity(activePreset == preset.id ? 0 : 0.3), lineWidth: 1)
+                        )
+                        .scaleEffect(activePreset == preset.id ? 0.96 : 1.0)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: activePreset)
                     }
-                    .foregroundStyle(activePreset == preset.name ? .black : preset.color)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        Capsule()
-                            .fill(activePreset == preset.name
-                                  ? preset.color
-                                  : preset.color.opacity(0.12))
-                    )
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(preset.color.opacity(activePreset == preset.name ? 0 : 0.3), lineWidth: 1)
-                    )
-                    .scaleEffect(activePreset == preset.name ? 0.96 : 1.0)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: activePreset)
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 1) // prevents clip of stroke at edge
         }
     }
 
     private func applyPreset(_ preset: LightPreset) {
         HapticManager.shared.medium()
-        withAnimation { activePreset = preset.name }
+        withAnimation { activePreset = preset.id }
 
         Task {
             guard let api = orchestrator.primaryAPIClient else {
