@@ -109,3 +109,48 @@ extension Notification.Name {
     static let hueBridgeUnpaired = Notification.Name("hueBridgeUnpaired")
     static let hueDemoExited     = Notification.Name("hueDemoExited")
 }
+
+// MARK: - WatchSessionManager
+// Inlined here so it compiles as part of the HueHome target without requiring
+// a manual Xcode "Add Files" step.
+
+import WatchConnectivity
+
+final class WatchSessionManager: NSObject, WCSessionDelegate {
+
+    static let shared = WatchSessionManager()
+
+    private override init() {
+        super.init()
+        guard WCSession.isSupported() else { return }
+        WCSession.default.delegate = self
+        WCSession.default.activate()
+    }
+
+    // MARK: - Push to Watch
+
+    func push(rooms: [WidgetRoomSnapshot], ip: String, token: String) {
+        guard WCSession.default.activationState == .activated,
+              WCSession.default.isPaired,
+              WCSession.default.isWatchAppInstalled else { return }
+        guard let roomsData = try? JSONEncoder().encode(rooms) else { return }
+        let context: [String: Any] = [
+            "wc_rooms_v1" : roomsData,
+            "wc_bridge_ip": ip,
+            "wc_token"    : token
+        ]
+        try? WCSession.default.updateApplicationContext(context)
+    }
+
+    // MARK: - WCSessionDelegate
+
+    func session(_ session: WCSession,
+                 activationDidCompleteWith activationState: WCSessionActivationState,
+                 error: Error?) {}
+
+    func sessionDidBecomeInactive(_ session: WCSession) {}
+
+    func sessionDidDeactivate(_ session: WCSession) {
+        WCSession.default.activate()
+    }
+}
