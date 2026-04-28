@@ -7,6 +7,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var store = WatchStore.shared
+    @Environment(\.scenePhase) private var scenePhase
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
 
     var body: some View {
@@ -102,6 +103,17 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .onAppear { store.loadFromCache() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { store.loadFromCache() }
+        }
+        // Poll every 5 s while rooms are empty so we pick up iPhone app writes automatically
+        .task(id: store.rooms.isEmpty) {
+            guard store.rooms.isEmpty else { return }
+            while store.rooms.isEmpty {
+                try? await Task.sleep(for: .seconds(5))
+                store.loadFromCache()
+            }
+        }
     }
 }
 
