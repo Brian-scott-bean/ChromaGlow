@@ -878,6 +878,11 @@ final class UnifiedOrchestrator {
             )
         }
         WidgetDataStore.shared.write(rooms: snapshots)
+        // Push to Apple Watch via WatchConnectivity
+        if let ip    = WidgetDataStore.shared.bridgeIP,
+           let token = WidgetDataStore.shared.token {
+            WatchSessionManager.shared.push(rooms: snapshots, ip: ip, token: token)
+        }
     }
 
     private func rebuildAllZones() {

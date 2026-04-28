@@ -243,15 +243,15 @@ extension WatchStore: WCSessionDelegate {
         let ip    = applicationContext["wc_bridge_ip"] as? String ?? ""
         let token = applicationContext["wc_token"]     as? String ?? ""
 
-        // Persist to watch-local cache
-        UserDefaults.standard.set(roomsData, forKey: CacheKey.rooms)
-        if !ip.isEmpty    { UserDefaults.standard.set(ip,    forKey: CacheKey.bridgeIP) }
-        if !token.isEmpty { UserDefaults.standard.set(token, forKey: CacheKey.token) }
+        // UserDefaults is thread-safe — write directly from any thread
+        UserDefaults.standard.set(roomsData, forKey: "wc_rooms_v1")
+        if !ip.isEmpty    { UserDefaults.standard.set(ip,    forKey: "wc_bridge_ip") }
+        if !token.isEmpty { UserDefaults.standard.set(token, forKey: "wc_token") }
 
         // Update published properties on MainActor
-        Task { @MainActor in
-            self.rooms    = decoded
-            self.isPaired = !ip.isEmpty
+        Task { @MainActor [weak self] in
+            self?.rooms    = decoded
+            self?.isPaired = !ip.isEmpty
         }
     }
 
