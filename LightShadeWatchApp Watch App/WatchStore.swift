@@ -18,6 +18,7 @@ import SwiftUI
 import Foundation
 import Combine
 import WatchConnectivity
+import WidgetKit
 
 // MARK: - Room Model
 
@@ -97,6 +98,9 @@ final class WatchStore: NSObject, ObservableObject {
         static let token    = "wc_token"
     }
 
+    // App Group shared with complication extension (watch-side container)
+    private var watchGroup: UserDefaults? { UserDefaults(suiteName: "group.com.lightshade.app") }
+
     private var bridgeIP: String? { UserDefaults.standard.string(forKey: CacheKey.bridgeIP) }
     private var token:    String? { UserDefaults.standard.string(forKey: CacheKey.token) }
 
@@ -131,6 +135,10 @@ final class WatchStore: NSObject, ObservableObject {
     private func saveToLocalCache() {
         guard let data = try? JSONEncoder().encode(rooms) else { return }
         UserDefaults.standard.set(data, forKey: CacheKey.rooms)
+        // Mirror into App Group so watch complications can read it
+        watchGroup?.set(data,       forKey: "hue_widget_rooms_v1")
+        watchGroup?.set(Date(),     forKey: "hue_widget_updated_at")
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     // MARK: - Toggle Room
@@ -265,11 +273,19 @@ extension WatchStore: WCSessionDelegate {
         if !ip.isEmpty    { UserDefaults.standard.set(ip,    forKey: "wc_bridge_ip") }
         if !token.isEmpty { UserDefaults.standard.set(token, forKey: "wc_token") }
 
-        // Update published properties on MainActor
+        // Mirror into watch-side App Group so complications refresh immediately
+        let watchGroup = UserDefaults(suiteName: "group.com.lightshade.app")
+        watchGroup?.set(roomsData, forKey: "hue_widget_rooms_v1")
+        watchGroup?.set(Date(),    forKey: "hue_widget_updated_at")
+        if !ip.isEmpty    { watchGroup?.set(ip,    forKey: "hue_widget_bridge_ip") }
+        if !token.isEmpty { watchGroup?.set(token, forKey: "hue_widget_token") }
+
+        // Update published properties on MainActor + reload complications
         Task { @MainActor [weak self] in
             self?.rooms    = decoded
             self?.zones    = decodedZones
             self?.isPaired = !ip.isEmpty
+            WidgetCenter.shared.reloadAllTimelines()
         }
     }
 
