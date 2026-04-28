@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Foundation
+import Combine
 
 // MARK: - Room Model
 
@@ -186,7 +187,7 @@ final class WatchStore: ObservableObject {
         _ = try? await session.data(for: req)
     }
 
-    private class TrustAll: NSObject, URLSessionDelegate {
+    private final class TrustAll: NSObject, URLSessionDelegate, @unchecked Sendable {
         func urlSession(_ s: URLSession, didReceive c: URLAuthenticationChallenge,
                         completionHandler h: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
             if let t = c.protectionSpace.serverTrust { h(.useCredential, URLCredential(trust: t)) }
