@@ -250,14 +250,20 @@ struct LightShadeWatch: Widget {
         }
         .configurationDisplayName("LightShade")
         .description("Monitor and control your lights from your wrist.")
+        #if os(watchOS)
         .supportedFamilies([
             .accessoryCircular,
             .accessoryRectangular,
             .accessoryInline,
-            #if os(watchOS)
             .accessoryCorner,
-            #endif
         ])
+        #else
+        .supportedFamilies([
+            .accessoryCircular,
+            .accessoryRectangular,
+            .accessoryInline,
+        ])
+        #endif
     }
 }
 
@@ -293,7 +299,9 @@ private let previewEntry = WatchEntry(
     selectedRoomID: nil
 )
 
-#Preview("Circular", as: .accessoryCircular)    { LightShadeWatch() } timeline: { previewEntry }
-#Preview("Rectangular", as: .accessoryRectangular) { LightShadeWatch() } timeline: { previewEntry }
-#Preview("Corner", as: .accessoryCorner)        { LightShadeWatch() } timeline: { previewEntry }
-#Preview("Inline", as: .accessoryInline)        { LightShadeWatch() } timeline: { previewEntry }
+#Preview("Circular", as: .accessoryCircular)       { LightShadeWatch() } timeline: { previewEntry }
+#Preview("Rectangular", as: .accessoryRectangular)  { LightShadeWatch() } timeline: { previewEntry }
+#Preview("Inline", as: .accessoryInline)            { LightShadeWatch() } timeline: { previewEntry }
+#if os(watchOS)
+#Preview("Corner", as: .accessoryCorner)            { LightShadeWatch() } timeline: { previewEntry }
+#endif
