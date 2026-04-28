@@ -83,7 +83,9 @@ struct LightShadeWatchEntryView: View {
         switch family {
         case .accessoryCircular:    CircularView(entry: entry)
         case .accessoryRectangular: RectangularView(entry: entry)
+        #if os(watchOS)
         case .accessoryCorner:      CornerView(entry: entry)
+        #endif
         default:                    InlineView(entry: entry)
         }
     }
@@ -188,6 +190,7 @@ struct RectangularView: View {
 
 // MARK: - Corner (watch-only slot — bottom corners of watch face)
 
+#if os(watchOS)
 struct CornerView: View {
     let entry: WatchEntry
 
@@ -207,6 +210,7 @@ struct CornerView: View {
         }
     }
 }
+#endif
 
 // MARK: - Inline (single line at top of watch face)
 
@@ -249,8 +253,10 @@ struct LightShadeWatch: Widget {
         .supportedFamilies([
             .accessoryCircular,
             .accessoryRectangular,
+            .accessoryInline,
+            #if os(watchOS)
             .accessoryCorner,
-            .accessoryInline
+            #endif
         ])
     }
 }
