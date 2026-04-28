@@ -7,14 +7,20 @@
 // Pushed onto the navigation stack from the Dashboard toolbar (⚡ button).
 
 import SwiftUI
+import SwiftData
 
 // MARK: - AutomationsView
 
 struct AutomationsView: View {
 
     @State private var vm = AutomationsViewModel()
-    @State private var showLog = false
+    @State private var showLog    = false
+    @State private var showCreate = false
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Environment(\.modelContext) private var modelContext
+
+    @Query(sort: \AppAutomation.createdAt, order: .forward)
+    private var appAutomations: [AppAutomation]
 
     private let amber  = Color(red: 1.0, green: 0.76, blue: 0.20)
     private let purple = Color(red: 0.55, green: 0.35, blue: 1.00)
@@ -38,7 +44,8 @@ struct AutomationsView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
         .toolbar { toolbarItems }
-        .sheet(isPresented: $showLog) { logSheet }
+        .sheet(isPresented: $showLog)    { logSheet }
+        .sheet(isPresented: $showCreate) { CreateAutomationView() }
         .task {
             // Inject orchestrator clients each time the tab appears.
             // For demo mode, orchestrator.allBridgeIDs will be empty — that's fine,
@@ -84,16 +91,20 @@ struct AutomationsView: View {
     private var automationsList: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
-                // Summary header
                 summaryHeader
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
                     .padding(.bottom, 20)
 
+                // ── My Schedules (app-side) ────────────────────────
+                mySchedulesSection
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, appAutomations.isEmpty ? 0 : 24)
+
+                // ── Bridge Automations ─────────────────────────────
                 if vm.automations.isEmpty {
                     emptyState
                 } else {
-                    // Group by category
                     let groups = groupedAutomations()
                     VStack(spacing: 24) {
                         ForEach(groups, id: \.0.rawValue) { (category, items) in
@@ -105,6 +116,128 @@ struct AutomationsView: View {
                 }
             }
         }
+    }
+
+    // ── My Schedules Section ──────────────────────
+
+    private var mySchedulesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(amber)
+                    Text("MY SCHEDULES")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.45))
+                    Text("(\(appAutomations.count))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.25))
+                }
+                Spacer()
+                Button {
+                    Task {
+                        _ = await AutomationScheduler.shared.requestPermission()
+                        showCreate = true
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                        Text("New")
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(amber))
+                }
+                .buttonStyle(.plain)
+            }
+
+            if appAutomations.isEmpty {
+                HStack {
+                    Spacer()
+                    VStack(spacing: 8) {
+                        Image(systemName: "clock.badge.plus")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.white.opacity(0.18))
+                        Text("No schedules yet — tap New")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.3))
+                    }
+                    .padding(.vertical, 20)
+                    Spacer()
+                }
+                .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.04)))
+            } else {
+                GlassmorphicCard(isActive: appAutomations.contains(where: \.isEnabled),
+                                 glowColor: amber) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(appAutomations.enumerated()), id: \.element.id) { idx, automation in
+                            appAutomationRow(automation)
+                            if idx < appAutomations.count - 1 {
+                                Divider().background(Color.white.opacity(0.07))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func appAutomationRow(_ automation: AppAutomation) -> some View {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(automation.isEnabled ? amber.opacity(0.18) : Color.white.opacity(0.06))
+                    .frame(width: 40, height: 40)
+                Image(systemName: automation.action.icon)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(automation.isEnabled ? amber : .white.opacity(0.25))
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(automation.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(automation.isEnabled ? .white : .white.opacity(0.45))
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(automation.timeLabel)
+                    Text("·")
+                    Text(automation.daysLabel)
+                }
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.35))
+            }
+
+            Spacer()
+
+            Toggle("", isOn: Binding(
+                get:  { automation.isEnabled },
+                set:  { enabled in
+                    automation.isEnabled = enabled
+                    if enabled {
+                        AutomationScheduler.shared.schedule(automation)
+                    } else {
+                        AutomationScheduler.shared.cancel(automation)
+                    }
+                }
+            ))
+            .tint(amber)
+            .labelsHidden()
+            .scaleEffect(0.85)
+        }
+        .padding(.vertical, 10)
+        .opacity(automation.isEnabled ? 1.0 : 0.7)
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+                AutomationScheduler.shared.cancel(automation)
+                modelContext.delete(automation)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .animation(.spring(response: 0.3), value: automation.isEnabled)
     }
 
     // ── Summary Header ────────────────────────────

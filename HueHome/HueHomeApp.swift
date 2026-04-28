@@ -11,7 +11,7 @@ struct HueHomeApp: App {
     // MARK: SwiftData Container (includes BridgeRecord from Stage 2A)
     let modelContainer: ModelContainer = {
         let schema = Schema([
-            BridgeRecord.self,     // Stage 2A — multi-bridge registry
+            BridgeRecord.self,
             HueLocalRoom.self,
             HueLocalScene.self,
             EffectPreset.self,
@@ -19,6 +19,7 @@ struct HueHomeApp: App {
             ActivityEvent.self,
             EnergySnapshot.self,
             AppSettings.self,
+            AppAutomation.self,   // user-created scheduled automations
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
