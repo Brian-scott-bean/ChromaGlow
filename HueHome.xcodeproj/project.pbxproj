@@ -70,6 +70,8 @@
 		DD4BB4D52F8C6AF300BED513 /* HueHomeWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = DD4BB4C42F8C6AF100BED513 /* HueHomeWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DD4BB4EB2F8C71F300BED513 /* WidgetDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */; };
 		DDC82E622F9FBA7E00324E29 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = DDC82E612F9FBA7E00324E29 /* PrivacyInfo.xcprivacy */; };
+		DDC82E862FA0878E00324E29 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD4BB4C52F8C6AF100BED513 /* WidgetKit.framework */; };
+		DDC82E872FA0878E00324E29 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD4BB4C72F8C6AF100BED513 /* SwiftUI.framework */; };
 		E3ED0638F1205B9278E91308 /* HueGroupedLight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24361D8C8182346A011E7B60 /* HueGroupedLight.swift */; };
 		E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */; };
 		E81712B70CBF1AAFBC4065E3 /* HueHome/UI/Effects/EffectControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D79067D6A4E961A8518EF5C /* HueHome/UI/Effects/EffectControlsView.swift */; };
@@ -177,6 +179,7 @@
 		DD4BB4DB2F8C6B1400BED513 /* HueHomeWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HueHomeWidgetExtension.entitlements; sourceTree = "<group>"; };
 		DD4BB4DC2F8C6B5800BED513 /* HueHome.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = HueHome.entitlements; path = HueHome/HueHome.entitlements; sourceTree = "<group>"; };
 		DDC82E612F9FBA7E00324E29 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		DDC82E852FA0878E00324E29 /* LightShadeWatchExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LightShadeWatchExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E7ACCF18A91D92561912E10F /* HueHome/Core/Effects/EffectEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Effects/EffectEngine.swift; sourceTree = "<group>"; };
 		F57BF74DE7F5F2F1B870513F /* HueHome/Core/Models/DeviceDisplayItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Models/DeviceDisplayItem.swift; sourceTree = "<group>"; };
 		FD54587B049C752BA3C84CD5 /* HueRoom.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueRoom.swift; path = HueHome/Core/Models/HueRoom.swift; sourceTree = "<group>"; };
@@ -190,10 +193,18 @@
 			);
 			target = DD4BB4C32F8C6AF100BED513 /* HueHomeWidgetExtension */;
 		};
+		DDC82E922FA0879000324E29 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = DDC82E842FA0878E00324E29 /* LightShadeWatchExtension */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		DD4BB4C92F8C6AF100BED513 /* HueHomeWidget */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (DD4BB4D92F8C6AF300BED513 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = HueHomeWidget; sourceTree = "<group>"; };
+		DDC82E882FA0878E00324E29 /* LightShadeWatch */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (DDC82E922FA0879000324E29 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = LightShadeWatch; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -211,6 +222,15 @@
 			files = (
 				DD4BB4C82F8C6AF100BED513 /* SwiftUI.framework in Frameworks */,
 				DD4BB4C62F8C6AF100BED513 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82E822FA0878E00324E29 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DDC82E872FA0878E00324E29 /* SwiftUI.framework in Frameworks */,
+				DDC82E862FA0878E00324E29 /* WidgetKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -260,6 +280,7 @@
 				DDC82E612F9FBA7E00324E29 /* PrivacyInfo.xcprivacy */,
 				DD4BB4DB2F8C6B1400BED513 /* HueHomeWidgetExtension.entitlements */,
 				DD4BB4C92F8C6AF100BED513 /* HueHomeWidget */,
+				DDC82E882FA0878E00324E29 /* LightShadeWatch */,
 				6D40BA073C014CF970DE66D7 /* Products */,
 				B659B5390C0CDC9FEBADD38A /* Frameworks */,
 				E8839A10D98E50D9EEC76ADB /* HueHome */,
@@ -332,6 +353,7 @@
 				3000CEF6604AF34A2F38DA90 /* HueHome.app */,
 				A6D407538C930D859C433439 /* HueHomeTests.xctest */,
 				DD4BB4C42F8C6AF100BED513 /* HueHomeWidgetExtension.appex */,
+				DDC82E852FA0878E00324E29 /* LightShadeWatchExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -550,6 +572,28 @@
 			productReference = DD4BB4C42F8C6AF100BED513 /* HueHomeWidgetExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		DDC82E842FA0878E00324E29 /* LightShadeWatchExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DDC82E932FA0879000324E29 /* Build configuration list for PBXNativeTarget "LightShadeWatchExtension" */;
+			buildPhases = (
+				DDC82E812FA0878E00324E29 /* Sources */,
+				DDC82E822FA0878E00324E29 /* Frameworks */,
+				DDC82E832FA0878E00324E29 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				DDC82E882FA0878E00324E29 /* LightShadeWatch */,
+			);
+			name = LightShadeWatchExtension;
+			packageProductDependencies = (
+			);
+			productName = LightShadeWatchExtension;
+			productReference = DDC82E852FA0878E00324E29 /* LightShadeWatchExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		DF2162E15E4CD1BF508535CF /* HueHome */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B93CA9D1B4C255F859F7073D /* Build configuration list for PBXNativeTarget "HueHome" */;
@@ -599,6 +643,9 @@
 					DD4BB4C32F8C6AF100BED513 = {
 						CreatedOnToolsVersion = 26.4;
 					};
+					DDC82E842FA0878E00324E29 = {
+						CreatedOnToolsVersion = 26.4;
+					};
 					DF2162E15E4CD1BF508535CF = {
 						DevelopmentTeam = 2H9J347H3T;
 					};
@@ -620,6 +667,7 @@
 				DF2162E15E4CD1BF508535CF /* HueHome */,
 				F28E742458072F94D9443FF7 /* HueHomeTests */,
 				DD4BB4C32F8C6AF100BED513 /* HueHomeWidgetExtension */,
+				DDC82E842FA0878E00324E29 /* LightShadeWatchExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -642,6 +690,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		DD4BB4C22F8C6AF100BED513 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82E832FA0878E00324E29 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -730,6 +785,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				DD4BB4EB2F8C71F300BED513 /* WidgetDataStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82E812FA0878E00324E29 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1046,6 +1108,84 @@
 			};
 			name = Release;
 		};
+		DDC82E942FA0879000324E29 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LightShadeWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = LightShadeWatch;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lightshade.LightShadeWatch;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = Debug;
+		};
+		DDC82E952FA0879000324E29 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LightShadeWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = LightShadeWatch;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lightshade.LightShadeWatch;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1081,6 +1221,15 @@
 			buildConfigurations = (
 				DD4BB4D72F8C6AF300BED513 /* Debug */,
 				DD4BB4D82F8C6AF300BED513 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DDC82E932FA0879000324E29 /* Build configuration list for PBXNativeTarget "LightShadeWatchExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DDC82E942FA0879000324E29 /* Debug */,
+				DDC82E952FA0879000324E29 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
