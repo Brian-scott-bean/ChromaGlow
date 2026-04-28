@@ -65,10 +65,12 @@ struct RoomDetailView: View {
                             Text("Brightness")
                         }
                         .tint(amber)
+                        #if os(watchOS)
                         .focusable()
                         .digitalCrownRotation($brightness, from: 1, through: 100, by: 1,
                                               sensitivity: .medium, isContinuous: false,
                                               isHapticFeedbackEnabled: true)
+                        #endif
                         .onChange(of: brightness) { _, new in
                             Task { await store.setBrightness(new, for: currentRoom) }
                         }
