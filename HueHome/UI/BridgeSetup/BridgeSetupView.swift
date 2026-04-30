@@ -201,19 +201,72 @@ struct BridgeSetupView: View {
                     .font(.system(size: 28, weight: .bold))
                     .foregroundStyle(.white)
 
-                Text("Looking for a Hue Bridge on your Wi-Fi. This usually takes a few seconds.")
+                Text(vm.scanningLabel)
                     .font(.system(size: 15))
                     .foregroundStyle(.white.opacity(0.55))
                     .multilineTextAlignment(.center)
+                    .animation(.easeInOut(duration: 0.4), value: vm.scanningLabel)
             }
 
-            // Can't find it?
+            // Discovery method step indicators
+            VStack(spacing: 8) {
+                discoveryStepRow(
+                    icon: "wifi",
+                    label: "Wi-Fi scan (mDNS)",
+                    active: vm.scanningLabel.contains("Wi")
+                )
+                discoveryStepRow(
+                    icon: "cloud",
+                    label: "Philips cloud discovery",
+                    active: vm.scanningLabel.contains("cloud")
+                )
+                discoveryStepRow(
+                    icon: "keyboard",
+                    label: "Manual IP entry",
+                    active: false,
+                    muted: true
+                )
+            }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+
             secondaryButton("Enter IP Manually", icon: "keyboard") {
                 vm.resetToIdle()
                 showManualEntry = true
             }
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    private func discoveryStepRow(icon: String, label: String, active: Bool, muted: Bool = false) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(active ? accentColor.opacity(0.2) : .white.opacity(0.05))
+                    .frame(width: 32, height: 32)
+                if active {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .tint(accentColor)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(muted ? .white.opacity(0.25) : .white.opacity(0.45))
+                }
+            }
+            Text(label)
+                .font(.system(size: 13, weight: active ? .semibold : .regular))
+                .foregroundStyle(active ? .white : (muted ? .white.opacity(0.25) : .white.opacity(0.50)))
+            Spacer()
+            if active {
+                Text("Active")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(accentColor)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(accentColor.opacity(0.15)))
+            }
+        }
     }
 
     // MARK: - Bridge Found

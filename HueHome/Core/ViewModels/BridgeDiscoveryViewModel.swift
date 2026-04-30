@@ -48,6 +48,14 @@ private struct PairingErr: Decodable {
     let description: String
 }
 
+// MARK: - NUPnP Cloud Discovery Response
+
+private struct NUPnPResult: Decodable {
+    let id: String
+    let internalipaddress: String
+    let port: Int?
+}
+
 // MARK: - Self-Signed Certificate Trust Delegate
 //
 // Newer Hue Bridges (Square v2, v3) serve HTTPS on port 443 with a Signify-issued
@@ -80,10 +88,13 @@ final class BridgeDiscoveryViewModel {
     // MARK: State
     var phase: DiscoveryPhase = .idle
     var logLines: [String] = []
+    /// Human-readable label shown in the scanning UI — updates as fallback methods are tried.
+    var scanningLabel: String = "Searching your Wi\u2011Fi\u2026"
 
     // MARK: Services
     let discovery = BridgeDiscoveryService()
     private var cancellables = Set<AnyCancellable>()
+    private var scanTimeoutTask: Task<Void, Never>?
     private let log = Logger(subsystem: "com.lightshade.app", category: "ViewModel.Discovery")
 
     // MARK: Init
@@ -118,21 +129,73 @@ final class BridgeDiscoveryViewModel {
     // ──────────────────────────────────────────────
 
     func startScan() {
-        guard phase == .idle || phase == .error("") || {
-            if case .error = phase { return true }
-            return false
-        }() else { return }
+        // Allow retry from idle or any error state
+        switch phase {
+        case .idle, .error: break
+        default: return
+        }
 
         logLines.removeAll()
         phase = .scanning
-        appendLog("▶️  Scan initiated.")
+        scanningLabel = "Searching your Wi\u2011Fi\u2026"
+        appendLog("▶️  Scan initiated — mDNS (layer 1).")
         discovery.startScan()
+
+        // ── Layer 2: NUPnP fallback after 12 s if mDNS finds nothing ──
+        scanTimeoutTask?.cancel()
+        scanTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(12))
+            guard let self, case .scanning = self.phase else { return }
+            self.appendLog("⏱ mDNS timeout — falling back to Philips cloud discovery (layer 2).")
+            await MainActor.run { self.scanningLabel = "Trying cloud discovery\u2026" }
+            await self.discoverViaNUPnP()
+        }
     }
 
     func resetToIdle() {
+        scanTimeoutTask?.cancel()
+        scanTimeoutTask = nil
         discovery.stopScan()
         phase = .idle
         appendLog("🔄 Reset to idle.")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - NUPnP Cloud Discovery (Layer 2)
+    // ──────────────────────────────────────────────
+
+    /// Calls Philips' internet-based discovery endpoint as a fallback when
+    /// mDNS is blocked by the router (AP isolation, IGMP filtering, etc.).
+    private func discoverViaNUPnP() async {
+        guard let url = URL(string: "https://discovery.meethue.com/api/nupnp") else { return }
+        appendLog("☁️  GET https://discovery.meethue.com/api/nupnp")
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+
+            if let raw = String(data: data, encoding: .utf8) {
+                appendLog("   NUPnP response: \(raw)")
+            }
+
+            let results = try JSONDecoder().decode([NUPnPResult].self, from: data)
+
+            guard let first = results.first else {
+                discovery.stopScan()
+                handleError("No bridge found automatically.\n\nMake sure your Hue Bridge is powered on and connected to Wi-Fi, then try again — or enter your bridge IP manually.")
+                return
+            }
+
+            let port = UInt16(first.port ?? 443)
+            let bridge = BridgeEndpoint(name: "Philips Hue Bridge", host: first.internalipaddress, port: port)
+            discovery.stopScan()
+            appendLog("✅ NUPnP found bridge at \(bridge.host):\(bridge.port)")
+            phase = .bridgeFound(bridge)
+
+        } catch {
+            discovery.stopScan()
+            appendLog("❌ NUPnP error: \(error.localizedDescription)")
+            handleError("Bridge not found automatically.\n\nCheck your Wi-Fi connection or tap \"Enter IP Manually\" to connect directly.")
+        }
     }
 
     // ──────────────────────────────────────────────
