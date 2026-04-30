@@ -58,6 +58,7 @@ private enum BridgeWriter {
 struct ToggleRoomIntent: AppIntent {
     static var title: LocalizedStringResource = "Toggle Room"
     static var description = IntentDescription("Turn a specific room on or off.")
+    static var openAppWhenRun: Bool = false
 
     /// Stable room identifier from WidgetDataStore.
     @Parameter(title: "Room ID")      var roomID: String
@@ -101,6 +102,7 @@ struct ToggleRoomIntent: AppIntent {
 struct ApplyPresetIntent: AppIntent {
     static var title: LocalizedStringResource = "Apply Preset"
     static var description = IntentDescription("Apply a lighting preset to all rooms.")
+    static var openAppWhenRun: Bool = false
 
     @Parameter(title: "Preset ID") var presetID: String   // "energize" | "read" | "relax" | "sleep"
 
@@ -147,6 +149,7 @@ struct ApplyPresetIntent: AppIntent {
 struct AllOffIntent: AppIntent {
     static var title: LocalizedStringResource = "All Lights Off"
     static var description = IntentDescription("Turn off every room at once.")
+    static var openAppWhenRun: Bool = false
 
     init() {}
 
