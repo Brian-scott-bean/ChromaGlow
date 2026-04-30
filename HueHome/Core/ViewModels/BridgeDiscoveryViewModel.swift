@@ -89,7 +89,7 @@ final class BridgeDiscoveryViewModel {
     var phase: DiscoveryPhase = .idle
     var logLines: [String] = []
     /// Human-readable label shown in the scanning UI — updates as fallback methods are tried.
-    var scanningLabel: String = "Searching your Wi\u2011Fi\u2026"
+    var scanningLabel: String = "Searching your Wi-Fi..."
 
     // MARK: Services
     let discovery = BridgeDiscoveryService()
@@ -137,7 +137,7 @@ final class BridgeDiscoveryViewModel {
 
         logLines.removeAll()
         phase = .scanning
-        scanningLabel = "Searching your Wi\u2011Fi\u2026"
+        scanningLabel = "Searching your Wi-Fi..."
         appendLog("▶️  Scan initiated — mDNS (layer 1).")
         discovery.startScan()
 
@@ -147,7 +147,7 @@ final class BridgeDiscoveryViewModel {
             try? await Task.sleep(for: .seconds(12))
             guard let self, case .scanning = self.phase else { return }
             self.appendLog("⏱ mDNS timeout — falling back to Philips cloud discovery (layer 2).")
-            await MainActor.run { self.scanningLabel = "Trying cloud discovery\u2026" }
+            await MainActor.run { self.scanningLabel = "Trying cloud discovery..." }
             await self.discoverViaNUPnP()
         }
     }
