@@ -62,7 +62,7 @@ struct SplashView: View {
                 // Title
                 VStack(spacing: 4) {
                     HStack(spacing: 4) {
-                        Text("LightShade")
+                        Text("ChromaForge")
                             .font(.system(size: 34, weight: .bold, design: .rounded))
                             .foregroundStyle(colorScheme == .dark
                                              ? HuePalette.Noir.textPrimary

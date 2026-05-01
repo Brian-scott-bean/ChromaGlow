@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>LightShade</string>
+	<string>ChromaForge</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -32,9 +32,9 @@
 		<string>_hue._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>LightShade needs local network access to discover your Philips Hue Bridge via mDNS.</string>
+	<string>ChromaForge needs local network access to discover your Philips Hue Bridge via mDNS.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>LightShade uses your microphone to react your lights to music and sound in real time.</string>
+	<string>ChromaForge uses your microphone to react your lights to music and sound in real time.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

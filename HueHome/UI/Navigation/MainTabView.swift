@@ -90,7 +90,7 @@ struct MainTabView: View {
                     )
                 }
             }
-            .navigationTitle("LightShade")
+            .navigationTitle("ChromaForge")
             .scrollContentBackground(.hidden)
             .background(colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background)
         } detail: {

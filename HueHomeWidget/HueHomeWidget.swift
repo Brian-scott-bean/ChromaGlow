@@ -153,7 +153,7 @@ struct SmallWidgetView: View {
                 Image(systemName: "lightbulb.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(amber)
-                Text("LightShade")
+                Text("ChromaForge")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.7))
             }
@@ -241,7 +241,7 @@ struct MediumWidgetView: View {
                 Image(systemName: "lightbulb.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(amber)
-                Text("LightShade")
+                Text("ChromaForge")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.8))
                 Spacer()
@@ -359,7 +359,7 @@ struct LargeWidgetView: View {
                 Image(systemName: "lightbulb.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(amber)
-                Text("LightShade")
+                Text("ChromaForge")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.85))
                 Spacer()
@@ -602,7 +602,7 @@ struct HueHomeWidget: Widget {
             HueHomeWidgetEntryView(entry: entry)
                 .widgetURL(URL(string: "lightshade://dashboard"))
         }
-        .configurationDisplayName("LightShade")
+        .configurationDisplayName("ChromaForge")
         .description("Control lights, apply presets, and monitor rooms right from your home screen.")
         .supportedFamilies([
             .systemSmall, .systemMedium, .systemLarge,
