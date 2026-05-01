@@ -269,9 +269,9 @@ final class MicModeEngine {
                     id:         glID,
                     on:         on,
                     brightness: bri,
+                    duration:   80,
                     xy:         nil,
-                    mirek:      mirek,
-                    duration:   80
+                    mirek:      mirek
                 )
             }
         }

@@ -75,6 +75,8 @@
 		DDC82E872FA0878E00324E29 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD4BB4C72F8C6AF100BED513 /* SwiftUI.framework */; };
 		DDC82F452FA1140C00324E29 /* LightShadeWatchApp Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = DDC82F252FA1140A00324E29 /* LightShadeWatchApp Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DDE73AC42FA2CEFF00C8FF8E /* LightShadeWatchExtension.appex in CopyFiles */ = {isa = PBXBuildFile; fileRef = DDC82E852FA0878E00324E29 /* LightShadeWatchExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		DDE73AF62FA4677E00C8FF8E /* MicModeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDE73AF42FA4677E00C8FF8E /* MicModeEngine.swift */; };
+		DDE73AF72FA4677E00C8FF8E /* MicModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDE73AF52FA4677E00C8FF8E /* MicModeView.swift */; };
 		E3ED0638F1205B9278E91308 /* HueGroupedLight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24361D8C8182346A011E7B60 /* HueGroupedLight.swift */; };
 		E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */; };
 		E81712B70CBF1AAFBC4065E3 /* HueHome/UI/Effects/EffectControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D79067D6A4E961A8518EF5C /* HueHome/UI/Effects/EffectControlsView.swift */; };
@@ -246,6 +248,8 @@
 		DDC82F252FA1140A00324E29 /* LightShadeWatchApp Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "LightShadeWatchApp Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		DDC82F312FA1140C00324E29 /* LightShadeWatchApp Watch AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "LightShadeWatchApp Watch AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		DDC82F3B2FA1140C00324E29 /* LightShadeWatchApp Watch AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "LightShadeWatchApp Watch AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		DDE73AF42FA4677E00C8FF8E /* MicModeEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicModeEngine.swift; sourceTree = "<group>"; };
+		DDE73AF52FA4677E00C8FF8E /* MicModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicModeView.swift; sourceTree = "<group>"; };
 		E7ACCF18A91D92561912E10F /* HueHome/Core/Effects/EffectEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Effects/EffectEngine.swift; sourceTree = "<group>"; };
 		F57BF74DE7F5F2F1B870513F /* HueHome/Core/Models/DeviceDisplayItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Models/DeviceDisplayItem.swift; sourceTree = "<group>"; };
 		FD54587B049C752BA3C84CD5 /* HueRoom.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueRoom.swift; path = HueHome/Core/Models/HueRoom.swift; sourceTree = "<group>"; };
@@ -367,6 +371,8 @@
 		22CB1F2908CACDFE206C8810 = {
 			isa = PBXGroup;
 			children = (
+				DDE73AF42FA4677E00C8FF8E /* MicModeEngine.swift */,
+				DDE73AF52FA4677E00C8FF8E /* MicModeView.swift */,
 				DDC82E612F9FBA7E00324E29 /* PrivacyInfo.xcprivacy */,
 				DD4BB4DB2F8C6B1400BED513 /* HueHomeWidgetExtension.entitlements */,
 				DD4BB4C92F8C6AF100BED513 /* HueHomeWidget */,
@@ -942,6 +948,8 @@
 				6C3CEE5283D3C9A740DC162E /* AutomationsView.swift in Sources */,
 				C07A9632E98ED3D5C7AD2537 /* HueBehaviorInstance.swift in Sources */,
 				B8EC85BF69B1476F2C0BD268 /* AutomationsViewModel.swift in Sources */,
+				DDE73AF62FA4677E00C8FF8E /* MicModeEngine.swift in Sources */,
+				DDE73AF72FA4677E00C8FF8E /* MicModeView.swift in Sources */,
 				83D16D11D9A22B3D443CED94 /* HueTokens.swift in Sources */,
 				1C125FE7B5ABB02BCD14BFED /* HueTypography.swift in Sources */,
 				665B9753748D3E4CF1D69CF5 /* HueComponents.swift in Sources */,
