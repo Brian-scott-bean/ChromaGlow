@@ -130,17 +130,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		C31A08AEB0B211DF15B578D1 /* Embed Watch Extension */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				0561822D9E63E1B1309E3DA6 /* LightShadeWatchExtension.appex in Embed Watch Extension */,
-			);
-			name = "Embed Watch Extension";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		DD4BB4D62F8C6AF300BED513 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -761,7 +750,6 @@
 				E38C29A44FE3685ADF2D02FC /* Frameworks */,
 				419A8BB0390C120D583BC94A /* Resources */,
 				DD4BB4D62F8C6AF300BED513 /* Embed Foundation Extensions */,
-				C31A08AEB0B211DF15B578D1 /* Embed Watch Extension */,
 				DDC82F462FA1140C00324E29 /* Embed Watch Content */,
 			);
 			buildRules = (
