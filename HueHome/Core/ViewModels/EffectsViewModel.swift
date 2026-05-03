@@ -61,6 +61,11 @@ final class EffectsViewModel: ObservableObject {
     private var cancellables      = Set<AnyCancellable>()
     private var reactivationTask: Task<Void, Never>?   = nil
 
+    /// Tracks the last-applied effect per room so the UI can restore
+    /// per-room selection state when the user switches between rooms.
+    /// Key: RoomDisplayItem.id  Value: HueEffect.id
+    private var appliedEffectPerRoom: [String: String] = [:]
+
     // MARK: - Configure
 
     @MainActor
@@ -85,6 +90,37 @@ final class EffectsViewModel: ObservableObject {
                       let effect = self.selectedEffect,
                       !effect.requiresForeground else { return }
                 Task { await self.activate() }
+            }
+            .store(in: &cancellables)
+
+        // Per-room effect state: when the user switches rooms, clear the current
+        // selection and restore whatever was last applied to the new room.
+        // This fixes the bug where selectedEffect bleeds across rooms, causing
+        // a tap on the same card to toggle-off instead of apply.
+        $selectedRoom
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newRoom in
+                guard let self else { return }
+
+                // If an app-driven effect is looping, stop it — the engine
+                // can only run one room's effect at a time.
+                if self.isRunning {
+                    Task { await self.stop() }
+                }
+
+                // Restore the previously applied effect for the incoming room, or clear.
+                if let roomID = newRoom?.id,
+                   let effectID = self.appliedEffectPerRoom[roomID],
+                   let effect   = EffectLibrary.all.first(where: { $0.id == effectID }) {
+                    self.selectedEffect = effect
+                    var restored = EffectParamState()
+                    restored.load(from: effect.params)
+                    self.paramState = restored
+                } else {
+                    self.selectedEffect = nil
+                    self.paramState     = EffectParamState()
+                }
             }
             .store(in: &cancellables)
     }
@@ -326,6 +362,11 @@ final class EffectsViewModel: ObservableObject {
 
     @MainActor
     func stop() async {
+        // For app-driven effects (isRunning == true), remove from room tracking
+        // so switching back to this room doesn't falsely restore the stopped effect.
+        if isRunning, let roomID = selectedRoom?.id {
+            appliedEffectPerRoom.removeValue(forKey: roomID)
+        }
         await engine.stop()
         isRunning         = false
         runningEffectName = nil
@@ -337,15 +378,20 @@ final class EffectsViewModel: ObservableObject {
 
     @MainActor
     private func setNowPlaying(_ effect: HueEffect) {
-        orchestrator?.activeEffectName      = effect.name
-        orchestrator?.activeEffectIcon      = effect.icon
+        orchestrator?.activeEffectName        = effect.name
+        orchestrator?.activeEffectIcon        = effect.icon
         orchestrator?.activeEffectIsAppDriven = effect.requiresForeground
+        // Record which effect was applied to this room so we can restore
+        // selection state when the user returns to this room later.
+        if let roomID = selectedRoom?.id {
+            appliedEffectPerRoom[roomID] = effect.id
+        }
     }
 
     @MainActor
     private func clearNowPlaying() {
-        orchestrator?.activeEffectName      = nil
-        orchestrator?.activeEffectIcon      = nil
+        orchestrator?.activeEffectName        = nil
+        orchestrator?.activeEffectIcon        = nil
         orchestrator?.activeEffectIsAppDriven = false
     }
 
