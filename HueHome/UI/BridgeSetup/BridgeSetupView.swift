@@ -350,7 +350,7 @@ struct BridgeSetupView: View {
                 Text("You're all set!")
                     .font(.system(size: 28, weight: .bold))
                     .foregroundStyle(.white)
-                Text("ChromaForge is paired with your bridge and ready to go.")
+                Text("CastChroma is paired with your bridge and ready to go.")
                     .font(.system(size: 15))
                     .foregroundStyle(.white.opacity(0.55))
                     .multilineTextAlignment(.center)

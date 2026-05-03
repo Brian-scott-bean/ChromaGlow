@@ -51,7 +51,7 @@ final class AutomationScheduler {
             let trigger      = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
 
             let content      = UNMutableNotificationContent()
-            content.title    = automation.name.isEmpty ? "ChromaForge" : automation.name
+            content.title    = automation.name.isEmpty ? "CastChroma" : automation.name
             content.body     = "Tap to apply \(automation.action.displayName)"
             content.sound    = .default
             content.categoryIdentifier = Self.categoryID
