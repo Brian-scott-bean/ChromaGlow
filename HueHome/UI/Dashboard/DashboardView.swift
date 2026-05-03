@@ -49,6 +49,8 @@ struct DashboardView: View {
     @State private var roomForMenu:    RoomDisplayItem? = nil
     /// true = the tapped card is from the Zones section (affects action sheet labels).
     @State private var isZoneMenu:     Bool             = false
+    /// Drives the confirmationDialog — set true when roomForMenu is assigned.
+    @State private var showRoomMenu:   Bool             = false
     /// Set to true once the user picks "Edit" from the action sheet.
     @State private var showEditSheet:  Bool             = false
 
@@ -107,10 +109,7 @@ struct DashboardView: View {
         // ── Room / Zone CRUD: action sheet triggered by the ··· button ─────────
         .confirmationDialog(
             roomForMenu.map { (isZoneMenu ? "Zone: " : "Room: ") + $0.name } ?? "",
-            isPresented: Binding(
-                get: { roomForMenu != nil && !showEditSheet },
-                set: { if !$0 { roomForMenu = nil } }
-            ),
+            isPresented: $showRoomMenu,
             titleVisibility: .visible
         ) {
             Button(isZoneMenu ? "Edit Zone" : "Edit Room") {
@@ -130,7 +129,7 @@ struct DashboardView: View {
             Button("Cancel", role: .cancel) { roomForMenu = nil }
         }
         // ── Edit Room / Zone sheet ─────────────────────────────────────────────
-        .sheet(isPresented: $showEditSheet, onDismiss: { roomForMenu = nil }) {
+        .sheet(isPresented: $showEditSheet, onDismiss: { roomForMenu = nil; showRoomMenu = false }) {
             if let item = roomForMenu {
                 EditRoomSheet(room: item, isZone: isZoneMenu) { newName, newArchetype in
                     Task {
@@ -232,8 +231,9 @@ struct DashboardView: View {
                                 orchestrator.setBrightness(newBrightness, for: room)
                             },
                             onEllipsisTap: {
-                                roomForMenu = room
-                                isZoneMenu  = false
+                                roomForMenu  = room
+                                isZoneMenu   = false
+                                showRoomMenu = true
                             }
                         )
                         .transition(.asymmetric(
@@ -266,8 +266,9 @@ struct DashboardView: View {
                                         orchestrator.setBrightness(newBrightness, for: zone)
                                     },
                                     onEllipsisTap: {
-                                        roomForMenu = zone
-                                        isZoneMenu  = true
+                                        roomForMenu  = zone
+                                        isZoneMenu   = true
+                                        showRoomMenu = true
                                     }
                                 )
                                 .transition(.asymmetric(
