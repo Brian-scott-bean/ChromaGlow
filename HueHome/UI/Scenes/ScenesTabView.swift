@@ -25,8 +25,9 @@ struct ScenesTabView: View {
     @State private var showSettings                      = false
 
     // Scene CRUD
-    @State private var sceneToDelete:  GlobalSceneItem? = nil   // triggers delete alert
-    @State private var sceneToRename:  GlobalSceneItem? = nil   // triggers rename sheet
+    @State private var sceneToDelete:  GlobalSceneItem? = nil
+    @State private var showDeleteAlert = false
+    @State private var sceneToRename:  GlobalSceneItem? = nil
     @State private var renameText:     String           = ""
     @State private var showCreateScene = false
 
@@ -103,18 +104,19 @@ struct ScenesTabView: View {
                 Task { await orchestrator.renameGlobalScene(scene, to: newName) }
             }
         }
-        .alert("Delete \"\(sceneToDelete?.name ?? "Scene\")\"",
-               isPresented: .init(
-                   get: { sceneToDelete != nil },
-                   set: { if !$0 { sceneToDelete = nil } }
-               )) {
-            Button("Delete", role: .destructive) {
-                if let s = sceneToDelete { orchestrator.deleteGlobalScene(s) }
-                sceneToDelete = nil
+        // Delete confirmation — uses presenting: so the scene name is always available
+        .alert("Delete Scene", isPresented: $showDeleteAlert, presenting: sceneToDelete) { scene in
+            Button("Delete \"\(scene.name)\"", role: .destructive) {
+                orchestrator.deleteGlobalScene(scene)
+                sceneToDelete  = nil
+                showDeleteAlert = false
             }
-            Button("Cancel", role: .cancel) { sceneToDelete = nil }
-        } message: {
-            Text("This scene will be permanently removed from your bridge.")
+            Button("Cancel", role: .cancel) {
+                sceneToDelete  = nil
+                showDeleteAlert = false
+            }
+        } message: { scene in
+            Text("\"\(scene.name)\" will be permanently removed from your bridge.")
         }
         .toolbar { toolbarItems }
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search scenes or rooms")
@@ -224,7 +226,8 @@ struct ScenesTabView: View {
                             }
                             Divider()
                             Button(role: .destructive) {
-                                sceneToDelete = scene
+                                sceneToDelete  = scene
+                                showDeleteAlert = true
                             } label: {
                                 Label("Delete Scene", systemImage: "trash")
                             }

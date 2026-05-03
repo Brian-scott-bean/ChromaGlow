@@ -153,7 +153,8 @@ struct HueTabBar: View {
                 )
         }
         .padding(.horizontal, HueSpacing.xl)
-        .padding(.bottom, HueSpacing.lg)
+        .padding(.bottom, 8)           // closer to home indicator — less overlap with cards
+        .contentShape(Rectangle())     // entire bar frame absorbs taps; nothing bleeds through
     }
 }
 

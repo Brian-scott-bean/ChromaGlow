@@ -129,6 +129,13 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private var widgetWriteTask: Task<Void, Never>?
 
+    /// Debounced post-action state refresh.
+    /// Any successful state-change (toggle, brightness, scene) schedules a 1.5 s
+    /// delayed loadAll() so colors and aggregate brightness always reflect the
+    /// bridge's confirmed state — SSE is the primary path but this is a reliable net.
+    @ObservationIgnored
+    private var pendingStateRefreshTask: Task<Void, Never>?
+
     /// One shared URL session for all SSE streams.
     /// Created lazily so the cert delegate is retained for the orchestrator's lifetime.
     /// NOT recreated on reconnect — reusing a session avoids resource leaks.
@@ -579,6 +586,7 @@ final class UnifiedOrchestrator {
         Task {
             do {
                 try await client.setGroupedLight(id: glID, on: desiredState)
+                scheduleStateRefresh()   // re-sync colors + confirmed state from bridge
             } catch {
                 // Rollback: revert to the opposite of what we tried
                 updateRoom(item.id, isOn: !desiredState)
@@ -604,10 +612,23 @@ final class UnifiedOrchestrator {
             do {
                 // Single PUT: on=true + brightness together — no "flash" at old brightness
                 try await client.setGroupedLightState(id: glID, on: true, brightness: clamped)
+                scheduleStateRefresh()   // re-sync colors + confirmed state from bridge
             } catch {
                 updateRoom(item.id, isOn: item.isOn, brightness: item.brightness)
                 log.error("Brightness failed for room \(item.id): \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Schedules a full state refresh 1.5 s after the last successful state change.
+    /// Debounced: rapid interactions (e.g. brightness slider) produce exactly one reload.
+    /// This ensures dominant colors and confirmed bridge state always match the cards.
+    private func scheduleStateRefresh() {
+        pendingStateRefreshTask?.cancel()
+        pendingStateRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled, let self else { return }
+            await self.loadAll()
         }
     }
 
