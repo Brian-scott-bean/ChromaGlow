@@ -24,10 +24,13 @@ struct ScenesTabView: View {
     @State private var speedSheetScene: GlobalSceneItem? = nil   // non-nil = sheet open
     @State private var showSettings                      = false
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 14),
-        GridItem(.flexible(), spacing: 14),
-    ]
+    @AppStorage("castchroma.useWideCards") private var useWideCards = false
+
+    private var gridColumns: [GridItem] {
+        useWideCards
+            ? [GridItem(.flexible())]
+            : [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+    }
 
     // ── Derived data ──────────────────────────────────────
 
@@ -167,7 +170,7 @@ struct ScenesTabView: View {
                 .padding(.bottom, 14)
 
                 // Scene mood grid
-                LazyVGrid(columns: columns, spacing: 14) {
+                LazyVGrid(columns: gridColumns, spacing: 14) {
                     ForEach(filteredScenes) { scene in
                         SceneMoodCard(
                             scene: scene,
@@ -202,7 +205,7 @@ struct ScenesTabView: View {
 
     private var loadingGrid: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 14) {
+            LazyVGrid(columns: gridColumns, spacing: 14) {
                 ForEach(0..<8, id: \.self) { _ in
                     SceneShimmerCard()
                 }
@@ -287,6 +290,15 @@ struct ScenesTabView: View {
             Button { showSettings = true } label: {
                 Image(systemName: "gear")
                     .foregroundStyle(.white.opacity(0.8))
+            }
+        }
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { useWideCards.toggle() }
+                HapticManager.shared.light()
+            } label: {
+                Image(systemName: useWideCards ? "rectangle.grid.1x2.fill" : "square.grid.2x2")
+                    .foregroundStyle(.white.opacity(0.7))
             }
         }
         ToolbarItem(placement: .navigationBarTrailing) {

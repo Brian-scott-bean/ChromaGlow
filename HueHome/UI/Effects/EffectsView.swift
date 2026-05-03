@@ -20,6 +20,13 @@ struct EffectsView: View {
     private let pink   = Color(red: 1.0,  green: 0.30, blue: 0.55)
 
     @State private var showSettings = false
+    @AppStorage("castchroma.useWideCards") private var useWideCards = false
+
+    private var gridColumns: [GridItem] {
+        useWideCards
+            ? [GridItem(.flexible())]
+            : [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+    }
 
     // Room list from orchestrator for the top selector
     private var rooms: [RoomDisplayItem] { orchestrator.allRooms }
@@ -235,8 +242,7 @@ struct EffectsView: View {
     // MARK: - Effect Grid
 
     private var effectGrid: some View {
-        let cols = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
-        return LazyVGrid(columns: cols, spacing: 14) {
+        return LazyVGrid(columns: gridColumns, spacing: 14) {
             ForEach(vm.filteredEffects) { effect in
                 EffectCard(effect: effect,
                            isSelected: vm.selectedEffect?.id == effect.id,
@@ -305,6 +311,15 @@ struct EffectsView: View {
             Button { showSettings = true } label: {
                 Image(systemName: "gear")
                     .foregroundStyle(.white.opacity(0.8))
+            }
+        }
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { useWideCards.toggle() }
+                HapticManager.shared.light()
+            } label: {
+                Image(systemName: useWideCards ? "rectangle.grid.1x2.fill" : "square.grid.2x2")
+                    .foregroundStyle(.white.opacity(0.7))
             }
         }
         ToolbarItem(placement: .navigationBarTrailing) {

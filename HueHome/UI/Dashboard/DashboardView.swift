@@ -24,7 +24,16 @@ struct DashboardView: View {
     @Environment(\.scenePhase)           private var scenePhase
     @Environment(\.horizontalSizeClass)  private var sizeClass
     /// Persist zones section open/closed state across launches.
-    @AppStorage("dashboard.zonesExpanded") private var zonesExpanded: Bool = true
+    @AppStorage("dashboard.zonesExpanded")  private var zonesExpanded: Bool  = true
+    @AppStorage("castchroma.useWideCards")  private var useWideCards: Bool   = false
+
+    /// Switches between 1-col (full-width) and 2-col (compact) layout.
+    private var gridColumns: [GridItem] {
+        useWideCards
+            ? [GridItem(.flexible())]
+            : [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+    }
+
     @State private var presetToast:         String?  = nil
     @State private var activePreset:        String?  = nil
     @State private var currentHour:         Int      = Calendar.current.component(.hour, from: Date())
@@ -152,10 +161,8 @@ struct DashboardView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                // 2-column grid on all devices — matches Effects and Scenes pages.
-                let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
-
-                LazyVGrid(columns: columns, spacing: 14) {
+                // Room grid — 1-col (wide) or 2-col (compact) based on user preference.
+                LazyVGrid(columns: gridColumns, spacing: 14) {
                     ForEach(orchestrator.allRooms, id: \.id) { room in
                         RoomCard(
                             room: room,
@@ -185,8 +192,7 @@ struct DashboardView: View {
                         .padding(.bottom, 8)
 
                     if zonesExpanded {
-                        let zoneCols = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
-                        LazyVGrid(columns: zoneCols, spacing: 14) {
+                        LazyVGrid(columns: gridColumns, spacing: 14) {
                             ForEach(orchestrator.allZones, id: \.id) { zone in
                                 RoomCard(
                                     room: zone,
@@ -570,7 +576,18 @@ struct DashboardView: View {
             }
         }
         ToolbarItem(placement: .navigationBarTrailing) {
-            // All Off button — only shows when at least one room is on
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    useWideCards.toggle()
+                }
+                HapticManager.shared.light()
+            } label: {
+                Image(systemName: useWideCards ? "rectangle.grid.1x2.fill" : "square.grid.2x2")
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+        }
+        ToolbarItem(placement: .navigationBarTrailing) {
+            // All Off button—only shows when at least one room is on
             if orchestrator.allRooms.contains(where: { $0.isOn }) {
                 Button {
                     turnAllOff()
