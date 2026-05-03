@@ -62,6 +62,13 @@ final class EffectsViewModel: ObservableObject {
     private var reactivationTask: Task<Void, Never>?   = nil
     /// Prevents Combine sinks from being re-registered on every onAppear (tab switch).
     private var isConfigured      = false
+    /// True while activate() is running — prevents syncWithOrchestrator() from
+    /// clearing selectedEffect during the stop→apply cycle inside activate().
+    private var isActivating      = false
+    /// When set, activate() targets this room instead of selectedRoom.
+    /// Used by applyToAllRooms() so it can reuse the full activate() code path
+    /// without mutating the @Published selectedRoom (which would fire the Combine sink).
+    private var activeRoomOverride: RoomDisplayItem? = nil
 
     /// When true, the $paramState debounce sink will NOT call activate().
     /// Set during room-switch param restoration to prevent the restored state
@@ -130,6 +137,16 @@ final class EffectsViewModel: ObservableObject {
                 if let roomID = newRoom?.id,
                    let entry   = self.orchestrator?.activeEffectEntries.first(where: { $0.id == roomID }),
                    let effect   = EffectLibrary.all.first(where: { $0.id == entry.effectID }) {
+                    // Specific room has an active effect — restore its card selection.
+                    self.selectedEffect = effect
+                    var restored = EffectParamState()
+                    restored.load(from: effect.params)
+                    self.paramState = restored
+                } else if newRoom == nil,
+                          let entry = self.orchestrator?.activeEffectEntries.last,
+                          let effect = EffectLibrary.all.first(where: { $0.id == entry.effectID }) {
+                    // "All Rooms" selected — show the most recently applied effect as selected
+                    // so the user can see what's running across all rooms.
                     self.selectedEffect = effect
                     var restored = EffectParamState()
                     restored.load(from: effect.params)
@@ -206,10 +223,18 @@ final class EffectsViewModel: ObservableObject {
             return
         }
 
-        guard let room = selectedRoom, let groupedLightID = room.groupedLightID else {
-            showStatus("⚠ Select a room first")
+        // Resolve the target room: explicit override > current selection > All Rooms
+        let effectiveRoom = activeRoomOverride ?? selectedRoom
+        guard let room = effectiveRoom, let groupedLightID = room.groupedLightID else {
+            // selectedRoom == nil means "All Rooms" chip — apply to each room in sequence
+            await applyToAllRooms(effect: effect)
             return
         }
+
+        // Mark as activating so syncWithOrchestrator() doesn't clear the card
+        // during the stop → apply cycle (stop() removes the entry, apply re-adds it).
+        isActivating = true
+        defer { isActivating = false }
 
         await stop()
 
@@ -407,6 +432,9 @@ final class EffectsViewModel: ObservableObject {
     /// (e.g. via the Stop button on the home page).
     @MainActor
     func syncWithOrchestrator(entries: [ActiveEffectEntry]) {
+        // Never clear the card while activate() is mid-cycle (stop removes the entry,
+        // then setNowPlaying re-adds it; clearing here would deselect the card).
+        guard !isActivating else { return }
         guard let roomID = selectedRoom?.id,
               selectedEffect != nil,
               !entries.contains(where: { $0.id == roomID })
@@ -420,7 +448,10 @@ final class EffectsViewModel: ObservableObject {
 
     @MainActor
     private func setNowPlaying(_ effect: HueEffect) {
-        guard let orchestrator, let room = selectedRoom else { return }
+        guard let orchestrator else { return }
+        // Use override room when apply-to-all loops over rooms without publishing a room change
+        let room = activeRoomOverride ?? selectedRoom
+        guard let room else { return }
         orchestrator.addActiveEffect(ActiveEffectEntry(
             id:             room.id,
             roomName:       room.name,
@@ -430,6 +461,26 @@ final class EffectsViewModel: ObservableObject {
             effectIcon:     effect.icon,
             isAppDriven:    effect.requiresForeground
         ))
+    }
+
+    /// Applies the current effect to every room that has a grouped light.
+    /// Called from activate() when selectedRoom == nil ("All Rooms" chip).
+    @MainActor
+    private func applyToAllRooms(effect: HueEffect) async {
+        guard let rooms = orchestrator?.allRooms else { return }
+        let targets = rooms.filter { $0.groupedLightID != nil }
+        guard !targets.isEmpty else {
+            showStatus("⚠ No rooms with lights found")
+            return
+        }
+        isActivating = true
+        defer { isActivating = false }
+        for room in targets {
+            activeRoomOverride = room
+            await activate()
+        }
+        activeRoomOverride = nil
+        showStatus("'\(effect.name)' applied to all rooms ✓")
     }
 
     @MainActor
