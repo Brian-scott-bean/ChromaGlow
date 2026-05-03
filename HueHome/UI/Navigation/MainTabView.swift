@@ -56,6 +56,14 @@ struct MainTabView: View {
             // and eliminates the TabView swipe-between-tabs gesture entirely.
             ForEach(HueTab.allCases, id: \.self) { tab in
                 tabContent(for: tab)
+                    // HueTabBar is a custom floating capsule in the ZStack;
+                    // the system safe area has no knowledge of it.
+                    // Declare its height here so every screen in every tab
+                    // automatically clears it — no per-screen hacks needed.
+                    // Height: icon(32) + padding.vertical(12*2) + padding.bottom(8) = 64pt
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        Color.clear.frame(height: 64)
+                    }
                     .opacity(selectedTab == tab ? 1 : 0)
                     .allowsHitTesting(selectedTab == tab)
             }
