@@ -185,6 +185,7 @@ struct CreateAutomationView: View {
                         .fill(selected ? .white.opacity(0.12) : .white.opacity(0.05)))
                     .overlay(RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(selected ? .white.opacity(0.25) : .clear, lineWidth: 1))
+                    .contentShape(RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
             }
@@ -217,6 +218,7 @@ struct CreateAutomationView: View {
                             .fill(selected ? effect.accentColor.opacity(0.15) : .white.opacity(0.05)))
                         .overlay(RoundedRectangle(cornerRadius: 12)
                             .strokeBorder(selected ? effect.accentColor.opacity(0.4) : .clear, lineWidth: 1))
+                        .contentShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
                 }

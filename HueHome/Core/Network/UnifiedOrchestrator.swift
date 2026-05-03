@@ -44,6 +44,20 @@ struct ActiveEffectEntry: Identifiable, Equatable {
     let isAppDriven: Bool         // true → engine loop must keep running
 }
 
+// MARK: - String + Hue UUID Detection
+
+private extension String {
+    /// Returns true if this string is formatted like a Hue API v2 UUID
+    /// (8-4-4-4-12 hex, e.g. "004289e5-0e84-4a7a-b194-3c4ccf89e2a1").
+    /// Third-party apps sometimes store the internal UUID as the scene name.
+    var isHueUUID: Bool {
+        let pattern = #"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"#
+        return range(of: pattern, options: .regularExpression) != nil
+    }
+    /// Returns a friendly fallback if this string is a raw UUID, otherwise self.
+    var sanitizedSceneName: String { isHueUUID ? "Untitled Scene" : self }
+}
+
 // MARK: - UnifiedOrchestrator
 
 @Observable
@@ -713,6 +727,56 @@ final class UnifiedOrchestrator {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Automation Effect Execution
+    // ──────────────────────────────────────────────
+
+    /// Applies a bridge-native HueEffect to every room on every bridge.
+    /// Called by AppRootView when an automation notification fires with actionType == "effect".
+    func applyAutomationEffect(id effectID: String) async {
+        guard let effect = EffectLibrary.all.first(where: { $0.id == effectID }) else {
+            log.warning("applyAutomationEffect: unknown effect '\(effectID)'")
+            return
+        }
+        log.info("Automation executing effect '\(effect.name)' on all rooms")
+
+        await withTaskGroup(of: Void.self) { group in
+            for (bridgeID, roomItems) in roomsByBridge {
+                guard let client = clients[bridgeID] else { continue }
+                for room in roomItems {
+                    guard let glID = room.groupedLightID else { continue }
+                    group.addTask {
+                        // Fetch individual light IDs so we can apply per-light native effects
+                        let lightIDs = (try? await client.fetchLightIDsForGroup(groupedLightID: glID)) ?? []
+                        if lightIDs.isEmpty {
+                            // Fallback: turn on via grouped light at comfortable brightness
+                            try? await client.setGroupedLightEffect(
+                                id: glID, on: true, brightness: 70, xy: nil, mirek: nil, duration: 400
+                            )
+                        } else {
+                            // Apply native effect per light (bridgeNative strategy)
+                            if case .bridgeNative(let effectName) = effect.strategy {
+                                await withTaskGroup(of: Void.self) { inner in
+                                    for lightID in lightIDs {
+                                        inner.addTask {
+                                            try? await client.setLightNativeEffect(id: lightID, effect: effectName)
+                                        }
+                                    }
+                                }
+                            } else {
+                                // oneShot / gradual: apply as brightness+CT preset
+                                try? await client.setGroupedLightEffect(
+                                    id: glID, on: true, brightness: 70, xy: nil, mirek: 300, duration: 400
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        log.info("Automation effect '\(effect.name)' applied to \(self.allRooms.count) rooms")
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Cross-Bridge "All Off"
     // ──────────────────────────────────────────────
 
@@ -1206,7 +1270,7 @@ final class UnifiedOrchestrator {
                         GlobalSceneItem(
                             id:            "\(bridgeID):\(scene.id)",
                             bridgeSceneID: scene.id,
-                            name:          scene.metadata.name,
+                            name:          scene.metadata.name.sanitizedSceneName,
                             roomID:        scene.group.rid,
                             bridgeID:      bridgeID,
                             isActive:      scene.status?.active == "active"

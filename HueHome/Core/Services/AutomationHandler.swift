@@ -80,20 +80,33 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     // MARK: - Private
 
     private func handle(userInfo: [AnyHashable: Any]) {
-        guard let presetID = userInfo["presetID"] as? String, !presetID.isEmpty else {
-            // TODO: handle effectID when effect scheduling is added
-            return
-        }
-        // 1. Store for cold-start / post-loadAll pickup
-        UserDefaults.standard.set(presetID, forKey: "pendingAutomationPresetID")
+        let actionType = userInfo["actionType"] as? String ?? "preset"
+        let presetID   = userInfo["presetID"]   as? String ?? ""
+        let effectID   = userInfo["effectID"]   as? String ?? ""
 
-        // 2. Post immediately — AppRootView will receive this if the app is already running
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(
-                name: .automationShouldExecute,
-                object: nil,
-                userInfo: ["presetID": presetID]
-            )
+        if actionType == "effect", !effectID.isEmpty {
+            // ── Effect action ──────────────────────────────────────────
+            // Store for cold-start pickup after loadAll() completes
+            UserDefaults.standard.set(effectID, forKey: "pendingAutomationEffectID")
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .automationShouldExecute,
+                    object: nil,
+                    userInfo: ["effectID": effectID, "actionType": "effect"]
+                )
+            }
+        } else if !presetID.isEmpty {
+            // ── Preset action ──────────────────────────────────────────
+            UserDefaults.standard.set(presetID, forKey: "pendingAutomationPresetID")
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .automationShouldExecute,
+                    object: nil,
+                    userInfo: ["presetID": presetID, "actionType": "preset"]
+                )
+            }
+        } else {
+            log.warning("handle(userInfo:): no valid preset or effect ID found — skipping")
         }
     }
 }

@@ -83,12 +83,21 @@ struct AppRootView: View {
                                 UserDefaults.standard.removeObject(forKey: "pendingAutomationPresetID")
                                 await orchestrator.applyAutomationPreset(id: presetID)
                             }
+                            if let effectID = UserDefaults.standard.string(forKey: "pendingAutomationEffectID") {
+                                UserDefaults.standard.removeObject(forKey: "pendingAutomationEffectID")
+                                await orchestrator.applyAutomationEffect(id: effectID)
+                            }
                         }
                     }
                     // ── Foreground automation (notification arrived while app was open) ──
                     .onReceive(NotificationCenter.default.publisher(for: .automationShouldExecute)) { note in
-                        guard let presetID = note.userInfo?["presetID"] as? String else { return }
-                        Task { await orchestrator.applyAutomationPreset(id: presetID) }
+                        let actionType = note.userInfo?["actionType"] as? String ?? "preset"
+                        if actionType == "effect",
+                           let effectID = note.userInfo?["effectID"] as? String {
+                            Task { await orchestrator.applyAutomationEffect(id: effectID) }
+                        } else if let presetID = note.userInfo?["presetID"] as? String {
+                            Task { await orchestrator.applyAutomationPreset(id: presetID) }
+                        }
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .hueBridgeUnpaired)) { _ in
                         orchestrator.stopSSE()

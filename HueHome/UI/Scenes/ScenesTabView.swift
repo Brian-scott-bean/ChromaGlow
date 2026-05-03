@@ -42,7 +42,7 @@ struct ScenesTabView: View {
     // ── Derived data ──────────────────────────────────────
 
     private func roomName(for scene: GlobalSceneItem) -> String {
-        orchestrator.allRooms.first(where: { $0.id == scene.roomID })?.name ?? "Unknown"
+        orchestrator.allRooms.first(where: { $0.id == scene.roomID })?.name ?? "Other"
     }
 
     private func roomArchetype(for roomID: String) -> String? {

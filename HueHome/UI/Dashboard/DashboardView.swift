@@ -1140,13 +1140,16 @@ struct NextAutomationBanner: View {
     let icon:     String
     let fireDate: Date
 
+    // Ticks every second so the countdown is live while the view is visible
+    @State private var now: Date = Date()
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
     private var timeLabel: String {
         let fmt = RelativeDateTimeFormatter()
         fmt.unitsStyle = .abbreviated
-        let rel = fmt.localizedString(for: fireDate, relativeTo: Date())
+        let rel = fmt.localizedString(for: fireDate, relativeTo: now)
         let abs = fireDate.formatted(date: .omitted, time: .shortened)
-        // Show "in 3h" if < 6 hours away, otherwise show clock time
-        let interval = fireDate.timeIntervalSince(Date())
+        let interval = fireDate.timeIntervalSince(now)
         return interval < 6 * 3600 ? rel : abs
     }
 
@@ -1191,5 +1194,6 @@ struct NextAutomationBanner: View {
                         .strokeBorder(.white.opacity(0.08), lineWidth: 1)
                 )
         )
+        .onReceive(ticker) { now = $0 }
     }
 }
