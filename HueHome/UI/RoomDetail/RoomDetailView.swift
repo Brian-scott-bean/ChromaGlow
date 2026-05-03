@@ -40,18 +40,6 @@ struct RoomDetailView: View {
                     lightScrollView
                 }
             }
-
-            // BulkActionBar — slides up from bottom in select mode
-            if vm.isSelecting {
-                VStack {
-                    Spacer()
-                    BulkActionBar(vm: vm) { showBulkScene = true }
-                        .padding(.bottom, 12)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-                .zIndex(5)
-                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: vm.isSelecting)
-            }
         }
         .navigationTitle(room.name)
         .navigationBarTitleDisplayMode(.large)
@@ -170,8 +158,15 @@ struct RoomDetailView: View {
                         ))
                     }
                 }
-                .padding(.bottom, vm.isSelecting ? 120 : 32)  // extra room for action bar
-                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: vm.lights.count)
+        }
+        // BulkActionBar sits in the safe area inset — automatically positioned
+        // above the tab bar + home indicator, and adjusts scroll content so
+        // no lights are ever hidden behind the bar.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if vm.isSelecting {
+                BulkActionBar(vm: vm) { showBulkScene = true }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.spring(response: 0.35, dampingFraction: 0.75), value: vm.isSelecting)
             }
         }
         .navigationDestination(for: LightDisplayItem.self) { light in
