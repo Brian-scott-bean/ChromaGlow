@@ -44,16 +44,6 @@ struct DashboardView: View {
     @State private var currentHour:         Int      = Calendar.current.component(.hour, from: Date())
     @State private var allOffWorking:       Bool     = false
 
-    // ── Room / Zone CRUD ──────────────────────────────────────────────────────
-    /// The room or zone whose ··· button was most recently tapped.
-    @State private var roomForMenu:    RoomDisplayItem? = nil
-    /// true = the tapped card is from the Zones section (affects action sheet labels).
-    @State private var isZoneMenu:     Bool             = false
-    /// Drives the confirmationDialog — set true when roomForMenu is assigned.
-    @State private var showRoomMenu:   Bool             = false
-    /// Set to true once the user picks "Edit" from the action sheet.
-    @State private var showEditSheet:  Bool             = false
-
     private let clockTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
 
@@ -104,42 +94,6 @@ struct DashboardView: View {
         .fullScreenCover(isPresented: $showSettings) {
             NavigationStack {
                 SettingsView(onForget: { showSettings = false })
-            }
-        }
-        // ── Room / Zone CRUD: action sheet triggered by the ··· button ─────────
-        .confirmationDialog(
-            roomForMenu.map { (isZoneMenu ? "Zone: " : "Room: ") + $0.name } ?? "",
-            isPresented: $showRoomMenu,
-            titleVisibility: .visible
-        ) {
-            Button(isZoneMenu ? "Edit Zone" : "Edit Room") {
-                showEditSheet = true
-            }
-            Button(isZoneMenu ? "Delete Zone" : "Delete Room", role: .destructive) {
-                guard let item = roomForMenu else { return }
-                Task {
-                    if isZoneMenu {
-                        await orchestrator.deleteZone(item)
-                    } else {
-                        await orchestrator.deleteRoom(item)
-                    }
-                }
-                roomForMenu = nil
-            }
-            Button("Cancel", role: .cancel) { roomForMenu = nil }
-        }
-        // ── Edit Room / Zone sheet ─────────────────────────────────────────────
-        .sheet(isPresented: $showEditSheet, onDismiss: { roomForMenu = nil; showRoomMenu = false }) {
-            if let item = roomForMenu {
-                EditRoomSheet(room: item, isZone: isZoneMenu) { newName, newArchetype in
-                    Task {
-                        if isZoneMenu {
-                            await orchestrator.renameZone(item, name: newName, archetype: newArchetype)
-                        } else {
-                            await orchestrator.renameRoom(item, name: newName, archetype: newArchetype)
-                        }
-                    }
-                }
             }
         }
         .onReceive(clockTimer) { _ in
@@ -229,11 +183,6 @@ struct DashboardView: View {
                             },
                             onBrightness: { newBrightness in
                                 orchestrator.setBrightness(newBrightness, for: room)
-                            },
-                            onEllipsisTap: {
-                                roomForMenu  = room
-                                isZoneMenu   = false
-                                showRoomMenu = true
                             }
                         )
                         .transition(.asymmetric(
@@ -264,11 +213,6 @@ struct DashboardView: View {
                                     },
                                     onBrightness: { newBrightness in
                                         orchestrator.setBrightness(newBrightness, for: zone)
-                                    },
-                                    onEllipsisTap: {
-                                        roomForMenu  = zone
-                                        isZoneMenu   = true
-                                        showRoomMenu = true
                                     }
                                 )
                                 .transition(.asymmetric(

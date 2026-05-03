@@ -18,7 +18,13 @@ struct RoomDetailView: View {
     @State private var showBulkScene     = false   // CreateSceneView from BulkActionBar
     @State private var sceneToRename:    SceneDisplayItem? = nil
     @State private var sceneRenameDraft: String = ""
+
+    // ── Room / Zone CRUD ──────────────────────────────────────────────────────
+    @State private var showRoomMenu  = false   // drives the ··· confirmationDialog
+    @State private var showEditSheet = false   // drives the EditRoomSheet
+
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Environment(\.dismiss)               private var dismiss
 
     init(room: RoomDisplayItem) {
         self.room = room
@@ -77,6 +83,39 @@ struct RoomDetailView: View {
                 if success { vm.exitSelectMode() }
                 return success
             }
+        }
+        // ── Edit Room / Zone sheet ─────────────────────────────────────────────
+        .sheet(isPresented: $showEditSheet) {
+            EditRoomSheet(room: room, isZone: room.kind == .zone) { newName, newArchetype in
+                Task {
+                    if room.kind == .zone {
+                        await orchestrator.renameZone(room, name: newName, archetype: newArchetype)
+                    } else {
+                        await orchestrator.renameRoom(room, name: newName, archetype: newArchetype)
+                    }
+                }
+            }
+        }
+        // ── Room / Zone CRUD action sheet (··· button) ───────────────────────────
+        .confirmationDialog(
+            room.kind == .zone ? "Zone: \(room.name)" : "Room: \(room.name)",
+            isPresented: $showRoomMenu,
+            titleVisibility: .visible
+        ) {
+            Button(room.kind == .zone ? "Edit Zone" : "Edit Room") {
+                showEditSheet = true
+            }
+            Button(room.kind == .zone ? "Delete Zone" : "Delete Room", role: .destructive) {
+                Task {
+                    if room.kind == .zone {
+                        await orchestrator.deleteZone(room)
+                    } else {
+                        await orchestrator.deleteRoom(room)
+                    }
+                    await MainActor.run { dismiss() }   // pop back to dashboard
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
         .alert("Rename Scene", isPresented: Binding(
             get: { sceneToRename != nil },
@@ -281,6 +320,20 @@ struct RoomDetailView: View {
 
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
+        // ··· (more) button — Edit / Delete room or zone
+        // Hidden during multi-select so it doesn't compete with Select/Done.
+        ToolbarItem(placement: .navigationBarTrailing) {
+            if !vm.isSelecting {
+                Button {
+                    showRoomMenu = true
+                    HapticManager.shared.light()
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+            }
+        }
         ToolbarItem(placement: .navigationBarTrailing) {
             Button { showLog.toggle() } label: {
                 Image(systemName: "terminal")
