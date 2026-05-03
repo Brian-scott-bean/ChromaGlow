@@ -132,35 +132,27 @@ struct DashboardView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                // Adaptive layout: 1-column on iPhone, 2-column grid on iPad.
-                // LazyVGrid with a single flexible column is functionally identical to
-                // LazyVStack but lets us switch columns without restructuring the ForEach.
-                let columns: [GridItem] = sizeClass == .regular
-                    ? [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
-                    : [GridItem(.flexible())]
+                // 2-column grid on all devices — matches Effects and Scenes pages.
+                let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
                 LazyVGrid(columns: columns, spacing: 14) {
                     ForEach(orchestrator.allRooms, id: \.id) { room in
                         RoomCard(
                             room: room,
                             onToggle: { desiredOn in
-                                // desiredOn is passed from RoomCard's localIsOn (post-flip),
-                                // avoiding stale room.isOn captured from ForEach closure.
                                 orchestrator.setRoom(room, isOn: desiredOn)
                             },
                             onBrightness: { newBrightness in
-                                // Fires once at drag END — not during drag.
                                 orchestrator.setBrightness(newBrightness, for: room)
                             }
                         )
-                        .padding(.horizontal, sizeClass == .regular ? 0 : 20)
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .bottom)),
                             removal:   .opacity
                         ))
                     }
                 }
-                .padding(.horizontal, sizeClass == .regular ? 20 : 0)
+                .padding(.horizontal, 20)
                 .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allRooms.count)
 
                 // ── Zones section ─────────────────────────────────────────────
@@ -173,7 +165,8 @@ struct DashboardView: View {
                         .padding(.bottom, 8)
 
                     if zonesExpanded {
-                        LazyVGrid(columns: columns, spacing: 14) {
+                        let zoneCols = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+                        LazyVGrid(columns: zoneCols, spacing: 14) {
                             ForEach(orchestrator.allZones, id: \.id) { zone in
                                 RoomCard(
                                     room: zone,
@@ -184,14 +177,13 @@ struct DashboardView: View {
                                         orchestrator.setBrightness(newBrightness, for: zone)
                                     }
                                 )
-                                .padding(.horizontal, sizeClass == .regular ? 0 : 20)
                                 .transition(.asymmetric(
                                     insertion: .opacity.combined(with: .move(edge: .bottom)),
                                     removal:   .opacity
                                 ))
                             }
                         }
-                        .padding(.horizontal, sizeClass == .regular ? 20 : 0)
+                        .padding(.horizontal, 20)
                         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allZones.count)
                     }
                 }
