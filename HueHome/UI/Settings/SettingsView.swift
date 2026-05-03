@@ -241,6 +241,25 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
                 .padding(.vertical, 2)
+
+                Divider().background(Color.white.opacity(0.08))
+
+                // ── Forget All Bridges (destructive) ─────────────────────
+                Button {
+                    showForgetAlert = true
+                } label: {
+                    HStack(spacing: 12) {
+                        iconCircle("minus.circle.fill", color: .red)
+                        Text("Forget All Bridges")
+                            .font(.subheadline)
+                            .foregroundStyle(.red)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.red.opacity(0.45))
+                    }
+                }
+                .buttonStyle(.plain)
             }
         }
     }
