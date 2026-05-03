@@ -95,6 +95,21 @@ The app uses a custom glassmorphic tab bar in a ZStack. Global `.safeAreaInset(e
 
 ## Version History
 
+### v0.10.0-room-restructure *(2026-05-03)*
+- **P1 Room Detail Restructuring — COMPLETE**
+- **Room Brightness Header:** Full-width room-level brightness slider + power toggle via grouped_light API. Shows "X of Y on" status.
+- **Horizontal Light Strip:** Lights now display in a horizontal scroll strip of compact cards (~110pt wide). Tap → LightControlView, long-press → multi-select mode. Replaced the vertical LazyVStack list.
+- **Room-Scoped Automations:** Bridge automations filtered to this room (matches room ID, child resource IDs, and light IDs in automation configuration). Toggle on/off with optimistic update.
+- **+ Toolbar Button:** New nav bar `+` button shows action sheet → "New Scene" / "New Automation".
+- **Select/Done** moved from toolbar to LIGHTS section header (declutters nav bar).
+- **CompactLightCard component:** New reusable card struct for horizontal layout — icon, name, brightness%, power button, glow sync.
+- **RoomDetailViewModel additions:** `loadRoomState()`, `toggleRoom(on:)`, `setRoomBrightness(_:)`, `loadAutomations()`, `toggleAutomation(_:)`, `roomBrightness`, `roomIsOn`, `automations` properties.
+- No new files — zero `project.pbxproj` changes.
+
+### v0.9.7-room-crud
+- Room + Zone rename, archetype picker, delete
+- Room CRUD flows via ··· button + action sheets
+
 ### v0.9.6-ui-polish *(current)*
 - Room & Zone CRUD: rename + archetype picker + delete
 - UX: `···` button moved to RoomDetailView nav bar (top-right)
@@ -122,14 +137,22 @@ The app uses a custom glassmorphic tab bar in a ZStack. Global `.safeAreaInset(e
 
 ---
 
-## Current Roadmap
+## Current Roadmap (updated 2026-05-03 post-feature review)
 
-### Priority 1 — Room Detail Restructuring *(next)*
-- Layout: Scenes (grid) → Lights (horizontal strip) → Automations (per-room)
+### Priority 1 — Room Detail Restructuring ✅ *(done — v0.10.0)*
+- Layout: Scenes (horizontal strip) → Lights (horizontal strip) → Automations (per-room)
 - Per-room brightness slider in detail header
-- `+` button in nav bar for adding scenes/lights
+- `+` button in nav bar for adding scenes/automations
+- Haptic feedback on brightness sliders (already had since v0.9.x)
 
-### Priority 2 — Sync Mode (replaces Mic Mode tab)
+### Priority 2 — Scene Color Builder *(upgraded)*
+Absorbs **XY Pad** + **Harmonic Color Scaling** from feature review.
+- **2D XY Color Pad** — drag puck across CIE xy / HSB field for per-light color assignment (replaces separate sliders)
+- **Harmonic Color Scaling** — pick root color + harmony rule (complementary, triad, analogous, split-comp, tetradic); system derives colors for all lights in room. Root hue slider rotates entire palette in harmonic sync.
+- Per-light assignment: tap light in horizontal strip → set its color via XY pad or harmony
+- Save as scene via existing `CreateSceneView`
+
+### Priority 3 — Sync Mode (replaces Mic Mode tab)
 
 **Phase 1 — Pure Signal Processing** (no external AI/API)
 | Engine | Tech | Description |
@@ -169,13 +192,15 @@ SyncModeView
 - NEW: `SyncModeView.swift`
 - NEW: `SyncModeRuleEngine.swift`
 
-### Priority 3 — Scene Color Builder
-- Per-light orbital color picker
-- Assign individual CIE xy colors to each light in a room
-- Save as scene via existing `CreateSceneView`
-
 ### Priority 4 — Settings Expansion
 - Account / Homes / Devices / App Preferences / Widgets / About sections
+
+### Priority 5 — Animated Scenes *(new — from feature review)*
+Builds on P2 Scene Color Builder. Scenes become timelines, not snapshots.
+- **LFO Modulators** — assign waveform (sine, square, saw) to brightness/color per light; configurable rate (0.1–2Hz) + depth. Room "breathes" on sine, pulses on square.
+- **Temporal Playhead** — scene = keyframe sequence over time; scrubber UI to drag through timeline, loop a section. Start with 2–3 keyframe transitions (e.g. sunrise over 30 min).
+- Rate-limited to 10Hz (Hue bridge spec). Sine works smooth; fast square will be steppy — acceptable tradeoff.
+- Full DAW-style scrubber is a v1.1 premium feature; P5 scope = basic keyframes + single LFO per light.
 
 ### Parking Lot
 - Spotify SDK track-reactive sync
@@ -183,6 +208,7 @@ SyncModeView
 - Siri Shortcuts
 - Bridge automation CRUD (PUT endpoint)
 - Notification history log
+- ~~Webhook event listeners~~ — rejected: iOS background limits kill local HTTP servers; Siri Shortcuts serves same "external trigger" need natively
 
 ---
 

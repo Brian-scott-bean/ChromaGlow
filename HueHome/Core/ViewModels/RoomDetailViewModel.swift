@@ -16,6 +16,7 @@ final class RoomDetailViewModel {
     // MARK: State
     var lights:  [LightDisplayItem] = []
     var scenes:  [SceneDisplayItem] = []
+    var automations: [AutomationDisplayItem] = []
     /// ID of scene currently being activated — drives spinner on RoomSceneChip.
     var activatingSceneID: String? = nil
     var isLoading: Bool = false
@@ -23,6 +24,11 @@ final class RoomDetailViewModel {
     var logLines: [String] = []
     /// Brief error for UI toast — auto-cleared after 3 s.
     var toastMessage: String? = nil
+
+    // MARK: Room-level brightness (grouped_light)
+    /// Room-level brightness synced from grouped_light on load.
+    var roomBrightness: Double = 100
+    var roomIsOn: Bool = false
 
     // MARK: Multi-select state
     /// True while the user is in light-selection mode.
@@ -333,6 +339,168 @@ final class RoomDetailViewModel {
     /// Set brightness on all selected lights.
     func setSelectedLightsBrightness(_ pct: Double) {
         for light in selectedLights { setBrightness(pct, for: light) }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Room-Level Brightness & Toggle
+    // ──────────────────────────────────────────────
+
+    /// Load the room's grouped_light state (brightness, on/off).
+    func loadRoomState() async {
+        guard let api, let glID = room.groupedLightID else {
+            // Demo mode: derive from loaded lights
+            if isDemoMode {
+                roomIsOn = lights.contains { $0.isOn }
+                let onLights = lights.filter { $0.isOn }
+                roomBrightness = onLights.isEmpty ? 50 : onLights.map(\.brightness).reduce(0, +) / Double(onLights.count)
+            }
+            return
+        }
+        do {
+            let gl = try await api.fetchGroupedLight(id: glID)
+            roomIsOn = gl.on.on
+            roomBrightness = gl.dimming?.brightness ?? 100
+        } catch {
+            appendLog("⚠️ Failed to load grouped_light state: \(error.localizedDescription)")
+        }
+    }
+
+    /// Toggle all lights in the room on or off.
+    func toggleRoom(on: Bool) {
+        roomIsOn = on
+        appendLog("🔄 Room '\(room.name)' → \(on ? "ON" : "OFF")")
+        if isDemoMode {
+            lights = lights.map { var l = $0; l.isOn = on; return l }
+            return
+        }
+        guard let api, let glID = room.groupedLightID else { return }
+        Task {
+            do {
+                try await api.setGroupedLight(id: glID, on: on)
+                appendLog("✅ Room '\(room.name)' → \(on ? "ON" : "OFF")")
+            } catch {
+                appendLog("❌ Room toggle failed: \(error.localizedDescription)")
+                roomIsOn = !on
+                showToast("Couldn't reach bridge — room reverted")
+            }
+        }
+    }
+
+    /// Set room-level brightness for all lights.
+    func setRoomBrightness(_ brightness: Double) {
+        let clamped = min(100, max(1, brightness))
+        let previous = roomBrightness
+        roomBrightness = clamped
+        roomIsOn = true
+        appendLog("🌓 Room '\(room.name)' brightness → \(Int(clamped))%")
+        if isDemoMode {
+            lights = lights.map { var l = $0; l.isOn = true; l.brightness = clamped; return l }
+            return
+        }
+        guard let api, let glID = room.groupedLightID else { return }
+        Task {
+            do {
+                try await api.setGroupedLightState(id: glID, on: true, brightness: clamped)
+                appendLog("✅ Room brightness set to \(Int(clamped))%")
+            } catch {
+                appendLog("❌ Room brightness failed: \(error.localizedDescription)")
+                roomBrightness = previous
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Automations (room-scoped)
+    // ──────────────────────────────────────────────
+
+    /// Fetch bridge automations and filter to those referencing this room's ID or
+    /// its member light/scene IDs. Uses raw JSON parsing since the behavior_instance
+    /// configuration shape varies by script type.
+    func loadAutomations() async {
+        guard let api else {
+            if isDemoMode {
+                appendLog("✦ Demo: no room-level automations in demo mode")
+            }
+            return
+        }
+        let bridgeID = room.bridgeID ?? "unknown"
+        appendLog("⚡ Fetching room automations for '\(room.name)'…")
+        do {
+            let raw = try await api.fetchAutomationsRaw()
+            guard let json = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
+                  let dataArr = json["data"] as? [[String: Any]] else {
+                appendLog("⚠️ Unexpected automation response shape")
+                return
+            }
+
+            // Build a set of IDs that belong to this room: room ID + all light IDs
+            var roomRelatedIDs: Set<String> = [room.id]
+            for ref in room.childResourceRefs {
+                roomRelatedIDs.insert(ref.rid)
+            }
+            for light in lights {
+                roomRelatedIDs.insert(light.id)
+            }
+
+            // Filter: serialize each item's configuration to string and check
+            // if any room-related IDs appear in it.
+            let matched = dataArr.compactMap { item -> AutomationDisplayItem? in
+                guard let id = item["id"] as? String,
+                      let enabled = item["enabled"] as? Bool else { return nil }
+
+                let itemJSON = (try? JSONSerialization.data(withJSONObject: item))
+                    .flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                let isRoomRelated = roomRelatedIDs.contains { itemJSON.contains($0) }
+                guard isRoomRelated else { return nil }
+
+                let meta = item["metadata"] as? [String: Any]
+                let name = meta?["name"] as? String ?? "Unnamed Automation"
+                let scriptID = item["script_id"] as? String
+                let statusD = item["status"] as? [String: Any]
+                let action = statusD?["action"] as? String
+
+                return AutomationDisplayItem(
+                    id: "\(bridgeID):\(id)",
+                    name: name,
+                    enabled: enabled,
+                    category: .from(scriptID: scriptID),
+                    status: action,
+                    bridgeAutomationID: id,
+                    bridgeID: bridgeID
+                )
+            }
+
+            automations = matched.sorted { $0.name < $1.name }
+            appendLog("✅ \(automations.count) automation(s) matched for '\(room.name)'")
+        } catch {
+            appendLog("⚠️ Automations load failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Toggle a room-scoped automation on/off with optimistic update.
+    func toggleAutomation(_ item: AutomationDisplayItem) {
+        let newEnabled = !item.enabled
+        automations = automations.map { a in
+            var c = a; if c.id == item.id { c.enabled = newEnabled }; return c
+        }
+        appendLog("\(newEnabled ? "✅" : "⏸") '\(item.name)' → \(newEnabled ? "enabled" : "disabled")")
+
+        guard !isDemoMode else { return }
+        guard let api, let rawID = item.bridgeAutomationID else {
+            appendLog("⚠️ No bridge client for '\(item.name)'")
+            return
+        }
+        Task {
+            do {
+                try await api.setAutomation(id: rawID, enabled: newEnabled)
+            } catch {
+                appendLog("❌ Toggle failed: \(error.localizedDescription)")
+                automations = automations.map { a in
+                    var c = a; if c.id == item.id { c.enabled = !newEnabled }; return c
+                }
+                showToast("Couldn't toggle '\(item.name)'")
+            }
+        }
     }
 
     // ──────────────────────────────────────────────

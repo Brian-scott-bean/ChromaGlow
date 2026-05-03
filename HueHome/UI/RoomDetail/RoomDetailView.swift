@@ -16,6 +16,8 @@ struct RoomDetailView: View {
     @State private var showLog           = false
     @State private var showCreateScene   = false
     @State private var showBulkScene     = false   // CreateSceneView from BulkActionBar
+    @State private var showAddMenu       = false   // + button menu
+    @State private var showCreateAutomation = false
     @State private var sceneToRename:    SceneDisplayItem? = nil
     @State private var sceneRenameDraft: String = ""
 
@@ -135,6 +137,14 @@ struct RoomDetailView: View {
                 Text("Enter a new name for \"\(scene.name)\"")
             }
         }
+        .sheet(isPresented: $showCreateAutomation) {
+            CreateAutomationView()
+        }
+        .confirmationDialog("Add", isPresented: $showAddMenu) {
+            Button("New Scene") { showCreateScene = true }
+            Button("New Automation") { showCreateAutomation = true }
+            Button("Cancel", role: .cancel) {}
+        }
         .task {
             // Re-build vm with the right bridge client now that orchestrator is available.
             // This replaces the placeholder vm created in init() with one that has correct credentials.
@@ -152,10 +162,13 @@ struct RoomDetailView: View {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask { await vm.loadLights() }
                 group.addTask { await vm.loadScenes() }
+                group.addTask { await vm.loadAutomations() }
                 // Subscribe to orchestrator's event bus instead of opening a new SSE
                 // connection — eliminates dual-SSE stream to the same bridge.
                 group.addTask { await vm.runSSE(eventStream: orchestrator.subscribeToLightEvents()) }
             }
+            // Load room-level state after lights are loaded (needs light data for demo fallback)
+            await vm.loadRoomState()
         }
         .preferredColorScheme(.dark)
         .overlay(alignment: .top) {
@@ -184,45 +197,33 @@ struct RoomDetailView: View {
     private var lightScrollView: some View {
         ScrollView {
             VStack(spacing: 0) {
-                summaryHeader
+                // ── Room Brightness Header ──
+                roomBrightnessHeader
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 20)
 
-                // ── Scene strip (always shown when lights are loaded) ──
+                // ── SCENES section ──
                 if !vm.scenes.isEmpty || !vm.lights.isEmpty {
                     scenesStrip
-                        .padding(.bottom, 20)
+                        .padding(.bottom, 24)
                 }
 
-                LazyVStack(spacing: 14) {
-                    ForEach(vm.lights, id: \.id) { light in
-                        let isSelected = vm.selectedLightIDs.contains(light.id)
-                        LightCard(
-                            light:          light,
-                            isSelecting:    vm.isSelecting,
-                            isSelected:     isSelected,
-                            onToggle:       { desiredOn in vm.setLight(light, isOn: desiredOn) },
-                            onBrightness:   { brightness in vm.setBrightness(brightness, for: light) },
-                            onToggleSelect: { vm.toggleSelection(id: light.id) },
-                            onLongPress:    { vm.enterSelectMode(preselecting: light.id) }
-                        )
-                        .padding(.horizontal, 20)
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .move(edge: .bottom)),
-                            removal: .opacity
-                        ))
-                    }
+                // ── LIGHTS section (horizontal scroll strip) ──
+                lightsSection
+                    .padding(.bottom, 24)
+
+                // ── AUTOMATIONS section (room-scoped) ──
+                if !vm.automations.isEmpty {
+                    automationsSection
+                        .padding(.bottom, 32)
                 }
-                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: vm.lights.count)
-                .padding(.bottom, 32)
             }   // VStack
         }       // ScrollView
         .navigationDestination(for: LightDisplayItem.self) { light in
             if let binding = vm.lightBinding(for: light) {
                 LightControlView(
                     light: binding,
-                    // Read binding.wrappedValue at call time — never a stale snapshot.
                     onToggle:     { desiredOn in vm.setLight(binding.wrappedValue, isOn: desiredOn) },
                     onBrightness: { vm.setBrightness($0, for: binding.wrappedValue) },
                     onColor:      { x, y in vm.setColor(x: x, y: y, for: binding.wrappedValue) },
@@ -230,8 +231,60 @@ struct RoomDetailView: View {
                 )
             }
         }
-        .refreshable { await vm.loadLights() }
+        .refreshable {
+            await vm.loadLights()
+            await vm.loadRoomState()
+            await vm.loadAutomations()
+        }
         .scrollIndicators(.hidden)
+    }
+
+    // ── Lights Section (horizontal strip) ─────────
+
+    private var lightsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "lightbulb.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
+                    Text("LIGHTS")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.45))
+                    Text("(\(vm.lights.count))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.25))
+                }
+                Spacer()
+                // Select / Done button for multi-select mode
+                Button(vm.isSelecting ? "Done" : "Select") {
+                    if vm.isSelecting { vm.exitSelectMode() } else { vm.enterSelectMode() }
+                }
+                .font(.system(size: 12, weight: vm.isSelecting ? .semibold : .regular))
+                .foregroundStyle(vm.isSelecting
+                                 ? Color(red: 1.0, green: 0.76, blue: 0.20)
+                                 : .white.opacity(0.5))
+            }
+            .padding(.horizontal, 20)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(vm.lights, id: \.id) { light in
+                        let isSelected = vm.selectedLightIDs.contains(light.id)
+                        CompactLightCard(
+                            light:          light,
+                            isSelecting:    vm.isSelecting,
+                            isSelected:     isSelected,
+                            onToggle:       { desiredOn in vm.setLight(light, isOn: desiredOn) },
+                            onToggleSelect: { vm.toggleSelection(id: light.id) },
+                            onLongPress:    { vm.enterSelectMode(preselecting: light.id) }
+                        )
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 2)
+            }
+        }
     }
 
     // ── Scene Strip ───────────────────────────────
@@ -290,27 +343,127 @@ struct RoomDetailView: View {
         }
     }
 
-    // ── Summary Header ────────────────────────────
+    // ── Room Brightness Header (replaces summaryHeader) ───────────
 
-    private var summaryHeader: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                let onCount = vm.lights.filter { $0.isOn }.count
-                Text(onCount == 0
-                     ? "All lights off"
-                     : "\(onCount) of \(vm.lights.count) on")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.9))
-                Text("\(vm.lights.count) bulb\(vm.lights.count == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.45))
+    private var roomBrightnessHeader: some View {
+        VStack(spacing: 14) {
+            // Status + room toggle
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    let onCount = vm.lights.filter { $0.isOn }.count
+                    Text(onCount == 0
+                         ? "All lights off"
+                         : "\(onCount) of \(vm.lights.count) on")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                    Text("\(vm.lights.count) bulb\(vm.lights.count == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+                Spacer()
+                // Room-level power button
+                Button {
+                    HapticManager.shared.medium()
+                    vm.toggleRoom(on: !vm.roomIsOn)
+                } label: {
+                    Image(systemName: vm.roomIsOn ? "power.circle.fill" : "power.circle")
+                        .font(.system(size: 28))
+                        .foregroundStyle(vm.roomIsOn
+                                         ? Color(red: 1.0, green: 0.76, blue: 0.20)
+                                         : .white.opacity(0.35))
+                        .symbolEffect(.bounce, value: vm.roomIsOn)
+                }
+                .buttonStyle(.plain)
             }
-            Spacer()
-            let anyOn = vm.lights.contains { $0.isOn }
-            Circle()
-                .fill(anyOn ? Color.yellow : Color.white.opacity(0.2))
-                .frame(width: 9, height: 9)
-                .shadow(color: anyOn ? .yellow.opacity(0.9) : .clear, radius: 8)
+
+            // Room-level brightness slider
+            if vm.roomIsOn {
+                BrightnessRow(
+                    brightness: vm.roomBrightness,
+                    glowColor: Color(red: 1.0, green: 0.76, blue: 0.20),
+                    onCommit: { vm.setRoomBrightness($0) }
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(vm.roomIsOn
+                      ? Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.10)
+                      : Color.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18)
+                        .strokeBorder(
+                            vm.roomIsOn
+                                ? Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.40)
+                                : Color.white.opacity(0.08),
+                            lineWidth: vm.roomIsOn ? 1.5 : 1
+                        )
+                )
+        )
+        .shadow(color: vm.roomIsOn
+                ? Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.20)
+                : .clear,
+                radius: 12, x: 0, y: 4)
+        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: vm.roomIsOn)
+    }
+
+    // ── Automations Section (room-scoped) ─────────
+
+    private var automationsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.55, green: 0.35, blue: 1.00))
+                Text("AUTOMATIONS")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+                Text("(\(vm.automations.count))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.25))
+            }
+            .padding(.horizontal, 20)
+
+            VStack(spacing: 0) {
+                ForEach(Array(vm.automations.enumerated()), id: \.element.id) { idx, item in
+                    AutomationRow(
+                        item: item,
+                        iconColor: automationIconColor(item.category)
+                    ) {
+                        vm.toggleAutomation(item)
+                    }
+                    .padding(.horizontal, 16)
+
+                    if idx < vm.automations.count - 1 {
+                        Divider()
+                            .background(Color.white.opacity(0.07))
+                            .padding(.horizontal, 16)
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Color.white.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18)
+                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
+            .padding(.horizontal, 20)
+        }
+    }
+
+    private func automationIconColor(_ category: AutomationDisplayItem.AutomationCategory) -> Color {
+        switch category.color {
+        case "orange":  return .orange
+        case "indigo":  return .indigo
+        case "yellow":  return Color(red: 1.0, green: 0.76, blue: 0.20)
+        case "blue":    return Color(red: 0.4, green: 0.6, blue: 1.0)
+        case "teal":    return .teal
+        case "purple":  return Color(red: 0.55, green: 0.35, blue: 1.00)
+        default:        return Color(red: 1.0, green: 0.76, blue: 0.20)
         }
     }
 
@@ -320,6 +473,19 @@ struct RoomDetailView: View {
 
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
+        // + button — New Scene / New Automation
+        ToolbarItem(placement: .navigationBarTrailing) {
+            if !vm.isSelecting {
+                Button {
+                    showAddMenu = true
+                    HapticManager.shared.light()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.85))
+                }
+            }
+        }
         // ··· (more) button — Edit / Delete room or zone
         // Hidden during multi-select so it doesn't compete with Select/Done.
         ToolbarItem(placement: .navigationBarTrailing) {
@@ -348,16 +514,6 @@ struct RoomDetailView: View {
                     Image(systemName: "arrow.clockwise").foregroundStyle(.white.opacity(0.7))
                 }
             }
-        }
-        // Select / Done button
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Button(vm.isSelecting ? "Done" : "Select") {
-                if vm.isSelecting { vm.exitSelectMode() } else { vm.enterSelectMode() }
-            }
-            .font(.system(size: 14, weight: vm.isSelecting ? .semibold : .regular))
-            .foregroundStyle(vm.isSelecting
-                             ? Color(red: 1.0, green: 0.76, blue: 0.20)
-                             : .white.opacity(0.7))
         }
     }
 
@@ -576,6 +732,134 @@ struct LightCard: View {
     }
 }
 
+// MARK: - CompactLightCard
+//
+// Narrower card for the horizontal lights strip.
+// Shows: icon circle + name + brightness% + power button.
+// Tap = NavigationLink to LightControlView; long-press = enter select mode.
+
+struct CompactLightCard: View {
+
+    let light:          LightDisplayItem
+    let isSelecting:    Bool
+    let isSelected:     Bool
+    let onToggle:       (Bool)   -> Void
+    let onToggleSelect: ()       -> Void
+    let onLongPress:    ()       -> Void
+
+    @State private var localIsOn:      Bool
+    @State private var localGlowColor: Color
+
+    init(
+        light:          LightDisplayItem,
+        isSelecting:    Bool             = false,
+        isSelected:     Bool             = false,
+        onToggle:       @escaping (Bool)   -> Void,
+        onToggleSelect: @escaping ()       -> Void = {},
+        onLongPress:    @escaping ()       -> Void = {}
+    ) {
+        self.light          = light
+        self.isSelecting    = isSelecting
+        self.isSelected     = isSelected
+        self.onToggle       = onToggle
+        self.onToggleSelect = onToggleSelect
+        self.onLongPress    = onLongPress
+        _localIsOn          = State(initialValue: light.isOn)
+        _localGlowColor     = State(initialValue: LightCard.resolveGlowColor(for: light))
+    }
+
+    var body: some View {
+        let content = VStack(spacing: 8) {
+            // Icon circle
+            ZStack {
+                Circle()
+                    .fill(localIsOn ? localGlowColor.opacity(0.22) : Color.white.opacity(0.07))
+                    .frame(width: 44, height: 44)
+                Image(systemName: archetypeIcon(for: light.archetype))
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.4))
+                    .symbolEffect(.bounce, value: localIsOn)
+            }
+
+            // Name
+            Text(light.name)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Brightness / Off label
+            Text(localIsOn ? "\(Int(light.brightness))%" : "Off")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(localIsOn ? localGlowColor.opacity(0.8) : .white.opacity(0.40))
+
+            // Power button
+            Button {
+                HapticManager.shared.light()
+                localIsOn.toggle()
+                onToggle(localIsOn)
+            } label: {
+                Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
+                    .symbolEffect(.bounce, value: localIsOn)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(width: 110)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 8)
+        .background {
+            RoundedRectangle(cornerRadius: 18)
+                .fill(localIsOn ? localGlowColor.opacity(0.10) : Color.white.opacity(0.06))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(
+                    isSelecting && isSelected
+                        ? localGlowColor.opacity(0.70)
+                        : localIsOn
+                            ? localGlowColor.opacity(0.40)
+                            : Color.white.opacity(0.08),
+                    lineWidth: isSelecting && isSelected ? 2 : (localIsOn ? 1.5 : 1)
+                )
+        }
+        .shadow(
+            color: localIsOn ? localGlowColor.opacity(0.25) : .clear,
+            radius: 10, x: 0, y: 4
+        )
+
+        // Wrap in NavigationLink or Button depending on mode
+        Group {
+            if isSelecting {
+                Button { onToggleSelect() } label: { content }
+                    .buttonStyle(.plain)
+            } else {
+                NavigationLink(value: light) { content }
+                    .buttonStyle(.plain)
+                    .onLongPressGesture(minimumDuration: 0.45) { onLongPress() }
+            }
+        }
+        .opacity(isSelecting ? (isSelected ? 1.0 : 0.58) : (localIsOn ? 1.0 : 0.72))
+        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: localIsOn)
+        .animation(.spring(response: 0.3), value: isSelecting)
+        .animation(.spring(response: 0.25), value: isSelected)
+        .onChange(of: light.isOn) { _, confirmed in
+            if localIsOn != confirmed {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) { localIsOn = confirmed }
+            }
+        }
+        .onChange(of: light.colorX) { _, _ in
+            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = LightCard.resolveGlowColor(for: light) }
+        }
+        .onChange(of: light.colorTempMirek) { _, _ in
+            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = LightCard.resolveGlowColor(for: light) }
+        }
+    }
+}
 
 
 // MARK: - Ambient Background (isolated — zero @Observable dependencies)
