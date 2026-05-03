@@ -9,6 +9,10 @@ import WatchConnectivity
 @main
 struct HueHomeApp: App {
 
+    // Register AppDelegate so UNUserNotificationCenterDelegate is set at launch.
+    // Required for automation notifications to actually execute light changes.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         // Activate WCSession early so the first room write can push to watch
         _ = WatchSessionManager.shared
@@ -66,17 +70,25 @@ struct AppRootView: View {
                 MainTabView()
                     .task {
                         if isDemoMode {
-                            // Demo: just load mock data, no real network
                             orchestrator.enterDemoMode()
                         } else {
                             orchestrator.configure(bridges: bridges, modelContext: modelContext)
-                            // Show cached rooms instantly (including groupedLightID) so
-                            // toggles work before the first network fetch completes.
                             let cachedRooms = (try? modelContext.fetch(FetchDescriptor<HueLocalRoom>())) ?? []
                             orchestrator.preloadCached(from: cachedRooms)
                             await orchestrator.loadAll(cacheContext: modelContext)
                             orchestrator.startSSE()
+
+                            // ── Pending automation (cold-start: user tapped notification) ──
+                            if let presetID = UserDefaults.standard.string(forKey: "pendingAutomationPresetID") {
+                                UserDefaults.standard.removeObject(forKey: "pendingAutomationPresetID")
+                                await orchestrator.applyAutomationPreset(id: presetID)
+                            }
                         }
+                    }
+                    // ── Foreground automation (notification arrived while app was open) ──
+                    .onReceive(NotificationCenter.default.publisher(for: .automationShouldExecute)) { note in
+                        guard let presetID = note.userInfo?["presetID"] as? String else { return }
+                        Task { await orchestrator.applyAutomationPreset(id: presetID) }
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .hueBridgeUnpaired)) { _ in
                         orchestrator.stopSSE()

@@ -601,6 +601,51 @@ final class UnifiedOrchestrator {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Automation Execution
+    // ──────────────────────────────────────────────
+
+    /// Apply a named preset to ALL rooms across ALL bridges.
+    /// Called by AppRootView when an automation notification fires (foreground or tap).
+    /// Uses the same concurrent per-bridge task group pattern as turnAllOff().
+    func applyAutomationPreset(id: String) async {
+        guard let preset = AutomationPreset.find(id) else {
+            log.warning("applyAutomationPreset: unknown preset '\(id)'")
+            return
+        }
+        log.info("Automation executing preset '\(preset.id)' — brightness=\(preset.brightness) mirek=\(preset.mirek)")
+
+        // Optimistic update so cards reflect the change instantly
+        allRooms = allRooms.map { room in
+            var r = room
+            r.isOn       = true
+            r.brightness = preset.brightness
+            r.dominantMirek  = preset.mirek
+            r.dominantColorX = nil
+            r.dominantColorY = nil
+            return r
+        }
+        rebuildAllRooms()
+
+        await withTaskGroup(of: Void.self) { group in
+            for (bridgeID, roomItems) in roomsByBridge {
+                guard let client = clients[bridgeID] else { continue }
+                for room in roomItems {
+                    guard let glID = room.groupedLightID else { continue }
+                    group.addTask {
+                        try? await client.setGroupedLightState(
+                            id:         glID,
+                            on:         true,
+                            brightness: preset.brightness,
+                            mirek:      preset.mirek
+                        )
+                    }
+                }
+            }
+        }
+        log.info("Automation preset '\(preset.id)' applied to \(self.allRooms.count) rooms")
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Cross-Bridge "All Off"
     // ──────────────────────────────────────────────
 
