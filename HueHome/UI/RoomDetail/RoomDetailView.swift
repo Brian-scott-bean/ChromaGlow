@@ -142,7 +142,7 @@ struct RoomDetailView: View {
         }
         .confirmationDialog("Add", isPresented: $showAddMenu) {
             Button("New Scene") { showCreateScene = true }
-            Button("New Automation") { showCreateAutomation = true }
+            Button("New Schedule") { showCreateAutomation = true }
             Button("Cancel", role: .cancel) {}
         }
         .task {

@@ -81,7 +81,9 @@ struct SceneDisplayItem: Identifiable, Hashable {
         return "wand.and.stars"
     }
 
-    static func == (lhs: SceneDisplayItem, rhs: SceneDisplayItem) -> Bool { lhs.id == rhs.id }
+    static func == (lhs: SceneDisplayItem, rhs: SceneDisplayItem) -> Bool {
+        lhs.id == rhs.id && lhs.isActive == rhs.isActive && lhs.name == rhs.name
+    }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 

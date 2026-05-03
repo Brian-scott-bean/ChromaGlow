@@ -210,9 +210,6 @@ struct AutomationsView: View {
     }
 
     private func appAutomationRow(_ automation: AppAutomation) -> some View {
-        // Toggle lives in an overlay OUTSIDE the contextMenu container.
-        // UISwitch has internal gesture recognisers that compete with the long-press
-        // that drives .contextMenu — separating the layers eliminates that conflict.
         HStack(spacing: 14) {
             ZStack {
                 Circle()
@@ -239,21 +236,20 @@ struct AutomationsView: View {
 
             Spacer()
 
-            // Reserve space so content doesn't shift when overlay Toggle renders
-            Color.clear.frame(width: 51, height: 31)
-        }
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .opacity(automation.isEnabled ? 1.0 : 0.7)
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.5)
-                .onEnded { _ in
-                    HapticManager.shared.medium()
-                    longPressedSchedule = automation
-                }
-        )
-        .overlay(alignment: .trailing) {
-            // Toggle sits above the contextMenu layer — handles taps independently
+            // ··· button — Edit / Delete
+            Button {
+                HapticManager.shared.light()
+                longPressedSchedule = automation
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.40))
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // Toggle — enable/disable
             Toggle("", isOn: Binding(
                 get:  { automation.isEnabled },
                 set:  { enabled in
@@ -268,7 +264,11 @@ struct AutomationsView: View {
             .tint(amber)
             .labelsHidden()
             .scaleEffect(0.85)
+            .frame(width: 51)
         }
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .opacity(automation.isEnabled ? 1.0 : 0.7)
         .animation(.spring(response: 0.3), value: automation.isEnabled)
     }
 
