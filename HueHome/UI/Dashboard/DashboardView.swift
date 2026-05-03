@@ -807,12 +807,14 @@ struct RoomCard: View {
 
     init(room: RoomDisplayItem,
          onToggle: @escaping (Bool) -> Void,
-         onBrightness: @escaping (Double) -> Void) {
-        self.room         = room
-        self.onToggle     = onToggle
-        self.onBrightness = onBrightness
-        _localIsOn       = State(initialValue: room.isOn)
-        _localGlowColor  = State(initialValue: Self.resolveGlowColor(for: room))
+         onBrightness: @escaping (Double) -> Void,
+         onEllipsisTap: (() -> Void)? = nil) {
+        self.room          = room
+        self.onToggle      = onToggle
+        self.onBrightness  = onBrightness
+        self.onEllipsisTap = onEllipsisTap
+        _localIsOn         = State(initialValue: room.isOn)
+        _localGlowColor    = State(initialValue: Self.resolveGlowColor(for: room))
     }
 
     /// Resolve the room card's glow color from its dominant light state.
