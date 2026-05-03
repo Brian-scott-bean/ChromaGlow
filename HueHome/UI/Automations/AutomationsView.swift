@@ -532,9 +532,6 @@ struct AutomationRow: View {
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        // Note: tap-to-toggle removed — only the Toggle control toggles.
-        // Whole-card onTapGesture was swallowing all touches incl. long-press.
-        // Long-press Edit/Delete will be added here when bridge CRUD is built.
         .opacity(item.enabled ? 1.0 : 0.72)
         .animation(.spring(response: 0.3), value: item.enabled)
     }

@@ -90,7 +90,7 @@ struct DashboardView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbarItems }
-        .sheet(isPresented: $showSettings) {
+        .fullScreenCover(isPresented: $showSettings) {
             NavigationStack {
                 SettingsView(onForget: { showSettings = false })
             }

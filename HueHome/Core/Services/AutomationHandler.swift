@@ -40,17 +40,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         log.info("AppDelegate: registered as UNUserNotificationCenter delegate")
         return true
     }
-
-    /// Lock the entire app to portrait.
-    /// Rotating to landscape was causing NavigationStack to pop back to the root view
-    /// because SwiftUI reconstructs the window geometry on orientation change.
-    /// The UI is portrait-only by design — landscape support would require a full layout pass.
-    func application(
-        _ application: UIApplication,
-        supportedInterfaceOrientationsFor window: UIWindow?
-    ) -> UIInterfaceOrientationMask {
-        return .portrait
-    }
 }
 
 // MARK: - UNUserNotificationCenterDelegate
