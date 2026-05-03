@@ -300,10 +300,6 @@ struct ScenesTabView: View {
 
 // ══════════════════════════════════════════════════════════
 // MARK: - SceneMoodCard
-//
-// Glassmorphic mood card per scene.
-// Active scenes show a glowing accent border + pulsing dot.
-// Press animation scales down 4% for satisfying tap feedback.
 // ══════════════════════════════════════════════════════════
 
 struct SceneMoodCard: View {
@@ -311,58 +307,31 @@ struct SceneMoodCard: View {
     let scene:       GlobalSceneItem
     let roomName:    String
     let onActivate:  () -> Void
-    let onLongPress: () -> Void   // opens speed sheet (called by ⚡ SPEED badge tap)
+    let onLongPress: () -> Void
 
     var body: some View {
-        // Outer Button handles card-body tap to activate the scene.
-        // Inner Button (⚡ SPEED badge) takes priority for its own tap.
-        // ButtonStyle-based press animation yields to parent ScrollViews;
-        // the previous DragGesture(minimumDistance:0) was blocking scroll.
         Button(action: onActivate) {
             ZStack {
-                // ── Background gradient ────────────────────────
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(LinearGradient(
-                        colors: [
-                            scene.accentColor.opacity(0.38),
-                            scene.accentColor.opacity(0.14),
-                            Color(red: 0.07, green: 0.07, blue: 0.11),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint:   .bottomTrailing
-                    ))
+                    .fill(.ultraThinMaterial)
+                    .overlay(scene.accentColor.opacity(0.12))
 
-                // ── Active glow border ─────────────────────────
                 if scene.isActive {
                     RoundedRectangle(cornerRadius: 20)
-                        .stroke(scene.accentColor.opacity(0.75), lineWidth: 1.5)
-                        .blur(radius: 2)
+                        .stroke(scene.accentColor.opacity(0.6), lineWidth: 2)
+                } else {
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 }
 
-                // ── Glass border ───────────────────────────────
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                .white.opacity(scene.isActive ? 0.45 : 0.18),
-                                .clear,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint:   .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-
-                // ── Content ────────────────────────────────────
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .top, spacing: 4) {
                         Text(roomName)
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.50))
-                            .lineLimit(1)
+                            .foregroundStyle(.white.opacity(0.6))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
-                            .background(Capsule().fill(Color.white.opacity(0.09)))
+                            .background(Capsule().fill(Color.white.opacity(0.1)))
 
                         Spacer()
 
