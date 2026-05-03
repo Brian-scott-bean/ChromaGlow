@@ -22,6 +22,15 @@ struct EffectsView: View {
     @State private var showSettings = false
     @AppStorage("castchroma.useWideCards") private var useWideCards = false
 
+    // Saved presets CRUD
+    @ObservedObject private var presetsStore  = EffectPresetsStore.shared
+    @State private var showSaveAlert          = false
+    @State private var presetInputName        = ""
+    @State private var presetToDelete: SavedEffectPreset? = nil
+    @State private var showDeletePresetAlert  = false
+    @State private var presetToRename: SavedEffectPreset? = nil
+    @State private var showRenamePresetAlert  = false
+
     private var gridColumns: [GridItem] {
         useWideCards
             ? [GridItem(.flexible())]
@@ -48,6 +57,13 @@ struct EffectsView: View {
                     roomSelector
                         .padding(.top, 12)
                         .padding(.bottom, 4)
+
+                    // ── My Presets ──────────────────────────────
+                    if !presetsStore.presets.isEmpty {
+                        myPresetsRow
+                            .padding(.top, 4)
+                            .padding(.bottom, 4)
+                    }
 
                     // ── Category filter ─────────────────────────
                     categoryFilter
@@ -108,6 +124,42 @@ struct EffectsView: View {
         .toolbar { stopToolbarItem }
         .sheet(isPresented: $showSettings) {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
+        }
+        // Save-as-preset alert
+        .alert("Save as Preset", isPresented: $showSaveAlert) {
+            TextField("Preset name", text: $presetInputName)
+            Button("Save") {
+                let name = presetInputName.trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty, let data = vm.buildPresetData(name: name) {
+                    presetsStore.save(data)
+                }
+                presetInputName = ""
+            }
+            Button("Cancel", role: .cancel) { presetInputName = "" }
+        } message: {
+            Text("Save your current \"\(vm.selectedEffect?.name ?? "")\" settings as a reusable preset.")
+        }
+        // Rename preset alert
+        .alert("Rename Preset", isPresented: $showRenamePresetAlert, presenting: presetToRename) { preset in
+            TextField("Name", text: $presetInputName)
+            Button("Rename") {
+                let name = presetInputName.trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { presetsStore.rename(preset, to: name) }
+                presetToRename = nil; presetInputName = ""; showRenamePresetAlert = false
+            }
+            Button("Cancel", role: .cancel) {
+                presetToRename = nil; presetInputName = ""; showRenamePresetAlert = false
+            }
+        }
+        // Delete preset alert
+        .alert("Delete Preset", isPresented: $showDeletePresetAlert, presenting: presetToDelete) { preset in
+            Button("Delete \"\(preset.name)\"", role: .destructive) {
+                presetsStore.delete(preset)
+                presetToDelete = nil; showDeletePresetAlert = false
+            }
+            Button("Cancel", role: .cancel) { presetToDelete = nil; showDeletePresetAlert = false }
+        } message: { preset in
+            Text("\"\(preset.name)\" will be removed from your saved presets.")
         }
         .preferredColorScheme(.dark)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.selectedEffect?.id)
@@ -322,6 +374,20 @@ struct EffectsView: View {
                     .foregroundStyle(.white.opacity(0.7))
             }
         }
+        // Save preset — only shown when an effect is selected & configured
+        ToolbarItem(placement: .navigationBarTrailing) {
+            if vm.selectedEffect != nil {
+                Button {
+                    presetInputName = vm.selectedEffect?.name ?? ""
+                    showSaveAlert   = true
+                    HapticManager.shared.light()
+                } label: {
+                    Image(systemName: "bookmark")
+                        .foregroundStyle(amber.opacity(0.9))
+                }
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
         ToolbarItem(placement: .navigationBarTrailing) {
             if vm.isRunning {
                 Button {
@@ -338,6 +404,74 @@ struct EffectsView: View {
             }
         }
     }
+
+    // MARK: - My Presets Row
+
+    private var myPresetsRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("MY PRESETS")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .tracking(0.8)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(presetsStore.presets) { preset in
+                        presetChip(preset)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    private func presetChip(_ preset: SavedEffectPreset) -> some View {
+        let baseEffect = EffectLibrary.all.first { $0.id == preset.baseEffectID }
+        let accentCol  = baseEffect?.accentColor ?? amber
+        return Button {
+            HapticManager.shared.medium()
+            Task { await vm.loadPreset(preset) }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: baseEffect?.icon ?? "wand.and.stars")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(accentCol)
+                Text(preset.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(
+                Capsule()
+                    .fill(.white.opacity(0.09))
+                    .overlay(Capsule().strokeBorder(accentCol.opacity(0.35), lineWidth: 1))
+            )
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                presetInputName      = preset.name
+                presetToRename       = preset
+                showRenamePresetAlert = true
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            Divider()
+            Button(role: .destructive) {
+                presetToDelete       = preset
+                showDeletePresetAlert = true
+            } label: {
+                Label("Delete Preset", systemImage: "trash")
+            }
+        }
+    }
+
 
     // MARK: - Helpers
 

@@ -349,6 +349,61 @@ final class EffectsViewModel: ObservableObject {
         orchestrator?.activeEffectIsAppDriven = false
     }
 
+    // MARK: - Saved Presets
+
+    /// Builds a SavedEffectPreset from the currently selected effect + param state.
+    /// Returns nil if no effect is selected.
+    func buildPresetData(name: String) -> SavedEffectPreset? {
+        guard let effect = selectedEffect else { return nil }
+        let encodedColors: [String: [Double]] = Dictionary(
+            uniqueKeysWithValues: paramState.colors.map { (k, v) in (k, v.hsbaComponents()) }
+        )
+        let encodedPalettes: [String: [[Double]]] = Dictionary(
+            uniqueKeysWithValues: paramState.palettes.map { (k, vs) in
+                (k, vs.map { $0.hsbaComponents() })
+            }
+        )
+        return SavedEffectPreset(
+            name:         name,
+            baseEffectID: effect.id,
+            sliders:      paramState.sliders,
+            toggles:      paramState.toggles,
+            segmented:    paramState.segmented,
+            durations:    paramState.durations,
+            colors:       encodedColors,
+            palettes:     encodedPalettes
+        )
+    }
+
+    /// Restores a saved preset: loads the base effect, replaces all param values,
+    /// and auto-applies the effect (for non-loop effects).
+    @MainActor
+    func loadPreset(_ preset: SavedEffectPreset) async {
+        guard let effect = EffectLibrary.all.first(where: { $0.id == preset.baseEffectID })
+        else { return }
+
+        select(effect)  // initialises paramState from default params
+
+        // Override with the saved snapshot
+        paramState.sliders   = preset.sliders
+        paramState.toggles   = preset.toggles
+        paramState.segmented = preset.segmented
+        paramState.durations = preset.durations
+        paramState.colors    = Dictionary(
+            uniqueKeysWithValues: preset.colors.map { (k, v) in (k, Color.fromHSBA(v)) }
+        )
+        paramState.palettes  = Dictionary(
+            uniqueKeysWithValues: preset.palettes.map { (k, vs) in
+                (k, vs.map { Color.fromHSBA($0) })
+            }
+        )
+
+        // Auto-apply immediately (same behaviour as tapping the effect card)
+        if !effect.requiresForeground {
+            await activate()
+        }
+    }
+
     // MARK: - Palette
 
     private func buildPalette() -> [(Double, Double)] {
