@@ -122,6 +122,13 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private var lightEventContinuation: AsyncStream<[SSEResourceUpdate]>.Continuation?
 
+    /// Debounced task for widget + watch writes.
+    /// Cancelled and re-scheduled on every rebuildAllRooms/Zones call so that
+    /// rapid SSE events (e.g. a dimmer ramp) only trigger ONE write 500 ms after
+    /// the last mutation instead of a write per event.
+    @ObservationIgnored
+    private var widgetWriteTask: Task<Void, Never>?
+
     /// One shared URL session for all SSE streams.
     /// Created lazily so the cert delegate is retained for the orchestrator's lifetime.
     /// NOT recreated on reconnect — reusing a session avoids resource leaks.
@@ -788,11 +795,17 @@ final class UnifiedOrchestrator {
                     guard !jsonStr.isEmpty, let data = jsonStr.data(using: .utf8) else { continue }
 
                     if let events = try? Self.sseDecoder.decode([SSEEvent].self, from: data) {
-                        var mutated = false
+                        var roomsMutated = false
+                        var zonesMutated = false
                         for event in events {
-                            if applySSEEvent(event, bridgeID: bridgeID) { mutated = true }
+                            let result = applySSEEvent(event, bridgeID: bridgeID)
+                            if result.rooms { roomsMutated = true }
+                            if result.zones { zonesMutated = true }
                         }
-                        if mutated { rebuildAllRooms(); rebuildAllZones() }
+                        // Only rebuild what actually changed — avoids a full zone
+                        // sort + filter on every brightness slider SSE event.
+                        if roomsMutated { rebuildAllRooms() }
+                        if zonesMutated { rebuildAllZones() }
                         let rawUpdates = events.flatMap { $0.data }
                         if !rawUpdates.isEmpty {
                             lightEventContinuation?.yield(rawUpdates)
@@ -813,13 +826,11 @@ final class UnifiedOrchestrator {
         }
     }
 
-    /// Returns true if any room/zone state was mutated (gates rebuildAllRooms/rebuildAllZones).
-    ///
-    /// "grouped_light" → room AND zone on/off + brightness
-    /// "light"         → room AND zone dominant color via lightIDToRoomID / lightIDToZoneID
+    /// Returns which of rooms/zones were mutated so callers can skip unnecessary rebuilds.
     @discardableResult
-    func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> Bool {
-        var mutated = false
+    func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> (rooms: Bool, zones: Bool) {
+        var roomsMutated = false
+        var zonesMutated = false
         for update in event.data {
             switch update.type {
 
@@ -830,14 +841,14 @@ final class UnifiedOrchestrator {
                     if let on  = update.on?.on              { rooms[idx].isOn       = on  }
                     if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
                     roomsByBridge[bridgeID] = rooms
-                    mutated = true
+                    roomsMutated = true
                 }
                 if var zones = zonesByBridge[bridgeID],
                    let idx = zones.firstIndex(where: { $0.groupedLightID == update.id }) {
                     if let on  = update.on?.on              { zones[idx].isOn       = on  }
                     if let bri = update.dimming?.brightness { zones[idx].brightness = bri }
                     zonesByBridge[bridgeID] = zones
-                    mutated = true
+                    zonesMutated = true
                 }
 
             // ── light (dominant color) ─────────────────────────────────────────
@@ -912,29 +923,10 @@ final class UnifiedOrchestrator {
             .flatMap { $0 }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
             .filter { seen.insert($0.id).inserted }
-
-        let snapshots = allRooms.map { r in
-            WidgetRoomSnapshot(
-                id:             r.id,
-                name:           r.name,
-                archetype:      r.archetype,
-                isOn:           r.isOn,
-                brightness:     r.brightness,
-                lightCount:     r.lightCount,
-                groupedLightId: r.groupedLightID
-            )
-        }
-        WidgetDataStore.shared.write(rooms: snapshots)
-        // Push rooms + latest zones to Apple Watch via WatchConnectivity
-        if let ip    = WidgetDataStore.shared.bridgeIP,
-           let token = WidgetDataStore.shared.token {
-            let zoneSnapshots = allZones.map { z in
-                WidgetRoomSnapshot(id: z.id, name: z.name, archetype: z.archetype,
-                                   isOn: z.isOn, brightness: z.brightness,
-                                   lightCount: z.lightCount, groupedLightId: z.groupedLightID)
-            }
-            WatchSessionManager.shared.push(rooms: snapshots, zones: zoneSnapshots, ip: ip, token: token)
-        }
+        // Widget / Watch writes are debounced — see scheduleWidgetWrite().
+        // allRooms is updated synchronously above so SwiftUI re-renders FIRST,
+        // then the disk/network side effects fire 500ms later.
+        scheduleWidgetWrite()
     }
 
     private func rebuildAllZones() {
@@ -943,20 +935,39 @@ final class UnifiedOrchestrator {
             .flatMap { $0 }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
             .filter { seen.insert($0.id).inserted }
-        // Re-push watch payload so zone changes are reflected immediately
-        if let ip    = WidgetDataStore.shared.bridgeIP,
-           let token = WidgetDataStore.shared.token {
-            let roomSnapshots = allRooms.map { r in
-                WidgetRoomSnapshot(id: r.id, name: r.name, archetype: r.archetype,
-                                   isOn: r.isOn, brightness: r.brightness,
-                                   lightCount: r.lightCount, groupedLightId: r.groupedLightID)
+        scheduleWidgetWrite()
+    }
+
+    /// Cancel-and-reschedule pattern: only fires ONE write 500 ms after the
+    /// last mutation burst, rather than one write per SSE event.
+    private func scheduleWidgetWrite() {
+        widgetWriteTask?.cancel()
+        widgetWriteTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, let self else { return }
+            let roomSnaps = self.allRooms.map { r in
+                WidgetRoomSnapshot(
+                    id:             r.id,
+                    name:           r.name,
+                    archetype:      r.archetype,
+                    isOn:           r.isOn,
+                    brightness:     r.brightness,
+                    lightCount:     r.lightCount,
+                    groupedLightId: r.groupedLightID
+                )
             }
-            let zoneSnapshots = allZones.map { z in
+            let zoneSnaps = self.allZones.map { z in
                 WidgetRoomSnapshot(id: z.id, name: z.name, archetype: z.archetype,
                                    isOn: z.isOn, brightness: z.brightness,
                                    lightCount: z.lightCount, groupedLightId: z.groupedLightID)
             }
-            WatchSessionManager.shared.push(rooms: roomSnapshots, zones: zoneSnapshots, ip: ip, token: token)
+            WidgetDataStore.shared.write(rooms: roomSnaps)
+            if let ip    = WidgetDataStore.shared.bridgeIP,
+               let token = WidgetDataStore.shared.token {
+                WatchSessionManager.shared.push(
+                    rooms: roomSnaps, zones: zoneSnaps, ip: ip, token: token
+                )
+            }
         }
     }
 

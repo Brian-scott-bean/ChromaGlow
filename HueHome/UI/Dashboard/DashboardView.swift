@@ -805,23 +805,18 @@ struct BrightnessRow: View {
     // ── Local drag state — NEVER propagated to parent during drag ─────
     @State private var localBrightness: Double
     @State private var isDragging:  Bool   = false
-    @State private var dragStart:   Double = 0
     @State private var lastNotch:   Int    = 0
-    private let sensitivity: CGFloat = 2.0
+    // NOTE: no sensitivity or dragStart — we use absolute position now.
 
     init(brightness: Double, glowColor: Color, onCommit: @escaping (Double) -> Void) {
         self.brightness = brightness
         self.glowColor  = glowColor
         self.onCommit   = onCommit
-        // Seed local state — only used while dragging; see displayValue below.
         _localBrightness = State(initialValue: brightness)
     }
 
     // Always display localBrightness — never conditionally switch back to the parent
-    // value mid-gesture. The snap-back bug was caused by setting isDragging=false
-    // in onEnded (switching display to parent's stale value) before the parent
-    // re-rendered with the committed value. onChange(of: brightness) syncs
-    // localBrightness from SSE/parent updates when finger is off the slider.
+    // value mid-gesture. .onChange(of: brightness) syncs when finger is off slider.
     private var displayValue: Double { localBrightness }
 
     var body: some View {
@@ -856,17 +851,21 @@ struct BrightnessRow: View {
                 .frame(height: 16)
                 .contentShape(Rectangle().inset(by: -8))
                 .gesture(
-                    DragGesture(minimumDistance: 4, coordinateSpace: .local)
+                    // minimumDistance:1 — starts on first movement, avoids conflict
+                    // with the parent scroll view, while still feeling instantaneous.
+                    // Absolute position: value.location.x ÷ track width → 0–100%
+                    // This means wherever the finger lands, the fill goes there.
+                    DragGesture(minimumDistance: 1, coordinateSpace: .local)
                         .onChanged { value in
                             if !isDragging {
-                                isDragging  = true
-                                dragStart   = localBrightness  // use live local value, not stale parent prop
-                                lastNotch   = Int(localBrightness / 10)
+                                isDragging = true
+                                lastNotch  = Int(localBrightness / 10)
                                 HapticManager.shared.medium()
                             }
-                            let delta  = Double(value.translation.width / sensitivity)
-                            let newVal = min(100, max(1, dragStart + delta))
-                            localBrightness = newVal   // ← pure @State, no Observable cascade
+                            // Absolute mapping — no sensitivity, no dragStart needed
+                            let rawPercent = Double(value.location.x / geo.size.width) * 100
+                            let newVal     = min(100, max(1, rawPercent))
+                            localBrightness = newVal
 
                             let notch = Int(newVal / 10)
                             if notch != lastNotch {
@@ -877,7 +876,7 @@ struct BrightnessRow: View {
                         .onEnded { _ in
                             isDragging = false
                             HapticManager.shared.heavy()
-                            onCommit(localBrightness)   // ← ONE write to orchestrator after release
+                            onCommit(localBrightness)
                         }
                 )
             }
