@@ -299,7 +299,8 @@ struct DashboardView: View {
     // MARK: - Presets Bar
 
     // Each preset gets a stable id — ready for future drag-to-reorder / add-remove customization
-    private struct LightPreset: Identifiable {
+    // NOTE: LightPreset is file-level (see bottom of file) for access by TimeSuggestionBanner
+    private typealias LightPreset = DashboardLightPreset
         let id:         String
         let name:       String
         let icon:       String
@@ -401,11 +402,7 @@ struct DashboardView: View {
     // Maps the current hour to a contextual prompt + the preset that best fits.
     // Only shown when all lights are off (avoids interrupting an active scene).
 
-    private struct TimeSuggestion {
-        let message:  String
-        let subtext:  String
-        let preset:   LightPreset
-    }
+    private typealias TimeSuggestion = DashboardTimeSuggestion
 
     private var timeSuggestion: TimeSuggestion? {
         // Don't show if any lights are already on
@@ -884,6 +881,23 @@ struct BrightnessRow: View {
 }
 
 
+// MARK: - Shared value types (file-level for cross-struct access)
+
+struct DashboardLightPreset: Identifiable {
+    let id:         String
+    let name:       String
+    let icon:       String
+    let brightness: Double
+    let mirek:      Int
+    let color:      Color
+}
+
+struct DashboardTimeSuggestion {
+    let message:  String
+    let subtext:  String
+    let preset:   DashboardLightPreset
+}
+
 // MARK: - Ambient Background (isolated View — zero @Observable dependencies)
 
 /// Renders the two blur-orb background gradient circles.
@@ -955,16 +969,7 @@ private struct DashboardAmbientBackground: View {
 
 struct TimeSuggestionBanner: View {
 
-    // Re-declare the nested type here so it's accessible as a parameter
-    struct Suggestion {
-        let message:  String
-        let subtext:  String
-        let icon:     String
-        let color:    Color
-        let label:    String  // preset button label
-    }
-
-    let suggestion: DashboardView.TimeSuggestion
+    let suggestion: DashboardTimeSuggestion
     let onTap: () -> Void
 
     var body: some View {
