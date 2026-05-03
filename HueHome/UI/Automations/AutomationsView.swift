@@ -188,6 +188,9 @@ struct AutomationsView: View {
     }
 
     private func appAutomationRow(_ automation: AppAutomation) -> some View {
+        // Toggle lives in an overlay OUTSIDE the contextMenu container.
+        // UISwitch has internal gesture recognisers that compete with the long-press
+        // that drives .contextMenu — separating the layers eliminates that conflict.
         HStack(spacing: 14) {
             ZStack {
                 Circle()
@@ -214,23 +217,11 @@ struct AutomationsView: View {
 
             Spacer()
 
-            Toggle("", isOn: Binding(
-                get:  { automation.isEnabled },
-                set:  { enabled in
-                    automation.isEnabled = enabled
-                    if enabled {
-                        AutomationScheduler.shared.schedule(automation)
-                    } else {
-                        AutomationScheduler.shared.cancel(automation)
-                    }
-                }
-            ))
-            .tint(amber)
-            .labelsHidden()
-            .scaleEffect(0.85)
+            // Reserve space so content doesn't shift when overlay Toggle renders
+            Color.clear.frame(width: 51, height: 31)
         }
         .padding(.vertical, 10)
-        .contentShape(Rectangle())          // full card area triggers contextMenu
+        .contentShape(Rectangle())
         .opacity(automation.isEnabled ? 1.0 : 0.7)
         .contextMenu {
             Button {
@@ -245,6 +236,23 @@ struct AutomationsView: View {
             } label: {
                 Label("Delete", systemImage: "trash")
             }
+        }
+        .overlay(alignment: .trailing) {
+            // Toggle sits above the contextMenu layer — handles taps independently
+            Toggle("", isOn: Binding(
+                get:  { automation.isEnabled },
+                set:  { enabled in
+                    automation.isEnabled = enabled
+                    if enabled {
+                        AutomationScheduler.shared.schedule(automation)
+                    } else {
+                        AutomationScheduler.shared.cancel(automation)
+                    }
+                }
+            ))
+            .tint(amber)
+            .labelsHidden()
+            .scaleEffect(0.85)
         }
         .animation(.spring(response: 0.3), value: automation.isEnabled)
     }
