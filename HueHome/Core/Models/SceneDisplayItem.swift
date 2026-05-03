@@ -12,7 +12,7 @@ import SwiftUI
 
 struct SceneDisplayItem: Identifiable, Hashable {
     let id: String
-    let name: String
+    var name: String     // var — allows optimistic rename via copy-mutate-assign
     var isActive: Bool
 
     // Derived from name — used for chip accent colour and icon.
