@@ -158,7 +158,10 @@ struct RoomDetailView: View {
                         ))
                     }
                 }
-        }
+                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: vm.lights.count)
+                .padding(.bottom, 32)
+            }   // VStack
+        }       // ScrollView
         // BulkActionBar sits in the safe area inset — automatically positioned
         // above the tab bar + home indicator, and adjusts scroll content so
         // no lights are ever hidden behind the bar.
