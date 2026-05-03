@@ -61,11 +61,6 @@ final class EffectsViewModel: ObservableObject {
     private var cancellables      = Set<AnyCancellable>()
     private var reactivationTask: Task<Void, Never>?   = nil
 
-    /// Tracks the last-applied effect per room so the UI can restore
-    /// per-room selection state when the user switches between rooms.
-    /// Key: RoomDisplayItem.id  Value: HueEffect.id
-    private var appliedEffectPerRoom: [String: String] = [:]
-
     /// When true, the \$paramState debounce sink will NOT call activate().
     /// Set during room-switch param restoration to prevent the restored state
     /// from being auto-applied to the incoming room.
@@ -123,8 +118,8 @@ final class EffectsViewModel: ObservableObject {
 
                 // Restore selection for the incoming room (visual only — no re-apply).
                 if let roomID = newRoom?.id,
-                   let effectID = self.appliedEffectPerRoom[roomID],
-                   let effect   = EffectLibrary.all.first(where: { $0.id == effectID }) {
+                   let entry   = self.orchestrator?.activeEffectEntries.first(where: { $0.id == roomID }),
+                   let effect   = EffectLibrary.all.first(where: { $0.id == entry.effectID }) {
                     self.selectedEffect = effect
                     var restored = EffectParamState()
                     restored.load(from: effect.params)
@@ -154,24 +149,11 @@ final class EffectsViewModel: ObservableObject {
             // App-driven: fully stop engine + remove from per-room tracking via stop()
             Task { await stop() }
         } else {
-            // Remove this room from applied-effect tracking
-            if let roomID = selectedRoom?.id {
-                appliedEffectPerRoom.removeValue(forKey: roomID)
-            }
-
+            // Remove this room's entry from the shared orchestrator state.
+            // clearNowPlaying() handles updating the bar for remaining rooms.
             selectedEffect = nil
             paramState     = EffectParamState()
-
-            // Only clear the Now Playing bar when every room is done.
-            // If another room still has an effect, keep the bar showing that effect.
-            if appliedEffectPerRoom.isEmpty {
-                clearNowPlaying()
-            } else if let (_, effectID) = appliedEffectPerRoom.first,
-                      let remaining = EffectLibrary.all.first(where: { $0.id == effectID }) {
-                orchestrator?.activeEffectName        = remaining.name
-                orchestrator?.activeEffectIcon        = remaining.icon
-                orchestrator?.activeEffectIsAppDriven = false
-            }
+            clearNowPlaying()  // removes current room; bar auto-updates from remaining entries
         }
     }
 
@@ -403,11 +385,6 @@ final class EffectsViewModel: ObservableObject {
 
     @MainActor
     func stop() async {
-        // For app-driven effects (isRunning == true), remove from room tracking
-        // so switching back to this room doesn't falsely restore the stopped effect.
-        if isRunning, let roomID = selectedRoom?.id {
-            appliedEffectPerRoom.removeValue(forKey: roomID)
-        }
         await engine.stop()
         isRunning         = false
         runningEffectName = nil
@@ -415,25 +392,43 @@ final class EffectsViewModel: ObservableObject {
         clearNowPlaying()
     }
 
+    /// Called from EffectsView's onChange(of: orchestrator.activeEffectEntries).
+    /// Clears the card selection when an effect is stopped externally
+    /// (e.g. via the Stop button on the home page).
+    @MainActor
+    func syncWithOrchestrator(entries: [ActiveEffectEntry]) {
+        guard let roomID = selectedRoom?.id,
+              selectedEffect != nil,
+              !entries.contains(where: { $0.id == roomID })
+        else { return }
+        // This room's effect was removed outside EffectsViewModel — clear the card.
+        selectedEffect = nil
+        paramState     = EffectParamState()
+    }
+
     // MARK: - Now Playing Helpers
 
     @MainActor
     private func setNowPlaying(_ effect: HueEffect) {
-        orchestrator?.activeEffectName        = effect.name
-        orchestrator?.activeEffectIcon        = effect.icon
-        orchestrator?.activeEffectIsAppDriven = effect.requiresForeground
-        // Record which effect was applied to this room so we can restore
-        // selection state when the user returns to this room later.
-        if let roomID = selectedRoom?.id {
-            appliedEffectPerRoom[roomID] = effect.id
-        }
+        guard let orchestrator, let room = selectedRoom else { return }
+        orchestrator.addActiveEffect(ActiveEffectEntry(
+            id:             room.id,
+            roomName:       room.name,
+            groupedLightID: room.groupedLightID,
+            effectID:       effect.id,
+            effectName:     effect.name,
+            effectIcon:     effect.icon,
+            isAppDriven:    effect.requiresForeground
+        ))
     }
 
     @MainActor
     private func clearNowPlaying() {
-        orchestrator?.activeEffectName        = nil
-        orchestrator?.activeEffectIcon        = nil
-        orchestrator?.activeEffectIsAppDriven = false
+        guard let roomID = selectedRoom?.id else {
+            orchestrator?.removeAllActiveEffects()
+            return
+        }
+        orchestrator?.removeActiveEffect(roomID: roomID)
     }
 
     // MARK: - Saved Presets

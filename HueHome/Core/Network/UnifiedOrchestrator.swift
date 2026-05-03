@@ -29,6 +29,21 @@ enum BridgeConnectionStatus {
     case disabled
 }
 
+// MARK: - ActiveEffectEntry
+
+/// Represents one room that currently has a Hue effect applied.
+/// Stored in UnifiedOrchestrator.activeEffectEntries so both
+/// DashboardView (menu) and EffectsViewModel (card sync) share the same state.
+struct ActiveEffectEntry: Identifiable, Equatable {
+    let id: String           // RoomDisplayItem.id (used as the stable key)
+    let roomName: String
+    let groupedLightID: String?   // needed to stop bridge-native effects
+    let effectID: String          // HueEffect.id
+    let effectName: String        // display name
+    let effectIcon: String        // SF Symbol
+    let isAppDriven: Bool         // true → engine loop must keep running
+}
+
 // MARK: - UnifiedOrchestrator
 
 @Observable
@@ -85,18 +100,36 @@ final class UnifiedOrchestrator {
     /// Populated by loadAll(); updated via rebuildAllZones().
     var allZones: [RoomDisplayItem] = []
 
-    // ── Active Effect (Now Playing) ───────────────────────────
+    // ── Active Effects (Now Playing) ─────────────────────────────────────────
+    // Each room/zone can have an independently applied effect.
+    // DashboardView reads this to build the Now Playing bar and per-room stop menu.
+    // EffectsViewModel writes to it via add/remove helpers below.
 
-    /// Name of the currently active effect, or nil if none running.
-    /// Written by EffectsViewModel; read by DashboardView's Now Playing bar.
-    var activeEffectName: String? = nil
+    /// All rooms that currently have an effect applied.
+    var activeEffectEntries: [ActiveEffectEntry] = []
 
-    /// SF Symbol icon for the active effect.
-    var activeEffectIcon: String? = nil
+    // Convenience computed properties kept for backward compatibility.
+    var activeEffectName:       String? { activeEffectEntries.last?.effectName }
+    var activeEffectIcon:       String? { activeEffectEntries.last?.effectIcon }
+    var activeEffectIsAppDriven: Bool   { activeEffectEntries.last?.isAppDriven ?? false }
 
-    /// True when the effect requires the app to stay open (appDriven).
-    /// False for bridgeNative/oneShot/gradual effects which persist on the bridge.
-    var activeEffectIsAppDriven: Bool = false
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// Records or updates a room's active effect.
+    func addActiveEffect(_ entry: ActiveEffectEntry) {
+        activeEffectEntries.removeAll { $0.id == entry.id }
+        activeEffectEntries.append(entry)
+    }
+
+    /// Removes one room's active effect entry.
+    func removeActiveEffect(roomID: String) {
+        activeEffectEntries.removeAll { $0.id == roomID }
+    }
+
+    /// Removes all active effect entries (Stop All).
+    func removeAllActiveEffects() {
+        activeEffectEntries.removeAll()
+    }
 
     // MARK: - Internal
 

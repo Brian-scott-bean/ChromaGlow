@@ -20,6 +20,7 @@ struct DashboardView: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var showLog         = false
     @State private var showSettings    = false
+    @State private var showEffectsMenu = false   // multi-effect stop dropdown
     @Environment(\.modelContext)         private var modelContext
     @Environment(\.scenePhase)           private var scenePhase
     @Environment(\.horizontalSizeClass)  private var sizeClass
@@ -242,26 +243,40 @@ struct DashboardView: View {
     // MARK: - Now Playing Bar
 
     private var nowPlayingBar: some View {
-        HStack(spacing: 12) {
+        let entries = orchestrator.activeEffectEntries
+        let first   = entries.first
+
+        return HStack(spacing: 12) {
             // Pulsing indicator dot
             Circle()
                 .fill(orchestrator.activeEffectIsAppDriven ? Color.cyan : Color.green)
                 .frame(width: 8, height: 8)
                 .overlay(
                     Circle()
-                        .fill(orchestrator.activeEffectIsAppDriven ? Color.cyan.opacity(0.35) : Color.green.opacity(0.35))
+                        .fill((orchestrator.activeEffectIsAppDriven ? Color.cyan : Color.green).opacity(0.35))
                         .frame(width: 16)
                 )
 
-            if let icon = orchestrator.activeEffectIcon {
+            if let icon = first?.effectIcon {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.8))
             }
 
-            Text(orchestrator.activeEffectName ?? "")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(first?.effectName ?? "")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                if let roomName = first?.roomName {
+                    Text(entries.count > 1
+                         ? "\(roomName) · \(entries.count - 1) more room\(entries.count > 2 ? "s" : "")"
+                         : roomName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(1)
+                }
+            }
 
             if orchestrator.activeEffectIsAppDriven {
                 Text("— keep app open")
@@ -272,14 +287,24 @@ struct DashboardView: View {
             Spacer()
 
             Button {
-                stopActiveEffect()
+                if entries.count > 1 {
+                    showEffectsMenu = true
+                } else {
+                    stopEffect(entries.first)
+                }
             } label: {
-                Text("Stop")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(.white.opacity(0.9)))
+                HStack(spacing: 4) {
+                    Text("Stop")
+                        .font(.system(size: 13, weight: .semibold))
+                    if entries.count > 1 {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                }
+                .foregroundStyle(.black)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(.white.opacity(0.9)))
             }
             .buttonStyle(.plain)
         }
@@ -288,25 +313,48 @@ struct DashboardView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.1), lineWidth: 1))
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: orchestrator.activeEffectName)
+        .confirmationDialog("Active Effects", isPresented: $showEffectsMenu, titleVisibility: .visible) {
+            ForEach(orchestrator.activeEffectEntries) { entry in
+                Button("Stop \"\(entry.effectName)\" in \(entry.roomName)", role: .destructive) {
+                    stopEffect(entry)
+                }
+            }
+            Button("Stop All", role: .destructive) {
+                stopAllEffects()
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
-    private func stopActiveEffect() {
+    private func stopEffect(_ entry: ActiveEffectEntry?) {
+        guard let entry else { return }
         HapticManager.shared.medium()
         Task {
             guard let api = orchestrator.primaryAPIClient else { return }
-            // Clear bridge-native effects from all lights in all rooms
-            let allLightIDs = orchestrator.allRooms.compactMap(\.groupedLightID)
+            // Stop the native bridge effect for this room only
+            if let glID = entry.groupedLightID {
+                try? await api.setGroupedLight(id: glID, on: true)
+            }
+            await MainActor.run {
+                orchestrator.removeActiveEffect(roomID: entry.id)
+            }
+        }
+    }
+
+    private func stopAllEffects() {
+        HapticManager.shared.medium()
+        Task {
+            guard let api = orchestrator.primaryAPIClient else { return }
+            let entries = orchestrator.activeEffectEntries
             await withTaskGroup(of: Void.self) { group in
-                for id in allLightIDs {
-                    group.addTask {
-                        try? await api.setGroupedLight(id: id, on: true) // keeps lights on but stops effect
+                for entry in entries {
+                    if let glID = entry.groupedLightID {
+                        group.addTask { try? await api.setGroupedLight(id: glID, on: true) }
                     }
                 }
             }
             await MainActor.run {
-                orchestrator.activeEffectName       = nil
-                orchestrator.activeEffectIcon       = nil
-                orchestrator.activeEffectIsAppDriven = false
+                orchestrator.removeAllActiveEffects()
             }
         }
     }

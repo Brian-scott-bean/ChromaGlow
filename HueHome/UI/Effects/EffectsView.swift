@@ -19,7 +19,8 @@ struct EffectsView: View {
     private let teal   = Color(red: 0.25, green: 0.85, blue: 0.75)
     private let pink   = Color(red: 1.0,  green: 0.30, blue: 0.55)
 
-    @State private var showSettings = false
+    @State private var showSettings    = false
+    @State private var showEffectsMenu  = false   // confirmationDialog for multi-effect stop
     @AppStorage("castchroma.useWideCards") private var useWideCards = false
 
     // Saved presets CRUD
@@ -166,6 +167,10 @@ struct EffectsView: View {
         .animation(.easeInOut(duration: 0.2), value: vm.selectedCategory)
         .onAppear {
             vm.configure(orchestrator: orchestrator)
+        }
+        // Sync card state when an effect is stopped externally (e.g. home page Stop button).
+        .onChange(of: orchestrator.activeEffectEntries) { _, newEntries in
+            vm.syncWithOrchestrator(entries: newEntries)
         }
     }
 
