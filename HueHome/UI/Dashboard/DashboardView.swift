@@ -126,6 +126,16 @@ struct DashboardView: View {
                         applyPreset(suggestion.preset)
                     }
                     .padding(.horizontal, 20)
+                    .padding(.bottom, 6)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                // ── Next automation banner ────────────────────────────
+                if let next = nextAutomation {
+                    NextAutomationBanner(name: next.automation.name,
+                                        icon: next.automation.action.icon,
+                                        fireDate: next.date)
+                    .padding(.horizontal, 20)
                     .padding(.bottom, 12)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -415,6 +425,42 @@ struct DashboardView: View {
         default:      return TimeSuggestion(message: "Still up late? 🌃",      subtext: "Try sleep mode",               preset: sleep)
         }
     }
+
+    private var nextAutomation: (automation: AppAutomation, date: Date)? {
+        let descriptor = FetchDescriptor<AppAutomation>(
+            predicate: #Predicate { $0.isEnabled }
+        )
+        guard let automations = try? modelContext.fetch(descriptor),
+              !automations.isEmpty else { return nil }
+
+        let now      = Date()
+        let calendar = Calendar.current
+        var earliest: (AppAutomation, Date)?
+
+        for automation in automations {
+            for dayOffset in 0..<8 {
+                guard let targetDay = calendar.date(byAdding: .day, value: dayOffset, to: now) else { continue }
+                let weekday = calendar.component(.weekday, from: targetDay)
+                guard automation.weekdays.contains(weekday) else { continue }
+
+                var comps        = calendar.dateComponents([.year, .month, .day], from: targetDay)
+                comps.hour       = automation.hour
+                comps.minute     = automation.minute
+                comps.second     = 0
+                guard let fireDate = calendar.date(from: comps), fireDate > now else { continue }
+
+                if earliest == nil || fireDate < earliest!.1 {
+                    earliest = (automation, fireDate)
+                }
+                break
+            }
+        }
+        return earliest
+    }
+
+
+    // MARK: - Summary Header
+    // ──────────────────────────────────────────────
 
     private var summaryHeader: some View {
         let onCount = orchestrator.allRooms.filter { $0.isOn }.count
@@ -1018,5 +1064,68 @@ struct TimeSuggestionBanner: View {
         )
         .shadow(color: suggestion.preset.color.opacity(0.15), radius: 10, x: 0, y: 4)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: suggestion.message)
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+// MARK: - NextAutomationBanner
+// ══════════════════════════════════════════════════════════
+
+struct NextAutomationBanner: View {
+    let name:     String
+    let icon:     String
+    let fireDate: Date
+
+    private var timeLabel: String {
+        let fmt = RelativeDateTimeFormatter()
+        fmt.unitsStyle = .abbreviated
+        let rel = fmt.localizedString(for: fireDate, relativeTo: Date())
+        let abs = fireDate.formatted(date: .omitted, time: .shortened)
+        // Show "in 3h" if < 6 hours away, otherwise show clock time
+        let interval = fireDate.timeIntervalSince(Date())
+        return interval < 6 * 3600 ? rel : abs
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.55))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Next up")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.40))
+                    .textCase(.uppercase)
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                    Text(name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Text(timeLabel)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(.white.opacity(0.08)))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(.white.opacity(0.08), lineWidth: 1)
+                )
+        )
     }
 }

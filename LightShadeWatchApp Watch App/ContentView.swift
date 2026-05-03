@@ -114,7 +114,7 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .onAppear { store.loadFromLocalCache() }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             if phase == .active { store.loadFromLocalCache() }
         }
         // Poll every 5 s while rooms are empty so we pick up iPhone pushes automatically

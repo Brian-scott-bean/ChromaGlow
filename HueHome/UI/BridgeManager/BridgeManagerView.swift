@@ -226,7 +226,7 @@ private struct BridgeRow: View {
     var body: some View {
         HStack(spacing: HueSpacing.lg) {
             // Bridge icon with accent color
-            let accentColor: Color = Color(hex: bridge.accentHex ?? "") ?? HuePalette.amber
+            let accentColor: Color = bridge.accentHex.map { Color(hex: $0) } ?? HuePalette.amber
             ZStack {
                 Circle()
                     .fill(accentColor.opacity(0.18))
