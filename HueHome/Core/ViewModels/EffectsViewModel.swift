@@ -513,11 +513,16 @@ final class EffectsViewModel: ObservableObject {
 
     @MainActor
     private func clearNowPlaying() {
-        guard let roomID = selectedRoom?.id else {
+        // When applyToAllRooms is running, activeRoomOverride is the current iteration room.
+        // Use it so we only remove THAT room's entry, preserving entries for rooms already done.
+        // Fall back to selectedRoom for the normal single-room case.
+        // Only removeAllActiveEffects() when both are nil (genuine "clear all" from stop/deselect).
+        let roomID = activeRoomOverride?.id ?? selectedRoom?.id
+        if let roomID {
+            orchestrator?.removeActiveEffect(roomID: roomID)
+        } else {
             orchestrator?.removeAllActiveEffects()
-            return
         }
-        orchestrator?.removeActiveEffect(roomID: roomID)
     }
 
     // MARK: - Saved Presets
