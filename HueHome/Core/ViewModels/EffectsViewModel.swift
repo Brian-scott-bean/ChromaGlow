@@ -51,8 +51,8 @@ final class EffectsViewModel: ObservableObject {
     @Published var isRunning:         Bool             = false
     @Published var runningEffectName: String?          = nil
     @Published var statusMessage:     String?          = nil
-
     // MARK: Dependencies
+
     private var api:              HueAPIClient?        = nil
     private var isDemoMode:       Bool                 = false
     private weak var orchestrator: UnifiedOrchestrator? = nil
@@ -60,8 +60,10 @@ final class EffectsViewModel: ObservableObject {
     private let log               = Logger(subsystem: "com.lightshade.app", category: "Effects")
     private var cancellables      = Set<AnyCancellable>()
     private var reactivationTask: Task<Void, Never>?   = nil
+    /// Prevents Combine sinks from being re-registered on every onAppear (tab switch).
+    private var isConfigured      = false
 
-    /// When true, the \$paramState debounce sink will NOT call activate().
+    /// When true, the $paramState debounce sink will NOT call activate().
     /// Set during room-switch param restoration to prevent the restored state
     /// from being auto-applied to the incoming room.
     private var suppressParamReapply = false
@@ -70,6 +72,7 @@ final class EffectsViewModel: ObservableObject {
 
     @MainActor
     func configure(orchestrator: UnifiedOrchestrator) {
+        // Always refresh transient dependencies (API client may change if a bridge is added/removed).
         self.orchestrator = orchestrator
         isDemoMode = orchestrator.isDemoMode
         api = orchestrator.primaryAPIClient
@@ -78,7 +81,14 @@ final class EffectsViewModel: ObservableObject {
         }
         let apiStatus = api != nil ? "set" : "nil"
         let roomName  = selectedRoom?.name ?? "none"
-        log.info("[EffectsVM] configure done — api=\(apiStatus) room=\(roomName) demo=\(self.isDemoMode)")
+        log.info("[EffectsVM] configure — api=\(apiStatus) room=\(roomName) demo=\(self.isDemoMode)")
+
+        // Guard: only register Combine sinks once. Calling configure() on every
+        // onAppear (tab switch) would otherwise stack duplicate sinks, causing
+        // multiple activate() calls per param change → unexpected effect API calls.
+        guard !isConfigured else { return }
+        isConfigured = true
+
 
         // Live re-apply: whenever paramState changes (slider/color/toggle),
         // debounce 350ms then re-apply the current effect to the lights.
