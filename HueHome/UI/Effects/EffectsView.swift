@@ -42,6 +42,50 @@ struct EffectsView: View {
     private var rooms: [RoomDisplayItem] { orchestrator.allRooms }
 
     var body: some View {
+        // Split into mainContent + alerts to stay within Swift's type-checker budget.
+        // (14 chained modifiers on a complex ZStack causes a timeout without this split.)
+        mainContent
+            // Save-as-preset alert
+            .alert("Save as Preset", isPresented: $showSaveAlert) {
+                TextField("Preset name", text: $presetInputName)
+                Button("Save") {
+                    let name = presetInputName.trimmingCharacters(in: .whitespaces)
+                    if !name.isEmpty, let data = vm.buildPresetData(name: name) {
+                        presetsStore.save(data)
+                    }
+                    presetInputName = ""
+                }
+                Button("Cancel", role: .cancel) { presetInputName = "" }
+            } message: {
+                Text("Save your current \"\(vm.selectedEffect?.name ?? "")\" settings as a reusable preset.")
+            }
+            // Rename preset alert
+            .alert("Rename Preset", isPresented: $showRenamePresetAlert, presenting: presetToRename) { preset in
+                TextField("Name", text: $presetInputName)
+                Button("Rename") {
+                    let name = presetInputName.trimmingCharacters(in: .whitespaces)
+                    if !name.isEmpty { presetsStore.rename(preset, to: name) }
+                    presetToRename = nil; presetInputName = ""; showRenamePresetAlert = false
+                }
+                Button("Cancel", role: .cancel) {
+                    presetToRename = nil; presetInputName = ""; showRenamePresetAlert = false
+                }
+            }
+            // Delete preset alert
+            .alert("Delete Preset", isPresented: $showDeletePresetAlert, presenting: presetToDelete) { preset in
+                Button("Delete \"\(preset.name)\"", role: .destructive) {
+                    presetsStore.delete(preset)
+                    presetToDelete = nil; showDeletePresetAlert = false
+                }
+                Button("Cancel", role: .cancel) { presetToDelete = nil; showDeletePresetAlert = false }
+            } message: { preset in
+                Text("\"\(preset.name)\" will be removed from your saved presets.")
+            }
+    }
+
+    // MARK: - Main Content (navigation + toolbar + animations — without alerts)
+
+    private var mainContent: some View {
         ZStack {
             ambientBackground
 
@@ -125,42 +169,6 @@ struct EffectsView: View {
         .toolbar { stopToolbarItem }
         .sheet(isPresented: $showSettings) {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
-        }
-        // Save-as-preset alert
-        .alert("Save as Preset", isPresented: $showSaveAlert) {
-            TextField("Preset name", text: $presetInputName)
-            Button("Save") {
-                let name = presetInputName.trimmingCharacters(in: .whitespaces)
-                if !name.isEmpty, let data = vm.buildPresetData(name: name) {
-                    presetsStore.save(data)
-                }
-                presetInputName = ""
-            }
-            Button("Cancel", role: .cancel) { presetInputName = "" }
-        } message: {
-            Text("Save your current \"\(vm.selectedEffect?.name ?? "")\" settings as a reusable preset.")
-        }
-        // Rename preset alert
-        .alert("Rename Preset", isPresented: $showRenamePresetAlert, presenting: presetToRename) { preset in
-            TextField("Name", text: $presetInputName)
-            Button("Rename") {
-                let name = presetInputName.trimmingCharacters(in: .whitespaces)
-                if !name.isEmpty { presetsStore.rename(preset, to: name) }
-                presetToRename = nil; presetInputName = ""; showRenamePresetAlert = false
-            }
-            Button("Cancel", role: .cancel) {
-                presetToRename = nil; presetInputName = ""; showRenamePresetAlert = false
-            }
-        }
-        // Delete preset alert
-        .alert("Delete Preset", isPresented: $showDeletePresetAlert, presenting: presetToDelete) { preset in
-            Button("Delete \"\(preset.name)\"", role: .destructive) {
-                presetsStore.delete(preset)
-                presetToDelete = nil; showDeletePresetAlert = false
-            }
-            Button("Cancel", role: .cancel) { presetToDelete = nil; showDeletePresetAlert = false }
-        } message: { preset in
-            Text("\"\(preset.name)\" will be removed from your saved presets.")
         }
         .preferredColorScheme(.dark)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.selectedEffect?.id)
