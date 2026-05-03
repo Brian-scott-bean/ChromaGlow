@@ -71,7 +71,7 @@ struct LightControlView: View {
         .navigationTitle(light.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 // Power toggle in toolbar — always reliable, no clipping/gesture conflicts.

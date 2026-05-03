@@ -81,7 +81,7 @@ struct ScenesTabView: View {
         .navigationTitle("Scenes")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbarItems }
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search scenes or rooms")
         .preferredColorScheme(.dark)

@@ -16,7 +16,7 @@ import SwiftUI
 struct GlassmorphicCard<Content: View>: View {
 
     var isActive: Bool          // drives glow + border intensity
-    var cornerRadius: CGFloat   = 24
+    var cornerRadius: CGFloat   = 20
     var glowColor: Color        = .yellow
     var glowRadius: CGFloat     = 40
     var padding: CGFloat        = 20

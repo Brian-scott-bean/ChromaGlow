@@ -51,7 +51,7 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
         .alert("Forget All Bridges?", isPresented: $showForgetAlert) {
             Button("Forget All", role: .destructive) {

@@ -38,7 +38,7 @@ struct DevicesView: View {
         .navigationTitle("Devices")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbarItems }
         .sheet(isPresented: $showLog) { logSheet }
         .task {

@@ -95,7 +95,7 @@ struct EffectsView: View {
         .navigationTitle("Effects")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { stopToolbarItem }
         .preferredColorScheme(.dark)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.selectedEffect?.id)

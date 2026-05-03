@@ -54,7 +54,7 @@ struct RoomDetailView: View {
         .navigationTitle(room.name)
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbarItems }
         .sheet(isPresented: $showLog) { logSheet }
         .sheet(isPresented: $showCreateScene) {
@@ -485,15 +485,6 @@ struct LightCard: View {
                     .foregroundStyle(localIsOn ? localGlowColor.opacity(0.8) : .white.opacity(0.40))
             }
             Spacer()
-            if light.supportsColor {
-                Image(systemName: "paintpalette.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.35))
-            } else if light.supportsColorTemp {
-                Image(systemName: "thermometer.medium")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.35))
-            }
             // Reserve space for power button overlay in normal mode
             if !isSelecting { Spacer().frame(width: 44) }
         }

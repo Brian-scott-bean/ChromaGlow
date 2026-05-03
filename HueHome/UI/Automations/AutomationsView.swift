@@ -42,7 +42,7 @@ struct AutomationsView: View {
         .navigationTitle("Automations")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbarItems }
         .sheet(isPresented: $showLog)    { logSheet }
         .sheet(isPresented: $showCreate) { CreateAutomationView() }
