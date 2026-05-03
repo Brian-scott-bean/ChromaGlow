@@ -77,32 +77,34 @@ struct MicModeView: View {
     // MARK: - Content
 
     private func content(engine: MicModeEngine) -> some View {
-        VStack(spacing: 0) {
-            header
-                .padding(.top, 16)
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                header
+                    .padding(.top, 16)
 
-            Spacer(minLength: 0)
+                // Equalizer visualizer
+                EqualizerView(bars: engine.barHeights, colorMode: engine.colorMode)
+                    .frame(height: 160)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 24)
 
-            // Equalizer visualizer
-            EqualizerView(bars: engine.barHeights, colorMode: engine.colorMode)
-                .frame(height: 160)
-                .padding(.horizontal, 24)
+                // Big start/stop button
+                StartStopButton(engine: engine)
+                    .padding(.bottom, 12)
 
-            Spacer(minLength: 0)
+                // Level meters
+                LevelMeterRow(engine: engine)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 20)
 
-            // Big start/stop button
-            StartStopButton(engine: engine)
-                .padding(.bottom, 12)
+                // Controls card
+                controlsCard(engine: engine)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 20)
 
-            // Level meters
-            LevelMeterRow(engine: engine)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 20)
-
-            // Controls card
-            controlsCard(engine: engine)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
+                // Space for tab bar
+                Color.clear.frame(height: 100)
+            }
         }
     }
 
