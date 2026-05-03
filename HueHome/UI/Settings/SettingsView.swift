@@ -36,9 +36,8 @@ struct SettingsView: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 24) {
-                    bridgesSection       // multi-bridge management
+                    bridgesSection       // multi-bridge management + connection info
                     exploreSection       // Automations + Devices (moved from tab bar)
-                    bridgeSection
                     accountSection
                     developerSection
                     appSection
@@ -159,7 +158,6 @@ struct SettingsView: View {
     private var bridgesSection: some View {
         settingsGroup(header: orchestrator.isDemoMode ? "DEMO MODE" : "BRIDGES") {
             if orchestrator.isDemoMode {
-                // Demo mode: show exit option instead of bridge management
                 Button {
                     NotificationCenter.default.post(name: .hueDemoExited, object: nil)
                 } label: {
@@ -181,6 +179,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
             } else {
+                // ── Manage Bridges link ────────────────────────────────────
                 NavigationLink(destination: BridgeManagerView()) {
                     HStack(spacing: 12) {
                         iconCircle("network", color: glowColor)
@@ -199,59 +198,50 @@ struct SettingsView: View {
                     }
                 }
                 .buttonStyle(.plain)
-            }
-        }
-    }
 
-    // ──────────────────────────────────────────────
-    // MARK: - Bridge Section
-    // ──────────────────────────────────────────────
+                Divider().background(Color.white.opacity(0.08))
 
-    private var bridgeSection: some View {
-        settingsGroup(header: "BRIDGE") {
-            // IP row
-            settingsRow(
-                icon: "network",
-                iconColor: glowColor,
-                title: "Bridge IP",
-                value: bridgeIP
-            )
+                // ── Bridge IP ────────────────────────────────────────────
+                settingsRow(
+                    icon: "network",
+                    iconColor: glowColor,
+                    title: "Bridge IP",
+                    value: bridgeIP
+                )
 
-            Divider().background(Color.white.opacity(0.08))
+                Divider().background(Color.white.opacity(0.08))
 
-            // Ping / connection status row
-            HStack(spacing: 12) {
-                iconCircle("wifi", color: pingColor)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Connection")
-                        .font(.subheadline)
-                        .foregroundStyle(.white)
-                    Text(pingLabel)
-                        .font(.caption)
-                        .foregroundStyle(pingColor.opacity(0.85))
+                // ── Connection ping ───────────────────────────────────────
+                HStack(spacing: 12) {
+                    iconCircle("wifi", color: pingColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Connection")
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+                        Text(pingLabel)
+                            .font(.caption)
+                            .foregroundStyle(pingColor.opacity(0.85))
+                    }
+                    Spacer()
+                    Button {
+                        pingStatus = .checking
+                        Task { await pingBridge() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.45))
+                            .rotationEffect(.degrees(pingStatus == .checking ? 360 : 0))
+                            .animation(
+                                pingStatus == .checking
+                                    ? .linear(duration: 0.8).repeatForever(autoreverses: false)
+                                    : .default,
+                                value: pingStatus == .checking
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
-
-                Spacer()
-
-                Button {
-                    pingStatus = .checking
-                    Task { await pingBridge() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.45))
-                        .rotationEffect(.degrees(pingStatus == .checking ? 360 : 0))
-                        .animation(
-                            pingStatus == .checking
-                                ? .linear(duration: 0.8).repeatForever(autoreverses: false)
-                                : .default,
-                            value: pingStatus == .checking
-                        )
-                }
-                .buttonStyle(.plain)
+                .padding(.vertical, 2)
             }
-            .padding(.vertical, 2)
         }
     }
 
