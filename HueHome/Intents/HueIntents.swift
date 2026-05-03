@@ -1,8 +1,8 @@
 // ToggleRoomIntent.swift
 // HueHome Pro — Siri Shortcuts
 //
-// "Hey Siri, turn on Living Room in LightShade"
-// "Hey Siri, turn off Kitchen in LightShade"
+// "Hey Siri, turn on Living Room in CastChroma"
+// "Hey Siri, turn off Kitchen in CastChroma"
 
 import AppIntents
 
@@ -77,9 +77,9 @@ enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .noBridgeConnection:
-            return "LightShade couldn't reach your bridge. Open the app and try again."
+            return "CastChroma couldn't reach your bridge. Open the app and try again."
         case .noGroupedLight(let name):
-            return "Couldn't find light controls for \(name). Open LightShade to refresh."
+            return "Couldn't find light controls for \(name). Open CastChroma to refresh."
         }
     }
 }

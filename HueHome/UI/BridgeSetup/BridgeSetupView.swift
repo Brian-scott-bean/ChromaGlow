@@ -369,7 +369,7 @@ struct BridgeSetupView: View {
             .background(Capsule().fill(.green.opacity(0.10)))
 
             primaryButton(
-                isAddingAdditional ? "Add to LightShade" : "Go to Dashboard",
+                isAddingAdditional ? "Add to CastChroma" : "Go to Dashboard",
                 icon: isAddingAdditional ? "plus.circle.fill" : "lightbulb.fill"
             ) {
                 handlePairedAction(ip: ip, token: token)

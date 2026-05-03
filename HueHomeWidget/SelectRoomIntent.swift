@@ -10,7 +10,7 @@ import WidgetKit
 
 struct SelectRoomIntent: WidgetConfigurationIntent {
 
-    static var title: LocalizedStringResource       = "LightShade Widget"
+    static var title: LocalizedStringResource       = "CastChroma Widget"
     static var description = IntentDescription("Choose which room to display, and whether to show quick preset buttons.")
 
     /// The room to focus on. Nil = show all rooms (summary mode).

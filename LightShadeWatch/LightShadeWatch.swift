@@ -163,7 +163,7 @@ struct RectangularView: View {
             // All rooms — show top 3
             let display = entry.rooms.sorted { $0.isOn && !$1.isOn }.prefix(3)
             VStack(alignment: .leading, spacing: 3) {
-                Label("LightShade · \(entry.onCount) on", systemImage: "lightbulb.fill")
+                Label("CastChroma · \(entry.onCount) on", systemImage: "lightbulb.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .widgetAccentable()
                     .lineLimit(1)
@@ -248,7 +248,7 @@ struct LightShadeWatch: Widget {
             LightShadeWatchEntryView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
         }
-        .configurationDisplayName("LightShade")
+        .configurationDisplayName("CastChroma")
         .description("Monitor and control your lights from your wrist.")
         #if os(watchOS)
         .supportedFamilies([
