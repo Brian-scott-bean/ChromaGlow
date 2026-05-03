@@ -1395,6 +1395,8 @@ final class UnifiedOrchestrator {
     /// in the same room, then fires the API call asynchronously.
     func activateGlobalScene(_ scene: GlobalSceneItem) {
         // Optimistic update via full-array replacement — avoids @Observable subscript bug
+        // Deactivate all scenes in the SAME ROOM on the same bridge (the bridge will only
+        // allow one active scene per room). Scenes in OTHER rooms stay as-is.
         var updated = globalScenes
         for i in updated.indices {
             if updated[i].roomID == scene.roomID && updated[i].bridgeID == scene.bridgeID {
@@ -1411,6 +1413,9 @@ final class UnifiedOrchestrator {
             log.info("Activated scene '\(scene.name)' \(scene.isDynamic ? "@ speed \(String(format: "%.2f", scene.speed))" : "") on bridge \(scene.bridgeID)")
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             refreshDominantColors(for: scene.bridgeID)
+            // Reload scene statuses from the bridge so stale optimistic isActive flags
+            // are corrected (e.g. when the bridge deactivated a scene in another room).
+            await loadAllScenes()
         }
     }
 
