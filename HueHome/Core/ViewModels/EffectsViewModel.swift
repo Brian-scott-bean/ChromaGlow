@@ -66,6 +66,11 @@ final class EffectsViewModel: ObservableObject {
     /// Key: RoomDisplayItem.id  Value: HueEffect.id
     private var appliedEffectPerRoom: [String: String] = [:]
 
+    /// When true, the \$paramState debounce sink will NOT call activate().
+    /// Set during room-switch param restoration to prevent the restored state
+    /// from being auto-applied to the incoming room.
+    private var suppressParamReapply = false
+
     // MARK: - Configure
 
     @MainActor
@@ -88,28 +93,35 @@ final class EffectsViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self,
                       let effect = self.selectedEffect,
-                      !effect.requiresForeground else { return }
+                      !effect.requiresForeground,
+                      !self.suppressParamReapply   // skip auto-apply during room-switch restoration
+                else { return }
                 Task { await self.activate() }
             }
             .store(in: &cancellables)
 
-        // Per-room effect state: when the user switches rooms, clear the current
-        // selection and restore whatever was last applied to the new room.
-        // This fixes the bug where selectedEffect bleeds across rooms, causing
-        // a tap on the same card to toggle-off instead of apply.
+        // Per-room effect state: clears selection on room-switch; restores
+        // whatever was last applied to the incoming room.
         $selectedRoom
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newRoom in
                 guard let self else { return }
 
-                // If an app-driven effect is looping, stop it — the engine
-                // can only run one room's effect at a time.
+                // Stop app-driven engine — single-slot, can't loop for two rooms.
                 if self.isRunning {
                     Task { await self.stop() }
                 }
 
-                // Restore the previously applied effect for the incoming room, or clear.
+                // Guard the $paramState debounce from firing activate() while we
+                // restore state. Reset after 500 ms (past the 350 ms window).
+                self.suppressParamReapply = true
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    self?.suppressParamReapply = false
+                }
+
+                // Restore selection for the incoming room (visual only — no re-apply).
                 if let roomID = newRoom?.id,
                    let effectID = self.appliedEffectPerRoom[roomID],
                    let effect   = EffectLibrary.all.first(where: { $0.id == effectID }) {
@@ -135,20 +147,31 @@ final class EffectsViewModel: ObservableObject {
     }
 
     /// Tapping a selected card a second time deselects it.
-    /// Clears the Now Playing bar on the home page and stops any running
-    /// app-driven effect loop. Bridge-native effects continue on the bridge
-    /// (they don’t need the app to keep running), but the UI no longer shows
-    /// them as active.
+    /// Clears the Now Playing bar only if no other room still has an active effect.
     @MainActor
     func deselect() {
-        // Stop app-driven engine loop first (if running)
         if isRunning {
+            // App-driven: fully stop engine + remove from per-room tracking via stop()
             Task { await stop() }
         } else {
-            // For bridge-native / oneShot effects just clear the Now Playing bar.
+            // Remove this room from applied-effect tracking
+            if let roomID = selectedRoom?.id {
+                appliedEffectPerRoom.removeValue(forKey: roomID)
+            }
+
             selectedEffect = nil
             paramState     = EffectParamState()
-            clearNowPlaying()
+
+            // Only clear the Now Playing bar when every room is done.
+            // If another room still has an effect, keep the bar showing that effect.
+            if appliedEffectPerRoom.isEmpty {
+                clearNowPlaying()
+            } else if let (_, effectID) = appliedEffectPerRoom.first,
+                      let remaining = EffectLibrary.all.first(where: { $0.id == effectID }) {
+                orchestrator?.activeEffectName        = remaining.name
+                orchestrator?.activeEffectIcon        = remaining.icon
+                orchestrator?.activeEffectIsAppDriven = false
+            }
         }
     }
 
