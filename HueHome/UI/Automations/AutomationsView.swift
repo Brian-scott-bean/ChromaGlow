@@ -510,14 +510,7 @@ struct AutomationRow: View {
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
-        .contextMenu {
-            Button {
-                onToggle()
-            } label: {
-                Label(item.enabled ? "Disable" : "Enable",
-                      systemImage: item.enabled ? "pause.circle" : "play.circle")
-            }
-        }
+        // Note: contextMenu reserved for Edit + Delete when bridge automation CRUD is built
         .opacity(item.enabled ? 1.0 : 0.72)
         .animation(.spring(response: 0.3), value: item.enabled)
     }
