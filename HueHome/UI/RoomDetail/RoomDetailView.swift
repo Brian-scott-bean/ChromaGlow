@@ -42,13 +42,16 @@ struct RoomDetailView: View {
             }
 
             // BulkActionBar — slides up when lights are selected.
-            // MainTabView declares the custom tab bar height as a safeAreaInset,
-            // so this VStack/Spacer naturally positions the bar above it.
+            // NOTE: RoomDetailAmbientBackground uses .ignoresSafeArea(), which
+            // expands the ZStack to the full screen height (inc. home indicator).
+            // Spacer() therefore pushes to the raw screen bottom, NOT the safe
+            // area bottom. Explicit padding is needed to clear:
+            //   home indicator (~34pt) + tab bar bottom pad (8pt) + capsule (56pt) = ~98pt
             if vm.isSelecting {
                 VStack {
                     Spacer()
                     BulkActionBar(vm: vm) { showBulkScene = true }
-                        .padding(.bottom, 8)
+                        .padding(.bottom, 100)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 .zIndex(5)
