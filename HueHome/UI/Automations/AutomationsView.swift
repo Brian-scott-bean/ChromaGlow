@@ -231,15 +231,13 @@ struct AutomationsView: View {
         }
         .padding(.vertical, 10)
         .opacity(automation.isEnabled ? 1.0 : 0.7)
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+        .contextMenu {
             Button {
                 editingSchedule = automation
             } label: {
                 Label("Edit", systemImage: "pencil")
             }
-            .tint(Color(red: 1.0, green: 0.76, blue: 0.20))
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Divider()
             Button(role: .destructive) {
                 AutomationScheduler.shared.cancel(automation)
                 modelContext.delete(automation)
