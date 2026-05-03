@@ -607,42 +607,54 @@ struct RoomCard: View {
 
     var body: some View {
         NavigationLink(value: room) {
-            GlassmorphicCard(isActive: localIsOn, glowColor: localGlowColor) {
-                VStack(spacing: 0) {
-                    headerContent
-                    if localIsOn {
-                        BrightnessRow(
-                            brightness: room.brightness,   // read-only snapshot
-                            glowColor: localGlowColor,
-                            onCommit: { onBrightness($0) } // $0 = final value on release
-                        )
-                        .padding(.top, 6)
-                    }
+            VStack(alignment: .leading, spacing: 0) {
+                headerContent
+                if localIsOn {
+                    BrightnessRow(
+                        brightness: room.brightness,
+                        glowColor: localGlowColor,
+                        onCommit: { onBrightness($0) }
+                    )
+                    .padding(.top, 10)
                 }
             }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(localIsOn ? localGlowColor.opacity(0.13) : Color.white.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18)
+                            .strokeBorder(
+                                localIsOn ? localGlowColor.opacity(0.55) : Color.white.opacity(0.08),
+                                lineWidth: localIsOn ? 1.5 : 1
+                            )
+                    )
+            )
+            .shadow(color: localIsOn ? localGlowColor.opacity(0.25) : .clear,
+                    radius: 12, x: 0, y: 4)
         }
         .buttonStyle(.plain)
-        // ── Power button overlay ──────────────────────────────────────────────
         .overlay(alignment: .topTrailing) {
             Button {
                 HapticManager.shared.light()
-                localIsOn.toggle()   // instant — never waits for @Observable
-                onToggle(localIsOn)   // pass the NEW state — avoids stale room.isOn capture
+                localIsOn.toggle()
+                onToggle(localIsOn)
             } label: {
                 Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
-                    .font(.system(size: 24))
+                    .font(.system(size: 22))
                     .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
-                    .frame(width: 52, height: 52)
+                    .frame(width: 48, height: 48)
                     .contentShape(Rectangle())
                     .symbolEffect(.bounce, value: localIsOn)
             }
             .buttonStyle(.plain)
-            .padding(.top, 18)
-            .padding(.trailing, 14)
+            .padding(.top, 10)
+            .padding(.trailing, 8)
             .accessibilityLabel(Text("Turn \(room.name) \(localIsOn ? "off" : "on")"))
             .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
         }
-        .frame(minHeight: 88)
+        .frame(minHeight: 76)
         .opacity(localIsOn ? 1.0 : 0.72)
         .scaleEffect(localIsOn ? 1.0 : 0.982)
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: localIsOn)
@@ -676,29 +688,27 @@ struct RoomCard: View {
     }
 
     private var headerContent: some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: 12) {
             ZStack {
                 Circle()
-                    .fill(localIsOn
-                          ? localGlowColor.opacity(0.22)
-                          : Color.white.opacity(0.07))
-                    .frame(width: 48, height: 48)
+                    .fill(localIsOn ? localGlowColor.opacity(0.25) : Color.white.opacity(0.07))
+                    .frame(width: 44, height: 44)
                 Image(systemName: archetypeIcon(for: room.archetype))
-                    .font(.system(size: 20, weight: .medium))
+                    .font(.system(size: 19, weight: .medium))
                     .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.4))
                     .symbolEffect(.bounce, value: localIsOn)
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(room.name)
-                    .font(.headline)
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                 Text("\(room.lightCount) light\(room.lightCount == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.50))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.45))
             }
             Spacer()
-            Spacer().frame(width: 48)   // reserve space for power overlay
+            Spacer().frame(width: 40)   // reserve for power overlay
         }
     }
 }
@@ -863,7 +873,7 @@ private struct DashboardAmbientBackground: View {
         case 10..<15: return Color(red: 0.35, green: 0.65, blue: 1.0)  // cool blue — midday
         case 15..<18: return Color(red: 1.0, green: 0.55, blue: 0.20)  // peach — late afternoon
         case 18..<22: return Color(red: 1.0, green: 0.45, blue: 0.15)  // amber — evening
-        default:      return Color(red: 0.25, green: 0.20, blue: 0.75) // deep indigo — night
+        default:      return Color(red: 0.40, green: 0.20, blue: 0.95) // vivid indigo — night
         }
     }
 
@@ -873,7 +883,7 @@ private struct DashboardAmbientBackground: View {
         case 10..<15: return Color(red: 0.30, green: 0.85, blue: 0.85) // teal — midday
         case 15..<18: return Color(red: 0.55, green: 0.35, blue: 1.00) // purple — afternoon
         case 18..<22: return Color(red: 0.55, green: 0.25, blue: 0.90) // violet — evening
-        default:      return Color(red: 0.15, green: 0.10, blue: 0.55) // dark blue — night
+        default:      return Color(red: 0.20, green: 0.10, blue: 0.70) // violet — night
         }
     }
 
@@ -885,7 +895,7 @@ private struct DashboardAmbientBackground: View {
             Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
             Circle()
                 .fill(RadialGradient(
-                    colors: [orb1Color.opacity(0.22), .clear],
+                    colors: [orb1Color.opacity(0.32), .clear],
                     center: .center, startRadius: 0, endRadius: 200
                 ))
                 .frame(width: 360)
@@ -895,7 +905,7 @@ private struct DashboardAmbientBackground: View {
                 .animation(.easeInOut(duration: 2.0), value: hour)
             Circle()
                 .fill(RadialGradient(
-                    colors: [orb2Color.opacity(0.16), .clear],
+                    colors: [orb2Color.opacity(0.22), .clear],
                     center: .center, startRadius: 0, endRadius: 160
                 ))
                 .frame(width: 280)
