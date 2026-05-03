@@ -14,8 +14,9 @@ import SwiftData
 struct AutomationsView: View {
 
     @State private var vm = AutomationsViewModel()
-    @State private var showLog    = false
-    @State private var showCreate = false
+    @State private var showLog         = false
+    @State private var showCreate      = false
+    @State private var editingSchedule: AppAutomation? = nil  // non-nil → edit sheet open
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.modelContext) private var modelContext
 
@@ -44,8 +45,9 @@ struct AutomationsView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbarItems }
-        .sheet(isPresented: $showLog)    { logSheet }
-        .sheet(isPresented: $showCreate) { CreateAutomationView() }
+        .sheet(isPresented: $showLog)      { logSheet }
+        .sheet(isPresented: $showCreate)   { CreateAutomationView() }
+        .sheet(item: $editingSchedule)     { auto in CreateAutomationView(editing: auto) }
         .task {
             // Inject orchestrator clients each time the tab appears.
             // For demo mode, orchestrator.allBridgeIDs will be empty — that's fine,
@@ -229,6 +231,14 @@ struct AutomationsView: View {
         }
         .padding(.vertical, 10)
         .opacity(automation.isEnabled ? 1.0 : 0.7)
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            Button {
+                editingSchedule = automation
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            .tint(Color(red: 1.0, green: 0.76, blue: 0.20))
+        }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
                 AutomationScheduler.shared.cancel(automation)

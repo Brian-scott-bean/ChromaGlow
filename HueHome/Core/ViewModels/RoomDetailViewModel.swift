@@ -444,6 +444,35 @@ final class RoomDetailViewModel {
         }
     }
 
+    /// Rename a scene on the Bridge and update the local strip optimistically.
+    func renameScene(_ item: SceneDisplayItem, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        let oldName = item.name
+        // Optimistic update
+        scenes = scenes.map { s in
+            var c = s; if c.id == item.id { c.name = trimmed }; return c
+        }
+        appendLog("✏️ Renaming scene '\(oldName)' → '\(trimmed)'…")
+        if isDemoMode {
+            appendLog("✦ Demo: scene renamed locally")
+            return
+        }
+        Task {
+            do {
+                try await api?.renameScene(id: item.id, name: trimmed)
+                appendLog("✅ Scene renamed to '\(trimmed)'.")
+            } catch {
+                appendLog("❌ Rename failed: \(error.localizedDescription)")
+                // Revert
+                scenes = scenes.map { s in
+                    var c = s; if c.id == item.id { c.name = oldName }; return c
+                }
+                showToast("Couldn't rename '\(oldName)'")
+            }
+        }
+    }
+
     /// Delete a scene from the Bridge and remove it from the local strip.
     func deleteScene(_ item: SceneDisplayItem) {
         scenes.removeAll { $0.id == item.id }

@@ -13,9 +13,11 @@ struct RoomDetailView: View {
 
     let room: RoomDisplayItem
     @State private var vm: RoomDetailViewModel
-    @State private var showLog          = false
-    @State private var showCreateScene  = false
-    @State private var showBulkScene    = false   // CreateSceneView from BulkActionBar
+    @State private var showLog           = false
+    @State private var showCreateScene   = false
+    @State private var showBulkScene     = false   // CreateSceneView from BulkActionBar
+    @State private var sceneToRename:    SceneDisplayItem? = nil
+    @State private var sceneRenameDraft: String = ""
     @Environment(UnifiedOrchestrator.self) private var orchestrator
 
     init(room: RoomDisplayItem) {
@@ -69,6 +71,24 @@ struct RoomDetailView: View {
                 let success = await vm.createScene(name: name, lights: selectedLights)
                 if success { vm.exitSelectMode() }
                 return success
+            }
+        }
+        .alert("Rename Scene", isPresented: Binding(
+            get: { sceneToRename != nil },
+            set: { if !$0 { sceneToRename = nil } }
+        )) {
+            TextField("Scene name", text: $sceneRenameDraft)
+            Button("Rename") {
+                if let scene = sceneToRename {
+                    vm.renameScene(scene, to: sceneRenameDraft)
+                }
+                sceneToRename = nil
+            }
+            .disabled(sceneRenameDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+            Button("Cancel", role: .cancel) { sceneToRename = nil }
+        } message: {
+            if let scene = sceneToRename {
+                Text("Enter a new name for \"\(scene.name)\"")
             }
         }
         .task {
@@ -205,6 +225,13 @@ struct RoomDetailView: View {
                             vm.activateScene(scene)
                         }
                         .contextMenu {
+                            Button {
+                                sceneRenameDraft = scene.name
+                                sceneToRename    = scene
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                            Divider()
                             Button(role: .destructive) {
                                 vm.deleteScene(scene)
                             } label: {
