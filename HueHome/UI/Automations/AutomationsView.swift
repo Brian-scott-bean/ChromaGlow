@@ -245,10 +245,13 @@ struct AutomationsView: View {
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .opacity(automation.isEnabled ? 1.0 : 0.7)
-        .onLongPressGesture(minimumDuration: 0.5) {
-            HapticManager.shared.medium()
-            longPressedSchedule = automation
-        }
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.5)
+                .onEnded { _ in
+                    HapticManager.shared.medium()
+                    longPressedSchedule = automation
+                }
+        )
         .overlay(alignment: .trailing) {
             // Toggle sits above the contextMenu layer — handles taps independently
             Toggle("", isOn: Binding(
