@@ -209,7 +209,7 @@ final class UnifiedOrchestrator {
         // MARK: Legacy migration — one-time on first Stage 2A launch
         if bridges.isEmpty {
             let legacyID = UUID().uuidString
-            if let (ip, token) = keychain.migrateLegacyCredentials(to: legacyID) {
+            if let (ip, _) = keychain.migrateLegacyCredentials(to: legacyID) {
                 let record = BridgeRecord(id: legacyID, name: "My Bridge", host: ip, sortOrder: 0)
                 modelContext.insert(record)
                 try? modelContext.save()
@@ -498,9 +498,13 @@ final class UnifiedOrchestrator {
                             zoneItems.append(item)
                         }
 
+                        // Capture counts as constants to avoid capturing mutable vars
+                        // across an async boundary (Swift 6 concurrency requirement).
+                        let roomCount = roomItems.count
+                        let zoneCount = zoneItems.count
                         await MainActor.run {
                             self.connectionStatus[bridgeID] = .connected
-                            self.log.info("Bridge \(bridgeID): \(roomItems.count) rooms, \(zoneItems.count) zones")
+                            self.log.info("Bridge \(bridgeID): \(roomCount) rooms, \(zoneCount) zones")
                         }
                         return (bridgeID, roomItems, zoneItems, roomLightMap, zoneLightMap)
                     } catch {
@@ -643,9 +647,9 @@ final class UnifiedOrchestrator {
                             id:         glID,
                             on:         true,
                             brightness: preset.brightness,
+                            xy:         nil,
                             mirek:      preset.mirek,
-                            colorX:     nil,
-                            colorY:     nil
+                            duration:   400
                         )
                     }
                 }
@@ -864,15 +868,14 @@ final class UnifiedOrchestrator {
                         rooms[idx].dominantColorY = xy.y
                         rooms[idx].dominantMirek  = nil
                         roomsByBridge[bridgeID]   = rooms
-                        mutated = true
+                        roomsMutated = true
                     } else if let mirek = update.colorTemp?.mirek {
                         // Always apply CT updates — even when a color dominant was stored.
-                        // Allows warm-white scenes to correctly override a colour glow.
-                        rooms[idx].dominantColorX = nil   // clear colour when CT takes over
+                        rooms[idx].dominantColorX = nil
                         rooms[idx].dominantColorY = nil
                         rooms[idx].dominantMirek  = mirek
                         roomsByBridge[bridgeID]   = rooms
-                        mutated = true
+                        roomsMutated = true
                     }
                 }
                 if var zones = zonesByBridge[bridgeID],
@@ -883,13 +886,13 @@ final class UnifiedOrchestrator {
                         zones[idx].dominantColorY = xy.y
                         zones[idx].dominantMirek  = nil
                         zonesByBridge[bridgeID]   = zones
-                        mutated = true
+                        zonesMutated = true
                     } else if let mirek = update.colorTemp?.mirek {
                         zones[idx].dominantColorX = nil
                         zones[idx].dominantColorY = nil
                         zones[idx].dominantMirek  = mirek
                         zonesByBridge[bridgeID]   = zones
-                        mutated = true
+                        zonesMutated = true
                     }
                 }
 
@@ -897,7 +900,7 @@ final class UnifiedOrchestrator {
                 continue
             }
         }
-        return mutated
+        return (rooms: roomsMutated, zones: zonesMutated)
     }
 
     // ──────────────────────────────────────────────
