@@ -307,20 +307,27 @@ struct EffectsView: View {
     // MARK: - Effect Grid
 
     private var effectGrid: some View {
-        // Read activeEffectEntries here so SwiftUI tracks the @Observable property
-        // and re-renders cards whenever any room's effect changes.
+        // Read activeEffectEntries + allRooms here so SwiftUI's @Observable tracking
+        // re-renders cards whenever any room's effect changes.
         let entries    = orchestrator.activeEffectEntries
         let allRoomIDs = Set(orchestrator.allRooms.compactMap { $0.groupedLightID != nil ? $0.id : nil })
         return LazyVGrid(columns: gridColumns, spacing: 14) {
             ForEach(vm.filteredEffects) { effect in
-                // isSelected is derived from activeEffectEntries + room context:
-                //  • Specific room → that room's entry matches this effect
-                //  • All Rooms    → EVERY room's entry matches this effect (intersection check)
+                // isSelected = two-signal combination:
+                //   1. activeEffectEntries  — persistent truth (cross-room, survives room switches)
+                //   2. vm.selectedEffect    — optimistic indicator for the CURRENT room so the
+                //      card lights up instantly on tap (before the async activate() finishes)
+                //
+                // All Rooms uses entries-only subset check (no optimistic fallback) because
+                // vm.selectedEffect alone can't confirm ALL rooms have the effect.
                 let activeRoomIDs = Set(entries.filter { $0.effectID == effect.id }.map { $0.id })
                 let isActive: Bool = {
                     if let room = vm.selectedRoom {
+                        // Specific room: entry exists OR effect is currently being selected/applied
                         return activeRoomIDs.contains(room.id)
+                            || vm.selectedEffect?.id == effect.id
                     } else {
+                        // All Rooms: only selected when EVERY room with lights has the effect
                         return !allRoomIDs.isEmpty && allRoomIDs.isSubset(of: activeRoomIDs)
                     }
                 }()
@@ -330,13 +337,9 @@ struct EffectsView: View {
                 {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                         if isActive {
-                            // Deselect: scope is determined inside deselect(effectID:)
-                            //  • Specific room → remove that room only
-                            //  • All Rooms     → remove all rooms running this effect
                             vm.deselect(effectID: effect.id)
                         } else {
                             vm.select(effect)
-                            // Auto-apply: activate() handles single room or all rooms
                             if !effect.requiresForeground {
                                 Task { await vm.activate() }
                             }
