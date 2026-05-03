@@ -632,11 +632,13 @@ final class UnifiedOrchestrator {
                 for room in roomItems {
                     guard let glID = room.groupedLightID else { continue }
                     group.addTask {
-                        try? await client.setGroupedLightState(
+                        try? await client.setGroupedLightEffect(
                             id:         glID,
                             on:         true,
                             brightness: preset.brightness,
-                            mirek:      preset.mirek
+                            mirek:      preset.mirek,
+                            colorX:     nil,
+                            colorY:     nil
                         )
                     }
                 }
