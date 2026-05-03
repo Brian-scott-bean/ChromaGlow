@@ -18,9 +18,13 @@ import SwiftData
 struct DashboardView: View {
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
-    @State private var showLog         = false
-    @State private var showSettings    = false
-    @State private var showEffectsMenu = false   // multi-effect stop dropdown
+    @State private var showLog           = false
+    @State private var showSettings      = false
+    @State private var showEffectsMenu   = false   // multi-effect stop dropdown
+    @State private var showScheduleSheet = false   // upcoming automations dropdown
+
+    @Query(sort: \AppAutomation.createdAt, order: .forward)
+    private var appAutomations: [AppAutomation]
     @Environment(\.modelContext)         private var modelContext
     @Environment(\.scenePhase)           private var scenePhase
     @Environment(\.horizontalSizeClass)  private var sizeClass
@@ -142,12 +146,18 @@ struct DashboardView: View {
 
                 // ── Next automation banner ────────────────────────────
                 if let next = nextAutomation {
+                    let upcomingCount = allUpcomingAutomations.count
                     NextAutomationBanner(name: next.automation.name,
                                         icon: next.automation.action.icon,
-                                        fireDate: next.date)
+                                        fireDate: next.date,
+                                        moreCount: max(0, upcomingCount - 1))
                     .padding(.horizontal, 20)
                     .padding(.bottom, 12)
                     .transition(.move(edge: .top).combined(with: .opacity))
+                    .onTapGesture { if upcomingCount > 1 { showScheduleSheet = true } }
+                    .sheet(isPresented: $showScheduleSheet) {
+                        UpcomingAutomationsSheet(automations: allUpcomingAutomations)
+                    }
                 }
 
                 presetsBar
@@ -478,6 +488,28 @@ struct DashboardView: View {
         case 20..<23: return TimeSuggestion(message: "Ready for sleep? 😴",    subtext: "Dim the lights, rest well",    preset: sleep)
         default:      return TimeSuggestion(message: "Still up late? 🌃",      subtext: "Try sleep mode",               preset: sleep)
         }
+    }
+
+    /// All enabled automations sorted by next fire date (nearest first).
+    private var allUpcomingAutomations: [(automation: AppAutomation, date: Date)] {
+        let now      = Date()
+        let calendar = Calendar.current
+        var results: [(AppAutomation, Date)] = []
+        for automation in appAutomations where automation.isEnabled {
+            for dayOffset in 0..<8 {
+                guard let targetDay = calendar.date(byAdding: .day, value: dayOffset, to: now) else { continue }
+                let weekday = calendar.component(.weekday, from: targetDay)
+                guard automation.weekdays.contains(weekday) else { continue }
+                var comps   = calendar.dateComponents([.year, .month, .day], from: targetDay)
+                comps.hour   = automation.hour
+                comps.minute = automation.minute
+                comps.second = 0
+                guard let fireDate = calendar.date(from: comps), fireDate > now else { continue }
+                results.append((automation, fireDate))
+                break
+            }
+        }
+        return results.sorted { $0.1 < $1.1 }
     }
 
     private var nextAutomation: (automation: AppAutomation, date: Date)? {
@@ -1136,11 +1168,11 @@ struct TimeSuggestionBanner: View {
 // ══════════════════════════════════════════════════════════
 
 struct NextAutomationBanner: View {
-    let name:     String
-    let icon:     String
-    let fireDate: Date
+    let name:      String
+    let icon:      String
+    let fireDate:  Date
+    var moreCount: Int = 0          // number of additional automations beyond the first
 
-    // Ticks every second so the countdown is live while the view is visible
     @State private var now: Date = Date()
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -1177,12 +1209,28 @@ struct NextAutomationBanner: View {
 
             Spacer()
 
-            Text(timeLabel)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(.white.opacity(0.08)))
+            HStack(spacing: 6) {
+                Text(timeLabel)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(.white.opacity(0.08)))
+
+                // Badge showing how many more automations are scheduled
+                if moreCount > 0 {
+                    Text("+\(moreCount)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color(red: 1.0, green: 0.76, blue: 0.20)))
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.40))
+                }
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -1194,6 +1242,87 @@ struct NextAutomationBanner: View {
                         .strokeBorder(.white.opacity(0.08), lineWidth: 1)
                 )
         )
+        .contentShape(Rectangle())
         .onReceive(ticker) { now = $0 }
+    }
+}
+
+// MARK: - UpcomingAutomationsSheet
+// ══════════════════════════════════════════════════════════
+
+struct UpcomingAutomationsSheet: View {
+    let automations: [(automation: AppAutomation, date: Date)]
+
+    @Environment(\.dismiss) private var dismiss
+    private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(automations.enumerated()), id: \.offset) { idx, item in
+                            HStack(spacing: 14) {
+                                // Icon
+                                ZStack {
+                                    Circle()
+                                        .fill(amber.opacity(0.15))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: item.automation.action.icon)
+                                        .font(.system(size: 16, weight: .medium))
+                                        .foregroundStyle(amber)
+                                }
+
+                                // Name + time info
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.automation.name)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.white)
+                                        .lineLimit(1)
+                                    HStack(spacing: 4) {
+                                        Text(item.automation.timeLabel)
+                                        Text("·")
+                                        Text(item.automation.daysLabel)
+                                    }
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.40))
+                                }
+
+                                Spacer()
+
+                                // Relative countdown
+                                Text(RelativeDateTimeFormatter().localizedString(for: item.date, relativeTo: Date()))
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(amber.opacity(0.85))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Capsule().fill(amber.opacity(0.12)))
+                            }
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 20)
+
+                            if idx < automations.count - 1 {
+                                Divider()
+                                    .background(Color.white.opacity(0.07))
+                                    .padding(.horizontal, 20)
+                            }
+                        }
+                    }
+                    .padding(.top, 8)
+                    .padding(.bottom, 32)
+                }
+            }
+            .navigationTitle("Upcoming Schedules")
+            .navigationBarTitleDisplayMode(.inline)
+            .preferredColorScheme(.dark)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(amber)
+                }
+            }
+        }
     }
 }

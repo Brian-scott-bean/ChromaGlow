@@ -52,7 +52,7 @@ final class AutomationScheduler {
 
             let content      = UNMutableNotificationContent()
             content.title    = automation.name.isEmpty ? "CastChroma" : automation.name
-            content.body     = "Tap to apply \(automation.action.displayName)"
+            content.body     = "\(automation.action.displayName) is now active — tap to open the app"
             content.sound    = .default
             content.categoryIdentifier = Self.categoryID
             content.userInfo = [

@@ -58,7 +58,9 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             log.info("Automation notification delivered (foreground) — firing immediately")
             handle(userInfo: info)
         }
-        completionHandler([.banner, .sound])
+        // Suppress the visual banner — lights are already being applied automatically.
+        // Showing "Tap to apply" while executing is confusing UX.
+        completionHandler([])
     }
 
     /// Called when the user TAPS a notification (app was in background or closed).

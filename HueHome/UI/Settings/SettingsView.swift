@@ -123,6 +123,7 @@ struct SettingsView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.30))
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -144,6 +145,7 @@ struct SettingsView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.30))
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
@@ -174,6 +176,7 @@ struct SettingsView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(glowColor.opacity(0.5))
                     }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             } else {
@@ -194,6 +197,7 @@ struct SettingsView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.30))
                     }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
@@ -218,6 +222,7 @@ struct SettingsView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.red.opacity(0.45))
                     }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -263,6 +268,7 @@ struct SettingsView: View {
                             .background(Capsule().fill(.orange.opacity(0.15)))
                     }
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
