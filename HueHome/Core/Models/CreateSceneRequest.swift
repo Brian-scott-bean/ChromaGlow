@@ -103,4 +103,36 @@ extension CreateSceneRequest {
             actions:  actions
         )
     }
+
+    /// Build from raw HueLight objects fetched directly from the bridge.
+    /// Used by the global Scenes tab create flow where LightDisplayItem isn't available.
+    static func fromHueLights(
+        name:       String,
+        groupID:    String,
+        groupRtype: String = "room",
+        lights:     [HueLight]
+    ) -> CreateSceneRequest {
+        let actions: [SceneAction] = lights.map { light in
+            let isOn  = light.on.on
+            let mirek = light.color_temperature?.mirek
+            let xy    = light.color.map { ($0.xy.x, $0.xy.y) }
+            let action = SceneAction.Action(
+                on:      .init(on: isOn),
+                dimming: isOn ? light.dimming.map { .init(brightness: max(1, min(100, $0.brightness))) } : nil,
+                color:   xy.map { .init(xy: .init(x: $0.0, y: $0.1)) },
+                color_temperature: (xy == nil && mirek != nil)
+                    ? light.color_temperature.flatMap { ct in ct.mirek.map { .init(mirek: $0) } }
+                    : nil
+            )
+            return SceneAction(
+                target: .init(rid: light.id, rtype: "light"),
+                action: action
+            )
+        }
+        return CreateSceneRequest(
+            metadata: .init(name: name),
+            group:    .init(rid: groupID, rtype: groupRtype),
+            actions:  actions
+        )
+    }
 }

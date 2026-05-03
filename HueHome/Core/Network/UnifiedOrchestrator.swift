@@ -1208,6 +1208,74 @@ final class UnifiedOrchestrator {
         updated[idx].speed = min(max(speed, 0.0), 1.0)
         globalScenes = updated
     }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // MARK: - Scene CRUD (Scenes Tab)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// Optimistically removes the scene from globalScenes, then fires the bridge DELETE.
+    func deleteGlobalScene(_ scene: GlobalSceneItem) {
+        globalScenes.removeAll { $0.id == scene.id }
+        guard let client = clients[scene.bridgeID] else { return }
+        Task { try? await client.deleteScene(id: scene.bridgeSceneID) }
+    }
+
+    /// Optimistically renames the scene in globalScenes, then persists to the bridge.
+    func renameGlobalScene(_ scene: GlobalSceneItem, to newName: String) async {
+        // Update locally first so the UI responds instantly
+        if let idx = globalScenes.firstIndex(where: { $0.id == scene.id }) {
+            var updated = globalScenes
+            updated[idx] = GlobalSceneItem(
+                id:            scene.id,
+                bridgeSceneID: scene.bridgeSceneID,
+                name:          newName,
+                roomID:        scene.roomID,
+                bridgeID:      scene.bridgeID,
+                isActive:      scene.isActive,
+                isDynamic:     scene.isDynamic,
+                speed:         scene.speed
+            )
+            globalScenes = updated
+        }
+        guard let client = clients[scene.bridgeID] else { return }
+        try? await client.renameScene(id: scene.bridgeSceneID, name: newName)
+    }
+
+    /// Creates a new scene by snapshotting the current light states in the given room.
+    /// Fetches all lights for the bridge, filters to this room's lights, and POSTs a scene.
+    func createSceneFromRoom(name: String, room: RoomDisplayItem) async throws {
+        guard let bridgeID = room.bridgeID,
+              let client   = clients[bridgeID] else {
+            throw HueAPIError.missingCredentials
+        }
+        // Fetch all lights from this bridge
+        let allLights = try await client.fetchLights()
+
+        // Filter to lights belonging to this room using its child resource refs
+        let childIDs  = Set(room.childResourceRefs.map { $0.rid })
+        let usesDirect = room.childResourceRefs.first?.rtype == "light"
+        let roomLights: [HueLight]
+        if usesDirect {
+            // Zones and newer-firmware rooms reference lights directly
+            roomLights = allLights.filter { childIDs.contains($0.id) }
+        } else {
+            // Older-firmware rooms reference devices — match via light.owner.rid
+            roomLights = allLights.filter { light in
+                guard let ownerRID = light.owner?.rid else { return false }
+                return childIDs.contains(ownerRID)
+            }
+        }
+
+        let req = CreateSceneRequest.fromHueLights(
+            name:       name,
+            groupID:    room.id,
+            groupRtype: room.kind == .zone ? "zone" : "room",
+            lights:     roomLights
+        )
+        try await client.createScene(req)
+        // Refresh the scene list so the new scene appears immediately
+        await loadAllScenes()
+    }
 }
 
 // MARK: - SSE Event Models

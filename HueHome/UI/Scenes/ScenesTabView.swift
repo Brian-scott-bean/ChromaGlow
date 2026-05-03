@@ -24,6 +24,12 @@ struct ScenesTabView: View {
     @State private var speedSheetScene: GlobalSceneItem? = nil   // non-nil = sheet open
     @State private var showSettings                      = false
 
+    // Scene CRUD
+    @State private var sceneToDelete:  GlobalSceneItem? = nil   // triggers delete alert
+    @State private var sceneToRename:  GlobalSceneItem? = nil   // triggers rename sheet
+    @State private var renameText:     String           = ""
+    @State private var showCreateScene = false
+
     @AppStorage("castchroma.useWideCards") private var useWideCards = false
 
     private var gridColumns: [GridItem] {
@@ -88,6 +94,27 @@ struct ScenesTabView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .sheet(isPresented: $showSettings) {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
+        }
+        .sheet(isPresented: $showCreateScene) {
+            CreateGlobalSceneView()
+        }
+        .sheet(item: $sceneToRename) { scene in
+            RenameSceneSheet(scene: scene, initialName: scene.name) { newName in
+                Task { await orchestrator.renameGlobalScene(scene, to: newName) }
+            }
+        }
+        .alert("Delete \"\(sceneToDelete?.name ?? "Scene\")\"",
+               isPresented: .init(
+                   get: { sceneToDelete != nil },
+                   set: { if !$0 { sceneToDelete = nil } }
+               )) {
+            Button("Delete", role: .destructive) {
+                if let s = sceneToDelete { orchestrator.deleteGlobalScene(s) }
+                sceneToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { sceneToDelete = nil }
+        } message: {
+            Text("This scene will be permanently removed from your bridge.")
         }
         .toolbar { toolbarItems }
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search scenes or rooms")
@@ -169,7 +196,7 @@ struct ScenesTabView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 14)
 
-                // Scene mood grid
+                // Scene mood grid — with context menu for rename / delete
                 LazyVGrid(columns: gridColumns, spacing: 14) {
                     ForEach(filteredScenes) { scene in
                         SceneMoodCard(
@@ -186,6 +213,20 @@ struct ScenesTabView: View {
                                 speedSheetScene = scene
                             } else {
                                 orchestrator.activateGlobalScene(scene)
+                            }
+                        }
+                        .contextMenu {
+                            Button {
+                                renameText    = scene.name
+                                sceneToRename = scene
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                sceneToDelete = scene
+                            } label: {
+                                Label("Delete Scene", systemImage: "trash")
                             }
                         }
                     }
@@ -286,6 +327,15 @@ struct ScenesTabView: View {
 
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarLeading) {
+            Button {
+                showCreateScene = true
+                HapticManager.shared.light()
+            } label: {
+                Image(systemName: "plus")
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+        }
         ToolbarItem(placement: .navigationBarTrailing) {
             Button { showSettings = true } label: {
                 Image(systemName: "gear")
@@ -316,6 +366,69 @@ struct ScenesTabView: View {
                     )
             }
             .disabled(orchestrator.isLoadingScenes)
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+// MARK: - RenameSceneSheet
+// ══════════════════════════════════════════════════════════
+
+struct RenameSceneSheet: View {
+    let scene:       GlobalSceneItem
+    let initialName: String
+    let onRename:    (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    private let glowColor = Color(red: 1.0, green: 0.76, blue: 0.2)
+
+    init(scene: GlobalSceneItem, initialName: String, onRename: @escaping (String) -> Void) {
+        self.scene       = scene
+        self.initialName = initialName
+        self.onRename    = onRename
+        _text            = State(initialValue: initialName)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
+                VStack(spacing: 24) {
+                    TextField("Scene name", text: $text)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.white)
+                        .tint(glowColor)
+                        .padding(16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(.white.opacity(0.07))
+                                .overlay(RoundedRectangle(cornerRadius: 14)
+                                    .strokeBorder(.white.opacity(0.12), lineWidth: 1))
+                        )
+                        .padding(.horizontal, 24)
+                    Spacer()
+                }
+                .padding(.top, 32)
+            }
+            .navigationTitle("Rename Scene")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.foregroundStyle(.white.opacity(0.65))
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let trimmed = text.trimmingCharacters(in: .whitespaces)
+                        if !trimmed.isEmpty { onRename(trimmed) }
+                        dismiss()
+                    }
+                    .foregroundStyle(text.trimmingCharacters(in: .whitespaces).isEmpty
+                        ? glowColor.opacity(0.35) : glowColor)
+                    .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .preferredColorScheme(.dark)
         }
     }
 }

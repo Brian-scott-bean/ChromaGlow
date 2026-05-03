@@ -163,6 +163,17 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "DELETE /scene/\(id)")
     }
 
+    /// Rename a scene by updating only its metadata.name field.
+    func renameScene(id: String, name: String) async throws {
+        let (ip, token) = try credentials()
+        let body: [String: Any] = ["metadata": ["name": name]]
+        let data = try await put(
+            path: "/clip/v2/resource/scene/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /scene/\(id) rename='\(name)'")
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - Devices (/clip/v2/resource/device)
     // ──────────────────────────────────────────────
