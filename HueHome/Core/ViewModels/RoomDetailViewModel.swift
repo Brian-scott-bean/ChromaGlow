@@ -363,6 +363,16 @@ final class RoomDetailViewModel {
         } catch {
             appendLog("⚠️ Failed to load grouped_light state: \(error.localizedDescription)")
         }
+        // Cross-check: if individual lights are on but grouped_light reports off
+        // (common after scene activation — grouped_light can lag), trust the lights.
+        let anyLightOn = lights.contains { $0.isOn }
+        if anyLightOn && !roomIsOn {
+            roomIsOn = true
+            let onLights = lights.filter { $0.isOn }
+            if roomBrightness == 0 || roomBrightness == 100 {
+                roomBrightness = onLights.map(\.brightness).reduce(0, +) / Double(max(1, onLights.count))
+            }
+        }
     }
 
     /// Toggle all lights in the room on or off.
