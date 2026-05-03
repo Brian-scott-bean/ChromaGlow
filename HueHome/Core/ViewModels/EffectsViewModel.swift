@@ -134,6 +134,24 @@ final class EffectsViewModel: ObservableObject {
         paramState.load(from: effect.params)
     }
 
+    /// Tapping a selected card a second time deselects it.
+    /// Clears the Now Playing bar on the home page and stops any running
+    /// app-driven effect loop. Bridge-native effects continue on the bridge
+    /// (they don’t need the app to keep running), but the UI no longer shows
+    /// them as active.
+    @MainActor
+    func deselect() {
+        // Stop app-driven engine loop first (if running)
+        if isRunning {
+            Task { await stop() }
+        } else {
+            // For bridge-native / oneShot effects just clear the Now Playing bar.
+            selectedEffect = nil
+            paramState     = EffectParamState()
+            clearNowPlaying()
+        }
+    }
+
     // MARK: - Filtered List
 
     var filteredEffects: [HueEffect] {

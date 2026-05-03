@@ -303,7 +303,7 @@ struct EffectsView: View {
                     let isAlreadySelected = vm.selectedEffect?.id == effect.id
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                         if isAlreadySelected {
-                            vm.selectedEffect = nil
+                            vm.deselect()   // clears Now Playing + stops engine if app-driven
                         } else {
                             vm.select(effect)
                             // Auto-apply instantly for non-looping effects
