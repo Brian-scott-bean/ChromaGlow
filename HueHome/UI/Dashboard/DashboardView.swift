@@ -118,7 +118,17 @@ struct DashboardView: View {
                 summaryHeader
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
+                    .padding(.bottom, 10)
+
+                // ── Time-aware suggestion banner ─────────────────────────
+                if let suggestion = timeSuggestion {
+                    TimeSuggestionBanner(suggestion: suggestion) {
+                        applyPreset(suggestion.preset)
+                    }
+                    .padding(.horizontal, 20)
                     .padding(.bottom, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
 
                 presetsBar
                     .padding(.leading, 20)
@@ -384,6 +394,35 @@ struct DashboardView: View {
         case 12..<17: return "Good afternoon"
         case 17..<21: return "Good evening"
         default:      return "Good night"
+        }
+    }
+
+    // ── Time-aware suggestion ─────────────────────────────────────────────────
+    // Maps the current hour to a contextual prompt + the preset that best fits.
+    // Only shown when all lights are off (avoids interrupting an active scene).
+
+    private struct TimeSuggestion {
+        let message:  String
+        let subtext:  String
+        let preset:   LightPreset
+    }
+
+    private var timeSuggestion: TimeSuggestion? {
+        // Don't show if any lights are already on
+        guard orchestrator.allRooms.allSatisfy({ !$0.isOn }) else { return nil }
+        guard !orchestrator.allRooms.isEmpty else { return nil }
+        let energize = presets.first(where: { $0.id == "energize" })!
+        let read     = presets.first(where: { $0.id == "read" })!
+        let relax    = presets.first(where: { $0.id == "relax" })!
+        let sleep    = presets.first(where: { $0.id == "sleep" })!
+        switch currentHour {
+        case 5..<9:   return TimeSuggestion(message: "Rise and shine ☀️",     subtext: "Start your morning strong",    preset: energize)
+        case 9..<12:  return TimeSuggestion(message: "Time to focus 🎯",       subtext: "Peak productivity hours",      preset: energize)
+        case 12..<14: return TimeSuggestion(message: "Afternoon reading? 📖",  subtext: "Easy on the eyes",             preset: read)
+        case 14..<17: return TimeSuggestion(message: "Afternoon boost ⚡",     subtext: "Keep the energy going",        preset: energize)
+        case 17..<20: return TimeSuggestion(message: "Time to wind down 🌙",   subtext: "Ease into your evening",       preset: relax)
+        case 20..<23: return TimeSuggestion(message: "Ready for sleep? 😴",    subtext: "Dim the lights, rest well",    preset: sleep)
+        default:      return TimeSuggestion(message: "Still up late? 🌃",      subtext: "Try sleep mode",               preset: sleep)
         }
     }
 
@@ -907,5 +946,79 @@ private struct DashboardAmbientBackground: View {
                 .animation(.easeInOut(duration: 2.0), value: hour)
         }
         .ignoresSafeArea()
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+// MARK: - TimeSuggestionBanner
+// ══════════════════════════════════════════════════════════
+
+struct TimeSuggestionBanner: View {
+
+    // Re-declare the nested type here so it's accessible as a parameter
+    struct Suggestion {
+        let message:  String
+        let subtext:  String
+        let icon:     String
+        let color:    Color
+        let label:    String  // preset button label
+    }
+
+    let suggestion: DashboardView.TimeSuggestion
+    let onTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            // Colored icon circle
+            ZStack {
+                Circle()
+                    .fill(suggestion.preset.color.opacity(0.22))
+                    .frame(width: 44, height: 44)
+                Image(systemName: suggestion.preset.icon)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(suggestion.preset.color)
+            }
+
+            // Text
+            VStack(alignment: .leading, spacing: 3) {
+                Text(suggestion.message)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(suggestion.subtext)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.50))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            // One-tap CTA
+            Button(action: onTap) {
+                HStack(spacing: 5) {
+                    Image(systemName: suggestion.preset.icon)
+                        .font(.system(size: 10, weight: .bold))
+                    Text(suggestion.preset.name)
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(.black.opacity(0.85))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Capsule().fill(suggestion.preset.color))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(suggestion.preset.color.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18)
+                        .strokeBorder(suggestion.preset.color.opacity(0.25), lineWidth: 1)
+                )
+        )
+        .shadow(color: suggestion.preset.color.opacity(0.15), radius: 10, x: 0, y: 4)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: suggestion.message)
     }
 }
