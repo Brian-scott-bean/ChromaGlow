@@ -20,9 +20,7 @@ struct SettingsView: View {
     @Query private var bridges: [BridgeRecord]
 
     // Loaded from Keychain on appear
-    @State private var bridgeIP     = "—"
     @State private var tokenPreview = "—"
-    @State private var pingStatus: PingStatus = .unknown
 
     @State private var showForgetAlert = false
 
@@ -201,46 +199,8 @@ struct SettingsView: View {
 
                 Divider().background(Color.white.opacity(0.08))
 
-                // ── Bridge IP ────────────────────────────────────────────
-                settingsRow(
-                    icon: "network",
-                    iconColor: glowColor,
-                    title: "Bridge IP",
-                    value: bridgeIP
-                )
-
-                Divider().background(Color.white.opacity(0.08))
-
-                // ── Connection ping ───────────────────────────────────────
-                HStack(spacing: 12) {
-                    iconCircle("wifi", color: pingColor)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Connection")
-                            .font(.subheadline)
-                            .foregroundStyle(.white)
-                        Text(pingLabel)
-                            .font(.caption)
-                            .foregroundStyle(pingColor.opacity(0.85))
-                    }
-                    Spacer()
-                    Button {
-                        pingStatus = .checking
-                        Task { await pingBridge() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.45))
-                            .rotationEffect(.degrees(pingStatus == .checking ? 360 : 0))
-                            .animation(
-                                pingStatus == .checking
-                                    ? .linear(duration: 0.8).repeatForever(autoreverses: false)
-                                    : .default,
-                                value: pingStatus == .checking
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.vertical, 2)
+                // ── Live connection status (SSE-driven, always accurate) ──────
+                liveConnectionRow
 
                 Divider().background(Color.white.opacity(0.08))
 
@@ -434,27 +394,42 @@ struct SettingsView: View {
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Ping Status
+    // MARK: - Live Connection Status
     // ──────────────────────────────────────────────
 
-    enum PingStatus: Equatable { case unknown, checking, reachable, unreachable }
+    /// Reads orchestrator.connectionStatus (updated live by SSE) — no manual ping needed.
+    private var liveConnectionRow: some View {
+        let statuses  = orchestrator.connectionStatus
+        let connected = statuses.values.filter { if case .connected = $0 { return true }; return false }.count
+        let total     = statuses.count
+        let color: Color = {
+            if total == 0          { return .white.opacity(0.35) }
+            if connected == total  { return .green }
+            if connected == 0      { return .red }
+            return .orange
+        }()
+        let label: String = {
+            if total == 0 { return "No bridges configured" }
+            if connected == total { return "All \(total) bridge\(total == 1 ? "" : "s") connected" }
+            return "\(connected) of \(total) connected"
+        }()
 
-    private var pingColor: Color {
-        switch pingStatus {
-        case .reachable:   return .green
-        case .unreachable: return .red
-        case .checking:    return glowColor
-        case .unknown:     return .white.opacity(0.35)
+        return HStack(spacing: 12) {
+            iconCircle("wifi", color: color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Connection")
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(color.opacity(0.85))
+            }
+            Spacer()
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
         }
-    }
-
-    private var pingLabel: String {
-        switch pingStatus {
-        case .reachable:   return "Connected"
-        case .unreachable: return "Unreachable"
-        case .checking:    return "Checking…"
-        case .unknown:     return "Tap ↺ to check"
-        }
+        .padding(.vertical, 2)
     }
 
     // ──────────────────────────────────────────────
@@ -470,24 +445,8 @@ struct SettingsView: View {
     }
 
     private func loadCredentials() {
-        bridgeIP     = (try? KeychainManager.shared.loadBridgeIP()) ?? "Not saved"
         let raw      = (try? KeychainManager.shared.loadAPIToken()) ?? ""
         tokenPreview = raw.isEmpty ? "Not saved"
                      : String(raw.prefix(6)) + "••••••" + String(raw.suffix(4))
-        // Auto-ping on appear
-        pingStatus = .checking
-        Task { await pingBridge() }
-    }
-
-    private func pingBridge() async {
-        guard let ip = try? KeychainManager.shared.loadBridgeIP(), !ip.isEmpty else {
-            pingStatus = .unreachable; return
-        }
-        do {
-            _ = try await HueAPIClient.shared.fetchRooms()
-            pingStatus = .reachable
-        } catch {
-            pingStatus = .unreachable
-        }
     }
 }

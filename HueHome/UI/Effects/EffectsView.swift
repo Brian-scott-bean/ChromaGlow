@@ -342,18 +342,35 @@ struct EffectCard: View {
 
     var body: some View {
         Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    ZStack {
-                        Circle()
-                            .fill(effect.accentColor.opacity(isSelected ? 0.30 : 0.15))
-                            .frame(width: 44, height: 44)
-                        Image(systemName: effect.icon)
-                            .font(.system(size: 19, weight: .medium))
-                            .foregroundStyle(effect.accentColor)
-                            .symbolEffect(.pulse, isActive: isRunning)
-                    }
-                    Spacer()
+            HStack(alignment: .center, spacing: 12) {
+
+                // ── Icon ──────────────────────────────────────────────────
+                ZStack {
+                    Circle()
+                        .fill(effect.accentColor.opacity(isSelected ? 0.30 : 0.15))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: effect.icon)
+                        .font(.system(size: 19, weight: .medium))
+                        .foregroundStyle(effect.accentColor)
+                        .symbolEffect(.pulse, isActive: isRunning)
+                }
+
+                // ── Text ──────────────────────────────────────────────────
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(effect.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text(effect.tagline)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                // ── Right: foreground indicator + running + play ───────────
+                HStack(spacing: 6) {
                     if effect.requiresForeground {
                         Image(systemName: "iphone")
                             .font(.system(size: 10))
@@ -362,20 +379,19 @@ struct EffectCard: View {
                     if isRunning {
                         Circle().fill(.green).frame(width: 7, height: 7)
                     }
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(effect.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text(effect.tagline)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.45))
-                        .lineLimit(2)
+                    Image(systemName: isRunning ? "play.circle.fill" : "play.circle")
+                        .font(.system(size: 22))
+                        .foregroundStyle(
+                            isRunning   ? effect.accentColor :
+                            isSelected  ? effect.accentColor.opacity(0.6) :
+                                          .white.opacity(0.28)
+                        )
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: 76)
             .background(
                 RoundedRectangle(cornerRadius: 18)
                     .fill(isSelected
@@ -394,8 +410,8 @@ struct EffectCard: View {
         }
         .buttonStyle(ScaleButtonStyle())
         .contentShape(RoundedRectangle(cornerRadius: 18))
-    }   // end body
-}   // end EffectCard
+    }
+}
 
 // MARK: - ScaleButtonStyle (reused)
 private struct ScaleButtonStyle: ButtonStyle {

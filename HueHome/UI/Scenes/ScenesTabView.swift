@@ -311,50 +311,58 @@ struct SceneMoodCard: View {
 
     var body: some View {
         Button(action: onActivate) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    ZStack {
-                        Circle()
-                            .fill(scene.accentColor.opacity(scene.isActive ? 0.30 : 0.15))
-                            .frame(width: 44, height: 44)
-                        Image(systemName: scene.icon)
-                            .font(.system(size: 19, weight: .medium))
-                            .foregroundStyle(scene.accentColor)
-                            .symbolEffect(.pulse, isActive: scene.isActive)
-                    }
-                    Spacer()
+            HStack(alignment: .center, spacing: 12) {
+
+                // ── Icon (with optional SPEED badge) ──────────────────────
+                ZStack(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(scene.accentColor.opacity(scene.isActive ? 0.30 : 0.15))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: scene.icon)
+                        .font(.system(size: 19, weight: .medium))
+                        .foregroundStyle(scene.accentColor)
+                        .symbolEffect(.pulse, isActive: scene.isActive)
+                        .frame(width: 44, height: 44)
                     if scene.isDynamic {
-                        Button(action: onLongPress) {
-                            HStack(spacing: 3) {
-                                Image(systemName: "bolt.fill")
-                                    .font(.system(size: 7, weight: .bold))
-                                Text("SPEED")
-                                    .font(.system(size: 7, weight: .bold))
-                            }
-                            .foregroundStyle(.black.opacity(0.85))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(scene.accentColor))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if scene.isActive {
-                        Circle().fill(.green).frame(width: 7, height: 7)
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(3)
+                            .background(Circle().fill(scene.accentColor))
+                            .offset(x: 4, y: 4)
                     }
                 }
+
+                // ── Text ──────────────────────────────────────────────────
                 VStack(alignment: .leading, spacing: 3) {
                     Text(scene.name)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
-                        .lineLimit(2)
+                        .lineLimit(1)
                     Text(roomName)
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.45))
                         .lineLimit(1)
                 }
+
+                Spacer()
+
+                // ── Active indicator + play affordance ────────────────────
+                HStack(spacing: 8) {
+                    if scene.isActive {
+                        Circle().fill(.green).frame(width: 7, height: 7)
+                    }
+                    Image(systemName: scene.isActive ? "play.circle.fill" : "play.circle")
+                        .font(.system(size: 22))
+                        .foregroundStyle(scene.isActive
+                            ? scene.accentColor
+                            : .white.opacity(0.28))
+                }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: 76)
             .background(
                 RoundedRectangle(cornerRadius: 18)
                     .fill(scene.isActive
@@ -375,6 +383,20 @@ struct SceneMoodCard: View {
         }
         .buttonStyle(SceneCardPressStyle())
         .contentShape(RoundedRectangle(cornerRadius: 18))
+        // SPEED button overlaid for dynamic scenes — intercepts taps in its hit area
+        .overlay(alignment: .topTrailing) {
+            if scene.isDynamic {
+                Button(action: onLongPress) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(scene.accentColor.opacity(0.75))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 6)
+                .padding(.trailing, 6)
+            }
+        }
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: scene.isActive)
     }
 }
