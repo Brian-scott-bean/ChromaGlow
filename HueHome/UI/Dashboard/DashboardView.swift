@@ -301,13 +301,6 @@ struct DashboardView: View {
     // Each preset gets a stable id — ready for future drag-to-reorder / add-remove customization
     // NOTE: LightPreset is file-level (see bottom of file) for access by TimeSuggestionBanner
     private typealias LightPreset = DashboardLightPreset
-        let id:         String
-        let name:       String
-        let icon:       String
-        let brightness: Double
-        let mirek:      Int
-        let color:      Color
-    }
 
     private let presets: [LightPreset] = [
         LightPreset(id: "energize", name: "Energize", icon: "bolt.fill",       brightness: 100, mirek: 156, color: Color(hue: 0.58, saturation: 0.7,  brightness: 1.0)),
