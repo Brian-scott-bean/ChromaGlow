@@ -311,91 +311,82 @@ struct SceneMoodCard: View {
 
     var body: some View {
         Button(action: onActivate) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(.ultraThinMaterial)
-                    .overlay(scene.accentColor.opacity(0.12))
-
-                if scene.isActive {
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(scene.accentColor.opacity(0.6), lineWidth: 2)
-                } else {
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
-
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(alignment: .top, spacing: 4) {
-                        Text(roomName)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(Color.white.opacity(0.1)))
-
-                        Spacer()
-
-                        if scene.isDynamic {
-                            Button(action: onLongPress) {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "bolt.fill")
-                                        .font(.system(size: 7, weight: .bold))
-                                    Text("SPEED")
-                                        .font(.system(size: 7, weight: .bold))
-                                }
-                                .foregroundStyle(.black.opacity(0.85))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(Capsule().fill(scene.accentColor))
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        if scene.isActive {
-                            Circle()
-                                .fill(scene.accentColor)
-                                .frame(width: 8, height: 8)
-                                .shadow(color: scene.accentColor, radius: 6)
-                                .symbolEffect(.pulse)
-                        }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    ZStack {
+                        Circle()
+                            .fill(scene.accentColor.opacity(scene.isActive ? 0.30 : 0.15))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: scene.icon)
+                            .font(.system(size: 19, weight: .medium))
+                            .foregroundStyle(scene.accentColor)
+                            .symbolEffect(.pulse, isActive: scene.isActive)
                     }
-
                     Spacer()
-
-                    Image(systemName: scene.icon)
-                        .font(.system(size: 30, weight: .light))
-                        .foregroundStyle(scene.accentColor)
-                        .frame(maxWidth: .infinity)
-                        .padding(.bottom, 10)
-
+                    if scene.isDynamic {
+                        Button(action: onLongPress) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 7, weight: .bold))
+                                Text("SPEED")
+                                    .font(.system(size: 7, weight: .bold))
+                            }
+                            .foregroundStyle(.black.opacity(0.85))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(scene.accentColor))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if scene.isActive {
+                        Circle().fill(.green).frame(width: 7, height: 7)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 3) {
                     Text(scene.name)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(roomName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .lineLimit(1)
                 }
-                .padding(14)
             }
-            .aspectRatio(0.88, contentMode: .fit)
-            .contentShape(RoundedRectangle(cornerRadius: 20))
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(scene.isActive
+                          ? scene.accentColor.opacity(0.13)
+                          : Color.white.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18)
+                            .strokeBorder(
+                                scene.isActive
+                                    ? scene.accentColor.opacity(0.55)
+                                    : Color.white.opacity(0.08),
+                                lineWidth: scene.isActive ? 1.5 : 1
+                            )
+                    )
+            )
+            .shadow(color: scene.isActive ? scene.accentColor.opacity(0.25) : .clear,
+                    radius: 12, x: 0, y: 4)
         }
         .buttonStyle(SceneCardPressStyle())
+        .contentShape(RoundedRectangle(cornerRadius: 18))
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: scene.isActive)
     }
 }
 
-/// ButtonStyle that applies a 4% scale-down on press.
-/// Using ButtonStyle (rather than DragGesture) lets SwiftUI properly
-/// coordinate with parent ScrollViews so scrolling is never blocked.
 private struct SceneCardPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
-            .animation(.spring(response: 0.22, dampingFraction: 0.65),
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7),
                        value: configuration.isPressed)
     }
 }
-
 
 // ══════════════════════════════════════════════════════════
 // MARK: - SceneFilterChip
