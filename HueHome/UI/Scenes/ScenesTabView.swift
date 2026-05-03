@@ -22,6 +22,7 @@ struct ScenesTabView: View {
     @State private var searchText:     String            = ""
     @State private var selectedRoomID: String?           = nil
     @State private var speedSheetScene: GlobalSceneItem? = nil   // non-nil = sheet open
+    @State private var showSettings                      = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 14),
@@ -82,6 +83,9 @@ struct ScenesTabView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .sheet(isPresented: $showSettings) {
+            NavigationStack { SettingsView(onForget: { showSettings = false }) }
+        }
         .toolbar { toolbarItems }
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search scenes or rooms")
         .preferredColorScheme(.dark)
@@ -279,6 +283,12 @@ struct ScenesTabView: View {
 
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button { showSettings = true } label: {
+                Image(systemName: "gear")
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+        }
         ToolbarItem(placement: .navigationBarTrailing) {
             Button {
                 Task { await orchestrator.loadAllScenes() }

@@ -19,6 +19,8 @@ struct EffectsView: View {
     private let teal   = Color(red: 0.25, green: 0.85, blue: 0.75)
     private let pink   = Color(red: 1.0,  green: 0.30, blue: 0.55)
 
+    @State private var showSettings = false
+
     // Room list from orchestrator for the top selector
     private var rooms: [RoomDisplayItem] { orchestrator.allRooms }
 
@@ -97,6 +99,9 @@ struct EffectsView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { stopToolbarItem }
+        .sheet(isPresented: $showSettings) {
+            NavigationStack { SettingsView(onForget: { showSettings = false }) }
+        }
         .preferredColorScheme(.dark)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.selectedEffect?.id)
         .animation(.easeInOut(duration: 0.2), value: vm.selectedCategory)
@@ -296,6 +301,12 @@ struct EffectsView: View {
 
     @ToolbarContentBuilder
     private var stopToolbarItem: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button { showSettings = true } label: {
+                Image(systemName: "gear")
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+        }
         ToolbarItem(placement: .navigationBarTrailing) {
             if vm.isRunning {
                 Button {

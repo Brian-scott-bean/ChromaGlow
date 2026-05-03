@@ -9,6 +9,7 @@ import SwiftUI
 struct MicModeView: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var engine: MicModeEngine?
+    @State private var showSettings = false
 
     var body: some View {
         ZStack {
@@ -18,6 +19,21 @@ struct MicModeView: View {
             } else {
                 ProgressView().tint(.white)
             }
+        }
+        .navigationTitle("Mic")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button { showSettings = true } label: {
+                    Image(systemName: "gear")
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+            }
+        }
+        .sheet(isPresented: $showSettings) {
+            NavigationStack { SettingsView(onForget: { showSettings = false }) }
         }
         .preferredColorScheme(.dark)
         .onAppear  { engine = MicModeEngine(orchestrator: orchestrator) }

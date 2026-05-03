@@ -13,25 +13,22 @@ enum HueTab: Int, CaseIterable {
     case scenes   = 1
     case effects  = 2
     case mic      = 3
-    case settings = 4
 
     var icon: String {
         switch self {
-        case .home:     return "house.fill"
-        case .scenes:   return "sparkles"
-        case .effects:  return "wand.and.stars"
-        case .mic:      return "waveform.and.mic"
-        case .settings: return "gearshape.fill"
+        case .home:    return "house.fill"
+        case .scenes:  return "sparkles"
+        case .effects: return "wand.and.stars"
+        case .mic:     return "waveform.and.mic"
         }
     }
 
     var label: String {
         switch self {
-        case .home:     return "Home"
-        case .scenes:   return "Scenes"
-        case .effects:  return "Effects"
-        case .mic:      return "Mic"
-        case .settings: return "Settings"
+        case .home:    return "Home"
+        case .scenes:  return "Scenes"
+        case .effects: return "Effects"
+        case .mic:     return "Mic"
         }
     }
 }
@@ -55,14 +52,13 @@ struct MainTabView: View {
 
     private var iPhoneLayout: some View {
         ZStack(alignment: .bottom) {
-            TabView(selection: $selectedTab) {
-                ForEach(HueTab.allCases, id: \.self) { tab in
-                    tabContent(for: tab)
-                        .tag(tab)
-                }
+            // Opacity-based switcher — preserves NavigationStack state per tab
+            // and eliminates the TabView swipe-between-tabs gesture entirely.
+            ForEach(HueTab.allCases, id: \.self) { tab in
+                tabContent(for: tab)
+                    .opacity(selectedTab == tab ? 1 : 0)
+                    .allowsHitTesting(selectedTab == tab)
             }
-            .toolbar(.hidden, for: .tabBar)
-
             HueTabBar(selectedTab: $selectedTab)
         }
     }
@@ -103,11 +99,10 @@ struct MainTabView: View {
     @ViewBuilder
     private func tabContent(for tab: HueTab) -> some View {
         switch tab {
-        case .home:     NavigationStack { DashboardView() }
-        case .scenes:   NavigationStack { ScenesTabView() }
-        case .effects:  NavigationStack { EffectsTabView() }
-        case .mic:      NavigationStack { MicModeView() }
-        case .settings: NavigationStack { SettingsTabView() }
+        case .home:    NavigationStack { DashboardView() }
+        case .scenes:  NavigationStack { ScenesTabView() }
+        case .effects: NavigationStack { EffectsTabView() }
+        case .mic:     NavigationStack { MicModeView() }
         }
     }
 }
