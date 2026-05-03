@@ -307,19 +307,36 @@ struct EffectsView: View {
     // MARK: - Effect Grid
 
     private var effectGrid: some View {
+        // Read activeEffectEntries here so SwiftUI tracks the @Observable property
+        // and re-renders cards whenever any room's effect changes.
+        let entries    = orchestrator.activeEffectEntries
+        let allRoomIDs = Set(orchestrator.allRooms.compactMap { $0.groupedLightID != nil ? $0.id : nil })
         return LazyVGrid(columns: gridColumns, spacing: 14) {
             ForEach(vm.filteredEffects) { effect in
+                // isSelected is derived from activeEffectEntries + room context:
+                //  • Specific room → that room's entry matches this effect
+                //  • All Rooms    → EVERY room's entry matches this effect (intersection check)
+                let activeRoomIDs = Set(entries.filter { $0.effectID == effect.id }.map { $0.id })
+                let isActive: Bool = {
+                    if let room = vm.selectedRoom {
+                        return activeRoomIDs.contains(room.id)
+                    } else {
+                        return !allRoomIDs.isEmpty && allRoomIDs.isSubset(of: activeRoomIDs)
+                    }
+                }()
                 EffectCard(effect: effect,
-                           isSelected: vm.selectedEffect?.id == effect.id,
+                           isSelected: isActive,
                            isRunning:  vm.isRunning && vm.runningEffectName == effect.name)
                 {
-                    let isAlreadySelected = vm.selectedEffect?.id == effect.id
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                        if isAlreadySelected {
-                            vm.deselect()   // clears Now Playing + stops engine if app-driven
+                        if isActive {
+                            // Deselect: scope is determined inside deselect(effectID:)
+                            //  • Specific room → remove that room only
+                            //  • All Rooms     → remove all rooms running this effect
+                            vm.deselect(effectID: effect.id)
                         } else {
                             vm.select(effect)
-                            // Auto-apply instantly for non-looping effects
+                            // Auto-apply: activate() handles single room or all rooms
                             if !effect.requiresForeground {
                                 Task { await vm.activate() }
                             }

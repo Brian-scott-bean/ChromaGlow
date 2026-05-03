@@ -168,19 +168,47 @@ final class EffectsViewModel: ObservableObject {
         paramState.load(from: effect.params)
     }
 
-    /// Tapping a selected card a second time deselects it.
-    /// Clears the Now Playing bar only if no other room still has an active effect.
+    // MARK: - Computed Selection State
+
+    /// Returns whether an effect is currently active for the given room context.
+    /// - Specific room: that room has an entry with this effect ID.
+    /// - All Rooms (nil): EVERY available room has an entry with this effect ID.
     @MainActor
-    func deselect() {
-        if isRunning {
-            // App-driven: fully stop engine + remove from per-room tracking via stop()
-            Task { await stop() }
+    func isEffectActive(_ effectID: String, in room: RoomDisplayItem?) -> Bool {
+        guard let entries = orchestrator?.activeEffectEntries else { return false }
+        if let room {
+            return entries.contains { $0.id == room.id && $0.effectID == effectID }
         } else {
-            // Remove this room's entry from the shared orchestrator state.
-            // clearNowPlaying() handles updating the bar for remaining rooms.
+            // All Rooms: selected only when the effect is running in every room with lights
+            let allRoomIDs = Set(orchestrator?.allRooms.compactMap { $0.groupedLightID != nil ? $0.id : nil } ?? [])
+            let activeRoomIDs = Set(entries.filter { $0.effectID == effectID }.map { $0.id })
+            return !allRoomIDs.isEmpty && allRoomIDs.isSubset(of: activeRoomIDs)
+        }
+    }
+
+    /// Tapping a selected card a second time deselects it.
+    /// Scope: single room or all rooms depending on selectedRoom.
+    @MainActor
+    func deselect(effectID: String) {
+        if isRunning {
+            // App-driven: fully stop engine + clear entry
+            Task { await stop() }
+        } else if let room = selectedRoom {
+            // ── Specific room ──────────────────────────────────────────────
+            orchestrator?.removeActiveEffect(roomID: room.id)
+            // Clear controls panel only if no other effect is now selected for this room
             selectedEffect = nil
             paramState     = EffectParamState()
-            clearNowPlaying()  // removes current room; bar auto-updates from remaining entries
+        } else {
+            // ── All Rooms ──────────────────────────────────────────────────
+            // Remove every room that has this specific effect
+            guard let entries = orchestrator?.activeEffectEntries else { return }
+            let roomIDsToRemove = entries.filter { $0.effectID == effectID }.map { $0.id }
+            for roomID in roomIDsToRemove {
+                orchestrator?.removeActiveEffect(roomID: roomID)
+            }
+            selectedEffect = nil
+            paramState     = EffectParamState()
         }
     }
 
