@@ -230,6 +230,7 @@ struct AutomationsView: View {
             .scaleEffect(0.85)
         }
         .padding(.vertical, 10)
+        .contentShape(Rectangle())          // full card area triggers contextMenu
         .opacity(automation.isEnabled ? 1.0 : 0.7)
         .contextMenu {
             Button {
@@ -509,6 +510,14 @@ struct AutomationRow: View {
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
+        .contextMenu {
+            Button {
+                onToggle()
+            } label: {
+                Label(item.enabled ? "Disable" : "Enable",
+                      systemImage: item.enabled ? "pause.circle" : "play.circle")
+            }
+        }
         .opacity(item.enabled ? 1.0 : 0.72)
         .animation(.spring(response: 0.3), value: item.enabled)
     }
