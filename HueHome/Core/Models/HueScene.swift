@@ -1,5 +1,5 @@
 // HueScene.swift
-// HueHome Pro — Epic 4 / Story 4.1
+// CastChroma — Epic 4 / Story 4.1
 //
 // Typed model for the Hue V2 /clip/v2/resource/scene response.
 // A scene stores a named set of light actions tied to a room or zone.

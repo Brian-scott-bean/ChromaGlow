@@ -1,5 +1,5 @@
 // ShimmerComponents.swift
-// HueHome Pro — Stage 2A Performance
+// CastChroma — Stage 2A Performance
 //
 // Shimmer skeleton views for instant perceived load.
 // Shown instead of spinners when data is being fetched from scratch.

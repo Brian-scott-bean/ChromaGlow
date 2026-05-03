@@ -1,5 +1,5 @@
 // MainTabView.swift
-// HueHome Pro — Stage 1 Navigation
+// CastChroma — Stage 1 Navigation
 // Custom glassmorphic 5-tab shell.
 // iPhone: TabView + NavigationStack per tab.
 // iPad: NavigationSplitView (sidebar + detail).

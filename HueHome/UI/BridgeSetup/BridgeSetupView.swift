@@ -1,5 +1,5 @@
 // BridgeSetupView.swift
-// HueHome Pro — Onboarding
+// CastChroma — Onboarding
 //
 // Premium step-driven onboarding flow.
 // Phases: idle → scanning → bridgeFound → pairing → paired → error

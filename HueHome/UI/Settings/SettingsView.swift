@@ -1,5 +1,5 @@
 // SettingsView.swift
-// HueHome Pro — Epic 7 / Story 7.1
+// CastChroma — Epic 7 / Story 7.1
 //
 // Glassmorphic settings sheet: bridge info, connection ping, token display,
 // "Forget Bridge" (destructive), and app version.

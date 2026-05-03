@@ -1,5 +1,5 @@
 // DevicesView.swift
-// HueHome Pro — Devices Tab
+// CastChroma — Devices Tab
 //
 // Shows all paired Hue devices across all bridges, grouped by type.
 // Displays model, firmware version, and device category at a glance.

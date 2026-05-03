@@ -1,5 +1,5 @@
 // KeychainManager.swift
-// HueHome Pro — Epic 1 / Story 1.1
+// CastChroma — Epic 1 / Story 1.1
 //
 // Thread-safe Keychain wrapper.
 // Stores and retrieves the Hue Bridge API token using kSecClassGenericPassword.

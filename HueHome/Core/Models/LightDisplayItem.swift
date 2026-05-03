@@ -1,5 +1,5 @@
 // LightDisplayItem.swift
-// HueHome Pro — Epic 3 / Story 3.1 → 3.3 (color + color temp fields added)
+// CastChroma — Epic 3 / Story 3.1 → 3.3 (color + color temp fields added)
 //
 // UI-ready individual light model. Mirrors RoomDisplayItem's pattern.
 

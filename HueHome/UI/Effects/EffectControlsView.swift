@@ -1,5 +1,5 @@
 // EffectControlsView.swift
-// HueHome Pro — Effects Tab
+// CastChroma — Effects Tab
 //
 // Dynamically renders fine-tuning controls (sliders, colour pickers, toggles,
 // segmented, duration pickers, colour palettes) from an effect's param schema.

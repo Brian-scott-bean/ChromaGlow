@@ -1,5 +1,5 @@
 // EffectEngine.swift
-// HueHome Pro — Effects Engine
+// CastChroma — Effects Engine
 //
 // Actor that manages exactly one running app-driven effect loop at a time.
 // Cancels and replaces whenever a new effect starts.

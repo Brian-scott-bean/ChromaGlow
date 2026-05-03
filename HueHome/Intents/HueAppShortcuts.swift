@@ -1,5 +1,5 @@
 // HueAppShortcuts.swift
-// HueHome Pro — Siri Shortcuts
+// CastChroma — Siri Shortcuts
 //
 // AppShortcutsProvider donates phrases to Siri automatically at app launch.
 // No user setup required — "Hey Siri" works immediately after install.

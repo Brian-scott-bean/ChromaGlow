@@ -1,5 +1,5 @@
 // SceneDisplayItem.swift
-// HueHome Pro — Epic 4 / Story 4.1
+// CastChroma — Epic 4 / Story 4.1
 //
 // SceneDisplayItem  — per-room scene chip (used in RoomDetailView scene strip)
 // GlobalSceneItem   — cross-bridge scene with room context (used in ScenesTabView grid)
@@ -112,6 +112,8 @@ struct GlobalSceneItem: Identifiable, Hashable {
     var accentColor: Color { SceneDisplayItem.color(for: name) }
     var icon:        String { SceneDisplayItem.icon(for: name) }
 
-    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id == rhs.id && lhs.isActive == rhs.isActive
+    }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }

@@ -1,5 +1,5 @@
 // HueIntentAPIClient.swift
-// HueHome Pro — Siri Shortcuts
+// CastChroma — Siri Shortcuts
 //
 // Lightweight PUT-capable client used exclusively by AppIntents.
 // Reads bridge IP + token from WidgetDataStore (App Group UserDefaults)

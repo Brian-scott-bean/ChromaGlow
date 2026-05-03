@@ -1,5 +1,5 @@
 // RoomDisplayItem.swift
-// HueHome Pro
+// CastChroma
 //
 // Value-type display model for a single Hue room or zone.
 // Shared by DashboardView (room grid + zone section), RoomDetailView, and

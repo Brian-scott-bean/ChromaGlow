@@ -1,5 +1,5 @@
 // HueBehaviorInstance.swift
-// HueHome Pro — Epic 6
+// CastChroma — Epic 6
 //
 // Typed model for GET /clip/v2/resource/behavior_instance.
 // A "behavior instance" is a configured automation on the Bridge —

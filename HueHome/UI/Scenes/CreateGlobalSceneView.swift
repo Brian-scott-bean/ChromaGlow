@@ -1,5 +1,5 @@
 // CreateGlobalSceneView.swift
-// HueHome Pro
+// CastChroma
 //
 // Sheet for creating a new scene from the global Scenes tab.
 // User picks a room, enters a name, and saves — the orchestrator

@@ -1,5 +1,5 @@
 // UnifiedOrchestrator.swift
-// HueHome Pro — Stage 2A Multi-Bridge
+// CastChroma — Stage 2A Multi-Bridge
 //
 // Aggregates N bridges into a single source of truth.
 // Each registered, active bridge gets its own BridgeAPIClient.

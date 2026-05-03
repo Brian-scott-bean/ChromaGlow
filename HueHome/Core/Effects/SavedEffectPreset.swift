@@ -1,5 +1,5 @@
 // SavedEffectPreset.swift
-// HueHome Pro
+// CastChroma
 //
 // Codable model for a user-saved effect preset (current effect + all param values).
 // Persisted to UserDefaults as JSON via EffectPresetsStore.

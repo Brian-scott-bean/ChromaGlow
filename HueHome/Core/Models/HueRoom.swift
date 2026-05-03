@@ -1,5 +1,5 @@
 // HueRoom.swift
-// HueHome Pro — Story 1.2
+// CastChroma — Story 1.2
 //
 // Typed model for the Hue V2 /clip/v2/resource/room response.
 

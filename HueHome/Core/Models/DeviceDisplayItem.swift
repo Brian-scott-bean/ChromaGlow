@@ -1,5 +1,5 @@
 // DeviceDisplayItem.swift
-// HueHome Pro — Devices Tab
+// CastChroma — Devices Tab
 //
 // UI-facing model for a Hue paired device.
 // Parsed from GET /clip/v2/resource/device.

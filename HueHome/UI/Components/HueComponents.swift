@@ -1,5 +1,5 @@
 // HueComponents.swift
-// HueHome Pro — Stage 1 Component Library
+// CastChroma — Stage 1 Component Library
 // Reusable primitives used across every screen.
 // All components consume tokens from HueTokens.swift + HueTypography.swift.
 

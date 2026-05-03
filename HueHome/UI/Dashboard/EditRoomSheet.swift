@@ -1,5 +1,5 @@
 // EditRoomSheet.swift
-// ChromaForge — Room & Zone CRUD
+// CastChroma — Room & Zone CRUD
 //
 // Sheet for renaming a room/zone and picking a new archetype icon.
 // Presented via .sheet in DashboardView when the user taps Edit Room/Zone

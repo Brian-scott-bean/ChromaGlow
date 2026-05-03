@@ -1,5 +1,5 @@
 // HueGroupedLight.swift
-// HueHome Pro — Story 1.2 / 1.3
+// CastChroma — Story 1.2 / 1.3
 //
 // Typed model for the Hue V2 /clip/v2/resource/grouped_light resource.
 // This is the control surface for toggling an entire room on/off.

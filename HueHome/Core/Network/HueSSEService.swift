@@ -1,5 +1,5 @@
 // HueSSEService.swift
-// HueHome Pro — Epic 3 / Story 3.2
+// CastChroma — Epic 3 / Story 3.2
 //
 // Server-Sent Events client for the Hue V2 event stream.
 // Endpoint: GET https://{ip}/eventstream/clip/v2

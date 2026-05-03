@@ -1,5 +1,5 @@
 // CreateSceneRequest.swift
-// HueHome Pro — Story 4.2
+// CastChroma — Story 4.2
 //
 // Encodable request body for POST /clip/v2/resource/scene.
 // Captures per-light state (on/off, brightness, color, color temp).

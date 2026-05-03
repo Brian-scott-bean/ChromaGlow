@@ -1,5 +1,5 @@
 // AutomationsViewModel.swift
-// HueHome Pro — Epic 6 (updated: orchestrator wiring + multi-bridge + demo mode)
+// CastChroma — Epic 6 (updated: orchestrator wiring + multi-bridge + demo mode)
 //
 // Fetches behavior_instance resources from every active Bridge and merges
 // them into a single sorted list. Enable/disable toggling uses optimistic UI.

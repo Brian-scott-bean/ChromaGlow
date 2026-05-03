@@ -1,5 +1,5 @@
 // DemoDataProvider.swift
-// HueHome Pro — Demo Mode
+// CastChroma — Demo Mode
 //
 // Realistic mock data for app exploration without a physical Bridge.
 // Two bridges (Main Home + Guest Suite), seven rooms total.

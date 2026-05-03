@@ -1,5 +1,5 @@
 // MicModeEngine.swift
-// HueHome Pro — Mic Mode
+// CastChroma — Mic Mode
 //
 // AVAudioEngine captures mic input → vDSP FFT extracts frequency bands →
 // mapped to Hue grouped light brightness + color temperature in real time.

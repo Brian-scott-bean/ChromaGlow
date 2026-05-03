@@ -1,5 +1,5 @@
 // BridgeDiscoveryService.swift
-// HueHome Pro — Epic 1 / Story 1.1
+// CastChroma — Epic 1 / Story 1.1
 //
 // Uses Apple's Network framework (NWBrowser) to discover a Philips Hue Bridge
 // on the local network via mDNS (_hue._tcp). Zero simulator fallbacks.

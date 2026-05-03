@@ -1,5 +1,5 @@
 // GlassmorphicCard.swift
-// HueHome Pro — Epic 2 / Story 2.1
+// CastChroma — Epic 2 / Story 2.1
 //
 // General-purpose glassmorphic container card.
 // Wraps any content in an .ultraThinMaterial surface with:

@@ -1,5 +1,5 @@
 // HueTokens.swift
-// HueHome Pro — Stage 1 Design Token System
+// CastChroma — Stage 1 Design Token System
 // Single source of truth for colors, spacing, radii, shadows.
 // Extracted from Stitch: Luminous Noir (dark) + Luminous Estate (light).
 

@@ -1,5 +1,5 @@
 // ToggleRoomIntent.swift
-// HueHome Pro — Siri Shortcuts
+// CastChroma — Siri Shortcuts
 //
 // "Hey Siri, turn on Living Room in CastChroma"
 // "Hey Siri, turn off Kitchen in CastChroma"

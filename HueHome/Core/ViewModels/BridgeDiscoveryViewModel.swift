@@ -1,5 +1,5 @@
 // BridgeDiscoveryViewModel.swift
-// HueHome Pro — Epic 1 / Story 1.1 (rev 2)
+// CastChroma — Epic 1 / Story 1.1 (rev 2)
 //
 // State machine for the full Hue Bridge handshake:
 //   .idle → .scanning → .bridgeFound → .awaitingPair → .pairing → .paired / .error
@@ -226,7 +226,7 @@ final class BridgeDiscoveryViewModel {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
-            "devicetype": "chromaforge#app",
+            "devicetype": AppBrand.hueDeviceType,
             "generateclientkey": true       // Needed for Entertainment API (Epic 4)
         ]
 

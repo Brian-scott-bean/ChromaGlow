@@ -1,5 +1,5 @@
 // HueZone.swift
-// HueHome Pro — Stage 2B
+// CastChroma — Stage 2B
 //
 // Hue CLIP v2 Zone model.
 //

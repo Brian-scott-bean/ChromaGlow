@@ -62,7 +62,7 @@ struct CreateAutomationView: View {
                     .padding(.top, 8)
                 }
             }
-            .navigationTitle(editing == nil ? "New Automation" : "Edit Automation")
+            .navigationTitle(editing == nil ? "New Schedule" : "Edit Schedule")
             .navigationBarTitleDisplayMode(.inline)
             .preferredColorScheme(.dark)
             .toolbar {

@@ -1,5 +1,5 @@
 // EffectsViewModel.swift
-// HueHome Pro — Effects Tab
+// CastChroma — Effects Tab
 //
 // Uses ObservableObject + @Published so SwiftUI reliably re-renders
 // when selectedEffect, paramState, or status changes.

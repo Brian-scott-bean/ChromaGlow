@@ -1,5 +1,5 @@
 // WidgetDataStore.swift
-// HueHome Pro — Epic 5 / Widget
+// CastChroma — Epic 5 / Widget
 //
 // Shared data layer between the main app and the widget extension.
 // Uses App Group UserDefaults (group.com.lightshade.app) so both processes

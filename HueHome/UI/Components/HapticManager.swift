@@ -1,5 +1,5 @@
 // HapticManager.swift
-// HueHome Pro — Epic 2 / Story 2.1
+// CastChroma — Epic 2 / Story 2.1
 //
 // Thin wrapper over UIKit feedback generators.
 // Pre-warmed via prepare() calls for zero-latency on first fire.

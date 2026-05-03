@@ -1,5 +1,5 @@
 // EffectsView.swift
-// HueHome Pro — Effects Tab
+// CastChroma — Effects Tab
 //
 // Main Effects tab: room selector, category filter, 2-column effect grid,
 // expandable controls panel, and Activate button.

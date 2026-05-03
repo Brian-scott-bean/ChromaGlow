@@ -1,5 +1,5 @@
 // HueHomeApp.swift
-// HueHome Pro — Stage 1 + Stage 2A Foundation
+// CastChroma — Stage 1 + Stage 2A Foundation
 // Entry point: SwiftData container, UnifiedOrchestrator environment injection, auth gate.
 
 import SwiftUI

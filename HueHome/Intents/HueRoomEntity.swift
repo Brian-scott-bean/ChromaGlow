@@ -1,5 +1,5 @@
 // HueRoomEntity.swift
-// HueHome Pro — Siri Shortcuts
+// CastChroma — Siri Shortcuts
 //
 // AppEntity representing a Hue room.
 // Data source: WidgetDataStore (App Group) — no network call, no main app needed.

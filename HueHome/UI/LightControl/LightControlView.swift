@@ -1,5 +1,5 @@
 // LightControlView.swift
-// HueHome Pro — Epic 3 / Story 3.3
+// CastChroma — Epic 3 / Story 3.3
 //
 // Full-screen individual light controller.
 // Capabilities detected at runtime:

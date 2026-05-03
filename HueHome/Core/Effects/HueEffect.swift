@@ -1,5 +1,5 @@
 // HueEffect.swift
-// HueHome Pro — Effects Engine
+// CastChroma — Effects Engine
 //
 // Defines all 14 built-in lighting effects, their parameter schemas,
 // execution strategy, and persistence behaviour.

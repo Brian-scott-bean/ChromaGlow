@@ -1,5 +1,5 @@
 // ScenesTabView.swift
-// HueHome Pro — Stage 2B / Scenes Browser
+// CastChroma — Stage 2B / Scenes Browser
 //
 // Full cross-bridge scene browser:
 //   • Fetches all scenes from all active bridges in parallel

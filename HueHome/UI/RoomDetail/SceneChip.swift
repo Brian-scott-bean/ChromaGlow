@@ -1,5 +1,5 @@
 // SceneChip.swift
-// HueHome Pro — Stage 1 (renamed RoomSceneChip to avoid conflict with HueComponents.SceneChip)
+// CastChroma — Stage 1 (renamed RoomSceneChip to avoid conflict with HueComponents.SceneChip)
 //
 // Full-featured scene tile for Room Detail's horizontal scene strip.
 // Takes a SceneDisplayItem with isActive state and accent color.

@@ -1,4 +1,4 @@
-# ChromaForge — Developer Log
+# CastChroma — Developer Log
 
 All session notes, architectural decisions, and roadmap context.
 This file is the source of truth for "why we did it this way."
@@ -6,7 +6,7 @@ This file is the source of truth for "why we did it this way."
 ---
 
 ## Project Identity
-- **App name:** ChromaForge (formerly LightShade → HueHome Pro)
+- **App name:** CastChroma (formerly LightShade → HueHome Pro)
 - **Bundle ID:** `com.lightshade.app` (keep as-is, never user visible)
 - **Developer:** Brian Bean (`brian.scott.bean@gmail.com`)
 - **App Store Connect:** https://appstoreconnect.apple.com/apps/6765770802

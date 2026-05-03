@@ -1,5 +1,5 @@
     // DashboardView.swift
-// HueHome Pro — Epic 2 / Story 2.1
+// CastChroma — Epic 2 / Story 2.1
 //
 // Performance re-pass (v0.3.3):
 // ─────────────────────────────

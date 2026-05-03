@@ -1,5 +1,5 @@
 // RoomDetailViewModel.swift
-// HueHome Pro — Epic 3 / Story 3.1
+// CastChroma — Epic 3 / Story 3.1
 //
 // Fetches and manages individual light state for a single room.
 // Matches lights to their room using childResourceRefs on the RoomDisplayItem,

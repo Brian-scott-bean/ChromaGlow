@@ -1,5 +1,5 @@
 // RoomDetailView.swift
-// HueHome Pro — Epic 3 / Story 3.1
+// CastChroma — Epic 3 / Story 3.1
 //
 // Individual light control drill-down.
 // Reuses GlassmorphicCard, BrightnessRow, and archetypeIcon() from the dashboard layer.

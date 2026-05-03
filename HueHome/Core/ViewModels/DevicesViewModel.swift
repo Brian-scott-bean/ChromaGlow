@@ -1,5 +1,5 @@
 // DevicesViewModel.swift
-// HueHome Pro — Devices Tab
+// CastChroma — Devices Tab
 //
 // Fetches /clip/v2/resource/device from every active bridge concurrently,
 // merges results, and groups them by DeviceType for the UI.

@@ -1,5 +1,5 @@
 // HueColorUtils.swift
-// HueHome Pro — Epic 3 / Story 3.3
+// CastChroma — Epic 3 / Story 3.3
 //
 // Bidirectional conversion between Hue's CIE 1931 xy colour space and SwiftUI Color/HSB.
 // Uses the Wide Colour D65 matrix recommended by the Philips Hue developer docs.

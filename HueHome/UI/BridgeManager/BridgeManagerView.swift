@@ -1,5 +1,5 @@
 // BridgeManagerView.swift
-// HueHome Pro — Stage 2A Multi-Bridge
+// CastChroma — Stage 2A Multi-Bridge
 //
 // Settings sub-screen for managing all registered bridges.
 // Shows each bridge with live status, device count, and CRUD controls.

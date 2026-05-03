@@ -1,5 +1,5 @@
 // HueDataModels.swift
-// HueHome Pro — Stage 1 + Stage 2A SwiftData Model Layer
+// CastChroma — Stage 1 + Stage 2A SwiftData Model Layer
 // Local-only metadata and logs — nothing here is sent to the Bridge.
 // Bridge truth lives in the API. Local models are user overrides + history.
 

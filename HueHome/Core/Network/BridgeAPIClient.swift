@@ -1,5 +1,5 @@
 // BridgeAPIClient.swift
-// HueHome Pro — Stage 2A Multi-Bridge
+// CastChroma — Stage 2A Multi-Bridge
 //
 // A named HueAPIClient with explicit credentials (ip + token) and
 // bridge identity metadata. One instance lives per registered bridge

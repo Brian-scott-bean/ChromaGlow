@@ -1,5 +1,5 @@
 // BulkActionBar.swift
-// HueHome Pro — Story 5.1 (multi-select bulk control)
+// CastChroma — Story 5.1 (multi-select bulk control)
 //
 // Floating glassmorphic action bar that slides up from the bottom
 // of RoomDetailView when one or more lights are selected.

@@ -1,5 +1,5 @@
 // HueAPIClient.swift
-// HueHome Pro — Story 1.2 / 1.3
+// CastChroma — Story 1.2 / 1.3
 //
 // Stateless V2 REST client for the Philips Hue Bridge.
 // All requests go to https://{ip}/clip/v2/... with the stored Application Key header.

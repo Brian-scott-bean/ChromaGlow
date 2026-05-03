@@ -1,5 +1,5 @@
 // MicModeView.swift
-// HueHome Pro — Mic Mode UI
+// CastChroma — Mic Mode UI
 //
 // Full-screen reactive lighting experience.
 // Equalizer bar visualizer, color mode chips, sensitivity, room selector.

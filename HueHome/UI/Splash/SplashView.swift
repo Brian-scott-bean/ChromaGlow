@@ -1,5 +1,5 @@
 // SplashView.swift
-// HueHome Pro — Stage 1
+// CastChroma — Stage 1
 // Shown on cold start. Checks Keychain, then calls onPaired or routes to BridgeSetupView.
 
 import SwiftUI

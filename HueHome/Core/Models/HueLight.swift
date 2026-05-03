@@ -1,5 +1,5 @@
 // HueLight.swift
-// HueHome Pro — Story 1.2 / Story 3.3 (color + color temp fields added)
+// CastChroma — Story 1.2 / Story 3.3 (color + color temp fields added)
 //
 // Typed model for the Hue V2 /clip/v2/resource/light response.
 // Color and color_temperature are optional — nil means the bulb doesn't support that capability.

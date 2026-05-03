@@ -1,5 +1,5 @@
 // HueTypography.swift
-// HueHome Pro — Stage 1 Typography Token System
+// CastChroma — Stage 1 Typography Token System
 // Extracted from Stitch designs. SF Pro system fonts throughout.
 
 import SwiftUI

@@ -1,5 +1,5 @@
 // AutomationsView.swift
-// HueHome Pro — Epic 6
+// CastChroma — Epic 6
 //
 // Read/write view of all Bridge automations (behavior_instances).
 // Users can enable/disable any automation with a tap.

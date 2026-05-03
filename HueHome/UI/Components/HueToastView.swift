@@ -1,5 +1,5 @@
 // HueToastView.swift
-// HueHome Pro
+// CastChroma
 //
 // Lightweight top-of-screen toast for transient error messages.
 // Displayed as a glass pill with a warning icon — auto-dismissed after 3 s

@@ -1,5 +1,5 @@
 // CreateSceneView.swift
-// HueHome Pro — Story 4.2 (updated: multi-select light picker)
+// CastChroma — Story 4.2 (updated: multi-select light picker)
 //
 // Glassmorphic sheet for saving the current room's light state as a named scene.
 // Presented from the "+" button in the scene strip.

@@ -1,5 +1,5 @@
 // TabShells.swift
-// HueHome Pro — Navigation shells for tab-routed views.
+// CastChroma — Navigation shells for tab-routed views.
 
 import SwiftUI
 
