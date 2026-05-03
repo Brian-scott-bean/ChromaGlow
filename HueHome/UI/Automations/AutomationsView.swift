@@ -16,7 +16,8 @@ struct AutomationsView: View {
     @State private var vm = AutomationsViewModel()
     @State private var showLog         = false
     @State private var showCreate      = false
-    @State private var editingSchedule: AppAutomation? = nil  // non-nil → edit sheet open
+    @State private var editingSchedule:   AppAutomation? = nil  // non-nil → edit sheet open
+    @State private var longPressedSchedule: AppAutomation? = nil // non-nil → confirmation dialog
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.modelContext) private var modelContext
 
@@ -48,6 +49,27 @@ struct AutomationsView: View {
         .sheet(isPresented: $showLog)      { logSheet }
         .sheet(isPresented: $showCreate)   { CreateAutomationView() }
         .sheet(item: $editingSchedule)     { auto in CreateAutomationView(editing: auto) }
+        .confirmationDialog(
+            longPressedSchedule?.name ?? "",
+            isPresented: Binding(
+                get: { longPressedSchedule != nil },
+                set: { if !$0 { longPressedSchedule = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Edit") {
+                editingSchedule = longPressedSchedule
+                longPressedSchedule = nil
+            }
+            Button("Delete", role: .destructive) {
+                if let auto = longPressedSchedule {
+                    AutomationScheduler.shared.cancel(auto)
+                    modelContext.delete(auto)
+                }
+                longPressedSchedule = nil
+            }
+            Button("Cancel", role: .cancel) { longPressedSchedule = nil }
+        }
         .task {
             // Inject orchestrator clients each time the tab appears.
             // For demo mode, orchestrator.allBridgeIDs will be empty — that's fine,
@@ -223,19 +245,9 @@ struct AutomationsView: View {
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .opacity(automation.isEnabled ? 1.0 : 0.7)
-        .contextMenu {
-            Button {
-                editingSchedule = automation
-            } label: {
-                Label("Edit", systemImage: "pencil")
-            }
-            Divider()
-            Button(role: .destructive) {
-                AutomationScheduler.shared.cancel(automation)
-                modelContext.delete(automation)
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
+        .onLongPressGesture(minimumDuration: 0.5) {
+            HapticManager.shared.medium()
+            longPressedSchedule = automation
         }
         .overlay(alignment: .trailing) {
             // Toggle sits above the contextMenu layer — handles taps independently
