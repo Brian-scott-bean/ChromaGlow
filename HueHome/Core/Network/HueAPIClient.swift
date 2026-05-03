@@ -175,6 +175,57 @@ class HueAPIClient: @unchecked Sendable {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Room & Zone CRUD
+    // ──────────────────────────────────────────────
+
+    /// Rename a room and optionally change its archetype icon.
+    /// Hue V2 stores both under /room/{id}/metadata.
+    func renameRoom(id: String, name: String, archetype: String) async throws {
+        let (ip, token) = try credentials()
+        let body: [String: Any] = ["metadata": ["name": name, "archetype": archetype]]
+        let data = try await put(
+            path: "/clip/v2/resource/room/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /room/\(id) name='\(name)' archetype='\(archetype)'")
+    }
+
+    /// Delete a room from the bridge. Lights remain paired — they just leave the room.
+    func deleteRoom(id: String) async throws {
+        let (ip, token) = try credentials()
+        let urlStr = "https://\(ip)/clip/v2/resource/room/\(id)"
+        guard let url = URL(string: urlStr) else { throw HueAPIError.badURL(urlStr) }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "DELETE"
+        req.setValue(token, forHTTPHeaderField: "hue-application-key")
+        let data = try await execute(req)
+        logRaw(data, label: "DELETE /room/\(id)")
+    }
+
+    /// Rename a zone and optionally change its archetype icon.
+    func renameZone(id: String, name: String, archetype: String) async throws {
+        let (ip, token) = try credentials()
+        let body: [String: Any] = ["metadata": ["name": name, "archetype": archetype]]
+        let data = try await put(
+            path: "/clip/v2/resource/zone/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /zone/\(id) name='\(name)' archetype='\(archetype)'")
+    }
+
+    /// Delete a zone from the bridge. Member lights are unaffected.
+    func deleteZone(id: String) async throws {
+        let (ip, token) = try credentials()
+        let urlStr = "https://\(ip)/clip/v2/resource/zone/\(id)"
+        guard let url = URL(string: urlStr) else { throw HueAPIError.badURL(urlStr) }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "DELETE"
+        req.setValue(token, forHTTPHeaderField: "hue-application-key")
+        let data = try await execute(req)
+        logRaw(data, label: "DELETE /zone/\(id)")
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Devices (/clip/v2/resource/device)
     // ──────────────────────────────────────────────
 

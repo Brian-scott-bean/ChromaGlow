@@ -667,6 +667,102 @@ final class UnifiedOrchestrator {
         }
     }
 
+    // ──────────────────────────────────────────────
+    // MARK: - Room & Zone CRUD
+    // ──────────────────────────────────────────────
+
+    /// Rename a room (name + archetype) on the bridge and update local state optimistically.
+    func renameRoom(_ item: RoomDisplayItem, name: String, archetype: String) async {
+        if isDemoMode {
+            allRooms = allRooms.map { r in
+                var updated = r
+                if r.id == item.id { updated.name = name; updated.archetype = archetype }
+                return updated
+            }
+            return
+        }
+        guard let client = clients[item.bridgeID ?? ""] else { return }
+        // Optimistic update
+        allRooms = allRooms.map { r in
+            var updated = r
+            if r.id == item.id { updated.name = name; updated.archetype = archetype }
+            return updated
+        }
+        do {
+            try await client.renameRoom(id: item.id, name: name, archetype: archetype)
+            showToast("\(name) updated")
+        } catch {
+            // Rollback — restore the original item
+            allRooms = allRooms.map { r in r.id == item.id ? item : r }
+            log.error("renameRoom failed: \(error.localizedDescription)")
+            showToast("Couldn't update \(item.name)")
+        }
+    }
+
+    /// Delete a room from the bridge and remove it from the local list immediately.
+    func deleteRoom(_ item: RoomDisplayItem) async {
+        if isDemoMode {
+            withAnimation { allRooms.removeAll { $0.id == item.id } }
+            return
+        }
+        guard let client = clients[item.bridgeID ?? ""] else { return }
+        // Optimistic removal
+        withAnimation { allRooms.removeAll { $0.id == item.id } }
+        do {
+            try await client.deleteRoom(id: item.id)
+            showToast("\(item.name) deleted")
+        } catch {
+            // Rollback — put it back (append; exact position isn't critical)
+            withAnimation { allRooms.append(item) }
+            log.error("deleteRoom failed: \(error.localizedDescription)")
+            showToast("Couldn't delete \(item.name)")
+        }
+    }
+
+    /// Rename a zone (name + archetype) on the bridge.
+    func renameZone(_ item: RoomDisplayItem, name: String, archetype: String) async {
+        if isDemoMode {
+            allZones = allZones.map { z in
+                var updated = z
+                if z.id == item.id { updated.name = name; updated.archetype = archetype }
+                return updated
+            }
+            return
+        }
+        guard let client = clients[item.bridgeID ?? ""] else { return }
+        allZones = allZones.map { z in
+            var updated = z
+            if z.id == item.id { updated.name = name; updated.archetype = archetype }
+            return updated
+        }
+        do {
+            try await client.renameZone(id: item.id, name: name, archetype: archetype)
+            showToast("\(name) updated")
+        } catch {
+            allZones = allZones.map { z in z.id == item.id ? item : z }
+            log.error("renameZone failed: \(error.localizedDescription)")
+            showToast("Couldn't update \(item.name)")
+        }
+    }
+
+    /// Delete a zone from the bridge and remove it from the local list immediately.
+    func deleteZone(_ item: RoomDisplayItem) async {
+        if isDemoMode {
+            withAnimation { allZones.removeAll { $0.id == item.id } }
+            return
+        }
+        guard let client = clients[item.bridgeID ?? ""] else { return }
+        withAnimation { allZones.removeAll { $0.id == item.id } }
+        do {
+            try await client.deleteZone(id: item.id)
+            showToast("\(item.name) deleted")
+        } catch {
+            withAnimation { allZones.append(item) }
+            log.error("deleteZone failed: \(error.localizedDescription)")
+            showToast("Couldn't delete \(item.name)")
+        }
+    }
+
     /// Schedules a full state refresh 1.5 s after the last successful state change.
     /// Debounced: rapid interactions (e.g. brightness slider) produce exactly one reload.
     /// This ensures dominant colors and confirmed bridge state always match the cards.

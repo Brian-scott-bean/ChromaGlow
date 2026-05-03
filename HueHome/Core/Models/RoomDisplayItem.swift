@@ -21,8 +21,8 @@ struct RoomDisplayItem: Identifiable, Hashable {
     var kind: Kind = .room
 
     let id:             String
-    let name:           String
-    let archetype:      String?
+    var name:           String
+    var archetype:      String?
 
     // Mutable state — updated optimistically on toggle / brightness change
     var isOn:           Bool

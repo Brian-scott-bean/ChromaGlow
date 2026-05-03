@@ -43,6 +43,15 @@ struct DashboardView: View {
     @State private var activePreset:        String?  = nil
     @State private var currentHour:         Int      = Calendar.current.component(.hour, from: Date())
     @State private var allOffWorking:       Bool     = false
+
+    // ── Room / Zone CRUD ──────────────────────────────────────────────────────
+    /// The room or zone whose ··· button was most recently tapped.
+    @State private var roomForMenu:    RoomDisplayItem? = nil
+    /// true = the tapped card is from the Zones section (affects action sheet labels).
+    @State private var isZoneMenu:     Bool             = false
+    /// Set to true once the user picks "Edit" from the action sheet.
+    @State private var showEditSheet:  Bool             = false
+
     private let clockTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
 
@@ -93,6 +102,45 @@ struct DashboardView: View {
         .fullScreenCover(isPresented: $showSettings) {
             NavigationStack {
                 SettingsView(onForget: { showSettings = false })
+            }
+        }
+        // ── Room / Zone CRUD: action sheet triggered by the ··· button ─────────
+        .confirmationDialog(
+            roomForMenu.map { (isZoneMenu ? "Zone: " : "Room: ") + $0.name } ?? "",
+            isPresented: Binding(
+                get: { roomForMenu != nil && !showEditSheet },
+                set: { if !$0 { roomForMenu = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(isZoneMenu ? "Edit Zone" : "Edit Room") {
+                showEditSheet = true
+            }
+            Button(isZoneMenu ? "Delete Zone" : "Delete Room", role: .destructive) {
+                guard let item = roomForMenu else { return }
+                Task {
+                    if isZoneMenu {
+                        await orchestrator.deleteZone(item)
+                    } else {
+                        await orchestrator.deleteRoom(item)
+                    }
+                }
+                roomForMenu = nil
+            }
+            Button("Cancel", role: .cancel) { roomForMenu = nil }
+        }
+        // ── Edit Room / Zone sheet ─────────────────────────────────────────────
+        .sheet(isPresented: $showEditSheet, onDismiss: { roomForMenu = nil }) {
+            if let item = roomForMenu {
+                EditRoomSheet(room: item, isZone: isZoneMenu) { newName, newArchetype in
+                    Task {
+                        if isZoneMenu {
+                            await orchestrator.renameZone(item, name: newName, archetype: newArchetype)
+                        } else {
+                            await orchestrator.renameRoom(item, name: newName, archetype: newArchetype)
+                        }
+                    }
+                }
             }
         }
         .onReceive(clockTimer) { _ in
@@ -182,6 +230,10 @@ struct DashboardView: View {
                             },
                             onBrightness: { newBrightness in
                                 orchestrator.setBrightness(newBrightness, for: room)
+                            },
+                            onEllipsisTap: {
+                                roomForMenu = room
+                                isZoneMenu  = false
                             }
                         )
                         .transition(.asymmetric(
@@ -212,6 +264,10 @@ struct DashboardView: View {
                                     },
                                     onBrightness: { newBrightness in
                                         orchestrator.setBrightness(newBrightness, for: zone)
+                                    },
+                                    onEllipsisTap: {
+                                        roomForMenu = zone
+                                        isZoneMenu  = true
                                     }
                                 )
                                 .transition(.asymmetric(
@@ -726,8 +782,9 @@ struct DashboardView: View {
 struct RoomCard: View {
 
     let room: RoomDisplayItem
-    let onToggle:     (Bool) -> Void   // Bool = desired new on-state
-    let onBrightness: (Double) -> Void   // called ONCE on drag end with final value
+    let onToggle:      (Bool)   -> Void   // Bool = desired new on-state
+    let onBrightness:  (Double) -> Void   // called ONCE on drag end with final value
+    var onEllipsisTap: (() -> Void)? = nil  // nil = no ··· button shown
 
     // ── Local optimistic state ────────────────────────────────────────────────
     // localIsOn flips INSTANTLY on tap — no dependency on the @Observable chain.
@@ -800,6 +857,7 @@ struct RoomCard: View {
         }
         .buttonStyle(.plain)
         .overlay(alignment: .topTrailing) {
+            // Power toggle — hard-coded to .topTrailing
             Button {
                 HapticManager.shared.light()
                 localIsOn.toggle()
@@ -817,6 +875,24 @@ struct RoomCard: View {
             .padding(.trailing, 8)
             .accessibilityLabel(Text("Turn \(room.name) \(localIsOn ? "off" : "on")"))
             .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
+        }
+        // ··· button — bottom-trailing, only shown if callback provided
+        .overlay(alignment: .bottomTrailing) {
+            if onEllipsisTap != nil {
+                Button {
+                    HapticManager.shared.light()
+                    onEllipsisTap?()
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 4)
+                .padding(.trailing, 4)
+            }
         }
         .frame(minHeight: 76)
         .opacity(localIsOn ? 1.0 : 0.72)
