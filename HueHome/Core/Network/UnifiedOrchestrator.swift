@@ -1382,11 +1382,21 @@ final class UnifiedOrchestrator {
             }
         }
 
-        // Active first, then alphabetical
-        globalScenes = result.sorted {
-            if $0.isActive != $1.isActive { return $0.isActive }
-            return $0.name.localizedCompare($1.name) == .orderedAscending
-        }
+        // Active first, then alphabetical.
+        // Preserve existing optimistic isActive flags — the bridge reports "no_effect"
+        // for scenes that are genuinely active (fire-and-forget), so we merge: if a scene
+        // is already marked active locally OR the bridge says active, keep it active.
+        let existingActive = Set(globalScenes.filter { $0.isActive }.map { $0.id })
+        globalScenes = result
+            .map { item in
+                var s = item
+                if existingActive.contains(s.id) { s.isActive = true }
+                return s
+            }
+            .sorted {
+                if $0.isActive != $1.isActive { return $0.isActive }
+                return $0.name.localizedCompare($1.name) == .orderedAscending
+            }
 
         log.info("Loaded \(self.globalScenes.count) scenes across \(self.clients.count) bridge(s)")
     }
@@ -1413,9 +1423,6 @@ final class UnifiedOrchestrator {
             log.info("Activated scene '\(scene.name)' \(scene.isDynamic ? "@ speed \(String(format: "%.2f", scene.speed))" : "") on bridge \(scene.bridgeID)")
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             refreshDominantColors(for: scene.bridgeID)
-            // Reload scene statuses from the bridge so stale optimistic isActive flags
-            // are corrected (e.g. when the bridge deactivated a scene in another room).
-            await loadAllScenes()
         }
     }
 
