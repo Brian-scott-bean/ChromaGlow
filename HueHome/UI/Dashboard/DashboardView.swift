@@ -887,7 +887,7 @@ private struct DashboardAmbientBackground: View {
         }
     }
 
-    private let orb1Offset = CGPoint(x: -80, y: -180)
+    private let orb1Offset = CGPoint(x: -60, y: -320)
     private let orb2Offset = CGPoint(x: 130, y: 80)
 
     var body: some View {
@@ -898,7 +898,7 @@ private struct DashboardAmbientBackground: View {
                     colors: [orb1Color.opacity(0.32), .clear],
                     center: .center, startRadius: 0, endRadius: 200
                 ))
-                .frame(width: 360)
+                .frame(width: 480)
                 .offset(x: orb1Offset.x, y: orb1Offset.y)
                 .blur(radius: 24)
                 .allowsHitTesting(false)
@@ -915,6 +915,5 @@ private struct DashboardAmbientBackground: View {
                 .animation(.easeInOut(duration: 2.0), value: hour)
         }
         .ignoresSafeArea()
-        .drawingGroup()
     }
 }
