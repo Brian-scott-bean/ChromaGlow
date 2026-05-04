@@ -307,6 +307,12 @@ struct SyncModeView: View {
                 Divider().background(.white.opacity(0.08))
             }
 
+            // ── Ambient Controls ─────────────────────────────
+            if engine.activeEngineType == .ambient {
+                ambientControls(engine: engine)
+                Divider().background(.white.opacity(0.08))
+            }
+
             // ── Sensitivity ─────────────────────────────────
             sliderRow(
                 label: "Sensitivity",
@@ -404,7 +410,90 @@ struct SyncModeView: View {
         }
     }
 
-    // MARK: - Entertainment Config Picker
+    // MARK: - Ambient Controls
+
+    private func ambientControls(engine: SyncModeEngine) -> some View {
+        VStack(spacing: 16) {
+
+            // Presence indicator
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(engine.ambient.presenceDetected
+                          ? Color(hue: 0.60, saturation: 0.7, brightness: 0.9)
+                          : Color.white.opacity(0.15))
+                    .frame(width: 8, height: 8)
+                    .animation(.easeInOut(duration: 0.4), value: engine.ambient.presenceDetected)
+                Text(engine.ambient.presenceDetected ? "Presence detected" : "Waiting for sound...")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.55))
+                Spacer()
+            }
+
+            Divider().background(.white.opacity(0.08))
+
+            // Color
+            VStack(alignment: .leading, spacing: 10) {
+                sectionLabel("Color")
+                HStack(spacing: 8) {
+                    ForEach(AmbientColorMode.allCases) { mode in
+                        let sel = engine.ambient.colorMode == mode
+                        Button { engine.ambient.colorMode = mode } label: {
+                            HStack(spacing: 5) {
+                                Circle().fill(mode.accentColor).frame(width: 10, height: 10)
+                                Text(mode.rawValue).font(.system(size: 12, weight: sel ? .semibold : .regular))
+                            }
+                            .foregroundStyle(sel ? .black : .white.opacity(0.6))
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(Capsule().fill(sel ? mode.accentColor : .white.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            Divider().background(.white.opacity(0.08))
+
+            // Pulse Speed
+            VStack(alignment: .leading, spacing: 10) {
+                sectionLabel("Pulse Speed")
+                HStack(spacing: 8) {
+                    ForEach(AmbientPulseSpeed.allCases) { speed in
+                        let sel = engine.ambient.pulseSpeed == speed
+                        Button { engine.ambient.pulseSpeed = speed } label: {
+                            Text(speed.rawValue).font(.system(size: 12, weight: sel ? .semibold : .regular))
+                                .foregroundStyle(sel ? .black : .white.opacity(0.6))
+                                .padding(.horizontal, 12).padding(.vertical, 7)
+                                .background(Capsule().fill(sel ? Color(hue: 0.60, saturation: 0.6, brightness: 0.85) : .white.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            Divider().background(.white.opacity(0.08))
+
+            // Base Brightness
+            sliderRow(
+                label: "Base Brightness",
+                value: Binding(get: { engine.ambient.baseBrightness }, set: { engine.ambient.baseBrightness = $0 }),
+                range: 10...80,
+                displayValue: String(format: "%.0f%%", engine.ambient.baseBrightness),
+                tint: Color(hue: 0.60, saturation: 0.6, brightness: 0.85)
+            )
+
+            Divider().background(.white.opacity(0.08))
+
+            // Pulse Depth
+            sliderRow(
+                label: "Pulse Depth",
+                value: Binding(get: { engine.ambient.pulseDepth }, set: { engine.ambient.pulseDepth = $0 }),
+                range: 5...40,
+                displayValue: String(format: "±%.0f%%", engine.ambient.pulseDepth),
+                tint: Color(hue: 0.60, saturation: 0.6, brightness: 0.85)
+            )
+        }
+    }
+
 
     private func entertainmentPicker(engine: SyncModeEngine) -> some View {
         VStack(alignment: .leading, spacing: 8) {

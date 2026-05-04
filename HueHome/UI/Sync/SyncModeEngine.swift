@@ -48,6 +48,7 @@ final class SyncModeEngine {
     // MARK: Engines
     let visualizer = VisualizerEngine()
     let gaming     = GamingEngine()
+    let ambient    = AmbientEngine()
 
     // MARK: Room selection
     var selectedRoomIDs: Set<String> = []
@@ -80,7 +81,8 @@ final class SyncModeEngine {
     /// 1 room = 150ms, 2 rooms = 300ms, etc.
     private var sendInterval: TimeInterval {
         if transportMode == .entertainment { return 0.04 }
-        if activeEngineType == .gaming { return 0.05 }  // 20fps for instant flash response
+        if activeEngineType == .gaming   { return 0.05 }   // 20fps for instant flash
+        if activeEngineType == .ambient  { return 0.50 }   // 2fps — slow breath changes
         let roomCount = max(1, selectedRoomIDs.count)
         return restInterval * Double(roomCount)
     }
@@ -102,6 +104,7 @@ final class SyncModeEngine {
         switch activeEngineType {
         case .visualizer: return visualizer
         case .gaming:     return gaming
+        case .ambient:    return ambient
         }
     }
 
@@ -168,6 +171,7 @@ final class SyncModeEngine {
         // 7. Reset engine state
         activeEngine.reset()
         gaming.reset()
+        ambient.reset()
         visualizer.reset()
         transportMode = .rest
         entertainmentError = nil
@@ -322,6 +326,7 @@ final class SyncModeEngine {
             switch activeEngineType {
             case .visualizer: sendVisualizerRESTUpdate()
             case .gaming:     sendGamingRESTUpdate()
+            case .ambient:    sendAmbientRESTUpdate()
             }
         }
     }
@@ -485,6 +490,55 @@ final class SyncModeEngine {
                         guard let self, self.generation == gen else { return }
                         self.consecutiveErrors = 0
                         self.restInterval = 0.150
+                    }
+                } catch {
+                    await MainActor.run { [weak self] in
+                        guard let self, self.generation == gen else { return }
+                        self.consecutiveErrors += 1
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: REST — Ambient (2fps, slow breath)
+
+    private func sendAmbientRESTUpdate() {
+        guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
+        let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
+        guard !rooms.isEmpty else { return }
+
+        guard let bri = ambient.tick() else { return }
+        guard bri > 0.5 else { return }
+
+        // Skip tiny changes — only send if brightness shifted meaningfully
+        guard abs(bri - lastSentBri) > 2.0 || lastSentBri < 0 else { return }
+        lastSentBri = bri
+
+        let mirek = ambient.colorMode.mirek
+        let gen   = generation
+
+        log.info("AMBIENT REST: bri=\(bri, format: .fixed(precision: 1)) mirek=\(mirek) present=\(self.ambient.presenceDetected)")
+
+        for room in rooms {
+            guard let glID   = room.groupedLightID,
+                  let client = orc.hueClient(for: room.bridgeID) else { continue }
+            let capturedGlID  = glID
+            let capturedBri   = bri
+            let capturedMirek = mirek
+            Task.detached(priority: .utility) { [weak self] in
+                do {
+                    try await client.setGroupedLightEffect(
+                        id:         capturedGlID,
+                        on:         true,
+                        brightness: capturedBri,
+                        xy:         nil,
+                        mirek:      capturedMirek,
+                        duration:   400   // 400ms smooth transition between breath steps
+                    )
+                    await MainActor.run { [weak self] in
+                        guard let self, self.generation == gen else { return }
+                        self.consecutiveErrors = 0
                     }
                 } catch {
                     await MainActor.run { [weak self] in

@@ -15,6 +15,7 @@ import SwiftUI
 enum SyncEngineType: String, CaseIterable, Identifiable {
     case visualizer = "Visualizer"
     case gaming     = "Gaming"
+    case ambient    = "Ambient"
 
     var id: String { rawValue }
 
@@ -22,6 +23,7 @@ enum SyncEngineType: String, CaseIterable, Identifiable {
         switch self {
         case .visualizer: return "waveform.path.ecg"
         case .gaming:     return "gamecontroller.fill"
+        case .ambient:    return "moon.stars.fill"
         }
     }
 
@@ -29,6 +31,7 @@ enum SyncEngineType: String, CaseIterable, Identifiable {
         switch self {
         case .visualizer: return "Frequency spectrum mapped to light color and brightness"
         case .gaming:     return "Instant flash on sound spikes — perfect for games and action"
+        case .ambient:    return "Slow breathing pulse — presence-aware, calm background light"
         }
     }
 
@@ -36,6 +39,7 @@ enum SyncEngineType: String, CaseIterable, Identifiable {
         switch self {
         case .visualizer: return Color(hue: 0.75, saturation: 0.7, brightness: 0.95)
         case .gaming:     return Color(hue: 0.08, saturation: 0.9, brightness: 0.95)
+        case .ambient:    return Color(hue: 0.60, saturation: 0.6, brightness: 0.85)
         }
     }
 }
