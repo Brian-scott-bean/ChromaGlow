@@ -378,11 +378,10 @@ final class RoomDetailViewModel {
     /// Toggle all lights in the room on or off.
     func toggleRoom(on: Bool) {
         roomIsOn = on
+        // Optimistically update all light cards so they reflect the toggle immediately
+        lights = lights.map { var l = $0; l.isOn = on; return l }
         appendLog("🔄 Room '\(room.name)' → \(on ? "ON" : "OFF")")
-        if isDemoMode {
-            lights = lights.map { var l = $0; l.isOn = on; return l }
-            return
-        }
+        if isDemoMode { return }
         guard let api, let glID = room.groupedLightID else { return }
         Task {
             do {
@@ -391,22 +390,22 @@ final class RoomDetailViewModel {
             } catch {
                 appendLog("❌ Room toggle failed: \(error.localizedDescription)")
                 roomIsOn = !on
+                // Rollback light cards too
+                lights = lights.map { var l = $0; l.isOn = !on; return l }
                 showToast("Couldn't reach bridge — room reverted")
             }
         }
     }
 
-    /// Set room-level brightness for all lights.
     func setRoomBrightness(_ brightness: Double) {
         let clamped = min(100, max(1, brightness))
         let previous = roomBrightness
         roomBrightness = clamped
         roomIsOn = true
+        // Optimistically update all light cards
+        lights = lights.map { var l = $0; l.isOn = true; l.brightness = clamped; return l }
         appendLog("🌓 Room '\(room.name)' brightness → \(Int(clamped))%")
-        if isDemoMode {
-            lights = lights.map { var l = $0; l.isOn = true; l.brightness = clamped; return l }
-            return
-        }
+        if isDemoMode { return }
         guard let api, let glID = room.groupedLightID else { return }
         Task {
             do {
