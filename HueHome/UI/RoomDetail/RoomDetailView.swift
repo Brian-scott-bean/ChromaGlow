@@ -70,6 +70,7 @@ struct RoomDetailView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .scrollContentBackground(.hidden)
         .toolbar { toolbarItems }
         .sheet(isPresented: $showLog) { logSheet }
         .sheet(isPresented: $showCreateScene) {
@@ -159,15 +160,15 @@ struct RoomDetailView: View {
                 guard let orchestrator, !bridgeID.isEmpty else { return }
                 orchestrator.refreshDominantColors(for: bridgeID)
             }
+            // Load data concurrently. SSE runs forever so it must NOT block the group.
+            // Instead, launch SSE separately and use the group for finite fetches only.
+            async let _: Void = vm.runSSE(eventStream: orchestrator.subscribeToLightEvents())
             await withTaskGroup(of: Void.self) { group in
                 group.addTask { await vm.loadLights() }
                 group.addTask { await vm.loadScenes() }
                 group.addTask { await vm.loadAutomations() }
-                // Subscribe to orchestrator's event bus instead of opening a new SSE
-                // connection — eliminates dual-SSE stream to the same bridge.
-                group.addTask { await vm.runSSE(eventStream: orchestrator.subscribeToLightEvents()) }
             }
-            // Load room-level state after lights are loaded (needs light data for demo fallback)
+            // Load room-level state after lights are loaded (needs light data for cross-check)
             await vm.loadRoomState()
         }
         .preferredColorScheme(.dark)
