@@ -115,6 +115,7 @@ struct RoomDetailView: View {
                 roomRType: room.kind == .zone ? "zone" : "room",
                 bridgeID: room.bridgeID ?? "",
                 existingSceneID: nil,
+                existingSceneName: nil,
                 initialLights: vm.lights
             ) {
                 Task { await vm.loadScenes() }
@@ -128,6 +129,7 @@ struct RoomDetailView: View {
                 roomRType: room.kind == .zone ? "zone" : "room",
                 bridgeID: room.bridgeID ?? "",
                 existingSceneID: nil,
+                existingSceneName: nil,
                 initialLights: prefiltered.isEmpty ? vm.lights : prefiltered
             ) {
                 vm.exitSelectMode()
@@ -141,6 +143,7 @@ struct RoomDetailView: View {
                 roomRType: room.kind == .zone ? "zone" : "room",
                 bridgeID: room.bridgeID ?? "",
                 existingSceneID: scene.id,
+                existingSceneName: scene.name,
                 initialLights: vm.lights   // lights are already in scene state after activateScene()
             ) {
                 Task { await vm.loadScenes() }

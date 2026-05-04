@@ -24,6 +24,8 @@ struct SceneColorBuilderView: View {
     let bridgeID: String
     /// Nil = create mode; non-nil = edit mode (existing scene UUID).
     let existingSceneID: String?
+    /// Scene name to pre-populate in edit mode.
+    let existingSceneName: String?
     /// The initial light states. In edit mode, these should be pre-seeded
     /// with the scene's per-light colors.
     let initialLights: [LightDisplayItem]
@@ -567,6 +569,11 @@ struct SceneColorBuilderView: View {
         lights = initialLights
         originalLights = initialLights
         selectedLightIDs = Set(initialLights.map(\.id))
+
+        // Pre-populate scene name in edit mode
+        if isEditMode, let name = existingSceneName {
+            sceneName = name
+        }
 
         // Seed color from first light
         if let first = initialLights.first, let x = first.colorX, let y = first.colorY {
