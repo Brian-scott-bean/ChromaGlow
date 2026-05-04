@@ -167,19 +167,33 @@ final class VisualizerEngine: SyncEngine {
         let adjHigh = min(high * sens, 1.0)
         let adjOverall = min(overall * sens, 1.0)
 
-        let attack: Float = 0.4; let decay: Float = 0.88
+        // Smoothing tuned for responsive light sync:
+        // - attack: how fast we rise to a new peak (0.7 = 70% of new value per frame → near-instant)
+        // - decay:  how fast we fall when sound drops (0.75 = drops to half in ~7 frames / ~160ms)
+        // - snap:   if delta > 30%, skip smoothing entirely → instant response to beats
+        let attack: Float = 0.7; let decay: Float = 0.75; let snapThreshold: Float = 0.3
+
         for i in 0..<20 {
-            sBars[i] = adjBars[i] > sBars[i]
-                ? sBars[i] * (1 - attack) + adjBars[i] * attack
-                : sBars[i] * decay
+            if abs(adjBars[i] - sBars[i]) > snapThreshold {
+                sBars[i] = adjBars[i]  // Snap — big change, no smoothing
+            } else {
+                sBars[i] = adjBars[i] > sBars[i]
+                    ? sBars[i] * (1 - attack) + adjBars[i] * attack
+                    : sBars[i] * decay
+            }
         }
+
         func smooth(_ s: inout Float, _ new: Float, _ atk: Float, _ dec: Float) {
-            s = new > s ? s * (1 - atk) + new * atk : s * dec
+            if abs(new - s) > snapThreshold {
+                s = new  // Snap
+            } else {
+                s = new > s ? s * (1 - atk) + new * atk : s * dec
+            }
         }
-        smooth(&sOverall, adjOverall, 0.4, 0.92)
-        smooth(&sBass,    adjBass,    0.5, 0.90)
-        smooth(&sMid,     adjMid,     0.4, 0.90)
-        smooth(&sHigh,    adjHigh,    0.5, 0.88)
+        smooth(&sOverall, adjOverall, 0.7, 0.65)  // Overall: fastest — drives light brightness
+        smooth(&sBass,    adjBass,    0.7, 0.70)
+        smooth(&sMid,     adjMid,    0.6, 0.72)
+        smooth(&sHigh,    adjHigh,   0.7, 0.68)
 
         barHeights   = sBars
         overallLevel = sOverall
