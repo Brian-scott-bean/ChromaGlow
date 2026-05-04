@@ -32,6 +32,7 @@ struct EntertainmentConfigBuilderView: View {
     @State private var errorMessage: String?
 
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+    private let maxLights = 10
 
     var body: some View {
         NavigationStack {
@@ -68,8 +69,12 @@ struct EntertainmentConfigBuilderView: View {
     }
 
     private var canCreate: Bool {
-        !areaName.trimmingCharacters(in: .whitespaces).isEmpty && !selectedLightIDs.isEmpty
+        !areaName.trimmingCharacters(in: .whitespaces).isEmpty
+        && !selectedLightIDs.isEmpty
+        && selectedLightIDs.count <= maxLights
     }
+
+    private var atLimit: Bool { selectedLightIDs.count >= maxLights }
 
     // MARK: - Main Content
 
@@ -140,11 +145,15 @@ struct EntertainmentConfigBuilderView: View {
             HStack {
                 sectionLabel("Select Lights")
                 Spacer()
-                if !selectedLightIDs.isEmpty {
-                    Text("\(selectedLightIDs.count) selected")
-                        .font(.system(size: 11))
-                        .foregroundStyle(amber.opacity(0.65))
-                }
+                Text("\(selectedLightIDs.count) / \(maxLights)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(atLimit ? amber : .white.opacity(0.45))
+            }
+
+            if atLimit {
+                Text("Maximum of \(maxLights) lights per entertainment area")
+                    .font(.system(size: 11))
+                    .foregroundStyle(amber.opacity(0.6))
             }
 
             if availableLights.isEmpty {
@@ -177,7 +186,8 @@ struct EntertainmentConfigBuilderView: View {
                 if allSelected {
                     selectedLightIDs.removeAll()
                 } else {
-                    selectedLightIDs = Set(availableLights.map(\.id))
+                    // Cap at maxLights
+                    selectedLightIDs = Set(availableLights.prefix(maxLights).map(\.id))
                 }
             }
         } label: {
@@ -198,10 +208,14 @@ struct EntertainmentConfigBuilderView: View {
 
     private func lightCard(_ light: HueLight) -> some View {
         let isSelected = selectedLightIDs.contains(light.id)
+        let isDisabled = !isSelected && atLimit
         return Button {
             withAnimation(.spring(response: 0.25)) {
-                if isSelected { selectedLightIDs.remove(light.id) }
-                else          { selectedLightIDs.insert(light.id) }
+                if isSelected {
+                    selectedLightIDs.remove(light.id)
+                } else if !atLimit {
+                    selectedLightIDs.insert(light.id)
+                }
             }
             HapticManager.shared.light()
         } label: {
@@ -241,8 +255,10 @@ struct EntertainmentConfigBuilderView: View {
                             )
                     )
             )
+            .opacity(isDisabled ? 0.4 : 1.0)
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
     }
 
     private func lightCapability(_ light: HueLight) -> String {
