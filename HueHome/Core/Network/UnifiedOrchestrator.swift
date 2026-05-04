@@ -1502,6 +1502,32 @@ final class UnifiedOrchestrator {
         // Refresh the scene list so the new scene appears immediately
         await loadAllScenes()
     }
+
+    /// Update an existing scene's name and per-light actions.
+    /// Used by the Scene Color Builder in edit mode.
+    func updateScene(sceneID: String, bridgeID: String, name: String, lights: [LightDisplayItem]) async throws {
+        guard let client = clients[bridgeID] else {
+            throw HueAPIError.missingCredentials
+        }
+        let actions: [[String: Any]] = lights.map { light in
+            var action: [String: Any] = ["on": ["on": light.isOn]]
+            if light.isOn {
+                action["dimming"] = ["brightness": max(1, min(100, light.brightness))]
+            }
+            if let x = light.colorX, let y = light.colorY {
+                action["color"] = ["xy": ["x": max(0, min(1, x)), "y": max(0, min(1, y))]]
+            } else if light.colorX == nil, let mirek = light.colorTempMirek {
+                let clamped = max(light.mirekMin, min(light.mirekMax, mirek))
+                action["color_temperature"] = ["mirek": clamped]
+            }
+            return [
+                "target": ["rid": light.id, "rtype": "light"],
+                "action": action
+            ]
+        }
+        try await client.updateScene(id: sceneID, name: name, actions: actions)
+        await loadAllScenes()
+    }
 }
 
 // MARK: - SSE Event Models

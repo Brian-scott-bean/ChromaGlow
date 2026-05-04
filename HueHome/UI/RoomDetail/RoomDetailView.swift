@@ -75,17 +75,28 @@ struct RoomDetailView: View {
         .toolbar { toolbarItems }
         .sheet(isPresented: $showLog) { logSheet }
         .sheet(isPresented: $showCreateScene) {
-            CreateSceneView(lights: vm.lights) { name, selectedLights in
-                await vm.createScene(name: name, lights: selectedLights)
+            SceneColorBuilderView(
+                roomID: room.id,
+                roomRType: room.kind == .zone ? "zone" : "room",
+                bridgeID: room.bridgeID ?? "",
+                existingSceneID: nil,
+                initialLights: vm.lights
+            ) {
+                Task { await vm.loadScenes() }
             }
         }
-        // CreateSceneView launched from BulkActionBar — pre-filtered to selection
+        // SceneColorBuilderView launched from BulkActionBar — pre-filtered to selection
         .sheet(isPresented: $showBulkScene) {
             let prefiltered = vm.selectedLights
-            CreateSceneView(lights: prefiltered.isEmpty ? vm.lights : prefiltered) { name, selectedLights in
-                let success = await vm.createScene(name: name, lights: selectedLights)
-                if success { vm.exitSelectMode() }
-                return success
+            SceneColorBuilderView(
+                roomID: room.id,
+                roomRType: room.kind == .zone ? "zone" : "room",
+                bridgeID: room.bridgeID ?? "",
+                existingSceneID: nil,
+                initialLights: prefiltered.isEmpty ? vm.lights : prefiltered
+            ) {
+                vm.exitSelectMode()
+                Task { await vm.loadScenes() }
             }
         }
         // ── Edit Room / Zone sheet ─────────────────────────────────────────────

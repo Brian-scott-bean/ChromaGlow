@@ -174,6 +174,19 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "PUT /scene/\(id) rename='\(name)'")
     }
 
+    /// Update an existing scene's name and per-light actions.
+    /// Used by the Scene Color Builder in edit mode.
+    func updateScene(id: String, name: String, actions: [[String: Any]]) async throws {
+        let (ip, token) = try credentials()
+        var body: [String: Any] = ["actions": actions]
+        body["metadata"] = ["name": name]
+        let data = try await put(
+            path: "/clip/v2/resource/scene/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /scene/\(id) update name='\(name)' actions=\(actions.count)")
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - Room & Zone CRUD
     // ──────────────────────────────────────────────
