@@ -187,11 +187,8 @@ final class SyncModeEngine {
             // Process buffer for visualization (updates bars, levels on MainActor)
             _ = self.activeEngine.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
 
-            // Send light commands from smoothed values on MainActor.
-            // Scheduled via Task to coalesce with the smoothing dispatch from process().
-            // DispatchQueue.main.async ensures we run AFTER the current RunLoop tick,
-            // giving the smoothing Task from process() time to complete first.
-            DispatchQueue.main.async { [weak self] in
+            // Send light commands from smoothed values on MainActor
+            Task { @MainActor [weak self] in
                 self?.sendLightUpdate()
             }
         }
@@ -319,8 +316,11 @@ final class SyncModeEngine {
 
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
         let bri   = max(2.0, Double(visualizer.overallLevel) * 100.0 * masterIntensity)
-        let on    = visualizer.overallLevel > 0.03
         let mirek = visualizer.computeMirek()
+
+        // Always keep lights ON during sync — brightness 2.0 is already near-dark.
+        // Toggling on/off between beats causes visible power cycling and latency.
+        let on = true
 
         for room in rooms {
             guard let glID   = room.groupedLightID,
