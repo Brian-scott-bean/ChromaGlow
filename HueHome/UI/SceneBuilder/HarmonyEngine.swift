@@ -23,6 +23,8 @@ enum HarmonyRule: String, CaseIterable, Identifiable {
     case analogous          = "Analog."
     case splitComplementary = "Split"
     case tetradic           = "Tetra"
+    case monochromatic      = "Mono"
+    case doubleComp         = "Dbl Comp."
 
     var id: String { rawValue }
 
@@ -35,6 +37,8 @@ enum HarmonyRule: String, CaseIterable, Identifiable {
         case .analogous:          return "rainbow"
         case .splitComplementary: return "arrow.triangle.branch"
         case .tetradic:           return "square.fill"
+        case .monochromatic:      return "circle.circle.fill"
+        case .doubleComp:         return "square.split.2x2.fill"
         }
     }
 
@@ -47,6 +51,8 @@ enum HarmonyRule: String, CaseIterable, Identifiable {
         case .analogous:          return 3
         case .splitComplementary: return 3
         case .tetradic:           return 4
+        case .monochromatic:      return 1
+        case .doubleComp:         return 4
         }
     }
 }
@@ -70,7 +76,7 @@ enum HarmonyEngine {
     /// These are the "pure" hue positions on the color wheel.
     static func anchorHues(for rule: HarmonyRule, rootHue: Double) -> [Double] {
         switch rule {
-        case .none:
+        case .none, .monochromatic:
             return [rootHue]
         case .complementary:
             return [rootHue, wrap(rootHue + 0.5)]
@@ -82,6 +88,9 @@ enum HarmonyEngine {
             return [rootHue, wrap(rootHue + 5.0/12.0), wrap(rootHue + 7.0/12.0)]
         case .tetradic:
             return [rootHue, wrap(rootHue + 0.25), wrap(rootHue + 0.5), wrap(rootHue + 0.75)]
+        case .doubleComp:
+            // Two complementary pairs: root ↔ complement, +60° ↔ its complement
+            return [rootHue, wrap(rootHue + 1.0/6.0), wrap(rootHue + 0.5), wrap(rootHue + 2.0/3.0)]
         }
     }
 
@@ -116,6 +125,19 @@ enum HarmonyEngine {
             return Array(repeating: PaletteColor(
                 hue: rootHue, saturation: saturation, brightness: brightness
             ), count: count)
+        }
+
+        // "Monochromatic" = same hue, varying saturation + brightness
+        if rule == .monochromatic {
+            var result: [PaletteColor] = []
+            for i in 0..<count {
+                let t = count > 1 ? Double(i) / Double(count - 1) : 0.5
+                // Vary saturation from 40% to 100%, brightness from 100% to 50%
+                let sat = 0.4 + t * 0.6 * saturation
+                let bri = brightness * (1.0 - t * 0.5)
+                result.append(PaletteColor(hue: rootHue, saturation: sat, brightness: max(0.2, bri)))
+            }
+            return result
         }
 
         let anchors = anchorHues(for: rule, rootHue: rootHue)

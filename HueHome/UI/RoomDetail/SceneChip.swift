@@ -47,9 +47,9 @@ struct RoomSceneChip: View {
                     .foregroundStyle(scene.isActive ? .white : .white.opacity(0.60))
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .truncationMode(.tail)
             }
-            .frame(width: 76)
+            .frame(width: 76, height: 80)
             .padding(.vertical, 14)
             .padding(.horizontal, 8)
             .background {

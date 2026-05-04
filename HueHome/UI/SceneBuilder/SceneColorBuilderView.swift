@@ -54,6 +54,7 @@ struct SceneColorBuilderView: View {
     // UI state
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var displayBrightness: Double = 100  // % label value
 
     // Debounce
     @State private var previewTask: Task<Void, Never>?
@@ -105,6 +106,8 @@ struct SceneColorBuilderView: View {
                         if selectedHasAmbiance {
                             colorTempSection
                         }
+
+                        brightnessSection
 
                         saveButton
                             .padding(.top, 8)
@@ -380,6 +383,13 @@ struct SceneColorBuilderView: View {
                 }
             }
         }
+        // Update light chips in real-time during pad drag (not just on commit)
+        .onChange(of: currentSaturation) { _, newSat in
+            updateLightChipsLive(hue: currentHue, saturation: newSat, brightness: currentBrightness)
+        }
+        .onChange(of: currentBrightness) { _, newBri in
+            updateLightChipsLive(hue: currentHue, saturation: currentSaturation, brightness: newBri)
+        }
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -402,6 +412,30 @@ struct SceneColorBuilderView: View {
                     currentMirek = mirek
                     applyColorTempToSelected(mirek: mirek)
                 }
+                .padding(.vertical, 12)
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // MARK: - Brightness Slider
+    // ══════════════════════════════════════════════════════════════
+
+    private var brightnessSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("BRIGHTNESS · \(Int(displayBrightness))%")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.45))
+
+            GlassmorphicCard(isActive: true, glowColor: amber) {
+                BrightnessRow(
+                    brightness: displayBrightness,
+                    glowColor: amber,
+                    onCommit: { newBrightness in
+                        displayBrightness = newBrightness
+                        applyBrightnessToSelected(percent: newBrightness)
+                    }
+                )
                 .padding(.vertical, 12)
             }
         }
@@ -500,6 +534,50 @@ struct SceneColorBuilderView: View {
             lights[i].isOn = true
         }
 
+        debouncedPreview()
+    }
+
+    /// Apply brightness to all selected lights.
+    private func applyBrightnessToSelected(percent: Double) {
+        let clamped = max(1, min(100, percent))
+        for i in lights.indices {
+            guard selectedLightIDs.contains(lights[i].id) else { continue }
+            lights[i].brightness = clamped
+            lights[i].isOn = true
+        }
+        debouncedPreview()
+    }
+
+    /// Update light chip colors in real-time during pad drag (local model only, no API).
+    /// The debounced preview handles the bridge communication.
+    private func updateLightChipsLive(hue: Double, saturation: Double, brightness: Double) {
+        if harmonyRule != .none {
+            // Harmony: update all color-capable lights with derived palette
+            let colorLights = lights.indices.filter { lights[$0].supportsColor }
+            guard !colorLights.isEmpty else { return }
+            let palette = HarmonyEngine.palette(
+                rule: harmonyRule, rootHue: hue,
+                saturation: saturation, brightness: brightness,
+                count: colorLights.count
+            )
+            for (i, idx) in colorLights.enumerated() {
+                let pc = palette[i]
+                let (x, y) = HueColorUtils.xyFrom(hue: pc.hue, saturation: pc.saturation, brightness: 1)
+                lights[idx].colorX = x
+                lights[idx].colorY = y
+                lights[idx].brightness = max(1, pc.brightness * 100)
+            }
+        } else {
+            // Manual: update only selected lights
+            let (x, y) = HueColorUtils.xyFrom(hue: hue, saturation: saturation, brightness: 1)
+            let brightnessPercent = max(1, brightness * 100)
+            for i in lights.indices {
+                guard selectedLightIDs.contains(lights[i].id), lights[i].supportsColor else { continue }
+                lights[i].colorX = x
+                lights[i].colorY = y
+                lights[i].brightness = brightnessPercent
+            }
+        }
         debouncedPreview()
     }
 
