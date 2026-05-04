@@ -619,20 +619,22 @@ struct SyncEqualizerView: View {
     let bars: [Float]
     let colorMode: VisualizerColorMode
 
+    private let maxBarHeight: CGFloat = 100
+
     var body: some View {
-        GeometryReader { geo in
-            HStack(alignment: .bottom, spacing: 3) {
-                ForEach(0..<bars.count, id: \.self) { i in
-                    SyncBarView(
-                        height: bars[i],
-                        maxHeight: geo.size.height,
-                        index: i,
-                        count: bars.count,
-                        colorMode: colorMode
-                    )
-                }
+        HStack(alignment: .bottom, spacing: 3) {
+            ForEach(0..<bars.count, id: \.self) { i in
+                SyncBarView(
+                    height: bars[i],
+                    maxHeight: maxBarHeight,
+                    index: i,
+                    count: bars.count,
+                    colorMode: colorMode
+                )
             }
         }
+        .frame(height: maxBarHeight, alignment: .bottom)
+        .clipped()
     }
 }
 

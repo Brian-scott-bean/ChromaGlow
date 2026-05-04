@@ -80,6 +80,7 @@ final class SyncModeEngine {
     /// 1 room = 150ms, 2 rooms = 300ms, etc.
     private var sendInterval: TimeInterval {
         if transportMode == .entertainment { return 0.04 }
+        if activeEngineType == .gaming { return 0.05 }  // 20fps for instant flash response
         let roomCount = max(1, selectedRoomIDs.count)
         return restInterval * Double(roomCount)
     }
@@ -300,6 +301,10 @@ final class SyncModeEngine {
             if shouldLog { log.info("SYNC GATE: blocked — isRunning=\(self.isRunning) stopFlag=\(self.stopFlag)") }
             return
         }
+
+        // Always tick gaming engine at display-link speed for smooth UI
+        if activeEngineType == .gaming { gaming.tick() }
+
         let now = Date()
         let elapsed = now.timeIntervalSince(lastSent)
         guard elapsed >= sendInterval else {
@@ -439,9 +444,7 @@ final class SyncModeEngine {
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
         guard !rooms.isEmpty else { return }
 
-        // Tick gaming engine to update transient state
-        gaming.tick()
-
+        // Tick already called in sendLightUpdate at display-link speed
         let gen = generation
         let isTransient = gaming.isTransient
         let bri: Double
