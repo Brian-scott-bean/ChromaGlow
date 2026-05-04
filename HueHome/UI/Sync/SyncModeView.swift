@@ -91,42 +91,41 @@ struct SyncModeView: View {
     // ══════════════════════════════════════════════════════════════
 
     private func content(engine: SyncModeEngine) -> some View {
-        GeometryReader { geo in
-            let isCompact = geo.size.height < 700  // iPhone SE / small screens
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 0) {
-                    // ── Header row ──
-                    headerRow(engine: engine)
-                        .padding(.top, 4)
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                // ── Header row ──
+                headerRow(engine: engine)
+                    .padding(.top, 4)
 
-                    // ── Start / Stop orb ──
-                    SyncStartStopButton(engine: engine, compact: isCompact)
-                        .padding(.top, isCompact ? 12 : 16)
-                        .padding(.bottom, isCompact ? 4 : 8)
+                // ── Start / Stop orb ──
+                SyncStartStopButton(engine: engine, compact: false)
+                    .padding(.top, 16)
+                    .padding(.bottom, 8)
 
-                    // ── Equalizer bars ──
-                    SyncEqualizerView(
-                        bars: engine.visualizer.barHeights,
-                        colorMode: engine.visualizer.colorMode
-                    )
-                    .frame(height: isCompact ? 80 : 100)
+                // ── Equalizer bars ──
+                SyncEqualizerView(
+                    bars: engine.visualizer.barHeights,
+                    colorMode: engine.visualizer.colorMode
+                )
+                .frame(height: 100)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 4)
+
+                // ── Level meters ──
+                SyncLevelMeterRow(visualizer: engine.visualizer)
                     .padding(.horizontal, 24)
-                    .padding(.bottom, 4)
+                    .padding(.bottom, 14)
 
-                    // ── Level meters ──
-                    SyncLevelMeterRow(visualizer: engine.visualizer)
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, isCompact ? 10 : 14)
+                // ── Controls card ──
+                controlsCard(engine: engine, compact: false)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
 
-                    // ── Controls card ──
-                    controlsCard(engine: engine, compact: isCompact)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
-
-                    // Tab bar clearance
-                    Color.clear.frame(height: 80)
-                }
+                // Tab bar clearance
+                Color.clear.frame(height: 80)
             }
+            .frame(maxWidth: 500)        // ← constrains on iPad / landscape
+            .frame(maxWidth: .infinity)   // ← centers the constrained content
         }
     }
 
