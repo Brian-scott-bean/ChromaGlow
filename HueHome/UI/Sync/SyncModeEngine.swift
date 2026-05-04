@@ -69,10 +69,11 @@ final class SyncModeEngine {
 
     // MARK: Private — rate limiting
     private var lastSent: Date = .distantPast
-    private var restInterval: TimeInterval = 0.075   // 75ms = 13fps per room
+    private var restInterval: TimeInterval = 0.150   // 150ms = 6fps per room (bridge needs time to apply each command)
     private var consecutiveErrors = 0
+    private var lastSentBri: Double = -1              // track last sent value to skip redundant sends
     /// Scale interval by room count so total bridge load stays constant.
-    /// 1 room = 75ms, 2 rooms = 150ms, 3 rooms = 225ms, etc.
+    /// 1 room = 150ms, 2 rooms = 300ms, etc.
     private var sendInterval: TimeInterval {
         if transportMode == .entertainment { return 0.04 }
         let roomCount = max(1, selectedRoomIDs.count)
@@ -163,8 +164,9 @@ final class SyncModeEngine {
         transportMode = .rest
         entertainmentError = nil
         consecutiveErrors = 0
-        restInterval = 0.075
+        restInterval = 0.150
         lastSent = .distantPast
+        lastSentBri = -1   // force first send of new session through delta check
 
         log.info("Sync stopped (generation=\(self.generation))")
     }
@@ -353,9 +355,14 @@ final class SyncModeEngine {
 
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
         // Boost x2.5 so typical speech (overallLevel 0.05-0.4) maps to visible 12-100%.
-        // No hard floor — threshold guard above handles silence.
-        // Mapping: 0.05 → 12%, 0.1 → 25%, 0.2 → 50%, 0.4+ → 100%
         let bri = min(100.0, Double(visualizer.overallLevel) * 250.0 * masterIntensity)
+
+        // Skip if brightness hasn't changed meaningfully (>8%) from last send.
+        // Eliminates chatter like 100→100→90→100 that fills the bridge's command queue.
+        guard abs(bri - lastSentBri) > 8.0 || lastSentBri < 0 else {
+            return
+        }
+        lastSentBri = bri   // record optimistically — prevents duplicate sends even if HTTP fails
         let gen   = generation
 
         log.info("SYNC REST: SENDING bri=\(bri, format: .fixed(precision: 1)) rooms=\(rooms.count) selectedIDs=\(self.selectedRoomIDs) gen=\(gen)")
@@ -383,7 +390,7 @@ final class SyncModeEngine {
                         guard let self, self.generation == gen else { return }
                         if self.consecutiveErrors > 0 {
                             self.consecutiveErrors = 0
-                            self.restInterval = 0.075
+                            self.restInterval = 0.150  // reset to base (not old 75ms)
                         }
                     }
                 } catch {
