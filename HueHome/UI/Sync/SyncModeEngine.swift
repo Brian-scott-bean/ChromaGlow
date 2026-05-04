@@ -359,15 +359,16 @@ final class SyncModeEngine {
 
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
 
-        // Peak follower with slow decay:
-        // - Fast attack: if new level is higher, snap to it immediately
-        // - Slow decay: otherwise multiply by 0.80 per 150ms call (~2s to fade out)
-        // Result: lights spike instantly on loud sound, then drift back down naturally.
+        // Peak follower with fast decay:
+        // - Fast attack: instantly snap to new peak on loud sound
+        // - Fast decay: 0.50x per 150ms ≈ 450ms to fall from 100% to below 5%
+        // Creates a "fighting" effect: lights constantly try to go dark,
+        // sound fights them back up. Very reactive, never "holds" a level.
         let rawLevel = Double(visualizer.overallLevel)
         if rawLevel > decayLevel {
             decayLevel = rawLevel
         } else {
-            decayLevel = max(0, decayLevel * 0.80)
+            decayLevel = max(0, decayLevel * 0.50)
         }
 
         guard decayLevel > 0.05 else { return }  // below threshold, let lights rest
