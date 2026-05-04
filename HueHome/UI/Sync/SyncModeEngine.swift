@@ -318,28 +318,30 @@ final class SyncModeEngine {
     private func sendRESTUpdate() {
         guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
 
+        // Don't send until we have actual audio data — prevents dimming lights on start
+        guard visualizer.overallLevel > 0.001 else { return }
+
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
         let bri   = max(2.0, Double(visualizer.overallLevel) * 100.0 * masterIntensity)
-        let mirek = visualizer.computeMirek()
         let gen   = generation
 
         for room in rooms {
             guard let glID   = room.groupedLightID,
                   let client = orc.hueClient(for: room.bridgeID) else { continue }
 
-            // Capture local Sendable values for the detached task
             let capturedGlID = glID
             let capturedBri = bri
-            let capturedMirek = mirek
 
             Task.detached(priority: .userInitiated) { [weak self] in
                 do {
+                    // Only send on + brightness. Mirek on grouped_light can fail
+                    // if the group contains non-color-temperature lights.
                     try await client.setGroupedLightEffect(
                         id:         capturedGlID,
                         on:         true,
                         brightness: capturedBri,
                         xy:         nil,
-                        mirek:      capturedMirek,
+                        mirek:      nil,
                         duration:   0
                     )
                     await MainActor.run { [weak self] in
