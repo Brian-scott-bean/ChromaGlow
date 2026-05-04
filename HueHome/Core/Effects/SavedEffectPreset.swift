@@ -50,7 +50,7 @@ extension Color {
 
 /// Singleton store for user-saved effect presets.
 /// Uses ObservableObject + @Published so SwiftUI re-renders on every change.
-final class EffectPresetsStore: ObservableObject {
+final class EffectPresetsStore: ObservableObject, @unchecked Sendable {
 
     static let shared = EffectPresetsStore()
 

@@ -17,7 +17,7 @@ enum DemoDataProvider {
     // MARK: - Mock Rooms
 
     /// 7 rooms across 2 bridges with varied states and archetypes.
-    static var rooms: [RoomDisplayItem] = [
+    nonisolated(unsafe) static var rooms: [RoomDisplayItem] = [
 
         // ── Bridge 1: Main Home ────────────────────────────────────────
         RoomDisplayItem(

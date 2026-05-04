@@ -28,7 +28,7 @@ extension Notification.Name {
 
 // MARK: - AppDelegate
 
-final class AppDelegate: NSObject, UIApplicationDelegate {
+final class AppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
 
     private let log = Logger(subsystem: "com.lightshade.app", category: "AutomationHandler")
 
@@ -44,7 +44,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
 // MARK: - UNUserNotificationCenterDelegate
 
-extension AppDelegate: UNUserNotificationCenterDelegate {
+extension AppDelegate {
 
     /// Called when a notification is DELIVERED while the app is in the FOREGROUND.
     /// We show the banner AND immediately fire the automation.

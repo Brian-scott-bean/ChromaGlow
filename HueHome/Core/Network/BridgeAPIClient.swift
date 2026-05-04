@@ -11,7 +11,7 @@ import Foundation
 
 /// A HueAPIClient pre-configured with a specific bridge's credentials.
 /// Adds bridgeID and bridgeName identity for orchestrator bookkeeping.
-final class BridgeAPIClient: HueAPIClient {
+final class BridgeAPIClient: HueAPIClient, @unchecked Sendable {
 
     let bridgeID:   String
     let bridgeName: String

@@ -27,7 +27,7 @@ struct WidgetRoomSnapshot: Codable, Identifiable {
 
 // MARK: - WidgetDataStore
 
-final class WidgetDataStore {
+final class WidgetDataStore: @unchecked Sendable {
     static let shared = WidgetDataStore()
     private init() {}
 
@@ -135,7 +135,7 @@ enum WidgetAPIClient {
     // MARK: - TLS Trust (Hue self-signed cert)
     // ──────────────────────────────────────────────
 
-    private class TrustDelegate: NSObject, URLSessionDelegate {
+    private final class TrustDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
         func urlSession(_ session: URLSession,
                         didReceive challenge: URLAuthenticationChallenge,
                         completionHandler: @escaping (URLSession.AuthChallengeDisposition,

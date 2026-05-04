@@ -211,7 +211,7 @@ actor HueEntertainmentClient {
         let conn = NWConnection(host: host, port: port, using: params)
 
         return try await withCheckedThrowingContinuation { continuation in
-            var resumed = false
+            nonisolated(unsafe) var resumed = false
 
             conn.stateUpdateHandler = { [weak self] newState in
                 guard let self, !resumed else { return }

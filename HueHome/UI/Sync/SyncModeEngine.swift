@@ -1,16 +1,19 @@
 // SyncModeEngine.swift
-// CastChroma — Sync Mode Controller
+// ChromaForge — Sync Mode Controller
 //
 // Owns the shared AVAudioEngine and dispatches audio buffers to the
 // currently active SyncEngine. Handles mic permissions, start/stop,
 // and dual-mode light output:
 //   • Entertainment API (DTLS streaming @ 25fps) — when an entertainment
 //     config is selected and clientkey is available
-//   • REST API fallback (grouped_light @ 10fps) — when no entertainment
+//   • REST API fallback (grouped_light @ 13fps) — when no entertainment
 //     config exists or DTLS fails
 //
-// One audio session, one tap, many engines.
-// Uses nonisolated(unsafe) stopFlag for thread-safe audio tap cancellation.
+// Architecture:
+//   - Single engine instance per app session (created once, reused across tab switches)
+//   - Generation counter prevents zombie HTTP requests after stop()
+//   - stopFlag is nonisolated(unsafe) for zero-cost audio thread reads
+//   - REST sends are fire-and-forget but guarded by generation ID
 
 import Foundation
 import AVFoundation
@@ -58,7 +61,15 @@ final class SyncModeEngine {
     private let bufferSize: AVAudioFrameCount = 1024
 
     /// Thread-safe stop flag — readable from the audio thread without actor isolation.
+    @ObservationIgnored
     nonisolated(unsafe) private var stopFlag = true
+
+    // MARK: Private — generation counter (zombie request prevention)
+    /// Incremented on every stop(). Fire-and-forget Tasks capture the current
+    /// generation at send time — if it doesn't match when the response arrives,
+    /// the result is silently discarded. This prevents zombie requests from
+    /// touching engine state after stop().
+    private var generation: Int = 0
 
     // MARK: Private — rate limiting
     private var lastSent: Date = .distantPast
@@ -68,6 +79,13 @@ final class SyncModeEngine {
     private var restInterval: TimeInterval = 0.075
     private var consecutiveErrors = 0
     private var sendInterval: TimeInterval { transportMode == .entertainment ? 0.04 : restInterval }
+
+    // MARK: Private — in-flight tracking
+    /// Limits concurrent REST HTTP requests to prevent task pile-up.
+    /// Each Task increments on entry and decrements on exit.
+    @ObservationIgnored
+    nonisolated(unsafe) private var inflightCount = 0
+    private let maxInflight = 3
 
     // MARK: Dependency
     private weak var orchestrator: UnifiedOrchestrator?
@@ -115,23 +133,29 @@ final class SyncModeEngine {
     // MARK: - Start / Stop
 
     func start() {
+        guard !isRunning else { return }
         Task { await requestAndStart() }
     }
 
     func stop() {
-        // 1. Immediately signal the audio thread to stop processing
+        guard isRunning || !stopFlag else { return }
+
+        // 1. Bump generation — all in-flight Tasks with old generation are now zombies
+        generation += 1
+
+        // 2. Immediately signal the audio thread to stop processing
         stopFlag = true
         isRunning = false
 
-        // 2. Remove tap and stop engine synchronously
+        // 3. Remove tap and stop engine synchronously
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
 
-        // 3. Release audio session
+        // 4. Release audio session
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 
-        // 4. Stop entertainment session if active
+        // 5. Stop entertainment session if active
         if let entClient = entertainmentClient {
             Task {
                 await entClient.stopSession()
@@ -140,16 +164,22 @@ final class SyncModeEngine {
         }
         entertainmentClient = nil
 
-        // 5. Reset all engine state (zeros bars, levels)
+        // 6. Reset all engine state (zeros bars, levels)
         activeEngine.reset()
         transportMode = .rest
         entertainmentError = nil
 
-        log.info("Sync stopped")
+        // 7. Reset rate limiting state
+        consecutiveErrors = 0
+        restInterval = 0.075
+        lastSent = .distantPast
+        inflightCount = 0
+
+        log.info("Sync stopped (generation=\(self.generation))")
     }
 
     private func requestAndStart() async {
-        switch AVAudioSession.sharedInstance().recordPermission {
+        switch AVAudioApplication.shared.recordPermission {
         case .granted:
             await startCapture()
         case .undetermined:
@@ -197,7 +227,7 @@ final class SyncModeEngine {
             try eng.start()
             audioEngine = eng
             isRunning   = true
-            log.info("Sync started — engine: \(self.activeEngineType.rawValue), transport: \(self.transportMode.rawValue)")
+            log.info("Sync started — engine: \(self.activeEngineType.rawValue), transport: \(self.transportMode.rawValue), generation=\(self.generation)")
         } catch {
             log.error("Audio engine start failed: \(error.localizedDescription)")
         }
@@ -214,7 +244,6 @@ final class SyncModeEngine {
         }
 
         // Find the bridge that has this entertainment config
-        // For now, use the first bridge that has a client key
         for bridgeID in orc.allBridgeIDs {
             guard let client = orc.hueClient(for: bridgeID),
                   let clientKey = KeychainManager.shared.loadClientKey(for: bridgeID) else {
@@ -306,13 +335,18 @@ final class SyncModeEngine {
 
     // MARK: REST Fallback (13fps, fire-and-forget)
     //
-    // Optimizations vs naive approach:
+    // Safeguards:
     // 1. duration: 0 — instant color change (no 80ms transition animation)
     // 2. Fire-and-forget — don't await HTTP response, prevents task pile-up
     // 3. 75ms interval (13fps) — safe for all V2 bridges, backs off on errors
+    // 4. Generation counter — zombie Tasks from old sessions are silently discarded
+    // 5. In-flight cap — max 3 concurrent HTTP requests to prevent pile-up
 
     private func sendRESTUpdate() {
         guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
+
+        // Don't pile up more HTTP requests if too many are already in flight
+        guard inflightCount < maxInflight else { return }
 
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
         let bri   = max(2.0, Double(visualizer.overallLevel) * 100.0 * masterIntensity)
@@ -322,13 +356,23 @@ final class SyncModeEngine {
         // Toggling on/off between beats causes visible power cycling and latency.
         let on = true
 
+        // Capture current generation — if stop() is called while this Task is in flight,
+        // the generation will have changed and the callback is discarded.
+        let sendGeneration = generation
+
         for room in rooms {
             guard let glID   = room.groupedLightID,
                   let client = orc.hueClient(for: room.bridgeID) else { continue }
 
-            // Fire-and-forget: send without awaiting response.
-            // This eliminates ~50-200ms of HTTP round-trip from the critical path.
+            inflightCount += 1
+
             Task.detached(priority: .userInitiated) { [weak self] in
+                defer {
+                    Task { @MainActor [weak self] in
+                        self?.inflightCount -= 1
+                    }
+                }
+
                 do {
                     try await client.setGroupedLightEffect(
                         id:         glID,
@@ -338,18 +382,18 @@ final class SyncModeEngine {
                         mirek:      mirek,
                         duration:   0   // instant — no transition animation
                     )
-                    // Success: tighten interval back to optimal
-                    await MainActor.run {
-                        guard let self else { return }
+                    // Only process result if this generation is still active
+                    await MainActor.run { [weak self] in
+                        guard let self, self.generation == sendGeneration else { return }
                         if self.consecutiveErrors > 0 {
                             self.consecutiveErrors = 0
                             self.restInterval = 0.075
                         }
                     }
                 } catch {
-                    // Adaptive backoff: if bridge is overwhelmed, slow down
-                    await MainActor.run {
-                        guard let self else { return }
+                    // Only process error if this generation is still active
+                    await MainActor.run { [weak self] in
+                        guard let self, self.generation == sendGeneration else { return }
                         self.consecutiveErrors += 1
                         if self.consecutiveErrors >= 3 {
                             self.restInterval = min(0.15, self.restInterval + 0.025)

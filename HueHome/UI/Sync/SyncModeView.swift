@@ -37,7 +37,7 @@ struct SyncModeView: View {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
         }
         .preferredColorScheme(.dark)
-        .onAppear  { engine = SyncModeEngine(orchestrator: orchestrator) }
+        .onAppear  { if engine == nil { engine = SyncModeEngine(orchestrator: orchestrator) } }
         .onDisappear { engine?.stop() }
         .sheet(isPresented: $showCreateArea) {
             EntertainmentConfigBuilderView { newConfig in

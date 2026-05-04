@@ -8,7 +8,7 @@ import OSLog
 
 // MARK: - AutomationScheduler
 
-final class AutomationScheduler {
+final class AutomationScheduler: @unchecked Sendable {
 
     static let shared = AutomationScheduler()
     private init() {}

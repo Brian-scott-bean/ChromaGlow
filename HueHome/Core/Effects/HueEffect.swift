@@ -151,13 +151,13 @@ enum PresetPalette: String, CaseIterable {
 
 enum EffectLibrary {
 
-    static let all: [HueEffect] = atmosphere + dynamic + gradual
+    nonisolated(unsafe) static let all: [HueEffect] = atmosphere + dynamic + gradual
 
     // ─────────────────────────────────────────────
     // MARK: Atmosphere (one-shot, always persist)
     // ─────────────────────────────────────────────
 
-    static let atmosphere: [HueEffect] = [
+    nonisolated(unsafe) static let atmosphere: [HueEffect] = [
         HueEffect(
             id: "movie",
             name: "Movie",
@@ -248,7 +248,7 @@ enum EffectLibrary {
     // MARK: Dynamic (bridge-native OR app-driven)
     // ─────────────────────────────────────────────
 
-    static let dynamic: [HueEffect] = [
+    nonisolated(unsafe) static let dynamic: [HueEffect] = [
         HueEffect(
             id: "colorloop",
             name: "Color Loop",
@@ -371,7 +371,7 @@ enum EffectLibrary {
     // MARK: Gradual (bridge-native ramps via duration)
     // ─────────────────────────────────────────────
 
-    static let gradual: [HueEffect] = [
+    nonisolated(unsafe) static let gradual: [HueEffect] = [
         HueEffect(
             id: "sunrise",
             name: "Sunrise",
