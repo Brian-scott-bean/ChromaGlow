@@ -36,6 +36,10 @@ This file is the source of truth for "why we did it this way."
 | `MicModeView.swift` | Mic mode UI (to be replaced by SyncModeView) |
 | `MainTabView.swift` | Custom glassmorphic tab bar |
 | `RoomDisplayItem.swift` | Value-type display model for rooms/zones |
+| `SceneColorBuilderView.swift` | Scene design studio — create + edit scenes |
+| `ColorPadView.swift` | 2D saturation × brightness color pad |
+| `HueSpectrumBar.swift` | Horizontal hue slider with harmony markers |
+| `HarmonyEngine.swift` | Color theory math (8 harmony rules) |
 
 ### Target Structure
 | Target | Notes |
@@ -94,6 +98,30 @@ The app uses a custom glassmorphic tab bar in a ZStack. Global `.safeAreaInset(e
 ---
 
 ## Version History
+
+### v0.11.0-scene-builder *(2026-05-03)*
+- **P2 Scene Color Builder — COMPLETE**
+- **2D Color Pad (SB Pad):** Canvas-rendered saturation × brightness surface. Hue set externally via the spectrum bar. Replaces circular color wheel for scene building.
+- **Hue Spectrum Bar:** Full-width horizontal hue slider with harmony anchor markers. Haptic notch feedback every 30°.
+- **HarmonyEngine:** Pure color-theory engine with 8 rules: None, Complementary, Triadic, Analogous, Split Complementary, Tetradic, Monochromatic, Double Complementary. Distributes palette across any number of lights with saturation/brightness variation for duplicates.
+- **Selection-scoped harmony:** Harmony applies only to selected lights. Enables layered scene design (Triad on 3 lights + Analogous on 2 others in one scene).
+- **Paint mode:** Tap = single-select for per-light painting. Long press (0.35s) = multi-select toggle. Follows iOS convention (Photos, Files).
+- **Live preview:** Debounced at 100ms + 50ms stagger between lights to stay within Hue bridge rate limits (10 req/sec). User perceives real-time response.
+- **Brightness slider:** Custom themed slider (white gradient) sends brightness to bridge for all light types (color, color temp, dimmable-only).
+- **Scene name limit:** 32 chars (Hue bridge max). Auto-truncation + countdown warning.
+- **Create + Edit modes:** New scenes via POST, existing via PUT with per-light actions.
+- **Cancel → revert:** Lights restored to original state on cancel.
+- **Scene chip sizing:** Fixed height prevents card growth from long names.
+
+**New files (4):**
+| File | Path |
+|---|---|
+| `HarmonyEngine.swift` | `HueHome/UI/SceneBuilder/` |
+| `ColorPadView.swift` | `HueHome/UI/SceneBuilder/` |
+| `HueSpectrumBar.swift` | `HueHome/UI/SceneBuilder/` |
+| `SceneColorBuilderView.swift` | `HueHome/UI/SceneBuilder/` |
+
+**Modified:** `HueAPIClient.swift` (updateScene), `UnifiedOrchestrator.swift` (updateScene), `RoomDetailView.swift` (builder integration), `SceneChip.swift` (fixed sizing)
 
 ### v0.10.0-room-restructure *(2026-05-03)*
 - **P1 Room Detail Restructuring — COMPLETE**
