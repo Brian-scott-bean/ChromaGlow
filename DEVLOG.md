@@ -17,11 +17,15 @@
   - `SyncEngineProtocol.swift` — protocol, output struct, engine type enum, color modes
   - `VisualizerEngine.swift` — 1:1 port of FFT pipeline from MicModeEngine
   - `SyncModeEngine.swift` — shared audio session, engine dispatch, rate-limited light sender
-  - `SyncModeView.swift` — premium glassmorphic UI with engine selector, controls card, visualizer
+  - `SyncModeView.swift` — rebuilt from EffectsView scaffold for consistent layout
 - **Tab Rename:** `.mic` → `.sync`, icon `waveform.and.mic` → `waveform`, label "Mic" → "Sync"
-- **UI Overhaul:** SyncModeView matches CastChroma design language — `.ultraThinMaterial` cards, amber accents, time-aware ambient orb, gradient borders, `LinearGradient` start/stop button. New master intensity slider.
+- **UI:** SyncModeView uses same scaffold as EffectsView — `.navigationTitle(.large)`, `ZStack` background with `.ignoresSafeArea()`, `ScrollView > VStack(spacing: 0)`, `.padding(.horizontal, 20)`, card style `RoundedRectangle(18) + .white.opacity(0.06)`. Includes engine selector, start/stop orb, equalizer bars, level meters, controls card (color mode, sensitivity, intensity, room picker).
+- **Stop fix:** Added `nonisolated(unsafe) stopFlag` for thread-safe audio tap cancellation. Stop is now immediate.
+- **Buffer optimization:** Reduced from 2048→1024 samples (~23ms vs ~46ms processing latency).
+- **Light sender:** Reads from visualizer's smoothed levels directly (sensitivity applied) instead of raw FFT output.
 - **Deleted:** `MicModeEngine.swift`, `MicModeView.swift` — fully replaced by Sync/ directory.
 - **Color modes** (Reactive, Pulse, Warm, Cool) preserved as sub-options within VisualizerEngine.
+- **Lesson learned:** When a new view has layout issues, stop iterating — study existing views that work (EffectsView, DashboardView) and replicate their exact scaffold.
 
 
 ## v0.12.1 — Room Detail Polish (Priority 1)
