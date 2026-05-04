@@ -44,6 +44,22 @@ struct RoomDisplayItem: Identifiable, Hashable {
     var dominantColorY: Double? = nil
     var dominantMirek:  Int?    = nil
 
-    static func == (lhs: RoomDisplayItem, rhs: RoomDisplayItem) -> Bool { lhs.id == rhs.id }
+    // Memberwise Equatable: compares ALL fields so SwiftUI detects changes
+    // to isOn, brightness, dominantColorX/Y, etc. ID-only == was preventing
+    // onChange handlers in RoomCard from ever firing.
+    static func == (lhs: RoomDisplayItem, rhs: RoomDisplayItem) -> Bool {
+        lhs.id == rhs.id &&
+        lhs.kind == rhs.kind &&
+        lhs.name == rhs.name &&
+        lhs.archetype == rhs.archetype &&
+        lhs.isOn == rhs.isOn &&
+        lhs.brightness == rhs.brightness &&
+        lhs.groupedLightID == rhs.groupedLightID &&
+        lhs.lightCount == rhs.lightCount &&
+        lhs.bridgeID == rhs.bridgeID &&
+        lhs.dominantColorX == rhs.dominantColorX &&
+        lhs.dominantColorY == rhs.dominantColorY &&
+        lhs.dominantMirek == rhs.dominantMirek
+    }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
