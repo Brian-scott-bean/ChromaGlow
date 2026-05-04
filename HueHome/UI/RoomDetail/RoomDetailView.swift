@@ -866,7 +866,7 @@ struct CompactLightCard: View {
                     .onLongPressGesture(minimumDuration: 0.45) { onLongPress() }
             }
         }
-        .opacity(isSelecting ? (isSelected ? 1.0 : 0.58) : (localIsOn ? 1.0 : 0.72))
+        .opacity(isSelecting ? (isSelected ? 1.0 : 0.58) : (localIsOn ? 1.0 : 0.55))
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: localIsOn)
         .animation(.spring(response: 0.3), value: isSelecting)
         .animation(.spring(response: 0.25), value: isSelected)
