@@ -26,6 +26,10 @@ struct LightDisplayItem: Identifiable, Hashable {
     var mirekMax: Int       // e.g. 500  (2000 K)
     var supportsColorTemp: Bool { colorTempMirek != nil || mirekMin != mirekMax }
 
-    static func == (lhs: LightDisplayItem, rhs: LightDisplayItem) -> Bool { lhs.id == rhs.id }
+    // Equatable is synthesized — compares ALL fields (not just id).
+    // This is critical: SwiftUI's ForEach diff uses == to detect changes.
+    // If == only compared id, onChange(of: light.colorX) would never fire
+    // because SwiftUI would think the item hadn't changed.
+
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
