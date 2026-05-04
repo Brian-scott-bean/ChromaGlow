@@ -1077,17 +1077,18 @@ final class UnifiedOrchestrator {
                 if var rooms = roomsByBridge[bridgeID],
                    let roomID = lightIDToRoomID[update.id],
                    let idx = rooms.firstIndex(where: { $0.id == roomID }) {
-                    if let xy = update.color?.xy {
-                        rooms[idx].dominantColorX = xy.x
-                        rooms[idx].dominantColorY = xy.y
-                        rooms[idx].dominantMirek  = nil
-                        roomsByBridge[bridgeID]   = rooms
-                        roomsMutated = true
-                    } else if let mirek = update.colorTemp?.mirek {
-                        // Always apply CT updates — even when a color dominant was stored.
+                    // Prefer mirek when present — CT scenes (Relax/Energize) render
+                    // more accurately via fromMirek than via the CIE xy equivalent.
+                    if let mirek = update.colorTemp?.mirek {
                         rooms[idx].dominantColorX = nil
                         rooms[idx].dominantColorY = nil
                         rooms[idx].dominantMirek  = mirek
+                        roomsByBridge[bridgeID]   = rooms
+                        roomsMutated = true
+                    } else if let xy = update.color?.xy {
+                        rooms[idx].dominantColorX = xy.x
+                        rooms[idx].dominantColorY = xy.y
+                        rooms[idx].dominantMirek  = nil
                         roomsByBridge[bridgeID]   = rooms
                         roomsMutated = true
                     }
@@ -1095,16 +1096,16 @@ final class UnifiedOrchestrator {
                 if var zones = zonesByBridge[bridgeID],
                    let zoneID = lightIDToZoneID[update.id],
                    let idx = zones.firstIndex(where: { $0.id == zoneID }) {
-                    if let xy = update.color?.xy {
-                        zones[idx].dominantColorX = xy.x
-                        zones[idx].dominantColorY = xy.y
-                        zones[idx].dominantMirek  = nil
-                        zonesByBridge[bridgeID]   = zones
-                        zonesMutated = true
-                    } else if let mirek = update.colorTemp?.mirek {
+                    if let mirek = update.colorTemp?.mirek {
                         zones[idx].dominantColorX = nil
                         zones[idx].dominantColorY = nil
                         zones[idx].dominantMirek  = mirek
+                        zonesByBridge[bridgeID]   = zones
+                        zonesMutated = true
+                    } else if let xy = update.color?.xy {
+                        zones[idx].dominantColorX = xy.x
+                        zones[idx].dominantColorY = xy.y
+                        zones[idx].dominantMirek  = nil
                         zonesByBridge[bridgeID]   = zones
                         zonesMutated = true
                     }

@@ -120,7 +120,8 @@ final class MicModeEngine {
         let fmt  = node.outputFormat(forBus: 0)
 
         node.installTap(onBus: 0, bufferSize: bufferSize, format: fmt) { [weak self] buf, _ in
-            self?.process(buf, sampleRate: Float(fmt.sampleRate))
+            guard let self, self.isRunning else { return }
+            self.process(buf, sampleRate: Float(fmt.sampleRate))
         }
 
         do {
@@ -240,6 +241,7 @@ final class MicModeEngine {
     // MARK: - Light Control (10 fps rate-limited)
 
     private func sendLightUpdate() {
+        guard isRunning else { return }
         let now = Date()
         guard now.timeIntervalSince(lastSent) >= sendInterval else { return }
         guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
