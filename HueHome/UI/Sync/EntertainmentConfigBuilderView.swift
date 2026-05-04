@@ -381,24 +381,6 @@ struct EntertainmentConfigBuilderView: View {
         do {
             let (ip, token) = try client.credentials()
 
-            // DEBUG: dump existing entertainment configs to see what format works
-            let existingData = try await client.get(
-                path: "/clip/v2/resource/entertainment_configuration",
-                ip: ip, token: token
-            )
-            if let existingStr = String(data: existingData, encoding: .utf8) {
-                print("🔍 EXISTING ENTERTAINMENT CONFIGS:\n\(existingStr)")
-            }
-
-            // DEBUG: dump entertainment services
-            let entServicesData = try await client.get(
-                path: "/clip/v2/resource/entertainment",
-                ip: ip, token: token
-            )
-            if let entStr = String(data: entServicesData, encoding: .utf8) {
-                print("🔍 ENTERTAINMENT SERVICES:\n\(entStr)")
-            }
-
             let selectedLights = availableLights.filter { selectedLightIDs.contains($0.id) }
 
             // Build service_locations — match exact format of working Hue app config:
@@ -437,12 +419,6 @@ struct EntertainmentConfigBuilderView: View {
                     "service_locations": serviceLocations
                 ]
             ]
-
-            // DEBUG: dump what we're sending
-            if let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .prettyPrinted),
-               let bodyStr = String(data: bodyData, encoding: .utf8) {
-                print("🔍 OUR POST BODY:\n\(bodyStr)")
-            }
 
             let data = try await client.post(
                 path: "/clip/v2/resource/entertainment_configuration",
