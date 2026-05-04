@@ -616,8 +616,7 @@ struct LightCard: View {
     let onToggleSelect: ()       -> Void
     let onLongPress:    ()       -> Void
 
-    @State private var localIsOn:      Bool
-    @State private var localGlowColor: Color
+    @State private var localIsOn: Bool
 
     init(
         light:          LightDisplayItem,
@@ -636,7 +635,11 @@ struct LightCard: View {
         self.onToggleSelect = onToggleSelect
         self.onLongPress    = onLongPress
         _localIsOn          = State(initialValue: light.isOn)
-        _localGlowColor     = State(initialValue: Self.resolveGlowColor(for: light))
+    }
+
+    /// Glow color computed directly from light — always current.
+    private var glowColor: Color {
+        Self.resolveGlowColor(for: light)
     }
 
     static func resolveGlowColor(for light: LightDisplayItem) -> Color {
@@ -665,7 +668,7 @@ struct LightCard: View {
             if isSelecting {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(isSelected ? localGlowColor : .white.opacity(0.35))
+                    .foregroundStyle(isSelected ? glowColor : .white.opacity(0.35))
                     .padding(14)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
                     .animation(.spring(response: 0.3), value: isSelected)
@@ -681,7 +684,7 @@ struct LightCard: View {
                 } label: {
                     Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
                         .font(.system(size: 22))
-                        .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
+                        .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
                         .frame(width: 52, height: 52)
                         .contentShape(Rectangle())
                         .symbolEffect(.bounce, value: localIsOn)
@@ -704,19 +707,16 @@ struct LightCard: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) { localIsOn = confirmed }
             }
         }
-        .onChange(of: light) { _, _ in
-            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = Self.resolveGlowColor(for: light) }
-        }
     }
 
     private var cardContent: some View {
-        GlassmorphicCard(isActive: localIsOn, glowColor: localGlowColor) {
+        GlassmorphicCard(isActive: localIsOn, glowColor: glowColor) {
             VStack(spacing: 0) {
                 lightHeaderContent
                 if localIsOn && !isSelecting {
                     BrightnessRow(
                         brightness: light.brightness,
-                        glowColor:  localGlowColor,
+                        glowColor:  glowColor,
                         onCommit:   { onBrightness($0) }
                     )
                     .padding(.top, 6)
@@ -729,11 +729,11 @@ struct LightCard: View {
         HStack(alignment: .center, spacing: 14) {
             ZStack {
                 Circle()
-                    .fill(localIsOn ? localGlowColor.opacity(0.22) : Color.white.opacity(0.07))
+                    .fill(localIsOn ? glowColor.opacity(0.22) : Color.white.opacity(0.07))
                     .frame(width: 44, height: 44)
                 Image(systemName: archetypeIcon(for: light.archetype))
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.4))
+                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.4))
                     .symbolEffect(.bounce, value: localIsOn)
             }
             VStack(alignment: .leading, spacing: 3) {
@@ -743,7 +743,7 @@ struct LightCard: View {
                     .lineLimit(1)
                 Text(localIsOn ? "\(Int(light.brightness))%" : "Off")
                     .font(.caption)
-                    .foregroundStyle(localIsOn ? localGlowColor.opacity(0.8) : .white.opacity(0.40))
+                    .foregroundStyle(localIsOn ? glowColor.opacity(0.8) : .white.opacity(0.40))
             }
             Spacer()
             // Reserve space for power button overlay in normal mode
@@ -767,8 +767,7 @@ struct CompactLightCard: View {
     let onToggleSelect: ()       -> Void
     let onLongPress:    ()       -> Void
 
-    @State private var localIsOn:      Bool
-    @State private var localGlowColor: Color
+    @State private var localIsOn: Bool
 
     init(
         light:          LightDisplayItem,
@@ -785,23 +784,25 @@ struct CompactLightCard: View {
         self.onToggleSelect = onToggleSelect
         self.onLongPress    = onLongPress
         _localIsOn          = State(initialValue: light.isOn)
-        _localGlowColor     = State(initialValue: LightCard.resolveGlowColor(for: light))
+    }
+
+    /// Glow color computed directly from light — always current, no @State lag.
+    private var glowColor: Color {
+        LightCard.resolveGlowColor(for: light)
     }
 
     var body: some View {
         let content = VStack(spacing: 8) {
-            // Icon circle
             ZStack {
                 Circle()
-                    .fill(localIsOn ? localGlowColor.opacity(0.22) : Color.white.opacity(0.07))
+                    .fill(localIsOn ? glowColor.opacity(0.22) : Color.white.opacity(0.07))
                     .frame(width: 44, height: 44)
                 Image(systemName: archetypeIcon(for: light.archetype))
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.4))
+                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.4))
                     .symbolEffect(.bounce, value: localIsOn)
             }
 
-            // Name
             Text(light.name)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white)
@@ -809,12 +810,10 @@ struct CompactLightCard: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // Brightness / Off label
             Text(localIsOn ? "\(Int(light.brightness))%" : "Off")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(localIsOn ? localGlowColor.opacity(0.8) : .white.opacity(0.40))
+                .foregroundStyle(localIsOn ? glowColor.opacity(0.8) : .white.opacity(0.40))
 
-            // Power button
             Button {
                 HapticManager.shared.light()
                 localIsOn.toggle()
@@ -822,7 +821,7 @@ struct CompactLightCard: View {
             } label: {
                 Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 20))
-                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
+                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
                     .symbolEffect(.bounce, value: localIsOn)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
@@ -834,25 +833,24 @@ struct CompactLightCard: View {
         .padding(.horizontal, 8)
         .background {
             RoundedRectangle(cornerRadius: 18)
-                .fill(localIsOn ? localGlowColor.opacity(0.10) : Color.white.opacity(0.06))
+                .fill(localIsOn ? glowColor.opacity(0.10) : Color.white.opacity(0.06))
         }
         .overlay {
             RoundedRectangle(cornerRadius: 18)
                 .stroke(
                     isSelecting && isSelected
-                        ? localGlowColor.opacity(0.70)
+                        ? glowColor.opacity(0.70)
                         : localIsOn
-                            ? localGlowColor.opacity(0.40)
+                            ? glowColor.opacity(0.40)
                             : Color.white.opacity(0.08),
                     lineWidth: isSelecting && isSelected ? 2 : (localIsOn ? 1.5 : 1)
                 )
         }
         .shadow(
-            color: localIsOn ? localGlowColor.opacity(0.25) : .clear,
+            color: localIsOn ? glowColor.opacity(0.25) : .clear,
             radius: 10, x: 0, y: 4
         )
 
-        // Wrap in NavigationLink or Button depending on mode
         Group {
             if isSelecting {
                 Button { onToggleSelect() } label: { content }
@@ -871,9 +869,6 @@ struct CompactLightCard: View {
             if localIsOn != confirmed {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) { localIsOn = confirmed }
             }
-        }
-        .onChange(of: light) { _, _ in
-            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = LightCard.resolveGlowColor(for: light) }
         }
     }
 }

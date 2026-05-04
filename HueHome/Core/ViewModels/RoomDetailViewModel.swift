@@ -596,9 +596,14 @@ final class RoomDetailViewModel {
     /// Lightweight refresh of light colors after scene activation.
     /// Fetches fresh light states and merges color/brightness into the existing array.
     private func refreshLightColors() async {
-        guard let api else { return }
+        guard let api else {
+            appendLog("⚠️ refreshLightColors: no API client")
+            return
+        }
+        appendLog("🔄 refreshLightColors: fetching fresh states…")
         do {
             let freshLights = try await api.fetchLights()
+            appendLog("🔄 refreshLightColors: got \(freshLights.count) lights from bridge, merging into \(lights.count) local lights")
             var arr = lights
             var changed = false
             for fresh in freshLights {
@@ -612,6 +617,7 @@ final class RoomDetailViewModel {
                 if arr[idx].isOn != newOn || arr[idx].brightness != newBri ||
                    arr[idx].colorX != newX || arr[idx].colorY != newY ||
                    arr[idx].colorTempMirek != newMirek {
+                    appendLog("🎨 '\(arr[idx].name)': xy(\(String(format: "%.4f", arr[idx].colorX ?? -1)),\(String(format: "%.4f", arr[idx].colorY ?? -1))) → xy(\(String(format: "%.4f", newX ?? -1)),\(String(format: "%.4f", newY ?? -1))) mirek:\(arr[idx].colorTempMirek ?? -1)→\(newMirek ?? -1)")
                     arr[idx].isOn = newOn
                     arr[idx].brightness = newBri
                     arr[idx].colorX = newX
@@ -622,7 +628,9 @@ final class RoomDetailViewModel {
             }
             if changed {
                 lights = arr
-                appendLog("🔄 Light colors refreshed after scene activation")
+                appendLog("🔄 ✅ Light colors refreshed — \(arr.filter { $0.colorX != nil }.count) lights have xy data")
+            } else {
+                appendLog("🔄 ⏭️ No color changes detected (bridge values match local)")
             }
         } catch {
             appendLog("⚠️ Color refresh failed: \(error.localizedDescription)")
