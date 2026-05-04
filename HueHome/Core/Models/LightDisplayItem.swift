@@ -30,6 +30,15 @@ struct LightDisplayItem: Identifiable, Hashable {
     // This is critical: SwiftUI's ForEach diff uses == to detect changes.
     // If == only compared id, onChange(of: light.colorX) would never fire
     // because SwiftUI would think the item hadn't changed.
-
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    // Hash must include volatile fields so SwiftUI's ForEach detects changes.
+    // If hash only used id, the collection hash wouldn't change when colors
+    // update, and ForEach might skip re-evaluating its content closure.
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(isOn)
+        hasher.combine(brightness)
+        hasher.combine(colorX)
+        hasher.combine(colorY)
+        hasher.combine(colorTempMirek)
+    }
 }

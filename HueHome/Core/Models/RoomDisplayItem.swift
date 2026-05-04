@@ -61,5 +61,12 @@ struct RoomDisplayItem: Identifiable, Hashable {
         lhs.dominantColorY == rhs.dominantColorY &&
         lhs.dominantMirek == rhs.dominantMirek
     }
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(isOn)
+        hasher.combine(brightness)
+        hasher.combine(dominantColorX)
+        hasher.combine(dominantColorY)
+        hasher.combine(dominantMirek)
+    }
 }

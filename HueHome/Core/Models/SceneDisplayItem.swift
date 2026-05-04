@@ -84,7 +84,7 @@ struct SceneDisplayItem: Identifiable, Hashable {
     static func == (lhs: SceneDisplayItem, rhs: SceneDisplayItem) -> Bool {
         lhs.id == rhs.id && lhs.isActive == rhs.isActive && lhs.name == rhs.name
     }
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    func hash(into hasher: inout Hasher) { hasher.combine(id); hasher.combine(isActive) }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -115,5 +115,5 @@ struct GlobalSceneItem: Identifiable, Hashable {
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.id == rhs.id && lhs.isActive == rhs.isActive
     }
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    func hash(into hasher: inout Hasher) { hasher.combine(id); hasher.combine(isActive) }
 }

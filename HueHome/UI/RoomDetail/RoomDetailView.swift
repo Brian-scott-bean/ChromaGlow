@@ -369,7 +369,15 @@ struct RoomDetailView: View {
     // ── Room Brightness Header (replaces summaryHeader) ───────────
 
     private var roomBrightnessHeader: some View {
-        VStack(spacing: 14) {
+        // Derive dominant glow color from the brightest ON light
+        let dominantGlow: Color = {
+            if let best = vm.lights.filter({ $0.isOn }).max(by: { $0.brightness < $1.brightness }) {
+                return LightCard.resolveGlowColor(for: best)
+            }
+            return Color(red: 1.0, green: 0.76, blue: 0.20)
+        }()
+
+        return VStack(spacing: 14) {
             // Status + room toggle
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -392,7 +400,7 @@ struct RoomDetailView: View {
                     Image(systemName: vm.roomIsOn ? "power.circle.fill" : "power.circle")
                         .font(.system(size: 28))
                         .foregroundStyle(vm.roomIsOn
-                                         ? Color(red: 1.0, green: 0.76, blue: 0.20)
+                                         ? dominantGlow
                                          : .white.opacity(0.35))
                         .symbolEffect(.bounce, value: vm.roomIsOn)
                 }
@@ -403,7 +411,7 @@ struct RoomDetailView: View {
             if vm.roomIsOn {
                 BrightnessRow(
                     brightness: vm.roomBrightness,
-                    glowColor: Color(red: 1.0, green: 0.76, blue: 0.20),
+                    glowColor: dominantGlow,
                     onCommit: { vm.setRoomBrightness($0) }
                 )
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -413,20 +421,20 @@ struct RoomDetailView: View {
         .background(
             RoundedRectangle(cornerRadius: 18)
                 .fill(vm.roomIsOn
-                      ? Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.10)
+                      ? dominantGlow.opacity(0.10)
                       : Color.white.opacity(0.06))
                 .overlay(
                     RoundedRectangle(cornerRadius: 18)
                         .strokeBorder(
                             vm.roomIsOn
-                                ? Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.40)
+                                ? dominantGlow.opacity(0.40)
                                 : Color.white.opacity(0.08),
                             lineWidth: vm.roomIsOn ? 1.5 : 1
                         )
                 )
         )
         .shadow(color: vm.roomIsOn
-                ? Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.20)
+                ? dominantGlow.opacity(0.20)
                 : .clear,
                 radius: 12, x: 0, y: 4)
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: vm.roomIsOn)
