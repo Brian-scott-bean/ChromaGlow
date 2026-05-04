@@ -71,6 +71,7 @@ struct RoomDetailView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .scrollContentBackground(.hidden)
+        .background(Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea())
         .toolbar { toolbarItems }
         .sheet(isPresented: $showLog) { logSheet }
         .sheet(isPresented: $showCreateScene) {
