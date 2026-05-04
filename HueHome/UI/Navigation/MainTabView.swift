@@ -12,14 +12,14 @@ enum HueTab: Int, CaseIterable {
     case home     = 0
     case scenes   = 1
     case effects  = 2
-    case mic      = 3
+    case sync     = 3
 
     var icon: String {
         switch self {
         case .home:    return "house.fill"
         case .scenes:  return "sparkles"
         case .effects: return "wand.and.stars"
-        case .mic:     return "waveform.and.mic"
+        case .sync:    return "waveform"
         }
     }
 
@@ -28,7 +28,7 @@ enum HueTab: Int, CaseIterable {
         case .home:    return "Home"
         case .scenes:  return "Scenes"
         case .effects: return "Effects"
-        case .mic:     return "Mic"
+        case .sync:    return "Sync"
         }
     }
 }
@@ -110,7 +110,7 @@ struct MainTabView: View {
         case .home:    NavigationStack { DashboardView() }
         case .scenes:  NavigationStack { ScenesTabView() }
         case .effects: NavigationStack { EffectsTabView() }
-        case .mic:     NavigationStack { MicModeView() }
+        case .sync:    NavigationStack { SyncModeView() }
         }
     }
 }

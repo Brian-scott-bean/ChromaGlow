@@ -20,6 +20,10 @@
 		0C9408FD0363E00A877DA046 /* BridgeDiscoveryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89DFB13E07B2B45F2C43EA9B /* BridgeDiscoveryViewModel.swift */; };
 		0D540DF0048CF5F6706AE881 /* BulkActionBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D31C27C4DBC782DB02FDBDF /* BulkActionBar.swift */; };
 		730F3B9C4A8D4110059DC631 /* SceneEditBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6C9A9397CEEFF6E1ECE8C8 /* SceneEditBar.swift */; };
+		20D48BFFBA68E425B8A696F6 /* SyncEngineProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43985F768FFF71B61A396C41 /* SyncEngineProtocol.swift */; };
+		DADBEE459E4F759FCCB8AEBD /* VisualizerEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */; };
+		02675208BF32B81876B29E75 /* SyncModeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */; };
+		79B2D82F96FC4476430B4F6A /* SyncModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF542C41EE24A79433CB5589 /* SyncModeView.swift */; };
 		17B38DAEE68E25F798E2F817 /* SceneDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23CB308132549DB8EABD0A0 /* SceneDisplayItem.swift */; };
 		18D9D9DDF64FEBF63D82EBEF /* CreateSceneRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE4E9E93C4062E27EC6C4CC /* CreateSceneRequest.swift */; };
 		1B67F13F56DA56C5ACA65D66 /* BridgeManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A38ACEC1527D7223CD105C53 /* BridgeManagerView.swift */; };
@@ -83,8 +87,6 @@
 		DDC82E862FA0878E00324E29 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD4BB4C52F8C6AF100BED513 /* WidgetKit.framework */; };
 		DDC82E872FA0878E00324E29 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD4BB4C72F8C6AF100BED513 /* SwiftUI.framework */; };
 		DDC82F452FA1140C00324E29 /* LightShadeWatchApp Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = DDC82F252FA1140A00324E29 /* LightShadeWatchApp Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		DDE73AF62FA4677E00C8FF8E /* MicModeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDE73AF42FA4677E00C8FF8E /* MicModeEngine.swift */; };
-		DDE73AF72FA4677E00C8FF8E /* MicModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDE73AF52FA4677E00C8FF8E /* MicModeView.swift */; };
 		E3ED0638F1205B9278E91308 /* HueGroupedLight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24361D8C8182346A011E7B60 /* HueGroupedLight.swift */; };
 		E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */; };
 		E81712B70CBF1AAFBC4065E3 /* EffectControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D79067D6A4E961A8518EF5C /* EffectControlsView.swift */; };
@@ -212,6 +214,10 @@
 		9C79FF00C4642AFCDC55029F /* HueDataModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueDataModels.swift; path = ./HueHome/Core/Models/HueDataModels.swift; sourceTree = "<group>"; };
 		9D31C27C4DBC782DB02FDBDF /* BulkActionBar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/RoomDetail/BulkActionBar.swift; sourceTree = "<group>"; };
 		0B6C9A9397CEEFF6E1ECE8C8 /* SceneEditBar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/RoomDetail/SceneEditBar.swift; sourceTree = "<group>"; };
+		43985F768FFF71B61A396C41 /* SyncEngineProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/SyncEngineProtocol.swift; sourceTree = "<group>"; };
+		ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/VisualizerEngine.swift; sourceTree = "<group>"; };
+		59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/SyncModeEngine.swift; sourceTree = "<group>"; };
+		EF542C41EE24A79433CB5589 /* SyncModeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/SyncModeView.swift; sourceTree = "<group>"; };
 		9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GlassmorphicCard.swift; path = HueHome/UI/Components/GlassmorphicCard.swift; sourceTree = "<group>"; };
 		A38ACEC1527D7223CD105C53 /* BridgeManagerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeManagerView.swift; path = ./HueHome/UI/BridgeManager/BridgeManagerView.swift; sourceTree = "<group>"; };
 		A605D920B86B15037E86EE5F /* DashboardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DashboardView.swift; path = HueHome/UI/Dashboard/DashboardView.swift; sourceTree = "<group>"; };
@@ -245,8 +251,6 @@
 		DDC82F252FA1140A00324E29 /* LightShadeWatchApp Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "LightShadeWatchApp Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		DDC82F312FA1140C00324E29 /* LightShadeWatchApp Watch AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "LightShadeWatchApp Watch AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		DDC82F3B2FA1140C00324E29 /* LightShadeWatchApp Watch AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "LightShadeWatchApp Watch AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		DDE73AF42FA4677E00C8FF8E /* MicModeEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MicModeEngine.swift; path = HueHome/UI/Effects/MicModeEngine.swift; sourceTree = "<group>"; };
-		DDE73AF52FA4677E00C8FF8E /* MicModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MicModeView.swift; path = HueHome/UI/Effects/MicModeView.swift; sourceTree = "<group>"; };
 		E7ACCF18A91D92561912E10F /* EffectEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Effects/EffectEngine.swift; sourceTree = "<group>"; };
 		F57BF74DE7F5F2F1B870513F /* DeviceDisplayItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Models/DeviceDisplayItem.swift; sourceTree = "<group>"; };
 		FD54587B049C752BA3C84CD5 /* HueRoom.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueRoom.swift; path = HueHome/Core/Models/HueRoom.swift; sourceTree = "<group>"; };
@@ -420,8 +424,6 @@
 		22CB1F2908CACDFE206C8810 = {
 			isa = PBXGroup;
 			children = (
-				DDE73AF42FA4677E00C8FF8E /* MicModeEngine.swift */,
-				DDE73AF52FA4677E00C8FF8E /* MicModeView.swift */,
 				DDC82E612F9FBA7E00324E29 /* PrivacyInfo.xcprivacy */,
 				DD4BB4DB2F8C6B1400BED513 /* HueHomeWidgetExtension.entitlements */,
 				DD4BB4C92F8C6AF100BED513 /* HueHomeWidget */,
@@ -605,6 +607,10 @@
 				B49C42A69FC79EABED9C77FC /* SceneColorBuilderView.swift */,
 				9D31C27C4DBC782DB02FDBDF /* BulkActionBar.swift */,
 				0B6C9A9397CEEFF6E1ECE8C8 /* SceneEditBar.swift */,
+				43985F768FFF71B61A396C41 /* SyncEngineProtocol.swift */,
+				ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */,
+				59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */,
+				EF542C41EE24A79433CB5589 /* SyncModeView.swift */,
 			);
 			name = RoomDetail;
 			sourceTree = "<group>";
@@ -1004,8 +1010,6 @@
 				6C3CEE5283D3C9A740DC162E /* AutomationsView.swift in Sources */,
 				C07A9632E98ED3D5C7AD2537 /* HueBehaviorInstance.swift in Sources */,
 				B8EC85BF69B1476F2C0BD268 /* AutomationsViewModel.swift in Sources */,
-				DDE73AF62FA4677E00C8FF8E /* MicModeEngine.swift in Sources */,
-				DDE73AF72FA4677E00C8FF8E /* MicModeView.swift in Sources */,
 				83D16D11D9A22B3D443CED94 /* HueTokens.swift in Sources */,
 				1C125FE7B5ABB02BCD14BFED /* HueTypography.swift in Sources */,
 				665B9753748D3E4CF1D69CF5 /* HueComponents.swift in Sources */,
@@ -1023,6 +1027,10 @@
 				73D4D0E7C3E0D0451914B46E /* HueZone.swift in Sources */,
 				0D540DF0048CF5F6706AE881 /* BulkActionBar.swift in Sources */,
 				730F3B9C4A8D4110059DC631 /* SceneEditBar.swift in Sources */,
+				20D48BFFBA68E425B8A696F6 /* SyncEngineProtocol.swift in Sources */,
+				DADBEE459E4F759FCCB8AEBD /* VisualizerEngine.swift in Sources */,
+				02675208BF32B81876B29E75 /* SyncModeEngine.swift in Sources */,
+				79B2D82F96FC4476430B4F6A /* SyncModeView.swift in Sources */,
 				2CBD48F48BAACBC512C084BA /* DeviceDisplayItem.swift in Sources */,
 				D1B8F5410D05D4831B237F16 /* DevicesView.swift in Sources */,
 				7AFCB8B820A30E0ECC0869C1 /* DevicesViewModel.swift in Sources */,
