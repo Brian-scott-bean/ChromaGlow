@@ -84,11 +84,13 @@ final class GamingEngine: SyncEngine {
     var isTransient:       Bool  = false
     var transientIntensity: Float = 0   // 1.0 on spike, decays to 0
 
-    // MARK: Private — audio thread (nonisolated(unsafe))
+    // MARK: Private — audio thread
     @ObservationIgnored nonisolated(unsafe) private var _lock          = os_unfair_lock()
     @ObservationIgnored nonisolated(unsafe) private var _pendingLevel:  Float = -1
     @ObservationIgnored nonisolated(unsafe) private var _pendingSpike:  Bool  = false
     @ObservationIgnored nonisolated(unsafe) private var _rollingAvg:    Float = 0
+    /// Mirrors `sensitivity` for safe audio-thread reads. Updated each tick() at 60fps.
+    @ObservationIgnored nonisolated(unsafe) private var _activeSensitivity: Float = 1.8
 
     // MARK: Private — main thread
     private var transientDecay:   Float  = 0
@@ -111,9 +113,8 @@ final class GamingEngine: SyncEngine {
         // Slow EMA baseline on audio thread (~43fps, alpha=0.03 ≈ 1s rise)
         _rollingAvg = _rollingAvg * 0.97 + level * 0.03
 
-        // Spike: current level > baseline × fixed threshold (1.8)
-        // Fine-tuning via sensitivity happens in tick() on main thread
-        let isSpike = level > (_rollingAvg * 1.6) && level > 0.06
+        // Spike: current level > baseline × user sensitivity threshold
+        let isSpike = level > (_rollingAvg * _activeSensitivity) && level > 0.06
 
         os_unfair_lock_lock(&_lock)
         _pendingLevel = level
@@ -141,6 +142,9 @@ final class GamingEngine: SyncEngine {
     // MARK: - Tick (called from SyncModeEngine.sendLightUpdate ~6fps)
 
     func tick() {
+        // Sync sensitivity to audio thread (safe: benign race, updates within 16ms)
+        _activeSensitivity = Float(sensitivity)
+
         os_unfair_lock_lock(&_lock)
         let level    = _pendingLevel
         let isSpike  = _pendingSpike

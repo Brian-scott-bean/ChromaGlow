@@ -71,11 +71,12 @@ final class SyncModeEngine {
 
     // MARK: Private — rate limiting
     private var lastSent: Date = .distantPast
-    private var restInterval: TimeInterval = 0.150   // 150ms = 6fps per room
+    private var restInterval: TimeInterval = 0.150
     private var consecutiveErrors = 0
-    private var lastSentBri: Double = -1             // skip sends when bri hasn't changed meaningfully
-    /// Peak follower: jumps instantly to loud levels, decays slowly back to 0.
-    /// 0.80 per 150ms call ≈ 2 seconds to decay from 100→ below 5%.
+    private var lastSentBri: Double = -1
+    /// Tracks last-known transient state so we only send on edges (ON or OFF), not every decay tick.
+    private var gamingWasTransient: Bool = false
+    /// Peak follower for visualizer mode.
     private var decayLevel: Double = 0
     /// Scale interval by room count so total bridge load stays constant.
     /// 1 room = 150ms, 2 rooms = 300ms, etc.
@@ -173,6 +174,7 @@ final class SyncModeEngine {
         gaming.reset()
         ambient.reset()
         visualizer.reset()
+        gamingWasTransient = false
         transportMode = .rest
         entertainmentError = nil
         consecutiveErrors = 0
@@ -442,50 +444,56 @@ final class SyncModeEngine {
         }
     }
 
-    // MARK: REST — Gaming (flash on transient, ambient between spikes)
+    // MARK: REST — Gaming (edge-triggered: 2 sends per transient event)
+    //
+    // OLD approach: send full decay curve (100 → 60 → 36...) every 50ms.
+    //   Problem: bridge processes ~10 req/s. At 50ms intervals we queue up
+    //   6+ commands that replay out of sync with reality — "wildly inconsistent."
+    //
+    // NEW approach: only send when transient state CHANGES (ON or OFF edge).
+    //   - Transient ON  → instant flash at masterIntensity × 100%, duration 0
+    //   - Transient OFF → dim floor at 10%, duration 350ms (bridge interpolates)
+    //   Result: 2 commands per clap. No queue. Smooth fade handled by bridge firmware.
 
     private func sendGamingRESTUpdate() {
         guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
         guard !rooms.isEmpty else { return }
 
-        // Tick already called in sendLightUpdate at display-link speed
-        let gen = generation
         let isTransient = gaming.isTransient
-        let bri: Double
-        let xy: (Double, Double)
 
+        // Only send on state edge: transient just started or just ended
+        guard isTransient != gamingWasTransient else { return }
+        gamingWasTransient = isTransient
+
+        let bri: Double
+        let duration: Int
         if isTransient {
-            bri = gaming.flashBrightness * masterIntensity
-            xy  = gaming.flashColor.xy
+            bri      = max(10, min(100, 100.0 * masterIntensity))
+            duration = 0     // instant flash
         } else {
-            guard let ambXY = gaming.ambientColor.xy else { return }  // .off
-            bri = gaming.ambientBrightness * masterIntensity
-            xy  = ambXY
+            bri      = max(5, gaming.ambientBrightness * masterIntensity)
+            duration = 350   // smooth fade-back; bridge firmware interpolates
         }
 
-        guard bri > 1.0 else { return }
-        guard abs(bri - lastSentBri) > 3.0 || isTransient else { return }
-        lastSentBri = bri
-
-        log.info("GAMING REST: bri=\(bri, format: .fixed(precision: 1)) transient=\(isTransient) rooms=\(rooms.count)")
+        let gen = generation
+        log.info("GAMING REST: edge=\(isTransient ? "ON" : "OFF") bri=\(bri, format: .fixed(precision: 1)) duration=\(duration)ms rooms=\(rooms.count)")
 
         for room in rooms {
             guard let glID   = room.groupedLightID,
                   let client = orc.hueClient(for: room.bridgeID) else { continue }
-            let capturedGlID = glID
-            let capturedBri  = bri
+            let capturedGlID      = glID
+            let capturedBri       = bri
+            let capturedDuration  = duration
             Task.detached(priority: .userInitiated) { [weak self] in
                 do {
-                    // xy omitted: grouped_light rejects xy on mixed/non-color rooms.
-                    // Brightness-only flash is reliable across all bulb types.
                     try await client.setGroupedLightEffect(
                         id:         capturedGlID,
                         on:         true,
                         brightness: capturedBri,
                         xy:         nil,
                         mirek:      nil,
-                        duration:   0
+                        duration:   capturedDuration
                     )
                     await MainActor.run { [weak self] in
                         guard let self, self.generation == gen else { return }
