@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F4E1000211111111 /* EntertainmentConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000200000000 /* EntertainmentConfigManager.swift */; };
+		F4E1000111111111 /* HueEntertainmentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000100000000 /* HueEntertainmentClient.swift */; };
 		AB000BRAND002 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000BRAND001 /* AppBrand.swift */; };
 		04DEE771A7499DCB48E4F81A /* WidgetDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */; };
 		06FADE8E35C87CCC9AB5CECB /* LightDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4092578BDBB64A4C0FE7E197 /* LightDisplayItem.swift */; };
@@ -165,6 +167,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F4E1000200000000 /* EntertainmentConfigManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentConfigManager.swift; path = HueHome/Core/Network/EntertainmentConfigManager.swift; sourceTree = "<group>"; };
+		F4E1000100000000 /* HueEntertainmentClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueEntertainmentClient.swift; path = HueHome/Core/Network/HueEntertainmentClient.swift; sourceTree = "<group>"; };
 		AB000BRAND001 /* AppBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppBrand.swift; path = HueHome/Core/AppBrand.swift; sourceTree = "<group>"; };
 		013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAPIClient.swift; path = ./HueHome/Core/Network/BridgeAPIClient.swift; sourceTree = "<group>"; };
 		0AE302747F21A3DDFB547CD1 /* KeychainManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeychainManager.swift; path = HueHome/Core/Keychain/KeychainManager.swift; sourceTree = "<group>"; };
@@ -403,6 +407,8 @@
 		07153DA61129E1EAC37A4D4A /* Network */ = {
 			isa = PBXGroup;
 			children = (
+				F4E1000200000000 /* EntertainmentConfigManager.swift */,
+				F4E1000100000000 /* HueEntertainmentClient.swift */,
 				6278B21D6E2592BB36A4CB8F /* BridgeDiscoveryService.swift */,
 				1E394B8CB521A7239F42E2C2 /* HueAPIClient.swift */,
 				2A4E5AC65C9D7C704980C395 /* HueSSEService.swift */,
@@ -976,6 +982,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F4E1000211111111 /* EntertainmentConfigManager.swift in Sources */,
+				F4E1000111111111 /* HueEntertainmentClient.swift in Sources */,
 				705F9B0F725C2186A5B3C80B /* HueHomeApp.swift in Sources */,
 				C9FD3C95694034D599E442F8 /* KeychainManager.swift in Sources */,
 				AB000BRAND002 /* AppBrand.swift in Sources */,

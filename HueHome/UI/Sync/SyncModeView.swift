@@ -197,6 +197,26 @@ struct SyncModeView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.white.opacity(engine.isRunning ? 0.6 : 0.35))
 
+            // Transport mode badge
+            if engine.isRunning {
+                HStack(spacing: 5) {
+                    Image(systemName: engine.transportMode == .entertainment ? "bolt.fill" : "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 9, weight: .bold))
+                    Text(engine.transportMode.rawValue)
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundStyle(engine.transportMode == .entertainment ? amber : .white.opacity(0.5))
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(
+                    Capsule().fill(
+                        engine.transportMode == .entertainment
+                        ? amber.opacity(0.15)
+                        : .white.opacity(0.06)
+                    )
+                )
+                .transition(.opacity)
+            }
+
             if engine.permissionDenied {
                 Text("Microphone access denied — enable in Settings")
                     .font(.system(size: 12))
@@ -285,6 +305,12 @@ struct SyncModeView: View {
 
             // ── Room Picker ─────────────────────────────────
             roomPicker(engine: engine)
+
+            // ── Entertainment Config ────────────────────────
+            if !engine.availableEntertainmentConfigs.isEmpty {
+                Divider().background(.white.opacity(0.08))
+                entertainmentPicker(engine: engine)
+            }
         }
         .padding(16)
         .background(
@@ -295,6 +321,76 @@ struct SyncModeView: View {
                         .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
+    }
+
+    // MARK: - Entertainment Config Picker
+
+    private func entertainmentPicker(engine: SyncModeEngine) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                sectionLabel("Entertainment Area")
+                Spacer()
+                if engine.selectedEntertainmentConfig != nil {
+                    HStack(spacing: 3) {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 8))
+                        Text("Low Latency")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(amber.opacity(0.7))
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    // "None" option (REST fallback)
+                    entertainmentChip(
+                        name: "None",
+                        icon: "antenna.radiowaves.left.and.right",
+                        selected: engine.selectedEntertainmentConfig == nil
+                    ) {
+                        withAnimation(.spring(response: 0.25)) {
+                            engine.selectedEntertainmentConfig = nil
+                        }
+                    }
+
+                    ForEach(engine.availableEntertainmentConfigs) { config in
+                        let sel = engine.selectedEntertainmentConfig?.id == config.id
+                        entertainmentChip(
+                            name: config.name,
+                            icon: "bolt.fill",
+                            selected: sel
+                        ) {
+                            withAnimation(.spring(response: 0.25)) {
+                                engine.selectedEntertainmentConfig = sel ? nil : config
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let error = engine.entertainmentError {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red.opacity(0.7))
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private func entertainmentChip(name: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 11, weight: .medium))
+                Text(name).font(.system(size: 12, weight: selected ? .semibold : .regular))
+            }
+            .foregroundStyle(selected ? .black : .white.opacity(0.7))
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(
+                Capsule().fill(selected ? amber : .white.opacity(0.08))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Slider Row (reusable)

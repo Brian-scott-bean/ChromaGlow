@@ -3,7 +3,11 @@
 //
 // Owns the shared AVAudioEngine and dispatches audio buffers to the
 // currently active SyncEngine. Handles mic permissions, start/stop,
-// and rate-limited light output to the Hue bridge.
+// and dual-mode light output:
+//   • Entertainment API (DTLS streaming @ 25fps) — when an entertainment
+//     config is selected and clientkey is available
+//   • REST API fallback (grouped_light @ 10fps) — when no entertainment
+//     config exists or DTLS fails
 //
 // One audio session, one tap, many engines.
 // Uses nonisolated(unsafe) stopFlag for thread-safe audio tap cancellation.
@@ -12,6 +16,13 @@ import Foundation
 import AVFoundation
 import SwiftUI
 import os
+
+// MARK: - Transport Mode
+
+enum SyncTransportMode: String {
+    case rest          = "REST"
+    case entertainment = "Streaming"
+}
 
 // MARK: - SyncModeEngine
 
@@ -24,6 +35,15 @@ final class SyncModeEngine {
     var permissionDenied = false
     var activeEngineType: SyncEngineType = .visualizer
 
+    // MARK: Transport
+    var transportMode: SyncTransportMode = .rest
+    var entertainmentError: String?
+
+    // MARK: Entertainment
+    var availableEntertainmentConfigs: [EntertainmentConfig] = []
+    var selectedEntertainmentConfig: EntertainmentConfig?
+    private var entertainmentClient: HueEntertainmentClient?
+
     // MARK: Engines
     let visualizer = VisualizerEngine()
 
@@ -35,15 +55,15 @@ final class SyncModeEngine {
 
     // MARK: Private — audio
     private var audioEngine: AVAudioEngine?
-    private let bufferSize: AVAudioFrameCount = 1024   // ← reduced from 2048 for faster response
+    private let bufferSize: AVAudioFrameCount = 1024
 
     /// Thread-safe stop flag — readable from the audio thread without actor isolation.
-    /// The audio tap callback checks this to bail immediately when stop() is called.
     nonisolated(unsafe) private var stopFlag = true
 
     // MARK: Private — rate limiting
     private var lastSent: Date = .distantPast
-    private let sendInterval: TimeInterval = 0.1   // 10 fps (Hue bridge spec)
+    /// Send interval adapts to transport mode: 40ms (25fps) for streaming, 100ms (10fps) for REST.
+    private var sendInterval: TimeInterval { transportMode == .entertainment ? 0.04 : 0.1 }
 
     // MARK: Dependency
     private weak var orchestrator: UnifiedOrchestrator?
@@ -51,12 +71,40 @@ final class SyncModeEngine {
 
     init(orchestrator: UnifiedOrchestrator) {
         self.orchestrator = orchestrator
+        Task { await loadEntertainmentConfigs() }
     }
 
     /// The currently active engine instance.
     var activeEngine: SyncEngine {
         switch activeEngineType {
         case .visualizer: return visualizer
+        }
+    }
+
+    // MARK: - Entertainment Config Loading
+
+    /// Fetch available entertainment configurations from all connected bridges.
+    func loadEntertainmentConfigs() async {
+        guard let orc = orchestrator else { return }
+        let manager = EntertainmentConfigManager()
+        var allConfigs: [EntertainmentConfig] = []
+
+        for bridgeID in orc.allBridgeIDs {
+            guard let client = orc.hueClient(for: bridgeID) else { continue }
+            do {
+                let configs = try await manager.fetchConfigs(client: client)
+                allConfigs.append(contentsOf: configs)
+                log.info("Found \(configs.count) entertainment config(s) on bridge \(bridgeID)")
+            } catch {
+                log.warning("Failed to fetch entertainment configs from \(bridgeID): \(error.localizedDescription)")
+            }
+        }
+
+        availableEntertainmentConfigs = allConfigs
+
+        // Auto-select first config if only one exists
+        if allConfigs.count == 1 && selectedEntertainmentConfig == nil {
+            selectedEntertainmentConfig = allConfigs.first
         }
     }
 
@@ -79,8 +127,19 @@ final class SyncModeEngine {
         // 3. Release audio session
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 
-        // 4. Reset all engine state (zeros bars, levels)
+        // 4. Stop entertainment session if active
+        if let entClient = entertainmentClient {
+            Task {
+                await entClient.stopSession()
+                log.info("Entertainment session stopped")
+            }
+        }
+        entertainmentClient = nil
+
+        // 5. Reset all engine state (zeros bars, levels)
         activeEngine.reset()
+        transportMode = .rest
+        entertainmentError = nil
 
         log.info("Sync stopped")
     }
@@ -107,6 +166,9 @@ final class SyncModeEngine {
             return
         }
 
+        // Try to start entertainment streaming mode
+        await startEntertainmentIfAvailable()
+
         let eng  = AVAudioEngine()
         let node = eng.inputNode
         let fmt  = node.outputFormat(forBus: 0)
@@ -131,10 +193,54 @@ final class SyncModeEngine {
             try eng.start()
             audioEngine = eng
             isRunning   = true
-            log.info("Sync started — engine: \(self.activeEngineType.rawValue)")
+            log.info("Sync started — engine: \(self.activeEngineType.rawValue), transport: \(self.transportMode.rawValue)")
         } catch {
             log.error("Audio engine start failed: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Entertainment Setup
+
+    private func startEntertainmentIfAvailable() async {
+        guard let config = selectedEntertainmentConfig,
+              let orc = orchestrator else {
+            transportMode = .rest
+            log.info("No entertainment config selected — using REST fallback")
+            return
+        }
+
+        // Find the bridge that has this entertainment config
+        // For now, use the first bridge that has a client key
+        for bridgeID in orc.allBridgeIDs {
+            guard let client = orc.hueClient(for: bridgeID),
+                  let clientKey = KeychainManager.shared.loadClientKey(for: bridgeID) else {
+                continue
+            }
+
+            do {
+                let (ip, token) = try client.credentials()
+                let entClient = HueEntertainmentClient(
+                    bridgeIP: ip,
+                    username: token,
+                    clientKeyHex: clientKey,
+                    restClient: client
+                )
+
+                try await entClient.startSession(configID: config.id)
+                entertainmentClient = entClient
+                transportMode = .entertainment
+                entertainmentError = nil
+                log.info("Entertainment streaming started on bridge \(bridgeID)")
+                return
+            } catch {
+                log.warning("Entertainment start failed on \(bridgeID): \(error.localizedDescription)")
+                entertainmentError = error.localizedDescription
+            }
+        }
+
+        // Fallback to REST
+        transportMode = .rest
+        log.info("Entertainment unavailable — falling back to REST")
     }
 
     // MARK: - Engine Switching
@@ -147,20 +253,59 @@ final class SyncModeEngine {
         log.info("Switched to engine: \(type.rawValue)")
     }
 
-    // MARK: - Light Control (rate-limited)
-    // Reads directly from the active engine's smoothed levels (sensitivity applied).
-    // This matches the original MicModeEngine pattern.
+    // MARK: - Light Control (dual-mode, rate-limited)
 
     private func sendLightUpdate() {
         guard isRunning, !stopFlag else { return }
         let now = Date()
         guard now.timeIntervalSince(lastSent) >= sendInterval else { return }
-        guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
         lastSent = now
 
-        let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
+        switch transportMode {
+        case .entertainment:
+            sendStreamingUpdate()
+        case .rest:
+            sendRESTUpdate()
+        }
+    }
 
-        // Read from visualizer's smoothed, sensitivity-adjusted levels
+    // MARK: Entertainment Streaming (25fps)
+
+    private func sendStreamingUpdate() {
+        guard let entClient = entertainmentClient,
+              let config = selectedEntertainmentConfig else {
+            // Lost entertainment client — fall back
+            transportMode = .rest
+            sendRESTUpdate()
+            return
+        }
+
+        // Map visualizer levels to channel data
+        let brightness = Double(visualizer.overallLevel) * masterIntensity
+        let mirek = visualizer.computeMirek()
+
+        // Convert mirek to approximate CIE xy for streaming
+        // mirek 153 (6500K cold) → xy≈(0.31, 0.33)
+        // mirek 500 (2000K warm) → xy≈(0.53, 0.41)
+        let t = Double(mirek - 153) / Double(500 - 153)  // 0=cold, 1=warm
+        let x = 0.31 + t * 0.22   // lerp x
+        let y = 0.33 + t * 0.08   // lerp y
+
+        let channelData = config.channels.map { ch in
+            (id: UInt8(ch.id), x: x, y: y, brightness: brightness)
+        }
+
+        Task {
+            await entClient.send(channels: channelData)
+        }
+    }
+
+    // MARK: REST Fallback (10fps)
+
+    private func sendRESTUpdate() {
+        guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
+
+        let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
         let bri   = max(2.0, Double(visualizer.overallLevel) * 100.0 * masterIntensity)
         let on    = visualizer.overallLevel > 0.03
         let mirek = visualizer.computeMirek()
