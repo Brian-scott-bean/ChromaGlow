@@ -66,37 +66,11 @@ struct RoomDetailView: View {
                 .animation(.spring(response: 0.35, dampingFraction: 0.75), value: vm.isSelecting)
             }
         }
-        .navigationTitle(room.name)
-        .navigationBarTitleDisplayMode(.large)
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .scrollContentBackground(.hidden)
-        .onAppear {
-            // Force fully transparent nav bar — .toolbarBackground(.hidden) alone
-            // doesn't suppress the large-title area background on pushed views.
-            let transparent = UINavigationBarAppearance()
-            transparent.configureWithTransparentBackground()
-            transparent.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
-            transparent.titleTextAttributes       = [.foregroundColor: UIColor.white]
-            transparent.backgroundColor = .clear
-            transparent.shadowColor     = .clear   // kills the separator line
-            UINavigationBar.appearance().standardAppearance   = transparent
-            UINavigationBar.appearance().scrollEdgeAppearance = transparent
-            UINavigationBar.appearance().compactAppearance    = transparent
-        }
-        .onDisappear {
-            // Restore default dark appearance so other views (Dashboard) aren't affected
-            let defaultApp = UINavigationBarAppearance()
-            defaultApp.configureWithDefaultBackground()
-            defaultApp.backgroundColor = .clear
-            defaultApp.shadowColor     = .clear
-            defaultApp.backgroundEffect = nil
-            defaultApp.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
-            defaultApp.titleTextAttributes      = [.foregroundColor: UIColor.white]
-            UINavigationBar.appearance().standardAppearance   = defaultApp
-            UINavigationBar.appearance().scrollEdgeAppearance = defaultApp
-            UINavigationBar.appearance().compactAppearance    = defaultApp
-        }
         .toolbar { toolbarItems }
         .sheet(isPresented: $showLog) { logSheet }
         .sheet(isPresented: $showCreateScene) {
@@ -224,6 +198,16 @@ struct RoomDetailView: View {
     private var lightScrollView: some View {
         ScrollView {
             VStack(spacing: 0) {
+                // ── Room Name (custom large title — inline mode has no large title area,
+                //    which eliminates the opaque nav bar background on pushed views) ──
+                Text(room.name)
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+
                 // ── Room Brightness Header ──
                 roomBrightnessHeader
                     .padding(.horizontal, 20)
