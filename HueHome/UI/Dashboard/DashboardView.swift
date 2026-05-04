@@ -786,7 +786,8 @@ struct RoomCard: View {
                     .padding(.top, 10)
                 }
             }
-            .padding(16)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 18)
@@ -811,15 +812,15 @@ struct RoomCard: View {
                 onToggle(localIsOn)
             } label: {
                 Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
-                    .font(.system(size: 22))
+                    .font(.system(size: 20))
                     .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
-                    .frame(width: 48, height: 48)
+                    .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
                     .symbolEffect(.bounce, value: localIsOn)
             }
             .buttonStyle(.plain)
-            .padding(.top, 10)
-            .padding(.trailing, 8)
+            .padding(.top, 8)
+            .padding(.trailing, 6)
             .accessibilityLabel(Text("Turn \(room.name) \(localIsOn ? "off" : "on")"))
             .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
         }
@@ -863,27 +864,28 @@ struct RoomCard: View {
     }
 
     private var headerContent: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 8) {
             ZStack {
                 Circle()
                     .fill(localIsOn ? localGlowColor.opacity(0.25) : Color.white.opacity(0.07))
-                    .frame(width: 44, height: 44)
+                    .frame(width: 36, height: 36)
                 Image(systemName: archetypeIcon(for: room.archetype))
-                    .font(.system(size: 19, weight: .medium))
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.4))
                     .symbolEffect(.bounce, value: localIsOn)
             }
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(room.name)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
                 Text("\(room.lightCount) light\(room.lightCount == 1 ? "" : "s")")
-                    .font(.system(size: 11))
+                    .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.45))
             }
-            Spacer()
-            Spacer().frame(width: 40)   // reserve for power overlay
+            Spacer(minLength: 4)
+            Spacer().frame(width: 32)   // reserve for power overlay
         }
     }
 }
@@ -990,14 +992,14 @@ struct BrightnessRow: View {
             }
             .frame(height: 16)
 
-            HStack(spacing: 4) {
+            HStack(spacing: 2) {
                 Image(systemName: "sun.max.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: 9))
                     .foregroundStyle(.white.opacity(0.35))
                 Text("\(Int(displayValue))%")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.55))
-                    .frame(width: 30, alignment: .trailing)
+                    .frame(width: 28, alignment: .trailing)
                     // numericText transition only runs when NOT dragging (too expensive at 60fps)
                     .contentTransition(isDragging ? .identity : .numericText())
                     .animation(isDragging ? .none : .default, value: displayValue)
