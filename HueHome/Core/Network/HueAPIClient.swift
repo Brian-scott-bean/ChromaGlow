@@ -501,6 +501,12 @@ class HueAPIClient: @unchecked Sendable {
         return try await execute(request)
     }
 
+    func post(path: String, body: [String: Any], ip: String, token: String) async throws -> Data {
+        var request = try buildRequest(method: "POST", path: path, ip: ip, token: token)
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await execute(request)
+    }
+
     private func buildRequest(method: String, path: String, ip: String, token: String) throws -> URLRequest {
         let urlStr = "https://\(ip)\(path)"
         guard let url = URL(string: urlStr) else { throw HueAPIError.badURL(urlStr) }

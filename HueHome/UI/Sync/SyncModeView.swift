@@ -14,6 +14,7 @@ struct SyncModeView: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var engine: SyncModeEngine?
     @State private var showSettings = false
+    @State private var showCreateArea = false
 
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
 
@@ -38,6 +39,12 @@ struct SyncModeView: View {
         .preferredColorScheme(.dark)
         .onAppear  { engine = SyncModeEngine(orchestrator: orchestrator) }
         .onDisappear { engine?.stop() }
+        .sheet(isPresented: $showCreateArea) {
+            EntertainmentConfigBuilderView { newConfig in
+                engine?.selectedEntertainmentConfig = newConfig
+                Task { await engine?.loadEntertainmentConfigs() }
+            }
+        }
     }
 
     // MARK: - Toolbar
@@ -307,10 +314,8 @@ struct SyncModeView: View {
             roomPicker(engine: engine)
 
             // ── Entertainment Config ────────────────────────
-            if !engine.availableEntertainmentConfigs.isEmpty {
-                Divider().background(.white.opacity(0.08))
-                entertainmentPicker(engine: engine)
-            }
+            Divider().background(.white.opacity(0.08))
+            entertainmentPicker(engine: engine)
         }
         .padding(16)
         .background(
@@ -375,6 +380,22 @@ struct SyncModeView: View {
                     .foregroundStyle(.red.opacity(0.7))
                     .lineLimit(2)
             }
+
+            // Create Area button
+            Button {
+                showCreateArea = true
+                HapticManager.shared.light()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 12, weight: .medium))
+                    Text(engine.availableEntertainmentConfigs.isEmpty ? "Create Entertainment Area" : "New Area")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(amber.opacity(0.7))
+                .padding(.top, 4)
+            }
+            .buttonStyle(.plain)
         }
     }
 

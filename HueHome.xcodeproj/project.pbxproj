@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F4E1000311111111 /* EntertainmentConfigBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000300000000 /* EntertainmentConfigBuilderView.swift */; };
 		F4E1000211111111 /* EntertainmentConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000200000000 /* EntertainmentConfigManager.swift */; };
 		F4E1000111111111 /* HueEntertainmentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000100000000 /* HueEntertainmentClient.swift */; };
 		AB000BRAND002 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000BRAND001 /* AppBrand.swift */; };
@@ -167,6 +168,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F4E1000300000000 /* EntertainmentConfigBuilderView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentConfigBuilderView.swift; path = HueHome/UI/Sync/EntertainmentConfigBuilderView.swift; sourceTree = "<group>"; };
 		F4E1000200000000 /* EntertainmentConfigManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentConfigManager.swift; path = HueHome/Core/Network/EntertainmentConfigManager.swift; sourceTree = "<group>"; };
 		F4E1000100000000 /* HueEntertainmentClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueEntertainmentClient.swift; path = HueHome/Core/Network/HueEntertainmentClient.swift; sourceTree = "<group>"; };
 		AB000BRAND001 /* AppBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppBrand.swift; path = HueHome/Core/AppBrand.swift; sourceTree = "<group>"; };
@@ -982,6 +984,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F4E1000311111111 /* EntertainmentConfigBuilderView.swift in Sources */,
 				F4E1000211111111 /* EntertainmentConfigManager.swift in Sources */,
 				F4E1000111111111 /* HueEntertainmentClient.swift in Sources */,
 				705F9B0F725C2186A5B3C80B /* HueHomeApp.swift in Sources */,
