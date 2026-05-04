@@ -166,6 +166,7 @@ final class SyncModeEngine {
 
         // 6. Reset all engine state (zeros bars, levels)
         activeEngine.reset()
+        visualizer.onUpdate = nil   // disconnect — no more light sends from residual tasks
         transportMode = .rest
         entertainmentError = nil
 
@@ -210,17 +211,20 @@ final class SyncModeEngine {
         // Clear the stop flag BEFORE installing the tap
         stopFlag = false
 
+        // Wire the visualizer callback: after smoothing completes on MainActor,
+        // immediately send the light update — guaranteed fresh values, no race.
+        visualizer.onUpdate = { [weak self] in
+            self?.sendLightUpdate()
+        }
+
         node.installTap(onBus: 0, bufferSize: bufferSize, format: fmt) { [weak self] buf, _ in
             // Check thread-safe flag first — no actor hop needed
             guard let self, !self.stopFlag else { return }
 
             // Process buffer for visualization (updates bars, levels on MainActor)
+            // The onUpdate callback fires AFTER smoothing → sendLightUpdate()
+            // All in one MainActor task — no race condition.
             _ = self.activeEngine.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
-
-            // Send light commands from smoothed values on MainActor
-            Task { @MainActor [weak self] in
-                self?.sendLightUpdate()
-            }
         }
 
         do {

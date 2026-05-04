@@ -27,6 +27,12 @@ final class VisualizerEngine: SyncEngine {
     var colorMode: VisualizerColorMode = .reactive
     var sensitivity: Double = 1.0
 
+    /// Called on MainActor after smoothing is applied.
+    /// SyncModeEngine wires this to sendLightUpdate() so that
+    /// light commands always read freshly-smoothed levels.
+    @ObservationIgnored
+    var onUpdate: (() -> Void)?
+
     // MARK: Private — smoothing
     private var sBars:    [Float] = Array(repeating: 0, count: 20)
     private var sBass:    Float   = 0
@@ -138,6 +144,7 @@ final class VisualizerEngine: SyncEngine {
                 high: capturedHigh,
                 overall: capturedOverall
             )
+            self?.onUpdate?()
         }
 
         // Return light output based on current levels
