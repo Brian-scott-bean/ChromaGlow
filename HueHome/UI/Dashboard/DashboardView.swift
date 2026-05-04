@@ -854,20 +854,8 @@ struct RoomCard: View {
                 }
             }
         }
-        // ── Glow color sync (same pattern as isOn above) ─────────────────────
-        // Watch both CIE components: a scene can shift Y without changing X.
-        // dominantMirek fires for warm/cool-only rooms (no colour capable lights).
-        .onChange(of: room.dominantColorX) { _, _ in
-            withAnimation(.easeInOut(duration: 0.4)) {
-                localGlowColor = Self.resolveGlowColor(for: room)
-            }
-        }
-        .onChange(of: room.dominantColorY) { _, _ in
-            withAnimation(.easeInOut(duration: 0.4)) {
-                localGlowColor = Self.resolveGlowColor(for: room)
-            }
-        }
-        .onChange(of: room.dominantMirek) { _, _ in
+        // ── Glow color sync — catches ANY room property change ───────────────
+        .onChange(of: room) { _, _ in
             withAnimation(.easeInOut(duration: 0.4)) {
                 localGlowColor = Self.resolveGlowColor(for: room)
             }

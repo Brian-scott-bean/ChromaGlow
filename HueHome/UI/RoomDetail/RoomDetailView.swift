@@ -704,10 +704,7 @@ struct LightCard: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) { localIsOn = confirmed }
             }
         }
-        .onChange(of: light.colorX) { _, _ in
-            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = Self.resolveGlowColor(for: light) }
-        }
-        .onChange(of: light.colorTempMirek) { _, _ in
+        .onChange(of: light) { _, _ in
             withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = Self.resolveGlowColor(for: light) }
         }
     }
@@ -875,13 +872,7 @@ struct CompactLightCard: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) { localIsOn = confirmed }
             }
         }
-        .onChange(of: light.colorX) { _, _ in
-            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = LightCard.resolveGlowColor(for: light) }
-        }
-        .onChange(of: light.colorY) { _, _ in
-            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = LightCard.resolveGlowColor(for: light) }
-        }
-        .onChange(of: light.colorTempMirek) { _, _ in
+        .onChange(of: light) { _, _ in
             withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = LightCard.resolveGlowColor(for: light) }
         }
     }
