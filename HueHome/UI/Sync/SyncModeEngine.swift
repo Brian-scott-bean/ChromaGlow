@@ -166,7 +166,8 @@ final class SyncModeEngine {
 
         // 6. Reset all engine state (zeros bars, levels)
         activeEngine.reset()
-        visualizer.onUpdate = nil   // disconnect — no more light sends from residual tasks
+        visualizer.stopDisplayLink()    // stop polling — no more sends
+        visualizer.onUpdate = nil       // disconnect callback
         transportMode = .rest
         entertainmentError = nil
 
@@ -211,19 +212,16 @@ final class SyncModeEngine {
         // Clear the stop flag BEFORE installing the tap
         stopFlag = false
 
-        // Wire the visualizer callback: after smoothing completes on MainActor,
-        // immediately send the light update — guaranteed fresh values, no race.
+        // Wire the visualizer callback: after smoothing on MainActor,
+        // immediately send light update — guaranteed fresh values.
         visualizer.onUpdate = { [weak self] in
             self?.sendLightUpdate()
         }
 
         node.installTap(onBus: 0, bufferSize: bufferSize, format: fmt) { [weak self] buf, _ in
-            // Check thread-safe flag first — no actor hop needed
             guard let self, !self.stopFlag else { return }
-
-            // Process buffer for visualization (updates bars, levels on MainActor)
-            // The onUpdate callback fires AFTER smoothing → sendLightUpdate()
-            // All in one MainActor task — no race condition.
+            // FFT on audio thread → writes to lock-free pendingFrame.
+            // No Task created — zero MainActor queue pressure.
             _ = self.activeEngine.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
         }
 
@@ -231,6 +229,9 @@ final class SyncModeEngine {
             try eng.start()
             audioEngine = eng
             isRunning   = true
+            // Start the display link AFTER audio is flowing.
+            // It polls pendingFrame at 60fps → applySmoothing → onUpdate → sendLightUpdate.
+            visualizer.startDisplayLink()
             log.info("Sync started — engine: \(self.activeEngineType.rawValue), transport: \(self.transportMode.rawValue), generation=\(self.generation)")
         } catch {
             log.error("Audio engine start failed: \(error.localizedDescription)")
