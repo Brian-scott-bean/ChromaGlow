@@ -63,6 +63,7 @@ struct AppRootView: View {
 
     @State private var isPaired:    Bool = false
     @State private var isDemoMode:  Bool = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -108,6 +109,22 @@ struct AppRootView: View {
                     .onReceive(NotificationCenter.default.publisher(for: .hueDemoExited)) { _ in
                         orchestrator.exitDemoMode()
                         isDemoMode = false
+                    }
+                    // ── Background automation drain ──────────────────────────────────
+                    // willPresent only fires when app is foregrounded at trigger time.
+                    // If the app was backgrounded, the notification fires silently.
+                    // When the user opens the app again, scenePhase hits .active here
+                    // and we drain whatever UserDefaults stored from didReceive.
+                    .onChange(of: scenePhase) { _, newPhase in
+                        guard newPhase == .active, isPaired, !isDemoMode else { return }
+                        if let presetID = UserDefaults.standard.string(forKey: "pendingAutomationPresetID") {
+                            UserDefaults.standard.removeObject(forKey: "pendingAutomationPresetID")
+                            Task { await orchestrator.applyAutomationPreset(id: presetID) }
+                        }
+                        if let effectID = UserDefaults.standard.string(forKey: "pendingAutomationEffectID") {
+                            UserDefaults.standard.removeObject(forKey: "pendingAutomationEffectID")
+                            Task { await orchestrator.applyAutomationEffect(id: effectID) }
+                        }
                     }
             } else {
                 SplashView(

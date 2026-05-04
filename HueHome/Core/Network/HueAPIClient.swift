@@ -479,6 +479,19 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "PUT /light/\(id) native effect=\(effect)")
     }
 
+    /// Set a native bridge effect on a grouped_light resource.
+    /// More reliable than enumerating per-light IDs — grouped_light propagates
+    /// the effect field to all compatible lights in the group automatically.
+    func setGroupedLightNativeEffect(id: String, effect: String) async throws {
+        let (ip, token) = try credentials()
+        let body: [String: Any] = ["effects": ["effect": effect]]
+        let data = try await put(
+            path: "/clip/v2/resource/grouped_light/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /grouped_light/\(id) native effect=\(effect)")
+    }
+
     /// Stop all effects on a light and return to neutral state.
     func stopLightEffects(id: String) async throws {
         try await setLightNativeEffect(id: id, effect: "no_effect")

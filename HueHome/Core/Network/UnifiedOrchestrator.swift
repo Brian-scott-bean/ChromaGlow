@@ -841,38 +841,35 @@ final class UnifiedOrchestrator {
         }
         log.info("Automation executing effect '\(effect.name)' on all rooms")
 
-        let capturedStrategy = effect.strategy
         await withTaskGroup(of: Void.self) { group in
             for (bridgeID, roomItems) in roomsByBridge {
                 guard let client = clients[bridgeID] else { continue }
                 for room in roomItems {
                     guard let glID = room.groupedLightID else { continue }
-                    let capturedClient = client
-                    let capturedGLID = glID
+                    let capturedClient   = client
+                    let capturedGLID     = glID
+                    let capturedStrategy = effect.strategy
                     group.addTask {
-                        // Fetch individual light IDs so we can apply per-light native effects
-                        let lightIDs = (try? await capturedClient.fetchLightIDsForGroup(groupedLightID: capturedGLID)) ?? []
-                        if lightIDs.isEmpty {
-                            // Fallback: turn on via grouped light at comfortable brightness
-                            try? await capturedClient.setGroupedLightEffect(
-                                id: capturedGLID, on: true, brightness: 70, xy: nil, mirek: nil, duration: 400
+                        switch capturedStrategy {
+                        case .bridgeNative(let effectName):
+                            // Use grouped_light directly — more reliable than fetching per-light IDs.
+                            // fetchLightIDsForGroup can return empty on some bridge versions,
+                            // causing the old code to silently fall back to a brightness-only PUT.
+                            try? await capturedClient.setGroupedLightNativeEffect(
+                                id: capturedGLID, effect: effectName
                             )
-                        } else {
-                            // Apply native effect per light (bridgeNative strategy)
-                            if case .bridgeNative(let effectName) = capturedStrategy {
-                                await withTaskGroup(of: Void.self) { inner in
-                                    for lightID in lightIDs {
-                                        inner.addTask {
-                                            try? await capturedClient.setLightNativeEffect(id: lightID, effect: effectName)
-                                        }
-                                    }
-                                }
-                            } else {
-                                // oneShot / gradual: apply as brightness+CT preset
-                                try? await capturedClient.setGroupedLightEffect(
-                                    id: capturedGLID, on: true, brightness: 70, xy: nil, mirek: 300, duration: 400
-                                )
-                            }
+                        case .oneShot, .gradual:
+                            try? await capturedClient.setGroupedLightEffect(
+                                id: capturedGLID, on: true, brightness: 70,
+                                xy: nil, mirek: 300, duration: 400
+                            )
+                        case .appDriven:
+                            // App-driven effects need a foreground Task loop — not possible
+                            // from a notification. Apply a static warm fallback instead.
+                            try? await capturedClient.setGroupedLightEffect(
+                                id: capturedGLID, on: true, brightness: 70,
+                                xy: nil, mirek: nil, duration: 400
+                            )
                         }
                     }
                 }
