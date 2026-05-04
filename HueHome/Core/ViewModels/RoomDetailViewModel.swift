@@ -124,9 +124,7 @@ final class RoomDetailViewModel {
             appendLog("💡 '\(room.name)' → \(roomLights.count) light(s) matched")
 
             lights = roomLights.map { hl in
-                let hasColor = hl.color != nil
-                let inCTMode = hl.color_temperature?.mirek != nil
-                return LightDisplayItem(
+                LightDisplayItem(
                     id:              hl.id,
                     name:            hl.metadata.name,
                     archetype:       hl.metadata.archetype,
@@ -134,11 +132,9 @@ final class RoomDetailViewModel {
                     brightness:      hl.dimming?.brightness ?? 100.0,
                     colorX:          hl.color?.xy.x,
                     colorY:          hl.color?.xy.y,
-                    supportsColor:   hasColor,
                     colorTempMirek:  hl.color_temperature?.mirek,
                     mirekMin:        hl.color_temperature?.mirek_schema?.mirek_minimum ?? 153,
-                    mirekMax:        hl.color_temperature?.mirek_schema?.mirek_maximum ?? 500,
-                    isColorTempMode: inCTMode
+                    mirekMax:        hl.color_temperature?.mirek_schema?.mirek_maximum ?? 500
                 )
             }.sorted { $0.name < $1.name }
 
@@ -607,23 +603,20 @@ final class RoomDetailViewModel {
             var changed = false
             for fresh in freshLights {
                 guard let idx = arr.firstIndex(where: { $0.id == fresh.id }) else { continue }
-                let newOn = fresh.on.on
+                let newOn  = fresh.on.on
                 let newBri = fresh.dimming?.brightness ?? arr[idx].brightness
-                let newColorX = fresh.color?.xy.x
-                let newColorY = fresh.color?.xy.y
-                let newMirek  = fresh.color_temperature?.mirek
-                // Bridge reports mirek non-nil when in CT mode, nil when in color mode
-                let newIsCTMode = newMirek != nil
+                let newX   = fresh.color?.xy.x ?? arr[idx].colorX
+                let newY   = fresh.color?.xy.y ?? arr[idx].colorY
+                let newMirek = fresh.color_temperature?.mirek ?? arr[idx].colorTempMirek
 
                 if arr[idx].isOn != newOn || arr[idx].brightness != newBri ||
-                   arr[idx].colorX != newColorX || arr[idx].colorY != newColorY ||
-                   arr[idx].colorTempMirek != newMirek || arr[idx].isColorTempMode != newIsCTMode {
+                   arr[idx].colorX != newX || arr[idx].colorY != newY ||
+                   arr[idx].colorTempMirek != newMirek {
                     arr[idx].isOn = newOn
                     arr[idx].brightness = newBri
-                    arr[idx].colorX = newColorX
-                    arr[idx].colorY = newColorY
+                    arr[idx].colorX = newX
+                    arr[idx].colorY = newY
                     arr[idx].colorTempMirek = newMirek
-                    arr[idx].isColorTempMode = newIsCTMode
                     changed = true
                 }
             }
@@ -769,15 +762,10 @@ final class RoomDetailViewModel {
             if let color = update.color {
                 arr[idx].colorX = color.xy.x
                 arr[idx].colorY = color.xy.y
-                // Only switch to color mode if no CT in same event
-                if update.colorTemp == nil || update.colorTemp?.mirek == nil {
-                    arr[idx].isColorTempMode = false
-                }
                 changed = true
             }
-            if let ct = update.colorTemp, let mirek = ct.mirek {
-                arr[idx].colorTempMirek = mirek
-                arr[idx].isColorTempMode = true
+            if let ct = update.colorTemp {
+                arr[idx].colorTempMirek = ct.mirek
                 changed = true
             }
         }

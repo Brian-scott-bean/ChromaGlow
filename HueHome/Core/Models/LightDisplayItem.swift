@@ -14,22 +14,17 @@ struct LightDisplayItem: Identifiable, Hashable {
     var brightness: Double  // 1–100
 
     // ── Color (CIE 1931 xy) ──────────────────────
+    // nil = bulb doesn't support full color
     var colorX: Double?
     var colorY: Double?
-    /// True if the bulb hardware supports full color. Stored property —
-    /// NOT derived from colorX != nil, because colorX is cleared when the
-    /// light is in color-temperature mode.
-    var supportsColor: Bool
+    var supportsColor: Bool { colorX != nil }
 
     // ── Color Temperature ─────────────────────────
+    // nil = bulb doesn't support color temperature
     var colorTempMirek: Int?
     var mirekMin: Int       // e.g. 153  (6500 K)
     var mirekMax: Int       // e.g. 500  (2000 K)
-    var supportsColorTemp: Bool { mirekMin != mirekMax }
-
-    /// Which mode the light is currently in. Determines which color
-    /// representation resolveGlowColor should use.
-    var isColorTempMode: Bool = false
+    var supportsColorTemp: Bool { colorTempMirek != nil || mirekMin != mirekMax }
 
     static func == (lhs: LightDisplayItem, rhs: LightDisplayItem) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
