@@ -580,6 +580,15 @@ final class RoomDetailViewModel {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 await refreshLightColors()
 
+                // Sync room-level state from updated lights
+                let anyOn = lights.contains { $0.isOn }
+                roomIsOn = anyOn
+                if anyOn {
+                    let avgBri = lights.filter { $0.isOn }.map(\.brightness).reduce(0, +)
+                        / max(1, Double(lights.filter { $0.isOn }.count))
+                    roomBrightness = avgBri
+                }
+
                 // Update Dashboard room card dominant colors
                 onColorCommitted?()
             } catch {
