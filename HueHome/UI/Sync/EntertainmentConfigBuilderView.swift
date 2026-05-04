@@ -382,7 +382,7 @@ struct EntertainmentConfigBuilderView: View {
                         "rid": entID,
                         "rtype": "entertainment"
                     ],
-                    "position": ["x": x, "y": 0.0, "z": 0.0]
+                    "positions": [["x": x, "y": 0.0, "z": 0.0]]
                 ])
             }
 
