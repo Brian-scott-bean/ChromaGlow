@@ -284,7 +284,10 @@ struct EntertainmentConfigBuilderView: View {
             .tracking(0.8)
     }
 
-    // MARK: - Load Lights
+    // MARK: - Load Lights + Entertainment Services
+
+    /// Maps light ID → entertainment service ID (same device, different service).
+    @State private var lightToEntertainmentID: [String: String] = [:]
 
     private func loadLights() async {
         isLoading = true
@@ -292,13 +295,54 @@ struct EntertainmentConfigBuilderView: View {
 
         guard let client = orchestrator.primaryAPIClient else { return }
         do {
-            let lights = try await client.fetchLights()
+            let (ip, token) = try client.credentials()
+
+            // Fetch lights and entertainment services in parallel
+            async let lightsFetch = client.fetchLights()
+            async let entData = client.get(
+                path: "/clip/v2/resource/entertainment",
+                ip: ip, token: token
+            )
+
+            let lights = try await lightsFetch
+            let entertainmentData = try await entData
+
+            // Parse entertainment services to build device → entertainment ID mapping
+            // Entertainment service JSON: { id, owner: { rid: <device_id>, rtype: "device" } }
+            var deviceToEntID: [String: String] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: entertainmentData) as? [String: Any],
+               let items = json["data"] as? [[String: Any]] {
+                for item in items {
+                    guard let entID = item["id"] as? String,
+                          let owner = item["owner"] as? [String: Any],
+                          let deviceID = owner["rid"] as? String else { continue }
+                    deviceToEntID[deviceID] = entID
+                }
+            }
+
+            // Build light ID → entertainment ID mapping via shared device owner
+            var mapping: [String: String] = [:]
+            for light in lights {
+                if let deviceID = light.owner?.rid,
+                   let entID = deviceToEntID[deviceID] {
+                    mapping[light.id] = entID
+                }
+            }
+            lightToEntertainmentID = mapping
+
+            // Only show lights that have entertainment capability
+            let entertainmentCapableLights = lights.filter { mapping[$0.id] != nil }
+
             // Sort: color lights first, then by name
-            availableLights = lights.sorted { a, b in
+            availableLights = entertainmentCapableLights.sorted { a, b in
                 let aColor = a.color != nil
                 let bColor = b.color != nil
                 if aColor != bColor { return aColor }
                 return a.metadata.name < b.metadata.name
+            }
+
+            if availableLights.isEmpty && !lights.isEmpty {
+                errorMessage = "No entertainment-capable lights found. Lights must support the Entertainment API (Color or Ambiance bulbs)."
             }
         } catch {
             errorMessage = "Failed to load lights: \(error.localizedDescription)"
@@ -321,38 +365,13 @@ struct EntertainmentConfigBuilderView: View {
         do {
             let (ip, token) = try client.credentials()
 
-            // Build channels — one channel per light, auto-arranged in a line
-            var channels: [[String: Any]] = []
             let selectedLights = availableLights.filter { selectedLightIDs.contains($0.id) }
 
-            for (index, light) in selectedLights.enumerated() {
-                // Auto-position: spread lights evenly left to right (-1.0 to 1.0)
-                let t = selectedLights.count > 1
-                    ? Double(index) / Double(selectedLights.count - 1)
-                    : 0.5
-                let x = -1.0 + t * 2.0  // -1.0 to 1.0
-                let y = 0.0             // centered vertically
-                let z = 0.0             // same depth plane
-
-                let channel: [String: Any] = [
-                    "channel_id": index,
-                    "position": ["x": x, "y": y, "z": z],
-                    "members": [
-                        [
-                            "service": [
-                                "rid": light.id,
-                                "rtype": "entertainment"
-                            ],
-                            "index": 0
-                        ]
-                    ]
-                ]
-                channels.append(channel)
-            }
-
-            // Build service_locations for the locations object
+            // Build service_locations using entertainment service IDs (NOT light IDs)
             var serviceLocations: [[String: Any]] = []
             for (index, light) in selectedLights.enumerated() {
+                guard let entID = lightToEntertainmentID[light.id] else { continue }
+
                 let t = selectedLights.count > 1
                     ? Double(index) / Double(selectedLights.count - 1)
                     : 0.5
@@ -360,12 +379,17 @@ struct EntertainmentConfigBuilderView: View {
 
                 serviceLocations.append([
                     "service": [
-                        "rid": light.id,
+                        "rid": entID,
                         "rtype": "entertainment"
                     ],
-                    "position": ["x": x, "y": 0.0, "z": 0.0],
-                    "positions": [["x": x, "y": 0.0, "z": 0.0]]
+                    "position": ["x": x, "y": 0.0, "z": 0.0]
                 ])
+            }
+
+            guard !serviceLocations.isEmpty else {
+                errorMessage = "Selected lights don't support Entertainment API"
+                isSaving = false
+                return
             }
 
             let body: [String: Any] = [
@@ -381,7 +405,7 @@ struct EntertainmentConfigBuilderView: View {
                 body: body, ip: ip, token: token
             )
 
-            // Try to parse the created config ID from response
+            // Parse the created config ID from response
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let dataArr = json["data"] as? [[String: Any]],
                let first = dataArr.first,
