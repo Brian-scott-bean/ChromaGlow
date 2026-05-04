@@ -104,25 +104,61 @@ struct SyncModeView: View {
     private func content(engine: SyncModeEngine) -> some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
-                header
-                    .padding(.top, 16)
+                // Header row: icon + title + subtitle inline with engine selector
+                HStack(spacing: 8) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(amber)
+                    Text("Sync")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    // Engine selector (inline when only 1 engine)
+                    ForEach(SyncEngineType.allCases) { type in
+                        let isActive = engine.activeEngineType == type
+                        Button {
+                            engine.switchEngine(to: type)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: type.icon)
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text(type.rawValue)
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundStyle(isActive ? Color(red: 0.05, green: 0.05, blue: 0.10) : .white.opacity(0.65))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(isActive ? amber : Color.white.opacity(0.06))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(
+                                        isActive ? .clear : .white.opacity(0.08),
+                                        lineWidth: 1
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
 
-                engineSelector(engine: engine)
-                    .padding(.top, 12)
+                // Start / Stop orb
+                SyncStartStopButton(engine: engine)
+                    .padding(.top, 20)
                     .padding(.bottom, 8)
 
                 // Engine-specific visualization
                 visualizerSection(engine: engine)
-                    .padding(.vertical, 16)
-
-                // Start / Stop orb
-                SyncStartStopButton(engine: engine)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 8)
 
                 // Level meters
                 SyncLevelMeterRow(visualizer: engine.visualizer)
                     .padding(.horizontal, 24)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, 16)
 
                 // Controls card
                 controlsCard(engine: engine)
@@ -132,69 +168,6 @@ struct SyncModeView: View {
                 // Space for tab bar
                 Color.clear.frame(height: 100)
             }
-        }
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    // MARK: - Header
-    // ══════════════════════════════════════════════════════════════
-
-    private var header: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "waveform")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(amber)
-                Text("Sync")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-            Text("Your lights, alive with your world")
-                .font(.system(size: 14))
-                .foregroundStyle(.white.opacity(0.45))
-        }
-        .padding(.bottom, 8)
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    // MARK: - Engine Selector
-    // ══════════════════════════════════════════════════════════════
-
-    private func engineSelector(engine: SyncModeEngine) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(SyncEngineType.allCases) { type in
-                    let isActive = engine.activeEngineType == type
-                    Button {
-                        engine.switchEngine(to: type)
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: type.icon)
-                                .font(.system(size: 12, weight: .semibold))
-                            Text(type.rawValue)
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundStyle(isActive ? Color(red: 0.05, green: 0.05, blue: 0.10) : .white.opacity(0.65))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule()
-                                .fill(isActive
-                                      ? amber
-                                      : Color.white.opacity(0.06))
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(
-                                    isActive ? .clear : .white.opacity(0.08),
-                                    lineWidth: 1
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 20)
         }
     }
 
@@ -210,7 +183,7 @@ struct SyncModeView: View {
                     bars: engine.visualizer.barHeights,
                     colorMode: engine.visualizer.colorMode
                 )
-                .frame(height: 160)
+                .frame(height: 120)
                 .padding(.horizontal, 24)
             }
         }

@@ -99,9 +99,11 @@ final class SyncModeEngine {
 
         node.installTap(onBus: 0, bufferSize: bufferSize, format: fmt) { [weak self] buf, _ in
             guard let self, self.isRunning else { return }
-            let output = self.activeEngine.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
+            // Process buffer for visualization (updates bars, levels on MainActor)
+            _ = self.activeEngine.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
+            // Send light commands from smoothed values on MainActor
             Task { @MainActor [weak self] in
-                self?.sendLightUpdate(output: output)
+                self?.sendLightUpdate()
             }
         }
 
@@ -126,8 +128,10 @@ final class SyncModeEngine {
     }
 
     // MARK: - Light Control (rate-limited)
+    // Reads directly from the active engine's smoothed levels (sensitivity applied).
+    // This matches the original MicModeEngine pattern.
 
-    private func sendLightUpdate(output: SyncEngineOutput) {
+    private func sendLightUpdate() {
         guard isRunning else { return }
         let now = Date()
         guard now.timeIntervalSince(lastSent) >= sendInterval else { return }
@@ -135,16 +139,11 @@ final class SyncModeEngine {
         lastSent = now
 
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
-        let bri   = max(2.0, output.brightness * masterIntensity)
-        let on    = output.on
 
-        // For Visualizer, use the engine's computed mirek (respects color mode)
-        let mirek: Int
-        if activeEngineType == .visualizer {
-            mirek = visualizer.computeMirek()
-        } else {
-            mirek = output.mirek ?? 300
-        }
+        // Read from visualizer's smoothed, sensitivity-adjusted levels
+        let bri   = max(2.0, Double(visualizer.overallLevel) * 100.0 * masterIntensity)
+        let on    = visualizer.overallLevel > 0.03
+        let mirek = visualizer.computeMirek()
 
         for room in rooms {
             guard let glID   = room.groupedLightID,
@@ -157,7 +156,7 @@ final class SyncModeEngine {
                     brightness: bri,
                     xy:         nil,
                     mirek:      mirek,
-                    duration:   output.transitionMs
+                    duration:   80
                 )
             }
         }
