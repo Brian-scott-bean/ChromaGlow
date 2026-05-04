@@ -306,9 +306,9 @@ struct ScenesTabView: View {
             Circle()
                 .fill(RadialGradient(
                     colors: [Color(red: 0.5, green: 0.2, blue: 0.95).opacity(0.25), .clear],
-                    center: .center, startRadius: 0, endRadius: 200
+                    center: .center, startRadius: 0, endRadius: 150
                 ))
-                .frame(width: 380)
+                .frame(width: 300)      // was 380 — clipped on SE (375pt)
                 .offset(x: 80, y: -160)
                 .blur(radius: 28)
                 .allowsHitTesting(false)
@@ -316,13 +316,14 @@ struct ScenesTabView: View {
             Circle()
                 .fill(RadialGradient(
                     colors: [Color(red: 1, green: 0.5, blue: 0.2).opacity(0.16), .clear],
-                    center: .center, startRadius: 0, endRadius: 160
+                    center: .center, startRadius: 0, endRadius: 140
                 ))
-                .frame(width: 280)
+                .frame(width: 260)      // was 280 — give some breathing room
                 .offset(x: -100, y: 120)
                 .blur(radius: 22)
                 .allowsHitTesting(false)
         }
+        .clipped()          // prevents circles from pushing ZStack wider than screen
         .ignoresSafeArea()
     }
 
