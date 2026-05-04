@@ -73,6 +73,9 @@ final class SyncModeEngine {
     private var consecutiveErrors = 0
     private var sendInterval: TimeInterval { transportMode == .entertainment ? 0.04 : restInterval }
 
+    // MARK: Private — diagnostic throttle (~1 log/sec)
+    private var _diagCounter: Int = 0
+
     // MARK: Dependency
     private weak var orchestrator: UnifiedOrchestrator?
     private let log = Logger(subsystem: "com.lightshade.app", category: "SyncMode")
@@ -268,10 +271,24 @@ final class SyncModeEngine {
     // MARK: - Light Control (rate-limited, generation-guarded)
 
     private func sendLightUpdate() {
-        guard isRunning, !stopFlag else { return }
+        // DIAGNOSTIC ~1/sec: log what's blocking sends
+        _diagCounter += 1
+        let shouldLog = _diagCounter >= 13  // ~13 calls/sec at 13fps
+        if shouldLog { _diagCounter = 0 }
+
+        guard isRunning, !stopFlag else {
+            if shouldLog { log.info("SYNC GATE: blocked — isRunning=\(self.isRunning) stopFlag=\(self.stopFlag)") }
+            return
+        }
         let now = Date()
-        guard now.timeIntervalSince(lastSent) >= sendInterval else { return }
+        let elapsed = now.timeIntervalSince(lastSent)
+        guard elapsed >= sendInterval else {
+            if shouldLog { log.info("SYNC GATE: rate limited — elapsed=\(elapsed, format: .fixed(precision: 3))s interval=\(self.sendInterval, format: .fixed(precision: 3))s") }
+            return
+        }
         lastSent = now
+
+        if shouldLog { log.info("SYNC GATE: PASS — transport=\(self.transportMode.rawValue) overallLevel=\(self.visualizer.overallLevel, format: .fixed(precision: 3))") }
 
         switch transportMode {
         case .entertainment:
@@ -316,14 +333,21 @@ final class SyncModeEngine {
     // 5. on: true always — brightness floor handles silence
 
     private func sendRESTUpdate() {
-        guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
+        guard !selectedRoomIDs.isEmpty, let orc = orchestrator else {
+            log.warning("SYNC REST: skip — selectedRoomIDs=\(self.selectedRoomIDs.count) orc=\(self.orchestrator != nil)")
+            return
+        }
 
-        // Don't send until we have actual audio data — prevents dimming lights on start
-        guard visualizer.overallLevel > 0.001 else { return }
+        guard visualizer.overallLevel > 0.001 else {
+            log.info("SYNC REST: skip — overallLevel too low (\(self.visualizer.overallLevel, format: .fixed(precision: 4)))")
+            return
+        }
 
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
         let bri   = max(2.0, Double(visualizer.overallLevel) * 100.0 * masterIntensity)
         let gen   = generation
+
+        log.info("SYNC REST: SENDING bri=\(bri, format: .fixed(precision: 1)) rooms=\(rooms.count) selectedIDs=\(self.selectedRoomIDs) gen=\(gen)")
 
         for room in rooms {
             guard let glID   = room.groupedLightID,

@@ -20,6 +20,7 @@ import AVFoundation
 import Accelerate
 import SwiftUI
 import QuartzCore
+import os
 
 // MARK: - Raw FFT Frame (lock-free audio→main transfer)
 
@@ -66,6 +67,13 @@ final class VisualizerEngine: SyncEngine {
     @ObservationIgnored private var displayLink: CADisplayLink?
     @ObservationIgnored private var linkTarget: DisplayLinkTarget?
 
+    // MARK: Private — diagnostics
+    private let log = Logger(subsystem: "com.lightshade.app", category: "SyncViz")
+    /// Throttle diagnostic logs to ~1/sec on the audio thread
+    @ObservationIgnored nonisolated(unsafe) private var _logCounter: Int = 0
+    /// Throttle diagnostic logs to ~1/sec on MainActor
+    private var _tickLogCounter: Int = 0
+
     // ── SyncEngine protocol ────────────────────────────────────
 
     /// Audio thread: FFT → write to pendingFrame. No Task, no actor hop.
@@ -89,6 +97,14 @@ final class VisualizerEngine: SyncEngine {
         var rms: Float = 0
         vDSP_rmsqv(windowed, 1, &rms, vDSP_Length(fftN))
         let overall = min(rms * 10.0, 1.0)
+
+        // DIAGNOSTIC: log ~1/sec (buffer arrives ~43/sec, so every 43 buffers)
+        _logCounter += 1
+        if _logCounter >= 43 {
+            _logCounter = 0
+            let log = Logger(subsystem: "com.lightshade.app", category: "SyncViz")
+            log.info("SYNC AUDIO: n=\(n) fftN=\(fftN) rms=\(rms, format: .fixed(precision: 4)) overall=\(overall, format: .fixed(precision: 3))")
+        }
 
         // Split complex (safe pointer handling)
         var realp = [Float](repeating: 0, count: halfN)
@@ -197,6 +213,14 @@ final class VisualizerEngine: SyncEngine {
 
         applySmoothing(bars: frame.bars, bass: frame.bass, mid: frame.mid,
                        high: frame.high, overall: frame.overall)
+
+        // DIAGNOSTIC: log smoothed levels ~1/sec (display link fires ~60/sec)
+        _tickLogCounter += 1
+        if _tickLogCounter >= 60 {
+            _tickLogCounter = 0
+            log.info("SYNC LEVELS: raw=\(frame.overall, format: .fixed(precision: 3)) smoothed=\(self.overallLevel, format: .fixed(precision: 3)) bass=\(self.bassLevel, format: .fixed(precision: 3)) onUpdate=\(self.onUpdate != nil)")
+        }
+
         onUpdate?()
     }
 
