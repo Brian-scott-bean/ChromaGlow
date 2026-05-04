@@ -439,6 +439,12 @@ final class UnifiedOrchestrator {
         errorMessage = nil
         defer { isLoading = false }
 
+        // ── Clean up stuck entertainment sessions ──────────────────
+        // Entertainment sessions lock the bridge and heavily throttle REST API.
+        // If a previous app session crashed without calling stopSession(), the
+        // bridge stays in entertainment mode. Deactivate ALL active sessions.
+        await deactivateStuckEntertainmentSessions()
+
         // Return type: (bridgeID, rooms?, zones?, roomLightMap, zoneLightMap)
         // nil rooms/zones = fetch failed; keep existing data (stale-while-revalidate).
         await withTaskGroup(
@@ -1545,6 +1551,44 @@ final class UnifiedOrchestrator {
         }
         try await client.updateScene(id: sceneID, name: name, actions: actions)
         await loadAllScenes()
+    }
+}
+
+// MARK: - Entertainment Session Cleanup
+
+extension UnifiedOrchestrator {
+    /// Deactivate any stuck entertainment sessions on all bridges.
+    /// Entertainment sessions lock the bridge and throttle REST calls.
+    /// Called on every loadAll() to ensure clean state.
+    func deactivateStuckEntertainmentSessions() async {
+        for (bridgeID, client) in clients {
+            do {
+                let (ip, token) = try client.credentials()
+                let data = try await client.get(
+                    path: "/clip/v2/resource/entertainment_configuration",
+                    ip: ip, token: token
+                )
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let items = json["data"] as? [[String: Any]] else { continue }
+
+                for config in items {
+                    guard let id = config["id"] as? String,
+                          let status = config["status"] as? String,
+                          status == "active" else { continue }
+
+                    // This session is stuck active — deactivate it
+                    log.warning("Found stuck entertainment session \(id) on bridge \(bridgeID) — deactivating")
+                    let body: [String: Any] = ["action": "stop"]
+                    _ = try await client.put(
+                        path: "/clip/v2/resource/entertainment_configuration/\(id)",
+                        body: body, ip: ip, token: token
+                    )
+                    log.info("Deactivated stuck entertainment session \(id)")
+                }
+            } catch {
+                log.warning("Entertainment cleanup failed on \(bridgeID): \(error.localizedDescription)")
+            }
+        }
     }
 }
 

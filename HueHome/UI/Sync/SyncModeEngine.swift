@@ -316,7 +316,7 @@ final class SyncModeEngine {
 
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
         let bri   = max(2.0, Double(visualizer.overallLevel) * 100.0 * masterIntensity)
-        let on    = visualizer.overallLevel > 0.03
+        let on    = true   // never turn off during sync — brightness floor handles silence
         let mirek = visualizer.computeMirek()
 
         for room in rooms {
