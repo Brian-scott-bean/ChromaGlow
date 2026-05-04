@@ -56,11 +56,12 @@ actor RestSender {
     }
 
     private func flush() async {
-        guard let work = pending else { isInflight = false; return }
-        pending    = nil
-        isInflight = true
-        await work()
-        await flush()   // tail-call: send pending if another arrived during flight
+        while let work = pending {
+            pending    = nil
+            isInflight = true
+            await work()
+        }
+        isInflight = false
     }
 }
 
@@ -580,12 +581,15 @@ final class SyncModeEngine {
                 guard let glID   = room.groupedLightID,
                       let client = capturedOrc.hueClient(for: room.bridgeID) else { continue }
                 do {
+                    // mirek omitted: same issue as xy on gaming — grouped_light
+                    // rejects mirek on rooms with non-color-temp bulbs. Brightness-only
+                    // works universally. Warm/cool distinction is a future per-bulb enhancement.
                     try await client.setGroupedLightEffect(
                         id:         glID,
                         on:         true,
                         brightness: capturedBri,
                         xy:         nil,
-                        mirek:      capturedMirek,
+                        mirek:      nil,
                         duration:   400
                     )
                     await MainActor.run { [weak self] in
