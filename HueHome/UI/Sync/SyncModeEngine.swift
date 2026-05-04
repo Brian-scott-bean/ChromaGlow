@@ -450,7 +450,7 @@ final class SyncModeEngine {
         let capturedBri   = bri
         let capturedGen   = gen
         let capturedOrc   = orc
-        restSender.enqueue { [weak self] in
+        Task { await self.restSender.enqueue { [weak self] in
             for room in capturedRooms {
                 guard let glID   = room.groupedLightID,
                       let client = capturedOrc.hueClient(for: room.bridgeID) else { continue }
@@ -523,7 +523,7 @@ final class SyncModeEngine {
         let capturedDuration = duration
         let capturedGen      = gen
         let capturedOrc      = orc
-        restSender.enqueue { [weak self] in
+        Task { await self.restSender.enqueue { [weak self] in
             for room in capturedRooms {
                 guard let glID   = room.groupedLightID,
                       let client = capturedOrc.hueClient(for: room.bridgeID) else { continue }
@@ -548,7 +548,7 @@ final class SyncModeEngine {
                     }
                 }
             }
-        }
+        } }
     }
 
     // MARK: REST — Ambient (2fps, slow breath)
@@ -575,7 +575,7 @@ final class SyncModeEngine {
         let capturedMirek = mirek
         let capturedGen   = gen
         let capturedOrc   = orc
-        restSender.enqueue { [weak self] in
+        Task { await self.restSender.enqueue { [weak self] in
             for room in capturedRooms {
                 guard let glID   = room.groupedLightID,
                       let client = capturedOrc.hueClient(for: room.bridgeID) else { continue }
@@ -599,6 +599,6 @@ final class SyncModeEngine {
                     }
                 }
             }
-        }
+        } }
     }
 }
