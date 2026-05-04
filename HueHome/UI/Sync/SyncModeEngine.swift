@@ -6,6 +6,7 @@
 // and rate-limited light output to the Hue bridge.
 //
 // One audio session, one tap, many engines.
+// Uses nonisolated(unsafe) stopFlag for thread-safe audio tap cancellation.
 
 import Foundation
 import AVFoundation
@@ -34,7 +35,11 @@ final class SyncModeEngine {
 
     // MARK: Private — audio
     private var audioEngine: AVAudioEngine?
-    private let bufferSize: AVAudioFrameCount = 2048
+    private let bufferSize: AVAudioFrameCount = 1024   // ← reduced from 2048 for faster response
+
+    /// Thread-safe stop flag — readable from the audio thread without actor isolation.
+    /// The audio tap callback checks this to bail immediately when stop() is called.
+    nonisolated(unsafe) private var stopFlag = true
 
     // MARK: Private — rate limiting
     private var lastSent: Date = .distantPast
@@ -62,12 +67,21 @@ final class SyncModeEngine {
     }
 
     func stop() {
+        // 1. Immediately signal the audio thread to stop processing
+        stopFlag = true
         isRunning = false
+
+        // 2. Remove tap and stop engine synchronously
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
+
+        // 3. Release audio session
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+
+        // 4. Reset all engine state (zeros bars, levels)
         activeEngine.reset()
+
         log.info("Sync stopped")
     }
 
@@ -97,10 +111,16 @@ final class SyncModeEngine {
         let node = eng.inputNode
         let fmt  = node.outputFormat(forBus: 0)
 
+        // Clear the stop flag BEFORE installing the tap
+        stopFlag = false
+
         node.installTap(onBus: 0, bufferSize: bufferSize, format: fmt) { [weak self] buf, _ in
-            guard let self, self.isRunning else { return }
+            // Check thread-safe flag first — no actor hop needed
+            guard let self, !self.stopFlag else { return }
+
             // Process buffer for visualization (updates bars, levels on MainActor)
             _ = self.activeEngine.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
+
             // Send light commands from smoothed values on MainActor
             Task { @MainActor [weak self] in
                 self?.sendLightUpdate()
@@ -132,7 +152,7 @@ final class SyncModeEngine {
     // This matches the original MicModeEngine pattern.
 
     private func sendLightUpdate() {
-        guard isRunning else { return }
+        guard isRunning, !stopFlag else { return }
         let now = Date()
         guard now.timeIntervalSince(lastSent) >= sendInterval else { return }
         guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
