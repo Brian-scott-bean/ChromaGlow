@@ -576,14 +576,64 @@ final class RoomDetailViewModel {
                 try await api?.activateScene(id: item.id)
                 appendLog("✅ Scene '\(item.name)' activated.")
                 log.info("RoomDetail: scene '\(item.name, privacy: .public)' activated.")
+
+                // Wait for bridge to settle, then refresh light colors
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                await refreshLightColors()
+
+                // Update Dashboard room card dominant colors
+                onColorCommitted?()
             } catch {
                 appendLog("❌ Scene activation failed: \(error.localizedDescription)")
                 scenes = scenes.map { s in var c = s; c.isActive = false; return c }
                 showToast("Couldn't activate scene '\(item.name)'")
             }
-            // Brief hold so user sees the active state before spinner clears
-            try? await Task.sleep(nanoseconds: 600_000_000)
+            try? await Task.sleep(nanoseconds: 300_000_000)
             activatingSceneID = nil
+        }
+    }
+
+    /// Lightweight refresh of light colors after scene activation.
+    /// Fetches fresh light states and merges color/brightness into the existing array.
+    private func refreshLightColors() async {
+        guard let api else { return }
+        do {
+            let freshLights = try await api.fetchLights()
+            var arr = lights
+            var changed = false
+            for fresh in freshLights {
+                guard let idx = arr.firstIndex(where: { $0.id == fresh.id }) else { continue }
+                let newOn = fresh.on.on
+                let newBri = fresh.dimming?.brightness ?? arr[idx].brightness
+                var newColorX = arr[idx].colorX
+                var newColorY = arr[idx].colorY
+                var newMirek  = arr[idx].colorTempMirek
+
+                if let xy = fresh.color?.xy {
+                    newColorX = xy.x
+                    newColorY = xy.y
+                }
+                if let mirek = fresh.color_temperature?.mirek {
+                    newMirek = mirek
+                }
+
+                if arr[idx].isOn != newOn || arr[idx].brightness != newBri ||
+                   arr[idx].colorX != newColorX || arr[idx].colorY != newColorY ||
+                   arr[idx].colorTempMirek != newMirek {
+                    arr[idx].isOn = newOn
+                    arr[idx].brightness = newBri
+                    arr[idx].colorX = newColorX
+                    arr[idx].colorY = newColorY
+                    arr[idx].colorTempMirek = newMirek
+                    changed = true
+                }
+            }
+            if changed {
+                lights = arr
+                appendLog("🔄 Light colors refreshed after scene activation")
+            }
+        } catch {
+            appendLog("⚠️ Color refresh failed: \(error.localizedDescription)")
         }
     }
 
