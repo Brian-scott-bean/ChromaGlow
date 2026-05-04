@@ -631,8 +631,10 @@ struct SceneColorBuilderView: View {
     /// The debounced preview handles the bridge communication.
     private func updateLightChipsLive(hue: Double, saturation: Double, brightness: Double) {
         if harmonyRule != .none {
-            // Harmony: update all color-capable lights with derived palette
-            let colorLights = lights.indices.filter { lights[$0].supportsColor }
+            // Harmony: update only SELECTED color-capable lights with derived palette
+            let colorLights = lights.indices.filter {
+                lights[$0].supportsColor && selectedLightIDs.contains(lights[$0].id)
+            }
             guard !colorLights.isEmpty else { return }
             let palette = HarmonyEngine.palette(
                 rule: harmonyRule, rootHue: hue,
@@ -662,11 +664,15 @@ struct SceneColorBuilderView: View {
 
     // MARK: Harmony
 
-    /// Apply the current harmony rule across all lights.
+    /// Apply the current harmony rule to the SELECTED lights only.
+    /// Unselected lights keep their existing colors — enabling layered
+    /// scene design (e.g. Triad on 3 lights + Analogous on 2 others).
     private func applyHarmony() {
         guard harmonyRule != .none else { return }
 
-        let colorLights = lights.indices.filter { lights[$0].supportsColor }
+        let colorLights = lights.indices.filter {
+            lights[$0].supportsColor && selectedLightIDs.contains(lights[$0].id)
+        }
         guard !colorLights.isEmpty else { return }
 
         let palette = HarmonyEngine.palette(
@@ -686,8 +692,6 @@ struct SceneColorBuilderView: View {
             lights[idx].isOn = true
         }
 
-        // Select all so the preview covers everything
-        selectedLightIDs = Set(lights.map(\.id))
         debouncedPreview()
     }
 
