@@ -25,6 +25,45 @@ enum SyncTransportMode: String {
     case entertainment = "Streaming"
 }
 
+// MARK: - RestSender (latest-wins mailbox)
+//
+// Solves the "bridge backlog" problem inherent to REST vs Entertainment API:
+//
+//   Entertainment (UDP/DTLS): connectionless. Bridge applies the LATEST packet
+//   immediately, dropping older unprocessed ones. Zero queue. Zero latency.
+//
+//   REST (HTTP/TCP): sequential. Bridge processes each PUT in order. If we
+//   send faster than ~10 req/s the queue grows, lights replay stale values.
+//
+// Solution — mailbox pattern:
+//   • Only 1 HTTP request in-flight at a time.
+//   • New values overwrite the pending slot — stale intermediate values dropped.
+//   • After in-flight completes, immediately sends latest pending (if any).
+//   • Max bridge queue depth: 1 (in-flight) + 1 (pending). Never deeper.
+//
+// Result: bridge always sees the LATEST desired state, not a backlog.
+
+actor RestSender {
+    private var isInflight = false
+    private var pending: (() async -> Void)?
+
+    /// Enqueue work. If something is already in-flight the closure overwrites
+    /// any previous pending value (old one is silently dropped).
+    func enqueue(_ work: @escaping () async -> Void) {
+        pending = work          // always latest — overwrites stale pending
+        guard !isInflight else { return }
+        Task { await flush() }
+    }
+
+    private func flush() async {
+        guard let work = pending else { isInflight = false; return }
+        pending    = nil
+        isInflight = true
+        await work()
+        await flush()   // tail-call: send pending if another arrived during flight
+    }
+}
+
 // MARK: - SyncModeEngine
 
 @Observable
@@ -49,6 +88,9 @@ final class SyncModeEngine {
     let visualizer = VisualizerEngine()
     let gaming     = GamingEngine()
     let ambient    = AmbientEngine()
+
+    /// Latest-wins REST sender — prevents bridge command backlog.
+    private let restSender = RestSender()
 
     // MARK: Room selection
     var selectedRoomIDs: Set<String> = []
@@ -404,19 +446,17 @@ final class SyncModeEngine {
 
         log.info("SYNC REST: SENDING bri=\(bri, format: .fixed(precision: 1)) rooms=\(rooms.count) selectedIDs=\(self.selectedRoomIDs) gen=\(gen)")
 
-        for room in rooms {
-            guard let glID   = room.groupedLightID,
-                  let client = orc.hueClient(for: room.bridgeID) else { continue }
-
-            let capturedGlID = glID
-            let capturedBri = bri
-
-            Task.detached(priority: .userInitiated) { [weak self] in
+        let capturedRooms = rooms
+        let capturedBri   = bri
+        let capturedGen   = gen
+        let capturedOrc   = orc
+        restSender.enqueue { [weak self] in
+            for room in capturedRooms {
+                guard let glID   = room.groupedLightID,
+                      let client = capturedOrc.hueClient(for: room.bridgeID) else { continue }
                 do {
-                    // Only send on + brightness. Mirek on grouped_light can fail
-                    // if the group contains non-color-temperature lights.
                     try await client.setGroupedLightEffect(
-                        id:         capturedGlID,
+                        id:         glID,
                         on:         true,
                         brightness: capturedBri,
                         xy:         nil,
@@ -424,19 +464,18 @@ final class SyncModeEngine {
                         duration:   0
                     )
                     await MainActor.run { [weak self] in
-                        guard let self, self.generation == gen else { return }
+                        guard let self, self.generation == capturedGen else { return }
                         if self.consecutiveErrors > 0 {
                             self.consecutiveErrors = 0
-                            self.restInterval = 0.150  // reset to base (not old 75ms)
+                            self.restInterval = 0.150
                         }
                     }
                 } catch {
                     await MainActor.run { [weak self] in
-                        guard let self, self.generation == gen else { return }
+                        guard let self, self.generation == capturedGen else { return }
                         self.consecutiveErrors += 1
                         if self.consecutiveErrors >= 3 {
                             self.restInterval = min(0.15, self.restInterval + 0.025)
-                            self.log.info("REST backoff → \(Int(self.restInterval * 1000))ms")
                         }
                     }
                 }
@@ -479,16 +518,18 @@ final class SyncModeEngine {
         let gen = generation
         log.info("GAMING REST: edge=\(isTransient ? "ON" : "OFF") bri=\(bri, format: .fixed(precision: 1)) duration=\(duration)ms rooms=\(rooms.count)")
 
-        for room in rooms {
-            guard let glID   = room.groupedLightID,
-                  let client = orc.hueClient(for: room.bridgeID) else { continue }
-            let capturedGlID      = glID
-            let capturedBri       = bri
-            let capturedDuration  = duration
-            Task.detached(priority: .userInitiated) { [weak self] in
+        let capturedRooms    = rooms
+        let capturedBri      = bri
+        let capturedDuration = duration
+        let capturedGen      = gen
+        let capturedOrc      = orc
+        restSender.enqueue { [weak self] in
+            for room in capturedRooms {
+                guard let glID   = room.groupedLightID,
+                      let client = capturedOrc.hueClient(for: room.bridgeID) else { continue }
                 do {
                     try await client.setGroupedLightEffect(
-                        id:         capturedGlID,
+                        id:         glID,
                         on:         true,
                         brightness: capturedBri,
                         xy:         nil,
@@ -496,13 +537,13 @@ final class SyncModeEngine {
                         duration:   capturedDuration
                     )
                     await MainActor.run { [weak self] in
-                        guard let self, self.generation == gen else { return }
+                        guard let self, self.generation == capturedGen else { return }
                         self.consecutiveErrors = 0
                         self.restInterval = 0.150
                     }
                 } catch {
                     await MainActor.run { [weak self] in
-                        guard let self, self.generation == gen else { return }
+                        guard let self, self.generation == capturedGen else { return }
                         self.consecutiveErrors += 1
                     }
                 }
@@ -529,29 +570,31 @@ final class SyncModeEngine {
 
         log.info("AMBIENT REST: bri=\(bri, format: .fixed(precision: 1)) mirek=\(mirek) present=\(self.ambient.presenceDetected)")
 
-        for room in rooms {
-            guard let glID   = room.groupedLightID,
-                  let client = orc.hueClient(for: room.bridgeID) else { continue }
-            let capturedGlID  = glID
-            let capturedBri   = bri
-            let capturedMirek = mirek
-            Task.detached(priority: .utility) { [weak self] in
+        let capturedRooms = rooms
+        let capturedBri   = bri
+        let capturedMirek = mirek
+        let capturedGen   = gen
+        let capturedOrc   = orc
+        restSender.enqueue { [weak self] in
+            for room in capturedRooms {
+                guard let glID   = room.groupedLightID,
+                      let client = capturedOrc.hueClient(for: room.bridgeID) else { continue }
                 do {
                     try await client.setGroupedLightEffect(
-                        id:         capturedGlID,
+                        id:         glID,
                         on:         true,
                         brightness: capturedBri,
                         xy:         nil,
                         mirek:      capturedMirek,
-                        duration:   400   // 400ms smooth transition between breath steps
+                        duration:   400
                     )
                     await MainActor.run { [weak self] in
-                        guard let self, self.generation == gen else { return }
+                        guard let self, self.generation == capturedGen else { return }
                         self.consecutiveErrors = 0
                     }
                 } catch {
                     await MainActor.run { [weak self] in
-                        guard let self, self.generation == gen else { return }
+                        guard let self, self.generation == capturedGen else { return }
                         self.consecutiveErrors += 1
                     }
                 }
