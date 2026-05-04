@@ -13,8 +13,6 @@ struct RoomSceneChip: View {
     let isActivating: Bool   // true while API call is in flight → shows spinner
     let onTap: () -> Void
 
-    @State private var isPressed = false
-
     var body: some View {
         Button(action: onTap) {
             VStack(spacing: 8) {
@@ -75,28 +73,25 @@ struct RoomSceneChip: View {
                 color: scene.isActive ? scene.accentColor.opacity(0.45) : .clear,
                 radius: 12, x: 0, y: 4
             )
-            .scaleEffect(isPressed ? 0.93 : 1.0)
         }
-        .buttonStyle(.plain)
-        .disabled(isActivating)   // prevent double-tap during activation
+        // Custom ButtonStyle handles press scale WITHOUT a DragGesture —
+        // DragGesture was stealing the horizontal ScrollView's pan on iPhone.
+        .buttonStyle(SceneChipButtonStyle())
+        .disabled(isActivating)
         .accessibilityLabel(Text("\(scene.name) scene\(scene.isActive ? ", active" : "")"))
         .accessibilityHint(Text(isActivating ? "Activating…" : "Tap to activate"))
-        // Press + release spring animation
-        // minimumDistance:10 prevents this from eating the horizontal scroll gesture
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 10)
-                .onChanged { _ in
-                    withAnimation(.spring(response: 0.18, dampingFraction: 0.6)) {
-                        isPressed = true
-                    }
-                }
-                .onEnded { _ in
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.7)) {
-                        isPressed = false
-                    }
-                }
-        )
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: scene.isActive)
         .animation(.easeInOut(duration: 0.2), value: isActivating)
+    }
+}
+
+/// Scroll-friendly press animation. Unlike DragGesture, ButtonStyle's
+/// isPressed is managed by UIKit's gesture system which correctly defers
+/// to scroll gestures — so horizontal ScrollView swiping works on iPhone.
+private struct SceneChipButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.93 : 1.0)
+            .animation(.spring(response: 0.2, dampingFraction: 0.65), value: configuration.isPressed)
     }
 }
