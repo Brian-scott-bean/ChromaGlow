@@ -187,8 +187,11 @@ final class SyncModeEngine {
             // Process buffer for visualization (updates bars, levels on MainActor)
             _ = self.activeEngine.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
 
-            // Send light commands from smoothed values on MainActor
-            Task { @MainActor [weak self] in
+            // Send light commands from smoothed values on MainActor.
+            // Scheduled via Task to coalesce with the smoothing dispatch from process().
+            // DispatchQueue.main.async ensures we run AFTER the current RunLoop tick,
+            // giving the smoothing Task from process() time to complete first.
+            DispatchQueue.main.async { [weak self] in
                 self?.sendLightUpdate()
             }
         }
