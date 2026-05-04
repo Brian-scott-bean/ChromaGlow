@@ -352,10 +352,10 @@ final class SyncModeEngine {
         }
 
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
-        // Floor at 50% — sync effect is brightness PULSING between 50-100%.
-        // 20% floor was too dim and made lights appear off between beats.
-        let rawBri = Double(visualizer.overallLevel) * 100.0 * masterIntensity
-        let bri    = max(50.0, rawBri)
+        // Boost x2.5 so typical speech (overallLevel 0.05-0.4) maps to visible 12-100%.
+        // No hard floor — threshold guard above handles silence.
+        // Mapping: 0.05 → 12%, 0.1 → 25%, 0.2 → 50%, 0.4+ → 100%
+        let bri = min(100.0, Double(visualizer.overallLevel) * 250.0 * masterIntensity)
         let gen   = generation
 
         log.info("SYNC REST: SENDING bri=\(bri, format: .fixed(precision: 1)) rooms=\(rooms.count) selectedIDs=\(self.selectedRoomIDs) gen=\(gen)")
