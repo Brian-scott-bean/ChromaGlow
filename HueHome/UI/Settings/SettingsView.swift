@@ -321,7 +321,7 @@ struct SettingsView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("CastChroma")
+                    Text("ChromaGlow")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
                     Text("Version \(appVersion)  ·  Build \(buildNumber)")

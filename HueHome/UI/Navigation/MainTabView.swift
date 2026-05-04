@@ -94,7 +94,7 @@ struct MainTabView: View {
                     )
                 }
             }
-            .navigationTitle("CastChroma")
+            .navigationTitle("ChromaGlow")
             .scrollContentBackground(.hidden)
             .background(colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background)
         } detail: {

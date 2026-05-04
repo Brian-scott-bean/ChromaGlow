@@ -1,5 +1,5 @@
 // SplashView.swift
-// CastChroma — Stage 1
+// ChromaGlow — Splash / Bridge Check
 // Shown on cold start. Checks Keychain, then calls onPaired or routes to BridgeSetupView.
 
 import SwiftUI
@@ -61,16 +61,15 @@ struct SplashView: View {
 
                 // Title
                 VStack(spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text("CastChroma")
-                            .font(.system(size: 34, weight: .bold, design: .rounded))
-                            .foregroundStyle(colorScheme == .dark
-                                             ? HuePalette.Noir.textPrimary
-                                             : HuePalette.Estate.textPrimary)
-                        Text("Pro")
-                            .font(.system(size: 34, weight: .thin, design: .rounded))
-                            .foregroundStyle(HuePalette.amber)
-                    }
+                    Text("ChromaGlow")
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color(hue: 0.08, saturation: 0.85, brightness: 0.98),
+                                         Color(hue: 0.78, saturation: 0.75, brightness: 0.95)],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                        )
                     Text("Your lighting ecosystem")
                         .font(HueFont.caption)
                         .foregroundStyle(colorScheme == .dark
