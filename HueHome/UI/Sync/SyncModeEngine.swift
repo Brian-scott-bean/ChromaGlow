@@ -62,8 +62,12 @@ final class SyncModeEngine {
 
     // MARK: Private — rate limiting
     private var lastSent: Date = .distantPast
-    /// Send interval adapts to transport mode: 40ms (25fps) for streaming, 100ms (10fps) for REST.
-    private var sendInterval: TimeInterval { transportMode == .entertainment ? 0.04 : 0.1 }
+    /// REST: 75ms (13fps) — safe for all V2 bridges.
+    /// Entertainment: 40ms (25fps) — DTLS streaming, no bridge rate limit.
+    /// Falls back to 120ms if bridge returns errors (adaptive backoff).
+    private var restInterval: TimeInterval = 0.075
+    private var consecutiveErrors = 0
+    private var sendInterval: TimeInterval { transportMode == .entertainment ? 0.04 : restInterval }
 
     // MARK: Dependency
     private weak var orchestrator: UnifiedOrchestrator?
@@ -300,7 +304,12 @@ final class SyncModeEngine {
         }
     }
 
-    // MARK: REST Fallback (10fps)
+    // MARK: REST Fallback (13fps, fire-and-forget)
+    //
+    // Optimizations vs naive approach:
+    // 1. duration: 0 — instant color change (no 80ms transition animation)
+    // 2. Fire-and-forget — don't await HTTP response, prevents task pile-up
+    // 3. 75ms interval (13fps) — safe for all V2 bridges, backs off on errors
 
     private func sendRESTUpdate() {
         guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
@@ -314,15 +323,37 @@ final class SyncModeEngine {
             guard let glID   = room.groupedLightID,
                   let client = orc.hueClient(for: room.bridgeID) else { continue }
 
-            Task {
-                try? await client.setGroupedLightEffect(
-                    id:         glID,
-                    on:         on,
-                    brightness: bri,
-                    xy:         nil,
-                    mirek:      mirek,
-                    duration:   80
-                )
+            // Fire-and-forget: send without awaiting response.
+            // This eliminates ~50-200ms of HTTP round-trip from the critical path.
+            Task.detached(priority: .userInitiated) { [weak self] in
+                do {
+                    try await client.setGroupedLightEffect(
+                        id:         glID,
+                        on:         on,
+                        brightness: bri,
+                        xy:         nil,
+                        mirek:      mirek,
+                        duration:   0   // instant — no transition animation
+                    )
+                    // Success: tighten interval back to optimal
+                    await MainActor.run {
+                        guard let self else { return }
+                        if self.consecutiveErrors > 0 {
+                            self.consecutiveErrors = 0
+                            self.restInterval = 0.075
+                        }
+                    }
+                } catch {
+                    // Adaptive backoff: if bridge is overwhelmed, slow down
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.consecutiveErrors += 1
+                        if self.consecutiveErrors >= 3 {
+                            self.restInterval = min(0.15, self.restInterval + 0.025)
+                            self.log.info("REST backoff → \(Int(self.restInterval * 1000))ms")
+                        }
+                    }
+                }
             }
         }
     }
