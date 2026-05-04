@@ -43,6 +43,25 @@ struct DashboardView: View {
     @State private var activePreset:        String?  = nil
     @State private var currentHour:         Int      = Calendar.current.component(.hour, from: Date())
     @State private var allOffWorking:       Bool     = false
+    @State private var activatingFavID:     String?  = nil  // tracks which fav scene pill is activating
+
+    // ── Favorite Scenes (shared with RoomDetailView via @AppStorage) ────────────
+    @AppStorage("favoriteSceneIDs") private var favoriteSceneIDsRaw: String = ""
+    private var favoriteSceneIDs: [String] {
+        favoriteSceneIDsRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty }
+    }
+    /// Favorite scenes resolved from orchestrator.globalScenes, preserving user order.
+    private var favoriteScenes: [GlobalSceneItem] {
+        let scenes = orchestrator.globalScenes
+        return favoriteSceneIDs.compactMap { favID in
+            scenes.first(where: { $0.bridgeSceneID == favID })
+        }
+    }
+    private func removeFavorite(_ sceneID: String) {
+        var ids = favoriteSceneIDsRaw.split(separator: ",").map(String.init)
+        ids.removeAll { $0 == sceneID }
+        favoriteSceneIDsRaw = ids.joined(separator: ",")
+    }
 
     private let clockTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
@@ -387,6 +406,7 @@ struct DashboardView: View {
     private var presetsBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
+                // ── Built-in presets ──
                 ForEach(presets) { preset in
                     Button {
                         applyPreset(preset)
@@ -416,8 +436,89 @@ struct DashboardView: View {
                     }
                     .buttonStyle(.plain)
                 }
+
+                // ── Favorite scenes (pinned from RoomDetail) ──
+                if !favoriteScenes.isEmpty {
+                    // Thin divider between built-in presets and favorites
+                    Rectangle()
+                        .fill(Color.white.opacity(0.12))
+                        .frame(width: 1, height: 24)
+                        .padding(.horizontal, 2)
+
+                    ForEach(favoriteScenes) { scene in
+                        let isActivating = activatingFavID == scene.bridgeSceneID
+                        let roomName = orchestrator.allRooms.first(where: { $0.id == scene.roomID })?.name
+                            ?? orchestrator.allZones.first(where: { $0.id == scene.roomID })?.name
+                            ?? ""
+
+                        Button {
+                            activateFavoriteScene(scene)
+                        } label: {
+                            HStack(spacing: 6) {
+                                if isActivating {
+                                    ProgressView()
+                                        .progressViewStyle(.circular)
+                                        .tint(scene.accentColor)
+                                        .scaleEffect(0.6)
+                                } else {
+                                    Image(systemName: scene.icon)
+                                        .font(.system(size: 11, weight: .semibold))
+                                }
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(scene.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .lineLimit(1)
+                                    if !roomName.isEmpty {
+                                        Text(roomName)
+                                            .font(.system(size: 9, weight: .medium))
+                                            .opacity(0.65)
+                                    }
+                                }
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 8))
+                                    .opacity(0.5)
+                            }
+                            .foregroundStyle(scene.accentColor)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(scene.accentColor.opacity(0.12))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(scene.accentColor.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isActivating)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                removeFavorite(scene.bridgeSceneID)
+                            } label: {
+                                Label("Unfavorite", systemImage: "star.slash")
+                            }
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 1) // prevents clip of stroke at edge
+        }
+    }
+
+    private func activateFavoriteScene(_ scene: GlobalSceneItem) {
+        HapticManager.shared.medium()
+        activatingFavID = scene.bridgeSceneID
+        orchestrator.activateGlobalScene(scene)
+        Task {
+            await MainActor.run {
+                presetToast = "\(scene.name) applied"
+            }
+            try? await Task.sleep(for: .seconds(2))
+            await MainActor.run {
+                activatingFavID = nil
+                if presetToast?.contains(scene.name) == true { presetToast = nil }
+            }
         }
     }
 

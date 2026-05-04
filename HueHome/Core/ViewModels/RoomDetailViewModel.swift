@@ -30,7 +30,7 @@ final class RoomDetailViewModel {
     var roomBrightness: Double = 100
     var roomIsOn: Bool = false
 
-    // MARK: Multi-select state
+    // MARK: Multi-select state (lights)
     /// True while the user is in light-selection mode.
     var isSelecting: Bool = false
     /// IDs of lights currently checked in select mode.
@@ -38,6 +38,16 @@ final class RoomDetailViewModel {
     /// Convenience: the LightDisplayItem objects for all checked IDs.
     var selectedLights: [LightDisplayItem] {
         lights.filter { selectedLightIDs.contains($0.id) }
+    }
+
+    // MARK: Multi-select state (scenes)
+    /// True while the user is in scene-selection mode.
+    var isSelectingScenes: Bool = false
+    /// IDs of scenes currently checked in scene select mode.
+    var selectedSceneIDs: Set<String> = []
+    /// Convenience: the SceneDisplayItem objects for all checked IDs.
+    var selectedScenes: [SceneDisplayItem] {
+        scenes.filter { selectedSceneIDs.contains($0.id) }
     }
 
     // MARK: Room context
@@ -339,6 +349,74 @@ final class RoomDetailViewModel {
     /// Set brightness on all selected lights.
     func setSelectedLightsBrightness(_ pct: Double) {
         for light in selectedLights { setBrightness(pct, for: light) }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Multi-select (scenes)
+    // ──────────────────────────────────────────────
+
+    func enterSceneSelectMode() {
+        selectedSceneIDs = []
+        withAnimation(.spring(response: 0.3)) { isSelectingScenes = true }
+        HapticManager.shared.medium()
+    }
+
+    func exitSceneSelectMode() {
+        withAnimation(.spring(response: 0.3)) { isSelectingScenes = false }
+        selectedSceneIDs.removeAll()
+    }
+
+    func toggleSceneSelection(id: String) {
+        if selectedSceneIDs.contains(id) {
+            selectedSceneIDs.remove(id)
+        } else {
+            selectedSceneIDs.insert(id)
+        }
+        HapticManager.shared.light()
+    }
+
+    func selectAllScenes()    { selectedSceneIDs = Set(scenes.map(\.id)) }
+    func clearSceneSelection() { selectedSceneIDs.removeAll() }
+
+    /// Batch delete all selected scenes with optimistic removal + rollback.
+    func deleteSelectedScenes() {
+        let toDelete = selectedScenes
+        guard !toDelete.isEmpty else { return }
+
+        // Optimistic: remove all selected scenes from the array
+        let backup = scenes
+        withAnimation(.spring(response: 0.3)) {
+            scenes.removeAll { selectedSceneIDs.contains($0.id) }
+        }
+        let count = toDelete.count
+        appendLog("🗑 Batch deleting \(count) scene(s)…")
+        exitSceneSelectMode()
+
+        if isDemoMode {
+            appendLog("✦ Demo: \(count) scene(s) removed locally")
+            return
+        }
+
+        Task {
+            var anyFailed = false
+            for scene in toDelete {
+                do {
+                    try await api?.deleteScene(id: scene.id)
+                    appendLog("✅ Deleted '\(scene.name)'")
+                } catch {
+                    appendLog("❌ Delete '\(scene.name)' failed: \(error.localizedDescription)")
+                    anyFailed = true
+                }
+            }
+            if anyFailed {
+                // Rollback: restore original list and re-fetch to get correct state
+                scenes = backup
+                await loadScenes()
+                showToast("Some scenes couldn't be deleted")
+            } else {
+                showToast("\(count) scene\(count == 1 ? "" : "s") deleted")
+            }
+        }
     }
 
     // ──────────────────────────────────────────────

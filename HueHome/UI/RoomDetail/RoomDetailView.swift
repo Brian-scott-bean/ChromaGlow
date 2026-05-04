@@ -21,6 +21,24 @@ struct RoomDetailView: View {
     @State private var sceneToRename:    SceneDisplayItem? = nil
     @State private var sceneRenameDraft: String = ""
 
+    // ── Scene Edit Mode ──────────────────────────────────────────────────────
+    @State private var sceneToEdit:       SceneDisplayItem? = nil  // drives SceneColorBuilder in edit mode
+
+    // ── Favorite Scenes ──────────────────────────────────────────────────────
+    @AppStorage("favoriteSceneIDs") private var favoriteSceneIDsRaw: String = ""
+    private var favoriteSceneIDs: Set<String> {
+        Set(favoriteSceneIDsRaw.split(separator: ",").map(String.init))
+    }
+    private func toggleFavorite(_ scene: SceneDisplayItem) {
+        var ids = favoriteSceneIDs
+        if ids.contains(scene.id) {
+            ids.remove(scene.id)
+        } else {
+            ids.insert(scene.id)
+        }
+        favoriteSceneIDsRaw = ids.joined(separator: ",")
+    }
+
     // ── Room / Zone CRUD ──────────────────────────────────────────────────────
     @State private var showRoomMenu  = false   // drives the ··· confirmationDialog
     @State private var showEditSheet = false   // drives the EditRoomSheet
@@ -65,6 +83,23 @@ struct RoomDetailView: View {
                 .zIndex(5)
                 .animation(.spring(response: 0.35, dampingFraction: 0.75), value: vm.isSelecting)
             }
+
+            // SceneEditBar — slides up when scenes are selected.
+            if vm.isSelectingScenes {
+                VStack {
+                    Spacer()
+                    SceneEditBar(vm: vm) { scene in
+                        // Edit: activate the scene to seed light states, then open builder
+                        vm.activateScene(scene)
+                        vm.exitSceneSelectMode()
+                        sceneToEdit = scene
+                    }
+                    .padding(.bottom, 100)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .zIndex(5)
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: vm.isSelectingScenes)
+            }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -96,6 +131,18 @@ struct RoomDetailView: View {
                 initialLights: prefiltered.isEmpty ? vm.lights : prefiltered
             ) {
                 vm.exitSelectMode()
+                Task { await vm.loadScenes() }
+            }
+        }
+        // SceneColorBuilderView launched for editing an existing scene
+        .sheet(item: $sceneToEdit) { scene in
+            SceneColorBuilderView(
+                roomID: room.id,
+                roomRType: room.kind == .zone ? "zone" : "room",
+                bridgeID: room.bridgeID ?? "",
+                existingSceneID: scene.id,
+                initialLights: vm.lights   // lights are already in scene state after activateScene()
+            ) {
                 Task { await vm.loadScenes() }
             }
         }
@@ -314,50 +361,134 @@ struct RoomDetailView: View {
 
     private var scenesStrip: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Header: label + "＋" button
+            // Header: label + Select/Done + "＋" button
             HStack {
-                Text("SCENES")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.45))
-                Spacer()
-                Button {
-                    HapticManager.shared.light()
-                    showCreateScene = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                        Text("New")
-                    }
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.85))
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color(red: 0.60, green: 0.40, blue: 0.90))
+                    Text("SCENES")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.45))
+                    Text("(\(vm.scenes.count))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.25))
                 }
-                .buttonStyle(.plain)
+                Spacer()
+
+                // Select / Done for scene multi-select
+                if vm.scenes.count > 1 {
+                    Button(vm.isSelectingScenes ? "Done" : "Select") {
+                        if vm.isSelectingScenes { vm.exitSceneSelectMode() } else { vm.enterSceneSelectMode() }
+                    }
+                    .font(.system(size: 12, weight: vm.isSelectingScenes ? .semibold : .regular))
+                    .foregroundStyle(vm.isSelectingScenes
+                                     ? Color(red: 1.0, green: 0.76, blue: 0.20)
+                                     : .white.opacity(0.5))
+                }
+
+                if !vm.isSelectingScenes {
+                    Button {
+                        HapticManager.shared.light()
+                        showCreateScene = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus")
+                            Text("New")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.85))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(.horizontal, 20)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(vm.scenes) { scene in
-                        RoomSceneChip(
-                            scene: scene,
-                            isActivating: vm.activatingSceneID == scene.id
-                        ) {
-                            vm.activateScene(scene)
-                        }
-                        .contextMenu {
-                            Button {
-                                sceneRenameDraft = scene.name
-                                sceneToRename    = scene
-                            } label: {
-                                Label("Rename", systemImage: "pencil")
+                        let isSelected = vm.selectedSceneIDs.contains(scene.id)
+                        let isFav = favoriteSceneIDs.contains(scene.id)
+
+                        ZStack(alignment: .topTrailing) {
+                            if vm.isSelectingScenes {
+                                // Select mode: tap = toggle selection
+                                Button {
+                                    vm.toggleSceneSelection(id: scene.id)
+                                } label: {
+                                    RoomSceneChip(
+                                        scene: scene,
+                                        isActivating: false
+                                    ) { /* no-op in select mode */ }
+                                    .allowsHitTesting(false)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                // Normal mode: tap = activate
+                                RoomSceneChip(
+                                    scene: scene,
+                                    isActivating: vm.activatingSceneID == scene.id
+                                ) {
+                                    vm.activateScene(scene)
+                                }
+                                .contextMenu {
+                                    Button {
+                                        // Edit: activate scene first to seed light colors, then open builder
+                                        vm.activateScene(scene)
+                                        // Small delay so lights update before builder opens
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                            sceneToEdit = scene
+                                        }
+                                    } label: {
+                                        Label("Edit Scene", systemImage: "slider.horizontal.3")
+                                    }
+                                    Button {
+                                        toggleFavorite(scene)
+                                    } label: {
+                                        Label(
+                                            isFav ? "Unfavorite" : "Favorite",
+                                            systemImage: isFav ? "star.slash" : "star"
+                                        )
+                                    }
+                                    Button {
+                                        sceneRenameDraft = scene.name
+                                        sceneToRename    = scene
+                                    } label: {
+                                        Label("Rename", systemImage: "pencil")
+                                    }
+                                    Divider()
+                                    Button(role: .destructive) {
+                                        vm.deleteScene(scene)
+                                    } label: {
+                                        Label("Delete Scene", systemImage: "trash")
+                                    }
+                                }
                             }
-                            Divider()
-                            Button(role: .destructive) {
-                                vm.deleteScene(scene)
-                            } label: {
-                                Label("Delete Scene", systemImage: "trash")
+
+                            // ── Star badge for favorited scenes ──
+                            if isFav && !vm.isSelectingScenes {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
+                                    .padding(6)
+                                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+                            }
+
+                            // ── Checkbox overlay for select mode ──
+                            if vm.isSelectingScenes {
+                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 18, weight: .medium))
+                                    .foregroundStyle(isSelected
+                                                     ? scene.accentColor
+                                                     : .white.opacity(0.35))
+                                    .padding(6)
+                                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                                    .animation(.spring(response: 0.3), value: isSelected)
                             }
                         }
+                        .opacity(vm.isSelectingScenes ? (isSelected ? 1.0 : 0.55) : 1.0)
+                        .animation(.spring(response: 0.25), value: isSelected)
+                        .animation(.spring(response: 0.3), value: vm.isSelectingScenes)
                     }
                 }
                 .padding(.horizontal, 20)

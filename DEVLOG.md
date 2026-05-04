@@ -10,7 +10,14 @@
 ## Project Location
 - **Path:** `/Users/brianbean/Desktop/huehome-pro-v0.3.0/`
 - **Xcode project:** `HueHome.xcodeproj`
-- **Git tags:** v0.1.0 → v0.12.0-live-state-sync
+- **Git tags:** v0.1.0 → v0.12.1-room-detail-polish
+
+## v0.12.1 — Room Detail Polish (Priority 1)
+- **Scene Edit Mode:** Per-section Select/Done on SCENES strip. Multi-select with animated checkmark overlays, dimmed unselected chips. New `SceneEditBar` floating toolbar: All/None toggle, Edit (single-select → opens SceneColorBuilder in edit mode), Delete (batch with confirmation alert). Full optimistic update + rollback.
+- **Favorite Scenes:** Long-press any scene chip → Favorite/Unfavorite context menu. Favorited scenes show a ⭐ badge overlay. Favorites appear as capsule pills in the Dashboard presets bar (after built-in presets, separated by divider). Each pill shows scene icon, name, room label, and star badge. Tap → activates via `activateGlobalScene`. Long-press → Unfavorite. Order preserved from `@AppStorage("favoriteSceneIDs")`.
+- **Edit Scene:** Context menu "Edit Scene" activates the scene to seed light colors, then opens `SceneColorBuilderView` in edit mode (passes `existingSceneID`). Save → updates scene on Bridge.
+- **Bug Fix:** `SceneDisplayItem.hash(into:)` now includes `name` (was missing — same class of bug as the v0.12.0 ForEach blindness). `==` compares `id + isActive + name`; hash must match.
+- **New File:** `SceneEditBar.swift` — added to `project.pbxproj` via `sed`.
 
 ## Target Structure
 | Target | Bundle ID | Notes |

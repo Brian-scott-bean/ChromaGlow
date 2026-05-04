@@ -84,7 +84,7 @@ struct SceneDisplayItem: Identifiable, Hashable {
     static func == (lhs: SceneDisplayItem, rhs: SceneDisplayItem) -> Bool {
         lhs.id == rhs.id && lhs.isActive == rhs.isActive && lhs.name == rhs.name
     }
-    func hash(into hasher: inout Hasher) { hasher.combine(id); hasher.combine(isActive) }
+    func hash(into hasher: inout Hasher) { hasher.combine(id); hasher.combine(isActive); hasher.combine(name) }
 }
 
 // ══════════════════════════════════════════════════════════
