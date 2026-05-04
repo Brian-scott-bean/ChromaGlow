@@ -714,6 +714,9 @@ struct SceneColorBuilderView: View {
 
         // Stagger updates across lights to avoid overwhelming the bridge.
         for light in lights where selectedLightIDs.contains(light.id) {
+            // Turn on the light first — setting color/brightness on an off light
+            // has no visible effect on the Hue bridge.
+            try? await api.setLight(id: light.id, on: true)
             if light.supportsColor, let x = light.colorX, let y = light.colorY {
                 try? await api.setLightColor(id: light.id, x: x, y: y)
                 try? await api.setLightBrightness(id: light.id, brightness: light.brightness)
