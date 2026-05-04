@@ -480,7 +480,7 @@ final class SyncModeEngine {
                     }
                 }
             }
-        }
+        } }
     }
 
     // MARK: REST — Gaming (edge-triggered: 2 sends per transient event)
