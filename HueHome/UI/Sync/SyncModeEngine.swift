@@ -80,13 +80,6 @@ final class SyncModeEngine {
     private var consecutiveErrors = 0
     private var sendInterval: TimeInterval { transportMode == .entertainment ? 0.04 : restInterval }
 
-    // MARK: Private — in-flight tracking
-    /// Limits concurrent REST HTTP requests to prevent task pile-up.
-    /// Each Task increments on entry and decrements on exit.
-    @ObservationIgnored
-    nonisolated(unsafe) private var inflightCount = 0
-    private let maxInflight = 3
-
     // MARK: Dependency
     private weak var orchestrator: UnifiedOrchestrator?
     private let log = Logger(subsystem: "com.lightshade.app", category: "SyncMode")
@@ -175,7 +168,6 @@ final class SyncModeEngine {
         consecutiveErrors = 0
         restInterval = 0.075
         lastSent = .distantPast
-        inflightCount = 0
 
         log.info("Sync stopped (generation=\(self.generation))")
     }
@@ -340,54 +332,34 @@ final class SyncModeEngine {
 
     // MARK: REST Fallback (13fps, fire-and-forget)
     //
-    // Safeguards:
-    // 1. duration: 0 — instant color change (no 80ms transition animation)
-    // 2. Fire-and-forget — don't await HTTP response, prevents task pile-up
-    // 3. 75ms interval (13fps) — safe for all V2 bridges, backs off on errors
-    // 4. Generation counter — zombie Tasks from old sessions are silently discarded
-    // 5. In-flight cap — max 3 concurrent HTTP requests to prevent pile-up
+    // Simple and proven:
+    // 1. Rate limiter (75ms / 13fps) — prevents over-sending
+    // 2. Fire-and-forget — don't await HTTP response on the critical path
+    // 3. Generation counter — zombie Tasks from old sessions are discarded
+    // 4. duration: 0 — instant color change (no transition animation)
 
     private func sendRESTUpdate() {
         guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
 
-        // Don't pile up more HTTP requests if too many are already in flight
-        guard inflightCount < maxInflight else { return }
-
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
         let bri   = max(2.0, Double(visualizer.overallLevel) * 100.0 * masterIntensity)
         let mirek = visualizer.computeMirek()
-
-        // Always keep lights ON during sync — brightness 2.0 is already near-dark.
-        // Toggling on/off between beats causes visible power cycling and latency.
-        let on = true
-
-        // Capture current generation — if stop() is called while this Task is in flight,
-        // the generation will have changed and the callback is discarded.
         let sendGeneration = generation
 
         for room in rooms {
             guard let glID   = room.groupedLightID,
                   let client = orc.hueClient(for: room.bridgeID) else { continue }
 
-            inflightCount += 1
-
             Task.detached(priority: .userInitiated) { [weak self] in
-                defer {
-                    Task { @MainActor [weak self] in
-                        self?.inflightCount -= 1
-                    }
-                }
-
                 do {
                     try await client.setGroupedLightEffect(
                         id:         glID,
-                        on:         on,
+                        on:         true,
                         brightness: bri,
                         xy:         nil,
                         mirek:      mirek,
-                        duration:   0   // instant — no transition animation
+                        duration:   0
                     )
-                    // Only process result if this generation is still active
                     await MainActor.run { [weak self] in
                         guard let self, self.generation == sendGeneration else { return }
                         if self.consecutiveErrors > 0 {
@@ -396,7 +368,6 @@ final class SyncModeEngine {
                         }
                     }
                 } catch {
-                    // Only process error if this generation is still active
                     await MainActor.run { [weak self] in
                         guard let self, self.generation == sendGeneration else { return }
                         self.consecutiveErrors += 1
