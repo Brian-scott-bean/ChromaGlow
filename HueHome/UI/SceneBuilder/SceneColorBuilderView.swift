@@ -307,74 +307,81 @@ struct SceneColorBuilderView: View {
         let isSelected = selectedLightIDs.contains(light.id)
         let chipColor = lightColor(for: light)
 
-        return Button {
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                if harmonyRule == .none {
-                    // Paint mode: single-select this light for individual painting
-                    selectedLightIDs = [light.id]
-                } else {
-                    // Harmony mode: multi-select toggle
-                    if isSelected && selectedLightIDs.count > 1 {
-                        selectedLightIDs.remove(light.id)
-                    } else if !isSelected {
-                        selectedLightIDs.insert(light.id)
-                    }
-                }
+        return VStack(spacing: 6) {
+            // Color dot
+            ZStack {
+                Circle()
+                    .fill(chipColor.opacity(0.25))
+                    .frame(width: 44, height: 44)
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(chipColor)
             }
-            // Sync color pad to this light's current color
-            if let x = light.colorX, let y = light.colorY {
-                let (h, s, b) = HueColorUtils.hsb(fromX: x, y: y, brightness: light.brightness)
-                currentHue = h
-                currentSaturation = s
-                currentBrightness = max(0.1, b)
-            }
-            // Sync brightness slider to this light's brightness
-            displayBrightness = light.brightness
-            HapticManager.shared.soft()
-        } label: {
-            VStack(spacing: 6) {
-                // Color dot
-                ZStack {
-                    Circle()
-                        .fill(chipColor.opacity(0.25))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: "lightbulb.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(chipColor)
-                }
 
-                // Name
-                Text(light.name)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(isSelected ? 0.9 : 0.45))
-                    .lineLimit(1)
-                    .frame(width: 65)
+            // Name
+            Text(light.name)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(isSelected ? 0.9 : 0.45))
+                .lineLimit(1)
+                .frame(width: 65)
 
-                // Brightness
-                Text("\(Int(light.brightness))%")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(chipColor.opacity(0.8))
-            }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(isSelected ? chipColor.opacity(0.12) : Color.white.opacity(0.04))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .strokeBorder(
-                                isSelected ? chipColor.opacity(0.5) : .white.opacity(0.06),
-                                lineWidth: isSelected ? 1.5 : 1
-                            )
-                    )
-            )
-            .shadow(
-                color: isSelected ? chipColor.opacity(0.35) : .clear,
-                radius: 8, y: 4
-            )
+            // Brightness
+            Text("\(Int(light.brightness))%")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(chipColor.opacity(0.8))
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(isSelected ? chipColor.opacity(0.12) : Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(
+                            isSelected ? chipColor.opacity(0.5) : .white.opacity(0.06),
+                            lineWidth: isSelected ? 1.5 : 1
+                        )
+                )
+        )
+        .shadow(
+            color: isSelected ? chipColor.opacity(0.35) : .clear,
+            radius: 8, y: 4
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 14))
+        // ── Tap: single-select (paint mode) ──
+        .onTapGesture {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                selectedLightIDs = [light.id]
+            }
+            syncPadToLight(light)
+            HapticManager.shared.soft()
+        }
+        // ── Long press: multi-select toggle ──
+        .onLongPressGesture(minimumDuration: 0.35) {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                if isSelected && selectedLightIDs.count > 1 {
+                    // Deselect this light
+                    selectedLightIDs.remove(light.id)
+                } else if !isSelected {
+                    // Add this light to selection
+                    selectedLightIDs.insert(light.id)
+                }
+                // If it's the only one selected, long press keeps it (can't deselect all)
+            }
+            HapticManager.shared.medium()
+        }
         .animation(.spring(response: 0.25), value: isSelected)
+    }
+
+    /// Sync the color pad & brightness slider to a specific light's state.
+    private func syncPadToLight(_ light: LightDisplayItem) {
+        if let x = light.colorX, let y = light.colorY {
+            let (h, s, b) = HueColorUtils.hsb(fromX: x, y: y, brightness: light.brightness)
+            currentHue = h
+            currentSaturation = s
+            currentBrightness = max(0.1, b)
+        }
+        displayBrightness = light.brightness
     }
 
     // ══════════════════════════════════════════════════════════════
