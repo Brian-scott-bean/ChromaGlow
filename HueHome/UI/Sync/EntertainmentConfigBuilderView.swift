@@ -365,9 +365,28 @@ struct EntertainmentConfigBuilderView: View {
         do {
             let (ip, token) = try client.credentials()
 
+            // DEBUG: dump existing entertainment configs to see what format works
+            let existingData = try await client.get(
+                path: "/clip/v2/resource/entertainment_configuration",
+                ip: ip, token: token
+            )
+            if let existingStr = String(data: existingData, encoding: .utf8) {
+                print("🔍 EXISTING ENTERTAINMENT CONFIGS:\n\(existingStr)")
+            }
+
+            // DEBUG: dump entertainment services
+            let entServicesData = try await client.get(
+                path: "/clip/v2/resource/entertainment",
+                ip: ip, token: token
+            )
+            if let entStr = String(data: entServicesData, encoding: .utf8) {
+                print("🔍 ENTERTAINMENT SERVICES:\n\(entStr)")
+            }
+
             let selectedLights = availableLights.filter { selectedLightIDs.contains($0.id) }
 
-            // Build service_locations using entertainment service IDs (NOT light IDs)
+            // Build service_locations — match exact format of working Hue app config:
+            // requires BOTH position (object) + positions (array) + equalization_factor
             var serviceLocations: [[String: Any]] = []
             for (index, light) in selectedLights.enumerated() {
                 guard let entID = lightToEntertainmentID[light.id] else { continue }
@@ -376,13 +395,16 @@ struct EntertainmentConfigBuilderView: View {
                     ? Double(index) / Double(selectedLights.count - 1)
                     : 0.5
                 let x = -1.0 + t * 2.0
+                let pos: [String: Double] = ["x": x, "y": 0.0, "z": 0.0]
 
                 serviceLocations.append([
                     "service": [
                         "rid": entID,
                         "rtype": "entertainment"
                     ],
-                    "positions": [["x": x, "y": 0.0, "z": 0.0]]
+                    "position": pos,
+                    "positions": [pos],
+                    "equalization_factor": 1.0
                 ])
             }
 
@@ -399,6 +421,12 @@ struct EntertainmentConfigBuilderView: View {
                     "service_locations": serviceLocations
                 ]
             ]
+
+            // DEBUG: dump what we're sending
+            if let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .prettyPrinted),
+               let bodyStr = String(data: bodyData, encoding: .utf8) {
+                print("🔍 OUR POST BODY:\n\(bodyStr)")
+            }
 
             let data = try await client.post(
                 path: "/clip/v2/resource/entertainment_configuration",
