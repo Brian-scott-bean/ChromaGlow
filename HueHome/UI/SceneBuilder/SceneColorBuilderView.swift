@@ -309,10 +309,16 @@ struct SceneColorBuilderView: View {
 
         return Button {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                if isSelected && selectedLightIDs.count > 1 {
-                    selectedLightIDs.remove(light.id)
-                } else if !isSelected {
-                    selectedLightIDs.insert(light.id)
+                if harmonyRule == .none {
+                    // Paint mode: single-select this light for individual painting
+                    selectedLightIDs = [light.id]
+                } else {
+                    // Harmony mode: multi-select toggle
+                    if isSelected && selectedLightIDs.count > 1 {
+                        selectedLightIDs.remove(light.id)
+                    } else if !isSelected {
+                        selectedLightIDs.insert(light.id)
+                    }
                 }
             }
             // Sync color pad to this light's current color
@@ -322,6 +328,8 @@ struct SceneColorBuilderView: View {
                 currentSaturation = s
                 currentBrightness = max(0.1, b)
             }
+            // Sync brightness slider to this light's brightness
+            displayBrightness = light.brightness
             HapticManager.shared.soft()
         } label: {
             VStack(spacing: 6) {
@@ -375,13 +383,20 @@ struct SceneColorBuilderView: View {
 
     private var colorControls: some View {
         VStack(spacing: 16) {
-            // 2D Color Pad
+            // 2D Color Pad (the "SB Pad")
             ColorPadView(
                 hue: currentHue,
                 saturation: $currentSaturation,
                 brightness: $currentBrightness
             ) { sat, bri in
-                applyColorToSelected(hue: currentHue, saturation: sat, brightness: bri)
+                // Harmony-aware commit: use palette, not single color
+                if harmonyRule != .none {
+                    applyHarmony()
+                } else {
+                    applyColorToSelected(hue: currentHue, saturation: sat, brightness: bri)
+                }
+                // Keep brightness slider in sync with pad Y-axis
+                displayBrightness = max(1, bri * 100)
             }
 
             // Hue Spectrum Bar
@@ -555,6 +570,11 @@ struct SceneColorBuilderView: View {
         }
         if let first = initialLights.first, let mirek = first.colorTempMirek {
             currentMirek = mirek
+        }
+        // Seed brightness slider from average of all lights
+        if !initialLights.isEmpty {
+            let avg = initialLights.reduce(0.0) { $0 + $1.brightness } / Double(initialLights.count)
+            displayBrightness = max(1, avg)
         }
     }
 
