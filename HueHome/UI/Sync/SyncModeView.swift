@@ -3,18 +3,8 @@
 //
 // Full-screen reactive lighting experience. Premium glassmorphic design
 // matching the rest of CastChroma's aesthetic.
-//
-// Layout:
-//   ┌─ Header (title + subtitle) ─────────────────────────────┐
-//   ├─ Engine selector (horizontal pills) ────────────────────┤
-//   ├─ Visualizer area (equalizer bars + level meters) ───────┤
-//   ├─ Start / Stop orb ─────────────────────────────────────┤
-//   ├─ Controls card ─────────────────────────────────────────┤
-//   │   Color mode chips                                      │
-//   │   Sensitivity slider                                    │
-//   │   Master intensity slider                               │
-//   │   Room picker                                           │
-//   └─────────────────────────────────────────────────────────┘
+// Adaptive layout: uses GeometryReader to scale visualizer area
+// proportionally, ensuring it fits all iOS device sizes (SE → Pro Max).
 
 import SwiftUI
 
@@ -62,7 +52,6 @@ struct SyncModeView: View {
         ZStack {
             Color(red: 0.04, green: 0.04, blue: 0.07).ignoresSafeArea()
 
-            // Ambient time-aware gradient orb (matches DashboardView)
             let hour = Calendar.current.component(.hour, from: Date())
             let isNight = hour >= 20 || hour < 6
             Circle()
@@ -102,99 +91,95 @@ struct SyncModeView: View {
     // ══════════════════════════════════════════════════════════════
 
     private func content(engine: SyncModeEngine) -> some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 0) {
-                // Header row: icon + title + subtitle inline with engine selector
-                HStack(spacing: 8) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(amber)
-                    Text("Sync")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(.white)
-                    Spacer()
-                    // Engine selector (inline when only 1 engine)
-                    ForEach(SyncEngineType.allCases) { type in
-                        let isActive = engine.activeEngineType == type
-                        Button {
-                            engine.switchEngine(to: type)
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: type.icon)
-                                    .font(.system(size: 11, weight: .semibold))
-                                Text(type.rawValue)
-                                    .font(.system(size: 12, weight: .semibold))
-                            }
-                            .foregroundStyle(isActive ? Color(red: 0.05, green: 0.05, blue: 0.10) : .white.opacity(0.65))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule()
-                                    .fill(isActive ? amber : Color.white.opacity(0.06))
-                            )
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(
-                                        isActive ? .clear : .white.opacity(0.08),
-                                        lineWidth: 1
-                                    )
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
+        GeometryReader { geo in
+            let isCompact = geo.size.height < 700  // iPhone SE / small screens
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    // ── Header row ──
+                    headerRow(engine: engine)
+                        .padding(.top, 4)
 
-                // Start / Stop orb
-                SyncStartStopButton(engine: engine)
-                    .padding(.top, 20)
-                    .padding(.bottom, 8)
+                    // ── Start / Stop orb ──
+                    SyncStartStopButton(engine: engine, compact: isCompact)
+                        .padding(.top, isCompact ? 12 : 16)
+                        .padding(.bottom, isCompact ? 4 : 8)
 
-                // Engine-specific visualization
-                visualizerSection(engine: engine)
-                    .padding(.bottom, 8)
-
-                // Level meters
-                SyncLevelMeterRow(visualizer: engine.visualizer)
+                    // ── Equalizer bars ──
+                    SyncEqualizerView(
+                        bars: engine.visualizer.barHeights,
+                        colorMode: engine.visualizer.colorMode
+                    )
+                    .frame(height: isCompact ? 80 : 100)
                     .padding(.horizontal, 24)
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 4)
 
-                // Controls card
-                controlsCard(engine: engine)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
+                    // ── Level meters ──
+                    SyncLevelMeterRow(visualizer: engine.visualizer)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, isCompact ? 10 : 14)
 
-                // Space for tab bar
-                Color.clear.frame(height: 100)
+                    // ── Controls card ──
+                    controlsCard(engine: engine, compact: isCompact)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+
+                    // Tab bar clearance
+                    Color.clear.frame(height: 80)
+                }
             }
         }
     }
 
     // ══════════════════════════════════════════════════════════════
-    // MARK: - Visualizer Section
+    // MARK: - Header Row
     // ══════════════════════════════════════════════════════════════
 
-    private func visualizerSection(engine: SyncModeEngine) -> some View {
-        VStack(spacing: 0) {
-            switch engine.activeEngineType {
-            case .visualizer:
-                SyncEqualizerView(
-                    bars: engine.visualizer.barHeights,
-                    colorMode: engine.visualizer.colorMode
-                )
-                .frame(height: 120)
-                .padding(.horizontal, 24)
+    private func headerRow(engine: SyncModeEngine) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "waveform")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(amber)
+            Text("Sync")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white)
+
+            Spacer(minLength: 8)
+
+            // Engine selector pills
+            ForEach(SyncEngineType.allCases) { type in
+                let isActive = engine.activeEngineType == type
+                Button {
+                    engine.switchEngine(to: type)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: type.icon)
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(type.rawValue)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(isActive ? Color(red: 0.05, green: 0.05, blue: 0.10) : .white.opacity(0.65))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(isActive ? amber : Color.white.opacity(0.06))
+                    )
+                    .overlay(
+                        Capsule().strokeBorder(isActive ? .clear : .white.opacity(0.08), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
+        .padding(.horizontal, 16)
     }
 
     // ══════════════════════════════════════════════════════════════
     // MARK: - Controls Card
     // ══════════════════════════════════════════════════════════════
 
-    private func controlsCard(engine: SyncModeEngine) -> some View {
-        VStack(spacing: 20) {
+    private func controlsCard(engine: SyncModeEngine, compact: Bool) -> some View {
+        VStack(spacing: compact ? 12 : 16) {
             // Engine-specific controls
             switch engine.activeEngineType {
             case .visualizer:
@@ -204,12 +189,12 @@ struct SyncModeView: View {
             Divider().background(.white.opacity(0.08))
 
             // Master intensity
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     sectionLabel("Intensity")
                     Spacer()
                     Text(String(format: "%.0f%%", engine.masterIntensity * 100))
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(amber.opacity(0.7))
                 }
                 Slider(value: Binding(
@@ -224,16 +209,16 @@ struct SyncModeView: View {
             // Room picker
             SyncRoomPicker(engine: engine, rooms: orchestrator.allRooms)
         }
-        .padding(20)
+        .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
                         .fill(Color.white.opacity(0.03))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
                         .strokeBorder(
                             LinearGradient(
                                 colors: [.white.opacity(0.12), .white.opacity(0.04)],
@@ -246,11 +231,12 @@ struct SyncModeView: View {
     }
 
     private func visualizerControls(engine: SyncModeEngine) -> some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 14) {
             // Color mode
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 sectionLabel("Color Mode")
-                HStack(spacing: 10) {
+                // Flexible wrap layout for color mode chips
+                HStack(spacing: 8) {
                     ForEach(VisualizerColorMode.allCases) { mode in
                         SyncColorModeChip(
                             mode: mode,
@@ -267,12 +253,12 @@ struct SyncModeView: View {
             Divider().background(.white.opacity(0.08))
 
             // Sensitivity
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     sectionLabel("Sensitivity")
                     Spacer()
                     Text(String(format: "%.0f%%", engine.visualizer.sensitivity * 100))
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.45))
                 }
                 Slider(value: Binding(
@@ -286,7 +272,7 @@ struct SyncModeView: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(.white.opacity(0.45))
             .textCase(.uppercase)
             .tracking(0.8)
@@ -302,9 +288,17 @@ struct SyncEqualizerView: View {
     let colorMode: VisualizerColorMode
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 3) {
-            ForEach(0..<bars.count, id: \.self) { i in
-                SyncBarView(height: bars[i], index: i, count: bars.count, colorMode: colorMode)
+        GeometryReader { geo in
+            HStack(alignment: .bottom, spacing: 3) {
+                ForEach(0..<bars.count, id: \.self) { i in
+                    SyncBarView(
+                        height: bars[i],
+                        maxHeight: geo.size.height,
+                        index: i,
+                        count: bars.count,
+                        colorMode: colorMode
+                    )
+                }
             }
         }
     }
@@ -312,6 +306,7 @@ struct SyncEqualizerView: View {
 
 struct SyncBarView: View {
     let height: Float
+    let maxHeight: CGFloat
     let index:  Int
     let count:  Int
     let colorMode: VisualizerColorMode
@@ -339,7 +334,7 @@ struct SyncBarView: View {
                 )
             )
             .frame(maxWidth: .infinity)
-            .frame(height: max(4, CGFloat(height) * 160))
+            .frame(height: max(3, CGFloat(height) * maxHeight))
             .animation(.spring(response: 0.08, dampingFraction: 0.7), value: height)
     }
 }
@@ -350,12 +345,16 @@ struct SyncBarView: View {
 
 struct SyncStartStopButton: View {
     let engine: SyncModeEngine
+    var compact: Bool = false
     @State private var pulsing = false
 
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
 
+    private var discSize: CGFloat { compact ? 56 : 64 }
+    private var ringSize: CGFloat { compact ? 76 : 84 }
+
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             Button {
                 if engine.isRunning { engine.stop() } else { engine.start() }
                 HapticManager.shared.medium()
@@ -369,8 +368,8 @@ struct SyncStartStopButton: View {
                                 : Color.clear,
                             lineWidth: 2
                         )
-                        .frame(width: 100, height: 100)
-                        .scaleEffect(pulsing ? 1.4 : 1.0)
+                        .frame(width: ringSize, height: ringSize)
+                        .scaleEffect(pulsing ? 1.35 : 1.0)
 
                     // Background disc
                     Circle()
@@ -385,15 +384,15 @@ struct SyncStartStopButton: View {
                                     startPoint: .topLeading, endPoint: .bottomTrailing
                                   )
                         )
-                        .frame(width: 76, height: 76)
+                        .frame(width: discSize, height: discSize)
                         .shadow(
                             color: engine.isRunning ? amber.opacity(0.5) : .clear,
-                            radius: 20
+                            radius: 16
                         )
 
                     // Icon
-                    Image(systemName: engine.isRunning ? "waveform" : "waveform")
-                        .font(.system(size: 28, weight: .medium))
+                    Image(systemName: "waveform")
+                        .font(.system(size: compact ? 22 : 24, weight: .medium))
                         .foregroundStyle(
                             engine.isRunning
                                 ? Color(red: 0.05, green: 0.05, blue: 0.10)
@@ -415,13 +414,13 @@ struct SyncStartStopButton: View {
 
             // Status label
             Text(engine.isRunning ? "Listening…" : "Tap to start")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(engine.isRunning ? 0.6 : 0.35))
 
             // Permission denied hint
             if engine.permissionDenied {
                 Text("Microphone access denied — enable in Settings")
-                    .font(.system(size: 12))
+                    .font(.system(size: 11))
                     .foregroundStyle(.red.opacity(0.8))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
@@ -438,7 +437,7 @@ struct SyncLevelMeterRow: View {
     let visualizer: VisualizerEngine
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 14) {
             SyncLevelPill(label: "BASS",     value: visualizer.bassLevel,    color: .orange)
             SyncLevelPill(label: "MID",      value: visualizer.midLevel,     color: .yellow)
             SyncLevelPill(label: "HIGH",     value: visualizer.highLevel,    color: .cyan)
@@ -453,11 +452,11 @@ struct SyncLevelPill: View {
     let color:  Color
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 3) {
             Text(label)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.35))
-                .tracking(0.6)
+                .tracking(0.5)
 
             GeometryReader { geo in
                 ZStack(alignment: .bottom) {
@@ -469,7 +468,7 @@ struct SyncLevelPill: View {
                         .animation(.spring(response: 0.1), value: value)
                 }
             }
-            .frame(height: 32)
+            .frame(height: 28)
         }
         .frame(maxWidth: .infinity)
     }
@@ -486,20 +485,19 @@ struct SyncColorModeChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Image(systemName: mode.icon)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                 Text(mode.rawValue)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
             }
             .foregroundStyle(isSelected ? Color(red: 0.05, green: 0.05, blue: 0.10) : .white.opacity(0.55))
-            .padding(.horizontal, 12).padding(.vertical, 8)
+            .padding(.horizontal, 10).padding(.vertical, 7)
             .background(
                 Capsule().fill(isSelected ? mode.color : .white.opacity(0.06))
             )
             .overlay(
-                Capsule()
-                    .strokeBorder(isSelected ? .clear : .white.opacity(0.08), lineWidth: 1)
+                Capsule().strokeBorder(isSelected ? .clear : .white.opacity(0.08), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -517,40 +515,32 @@ struct SyncRoomPicker: View {
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("ROOMS")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.45))
                     .tracking(0.8)
                 Spacer()
                 if !engine.selectedRoomIDs.isEmpty {
                     Text("\(engine.selectedRoomIDs.count) selected")
-                        .font(.system(size: 11))
+                        .font(.system(size: 10))
                         .foregroundStyle(amber.opacity(0.65))
                 }
             }
 
             if rooms.isEmpty {
                 Text("No rooms loaded — open the Home tab first")
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.35))
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        // "All" button
+                    HStack(spacing: 6) {
                         let allSelected = rooms.allSatisfy { engine.selectedRoomIDs.contains($0.id) }
-                        syncRoomChip(
-                            name: "All",
-                            icon: "house.fill",
-                            selected: allSelected
-                        ) {
+                        syncRoomChip(name: "All", icon: "house.fill", selected: allSelected) {
                             withAnimation(.spring(response: 0.25)) {
-                                if allSelected {
-                                    engine.selectedRoomIDs.removeAll()
-                                } else {
-                                    engine.selectedRoomIDs = Set(rooms.map(\.id))
-                                }
+                                if allSelected { engine.selectedRoomIDs.removeAll() }
+                                else { engine.selectedRoomIDs = Set(rooms.map(\.id)) }
                             }
                         }
 
@@ -568,7 +558,6 @@ struct SyncRoomPicker: View {
                             }
                         }
                     }
-                    .padding(.vertical, 2)
                 }
             }
         }
@@ -576,18 +565,17 @@ struct SyncRoomPicker: View {
 
     private func syncRoomChip(name: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 11))
-                Text(name).font(.system(size: 12, weight: .medium))
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 10))
+                Text(name).font(.system(size: 11, weight: .medium))
             }
             .foregroundStyle(selected ? Color(red: 0.05, green: 0.05, blue: 0.10) : .white.opacity(0.6))
-            .padding(.horizontal, 11).padding(.vertical, 7)
+            .padding(.horizontal, 10).padding(.vertical, 6)
             .background(
                 Capsule().fill(selected ? amber : .white.opacity(0.06))
             )
             .overlay(
-                Capsule()
-                    .strokeBorder(selected ? .clear : .white.opacity(0.08), lineWidth: 1)
+                Capsule().strokeBorder(selected ? .clear : .white.opacity(0.08), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
