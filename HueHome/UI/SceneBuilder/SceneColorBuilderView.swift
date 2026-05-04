@@ -66,13 +66,14 @@ struct SceneColorBuilderView: View {
     // ── Computed ──────────────────────────────────────────────────
 
     private var canSave: Bool {
-        !sceneName.trimmingCharacters(in: .whitespaces).isEmpty && !lights.isEmpty
+        let name = sceneName.trimmingCharacters(in: .whitespaces)
+        return !name.isEmpty && name.count <= 32 && !lights.isEmpty
     }
 
-    /// True when ALL selected lights are color-capable.
+    /// True when ANY selected light is color-capable (show the pad).
     private var selectedSupportsColor: Bool {
         let selected = lights.filter { selectedLightIDs.contains($0.id) }
-        return !selected.isEmpty && selected.allSatisfy { $0.supportsColor }
+        return selected.contains { $0.supportsColor }
     }
 
     /// True when at least one selected light supports only color temp (no full color).
@@ -183,6 +184,12 @@ struct SceneColorBuilderView: View {
                         .foregroundStyle(.white)
                         .tint(amber)
                         .submitLabel(.done)
+                        .onChange(of: sceneName) { _, newValue in
+                            // Hue bridge limits scene names to 32 characters
+                            if newValue.count > 32 {
+                                sceneName = String(newValue.prefix(32))
+                            }
+                        }
 
                     if !sceneName.isEmpty {
                         Button {
@@ -194,6 +201,12 @@ struct SceneColorBuilderView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+
+            if sceneName.count > 28 {
+                Text("\(32 - sceneName.count) characters remaining")
+                    .font(.caption2)
+                    .foregroundStyle(sceneName.count >= 32 ? .red.opacity(0.7) : .white.opacity(0.35))
             }
         }
     }
@@ -390,6 +403,9 @@ struct SceneColorBuilderView: View {
         .onChange(of: currentBrightness) { _, newBri in
             updateLightChipsLive(hue: currentHue, saturation: currentSaturation, brightness: newBri)
         }
+        .onChange(of: currentHue) { _, newHue in
+            updateLightChipsLive(hue: newHue, saturation: currentSaturation, brightness: currentBrightness)
+        }
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -427,18 +443,54 @@ struct SceneColorBuilderView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.45))
 
-            GlassmorphicCard(isActive: true, glowColor: amber) {
-                BrightnessRow(
-                    brightness: displayBrightness,
-                    glowColor: amber,
-                    onCommit: { newBrightness in
-                        displayBrightness = newBrightness
-                        applyBrightnessToSelected(percent: newBrightness)
-                    }
-                )
-                .padding(.vertical, 12)
-            }
+            builderBrightnessSlider
         }
+    }
+
+    /// Custom brightness slider themed to match the builder.
+    private var builderBrightnessSlider: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let fillWidth = max(6, width * CGFloat(displayBrightness / 100))
+
+            ZStack(alignment: .leading) {
+                // Track background
+                Capsule()
+                    .fill(Color.white.opacity(0.08))
+                    .frame(height: 12)
+
+                // Filled portion — gradient from dark to bright
+                Capsule()
+                    .fill(LinearGradient(
+                        colors: [.white.opacity(0.15), .white.opacity(0.85)],
+                        startPoint: .leading, endPoint: .trailing
+                    ))
+                    .frame(width: fillWidth, height: 12)
+
+                // Thumb
+                let thumbX = fillWidth
+                Circle()
+                    .fill(.white)
+                    .frame(width: 24, height: 24)
+                    .shadow(color: .white.opacity(0.3), radius: 6)
+                    .position(x: max(12, min(thumbX, width - 12)), y: 16)
+            }
+            .frame(height: 32)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let raw = value.location.x / width * 100
+                        displayBrightness = min(100, max(1, raw))
+                    }
+                    .onEnded { _ in
+                        HapticManager.shared.heavy()
+                        applyBrightnessToSelected(percent: displayBrightness)
+                    }
+            )
+        }
+        .frame(height: 32)
+        .padding(.horizontal, 4)
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -633,8 +685,13 @@ struct SceneColorBuilderView: View {
         for light in lights where selectedLightIDs.contains(light.id) {
             if light.supportsColor, let x = light.colorX, let y = light.colorY {
                 try? await api.setLightColor(id: light.id, x: x, y: y)
+                try? await api.setLightBrightness(id: light.id, brightness: light.brightness)
             } else if light.supportsColorTemp, let mirek = light.colorTempMirek {
                 try? await api.setLightColorTemp(id: light.id, mirek: mirek)
+                try? await api.setLightBrightness(id: light.id, brightness: light.brightness)
+            } else {
+                // Dimmable-only lights: just set brightness
+                try? await api.setLightBrightness(id: light.id, brightness: light.brightness)
             }
             // Small stagger between lights
             try? await Task.sleep(for: .milliseconds(50))
