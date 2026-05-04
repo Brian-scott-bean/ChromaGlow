@@ -475,14 +475,15 @@ final class SyncModeEngine {
                   let client = orc.hueClient(for: room.bridgeID) else { continue }
             let capturedGlID = glID
             let capturedBri  = bri
-            let capturedXY   = xy
             Task.detached(priority: .userInitiated) { [weak self] in
                 do {
+                    // xy omitted: grouped_light rejects xy on mixed/non-color rooms.
+                    // Brightness-only flash is reliable across all bulb types.
                     try await client.setGroupedLightEffect(
                         id:         capturedGlID,
                         on:         true,
                         brightness: capturedBri,
-                        xy:         capturedXY,
+                        xy:         nil,
                         mirek:      nil,
                         duration:   0
                     )

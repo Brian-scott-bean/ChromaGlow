@@ -62,46 +62,50 @@ struct SyncModeView: View {
     // MARK: - Background (same pattern as EffectsView)
 
     private var ambientBackground: some View {
-        ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
+        GeometryReader { geo in
+            ZStack {
+                Color(red: 0.055, green: 0.055, blue: 0.08)
 
-            // Reactive glow when running
-            if let e = engine, e.isRunning {
-                Circle()
-                    .fill(RadialGradient(
-                        colors: [
-                            e.visualizer.glowColor.opacity(Double(e.visualizer.overallLevel) * 0.45),
-                            .clear
-                        ],
-                        center: .center, startRadius: 0, endRadius: 240
-                    ))
-                    .frame(width: 400)
-                    .offset(x: 80, y: -180)
-                    .blur(radius: 30)
-                    .animation(.easeOut(duration: 0.12), value: e.visualizer.overallLevel)
-
-                // Gaming transient flash
-                if e.activeEngineType == .gaming && e.gaming.isTransient {
+                // Reactive glow when running — pinned relative to screen size
+                if let e = engine, e.isRunning {
                     Circle()
                         .fill(RadialGradient(
-                            colors: [e.gaming.flashColor.accentColor.opacity(Double(e.gaming.transientIntensity) * 0.6), .clear],
-                            center: .center, startRadius: 0, endRadius: 300
+                            colors: [
+                                e.visualizer.glowColor.opacity(Double(e.visualizer.overallLevel) * 0.45),
+                                .clear
+                            ],
+                            center: .center, startRadius: 0, endRadius: 180
                         ))
-                        .frame(width: 600)
-                        .blur(radius: 40)
-                        .animation(.easeOut(duration: 0.08), value: e.gaming.transientIntensity)
-                }
-            }
+                        .frame(width: 320, height: 320)
+                        .position(x: geo.size.width * 0.85, y: geo.size.height * 0.15)
+                        .blur(radius: 30)
+                        .animation(.easeOut(duration: 0.12), value: e.visualizer.overallLevel)
 
-            // Static ambient orb
-            Circle()
-                .fill(RadialGradient(
-                    colors: [amber.opacity(0.08), .clear],
-                    center: .center, startRadius: 0, endRadius: 160
-                ))
-                .frame(width: 280)
-                .offset(x: -120, y: 200)
-                .blur(radius: 24)
+                    // Gaming transient flash — centered, contained to screen
+                    if e.activeEngineType == .gaming && e.gaming.isTransient {
+                        Circle()
+                            .fill(RadialGradient(
+                                colors: [e.gaming.flashColor.accentColor.opacity(Double(e.gaming.transientIntensity) * 0.55), .clear],
+                                center: .center, startRadius: 0, endRadius: 200
+                            ))
+                            .frame(width: geo.size.width, height: geo.size.width)
+                            .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                            .blur(radius: 30)
+                            .animation(.easeOut(duration: 0.08), value: e.gaming.transientIntensity)
+                    }
+                }
+
+                // Static ambient orb — bottom left, pinned to screen
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [amber.opacity(0.08), .clear],
+                        center: .center, startRadius: 0, endRadius: 140
+                    ))
+                    .frame(width: 240, height: 240)
+                    .position(x: geo.size.width * 0.15, y: geo.size.height * 0.75)
+                    .blur(radius: 24)
+            }
+            .clipped()
         }
         .ignoresSafeArea()
     }
