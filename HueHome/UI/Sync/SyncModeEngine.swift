@@ -69,9 +69,12 @@ final class SyncModeEngine {
 
     // MARK: Private — rate limiting
     private var lastSent: Date = .distantPast
-    private var restInterval: TimeInterval = 0.150   // 150ms = 6fps per room (bridge needs time to apply each command)
+    private var restInterval: TimeInterval = 0.150   // 150ms = 6fps per room
     private var consecutiveErrors = 0
-    private var lastSentBri: Double = -1              // track last sent value to skip redundant sends
+    private var lastSentBri: Double = -1             // skip sends when bri hasn't changed meaningfully
+    /// Peak follower: jumps instantly to loud levels, decays slowly back to 0.
+    /// 0.80 per 150ms call ≈ 2 seconds to decay from 100→ below 5%.
+    private var decayLevel: Double = 0
     /// Scale interval by room count so total bridge load stays constant.
     /// 1 room = 150ms, 2 rooms = 300ms, etc.
     private var sendInterval: TimeInterval {
@@ -166,7 +169,8 @@ final class SyncModeEngine {
         consecutiveErrors = 0
         restInterval = 0.150
         lastSent = .distantPast
-        lastSentBri = -1   // force first send of new session through delta check
+        lastSentBri = -1
+        decayLevel = 0  // reset peak follower
 
         log.info("Sync stopped (generation=\(self.generation))")
     }
@@ -354,14 +358,24 @@ final class SyncModeEngine {
         }
 
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
-        // Boost x2.5 so typical speech (overallLevel 0.05-0.4) maps to visible 12-100%.
-        let bri = min(100.0, Double(visualizer.overallLevel) * 250.0 * masterIntensity)
 
-        // Skip if brightness hasn't changed meaningfully (>8%) from last send.
-        // Eliminates chatter like 100→100→90→100 that fills the bridge's command queue.
-        guard abs(bri - lastSentBri) > 8.0 || lastSentBri < 0 else {
-            return
+        // Peak follower with slow decay:
+        // - Fast attack: if new level is higher, snap to it immediately
+        // - Slow decay: otherwise multiply by 0.80 per 150ms call (~2s to fade out)
+        // Result: lights spike instantly on loud sound, then drift back down naturally.
+        let rawLevel = Double(visualizer.overallLevel)
+        if rawLevel > decayLevel {
+            decayLevel = rawLevel
+        } else {
+            decayLevel = max(0, decayLevel * 0.80)
         }
+
+        guard decayLevel > 0.05 else { return }  // below threshold, let lights rest
+
+        let bri = min(100.0, decayLevel * 250.0 * masterIntensity)
+
+        // Skip if brightness hasn't changed meaningfully from last send (>5%).
+        guard abs(bri - lastSentBri) > 5.0 || lastSentBri < 0 else { return }
         lastSentBri = bri   // record optimistically — prevents duplicate sends even if HTTP fails
         let gen   = generation
 
