@@ -116,11 +116,9 @@ final class SyncModeEngine {
         }
 
         availableEntertainmentConfigs = allConfigs
-
-        // Auto-select first config if only one exists
-        if allConfigs.count == 1 && selectedEntertainmentConfig == nil {
-            selectedEntertainmentConfig = allConfigs.first
-        }
+        // Don't auto-select — user explicitly picks entertainment area vs rooms.
+        // Auto-selecting would silently route sends through DTLS instead of REST,
+        // making room-based sync appear broken.
     }
 
     // MARK: - Start / Stop
