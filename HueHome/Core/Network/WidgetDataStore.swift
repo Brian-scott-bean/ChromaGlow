@@ -2,7 +2,7 @@
 // CastChroma — Epic 5 / Widget
 //
 // Shared data layer between the main app and the widget extension.
-// Uses App Group UserDefaults (group.com.lightshade.app) so both processes
+// Uses App Group UserDefaults (group.com.huehome.pro) so both processes
 // can read and write without XPC or file-coordination overhead.
 //
 // WRITE path: DashboardViewModel → after every loadAll() success.
@@ -31,7 +31,7 @@ final class WidgetDataStore: @unchecked Sendable {
     static let shared = WidgetDataStore()
     private init() {}
 
-    private let group = "group.com.lightshade.app"
+    private let group = "group.com.huehome.pro"
     private var ud: UserDefaults? { UserDefaults(suiteName: group) }
 
     private enum Key {

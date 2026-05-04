@@ -1,7 +1,7 @@
 // WatchWidgetStore.swift
 // LightShadeWatch — Minimal App Group reader for the watch widget extension.
 // Mirrors WidgetDataStore but lives in the watch target (separate process).
-// Reads room snapshots written by the main iOS app via group.com.lightshade.app.
+// Reads room snapshots written by the main iOS app via group.com.huehome.pro.
 
 import Foundation
 
@@ -20,7 +20,7 @@ final class WatchWidgetStore {
     static let shared = WatchWidgetStore()
     private init() {}
 
-    private let suiteName = "group.com.lightshade.app"
+    private let suiteName = "group.com.huehome.pro"
     private var ud: UserDefaults? { UserDefaults(suiteName: suiteName) }
 
     var rooms: [WatchRoomSnapshot] {

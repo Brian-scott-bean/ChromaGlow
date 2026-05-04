@@ -7,7 +7,7 @@
 //   • accessoryCorner      — Mini icon + on-count text (watch-only)
 //   • accessoryInline      — Single line: "4 on · Relax" or "Living Room 85%"
 //
-// Data: reads from App Group (group.com.lightshade.app) written by the iOS app.
+// Data: reads from App Group (group.com.huehome.pro) written by the iOS app.
 // Refreshes every 15 minutes via timeline, or instantly when iOS app updates.
 
 import WidgetKit

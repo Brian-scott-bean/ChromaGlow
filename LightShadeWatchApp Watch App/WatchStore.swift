@@ -99,7 +99,7 @@ final class WatchStore: NSObject, ObservableObject {
     }
 
     // App Group shared with complication extension (watch-side container)
-    private var watchGroup: UserDefaults? { UserDefaults(suiteName: "group.com.lightshade.app") }
+    private var watchGroup: UserDefaults? { UserDefaults(suiteName: "group.com.huehome.pro") }
 
     private var bridgeIP: String? { UserDefaults.standard.string(forKey: CacheKey.bridgeIP) }
     private var token:    String? { UserDefaults.standard.string(forKey: CacheKey.token) }
@@ -274,7 +274,7 @@ extension WatchStore: WCSessionDelegate {
         if !token.isEmpty { UserDefaults.standard.set(token, forKey: "wc_token") }
 
         // Mirror into watch-side App Group so complications refresh immediately
-        let watchGroup = UserDefaults(suiteName: "group.com.lightshade.app")
+        let watchGroup = UserDefaults(suiteName: "group.com.huehome.pro")
         watchGroup?.set(roomsData, forKey: "hue_widget_rooms_v1")
         watchGroup?.set(Date(),    forKey: "hue_widget_updated_at")
         if !ip.isEmpty    { watchGroup?.set(ip,    forKey: "hue_widget_bridge_ip") }
