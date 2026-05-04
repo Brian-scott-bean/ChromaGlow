@@ -640,10 +640,14 @@ struct LightCard: View {
     }
 
     static func resolveGlowColor(for light: LightDisplayItem) -> Color {
+        // CT mode check first — explicit mode flag from bridge state
+        if light.isColorTempMode, let mirek = light.colorTempMirek {
+            return HueColorUtils.color(fromMirek: mirek)
+        }
         if light.supportsColor, let x = light.colorX, let y = light.colorY {
             return HueColorUtils.color(fromX: x, y: y, brightness: max(light.brightness, 50))
         }
-        if light.supportsColorTemp, let mirek = light.colorTempMirek {
+        if let mirek = light.colorTempMirek {
             return HueColorUtils.color(fromMirek: mirek)
         }
         return Color(red: 1.0, green: 0.76, blue: 0.2)
@@ -878,7 +882,13 @@ struct CompactLightCard: View {
         .onChange(of: light.colorX) { _, _ in
             withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = LightCard.resolveGlowColor(for: light) }
         }
+        .onChange(of: light.colorY) { _, _ in
+            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = LightCard.resolveGlowColor(for: light) }
+        }
         .onChange(of: light.colorTempMirek) { _, _ in
+            withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = LightCard.resolveGlowColor(for: light) }
+        }
+        .onChange(of: light.isColorTempMode) { _, _ in
             withAnimation(.easeInOut(duration: 0.4)) { localGlowColor = LightCard.resolveGlowColor(for: light) }
         }
     }

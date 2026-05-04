@@ -403,6 +403,7 @@ final class EffectsViewModel: ObservableObject {
                 LightDisplayItem(id: id, name: "Light", archetype: nil,
                                  isOn: true, brightness: 100,
                                  colorX: 0.32, colorY: 0.33,
+                                 supportsColor: true,
                                  colorTempMirek: 300, mirekMin: 153, mirekMax: 500)
             }
 

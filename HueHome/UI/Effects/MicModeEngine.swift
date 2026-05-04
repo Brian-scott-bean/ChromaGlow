@@ -88,12 +88,19 @@ final class MicModeEngine {
     }
 
     func stop() {
+        // 1. Immediately prevent further processing
+        isRunning   = false
+        // 2. Remove the audio tap and stop the engine
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
-        isRunning   = false
+        // 3. Deactivate audio session — releases mic hardware
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // 4. Zero out all levels
         barHeights  = Array(repeating: 0, count: 20)
+        sBars       = Array(repeating: 0, count: 20)
         bassLevel   = 0; midLevel = 0; highLevel = 0; overallLevel = 0
+        sBass       = 0; sMid     = 0; sHigh     = 0; sOverall     = 0
     }
 
     private func requestAndStart() async {
