@@ -1274,10 +1274,18 @@ final class UnifiedOrchestrator {
     /// roomsByBridge is synced afterward to keep SSE and loadAll consistent.
     private func updateRoom(_ id: String, isOn: Bool? = nil, brightness: Double? = nil) {
         var anyChanged = false
-        // Step 1: direct allRooms update — guaranteed @Observable notification
+        // Step 1a: direct allRooms update — guaranteed @Observable notification
         allRooms = allRooms.map { room in
             guard room.id == id else { return room }
             var updated = room
+            if let on  = isOn       { updated.isOn       = on;  anyChanged = true }
+            if let bri = brightness { updated.brightness = bri; anyChanged = true }
+            return updated
+        }
+        // Step 1b: also update allZones — zones use the same RoomDisplayItem type
+        allZones = allZones.map { zone in
+            guard zone.id == id else { return zone }
+            var updated = zone
             if let on  = isOn       { updated.isOn       = on;  anyChanged = true }
             if let bri = brightness { updated.brightness = bri; anyChanged = true }
             return updated
@@ -1291,6 +1299,14 @@ final class UnifiedOrchestrator {
             if let on  = isOn       { rooms[i].isOn       = on  }
             if let bri = brightness { rooms[i].brightness = bri }
             roomsByBridge[bridgeID] = rooms
+        }
+        // Step 3: sync zonesByBridge cache
+        for bridgeID in zonesByBridge.keys {
+            guard var zones = zonesByBridge[bridgeID],
+                  let i = zones.firstIndex(where: { $0.id == id }) else { continue }
+            if let on  = isOn       { zones[i].isOn       = on  }
+            if let bri = brightness { zones[i].brightness = bri }
+            zonesByBridge[bridgeID] = zones
         }
     }
 
