@@ -25,6 +25,7 @@
 		730F3B9C4A8D4110059DC631 /* SceneEditBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6C9A9397CEEFF6E1ECE8C8 /* SceneEditBar.swift */; };
 		20D48BFFBA68E425B8A696F6 /* SyncEngineProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43985F768FFF71B61A396C41 /* SyncEngineProtocol.swift */; };
 		DADBEE459E4F759FCCB8AEBD /* VisualizerEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */; };
+		AA1234BB5678CCDD00EEFF11 /* GamingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2345CC6789DDEE00FF0022 /* GamingEngine.swift */; };
 		02675208BF32B81876B29E75 /* SyncModeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */; };
 		79B2D82F96FC4476430B4F6A /* SyncModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF542C41EE24A79433CB5589 /* SyncModeView.swift */; };
 		17B38DAEE68E25F798E2F817 /* SceneDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23CB308132549DB8EABD0A0 /* SceneDisplayItem.swift */; };
@@ -222,6 +223,7 @@
 		0B6C9A9397CEEFF6E1ECE8C8 /* SceneEditBar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/RoomDetail/SceneEditBar.swift; sourceTree = "<group>"; };
 		43985F768FFF71B61A396C41 /* SyncEngineProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/SyncEngineProtocol.swift; sourceTree = "<group>"; };
 		ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/VisualizerEngine.swift; sourceTree = "<group>"; };
+		BB2345CC6789DDEE00FF0022 /* GamingEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/GamingEngine.swift; sourceTree = "<group>"; };
 		59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/SyncModeEngine.swift; sourceTree = "<group>"; };
 		EF542C41EE24A79433CB5589 /* SyncModeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/SyncModeView.swift; sourceTree = "<group>"; };
 		9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GlassmorphicCard.swift; path = HueHome/UI/Components/GlassmorphicCard.swift; sourceTree = "<group>"; };
@@ -617,6 +619,7 @@
 				0B6C9A9397CEEFF6E1ECE8C8 /* SceneEditBar.swift */,
 				43985F768FFF71B61A396C41 /* SyncEngineProtocol.swift */,
 				ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */,
+				BB2345CC6789DDEE00FF0022 /* GamingEngine.swift */,
 				59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */,
 				EF542C41EE24A79433CB5589 /* SyncModeView.swift */,
 			);
@@ -1040,6 +1043,7 @@
 				730F3B9C4A8D4110059DC631 /* SceneEditBar.swift in Sources */,
 				20D48BFFBA68E425B8A696F6 /* SyncEngineProtocol.swift in Sources */,
 				DADBEE459E4F759FCCB8AEBD /* VisualizerEngine.swift in Sources */,
+					AA1234BB5678CCDD00EEFF11 /* GamingEngine.swift in Sources */,
 				02675208BF32B81876B29E75 /* SyncModeEngine.swift in Sources */,
 				79B2D82F96FC4476430B4F6A /* SyncModeView.swift in Sources */,
 				2CBD48F48BAACBC512C084BA /* DeviceDisplayItem.swift in Sources */,

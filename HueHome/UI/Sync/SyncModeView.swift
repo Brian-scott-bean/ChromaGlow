@@ -79,6 +79,18 @@ struct SyncModeView: View {
                     .offset(x: 80, y: -180)
                     .blur(radius: 30)
                     .animation(.easeOut(duration: 0.12), value: e.visualizer.overallLevel)
+
+                // Gaming transient flash
+                if e.activeEngineType == .gaming && e.gaming.isTransient {
+                    Circle()
+                        .fill(RadialGradient(
+                            colors: [e.gaming.flashColor.accentColor.opacity(Double(e.gaming.transientIntensity) * 0.6), .clear],
+                            center: .center, startRadius: 0, endRadius: 300
+                        ))
+                        .frame(width: 600)
+                        .blur(radius: 40)
+                        .animation(.easeOut(duration: 0.08), value: e.gaming.transientIntensity)
+                }
             }
 
             // Static ambient orb
@@ -272,21 +284,28 @@ struct SyncModeView: View {
     private func controlsCard(engine: SyncModeEngine) -> some View {
         VStack(spacing: 16) {
 
-            // ── Color Mode ──────────────────────────────────
-            VStack(alignment: .leading, spacing: 10) {
-                sectionLabel("Color Mode")
-                HStack(spacing: 8) {
-                    ForEach(VisualizerColorMode.allCases) { mode in
-                        colorModeChip(mode: mode, isSelected: engine.visualizer.colorMode == mode) {
-                            withAnimation(.spring(response: 0.3)) {
-                                engine.visualizer.colorMode = mode
+            // ── Color Mode (Visualizer only) ──────────────────
+            if engine.activeEngineType == .visualizer {
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionLabel("Color Mode")
+                    HStack(spacing: 8) {
+                        ForEach(VisualizerColorMode.allCases) { mode in
+                            colorModeChip(mode: mode, isSelected: engine.visualizer.colorMode == mode) {
+                                withAnimation(.spring(response: 0.3)) {
+                                    engine.visualizer.colorMode = mode
+                                }
                             }
                         }
                     }
                 }
+                Divider().background(.white.opacity(0.08))
             }
 
-            Divider().background(.white.opacity(0.08))
+            // ── Gaming Controls ───────────────────────────────
+            if engine.activeEngineType == .gaming {
+                gamingControls(engine: engine)
+                Divider().background(.white.opacity(0.08))
+            }
 
             // ── Sensitivity ─────────────────────────────────
             sliderRow(
@@ -326,6 +345,63 @@ struct SyncModeView: View {
                         .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
+    }
+
+    // MARK: - Gaming Controls
+
+    private func gamingControls(engine: SyncModeEngine) -> some View {
+        VStack(spacing: 16) {
+
+            // Flash Color
+            VStack(alignment: .leading, spacing: 10) {
+                sectionLabel("Flash Color")
+                HStack(spacing: 8) {
+                    ForEach(GamingFlashColor.allCases) { color in
+                        let sel = engine.gaming.flashColor == color
+                        Button { engine.gaming.flashColor = color } label: {
+                            HStack(spacing: 5) {
+                                Circle().fill(color.accentColor).frame(width: 10, height: 10)
+                                Text(color.rawValue).font(.system(size: 12, weight: sel ? .semibold : .regular))
+                            }
+                            .foregroundStyle(sel ? .black : .white.opacity(0.6))
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(Capsule().fill(sel ? color.accentColor : .white.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            Divider().background(.white.opacity(0.08))
+
+            // Ambient Color
+            VStack(alignment: .leading, spacing: 10) {
+                sectionLabel("Ambient")
+                HStack(spacing: 8) {
+                    ForEach(GamingAmbientColor.allCases) { color in
+                        let sel = engine.gaming.ambientColor == color
+                        Button { engine.gaming.ambientColor = color } label: {
+                            Text(color.rawValue).font(.system(size: 12, weight: sel ? .semibold : .regular))
+                                .foregroundStyle(sel ? .black : .white.opacity(0.6))
+                                .padding(.horizontal, 12).padding(.vertical, 7)
+                                .background(Capsule().fill(sel ? color.accentColor : .white.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            Divider().background(.white.opacity(0.08))
+
+            // Spike Sensitivity
+            sliderRow(
+                label: "Spike Sensitivity",
+                value: Binding(get: { engine.gaming.sensitivity }, set: { engine.gaming.sensitivity = $0 }),
+                range: 1.2...3.0,
+                displayValue: String(format: "%.1fx", engine.gaming.sensitivity),
+                tint: Color(hue: 0.08, saturation: 0.9, brightness: 0.95)
+            )
+        }
     }
 
     // MARK: - Entertainment Config Picker

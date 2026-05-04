@@ -14,24 +14,28 @@ import SwiftUI
 /// should be included; new ones are added as they ship.
 enum SyncEngineType: String, CaseIterable, Identifiable {
     case visualizer = "Visualizer"
+    case gaming     = "Gaming"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
         case .visualizer: return "waveform.path.ecg"
+        case .gaming:     return "gamecontroller.fill"
         }
     }
 
     var description: String {
         switch self {
         case .visualizer: return "Frequency spectrum mapped to light color and brightness"
+        case .gaming:     return "Instant flash on sound spikes — perfect for games and action"
         }
     }
 
     var accentColor: Color {
         switch self {
         case .visualizer: return Color(hue: 0.75, saturation: 0.7, brightness: 0.95)
+        case .gaming:     return Color(hue: 0.08, saturation: 0.9, brightness: 0.95)
         }
     }
 }

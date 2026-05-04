@@ -47,6 +47,7 @@ final class SyncModeEngine {
 
     // MARK: Engines
     let visualizer = VisualizerEngine()
+    let gaming     = GamingEngine()
 
     // MARK: Room selection
     var selectedRoomIDs: Set<String> = []
@@ -99,6 +100,7 @@ final class SyncModeEngine {
     var activeEngine: SyncEngine {
         switch activeEngineType {
         case .visualizer: return visualizer
+        case .gaming:     return gaming
         }
     }
 
@@ -164,6 +166,8 @@ final class SyncModeEngine {
 
         // 7. Reset engine state
         activeEngine.reset()
+        gaming.reset()
+        visualizer.reset()
         transportMode = .rest
         entertainmentError = nil
         consecutiveErrors = 0
@@ -211,10 +215,14 @@ final class SyncModeEngine {
             self?.sendLightUpdate()
         }
 
-        // Audio callback: FFT on audio thread → lock-free write. No Task created.
+        // Audio callback: always process visualizer for bar UI,
+        // plus active engine when different.
         node.installTap(onBus: 0, bufferSize: bufferSize, format: fmt) { [weak self] buf, _ in
             guard let self, !self.stopFlag else { return }
-            _ = self.activeEngine.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
+            _ = self.visualizer.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
+            if self.activeEngineType != .visualizer {
+                _ = self.activeEngine.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
+            }
         }
 
         do {
@@ -306,7 +314,10 @@ final class SyncModeEngine {
         case .entertainment:
             sendStreamingUpdate()
         case .rest:
-            sendRESTUpdate()
+            switch activeEngineType {
+            case .visualizer: sendVisualizerRESTUpdate()
+            case .gaming:     sendGamingRESTUpdate()
+            }
         }
     }
 
@@ -316,7 +327,7 @@ final class SyncModeEngine {
         guard let entClient = entertainmentClient,
               let config = selectedEntertainmentConfig else {
             transportMode = .rest
-            sendRESTUpdate()
+            sendVisualizerRESTUpdate()
             return
         }
 
@@ -335,16 +346,15 @@ final class SyncModeEngine {
         }
     }
 
-    // MARK: REST Fallback (13fps, fire-and-forget)
+    // MARK: REST — Visualizer (13fps, fire-and-forget)
     //
     // Simple and proven:
-    // 1. Rate limiter (75ms / 13fps) prevents over-sending
+    // 1. Rate limiter (150ms) prevents over-sending
     // 2. Fire-and-forget — no await on critical path
     // 3. Generation counter — zombie Tasks are discarded
     // 4. duration: 0 — instant, no transition animation
-    // 5. on: true always — brightness floor handles silence
 
-    private func sendRESTUpdate() {
+    private func sendVisualizerRESTUpdate() {
         guard !selectedRoomIDs.isEmpty, let orc = orchestrator else {
             log.warning("SYNC REST: skip — selectedRoomIDs=\(self.selectedRoomIDs.count) orc=\(self.orchestrator != nil)")
             return
@@ -416,6 +426,67 @@ final class SyncModeEngine {
                             self.restInterval = min(0.15, self.restInterval + 0.025)
                             self.log.info("REST backoff → \(Int(self.restInterval * 1000))ms")
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: REST — Gaming (flash on transient, ambient between spikes)
+
+    private func sendGamingRESTUpdate() {
+        guard !selectedRoomIDs.isEmpty, let orc = orchestrator else { return }
+        let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
+        guard !rooms.isEmpty else { return }
+
+        // Tick gaming engine to update transient state
+        gaming.tick()
+
+        let gen = generation
+        let isTransient = gaming.isTransient
+        let bri: Double
+        let xy: (Double, Double)
+
+        if isTransient {
+            bri = gaming.flashBrightness * masterIntensity
+            xy  = gaming.flashColor.xy
+        } else {
+            guard let ambXY = gaming.ambientColor.xy else { return }  // .off
+            bri = gaming.ambientBrightness * masterIntensity
+            xy  = ambXY
+        }
+
+        guard bri > 1.0 else { return }
+        guard abs(bri - lastSentBri) > 3.0 || isTransient else { return }
+        lastSentBri = bri
+
+        log.info("GAMING REST: bri=\(bri, format: .fixed(precision: 1)) transient=\(isTransient) rooms=\(rooms.count)")
+
+        for room in rooms {
+            guard let glID   = room.groupedLightID,
+                  let client = orc.hueClient(for: room.bridgeID) else { continue }
+            let capturedGlID = glID
+            let capturedBri  = bri
+            let capturedXY   = xy
+            Task.detached(priority: .userInitiated) { [weak self] in
+                do {
+                    try await client.setGroupedLightEffect(
+                        id:         capturedGlID,
+                        on:         true,
+                        brightness: capturedBri,
+                        xy:         capturedXY,
+                        mirek:      nil,
+                        duration:   0
+                    )
+                    await MainActor.run { [weak self] in
+                        guard let self, self.generation == gen else { return }
+                        self.consecutiveErrors = 0
+                        self.restInterval = 0.150
+                    }
+                } catch {
+                    await MainActor.run { [weak self] in
+                        guard let self, self.generation == gen else { return }
+                        self.consecutiveErrors += 1
                     }
                 }
             }
