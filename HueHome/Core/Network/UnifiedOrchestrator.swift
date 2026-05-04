@@ -835,33 +835,36 @@ final class UnifiedOrchestrator {
         }
         log.info("Automation executing effect '\(effect.name)' on all rooms")
 
+        let capturedStrategy = effect.strategy
         await withTaskGroup(of: Void.self) { group in
             for (bridgeID, roomItems) in roomsByBridge {
                 guard let client = clients[bridgeID] else { continue }
                 for room in roomItems {
                     guard let glID = room.groupedLightID else { continue }
+                    let capturedClient = client
+                    let capturedGLID = glID
                     group.addTask {
                         // Fetch individual light IDs so we can apply per-light native effects
-                        let lightIDs = (try? await client.fetchLightIDsForGroup(groupedLightID: glID)) ?? []
+                        let lightIDs = (try? await capturedClient.fetchLightIDsForGroup(groupedLightID: capturedGLID)) ?? []
                         if lightIDs.isEmpty {
                             // Fallback: turn on via grouped light at comfortable brightness
-                            try? await client.setGroupedLightEffect(
-                                id: glID, on: true, brightness: 70, xy: nil, mirek: nil, duration: 400
+                            try? await capturedClient.setGroupedLightEffect(
+                                id: capturedGLID, on: true, brightness: 70, xy: nil, mirek: nil, duration: 400
                             )
                         } else {
                             // Apply native effect per light (bridgeNative strategy)
-                            if case .bridgeNative(let effectName) = effect.strategy {
+                            if case .bridgeNative(let effectName) = capturedStrategy {
                                 await withTaskGroup(of: Void.self) { inner in
                                     for lightID in lightIDs {
                                         inner.addTask {
-                                            try? await client.setLightNativeEffect(id: lightID, effect: effectName)
+                                            try? await capturedClient.setLightNativeEffect(id: lightID, effect: effectName)
                                         }
                                     }
                                 }
                             } else {
                                 // oneShot / gradual: apply as brightness+CT preset
-                                try? await client.setGroupedLightEffect(
-                                    id: glID, on: true, brightness: 70, xy: nil, mirek: 300, duration: 400
+                                try? await capturedClient.setGroupedLightEffect(
+                                    id: capturedGLID, on: true, brightness: 70, xy: nil, mirek: 300, duration: 400
                                 )
                             }
                         }
@@ -1524,7 +1527,7 @@ final class UnifiedOrchestrator {
         guard let client = clients[bridgeID] else {
             throw HueAPIError.missingCredentials
         }
-        let actions: [[String: Any]] = lights.map { light in
+        nonisolated(unsafe) let actions: [[String: Any]] = lights.map { light in
             var action: [String: Any] = ["on": ["on": light.isOn]]
             if light.isOn {
                 action["dimming"] = ["brightness": max(1, min(100, light.brightness))]

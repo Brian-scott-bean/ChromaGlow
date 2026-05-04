@@ -66,21 +66,29 @@ final class VisualizerEngine: SyncEngine {
         var realp = [Float](repeating: 0, count: halfN)
         var imagp = [Float](repeating: 0, count: halfN)
         windowed.withUnsafeBufferPointer { wBuf in
-            wBuf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: halfN) { cPtr in
-                var split = DSPSplitComplex(realp: &realp, imagp: &imagp)
-                vDSP_ctoz(cPtr, 2, &split, 1, vDSP_Length(halfN))
+            realp.withUnsafeMutableBufferPointer { rBuf in
+                imagp.withUnsafeMutableBufferPointer { iBuf in
+                    var split = DSPSplitComplex(realp: rBuf.baseAddress!, imagp: iBuf.baseAddress!)
+                    wBuf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: halfN) { cPtr in
+                        vDSP_ctoz(cPtr, 2, &split, 1, vDSP_Length(halfN))
+                    }
+                }
             }
         }
 
         // FFT
         guard let setup = vDSP_create_fftsetup(log2n, FFTRadix(FFT_RADIX2)) else { return .idle }
         defer { vDSP_destroy_fftsetup(setup) }
-        var split = DSPSplitComplex(realp: &realp, imagp: &imagp)
-        vDSP_fft_zrip(setup, &split, 1, log2n, FFTDirection(FFT_FORWARD))
 
         // Magnitudes
         var mags = [Float](repeating: 0, count: halfN)
-        vDSP_zvabs(&split, 1, &mags, 1, vDSP_Length(halfN))
+        realp.withUnsafeMutableBufferPointer { rBuf in
+            imagp.withUnsafeMutableBufferPointer { iBuf in
+                var split = DSPSplitComplex(realp: rBuf.baseAddress!, imagp: iBuf.baseAddress!)
+                vDSP_fft_zrip(setup, &split, 1, log2n, FFTDirection(FFT_FORWARD))
+                vDSP_zvabs(&split, 1, &mags, 1, vDSP_Length(halfN))
+            }
+        }
         var scale: Float = 2.0 / Float(fftN)
         vDSP_vsmul(mags, 1, &scale, &mags, 1, vDSP_Length(halfN))
 

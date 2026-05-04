@@ -615,11 +615,10 @@ struct DashboardView: View {
     }
 
     private var nextAutomation: (automation: AppAutomation, date: Date)? {
-        let descriptor = FetchDescriptor<AppAutomation>(
-            predicate: #Predicate { $0.isEnabled }
-        )
-        guard let automations = try? modelContext.fetch(descriptor),
-              !automations.isEmpty else { return nil }
+        let descriptor = FetchDescriptor<AppAutomation>()
+        guard let allAutomations = try? modelContext.fetch(descriptor) else { return nil }
+        let automations = allAutomations.filter(\.isEnabled)
+        guard !automations.isEmpty else { return nil }
 
         let now      = Date()
         let calendar = Calendar.current
