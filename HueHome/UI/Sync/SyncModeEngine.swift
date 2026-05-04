@@ -69,9 +69,15 @@ final class SyncModeEngine {
 
     // MARK: Private — rate limiting
     private var lastSent: Date = .distantPast
-    private var restInterval: TimeInterval = 0.075   // 75ms = 13fps
+    private var restInterval: TimeInterval = 0.075   // 75ms = 13fps per room
     private var consecutiveErrors = 0
-    private var sendInterval: TimeInterval { transportMode == .entertainment ? 0.04 : restInterval }
+    /// Scale interval by room count so total bridge load stays constant.
+    /// 1 room = 75ms, 2 rooms = 150ms, 3 rooms = 225ms, etc.
+    private var sendInterval: TimeInterval {
+        if transportMode == .entertainment { return 0.04 }
+        let roomCount = max(1, selectedRoomIDs.count)
+        return restInterval * Double(roomCount)
+    }
 
     // MARK: Private — diagnostic throttle (~1 log/sec)
     private var _diagCounter: Int = 0
@@ -338,13 +344,18 @@ final class SyncModeEngine {
             return
         }
 
-        guard visualizer.overallLevel > 0.001 else {
-            log.info("SYNC REST: skip — overallLevel too low (\(self.visualizer.overallLevel, format: .fixed(precision: 4)))")
+        // Ignore ambient noise below 5% — prevents lights dimming on mic start.
+        // Room noise typically registers as 0.01–0.04 overallLevel.
+        guard visualizer.overallLevel > 0.05 else {
+            log.info("SYNC REST: skip — ambient noise (\(self.visualizer.overallLevel, format: .fixed(precision: 4)))")
             return
         }
 
         let rooms = orc.allRooms.filter { selectedRoomIDs.contains($0.id) }
-        let bri   = max(2.0, Double(visualizer.overallLevel) * 100.0 * masterIntensity)
+        // Floor at 50% — sync effect is brightness PULSING between 50-100%.
+        // 20% floor was too dim and made lights appear off between beats.
+        let rawBri = Double(visualizer.overallLevel) * 100.0 * masterIntensity
+        let bri    = max(50.0, rawBri)
         let gen   = generation
 
         log.info("SYNC REST: SENDING bri=\(bri, format: .fixed(precision: 1)) rooms=\(rooms.count) selectedIDs=\(self.selectedRoomIDs) gen=\(gen)")
