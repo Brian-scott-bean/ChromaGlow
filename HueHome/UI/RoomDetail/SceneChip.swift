@@ -82,8 +82,9 @@ struct RoomSceneChip: View {
         .accessibilityLabel(Text("\(scene.name) scene\(scene.isActive ? ", active" : "")"))
         .accessibilityHint(Text(isActivating ? "Activating…" : "Tap to activate"))
         // Press + release spring animation
+        // minimumDistance:10 prevents this from eating the horizontal scroll gesture
         .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
+            DragGesture(minimumDistance: 10)
                 .onChanged { _ in
                     withAnimation(.spring(response: 0.18, dampingFraction: 0.6)) {
                         isPressed = true

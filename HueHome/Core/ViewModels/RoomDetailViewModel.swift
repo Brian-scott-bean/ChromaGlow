@@ -605,16 +605,25 @@ final class RoomDetailViewModel {
                 guard let idx = arr.firstIndex(where: { $0.id == fresh.id }) else { continue }
                 let newOn = fresh.on.on
                 let newBri = fresh.dimming?.brightness ?? arr[idx].brightness
-                var newColorX = arr[idx].colorX
-                var newColorY = arr[idx].colorY
-                var newMirek  = arr[idx].colorTempMirek
 
-                if let xy = fresh.color?.xy {
+                // Determine color mode: if mirek is non-nil, the light is in
+                // color-temperature mode (e.g. Relax/Energize scenes).
+                // If mirek is nil, the light is in color mode — use xy.
+                var newColorX: Double? = arr[idx].colorX
+                var newColorY: Double? = arr[idx].colorY
+                var newMirek:  Int?    = arr[idx].colorTempMirek
+
+                if let mirek = fresh.color_temperature?.mirek {
+                    // Light is in CT mode — use mirek, clear xy so resolveGlowColor
+                    // falls through to the mirek path for accurate warm/cool rendering
+                    newMirek  = mirek
+                    newColorX = nil
+                    newColorY = nil
+                } else if let xy = fresh.color?.xy {
+                    // Light is in color mode — use xy, clear mirek
                     newColorX = xy.x
                     newColorY = xy.y
-                }
-                if let mirek = fresh.color_temperature?.mirek {
-                    newMirek = mirek
+                    newMirek  = nil
                 }
 
                 if arr[idx].isOn != newOn || arr[idx].brightness != newBri ||
@@ -770,10 +779,13 @@ final class RoomDetailViewModel {
             if let color = update.color {
                 arr[idx].colorX = color.xy.x
                 arr[idx].colorY = color.xy.y
+                arr[idx].colorTempMirek = nil  // color mode: clear CT so resolveGlowColor uses xy
                 changed = true
             }
-            if let ct = update.colorTemp {
-                arr[idx].colorTempMirek = ct.mirek
+            if let ct = update.colorTemp, let mirek = ct.mirek {
+                arr[idx].colorTempMirek = mirek
+                arr[idx].colorX = nil  // CT mode: clear xy so resolveGlowColor uses mirek
+                arr[idx].colorY = nil
                 changed = true
             }
         }
