@@ -34,9 +34,9 @@
 		<string>_hue._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>CastChroma needs local network access to discover your Philips Hue Bridge via mDNS.</string>
+	<string>ChromaGlow needs local network access to discover your Philips Hue Bridge via mDNS.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>CastChroma uses your microphone to react your lights to music and sound in real time.</string>
+	<string>ChromaGlow uses your microphone to react your lights to music and sound in real time.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
