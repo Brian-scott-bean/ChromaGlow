@@ -10,7 +10,19 @@
 ## Project Location
 - **Path:** `/Users/brianbean/Desktop/huehome-pro-v0.3.0/`
 - **Xcode project:** `HueHome.xcodeproj`
-- **Git tags:** v0.1.0 → v0.12.1-room-detail-polish
+- **Git tags:** v0.1.0 → v0.13.0-sync-mode-phase1a
+
+## v0.13.0 — Sync Mode Phase 1A (Priority 2)
+- **Architecture:** Introduced `SyncEngine` protocol for pluggable reactive engines. One shared `AVAudioEngine` tap dispatches audio buffers to the active engine. New files in `HueHome/UI/Sync/`:
+  - `SyncEngineProtocol.swift` — protocol, output struct, engine type enum, color modes
+  - `VisualizerEngine.swift` — 1:1 port of FFT pipeline from MicModeEngine
+  - `SyncModeEngine.swift` — shared audio session, engine dispatch, rate-limited light sender
+  - `SyncModeView.swift` — premium glassmorphic UI with engine selector, controls card, visualizer
+- **Tab Rename:** `.mic` → `.sync`, icon `waveform.and.mic` → `waveform`, label "Mic" → "Sync"
+- **UI Overhaul:** SyncModeView matches CastChroma design language — `.ultraThinMaterial` cards, amber accents, time-aware ambient orb, gradient borders, `LinearGradient` start/stop button. New master intensity slider.
+- **Deleted:** `MicModeEngine.swift`, `MicModeView.swift` — fully replaced by Sync/ directory.
+- **Color modes** (Reactive, Pulse, Warm, Cool) preserved as sub-options within VisualizerEngine.
+
 
 ## v0.12.1 — Room Detail Polish (Priority 1)
 - **Scene Edit Mode:** Per-section Select/Done on SCENES strip. Multi-select with animated checkmark overlays, dimmed unselected chips. New `SceneEditBar` floating toolbar: All/None toggle, Edit (single-select → opens SceneColorBuilder in edit mode), Delete (batch with confirmation alert). Full optimistic update + rollback.
