@@ -25,11 +25,14 @@ struct StudioView: View {
     // ── Room picker ────────────────────────────────────────
     @State private var showRoomSheet = false
     @State private var dragAxisLocked: Axis? = nil
-    @State private var dragRoomSteps: Int = 0        // accumulated steps during drag
+    @State private var dragRoomSteps: Int = 0
     @State private var slideDirection: Edge = .trailing
 
     // ── Deck paging ───────────────────────────────────────
     @State private var currentDeck: Int = 0  // 0 = Effects, 1 = Live
+
+    // ── Param sheet ───────────────────────────────────────
+    @State private var showParamSheet = false
 
     // ── Performance ───────────────────────────────────────
     @State private var blurReady = false  // deferred to avoid first-frame GPU hitch
@@ -101,7 +104,9 @@ struct StudioView: View {
 
     private func computeMixerHeight() -> CGFloat {
         guard let card = allCards.first(where: { $0.id == vm.runningCardID }) else { return 0 }
-        return CGFloat(80 + card.params.count * 56)
+        let essentialCount = card.params.filter { $0.tier == .essential }.count
+        // Header (60) + essential sliders (56 each) + chevron row (36) + padding
+        return CGFloat(60 + essentialCount * 56 + 36 + 16)
     }
 
     private var allCards: [StudioCard] {
@@ -371,23 +376,52 @@ struct StudioView: View {
                     .frame(height: 0.5)
                     .padding(.horizontal, HueSpacing.screenH)
 
-                // ── Parameter sliders ────────────────────────
-                if !card.params.isEmpty {
+                // ── Essential parameter sliders ──────────────
+                let essentialParams = card.params.filter { $0.tier == .essential }
+                if !essentialParams.isEmpty {
                     VStack(spacing: HueSpacing.md) {
-                        ForEach(card.params) { param in
-                            StudioParamRow(param: param, vm: vm)
+                        ForEach(essentialParams) { param in
+                            StudioParamRow(param: param, cardID: card.id, vm: vm)
                         }
                     }
                     .padding(.horizontal, HueSpacing.screenH)
                     .padding(.top, HueSpacing.md)
-                    .padding(.bottom, HueSpacing.sm)
                 }
+
+                // ── More params chevron ──────────────────────
+                let advancedCount = card.params.filter { $0.tier != .essential }.count
+                if advancedCount > 0 {
+                    Button {
+                        showParamSheet = true
+                        HapticManager.shared.light()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("\(advancedCount) more")
+                                .font(.system(size: 11, weight: .medium))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .foregroundStyle(.white.opacity(0.45))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // ── Param sheet (inside if-let for unwrapped card) ──
+                Color.clear.frame(height: 0)
+                    .sheet(isPresented: $showParamSheet) {
+                        StudioParamSheet(card: card, vm: vm)
+                            .presentationDetents([.medium, .large])
+                            .presentationDragIndicator(.visible)
+                            .presentationBackgroundInteraction(.enabled)
+                    }
             }
         }
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
         .padding(.horizontal, HueSpacing.sm)
-        .id(vm.runningCardID)  // forces cross-fade on effect switch
+        .id(vm.runningCardID)
         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
     }
 }
@@ -496,6 +530,7 @@ struct StudioCardButtonStyle: ButtonStyle {
 struct StudioParamRow: View {
 
     let param: StudioParam
+    let cardID: String
     @Bindable var vm: StudioViewModel
 
     var body: some View {
@@ -516,21 +551,22 @@ struct StudioParamRow: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.60))
                 Spacer()
-                Text("\(Int(vm.paramValues[param.id] ?? param.defaultValue))")
+                Text("\(Int(vm.paramValue(for: cardID, paramID: param.id, default: param.defaultValue)))")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.40))
             }
             Slider(
                 value: Binding(
-                    get: { vm.paramValues[param.id] ?? param.defaultValue },
-                    set: { vm.paramValues[param.id] = $0 }
+                    get: { vm.paramValue(for: cardID, paramID: param.id, default: param.defaultValue) },
+                    set: { vm.setParamValue(for: cardID, paramID: param.id, value: $0) }
                 ),
                 in: min...max
             )
             .tint(HuePalette.amber)
-            .onChange(of: vm.paramValues[param.id]) { _, newValue in
-                guard param.id == "brightness", let brightness = newValue else { return }
-                Task { await vm.sendBrightness(brightness) }
+            .onChange(of: vm.paramValues[cardID]?[param.id]) { _, newValue in
+                guard let value = newValue else { return }
+                // Send live updates for bridge-controllable params
+                vm.sendParam(cardID: cardID, paramID: param.id, value: value)
             }
         }
     }
@@ -543,14 +579,14 @@ struct StudioParamRow: View {
             Spacer()
             HStack(spacing: 8) {
                 ForEach(StudioViewModel.presetColors, id: \.self) { color in
-                    let isActive = vm.paramColors[param.id] == color
+                    let isActive = vm.paramColor(for: cardID, paramID: param.id) == color
                     Circle()
                         .fill(color)
                         .frame(width: 26, height: 26)
                         .overlay(Circle().strokeBorder(.white, lineWidth: isActive ? 2 : 0))
                         .onTapGesture {
                             withAnimation(HueAnimation.fast) {
-                                vm.paramColors[param.id] = color
+                                vm.setParamColor(for: cardID, paramID: param.id, color: color)
                             }
                         }
                 }
@@ -565,11 +601,88 @@ struct StudioParamRow: View {
                 .foregroundStyle(.white)
             Spacer()
             Toggle("", isOn: Binding(
-                get: { vm.paramValues[param.id].map { $0 > 0.5 } ?? false },
-                set: { vm.paramValues[param.id] = $0 ? 1 : 0 }
+                get: { vm.paramValue(for: cardID, paramID: param.id, default: 0) > 0.5 },
+                set: { vm.setParamValue(for: cardID, paramID: param.id, value: $0 ? 1 : 0) }
             ))
             .tint(HuePalette.amber)
             .labelsHidden()
+        }
+    }
+}
+
+// MARK: - StudioParamSheet
+//
+// Full parameter sheet with sections: Essential, Color, Advanced.
+// Presented as a half-sheet from the mixer tray chevron.
+
+struct StudioParamSheet: View {
+
+    let card: StudioCard
+    @Bindable var vm: StudioViewModel
+
+    private var essentialParams: [StudioParam] { card.params.filter { $0.tier == .essential } }
+    private var colorParams: [StudioParam]     { card.params.filter { $0.tier == .color } }
+    private var advancedParams: [StudioParam]   { card.params.filter { $0.tier == .advanced } }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: HueSpacing.lg) {
+                    // ── Essential ─────────────────────────────
+                    if !essentialParams.isEmpty {
+                        paramSection(title: "ESSENTIAL", params: essentialParams)
+                    }
+
+                    // ── Color ────────────────────────────────
+                    if !colorParams.isEmpty {
+                        paramSection(title: "COLOR", params: colorParams)
+                    }
+
+                    // ── Advanced ─────────────────────────────
+                    if !advancedParams.isEmpty {
+                        paramSection(title: "ADVANCED", params: advancedParams)
+                    }
+
+                    // ── Stop button ──────────────────────────
+                    Button {
+                        Task { await vm.stop(card) }
+                        HapticManager.shared.medium()
+                    } label: {
+                        HStack {
+                            Image(systemName: "stop.fill")
+                            Text("Stop \(card.name)")
+                                .fontWeight(.semibold)
+                        }
+                        .foregroundStyle(HuePalette.Noir.destructive)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: HueRadius.lg)
+                                .fill(HuePalette.Noir.destructive.opacity(0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, HueSpacing.sm)
+                }
+                .padding(HueSpacing.screenH)
+            }
+            .navigationTitle(card.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func paramSection(title: String, params: [StudioParam]) -> some View {
+        VStack(alignment: .leading, spacing: HueSpacing.md) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.35))
+                .tracking(0.8)
+
+            ForEach(params) { param in
+                StudioParamRow(param: param, cardID: card.id, vm: vm)
+            }
         }
     }
 }

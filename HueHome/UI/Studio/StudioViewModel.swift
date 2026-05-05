@@ -28,7 +28,14 @@ struct StudioParam: Identifiable {
     let label: String
     let kind: StudioParamKind
     let defaultValue: Double
+    let tier: ParamTier
     var displayValue: String { "\(Int(defaultValue))" }
+
+    enum ParamTier: String {
+        case essential  // Always visible in compact mixer tray
+        case color      // Color section of param sheet
+        case advanced   // Advanced section of param sheet
+    }
 }
 
 enum StudioParamKind {
@@ -38,16 +45,9 @@ enum StudioParamKind {
 }
 
 enum StudioStrategy {
-    // Bridge-native: persists on bridge even after app closes.
-    // colorloop/no_effect → grouped_light endpoint (supported natively).
-    // candle/fire/sparkle/prism/opal/glisten → per-light calls (grouped_light
-    // silently ignores the `effects` field for these; only individual light
-    // resources support the full SupportedEffects enum).
     case bridgeNative(effect: String)
-    // App-driven: loops in foreground, uses EffectsEngine/SyncEngine internally
     case appDriven(engineKey: String)
 
-    /// Effects that grouped_light natively supports via its own `effects` schema.
     static let groupedLightNativeEffects: Set<String> = ["colorloop", "no_effect"]
 }
 
@@ -61,9 +61,10 @@ final class StudioViewModel {
     var selectedCard: StudioCard?      = nil
     var runningCardID: String?         = nil
 
-    // ── Param values (keyed by param.id) ─────────────────────
-    var paramValues:  [String: Double] = [:]
-    var paramColors:  [String: Color]  = [:]
+    // ── Param values (namespaced: cardID → paramID → value) ──
+    // Composition-ready: each card gets its own param namespace.
+    var paramValues:  [String: [String: Double]] = [:]
+    var paramColors:  [String: [String: Color]]  = [:]
 
     // ── Engine reference (set in configure()) ─────────────────
     private weak var orchestrator: UnifiedOrchestrator?
@@ -89,10 +90,35 @@ final class StudioViewModel {
     @MainActor
     func configure(orchestrator: UnifiedOrchestrator) {
         self.orchestrator = orchestrator
-        // Auto-select first room if only one bridge/room available
         if selectedRoom == nil, let first = orchestrator.allRooms.first {
             selectedRoom = first
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Param Access (composition-ready)
+    // ──────────────────────────────────────────────
+
+    /// Read a param value for a specific card, falling back to the param's default.
+    func paramValue(for cardID: String, paramID: String, default defaultVal: Double) -> Double {
+        paramValues[cardID]?[paramID] ?? defaultVal
+    }
+
+    /// Write a param value for a specific card.
+    func setParamValue(for cardID: String, paramID: String, value: Double) {
+        if paramValues[cardID] == nil { paramValues[cardID] = [:] }
+        paramValues[cardID]?[paramID] = value
+    }
+
+    /// Read a param color for a specific card.
+    func paramColor(for cardID: String, paramID: String) -> Color? {
+        paramColors[cardID]?[paramID]
+    }
+
+    /// Write a param color for a specific card.
+    func setParamColor(for cardID: String, paramID: String, color: Color) {
+        if paramColors[cardID] == nil { paramColors[cardID] = [:] }
+        paramColors[cardID]?[paramID] = color
     }
 
     // ──────────────────────────────────────────────
@@ -129,24 +155,13 @@ final class StudioViewModel {
             await stop(runningCard)
         }
 
-        let brightness = paramValues["brightness"] ?? 70
+        let brightness = paramValue(for: card.id, paramID: "brightness", default: 70)
 
         // ── Ensure lights are on first ──────────────────────────────
-        // Bridge ignores effects on lights that are off.
         try? await api.setGroupedLight(id: groupedLightID, on: true)
 
         switch card.strategy {
         case .bridgeNative(let effectName):
-            // ── Hybrid API strategy ──────────────────────────────────────────
-            // grouped_light only supports colorloop + no_effect in its effects
-            // schema. The richer effects (candle, fire, sparkle, prism, opal,
-            // glisten) are only supported by individual light resources.
-            // The bridge returns HTTP 200 for grouped_light + complex effect
-            // but silently ignores the field — nothing happens.
-            //
-            // Fix: use grouped_light for colorloop; per-light for everything
-            // else. Swallow per-light 400s (unsupported effect on that bulb
-            // model) so one incompatible bulb doesn't kill the whole room.
             if StudioStrategy.groupedLightNativeEffects.contains(effectName) {
                 try? await api.setGroupedLightNativeEffect(id: groupedLightID, effect: effectName)
             } else {
@@ -158,8 +173,6 @@ final class StudioViewModel {
                 await withTaskGroup(of: Void.self) { group in
                     for id in lightIDs {
                         group.addTask {
-                            // try? swallows 400 json-schema errors for bulbs
-                            // that don't support this effect (e.g. white-only).
                             try? await api.setLightNativeEffect(id: id, effect: effectName)
                         }
                     }
@@ -173,11 +186,14 @@ final class StudioViewModel {
             statusMessage = "'\(card.name)' running on bridge — persists after closing ✓"
 
         case .appDriven(let engineKey):
+            // Flatten namespaced params for engine compatibility
+            let flatValues = paramValues[card.id] ?? [:]
+            let flatColors = paramColors[card.id] ?? [:]
             await orchestrator.startStudioMode(
                 key: engineKey,
                 room: room,
-                params: paramValues,
-                colors: paramColors
+                params: flatValues,
+                colors: flatColors
             )
             runningCardID = card.id
             statusMessage = "'\(card.name)' running"
@@ -198,7 +214,6 @@ final class StudioViewModel {
             await orchestrator.stopStudioMode()
         }
 
-        // Turn lights off — symmetrical with apply() which turns them on
         try? await api.setGroupedLight(id: groupedLightID, on: false)
 
         await MainActor.run {
@@ -211,14 +226,14 @@ final class StudioViewModel {
     // MARK: - Live Param Updates
     // ──────────────────────────────────────────────
 
-    private var brightnessTask: Task<Void, Never>?
+    private var paramTask: Task<Void, Never>?
 
-    /// Debounced brightness update — avoids hammering the bridge on every
-    /// slider tick. Waits 150ms after last change, then sends one PUT.
+    /// Debounced param update — dispatches to the correct API call based on param ID.
+    /// Waits 150ms after last change, then sends one PUT.
     @MainActor
-    func sendBrightness(_ brightness: Double) {
-        brightnessTask?.cancel()
-        brightnessTask = Task {
+    func sendParam(cardID: String, paramID: String, value: Double) {
+        paramTask?.cancel()
+        paramTask = Task {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
 
@@ -227,7 +242,21 @@ final class StudioViewModel {
                   let orchestrator,
                   let api = orchestrator.hueClient(for: room.bridgeID) else { return }
 
-            try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: brightness)
+            switch paramID {
+            case "brightness":
+                try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: value)
+            case "warmth":
+                // mirek range: 153 (cool) – 500 (warm)
+                let mirek = Int(value.rounded())
+                try? await api.setGroupedLightColorTemp(id: groupedLightID, mirek: mirek)
+            case "transition":
+                // dynamics.duration in ms — applied on next state change
+                break // Stored locally, used on next apply()
+            default:
+                // App-driven params (speed, sensitivity, min_brightness, etc.)
+                // are read by the engine loop directly from paramValues
+                break
+            }
         }
     }
 
@@ -236,15 +265,6 @@ final class StudioViewModel {
     // ──────────────────────────────────────────────
 
     private static func buildEffectCards() -> [StudioCard] {
-        let brightnessParam = StudioParam(
-            id: "brightness", label: "Brightness",
-            kind: .slider(min: 1, max: 100), defaultValue: 70
-        )
-        let speedParam = StudioParam(
-            id: "speed", label: "Speed",
-            kind: .slider(min: 0, max: 100), defaultValue: 50
-        )
-
         return [
             StudioCard(
                 id: "candle",
@@ -253,7 +273,12 @@ final class StudioViewModel {
                 icon: "flame.fill",
                 accentColor: Color(hex: "#FF9500"),
                 requiresForeground: false,
-                params: [brightnessParam],
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 366, tier: .color),
+                    StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 500, tier: .advanced),
+                ],
                 strategy: .bridgeNative(effect: "candle")
             ),
             StudioCard(
@@ -263,7 +288,12 @@ final class StudioViewModel {
                 icon: "flame",
                 accentColor: Color(hex: "#FF3B30"),
                 requiresForeground: false,
-                params: [brightnessParam],
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 400, tier: .color),
+                    StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 300, tier: .advanced),
+                ],
                 strategy: .bridgeNative(effect: "fire")
             ),
             StudioCard(
@@ -273,7 +303,11 @@ final class StudioViewModel {
                 icon: "sparkles",
                 accentColor: Color(hex: "#FFC107"),
                 requiresForeground: false,
-                params: [brightnessParam],
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 400, tier: .advanced),
+                ],
                 strategy: .bridgeNative(effect: "sparkle")
             ),
             StudioCard(
@@ -283,7 +317,12 @@ final class StudioViewModel {
                 icon: "camera.filters",
                 accentColor: Color(hex: "#BF5AF2"),
                 requiresForeground: false,
-                params: [brightnessParam, speedParam],
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 1000, tier: .advanced),
+                    StudioParam(id: "saturation", label: "Saturation", kind: .slider(min: 0, max: 100), defaultValue: 100, tier: .advanced),
+                ],
                 strategy: .bridgeNative(effect: "prism")
             ),
             StudioCard(
@@ -293,7 +332,12 @@ final class StudioViewModel {
                 icon: "circle.hexagongrid.fill",
                 accentColor: Color(hex: "#40D9BF"),
                 requiresForeground: false,
-                params: [brightnessParam],
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 300, tier: .color),
+                    StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 800, tier: .advanced),
+                ],
                 strategy: .bridgeNative(effect: "opal")
             ),
             StudioCard(
@@ -303,7 +347,11 @@ final class StudioViewModel {
                 icon: "rays",
                 accentColor: Color(hex: "#0A84FF"),
                 requiresForeground: false,
-                params: [brightnessParam],
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 300, tier: .advanced),
+                ],
                 strategy: .bridgeNative(effect: "glisten")
             ),
             StudioCard(
@@ -313,30 +361,17 @@ final class StudioViewModel {
                 icon: "arrow.triangle.2.circlepath",
                 accentColor: Color(hex: "#30D158"),
                 requiresForeground: false,
-                params: [brightnessParam, speedParam],
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 1000, tier: .advanced),
+                ],
                 strategy: .bridgeNative(effect: "colorloop")
             ),
         ]
     }
 
     private static func buildLiveModeCards() -> [StudioCard] {
-        let brightnessParam = StudioParam(
-            id: "brightness", label: "Brightness",
-            kind: .slider(min: 1, max: 100), defaultValue: 80
-        )
-        let sensitivityParam = StudioParam(
-            id: "sensitivity", label: "Sensitivity",
-            kind: .slider(min: 0, max: 100), defaultValue: 70
-        )
-        let speedParam = StudioParam(
-            id: "speed", label: "Speed",
-            kind: .slider(min: 0, max: 100), defaultValue: 50
-        )
-        let colorParam = StudioParam(
-            id: "color", label: "Color",
-            kind: .colorPicker, defaultValue: 0
-        )
-
         return [
             StudioCard(
                 id: "music_sync",
@@ -345,7 +380,14 @@ final class StudioViewModel {
                 icon: "waveform.and.mic",
                 accentColor: Color(hex: "#FF4D8C"),
                 requiresForeground: true,
-                params: [sensitivityParam, brightnessParam],
+                params: [
+                    StudioParam(id: "sensitivity", label: "Sensitivity", kind: .slider(min: 0, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 80, tier: .essential),
+                    StudioParam(id: "color", label: "Color Palette", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 50), defaultValue: 10, tier: .advanced),
+                    StudioParam(id: "smoothness", label: "Smoothness", kind: .slider(min: 0, max: 100), defaultValue: 30, tier: .advanced),
+                    StudioParam(id: "saturation", label: "Saturation", kind: .slider(min: 0, max: 100), defaultValue: 100, tier: .advanced),
+                ],
                 strategy: .appDriven(engineKey: "mic")
             ),
             StudioCard(
@@ -355,7 +397,13 @@ final class StudioViewModel {
                 icon: "gamecontroller.fill",
                 accentColor: Color(hex: "#0A84FF"),
                 requiresForeground: true,
-                params: [brightnessParam, speedParam],
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 80, tier: .essential),
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
+                    StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 300, tier: .color),
+                    StudioParam(id: "saturation", label: "Saturation", kind: .slider(min: 0, max: 100), defaultValue: 80, tier: .advanced),
+                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 50), defaultValue: 15, tier: .advanced),
+                ],
                 strategy: .appDriven(engineKey: "gaming")
             ),
             StudioCard(
@@ -365,7 +413,14 @@ final class StudioViewModel {
                 icon: "party.popper.fill",
                 accentColor: Color(hex: "#BF5AF2"),
                 requiresForeground: true,
-                params: [speedParam, colorParam],
+                params: [
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 60, tier: .essential),
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 90, tier: .essential),
+                    StudioParam(id: "color", label: "Flash Color", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 0, max: 50), defaultValue: 5, tier: .advanced),
+                    StudioParam(id: "smoothness", label: "Smoothness", kind: .slider(min: 0, max: 100), defaultValue: 20, tier: .advanced),
+                    StudioParam(id: "saturation", label: "Saturation", kind: .slider(min: 0, max: 100), defaultValue: 100, tier: .advanced),
+                ],
                 strategy: .appDriven(engineKey: "party")
             ),
             StudioCard(
@@ -375,7 +430,13 @@ final class StudioViewModel {
                 icon: "bolt.fill",
                 accentColor: Color(hex: "#FFC107"),
                 requiresForeground: true,
-                params: [speedParam, brightnessParam],
+                params: [
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 100, tier: .essential),
+                    StudioParam(id: "flash_color", label: "Flash Color", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 0, max: 50), defaultValue: 0, tier: .advanced),
+                    StudioParam(id: "duty_cycle", label: "Duty Cycle", kind: .slider(min: 10, max: 90), defaultValue: 50, tier: .advanced),
+                ],
                 strategy: .appDriven(engineKey: "strobe")
             ),
             StudioCard(
@@ -385,7 +446,13 @@ final class StudioViewModel {
                 icon: "cloud.bolt.fill",
                 accentColor: Color(hex: "#668AFF"),
                 requiresForeground: true,
-                params: [brightnessParam],
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 80, tier: .essential),
+                    StudioParam(id: "frequency", label: "Storm Intensity", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
+                    StudioParam(id: "ambient_color", label: "Ambient Color", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "flash_intensity", label: "Flash Intensity", kind: .slider(min: 20, max: 100), defaultValue: 90, tier: .advanced),
+                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 30), defaultValue: 5, tier: .advanced),
+                ],
                 strategy: .appDriven(engineKey: "thunderstorm")
             ),
             StudioCard(
@@ -395,9 +462,17 @@ final class StudioViewModel {
                 icon: "aqi.low",
                 accentColor: Color(hex: "#40D9BF"),
                 requiresForeground: true,
-                params: [speedParam, brightnessParam, colorParam],
+                params: [
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 30, tier: .essential),
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "color", label: "Color Palette", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 350, tier: .color),
+                    StudioParam(id: "smoothness", label: "Smoothness", kind: .slider(min: 0, max: 100), defaultValue: 70, tier: .advanced),
+                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 50), defaultValue: 15, tier: .advanced),
+                ],
                 strategy: .appDriven(engineKey: "ambient")
             ),
         ]
     }
 }
+

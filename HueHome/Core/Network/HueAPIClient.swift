@@ -319,13 +319,26 @@ class HueAPIClient: @unchecked Sendable {
 
     func setGroupedLightBrightness(id: String, brightness: Double) async throws {
         let (ip, token) = try credentials()
-        let clamped = (min(100, max(1, brightness))).rounded()   // round to avoid float noise in logs
+        let clamped = (min(100, max(1, brightness))).rounded()
         let body: [String: Any] = ["dimming": ["brightness": clamped]]
         let data = try await put(
             path: "/clip/v2/resource/grouped_light/\(id)",
             body: body, ip: ip, token: token
         )
         logRaw(data, label: "PUT /grouped_light/\(id) brightness=\(Int(clamped))")
+    }
+
+    /// Set color temperature (mirek) for all lights in a group.
+    /// Mirek range: 153 (cool/6500K) – 500 (warm/2000K).
+    func setGroupedLightColorTemp(id: String, mirek: Int) async throws {
+        let (ip, token) = try credentials()
+        let clamped = min(500, max(153, mirek))
+        let body: [String: Any] = ["color_temperature": ["mirek": clamped]]
+        let data = try await put(
+            path: "/clip/v2/resource/grouped_light/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /grouped_light/\(id) mirek=\(clamped)")
     }
 
     /// Set on-state + brightness in a single PUT for a grouped_light — avoids the two-call flash
