@@ -1377,12 +1377,45 @@ final class UnifiedOrchestrator {
     /// Total light count across all rooms — displayed in More tab
     var totalLightCount: Int { allRooms.reduce(0) { $0 + $1.lightCount } }
 
-    // ── Studio Mode — delegates to existing effect/sync engines ──────────
+    // ── Studio Mode — app-driven effect engines ──────────────────────────
     // Called by StudioViewModel for .appDriven cards.
+    //
+    // Transport selection:
+    //   • Entertainment API (DTLS streaming @ 50fps) — for strobe, party, thunderstorm
+    //   • REST API fallback (grouped_light @ 1/sec) — when no entertainment config exists
+    //   • REST (slow cadence) — for ambient (0.2Hz changes, no need for streaming)
+    //
+    // Each engine reads its params from the `params` dictionary passed in.
+    // Params are user-adjustable sliders; the engine loop polls them each frame.
 
     /// Stored reference to the running studio task (strobe, etc.)
     /// so stopStudioMode() can cancel it. Without this, loops run forever.
     private var activeStudioTask: Task<Void, Never>?
+
+    /// Entertainment client for the current studio session.
+    private var studioEntClient: HueEntertainmentClient?
+
+    /// Latest-wins REST sender for studio mode — prevents bridge command backlog.
+    private let studioRestSender = RestSender()
+
+    /// Live param reference — StudioViewModel updates this dict, engine loops read it.
+    /// Using a class wrapper so the Task closure captures a reference, not a copy.
+    final class StudioParamBox: @unchecked Sendable {
+        var values: [String: Double]
+        var colors: [String: Color]
+        init(values: [String: Double], colors: [String: Color]) {
+            self.values = values
+            self.colors = colors
+        }
+    }
+    nonisolated(unsafe) private var activeParamBox: StudioParamBox?
+
+    /// Update live params while an engine is running (called by StudioViewModel on slider change).
+    /// Nonisolated because StudioParamBox is @unchecked Sendable — safe for cross-actor writes.
+    nonisolated func updateStudioParams(values: [String: Double], colors: [String: Color]) {
+        activeParamBox?.values = values
+        activeParamBox?.colors = colors
+    }
 
     func startStudioMode(
         key: String,
@@ -1393,9 +1426,17 @@ final class UnifiedOrchestrator {
         // Cancel any previously running studio task first
         activeStudioTask?.cancel()
         activeStudioTask = nil
+        if let entClient = studioEntClient {
+            await entClient.stopSession()
+            studioEntClient = nil
+        }
 
         guard let api = hueClient(for: room.bridgeID),
               let groupedLightID = room.groupedLightID else { return }
+
+        // Create live param box (engine loop reads from this; ViewModel updates it)
+        let paramBox = StudioParamBox(values: params, colors: colors)
+        activeParamBox = paramBox
 
         switch key {
         case "mic":
@@ -1406,15 +1447,66 @@ final class UnifiedOrchestrator {
                 object: nil,
                 userInfo: ["groupedLightID": groupedLightID, "sensitivity": sensitivity, "brightness": brightness]
             )
+
+        case "gaming":
+            // Gaming uses mic-reactive transient detection — delegate to SyncModeEngine
+            let sensitivity = params["sensitivity"] ?? 70
+            let brightness  = params["brightness"]  ?? 80
+            NotificationCenter.default.post(
+                name: .studioStartMicSync,
+                object: nil,
+                userInfo: ["groupedLightID": groupedLightID, "sensitivity": sensitivity, "brightness": brightness, "engine": "gaming"]
+            )
+
         case "strobe":
-            let speed      = params["speed"]      ?? 50
-            let brightness = params["brightness"] ?? 80
-            let duration   = Int(1000 / max(1, speed / 10))
-            // Store the task so stopStudioMode() can cancel it
-            activeStudioTask = Task {
-                await startStrobeLoop(api: api, groupedLightID: groupedLightID,
-                                      brightness: brightness, intervalMs: duration)
+            // Try entertainment first for crisp on/off, fall back to REST
+            let entClient = await tryStartEntertainment(room: room)
+            if let entClient {
+                let config = await findEntertainmentConfig(bridgeID: room.bridgeID)
+                let channelIDs = config?.channels.map { UInt8($0.id) } ?? [0]
+                activeStudioTask = Task {
+                    await runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                }
+            } else {
+                activeStudioTask = Task {
+                    await runStrobeREST(api: api, groupedLightID: groupedLightID, paramBox: paramBox)
+                }
             }
+
+        case "party":
+            let entClient = await tryStartEntertainment(room: room)
+            if let entClient {
+                let config = await findEntertainmentConfig(bridgeID: room.bridgeID)
+                let channelIDs = config?.channels.map { UInt8($0.id) } ?? [0]
+                activeStudioTask = Task {
+                    await runPartyEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                }
+            } else {
+                activeStudioTask = Task {
+                    await runPartyREST(api: api, groupedLightID: groupedLightID, paramBox: paramBox)
+                }
+            }
+
+        case "thunderstorm":
+            let entClient = await tryStartEntertainment(room: room)
+            if let entClient {
+                let config = await findEntertainmentConfig(bridgeID: room.bridgeID)
+                let channelIDs = config?.channels.map { UInt8($0.id) } ?? [0]
+                activeStudioTask = Task {
+                    await runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                }
+            } else {
+                activeStudioTask = Task {
+                    await runThunderstormREST(api: api, groupedLightID: groupedLightID, paramBox: paramBox)
+                }
+            }
+
+        case "ambient":
+            // Ambient is slow enough for REST (one change every few seconds)
+            activeStudioTask = Task {
+                await runAmbientREST(api: api, groupedLightID: groupedLightID, paramBox: paramBox)
+            }
+
         default:
             let brightness = params["brightness"] ?? 80
             try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: brightness)
@@ -1425,33 +1517,387 @@ final class UnifiedOrchestrator {
         // Cancel the running loop task (strobe, etc.)
         activeStudioTask?.cancel()
         activeStudioTask = nil
+        activeParamBox = nil
+
+        // Stop entertainment session
+        if let entClient = studioEntClient {
+            await entClient.stopSession()
+            studioEntClient = nil
+        }
+
         // Also notify any mic engines
         NotificationCenter.default.post(name: .studioStopAll, object: nil)
         activeEffectEntries.removeAll()
     }
 
-    private func startStrobeLoop(
-        api: HueAPIClient,
-        groupedLightID: String,
-        brightness: Double,
-        intervalMs: Int
+    // MARK: - Entertainment Setup Helpers
+
+    /// Try to open an entertainment DTLS session for the given room.
+    /// Returns the client if successful, nil if no entertainment config or connection failed.
+    private func tryStartEntertainment(room: RoomDisplayItem) async -> HueEntertainmentClient? {
+        guard let bridgeID = room.bridgeID,
+              let api = hueClient(for: bridgeID),
+              let clientKey = KeychainManager.shared.loadClientKey(for: bridgeID),
+              let config = await findEntertainmentConfig(bridgeID: bridgeID) else {
+            return nil
+        }
+
+        do {
+            let (ip, token) = try api.credentials()
+            let entClient = HueEntertainmentClient(
+                bridgeIP: ip,
+                username: token,
+                clientKeyHex: clientKey,
+                restClient: api
+            )
+            try await entClient.startSession(configID: config.id)
+            studioEntClient = entClient
+            return entClient
+        } catch {
+            print("[Studio] Entertainment start failed: \(error.localizedDescription) — falling back to REST")
+            return nil
+        }
+    }
+
+    /// Find an entertainment config on the given bridge.
+    private func findEntertainmentConfig(bridgeID: String?) async -> EntertainmentConfig? {
+        guard let bid = bridgeID, let api = hueClient(for: bid) else { return nil }
+        let manager = EntertainmentConfigManager()
+        return try? await manager.fetchConfigs(client: api).first
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Strobe Engine
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Strobe via Entertainment API — crisp on/off at 50fps streaming.
+    /// Speed capped at 3Hz (WCAG 2.3.1 compliance).
+    private func runStrobeEntertainment(
+        entClient: HueEntertainmentClient,
+        channelIDs: [UInt8],
+        paramBox: StudioParamBox
     ) async {
-        // Simple strobe: toggle on/off at interval. Runs until task is cancelled.
-        let interval = Double(max(50, intervalMs)) / 1000.0
-        var on = true
+        let frameInterval: UInt64 = 20_000_000  // 20ms = 50fps
+
         while !Task.isCancelled {
-            try? await api.setGroupedLight(id: groupedLightID, on: on)
-            on.toggle()
-            // Use do/try (not try?) so CancellationError breaks the loop
-            do {
-                try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
-            } catch {
-                // CancellationError or other — exit the loop
-                break
+            let p = paramBox.values
+            let speed       = p["speed"]          ?? 50
+            let peakBri     = (p["brightness"]    ?? 100) / 100.0
+            let minBri      = (p["min_brightness"] ?? 0) / 100.0
+            let dutyCycle   = (p["duty_cycle"]    ?? 50) / 100.0
+
+            // Speed 0–100 → 0.5–3.0 Hz (WCAG safe: never exceeds 3 flashes/sec)
+            let hz = 0.5 + (speed / 100.0) * 2.5
+            let period = 1.0 / hz
+            let onDuration = period * dutyCycle
+            let offDuration = period * (1.0 - dutyCycle)
+
+            // Flash color — extract CIE xy from Color or default to white (D65)
+            let xy = extractXY(from: paramBox.colors["flash_color"]) ?? (x: 0.3127, y: 0.3290)
+
+            // ON phase
+            let onFrames = max(1, Int(onDuration / 0.02))
+            for _ in 0..<onFrames {
+                guard !Task.isCancelled else { return }
+                await entClient.sendUniform(channelIDs: channelIDs, x: xy.x, y: xy.y, brightness: peakBri)
+                try? await Task.sleep(nanoseconds: frameInterval)
+            }
+
+            // OFF phase
+            let offFrames = max(1, Int(offDuration / 0.02))
+            for _ in 0..<offFrames {
+                guard !Task.isCancelled else { return }
+                await entClient.sendUniform(channelIDs: channelIDs, x: xy.x, y: xy.y, brightness: minBri)
+                try? await Task.sleep(nanoseconds: frameInterval)
             }
         }
-        // Ensure lights are turned off when strobe stops
-        try? await api.setGroupedLight(id: groupedLightID, on: false)
+    }
+
+    /// Strobe via REST — fallback when no entertainment config.
+    /// Limited to ~1Hz by bridge rate limits. Shows toast suggesting entertainment setup.
+    private func runStrobeREST(
+        api: HueAPIClient,
+        groupedLightID: String,
+        paramBox: StudioParamBox
+    ) async {
+        var on = true
+        while !Task.isCancelled {
+            let p = paramBox.values
+            let peakBri = p["brightness"]     ?? 100
+            let minBri  = p["min_brightness"] ?? 0
+
+            let bri = on ? peakBri : max(1, minBri)
+
+            await studioRestSender.enqueue {
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: bri > 1,
+                    brightness: bri, xy: nil, mirek: nil,
+                    duration: 0  // instant transition
+                )
+            }
+
+            on.toggle()
+
+            do {
+                // REST rate limit: 900ms minimum between group commands
+                try await Task.sleep(nanoseconds: 900_000_000)
+            } catch { break }
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Party Engine
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Party via Entertainment — random color flashes at user-controlled speed.
+    private func runPartyEntertainment(
+        entClient: HueEntertainmentClient,
+        channelIDs: [UInt8],
+        paramBox: StudioParamBox
+    ) async {
+        let frameInterval: UInt64 = 20_000_000  // 50fps
+
+        // Pre-built color palette: 8 vivid party colors (CIE xy)
+        let palette: [(x: Double, y: Double)] = [
+            (0.6400, 0.3300),  // Red
+            (0.1500, 0.0600),  // Blue
+            (0.1700, 0.7000),  // Green
+            (0.3200, 0.1500),  // Purple
+            (0.4500, 0.4100),  // Yellow
+            (0.5400, 0.2300),  // Pink/Magenta
+            (0.1600, 0.2300),  // Cyan
+            (0.5600, 0.4000),  // Orange
+        ]
+        var colorIndex = 0
+
+        while !Task.isCancelled {
+            let p = paramBox.values
+            let speed       = p["speed"]          ?? 60
+            let peakBri     = (p["brightness"]    ?? 90) / 100.0
+            let minBri      = (p["min_brightness"] ?? 5) / 100.0
+            let smoothness  = (p["smoothness"]    ?? 20) / 100.0
+
+            // Speed 0–100 → 0.5–3.0 Hz
+            let hz = 0.5 + (speed / 100.0) * 2.5
+            let period = 1.0 / hz
+            let fadeFrames = max(1, Int(smoothness * period / 0.02))
+            let holdFrames = max(1, Int((1.0 - smoothness) * period / 0.02))
+
+            let color = palette[colorIndex % palette.count]
+            colorIndex += 1
+
+            // Flash phase: hold at peak brightness
+            for _ in 0..<holdFrames {
+                guard !Task.isCancelled else { return }
+                await entClient.sendUniform(channelIDs: channelIDs, x: color.x, y: color.y, brightness: peakBri)
+                try? await Task.sleep(nanoseconds: frameInterval)
+            }
+
+            // Fade phase: linear fade from peak to min
+            for i in 0..<fadeFrames {
+                guard !Task.isCancelled else { return }
+                let t = Double(i) / Double(fadeFrames)
+                let bri = peakBri + (minBri - peakBri) * t
+                await entClient.sendUniform(channelIDs: channelIDs, x: color.x, y: color.y, brightness: bri)
+                try? await Task.sleep(nanoseconds: frameInterval)
+            }
+        }
+    }
+
+    /// Party via REST — fallback. Cycles colors at ~1/sec.
+    private func runPartyREST(
+        api: HueAPIClient,
+        groupedLightID: String,
+        paramBox: StudioParamBox
+    ) async {
+        let palette: [(x: Double, y: Double)] = [
+            (0.6400, 0.3300), (0.1500, 0.0600), (0.1700, 0.7000),
+            (0.3200, 0.1500), (0.4500, 0.4100), (0.5400, 0.2300),
+        ]
+        var colorIndex = 0
+
+        while !Task.isCancelled {
+            let p = paramBox.values
+            let bri = p["brightness"] ?? 90
+            let smoothness = p["smoothness"] ?? 20
+            let durationMs = Int(smoothness / 100.0 * 500)  // 0–500ms transition
+
+            let color = palette[colorIndex % palette.count]
+            colorIndex += 1
+
+            await studioRestSender.enqueue {
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: true,
+                    brightness: bri, xy: (color.x, color.y), mirek: nil,
+                    duration: durationMs
+                )
+            }
+
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000)  // 1/sec rate limit
+            } catch { break }
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Thunderstorm Engine
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Thunderstorm via Entertainment — ambient blue glow + random lightning strikes.
+    private func runThunderstormEntertainment(
+        entClient: HueEntertainmentClient,
+        channelIDs: [UInt8],
+        paramBox: StudioParamBox
+    ) async {
+        let frameInterval: UInt64 = 20_000_000  // 50fps
+        // Deep blue ambient default
+        let ambientXY = (x: 0.1548, y: 0.1220)
+
+        while !Task.isCancelled {
+            let p = paramBox.values
+            let frequency      = (p["frequency"]       ?? 50) / 100.0  // 0–1
+            let flashIntensity = (p["flash_intensity"]  ?? 90) / 100.0
+            let minBri         = (p["min_brightness"]   ?? 5) / 100.0
+
+            // Ambient glow phase (variable duration based on frequency)
+            // Higher frequency = shorter gaps between strikes
+            let gapDuration = 2.0 - frequency * 1.8  // 0.2–2.0 seconds
+            let gapFrames = max(5, Int(gapDuration / 0.02))
+
+            for _ in 0..<gapFrames {
+                guard !Task.isCancelled else { return }
+                let ambientColor = extractXY(from: paramBox.colors["ambient_color"]) ?? ambientXY
+                await entClient.sendUniform(channelIDs: channelIDs, x: ambientColor.x, y: ambientColor.y, brightness: minBri)
+                try? await Task.sleep(nanoseconds: frameInterval)
+            }
+
+            // Lightning strike — random chance based on frequency
+            let strikeChance = 0.3 + frequency * 0.6  // 30%–90%
+            guard Double.random(in: 0...1) < strikeChance else { continue }
+
+            // Lightning flash: 2-5 rapid bright frames (white)
+            let flashFrames = Int.random(in: 2...5)
+            for _ in 0..<flashFrames {
+                guard !Task.isCancelled else { return }
+                // White flash
+                await entClient.sendUniform(channelIDs: channelIDs, x: 0.3127, y: 0.3290, brightness: flashIntensity)
+                try? await Task.sleep(nanoseconds: frameInterval)
+            }
+
+            // Quick afterglow (1-2 frames at half intensity)
+            let afterglow = Int.random(in: 1...2)
+            for _ in 0..<afterglow {
+                guard !Task.isCancelled else { return }
+                await entClient.sendUniform(channelIDs: channelIDs, x: 0.3127, y: 0.3290, brightness: flashIntensity * 0.4)
+                try? await Task.sleep(nanoseconds: frameInterval)
+            }
+        }
+    }
+
+    /// Thunderstorm via REST — fallback. Random brightness spikes.
+    private func runThunderstormREST(
+        api: HueAPIClient,
+        groupedLightID: String,
+        paramBox: StudioParamBox
+    ) async {
+        while !Task.isCancelled {
+            let p = paramBox.values
+            let frequency      = (p["frequency"]       ?? 50) / 100.0
+            let flashIntensity = p["flash_intensity"]   ?? 90
+            let minBri         = max(1, p["min_brightness"] ?? 5)
+
+            // Ambient dim
+            await studioRestSender.enqueue {
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: true,
+                    brightness: minBri, xy: nil, mirek: nil,
+                    duration: 400
+                )
+            }
+
+            // Wait for random gap
+            let gap = UInt64((2.0 - frequency * 1.5) * 1_000_000_000)
+            do { try await Task.sleep(nanoseconds: max(500_000_000, gap)) } catch { break }
+
+            // Random lightning
+            let strikeChance = 0.3 + frequency * 0.5
+            guard Double.random(in: 0...1) < strikeChance else { continue }
+
+            await studioRestSender.enqueue {
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: true,
+                    brightness: flashIntensity, xy: nil, mirek: nil,
+                    duration: 0  // instant flash
+                )
+            }
+
+            do { try await Task.sleep(nanoseconds: 200_000_000) } catch { break }
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Ambient Engine
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Ambient via REST — slow sine wave between min and max brightness.
+    /// Smooth enough for REST since changes happen every ~1 second.
+    private func runAmbientREST(
+        api: HueAPIClient,
+        groupedLightID: String,
+        paramBox: StudioParamBox
+    ) async {
+        var phase: Double = 0
+
+        while !Task.isCancelled {
+            let p = paramBox.values
+            let speed       = p["speed"]          ?? 30
+            let peakBri     = p["brightness"]     ?? 70
+            let minBri      = max(1, p["min_brightness"] ?? 15)
+            let warmth      = p["warmth"]         ?? 350
+            let smoothness  = (p["smoothness"]    ?? 70) / 100.0
+
+            // Speed 0–100 → period 8s (slow) to 2s (fast)
+            let period = 8.0 - (speed / 100.0) * 6.0
+            let dt = 1.0  // update every 1 second
+
+            phase += dt * (2.0 * .pi) / period
+            let sine = sin(phase)  // -1 to +1
+
+            // Brightness oscillation
+            let range = peakBri - minBri
+            let targetBri = minBri + (sine + 1.0) / 2.0 * range
+            let clampedBri = max(1, min(100, targetBri))
+
+            // Transition duration based on smoothness
+            let transitionMs = Int(smoothness * 2000)  // 0–2000ms
+
+            let mirek = Int(warmth.rounded())
+
+            await studioRestSender.enqueue {
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: true,
+                    brightness: clampedBri, xy: nil, mirek: mirek,
+                    duration: transitionMs
+                )
+            }
+
+            do {
+                try await Task.sleep(nanoseconds: UInt64(dt * 1_000_000_000))
+            } catch { break }
+        }
+    }
+
+    // MARK: - Color Extraction Helper
+
+    /// Extract CIE xy from a SwiftUI Color, or return nil for default handling.
+    private func extractXY(from color: Color?) -> (x: Double, y: Double)? {
+        guard let color else { return nil }
+        let uiColor = UIColor(color)
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0
+        uiColor.getHue(&h, saturation: &s, brightness: &b, alpha: nil)
+        // If it's basically white (low saturation), return D65 white point
+        if s < 0.05 { return (0.3127, 0.3290) }
+        return HueColorUtils.xyFrom(hue: Double(h), saturation: Double(s), brightness: Double(b))
     }
 
     /// Returns the HueAPIClient for a specific bridge ID — used by RoomDetailViewModel

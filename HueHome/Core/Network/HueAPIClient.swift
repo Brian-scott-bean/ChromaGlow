@@ -375,7 +375,8 @@ class HueAPIClient: @unchecked Sendable {
         if let b  = brightness { body["dimming"]  = ["brightness": min(100, max(0, b))] }
         if let xy = xy         { body["color"]    = ["xy": ["x": xy.0, "y": xy.1]] }
         if let m  = mirek      { body["color_temperature"] = ["mirek": m] }
-        if duration > 0        { body["dynamics"] = ["duration": duration] }
+        // duration=0 means instant (no fade). Must be sent explicitly.
+        body["dynamics"] = ["duration": max(0, duration)]
         let data = try await put(
             path: "/clip/v2/resource/grouped_light/\(id)",
             body: body, ip: ip, token: token

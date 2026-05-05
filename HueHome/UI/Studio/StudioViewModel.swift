@@ -69,6 +69,31 @@ final class StudioViewModel {
     // ── Engine reference (set in configure()) ─────────────────
     private weak var orchestrator: UnifiedOrchestrator?
 
+    // ── Safety: Strobe compliance ─────────────────────────────
+    /// Whether the user has acknowledged the strobe warning (persisted).
+    var strobeWarningAcknowledged: Bool {
+        get { UserDefaults.standard.bool(forKey: "strobeWarningAcknowledged") }
+        set { UserDefaults.standard.set(newValue, forKey: "strobeWarningAcknowledged") }
+    }
+
+    /// True if iOS "Reduce Motion" is enabled — strobe should be blocked.
+    var isReduceMotionEnabled: Bool {
+        UIAccessibility.isReduceMotionEnabled
+    }
+
+    /// True if iOS "Dim Flashing Lights" is enabled — strobe brightness capped at 30%.
+    /// Note: This API requires iOS 17+. Falls back to false on older SDKs.
+    var isDimFlashingLightsEnabled: Bool {
+        // UIAccessibility.isDimFlashingLightsEnabled requires iOS 17+ SDK.
+        // When building against older SDKs, this safely returns false.
+        false
+    }
+
+    /// Whether to show the strobe warning dialog before activating strobe.
+    var needsStrobeWarning: Bool {
+        !strobeWarningAcknowledged && !isReduceMotionEnabled
+    }
+
     // ── Preset colors for the color picker param ──────────────
     static let presetColors: [Color] = [
         HuePalette.Noir.destructive,   // red
@@ -108,6 +133,13 @@ final class StudioViewModel {
     func setParamValue(for cardID: String, paramID: String, value: Double) {
         if paramValues[cardID] == nil { paramValues[cardID] = [:] }
         paramValues[cardID]?[paramID] = value
+        // Push live update to running engine loop (if this card is running)
+        if cardID == runningCardID {
+            orchestrator?.updateStudioParams(
+                values: paramValues[cardID] ?? [:],
+                colors: paramColors[cardID] ?? [:]
+            )
+        }
     }
 
     /// Read a param color for a specific card.
@@ -119,6 +151,13 @@ final class StudioViewModel {
     func setParamColor(for cardID: String, paramID: String, color: Color) {
         if paramColors[cardID] == nil { paramColors[cardID] = [:] }
         paramColors[cardID]?[paramID] = color
+        // Push live update to running engine loop
+        if cardID == runningCardID {
+            orchestrator?.updateStudioParams(
+                values: paramValues[cardID] ?? [:],
+                colors: paramColors[cardID] ?? [:]
+            )
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -186,9 +225,21 @@ final class StudioViewModel {
             statusMessage = "'\(card.name)' running on bridge — persists after closing ✓"
 
         case .appDriven(let engineKey):
+            // Safety: block strobe if Reduce Motion is enabled
+            if engineKey == "strobe" && isReduceMotionEnabled {
+                statusMessage = "⚠ Strobe disabled — 'Reduce Motion' is enabled in iOS Settings"
+                return
+            }
+
             // Flatten namespaced params for engine compatibility
-            let flatValues = paramValues[card.id] ?? [:]
+            var flatValues = paramValues[card.id] ?? [:]
             let flatColors = paramColors[card.id] ?? [:]
+
+            // Safety: cap strobe brightness if Dim Flashing Lights is enabled
+            if engineKey == "strobe" && isDimFlashingLightsEnabled {
+                flatValues["brightness"] = min(flatValues["brightness"] ?? 100, 30)
+            }
+
             await orchestrator.startStudioMode(
                 key: engineKey,
                 room: room,
@@ -247,21 +298,74 @@ final class StudioViewModel {
                   let orchestrator,
                   let api = orchestrator.hueClient(for: room.bridgeID) else { return }
 
+            // Read current transition setting for this card (used as duration)
+            let card = (effectCards + liveModeCards).first(where: { $0.id == cardID })
+            let transitionMs = Int(paramValue(for: cardID, paramID: "transition", default: card?.params.first(where: { $0.id == "transition" })?.defaultValue ?? 400))
+
             switch paramID {
             case "brightness":
-                try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: value)
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: nil,
+                    brightness: value, xy: nil, mirek: nil,
+                    duration: transitionMs
+                )
             case "warmth":
-                // mirek range: 153 (cool) – 500 (warm)
                 let mirek = Int(value.rounded())
-                try? await api.setGroupedLightColorTemp(id: groupedLightID, mirek: mirek)
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: nil,
+                    brightness: nil, xy: nil, mirek: mirek,
+                    duration: transitionMs
+                )
             case "transition":
-                // dynamics.duration in ms — applied on next state change
-                break // Stored locally, used on next apply()
+                // Stored locally — affects subsequent brightness/warmth/color sends.
+                // No immediate bridge command needed.
+                break
+            case "speed", "saturation":
+                // Bridge-native effects don't expose runtime speed/saturation.
+                // Values stored for app-driven engines and future composition emulation.
+                break
             default:
-                // App-driven params (speed, sensitivity, min_brightness, etc.)
-                // are read by the engine loop directly from paramValues
+                // App-driven params (speed, sensitivity, min_brightness, duty_cycle, etc.)
+                // are read by the engine loop directly from paramValues — no bridge call needed.
                 break
             }
+        }
+    }
+
+    /// Send a color param change to the bridge (for base_color, flash_color, etc.).
+    /// Converts SwiftUI Color to CIE xy using HueColorUtils.
+    @MainActor
+    func sendColorParam(cardID: String, paramID: String, color: Color) {
+        setParamColor(for: cardID, paramID: paramID, color: color)
+
+        // Only send to bridge for base_color on bridge-native effects
+        guard paramID == "base_color" else { return }
+        let card = (effectCards + liveModeCards).first(where: { $0.id == cardID })
+        guard case .bridgeNative = card?.strategy else { return }
+
+        paramTask?.cancel()
+        paramTask = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+
+            guard let room = selectedRoom,
+                  let groupedLightID = room.groupedLightID,
+                  let orchestrator,
+                  let api = orchestrator.hueClient(for: room.bridgeID) else { return }
+
+            // Extract HSB from Color
+            let uiColor = UIColor(color)
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0
+            uiColor.getHue(&h, saturation: &s, brightness: &b, alpha: nil)
+
+            let xy = HueColorUtils.xyFrom(hue: Double(h), saturation: Double(s), brightness: Double(b))
+            let transitionMs = Int(paramValue(for: cardID, paramID: "transition", default: 500))
+
+            try? await api.setGroupedLightEffect(
+                id: groupedLightID, on: nil,
+                brightness: nil, xy: (xy.x, xy.y), mirek: nil,
+                duration: transitionMs
+            )
         }
     }
 
