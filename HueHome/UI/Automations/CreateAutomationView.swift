@@ -276,29 +276,7 @@ struct CreateAutomationView: View {
             AutomationScheduler.shared.schedule(a)
         }
 
-        // ── Fire immediately if the scheduled time has already passed today ──
-        // UNCalendarNotificationTrigger only fires at the NEXT future occurrence.
-        // If someone sets 3:30 PM and it's already 3:31 PM, we apply right now
-        // so the lights change immediately, and the recurring trigger handles
-        // all future fires from here on.
-        fireNowIfPastDue(hour: comps.hour ?? 8, minute: comps.minute ?? 0, action: action)
-
         dismiss()
-    }
-
-    private func fireNowIfPastDue(hour: Int, minute: Int, action: AutomationAction) {
-        let now   = Date()
-        let cal   = Calendar.current
-        let nowH  = cal.component(.hour,   from: now)
-        let nowM  = cal.component(.minute, from: now)
-        let pastDue = (hour < nowH) || (hour == nowH && minute <= nowM)
-        guard pastDue else { return }   // time is still in the future — notification will fire on time
-        Task {
-            switch action {
-            case .preset(let id): await orchestrator.applyAutomationPreset(id: id)
-            case .effect(let id): await orchestrator.applyAutomationEffect(id: id)
-            }
-        }
     }
 
     private func formattedTime() -> String {
