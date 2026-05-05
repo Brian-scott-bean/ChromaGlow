@@ -192,6 +192,54 @@ enum HueAnimation {
     static let toggle:  Animation = .spring(response: 0.30, dampingFraction: 0.70)
     static let card:    Animation = .spring(response: 0.40, dampingFraction: 0.78)
     static let linear:  Animation = .linear(duration: 0.15)
+
+    // ── Reduce Motion Support ─────────────────────────────────
+    // Returns nil when user has Reduce Motion enabled (nil = instant, no animation).
+    // Usage: withAnimation(HueAnimation.adaptive(.fast, reduceMotion: reduceMotion)) { ... }
+    static func adaptive(_ base: Animation, reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : base
+    }
+}
+
+// MARK: - Font Tokens
+//
+// See HueTypography.swift for the full HueFont token system.
+// During page overhauls, migrate from .system(size: N) to
+// Dynamic Type–compatible fonts (.subheadline, .caption, etc.)
+// to support accessibility text scaling.
+
+// MARK: - Accessibility Helpers
+//
+// Convenience functions for building VoiceOver labels and traits.
+// Keeps accessibility logic consistent across all views.
+
+enum HueAccessibility {
+    /// Standard effect card label: "{name} effect"
+    static func cardLabel(name: String) -> String {
+        "\(name) effect"
+    }
+
+    /// Standard effect card hint based on running state
+    static func cardHint(isRunning: Bool, roomName: String?) -> String {
+        if isRunning {
+            return "Double tap to stop"
+        } else if let room = roomName {
+            return "Double tap to apply to \(room)"
+        } else {
+            return "Select a room first"
+        }
+    }
+
+    /// Room/zone label: "{name}, {lightCount} lights"
+    static func roomLabel(name: String, lightCount: Int, isZone: Bool) -> String {
+        let type = isZone ? "zone" : "room"
+        return "\(name) \(type), \(lightCount) \(lightCount == 1 ? "light" : "lights")"
+    }
+
+    /// Slider value announcement: "{label}: {value}"
+    static func sliderValue(label: String, value: Int) -> String {
+        "\(label): \(value)"
+    }
 }
 
 // MARK: - Color Hex Init
