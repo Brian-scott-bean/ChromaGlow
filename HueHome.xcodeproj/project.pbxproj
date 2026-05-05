@@ -98,6 +98,7 @@
 		EBD402E37AF2043D8391E87F /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A54B6A1F1A2CC5FAF3CEE /* SplashView.swift */; };
 		F2903EB080E11603E73CED60 /* ShimmerComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 471A0EDBCE4C17624925EAB6 /* ShimmerComponents.swift */; };
 		A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8223FA80DC0EC19E9CE6C831 /* StudioView.swift */; };
+		B2RPSH9FF07852E320B7354B /* RoomPickerSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1RPSHEC5402CA37A711CBB8 /* RoomPickerSheetView.swift */; };
 		5C010330BA69003015BD0FD0 /* StudioViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0F56D4CFF98F22595FF4143 /* StudioViewModel.swift */; };
 		3703A6704D1E838A0BF402C0 /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468C7402382CCA5F09F9C65F /* MoreView.swift */; };
 /* End PBXBuildFile section */
@@ -268,6 +269,7 @@
 		F57BF74DE7F5F2F1B870513F /* DeviceDisplayItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Models/DeviceDisplayItem.swift; sourceTree = "<group>"; };
 		FD54587B049C752BA3C84CD5 /* HueRoom.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueRoom.swift; path = HueHome/Core/Models/HueRoom.swift; sourceTree = "<group>"; };
 		8223FA80DC0EC19E9CE6C831 /* StudioView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioView.swift; path = ./HueHome/UI/Studio/StudioView.swift; sourceTree = "<group>"; };
+		B1RPSHEC5402CA37A711CBB8 /* RoomPickerSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RoomPickerSheetView.swift; path = ./HueHome/UI/Studio/RoomPickerSheetView.swift; sourceTree = "<group>"; };
 		E0F56D4CFF98F22595FF4143 /* StudioViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioViewModel.swift; path = ./HueHome/UI/Studio/StudioViewModel.swift; sourceTree = "<group>"; };
 		468C7402382CCA5F09F9C65F /* MoreView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MoreView.swift; path = ./HueHome/UI/More/MoreView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -575,6 +577,7 @@
 				468C7402382CCA5F09F9C65F /* MoreView.swift */,
 				E0F56D4CFF98F22595FF4143 /* StudioViewModel.swift */,
 				8223FA80DC0EC19E9CE6C831 /* StudioView.swift */,
+				B1RPSHEC5402CA37A711CBB8 /* RoomPickerSheetView.swift */,
 				92662E9280D48307551834BA /* CreateGlobalSceneView.swift */,
 			);
 			name = Scenes;
@@ -1051,6 +1054,7 @@
 				3703A6704D1E838A0BF402C0 /* MoreView.swift in Sources */,
 				5C010330BA69003015BD0FD0 /* StudioViewModel.swift in Sources */,
 				A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */,
+				B2RPSH9FF07852E320B7354B /* RoomPickerSheetView.swift in Sources */,
 				AA2222222222222222222222 /* RoomDisplayItem.swift in Sources */,
 				BB2222222222222222222222 /* HueToastView.swift in Sources */,
 				73D4D0E7C3E0D0451914B46E /* HueZone.swift in Sources */,

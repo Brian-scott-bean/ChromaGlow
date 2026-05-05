@@ -22,7 +22,13 @@ struct StudioView: View {
     @State private var vm = StudioViewModel()
     @State private var showSettings = false
 
-    // ── Deck paging ────────────────────────────────────────────
+    // ── Room picker ────────────────────────────────────────
+    @State private var showRoomSheet = false
+    @State private var dragAxisLocked: Axis? = nil
+    @State private var dragRoomSteps: Int = 0        // accumulated steps during drag
+    @State private var slideDirection: Edge = .trailing
+
+    // ── Deck paging ───────────────────────────────────────
     @State private var currentDeck: Int = 0  // 0 = Effects, 1 = Live
 
     var body: some View {
@@ -34,10 +40,7 @@ struct StudioView: View {
                 ambientBackground
 
                 VStack(spacing: 0) {
-                    // ── Zone A: Room Pill Strip ───────────────
-                    roomPillStrip
-                        .padding(.top, HueSpacing.sm)
-                        .padding(.bottom, HueSpacing.md)
+                    // Zone A is now the nav title (no pill strip needed)
 
                     // ── Zone B: Living Card Grid ──────────────────
                     cardGrid
@@ -59,11 +62,13 @@ struct StudioView: View {
                 }
             }
         }
-        .navigationTitle("Studio")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                swipeableRoomTitle
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showSettings = true } label: {
                     Image(systemName: "gear").foregroundStyle(.white.opacity(0.8))
@@ -72,6 +77,9 @@ struct StudioView: View {
         }
         .sheet(isPresented: $showSettings) {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
+        }
+        .sheet(isPresented: $showRoomSheet) {
+            roomPickerSheet
         }
         .preferredColorScheme(.dark)
         .onAppear { vm.configure(orchestrator: orchestrator) }
@@ -123,54 +131,106 @@ struct StudioView: View {
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Zone A: Room Pill Strip
-    // One-tap room switching. All rooms visible.
+    // MARK: - Zone A: Swipeable Room Title
+    // Swipe L/R = rooms, U/D = zones, tap = sheet
     // ──────────────────────────────────────────────
 
-    private var roomPillStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: HueSpacing.sm) {
-                ForEach(allPickerItems, id: \.id) { item in
-                    let isSelected = vm.selectedRoom?.id == item.id
-                    let isZone = orchestrator.allZones.contains(where: { $0.id == item.id })
+    private var swipeableRoomTitle: some View {
+        let displayName = vm.selectedRoom?.name ?? "Select a room"
+        let hasRoom = vm.selectedRoom != nil
 
-                    Button {
+        return HStack(spacing: 6) {
+            Text(displayName)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(hasRoom ? .white : .white.opacity(0.45))
+                .id(displayName)  // forces view recreation for transition
+                .transition(.asymmetric(
+                    insertion: .move(edge: slideDirection).combined(with: .opacity),
+                    removal: .move(edge: slideDirection == .trailing ? .leading : .trailing).combined(with: .opacity)
+                ))
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.35))
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            showRoomSheet = true
+            HapticManager.shared.light()
+        }
+        .gesture(
+            DragGesture(minimumDistance: 10)
+                .onChanged { value in
+                    let dx = value.translation.width
+                    let dy = value.translation.height
+
+                    // Lock axis on first significant movement
+                    if dragAxisLocked == nil {
+                        if abs(dx) > 15 || abs(dy) > 15 {
+                            dragAxisLocked = abs(dx) > abs(dy) ? .horizontal : .vertical
+                        }
+                        return
+                    }
+
+                    // Calculate steps (40pt per room change)
+                    let stepSize: CGFloat = 40
+                    let steps: Int
+                    if dragAxisLocked == .horizontal {
+                        steps = -Int(dx / stepSize)  // swipe left = next
+                    } else {
+                        steps = -Int(dy / stepSize)  // swipe up = next
+                    }
+
+                    if steps != dragRoomSteps {
+                        let items = dragAxisLocked == .horizontal
+                            ? orchestrator.allRooms
+                            : orchestrator.allZones
+                        guard !items.isEmpty else { return }
+
+                        let delta = steps - dragRoomSteps
+                        dragRoomSteps = steps
+
+                        // Determine new index
+                        let currentIndex = items.firstIndex(where: { $0.id == vm.selectedRoom?.id }) ?? 0
+                        let newIndex = (currentIndex + delta + items.count * 100) % items.count
+                        let newRoom = items[newIndex]
+
                         withAnimation(HueAnimation.fast) {
-                            vm.selectedRoom = item
+                            slideDirection = delta > 0 ? .trailing : .leading
+                            vm.selectedRoom = newRoom
                         }
                         HapticManager.shared.selection()
-                    } label: {
-                        HStack(spacing: 5) {
-                            if isZone {
-                                Image(systemName: "square.3.layers.3d")
-                                    .font(.system(size: 9, weight: .medium))
-                            }
-                            Text(item.name)
-                                .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(isSelected ? .black : .white.opacity(0.55))
-                        .padding(.horizontal, HueSpacing.md)
-                        .padding(.vertical, 7)
-                        .background(
-                            Capsule()
-                                .fill(isSelected
-                                      ? HuePalette.amber
-                                      : HuePalette.Noir.surface)
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(
-                                    isSelected ? Color.clear : HuePalette.Noir.surfaceBorder,
-                                    lineWidth: 1
-                                )
-                        )
                     }
-                    .buttonStyle(.plain)
                 }
+                .onEnded { _ in
+                    dragAxisLocked = nil
+                    dragRoomSteps = 0
+                }
+        )
+        .animation(HueAnimation.fast, value: displayName)
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Room Picker Sheet
+    // Searchable half-sheet, grouped by Rooms / Zones
+    // ──────────────────────────────────────────────
+
+    private var roomPickerSheet: some View {
+        RoomPickerSheetView(
+            rooms: orchestrator.allRooms,
+            zones: orchestrator.allZones,
+            selectedRoom: vm.selectedRoom,
+            onSelect: { room in
+                withAnimation(HueAnimation.fast) {
+                    vm.selectedRoom = room
+                }
+                showRoomSheet = false
+                HapticManager.shared.selection()
             }
-            .padding(.horizontal, HueSpacing.screenH)
-        }
+        )
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(.ultraThinMaterial)
     }
 
     // ──────────────────────────────────────────────
