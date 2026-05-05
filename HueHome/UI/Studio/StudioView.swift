@@ -426,23 +426,22 @@ struct StudioView: View {
     }
 }
 
-// MARK: - StudioCardView (Phase 1)
+// MARK: - StudioCardView (Living Cards)
 //
 // Performance: receives value types only. Never sees the ViewModel.
 // The card IS the button — tap to apply/stop. No Apply/Stop sub-buttons.
+// Canvas animation plays behind content — unique per card ID.
 
 struct StudioCardView: View, Equatable {
 
-    // Equatable: skip body re-evaluation when card data hasn't changed.
-    // Closures can't be compared, so we compare only data inputs.
     static func == (lhs: StudioCardView, rhs: StudioCardView) -> Bool {
         lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected
     }
 
-    let card: StudioCard       // value type (struct)
-    let isRunning: Bool        // value type
-    let roomSelected: Bool     // value type
-    let onTap: () -> Void      // closure (excluded from ==)
+    let card: StudioCard
+    let isRunning: Bool
+    let roomSelected: Bool
+    let onTap: () -> Void
 
     private var accentColor: Color { card.accentColor }
 
@@ -464,6 +463,15 @@ struct StudioCardView: View, Equatable {
                                 lineWidth: isRunning ? 1.5 : 1
                             )
                     )
+
+                // ── Living Canvas animation ─────────────────────
+                StudioCardCanvas(
+                    cardID: card.id,
+                    accentColor: accentColor,
+                    isRunning: isRunning
+                )
+                .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
+                .allowsHitTesting(false)
 
                 // ── Content ─────────────────────────────────────
                 VStack(alignment: .leading, spacing: 0) {
@@ -494,7 +502,7 @@ struct StudioCardView: View, Equatable {
                         }
                     }
 
-                    // Tagline (Phase 1 — removed in Phase 2 when animations arrive)
+                    // Tagline
                     Text(card.tagline)
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.40))
