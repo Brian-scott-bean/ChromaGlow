@@ -139,19 +139,26 @@ struct StudioView: View {
         let displayName = vm.selectedRoom?.name ?? "Select a room"
         let hasRoom = vm.selectedRoom != nil
 
-        return HStack(spacing: 6) {
-            Text(displayName)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(hasRoom ? .white : .white.opacity(0.45))
-                .id(displayName)  // forces view recreation for transition
-                .transition(.asymmetric(
-                    insertion: .move(edge: slideDirection).combined(with: .opacity),
-                    removal: .move(edge: slideDirection == .trailing ? .leading : .trailing).combined(with: .opacity)
-                ))
-
-            Image(systemName: "chevron.down")
-                .font(.system(size: 10, weight: .semibold))
+        return VStack(spacing: 1) {
+            Text("Studio")
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white.opacity(0.35))
+                .tracking(0.5)
+
+            HStack(spacing: 5) {
+                Text(displayName)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(hasRoom ? .white : .white.opacity(0.45))
+                    .id(displayName)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: slideDirection).combined(with: .opacity),
+                        removal: .move(edge: slideDirection == .trailing ? .leading : .trailing).combined(with: .opacity)
+                    ))
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.35))
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture {
