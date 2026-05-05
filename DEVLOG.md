@@ -10,7 +10,74 @@
 ## Project Location
 - **Path:** `/Users/brianbean/Desktop/huehome-pro-v0.3.0/`
 - **Xcode project:** `HueHome.xcodeproj`
-- **Git tags:** v0.1.0 → v0.13.0-sync-mode-phase1a
+- **Git tags:** v0.1.0 → v0.16.0-studio-redesign-plan
+
+---
+
+## Session Log — 2026-05-05 — Studio DJ Redesign Planning (v0.16.0 plan)
+
+### Context
+Full architectural planning session for the Studio tab redesign. No code changes — pure design, research, and discovery. The goal: transform Studio from a scrolling list of cards with a wheel picker into a spatial, DJ-style mixing surface where every element earns its presence.
+
+### Design Philosophy Established
+> "Nothing takes space unless it has earned its presence. When something arrives, it arrives like it was always meant to be there."
+
+Inspired by Apple's Liquid Glass (iOS 26): hierarchy through depth, honest materiality, temporal coherence in animation, and prioritized motion.
+
+### Key Discoveries
+
+**1. Design Token Parity Crisis**
+The app has a well-built token system (`HuePalette`, `HueSpacing`, `HueAnimation`, `HueRadius`) in `HueTokens.swift`, but the three highest-traffic screens (Dashboard, Studio, Scenes) use **zero tokens**. All colors are hardcoded `Color(hex: "#FFC107")`. This means changing the amber in `HuePalette` updates the tab bar but not the room cards. Phase 0 of the redesign sweeps all tabs for token compliance.
+
+**2. Performance Architecture**
+Audited current StudioView for SwiftUI antipatterns. Found the same `@Observable` mutation-at-60fps bug that was previously fixed in DashboardView (v0.3.3 BrightnessRow fix). The slider `Binding` to `vm.paramValues[param.id]` writes at 60fps → full tree rebuild per frame. Established 7 performance rules:
+1. Canvas views receive value types only (never the ViewModel)
+2. Slider drags use local `@State` with commit-on-end
+3. Card views get `Bool isRunning`, never `@Bindable var vm`
+4. Canvas draw closures allocate nothing (pure math only)
+5. TimelineView: 15fps idle, 30fps running, 0fps offscreen, 8fps low battery
+6. `matchedGeometryEffect` on leaf views only
+7. Mixer Tray height uses coordinated animation, not layout cascade
+
+Performance budget: ~13.5ms/sec at peak = 0.2% of iPhone 13 budget.
+
+**3. Composition Workshop Feasibility**
+Confirmed fully feasible (~8 days). Key insight: bypasses REST entirely using Entertainment API (UDP/DTLS) already integrated in `SyncModeEngine.swift`. Static palette layers = 1 REST call, 0 ongoing cost. Dynamic layers (Motion, Envelope, Reaction) = 30fps UDP, 1 packet per frame containing N light states. The `HueEntertainmentClient` already has `startSession` + `send(channels:)`.
+
+**4. Competitive Landscape**
+Analyzed 12 competitor apps (iConnectHue, Govee, Nanoleaf, etc). ChromaGlow's visual design is best-in-class. Functional gaps: no widgets, no scene color previews, no onboarding, no Siri Shortcuts.
+
+### Studio Redesign Architecture (4 Phases)
+
+**Phase 0 — Token Parity:** Replace all hardcoded hex/spacing/animation values across ALL tabs with design tokens. Search-replace, not rewrite.
+
+**Phase 1 — Structure (3 zones, fixed layout):**
+- **Zone A: Rolodex Room Selector** — collapses to a single 36pt capsule showing room name. Tap to expand floating name list. `matchedGeometryEffect` on the selected name.
+- **Zone B: 2-Column Card Grid** — paged horizontal swipe between Effects (7 cards) and Live (6 cards). Two tiny dots as page indicator. No tabs, no labels. Cards are the buttons — tap = apply/stop.
+- **Zone C: Mixer Tray** — springs from bottom when an effect runs. Cross-fades content on effect switch (never drops down and rises again). `.ultraThinMaterial` background.
+
+**Phase 2 — Living Cards:** `TimelineView` + `Canvas` animated backgrounds per-effect. Candle flickers, Sparkle twinkles, Prism rotates. 12 unique animations. Animation replaces tagline text.
+
+**Phase 3 — Feel:** Responsive ambient background (orbs shift to match running effect), no-room pulse feedback, auto-apply-on-select, staggered card entrance, haptic detents.
+
+### Resolved Design Decisions
+| Decision | Resolution |
+|---|---|
+| Card taglines | Keep Phase 1, remove Phase 2 (animation replaces them) |
+| Deck switching | Invisible paged swipe with two tiny dots — no tabs |
+| Token parity scope | All tabs at once |
+| Composition nav button | Deferred — no clutter until real |
+
+### Artifacts Created
+- `implementation_plan.md` — full Studio redesign plan with performance architecture
+- `composition_feasibility.md` — Composition Workshop technical analysis
+- `competitive_landscape.md` — 12-app competitive audit
+- `ux_audit.md` — tab-by-tab UX assessment
+- `chromaglow_visual_spec.md` — pixel-precise visual specification
+
+### Git Tag
+- `v0.16.0-studio-redesign-plan` — planning milestone, no code changes
+
 
 ## v0.13.0 — Sync Mode Phase 1A (Priority 2)
 - **Architecture:** Introduced `SyncEngine` protocol for pluggable reactive engines. One shared `AVAudioEngine` tap dispatches audio buffers to the active engine. New files in `HueHome/UI/Sync/`:
