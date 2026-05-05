@@ -163,6 +163,13 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private var sseTasks: [String: Task<Void, Never>] = [:]
 
+    /// Optimistic-action guard: keyed by grouped_light UUID, value is the deadline
+    /// after which SSE may freely overwrite on/brightness for that resource.
+    /// Set to now+1.5 s whenever setRoom or setBrightness fires; cleared on expiry.
+    /// @ObservationIgnored: infrastructure, never read by views.
+    @ObservationIgnored
+    private var pendingActionDeadlines: [String: Date] = [:]
+
     /// Continuation for the orchestrator light-event bus.
     /// RoomDetailViewModel subscribes here instead of opening its own SSE connection.
     /// @ObservationIgnored: infrastructure — views never read this directly.
@@ -636,6 +643,8 @@ final class UnifiedOrchestrator {
         guard let glID = item.groupedLightID,
               let client = clients[item.bridgeID ?? ""] else { return }
         updateRoom(item.id, isOn: desiredState)
+        // Block SSE from overwriting this optimistic update for 1.5 s
+        pendingActionDeadlines[glID] = Date().addingTimeInterval(1.5)
         Task {
             do {
                 try await client.setGroupedLight(id: glID, on: desiredState)
@@ -646,6 +655,7 @@ final class UnifiedOrchestrator {
                 log.error("setRoom failed for \(item.id): \(error.localizedDescription)")
                 showToast("Couldn't reach bridge — \(item.name) reverted")
             }
+            pendingActionDeadlines.removeValue(forKey: glID)   // release guard
         }
     }
 
@@ -660,6 +670,8 @@ final class UnifiedOrchestrator {
 
         let clamped = max(1, min(100, brightness))
         updateRoom(item.id, isOn: true, brightness: clamped)
+        // Block SSE from overwriting during the PUT round-trip
+        pendingActionDeadlines[glID] = Date().addingTimeInterval(1.5)
 
         Task {
             do {
@@ -670,6 +682,7 @@ final class UnifiedOrchestrator {
                 updateRoom(item.id, isOn: item.isOn, brightness: item.brightness)
                 log.error("Brightness failed for room \(item.id): \(error.localizedDescription)")
             }
+            pendingActionDeadlines.removeValue(forKey: glID)   // release guard
         }
     }
 
@@ -1062,17 +1075,25 @@ final class UnifiedOrchestrator {
             case "grouped_light":
                 if var rooms = roomsByBridge[bridgeID],
                    let idx = rooms.firstIndex(where: { $0.groupedLightID == update.id }) {
-                    if let on  = update.on?.on              { rooms[idx].isOn       = on  }
-                    if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
-                    roomsByBridge[bridgeID] = rooms
-                    roomsMutated = true
+                    // Skip on/brightness if there is a pending optimistic action in flight.
+                    // The SSE event pre-dates our PUT; applying it would cause a visible flicker.
+                    let isPending = pendingActionDeadlines[update.id].map { Date() < $0 } ?? false
+                    if !isPending {
+                        if let on  = update.on?.on              { rooms[idx].isOn       = on  }
+                        if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
+                        roomsByBridge[bridgeID] = rooms
+                        roomsMutated = true
+                    }
                 }
                 if var zones = zonesByBridge[bridgeID],
                    let idx = zones.firstIndex(where: { $0.groupedLightID == update.id }) {
-                    if let on  = update.on?.on              { zones[idx].isOn       = on  }
-                    if let bri = update.dimming?.brightness { zones[idx].brightness = bri }
-                    zonesByBridge[bridgeID] = zones
-                    zonesMutated = true
+                    let isPending = pendingActionDeadlines[update.id].map { Date() < $0 } ?? false
+                    if !isPending {
+                        if let on  = update.on?.on              { zones[idx].isOn       = on  }
+                        if let bri = update.dimming?.brightness { zones[idx].brightness = bri }
+                        zonesByBridge[bridgeID] = zones
+                        zonesMutated = true
+                    }
                 }
 
             // ── light (dominant color) ─────────────────────────────────────────
