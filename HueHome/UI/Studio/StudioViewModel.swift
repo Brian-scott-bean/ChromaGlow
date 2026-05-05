@@ -197,6 +197,10 @@ final class StudioViewModel {
         case .appDriven:
             await orchestrator.stopStudioMode()
         }
+
+        // Turn lights off — symmetrical with apply() which turns them on
+        try? await api.setGroupedLight(id: groupedLightID, on: false)
+
         await MainActor.run {
             runningCardID = nil
             statusMessage = ""
