@@ -384,12 +384,44 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "PUT /grouped_light/\(id) effect dur=\(duration)ms")
     }
 
-    /// Fetch all light resource IDs from the bridge.
-    /// Used by bridge-native and app-driven effects that must be set per-light.
-    /// Note: returns ALL lights — callers should filter by room if needed.
+    /// Fetch light IDs belonging to a specific grouped_light resource.
+    /// Resolves the chain: groupedLightID → room/zone → children → light IDs.
+    ///
+    /// - Rooms have children with rtype "device" — lights are matched via owner.rid.
+    /// - Zones have children with rtype "light" — lights are matched by ID directly.
     func fetchLightIDsForGroup(groupedLightID: String) async throws -> [String] {
-        let lights = try await fetchLights()
-        return lights.map { $0.id }
+        // Step 1: Find the room or zone that owns this grouped_light
+        let rooms = try await fetchRooms()
+        let zones = try await fetchZones()
+
+        // Check rooms first (more common), then zones
+        if let room = rooms.first(where: { $0.groupedLightID == groupedLightID }) {
+            // Room children reference devices (rtype: "device").
+            // Lights reference their parent device via owner.rid.
+            let deviceIDs = Set(room.children.map { $0.rid })
+            let allLights = try await fetchLights()
+            let roomLightIDs = allLights
+                .filter { light in
+                    // Direct light ref (newer firmware) or device-owner ref (older firmware)
+                    if room.children.contains(where: { $0.rtype == "light" }) {
+                        return deviceIDs.contains(light.id)
+                    } else {
+                        guard let ownerRID = light.owner?.rid else { return false }
+                        return deviceIDs.contains(ownerRID)
+                    }
+                }
+                .map { $0.id }
+            return roomLightIDs
+        }
+
+        if let zone = zones.first(where: { $0.groupedLightID == groupedLightID }) {
+            // Zone children reference lights directly (rtype: "light").
+            return zone.children.filter { $0.rtype == "light" }.map { $0.rid }
+        }
+
+        // Fallback: grouped_light not found in any room or zone
+        // Return empty to avoid affecting wrong lights
+        return []
     }
 
     /// Toggle an individual light on or off.
@@ -504,6 +536,27 @@ class HueAPIClient: @unchecked Sendable {
             body: body, ip: ip, token: token
         )
         logRaw(data, label: "PUT /grouped_light/\(id) native effect=\(effect)")
+    }
+
+    /// Atomic: set on + effect + brightness in a SINGLE PUT.
+    /// Critical for avoiding rate limits — grouped_light allows ~1 PUT/sec.
+    /// Combining these fields prevents the bridge from silently dropping commands.
+    func setGroupedLightWithEffect(
+        id: String, on: Bool, effect: String, brightness: Double? = nil
+    ) async throws {
+        let (ip, token) = try credentials()
+        var body: [String: Any] = [
+            "on": ["on": on],
+            "effects": ["effect": effect]
+        ]
+        if let bri = brightness {
+            body["dimming"] = ["brightness": max(1, min(100, bri))]
+        }
+        let data = try await put(
+            path: "/clip/v2/resource/grouped_light/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /grouped_light/\(id) atomic on=\(on) effect=\(effect) bri=\(brightness ?? -1)")
     }
 
     /// Stop all effects on a light and return to neutral state.

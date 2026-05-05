@@ -155,29 +155,48 @@ struct StudioView: View {
         let displayName = vm.selectedRoom?.name ?? "Select a room"
         let hasRoom = vm.selectedRoom != nil
 
+        // Check if the running card is entertainment-scoped
+        let runningCard: StudioCard? = {
+            guard let id = vm.runningCardID else { return nil }
+            return (vm.effectCards + vm.liveModeCards).first { $0.id == id }
+        }()
+        let isEntRunning = runningCard?.isEntertainmentScoped == true
+
         return VStack(spacing: 1) {
             Text("Studio")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white.opacity(0.35))
                 .tracking(0.5)
 
-            HStack(spacing: 5) {
-                Text(displayName)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(hasRoom ? .white : .white.opacity(0.45))
-                    .id(displayName)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: slideDirection).combined(with: .opacity),
-                        removal: .move(edge: slideDirection == .trailing ? .leading : .trailing).combined(with: .opacity)
-                    ))
+            if isEntRunning {
+                // Entertainment mode — show area indicator instead of room picker
+                HStack(spacing: 4) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Entertainment Area")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .foregroundStyle(runningCard?.accentColor ?? .white)
+            } else {
+                HStack(spacing: 5) {
+                    Text(displayName)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(hasRoom ? .white : .white.opacity(0.45))
+                        .id(displayName)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: slideDirection).combined(with: .opacity),
+                            removal: .move(edge: slideDirection == .trailing ? .leading : .trailing).combined(with: .opacity)
+                        ))
 
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.35))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.35))
+                }
             }
         }
         .contentShape(Rectangle())
         .onTapGesture {
+            guard !isEntRunning else { return }  // Disable picker during entertainment
             showRoomSheet = true
             HapticManager.shared.light()
         }
@@ -291,7 +310,7 @@ struct StudioView: View {
                         isVisible: visible
                     ) {
                         if vm.runningCardID == card.id {
-                            Task { await vm.stop(card) }
+                            Task { await vm.explicitStop(card) }
                         } else {
                             Task { await vm.apply(card) }
                         }
@@ -354,7 +373,7 @@ struct StudioView: View {
 
                     // Stop control
                     Button {
-                        Task { await vm.stop(card) }
+                        Task { await vm.explicitStop(card) }
                         HapticManager.shared.light()
                     } label: {
                         Image(systemName: "stop.fill")
@@ -512,6 +531,18 @@ struct StudioCardView: View, Equatable {
                         .foregroundStyle(.white.opacity(0.40))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    // Entertainment Area badge
+                    if card.isEntertainmentScoped {
+                        HStack(spacing: 3) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 8))
+                            Text("Entertainment Area")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundStyle(accentColor.opacity(0.7))
+                        .padding(.top, 4)
+                    }
                 }
                 .padding(HueSpacing.lg)
             }
@@ -657,7 +688,7 @@ struct StudioParamSheet: View {
 
                     // ── Stop button ──────────────────────────
                     Button {
-                        Task { await vm.stop(card) }
+                        Task { await vm.explicitStop(card) }
                         HapticManager.shared.medium()
                     } label: {
                         HStack {

@@ -1393,7 +1393,8 @@ final class UnifiedOrchestrator {
     private var activeStudioTask: Task<Void, Never>?
 
     /// Entertainment client for the current studio session.
-    private var studioEntClient: HueEntertainmentClient?
+    /// Internal access so StudioViewModel can report transport mode in debug.
+    var studioEntClient: HueEntertainmentClient?
 
     /// Latest-wins REST sender for studio mode — prevents bridge command backlog.
     private let studioRestSender = RestSender()
