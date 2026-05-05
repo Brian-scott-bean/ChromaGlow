@@ -1,12 +1,12 @@
 // StudioView.swift
-// CastChroma — v0.15.0 Studio Tab
+// CastChroma — v0.15.1 Studio Tab
 //
-// Unified Effects + Sync screen.
 // Layout:
-//   1. Room dropdown (explicit selection required)
-//   2. EFFECTS carousel (bridge-native, persist after closing)
-//   3. LIVE MODES carousel (app-driven, foreground required)
-//   4. Controls panel (slides up when a card is selected)
+//   1. Room wheel picker (inline, no extra tap)
+//   2. EFFECTS carousel  — tap card = apply immediately
+//   3. EFFECTS inline controls (visible when an effect card is running)
+//   4. LIVE MODES carousel
+//   5. LIVE MODES inline controls (visible when a live card is running)
 
 import SwiftUI
 
@@ -30,29 +30,37 @@ struct StudioView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 0) {
 
-                    // 1. Room picker
-                    roomDropdown
+                    // 1. Room wheel picker
+                    roomWheelPicker
                         .padding(.horizontal, 20)
-                        .padding(.top, 12)
-                        .padding(.bottom, 20)
+                        .padding(.top, 8)
+                        .padding(.bottom, 12)
 
-                    // 2. Bridge-native effects
+                    // 2. Effects
                     carouselSection(
                         title: "EFFECTS",
                         subtitle: "Persist after closing app",
                         subtitleColor: .white.opacity(0.35),
                         cards: vm.effectCards
                     )
-                    .padding(.bottom, 28)
 
-                    // 3. App-driven live modes
+                    // 2b. Effects inline controls
+                    inlineControls(for: vm.effectCards)
+                        .padding(.bottom, 24)
+
+                    // 3. Live Modes
                     carouselSection(
                         title: "LIVE MODES",
                         subtitle: "Requires app open",
                         subtitleColor: pink,
                         cards: vm.liveModeCards
                     )
-                    .padding(.bottom, 28)
+
+                    // 3b. Live Modes inline controls
+                    inlineControls(for: vm.liveModeCards)
+                        .padding(.bottom, 28)
+
+                    Color.clear.frame(height: 90)
                 }
             }
         }
@@ -67,20 +75,17 @@ struct StudioView: View {
                 }
             }
         }
-        .sheet(isPresented: Binding(
-            get: { vm.selectedCard != nil },
-            set: { if !$0 { vm.selectedCard = nil } }
-        )) {
-            if let card = vm.selectedCard {
-                StudioControlsSheet(card: card, vm: vm)
-            }
-        }
         .sheet(isPresented: $showSettings) {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
         }
         .preferredColorScheme(.dark)
         .onAppear { vm.configure(orchestrator: orchestrator) }
-        .animation(.spring(response: 0.38, dampingFraction: 0.78), value: vm.selectedCard?.id)
+        .animation(.spring(response: 0.38, dampingFraction: 0.78), value: vm.runningCardID)
+    }
+
+    // Combined rooms + zones for the wheel
+    private var allPickerItems: [RoomDisplayItem] {
+        orchestrator.allRooms + orchestrator.allZones
     }
 
     // ──────────────────────────────────────────────
@@ -115,76 +120,58 @@ struct StudioView: View {
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Room Dropdown
+    // MARK: - Room Wheel Picker
     // ──────────────────────────────────────────────
 
-    private var roomDropdown: some View {
-        Menu {
-            // ── Rooms ─────────────────────────────────────────────
-            if !orchestrator.allRooms.isEmpty {
-                Section("ROOMS") {
-                    ForEach(orchestrator.allRooms, id: \.id) { room in
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                vm.selectedRoom = room
-                            }
-                        } label: {
-                            Label(room.name, systemImage: archetypeIcon(for: room.archetype))
-                        }
-                    }
-                }
-            }
-            // ── Zones ─────────────────────────────────────────────
-            if !orchestrator.allZones.isEmpty {
-                Section("ZONES") {
-                    ForEach(orchestrator.allZones, id: \.id) { zone in
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                vm.selectedRoom = zone
-                            }
-                        } label: {
-                            Label(zone.name, systemImage: "square.3.layers.3d")
-                        }
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 12) {
-                if let room = vm.selectedRoom {
-                    Image(systemName: archetypeIcon(for: room.archetype))
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(amber)
-                    Text(room.name)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.white)
-                } else {
-                    Image(systemName: "house.fill")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.4))
-                    Text("Select a room or zone…")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.45))
-                }
+    private var roomWheelPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("ROOM / ZONE")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .tracking(0.8)
                 Spacer()
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.40))
+                if vm.selectedRoom != nil {
+                    Text(vm.selectedRoom!.name)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(amber)
+                }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 13)
+
+            Picker("", selection: Binding(
+                get: { vm.selectedRoom?.id ?? "" },
+                set: { id in
+                    if let match = allPickerItems.first(where: { $0.id == id }) {
+                        vm.selectedRoom = match
+                    }
+                }
+            )) {
+                Text("Select a room…").tag("")
+                ForEach(orchestrator.allRooms, id: \.id) { room in
+                    Text(room.name).tag(room.id)
+                }
+                ForEach(orchestrator.allZones, id: \.id) { zone in
+                    Text("⧡ " + zone.name).tag(zone.id)
+                }
+            }
+            .pickerStyle(.wheel)
+            .frame(height: 110)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.white.opacity(0.08))
+                    .fill(Color.white.opacity(0.05))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
-                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
                     )
             )
+            .clipShape(RoundedRectangle(cornerRadius: 14))
         }
     }
 
+
     // ──────────────────────────────────────────────
     // MARK: - Carousel Section
+    // Tap = apply immediately. Tap running card = stop.
     // ──────────────────────────────────────────────
 
     private func carouselSection(
@@ -194,7 +181,6 @@ struct StudioView: View {
         cards: [StudioCard]
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Section header
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
@@ -206,23 +192,21 @@ struct StudioView: View {
             }
             .padding(.horizontal, 20)
 
-            // Cards — peek of next card visible on right
             GeometryReader { geo in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 14) {
                         ForEach(cards) { card in
                             StudioCardView(
                                 card: card,
-                                isSelected: vm.selectedCard?.id == card.id,
+                                isSelected: vm.runningCardID == card.id,
                                 isRunning: vm.runningCardID == card.id,
                                 roomSelected: vm.selectedRoom != nil
                             ) {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                                    if vm.selectedCard?.id == card.id {
-                                        vm.selectedCard = nil
-                                    } else {
-                                        vm.selectedCard = card
-                                    }
+                                // TAP = apply immediately (or stop if already running)
+                                if vm.runningCardID == card.id {
+                                    Task { await vm.stop(card) }
+                                } else {
+                                    Task { await vm.apply(card) }
                                 }
                             } onApply: {
                                 Task { await vm.apply(card) }
@@ -236,16 +220,55 @@ struct StudioView: View {
                     .padding(.vertical, 4)
                 }
             }
-            .frame(height: 230)
+            .frame(height: 200)
         }
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Controls Panel (now rendered as a .sheet)
-    // Sheet always renders above the entire view hierarchy — tab bar included.
-    // This is the canonical iOS approach; ZStack overlays inside a child view
-    // cannot escape the parent's z-ordering to appear above HueTabBar.
+    // MARK: - Inline Controls
+    // Shown below a carousel when a card from that
+    // carousel is running. No sheet, no extra tap.
     // ──────────────────────────────────────────────
+
+    @ViewBuilder
+    private func inlineControls(for cards: [StudioCard]) -> some View {
+        let running = cards.first { $0.id == vm.runningCardID }
+        if let card = running, !card.params.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: card.icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(card.accentColor)
+                    Text(card.name.uppercased())
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .tracking(0.8)
+                    Spacer()
+                    // Live running indicator
+                    HStack(spacing: 5) {
+                        Circle().fill(Color.green).frame(width: 6, height: 6)
+                            .symbolEffect(.pulse, isActive: true)
+                        Text("LIVE")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.green)
+                    }
+                }
+                .padding(.horizontal, 20)
+
+                GlassmorphicCard(isActive: true, glowColor: card.accentColor, padding: 16) {
+                    VStack(spacing: 16) {
+                        ForEach(card.params) { param in
+                            StudioParamRow(param: param, vm: vm)
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .animation(.spring(response: 0.38, dampingFraction: 0.78), value: vm.runningCardID)
+        }
+    }
+
 }
 
 // MARK: - StudioCardView
