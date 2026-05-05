@@ -31,35 +31,36 @@ struct StudioView: View {
     // ── Deck paging ───────────────────────────────────────
     @State private var currentDeck: Int = 0  // 0 = Effects, 1 = Live
 
+    // ── Performance ───────────────────────────────────────
+    @State private var blurReady = false  // deferred to avoid first-frame GPU hitch
+
     var body: some View {
-        GeometryReader { geo in
-            let mixerVisible = vm.runningCardID != nil
-            let mixerHeight: CGFloat = mixerVisible ? computeMixerHeight() : 0
+        let mixerVisible = vm.runningCardID != nil
+        let mixerHeight: CGFloat = mixerVisible ? computeMixerHeight() : 0
 
-            ZStack {
-                ambientBackground
+        ZStack {
+            ambientBackground
 
-                VStack(spacing: 0) {
-                    // Zone A is now the nav title (no pill strip needed)
+            VStack(spacing: 0) {
+                // Zone A is now the nav title (no pill strip needed)
 
-                    // ── Zone B: Living Card Grid ──────────────────
-                    cardGrid
-                        .frame(maxHeight: .infinity)
+                // ── Zone B: Living Card Grid ──────────────────
+                cardGrid
+                    .frame(maxHeight: .infinity)
 
-                    // ── Deck page indicator ───────────────────────
-                    deckDots
-                        .padding(.bottom, HueSpacing.sm)
+                // ── Deck page indicator ───────────────────────
+                deckDots
+                    .padding(.bottom, HueSpacing.sm)
 
-                    // ── Zone C: Mixer Tray ────────────────────────
-                    if mixerVisible {
-                        mixerTray
-                            .frame(height: mixerHeight)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-
-                    // Tab bar clearance
-                    Color.clear.frame(height: 80)
+                // ── Zone C: Mixer Tray ────────────────────────
+                if mixerVisible {
+                    mixerTray
+                        .frame(height: mixerHeight)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+
+                // Tab bar clearance
+                Color.clear.frame(height: 80)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -82,7 +83,13 @@ struct StudioView: View {
             roomPickerSheet
         }
         .preferredColorScheme(.dark)
-        .onAppear { vm.configure(orchestrator: orchestrator) }
+        .onAppear {
+            vm.configure(orchestrator: orchestrator)
+            // Defer blur to avoid ~2ms GPU hitch on first frame
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeIn(duration: 0.4)) { blurReady = true }
+            }
+        }
         .animation(HueAnimation.slow, value: vm.runningCardID != nil)
         .animation(HueAnimation.card, value: vm.runningCardID)
     }
@@ -109,22 +116,26 @@ struct StudioView: View {
         GeometryReader { geo in
             ZStack {
                 HuePalette.Noir.background
-                Circle()
-                    .fill(RadialGradient(
-                        colors: [HuePalette.amber.opacity(0.20), .clear],
-                        center: .center, startRadius: 0, endRadius: 180
-                    ))
-                    .frame(width: 360)
-                    .position(x: geo.size.width * 0.85, y: 120)
-                    .blur(radius: 30)
-                Circle()
-                    .fill(RadialGradient(
-                        colors: [Color(hex: "#8C59FF").opacity(0.18), .clear],
-                        center: .center, startRadius: 0, endRadius: 150
-                    ))
-                    .frame(width: 300)
-                    .position(x: geo.size.width * 0.15, y: geo.size.height * 0.65)
-                    .blur(radius: 24)
+
+                if blurReady {
+                    Circle()
+                        .fill(RadialGradient(
+                            colors: [HuePalette.amber.opacity(0.20), .clear],
+                            center: .center, startRadius: 0, endRadius: 180
+                        ))
+                        .frame(width: 360)
+                        .position(x: geo.size.width * 0.85, y: 120)
+                        .blur(radius: 30)
+
+                    Circle()
+                        .fill(RadialGradient(
+                            colors: [Color(hex: "#8C59FF").opacity(0.18), .clear],
+                            center: .center, startRadius: 0, endRadius: 150
+                        ))
+                        .frame(width: 300)
+                        .position(x: geo.size.width * 0.15, y: geo.size.height * 0.65)
+                        .blur(radius: 24)
+                }
             }
         }
         .ignoresSafeArea()
@@ -386,12 +397,18 @@ struct StudioView: View {
 // Performance: receives value types only. Never sees the ViewModel.
 // The card IS the button — tap to apply/stop. No Apply/Stop sub-buttons.
 
-struct StudioCardView: View {
+struct StudioCardView: View, Equatable {
+
+    // Equatable: skip body re-evaluation when card data hasn't changed.
+    // Closures can't be compared, so we compare only data inputs.
+    static func == (lhs: StudioCardView, rhs: StudioCardView) -> Bool {
+        lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected
+    }
 
     let card: StudioCard       // value type (struct)
     let isRunning: Bool        // value type
     let roomSelected: Bool     // value type
-    let onTap: () -> Void      // closure
+    let onTap: () -> Void      // closure (excluded from ==)
 
     @State private var pressing = false
 
