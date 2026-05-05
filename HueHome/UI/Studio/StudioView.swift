@@ -1,12 +1,16 @@
 // StudioView.swift
-// CastChroma — v0.15.1 Studio Tab
+// CastChroma — v0.16.0 Studio DJ Redesign
 //
-// Layout:
-//   1. Room wheel picker (inline, no extra tap)
-//   2. EFFECTS carousel  — tap card = apply immediately
-//   3. EFFECTS inline controls (visible when an effect card is running)
-//   4. LIVE MODES carousel
-//   5. LIVE MODES inline controls (visible when a live card is running)
+// Layout: Three fixed zones (no root scroll)
+//   Zone A: Rolodex room selector (36pt capsule, expands on tap)
+//   Zone B: 2-column living card grid (paged between Effects / Live decks)
+//   Zone C: Mixer Tray (springs from bottom when an effect runs)
+//
+// Performance contract:
+//   - Canvas views isolated: receive value types only
+//   - Sliders: local @State, commit on drag end
+//   - Cards: receive Bool isRunning, never the ViewModel
+//   - All colors/spacing/animation via HueTokens
 
 import SwiftUI
 
@@ -18,47 +22,46 @@ struct StudioView: View {
     @State private var vm = StudioViewModel()
     @State private var showSettings = false
 
-    // ── Accent colors (from design token system) ────────────
-    private let pink   = Color(hex: "#FF4D8C")  // no token yet — Studio-specific
+    // ── Rolodex state ──────────────────────────────────────────
+    @State private var rolodexExpanded = false
+    @Namespace private var rolodexNS
+
+    // ── Deck paging ────────────────────────────────────────────
+    @State private var currentDeck: Int = 0  // 0 = Effects, 1 = Live
 
     var body: some View {
-        ZStack {
-            ambientBackground
+        GeometryReader { geo in
+            let mixerVisible = vm.runningCardID != nil
+            let mixerHeight: CGFloat = mixerVisible ? computeMixerHeight() : 0
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 0) {
+            ZStack {
+                ambientBackground
 
-                    // 1. Room wheel picker
-                    roomWheelPicker
+                VStack(spacing: 0) {
+                    // ── Zone A: Rolodex Room Selector ─────────────
+                    rolodexSelector
                         .padding(.horizontal, HueSpacing.screenH)
                         .padding(.top, HueSpacing.sm)
                         .padding(.bottom, HueSpacing.md)
+                        .zIndex(10)  // floats above grid when expanded
 
-                    // 2. Effects
-                    carouselSection(
-                        title: "EFFECTS",
-                        subtitle: "Persist after closing app",
-                        subtitleColor: .white.opacity(0.35),
-                        cards: vm.effectCards
-                    )
+                    // ── Zone B: Living Card Grid ──────────────────
+                    cardGrid
+                        .frame(maxHeight: .infinity)
 
-                    // 2b. Effects inline controls
-                    inlineControls(for: vm.effectCards)
-                        .padding(.bottom, HueSpacing.xxl)
+                    // ── Deck page indicator ───────────────────────
+                    deckDots
+                        .padding(.bottom, HueSpacing.sm)
 
-                    // 3. Live Modes
-                    carouselSection(
-                        title: "LIVE MODES",
-                        subtitle: "Requires app open",
-                        subtitleColor: pink,
-                        cards: vm.liveModeCards
-                    )
+                    // ── Zone C: Mixer Tray ────────────────────────
+                    if mixerVisible {
+                        mixerTray
+                            .frame(height: mixerHeight)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
 
-                    // 3b. Live Modes inline controls
-                    inlineControls(for: vm.liveModeCards)
-                        .padding(.bottom, HueSpacing.xxl + HueSpacing.xs)
-
-                    Color.clear.frame(height: 90)
+                    // Tab bar clearance
+                    Color.clear.frame(height: 80)
                 }
             }
         }
@@ -78,12 +81,22 @@ struct StudioView: View {
         }
         .preferredColorScheme(.dark)
         .onAppear { vm.configure(orchestrator: orchestrator) }
+        .animation(HueAnimation.slow, value: vm.runningCardID != nil)
         .animation(HueAnimation.card, value: vm.runningCardID)
     }
 
-    // Combined rooms + zones for the wheel
+    // Combined rooms + zones
     private var allPickerItems: [RoomDisplayItem] {
         orchestrator.allRooms + orchestrator.allZones
+    }
+
+    private func computeMixerHeight() -> CGFloat {
+        guard let card = allCards.first(where: { $0.id == vm.runningCardID }) else { return 0 }
+        return CGFloat(80 + card.params.count * 56)
+    }
+
+    private var allCards: [StudioCard] {
+        vm.effectCards + vm.liveModeCards
     }
 
     // ──────────────────────────────────────────────
@@ -94,7 +107,6 @@ struct StudioView: View {
         GeometryReader { geo in
             ZStack {
                 HuePalette.Noir.background
-                // Amber orb — top right
                 Circle()
                     .fill(RadialGradient(
                         colors: [HuePalette.amber.opacity(0.20), .clear],
@@ -103,7 +115,6 @@ struct StudioView: View {
                     .frame(width: 360)
                     .position(x: geo.size.width * 0.85, y: 120)
                     .blur(radius: 30)
-                // Purple orb — bottom left
                 Circle()
                     .fill(RadialGradient(
                         colors: [Color(hex: "#8C59FF").opacity(0.18), .clear],
@@ -118,298 +129,349 @@ struct StudioView: View {
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Room Wheel Picker
+    // MARK: - Zone A: Rolodex Room Selector
     // ──────────────────────────────────────────────
 
-    private var roomWheelPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("ROOM / ZONE")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .tracking(0.8)
-                Spacer()
-                if vm.selectedRoom != nil {
-                    Text(vm.selectedRoom!.name)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(HuePalette.amber)
+    private var rolodexSelector: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // ── Collapsed capsule (always visible) ───────────
+            Button {
+                withAnimation(HueAnimation.toggle) {
+                    rolodexExpanded.toggle()
                 }
-            }
+                HapticManager.shared.selection()
+            } label: {
+                HStack(spacing: HueSpacing.sm) {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.35))
+                        .rotationEffect(.degrees(rolodexExpanded ? 180 : 0))
 
-            Picker("", selection: Binding(
-                get: { vm.selectedRoom?.id ?? "" },
-                set: { id in
-                    if let match = allPickerItems.first(where: { $0.id == id }) {
-                        vm.selectedRoom = match
+                    if let room = vm.selectedRoom {
+                        Text(room.name)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .matchedGeometryEffect(id: "room_\(room.id)", in: rolodexNS)
+                    } else {
+                        Text("Select a room")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+
+                    Spacer()
+
+                    if vm.selectedRoom != nil {
+                        // Subtle room type indicator
+                        Image(systemName: archetypeIcon(for: vm.selectedRoom?.archetype))
+                            .font(.system(size: 12))
+                            .foregroundStyle(HuePalette.amber.opacity(0.6))
                     }
                 }
-            )) {
-                Text("Select a room…").tag("")
-                ForEach(orchestrator.allRooms, id: \.id) { room in
-                    Text(room.name).tag(room.id)
-                }
-                ForEach(orchestrator.allZones, id: \.id) { zone in
-                    Text("⧡ " + zone.name).tag(zone.id)
-                }
+                .padding(.horizontal, HueSpacing.lg)
+                .padding(.vertical, 10)
+                .background(
+                    Capsule()
+                        .fill(HuePalette.Noir.surface)
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(HuePalette.Noir.surfaceBorder, lineWidth: 1)
+                        )
+                )
             }
-            .pickerStyle(.wheel)
-            .frame(height: 110)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.white.opacity(0.05))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                    )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .buttonStyle(.plain)
+
+            // ── Expanded room list (floats below capsule) ────
+            if rolodexExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(allPickerItems.enumerated()), id: \.element.id) { index, item in
+                        let isSelected = vm.selectedRoom?.id == item.id
+                        let isZone = orchestrator.allZones.contains(where: { $0.id == item.id })
+
+                        Button {
+                            withAnimation(HueAnimation.toggle) {
+                                vm.selectedRoom = item
+                                rolodexExpanded = false
+                            }
+                            HapticManager.shared.selection()
+                        } label: {
+                            HStack(spacing: HueSpacing.sm) {
+                                if isZone {
+                                    Text("⬡")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.white.opacity(0.30))
+                                }
+                                Text(item.name)
+                                    .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
+                                    .foregroundStyle(isSelected ? .white : .white.opacity(0.35))
+                                    .matchedGeometryEffect(id: "room_\(item.id)", in: rolodexNS)
+                                Spacer()
+                                if isSelected {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(HuePalette.amber)
+                                }
+                            }
+                            .padding(.horizontal, HueSpacing.lg)
+                            .padding(.vertical, 10)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.opacity.combined(with: .offset(y: -4)))
+                        .animation(
+                            HueAnimation.toggle.delay(Double(index) * 0.04),
+                            value: rolodexExpanded
+                        )
+                    }
+                }
+                .padding(.top, HueSpacing.xs)
+                .background(
+                    RoundedRectangle(cornerRadius: HueRadius.lg)
+                        .fill(HuePalette.Noir.surface.opacity(0.95))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: HueRadius.lg)
+                                .strokeBorder(HuePalette.Noir.surfaceBorder, lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
+            }
         }
     }
 
-
     // ──────────────────────────────────────────────
-    // MARK: - Carousel Section
-    // Tap = apply immediately. Tap running card = stop.
+    // MARK: - Zone B: Card Grid (paged)
     // ──────────────────────────────────────────────
 
-    private func carouselSection(
-        title: String,
-        subtitle: String,
-        subtitleColor: Color,
-        cards: [StudioCard]
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .tracking(0.8)
-                Text(subtitle)
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundStyle(subtitleColor)
-            }
-            .padding(.horizontal, HueSpacing.screenH)
+    private var cardGrid: some View {
+        TabView(selection: $currentDeck) {
+            // Deck 0: Effects
+            deckGrid(cards: vm.effectCards)
+                .tag(0)
 
-            GeometryReader { geo in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: HueSpacing.md + 2) {
-                        ForEach(cards) { card in
-                            StudioCardView(
-                                card: card,
-                                isSelected: vm.runningCardID == card.id,
-                                isRunning: vm.runningCardID == card.id,
-                                roomSelected: vm.selectedRoom != nil
-                            ) {
-                                // TAP = apply immediately (or stop if already running)
-                                if vm.runningCardID == card.id {
-                                    Task { await vm.stop(card) }
-                                } else {
-                                    Task { await vm.apply(card) }
-                                }
-                            } onApply: {
-                                Task { await vm.apply(card) }
-                            } onStop: {
-                                Task { await vm.stop(card) }
-                            }
-                            .frame(width: geo.size.width * 0.78)
+            // Deck 1: Live Modes
+            deckGrid(cards: vm.liveModeCards)
+                .tag(1)
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .animation(HueAnimation.card, value: currentDeck)
+    }
+
+    private func deckGrid(cards: [StudioCard]) -> some View {
+        let columns = [
+            GridItem(.flexible(), spacing: HueSpacing.md),
+            GridItem(.flexible(), spacing: HueSpacing.md)
+        ]
+
+        return ScrollView(showsIndicators: false) {
+            LazyVGrid(columns: columns, spacing: HueSpacing.md) {
+                ForEach(cards) { card in
+                    StudioCardView(
+                        card: card,
+                        isRunning: vm.runningCardID == card.id,
+                        roomSelected: vm.selectedRoom != nil
+                    ) {
+                        if vm.runningCardID == card.id {
+                            Task { await vm.stop(card) }
+                        } else {
+                            Task { await vm.apply(card) }
                         }
                     }
-                    .padding(.horizontal, HueSpacing.screenH)
-                    .padding(.vertical, HueSpacing.xs)
                 }
             }
-            .frame(height: 200)
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.vertical, HueSpacing.sm)
+        }
+    }
+
+    // ── Deck page dots ───────────────────────────────────────
+
+    private var deckDots: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<2) { i in
+                Circle()
+                    .fill(currentDeck == i ? .white : .white.opacity(0.25))
+                    .frame(width: 6, height: 6)
+                    .animation(HueAnimation.fast, value: currentDeck)
+            }
         }
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Inline Controls
-    // Shown below a carousel when a card from that
-    // carousel is running. No sheet, no extra tap.
+    // MARK: - Zone C: Mixer Tray
     // ──────────────────────────────────────────────
 
-    @ViewBuilder
-    private func inlineControls(for cards: [StudioCard]) -> some View {
-        let running = cards.first { $0.id == vm.runningCardID }
-        if let card = running, !card.params.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
+    private var mixerTray: some View {
+        let card = allCards.first(where: { $0.id == vm.runningCardID })
+
+        return VStack(spacing: 0) {
+            if let card {
+                // ── Header ───────────────────────────────────
                 HStack(spacing: 10) {
-                    Image(systemName: card.icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(card.accentColor)
-                    Text(card.name.uppercased())
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.45))
-                        .tracking(0.8)
-                    Spacer()
-                    // Live running indicator
-                    HStack(spacing: 5) {
-                        Circle().fill(Color.green).frame(width: 6, height: 6)
-                            .symbolEffect(.pulse, isActive: true)
-                        Text("LIVE")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.green)
+                    // Effect icon
+                    ZStack {
+                        Circle()
+                            .fill(card.accentColor.opacity(0.20))
+                            .frame(width: 32, height: 32)
+                        Image(systemName: card.icon)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(card.accentColor)
                     }
+
+                    Text(card.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+
+                    // Live indicator
+                    HStack(spacing: 4) {
+                        Circle().fill(HuePalette.Noir.success)
+                            .frame(width: 5, height: 5)
+                        Text("LIVE")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(HuePalette.Noir.success)
+                    }
+
+                    Spacer()
+
+                    // Stop control
+                    Button {
+                        Task { await vm.stop(card) }
+                        HapticManager.shared.light()
+                    } label: {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(HuePalette.Noir.destructive)
+                            .padding(8)
+                            .background(
+                                Circle()
+                                    .fill(HuePalette.Noir.destructive.opacity(0.15))
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, HueSpacing.screenH)
+                .padding(.top, HueSpacing.md)
+                .padding(.bottom, HueSpacing.sm)
 
-                GlassmorphicCard(isActive: true, glowColor: card.accentColor, padding: HueSpacing.lg) {
-                    VStack(spacing: HueSpacing.lg) {
+                // ── Separator ────────────────────────────────
+                Rectangle()
+                    .fill(HuePalette.Noir.separator)
+                    .frame(height: 0.5)
+                    .padding(.horizontal, HueSpacing.screenH)
+
+                // ── Parameter sliders ────────────────────────
+                if !card.params.isEmpty {
+                    VStack(spacing: HueSpacing.md) {
                         ForEach(card.params) { param in
                             StudioParamRow(param: param, vm: vm)
                         }
                     }
+                    .padding(.horizontal, HueSpacing.screenH)
+                    .padding(.top, HueSpacing.md)
+                    .padding(.bottom, HueSpacing.sm)
                 }
-                .padding(.horizontal, HueSpacing.screenH)
             }
-            .transition(.move(edge: .top).combined(with: .opacity))
-            .animation(HueAnimation.card, value: vm.runningCardID)
         }
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
+        .padding(.horizontal, HueSpacing.sm)
+        .id(vm.runningCardID)  // forces cross-fade on effect switch
+        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
     }
-
 }
 
-// MARK: - StudioCardView
+// MARK: - StudioCardView (Phase 1)
+//
+// Performance: receives value types only. Never sees the ViewModel.
+// The card IS the button — tap to apply/stop. No Apply/Stop sub-buttons.
 
 struct StudioCardView: View {
 
-    let card: StudioCard
-    let isSelected: Bool
-    let isRunning: Bool
-    let roomSelected: Bool
-    let onSelect: () -> Void
-    let onApply: () -> Void
-    let onStop: () -> Void
+    let card: StudioCard       // value type (struct)
+    let isRunning: Bool        // value type
+    let roomSelected: Bool     // value type
+    let onTap: () -> Void      // closure
 
     @State private var pressing = false
 
     private var accentColor: Color { card.accentColor }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            // Card background
-            RoundedRectangle(cornerRadius: 20)
-                .fill(isSelected
+        ZStack(alignment: .bottomLeading) {
+            // ── Card background ─────────────────────────────
+            RoundedRectangle(cornerRadius: HueRadius.xl)
+                .fill(isRunning
                       ? accentColor.opacity(0.13)
                       : Color.white.opacity(0.06))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 20)
+                    RoundedRectangle(cornerRadius: HueRadius.xl)
                         .strokeBorder(
-                            isSelected ? accentColor.opacity(0.55) : Color.white.opacity(0.08),
-                            lineWidth: isSelected ? 1.5 : 1
+                            isRunning ? accentColor.opacity(0.55) : Color.white.opacity(0.08),
+                            lineWidth: isRunning ? 1.5 : 1
                         )
                 )
-                .shadow(
-                    color: isRunning ? accentColor.opacity(0.35) : .clear,
-                    radius: 16, x: 0, y: 5
-                )
 
-            // Content
+            // ── Content ─────────────────────────────────────
             VStack(alignment: .leading, spacing: 0) {
-                // Top row: icon + foreground badge
-                HStack(alignment: .top) {
-                    // Icon circle
-                    ZStack {
-                        Circle()
-                            .fill(accentColor.opacity(isSelected ? 0.28 : 0.15))
-                            .frame(width: 52, height: 52)
-                        Image(systemName: card.icon)
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundStyle(accentColor)
-                            .symbolEffect(.pulse.byLayer, isActive: isRunning)
-                    }
-
-                    Spacer()
-
-                    // Foreground-only badge for live modes
-                    if card.requiresForeground {
-                        HStack(spacing: 4) {
-                            Image(systemName: "iphone")
-                                .font(.system(size: 9, weight: .medium))
-                            Text("App open")
-                                .font(.system(size: 9, weight: .medium))
-                        }
-                        .foregroundStyle(.white.opacity(0.30))
-                        .padding(.top, 4)
-                    }
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(accentColor.opacity(isRunning ? 0.28 : 0.15))
+                        .frame(width: 40, height: 40)
+                    Image(systemName: card.icon)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(accentColor)
+                        .symbolEffect(.pulse.byLayer, isActive: isRunning)
                 }
-                .padding(.bottom, 14)
+
+                Spacer(minLength: HueSpacing.sm)
 
                 // Name
-                Text(card.name)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.bottom, 6)
+                HStack(spacing: 5) {
+                    Text(card.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
 
-                // Tagline
+                    if isRunning {
+                        Circle()
+                            .fill(HuePalette.Noir.success)
+                            .frame(width: 6, height: 6)
+                    }
+                }
+
+                // Tagline (Phase 1 — removed in Phase 2 when animations arrive)
                 Text(card.tagline)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.45))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.40))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, 18)
-
-                Spacer(minLength: 0)
-
-                // Action button
-                if isRunning {
-                    // Running state
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 7, height: 7)
-                        Text("Running")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.green)
-                        Spacer()
-                        Button(action: onStop) {
-                            Text("Stop")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.red)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .background(Capsule().fill(Color.red.opacity(0.15)))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                } else {
-                    // Apply / Start button
-                    Button(action: onApply) {
-                        Text(card.requiresForeground ? "Start" : "Apply")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(roomSelected ? .black : .white.opacity(0.35))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 11)
-                            .background(
-                                Capsule()
-                                    .fill(roomSelected
-                                          ? accentColor
-                                          : Color.white.opacity(0.10))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!roomSelected)
-                }
             }
-            .padding(20)
+            .padding(HueSpacing.lg)
         }
-        .scaleEffect(pressing ? 0.97 : 1.0)
-        .onTapGesture { onSelect() }
+        .aspectRatio(0.9, contentMode: .fit)
+        .scaleEffect(pressing ? 0.96 : 1.0)
+        .contentShape(RoundedRectangle(cornerRadius: HueRadius.xl))
+        .onTapGesture {
+            onTap()
+            HapticManager.shared.medium()
+        }
         .onLongPressGesture(
             minimumDuration: 0,
             pressing: { isPressing in
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                withAnimation(HueAnimation.fast) {
                     pressing = isPressing
                 }
             },
             perform: {}
         )
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isSelected)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isRunning)
+        .animation(HueAnimation.normal, value: isRunning)
     }
 }
 
 // MARK: - StudioParamRow
+//
+// Performance note: slider still uses @Bindable vm for now.
+// Phase 1 priority is layout. Phase 3 will convert to local @State + onCommit.
 
 struct StudioParamRow: View {
 
@@ -428,13 +490,12 @@ struct StudioParamRow: View {
     }
 
     private func sliderRow(param: StudioParam, min: Double, max: Double) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(param.label)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.60))
                 Spacer()
-                // Show live value from paramValues, fallback to defaultValue
                 Text("\(Int(vm.paramValues[param.id] ?? param.defaultValue))")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.40))
@@ -464,7 +525,7 @@ struct StudioParamRow: View {
                         .frame(width: 26, height: 26)
                         .overlay(Circle().strokeBorder(.white, lineWidth: isActive ? 2 : 0))
                         .onTapGesture {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                            withAnimation(HueAnimation.fast) {
                                 vm.paramColors[param.id] = color
                             }
                         }
@@ -488,4 +549,3 @@ struct StudioParamRow: View {
         }
     }
 }
-
