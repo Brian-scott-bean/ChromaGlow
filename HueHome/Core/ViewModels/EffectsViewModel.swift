@@ -251,11 +251,16 @@ final class EffectsViewModel: ObservableObject {
             return
         }
 
-        // Resolve the target room: explicit override > current selection > All Rooms
+        // Resolve the target room: explicit override > current selection.
+        // GUARD: require an explicit room — never fall through to "all rooms" silently.
+        // If the room picker hasn't been set yet, prompt the user instead of broadcasting.
         let effectiveRoom = activeRoomOverride ?? selectedRoom
-        guard let room = effectiveRoom, let groupedLightID = room.groupedLightID else {
-            // selectedRoom == nil means "All Rooms" chip — apply to each room in sequence
-            await applyToAllRooms(effect: effect)
+        guard let room = effectiveRoom else {
+            showStatus("⚠ Select a room first")
+            return
+        }
+        guard let groupedLightID = room.groupedLightID else {
+            showStatus("⚠ Room '\(room.name)' has no grouped light — try a different room")
             return
         }
 
@@ -309,33 +314,26 @@ final class EffectsViewModel: ObservableObject {
         case .bridgeNative(let effectName):
             isRunning         = false
             runningEffectName = nil
-            statusMessage     = "Fetching lights…"
+            let brightness    = paramState.sliderValue("brightness", default: 70)
 
-            let lightIDs       = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []
-            let brightness     = paramState.sliderValue("brightness", default: 70)
+            // ── Use grouped_light, NOT per-light enumeration ──────────────────
+            // The CLIP v2 grouped_light endpoint propagates the native effect to
+            // all lights in the room that support it, and silently skips those
+            // that don't. Per-light calls return HTTP 400 for unsupported effects
+            // (json-schema validation on SupportedEffects enum) — swallowed by
+            // try? but causing silent failure for the entire effect application.
+            statusMessage = "Applying '\(effect.name)'…"
+            try? await api.setGroupedLightNativeEffect(id: groupedLightID, effect: effectName)
 
-            if lightIDs.isEmpty {
-                try? await api.setGroupedLightEffect(
-                    id: groupedLightID, on: true,
-                    brightness: brightness, xy: nil, mirek: nil, duration: 0
-                )
-                showStatus("'\(effect.name)' applied (limited)")
-                return
+            // Set brightness separately if non-default (grouped_light native effect
+            // call doesn't accept dimming in the same request body)
+            if brightness != 70 {
+                try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: brightness)
             }
 
-            statusMessage = "Applying '\(effect.name)' to \(lightIDs.count) lights…"
-            await withTaskGroup(of: Void.self) { group in
-                for id in lightIDs {
-                    group.addTask {
-                        try? await api.setLightNativeEffect(id: id, effect: effectName)
-                        if brightness != 70 {
-                            try? await api.setLightBrightness(id: id, brightness: brightness)
-                        }
-                    }
-                }
-            }
             showStatus("'\(effect.name)' running on bridge ✓ — persists after closing app")
             setNowPlaying(effect)
+
 
         case .gradual:
             let durationSec    = paramState.durationValue("duration",       default: 1800)
