@@ -1,7 +1,7 @@
 // MainTabView.swift
-// CastChroma — Stage 1 Navigation
-// Custom glassmorphic 5-tab shell.
-// iPhone: TabView + NavigationStack per tab.
+// CastChroma — Navigation Shell
+// v0.15.0: Replaced Effects + Sync tabs with unified Studio tab and More hub.
+// iPhone: custom floating capsule tab bar (ZStack opacity switcher).
 // iPad: NavigationSplitView (sidebar + detail).
 
 import SwiftUI
@@ -9,26 +9,26 @@ import SwiftUI
 // MARK: - Tab Definition
 
 enum HueTab: Int, CaseIterable {
-    case home     = 0
-    case scenes   = 1
-    case effects  = 2
-    case sync     = 3
+    case home    = 0
+    case scenes  = 1
+    case studio  = 2
+    case more    = 3
 
     var icon: String {
         switch self {
-        case .home:    return "house.fill"
-        case .scenes:  return "sparkles"
-        case .effects: return "wand.and.stars"
-        case .sync:    return "waveform"
+        case .home:   return "house.fill"
+        case .scenes: return "sparkles"
+        case .studio: return "paintpalette.fill"
+        case .more:   return "ellipsis.circle.fill"
         }
     }
 
     var label: String {
         switch self {
-        case .home:    return "Home"
-        case .scenes:  return "Scenes"
-        case .effects: return "Effects"
-        case .sync:    return "Sync"
+        case .home:   return "Home"
+        case .scenes: return "Scenes"
+        case .studio: return "Studio"
+        case .more:   return "More"
         }
     }
 }
@@ -58,8 +58,6 @@ struct MainTabView: View {
                 tabContent(for: tab)
                     // HueTabBar is a custom floating capsule in the ZStack;
                     // the system safe area has no knowledge of it.
-                    // Declare its height here so every screen in every tab
-                    // automatically clears it — no per-screen hacks needed.
                     // Height: icon(32) + padding.vertical(12*2) + padding.bottom(8) = 64pt
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         Color.clear.frame(height: 64)
@@ -107,10 +105,10 @@ struct MainTabView: View {
     @ViewBuilder
     private func tabContent(for tab: HueTab) -> some View {
         switch tab {
-        case .home:    NavigationStack { DashboardView() }
-        case .scenes:  NavigationStack { ScenesTabView() }
-        case .effects: NavigationStack { EffectsTabView() }
-        case .sync:    NavigationStack { SyncModeView() }
+        case .home:   NavigationStack { DashboardView() }
+        case .scenes: NavigationStack { ScenesTabView() }
+        case .studio: NavigationStack { StudioView() }
+        case .more:   NavigationStack { MoreView() }
         }
     }
 }

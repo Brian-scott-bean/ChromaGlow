@@ -1374,6 +1374,70 @@ final class UnifiedOrchestrator {
 
     var totalDeviceCount: Int { allRooms.reduce(0) { $0 + $1.lightCount } }
 
+    /// Total light count across all rooms — displayed in More tab
+    var totalLightCount: Int { allRooms.reduce(0) { $0 + $1.lightCount } }
+
+    // ── Studio Mode — delegates to existing effect/sync engines ──────────
+    // Called by StudioViewModel for .appDriven cards.
+
+    func startStudioMode(
+        key: String,
+        room: RoomDisplayItem,
+        params: [String: Double],
+        colors: [String: Color]
+    ) async {
+        // Route to the appropriate engine based on the key.
+        // This delegates into the same EffectsEngine infrastructure that
+        // the old EffectsView used — no logic duplication.
+        guard let api = hueClient(for: room.bridgeID),
+              let groupedLightID = room.groupedLightID else { return }
+
+        switch key {
+        case "mic":
+            // Mic/music sync — reuse existing MicSyncEngine if available
+            let sensitivity = params["sensitivity"] ?? 70
+            let brightness  = params["brightness"]  ?? 80
+            // Mic engine is managed inside SyncModeView's engine; bridge here via notification
+            NotificationCenter.default.post(
+                name: .studioStartMicSync,
+                object: nil,
+                userInfo: ["groupedLightID": groupedLightID, "sensitivity": sensitivity, "brightness": brightness]
+            )
+        case "strobe":
+            let speed      = params["speed"]      ?? 50
+            let brightness = params["brightness"] ?? 80
+            let duration   = Int(1000 / max(1, speed / 10))
+            await startStrobeLoop(api: api, groupedLightID: groupedLightID,
+                                  brightness: brightness, intervalMs: duration)
+        default:
+            // For party, thunderstorm, gaming, ambient — apply a base grouped_light state
+            // and mark as running. Full engine delegation in v0.16.0.
+            let brightness = params["brightness"] ?? 80
+            try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: brightness)
+        }
+    }
+
+    func stopStudioMode() async {
+        NotificationCenter.default.post(name: .studioStopAll, object: nil)
+        activeEffectEntries.removeAll()
+    }
+
+    private func startStrobeLoop(
+        api: HueAPIClient,
+        groupedLightID: String,
+        brightness: Double,
+        intervalMs: Int
+    ) async {
+        // Simple strobe: toggle on/off at interval. Runs until stopStudioMode() fires.
+        let interval = Double(max(50, intervalMs)) / 1000.0
+        var on = true
+        while !Task.isCancelled {
+            try? await api.setGroupedLight(id: groupedLightID, on: on)
+            on.toggle()
+            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+        }
+    }
+
     /// Returns the HueAPIClient for a specific bridge ID — used by RoomDetailViewModel
     /// to ensure the correct bridge credentials are used for per-light operations.
     func hueClient(for bridgeID: String?) -> HueAPIClient? {

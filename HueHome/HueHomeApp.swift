@@ -144,8 +144,10 @@ struct AppRootView: View {
 // MARK: - Notification Names
 
 extension Notification.Name {
-    static let hueBridgeUnpaired = Notification.Name("hueBridgeUnpaired")
-    static let hueDemoExited     = Notification.Name("hueDemoExited")
+    static let hueBridgeUnpaired  = Notification.Name("hueBridgeUnpaired")
+    static let hueDemoExited      = Notification.Name("hueDemoExited")
+    static let studioStartMicSync = Notification.Name("studioStartMicSync")
+    static let studioStopAll      = Notification.Name("studioStopAll")
 }
 
 // MARK: - WatchSessionManager
