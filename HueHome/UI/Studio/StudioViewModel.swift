@@ -64,17 +64,43 @@ enum StudioStrategy {
 
 // MARK: - StudioViewModel
 
+/// Tracks a running effect on a specific room.
+struct RunningEffect {
+    let cardID: String
+    let card: StudioCard
+    let room: RoomDisplayItem
+    let lightIDs: [String]     // for per-light cleanup (bridgeNative)
+    let isEntertainment: Bool  // true = DTLS session active
+}
+
 @Observable
 final class StudioViewModel {
 
     // ── Selection state ───────────────────────────────────────
     var selectedRoom: RoomDisplayItem? = nil
     var selectedCard: StudioCard?      = nil
-    var runningCardID: String?         = nil
-    /// The room where the currently running effect was started.
-    /// Used by stop() to send the stop command to the CORRECT room,
-    /// not whatever selectedRoom happens to be now.
-    private var runningRoom: RoomDisplayItem? = nil
+
+    /// All currently running effects, keyed by room ID.
+    /// Multiple rooms can have independent effects running simultaneously.
+    var runningEffects: [String: RunningEffect] = [:]
+
+    /// The running effect on the CURRENTLY SELECTED room.
+    /// Drives card grid running indicators and mixer tray content.
+    var currentRoomEffect: RunningEffect? {
+        guard let room = selectedRoom else { return nil }
+        return runningEffects[room.id]
+    }
+
+    /// Whether ANY effect is running across any room.
+    var hasAnyRunningEffect: Bool {
+        !runningEffects.isEmpty
+    }
+
+    /// Convenience: the running card ID for the currently selected room.
+    /// Used by the card grid to determine which card shows as "running".
+    var runningCardID: String? {
+        currentRoomEffect?.cardID
+    }
 
     // ── Param values (namespaced: cardID → paramID → value) ──
     // Composition-ready: each card gets its own param namespace.
@@ -190,9 +216,6 @@ final class StudioViewModel {
     /// Whether the current stop is an explicit user action (turn off) vs internal switch.
     private var isExplicitStop = false
 
-    /// Light IDs from the last per-light effect — needed for per-light cleanup on stop.
-    private var lastPerLightIDs: [String] = []
-
     /// Send per-light commands in throttled batches to avoid 429 rate limiting.
     /// The bridge accepts ~7 simultaneous per-light PUTs before throttling.
     /// Batches of 5 with 150ms gaps guarantee no 429s.
@@ -268,30 +291,51 @@ final class StudioViewModel {
         }
         print("[Studio] ✅ All guards passed — groupedLightID: \(groupedLightID), bridgeID: \(room.bridgeID ?? "nil"), strategy: \(card.strategy)")
 
-        // DEBUG: Show room targeting info in the UI (remove before release)
-        statusMessage = "🔍 \(room.name) → glID: \(String(groupedLightID.prefix(8)))…"
+        // ── Stop any effect already running on THIS room ─────────────
+        if let existing = runningEffects[room.id] {
+            let existingCard = existing.card
+            print("[Studio] Replacing '\(existingCard.name)' on \(room.name)")
+            isExplicitStop = false
+            await stopEffect(on: room.id)
 
-        // ── Stop any currently running effect first ─────────────────
-        if let runningID = runningCardID,
-           let runningCard = (effectCards + liveModeCards).first(where: { $0.id == runningID }) {
-
-            let sameRoom = (runningRoom?.id == room.id)
+            // Delay if both old and new use REST on the same grouped_light
             let oldIsBridgeNative: Bool
-            if case .bridgeNative = runningCard.strategy { oldIsBridgeNative = true } else { oldIsBridgeNative = false }
+            if case .bridgeNative = existingCard.strategy { oldIsBridgeNative = true } else { oldIsBridgeNative = false }
             let newIsBridgeNative: Bool
             if case .bridgeNative = card.strategy { newIsBridgeNative = true } else { newIsBridgeNative = false }
-
-            // Always do a full stop — effects are per-light and need cleanup.
-            print("[Studio] Stopping previous: \(runningCard.name)")
-            isExplicitStop = false
-            await stop(runningCard)
-
-            // Only delay if BOTH old and new use REST grouped_light on the SAME endpoint.
-            // Entertainment (appDriven) uses DTLS — no REST rate limit conflict.
-            // Cross-room = different endpoints = no conflict.
-            let needsDelay = sameRoom && oldIsBridgeNative && newIsBridgeNative
-            if needsDelay {
+            if oldIsBridgeNative && newIsBridgeNative {
                 try? await Task.sleep(for: .milliseconds(400))
+            }
+        }
+
+        // ── If new card is entertainment-scoped, stop any existing entertainment effect ──
+        if card.isEntertainmentScoped {
+            for (roomID, effect) in runningEffects where effect.isEntertainment {
+                print("[Studio] Stopping entertainment '\(effect.card.name)' on \(effect.room.name) (only one DTLS session allowed)")
+                isExplicitStop = false
+                await stopEffect(on: roomID)
+            }
+        }
+
+        // ── Check for light overlap with other running rooms ─────────
+        // (e.g. Home zone overlaps individual rooms)
+        let newLightIDs: [String]
+        switch card.strategy {
+        case .bridgeNative:
+            newLightIDs = await resolveLightIDs(for: room, api: api)
+        default:
+            newLightIDs = []  // appDriven doesn't use per-light IDs
+        }
+
+        if !newLightIDs.isEmpty {
+            let newLightSet = Set(newLightIDs)
+            for (roomID, effect) in runningEffects {
+                let overlap = Set(effect.lightIDs).intersection(newLightSet)
+                if !overlap.isEmpty {
+                    print("[Studio] Light overlap: \(overlap.count) lights shared with \(effect.room.name) — stopping")
+                    isExplicitStop = false
+                    await stopEffect(on: roomID)
+                }
             }
         }
 
@@ -300,29 +344,27 @@ final class StudioViewModel {
         switch card.strategy {
         case .bridgeNative(let effectName):
             // Step 1: Turn on group with brightness (1 grouped_light PUT).
-            // grouped_light only supports on/dimming — effects field is ignored.
             print("[Studio] 📡 Group ON + bri=\(brightness) → \(room.name)")
             try? await api.setGroupedLightState(
                 id: groupedLightID, on: true, brightness: brightness
             )
 
-            // Step 2: Resolve this room's lights from in-memory child refs.
-            // Zones: zero API calls (direct light refs).
-            // Rooms: one fetchLights() call (device→light owner match).
-            let lightIDs = await resolveLightIDs(for: room, api: api)
+            // Step 2: Apply effect per-light.
+            let lightIDs = newLightIDs.isEmpty ? await resolveLightIDs(for: room, api: api) : newLightIDs
             if lightIDs.isEmpty {
                 statusMessage = "⚠ No lights found in \(room.name)"
                 return
             }
-            lastPerLightIDs = lightIDs
             print("[Studio] 📡 Per-light effect=\(effectName) to \(lightIDs.count) lights in \(room.name)")
             await sendPerLightBatched(lightIDs: lightIDs, api: api) { id in
                 try? await api.setLightNativeEffect(id: id, effect: effectName)
             }
 
-            runningCardID = card.id
-            runningRoom = room
-            statusMessage = "🟢 \(card.name) → \(room.name) [REST/Bridge] glID: \(String(groupedLightID.prefix(8)))…"
+            runningEffects[room.id] = RunningEffect(
+                cardID: card.id, card: card, room: room,
+                lightIDs: lightIDs, isEntertainment: false
+            )
+            statusMessage = "🟢 \(card.name) → \(room.name)"
 
         case .appDriven(let engineKey):
             if engineKey == "strobe" && isReduceMotionEnabled {
@@ -341,32 +383,34 @@ final class StudioViewModel {
                 key: engineKey, room: room,
                 params: flatValues, colors: flatColors
             )
-            let transport = orchestrator.studioEntClient != nil ? "ENTERTAINMENT" : "REST"
-            runningCardID = card.id
-            runningRoom = room
-            statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)] glID: \(String(groupedLightID.prefix(8)))…"
+            let isEnt = orchestrator.studioEntClient != nil
+            runningEffects[room.id] = RunningEffect(
+                cardID: card.id, card: card, room: room,
+                lightIDs: [], isEntertainment: isEnt
+            )
+            let transport = isEnt ? "ENTERTAINMENT" : "REST"
+            statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)]"
         }
+
+        print("[Studio] Active effects: \(runningEffects.count) rooms")
     }
 
+    /// Stop the effect running on a specific room.
     @MainActor
-    func stop(_ card: StudioCard) async {
-        let targetRoom = runningRoom ?? selectedRoom
-        guard let room = targetRoom,
-              let groupedLightID = room.groupedLightID,
+    private func stopEffect(on roomID: String) async {
+        guard let effect = runningEffects[roomID],
               let orchestrator,
-              let api = orchestrator.hueClient(for: room.bridgeID) else { return }
+              let api = orchestrator.hueClient(for: effect.room.bridgeID),
+              let groupedLightID = effect.room.groupedLightID else { return }
 
-        print("[Studio] Stopping '\(card.name)' on \(room.name) (glID: \(groupedLightID)) explicit=\(isExplicitStop)")
+        print("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (glID: \(groupedLightID)) explicit=\(isExplicitStop)")
 
-        switch card.strategy {
+        switch effect.card.strategy {
         case .bridgeNative:
-            // Clean up per-light effects (the ONLY way to clear them —
-            // grouped_light has no effects field, so sending no_effect there is a no-op)
-            if !lastPerLightIDs.isEmpty {
-                print("[Studio] 📡 Clearing per-light effects on \(lastPerLightIDs.count) lights")
-                let idsToClean = lastPerLightIDs
-                lastPerLightIDs = []
-                await sendPerLightBatched(lightIDs: idsToClean, api: api) { id in
+            // Clean up per-light effects (the ONLY way to clear them)
+            if !effect.lightIDs.isEmpty {
+                print("[Studio] 📡 Clearing per-light effects on \(effect.lightIDs.count) lights")
+                await sendPerLightBatched(lightIDs: effect.lightIDs, api: api) { id in
                     try? await api.setLightNativeEffect(id: id, effect: "no_effect")
                 }
             }
@@ -375,27 +419,44 @@ final class StudioViewModel {
                 // User tapped Stop — turn off the room (1 PUT)
                 try? await api.setGroupedLight(id: groupedLightID, on: false)
             }
-            // Internal switch: no grouped_light call needed — lights stay on,
-            // per-light effects already cleared above.
 
         case .appDriven:
             await orchestrator.stopStudioMode()
             try? await Task.sleep(for: .milliseconds(200))
         }
 
-        await MainActor.run {
-            runningCardID = nil
-            runningRoom = nil
-            lastPerLightIDs = []
-            statusMessage = ""
-        }
+        runningEffects.removeValue(forKey: roomID)
+    }
+
+    /// Public stop — called from the card grid (tap running card to toggle off)
+    /// or from the mixer stop button.
+    @MainActor
+    func stop(_ card: StudioCard) async {
+        guard let room = selectedRoom else { return }
+        isExplicitStop = false
+        await stopEffect(on: room.id)
+        statusMessage = ""
     }
 
     /// Explicit stop — called when user taps the stop button directly.
+    /// Turns off the room's lights.
     @MainActor
     func explicitStop(_ card: StudioCard) async {
+        guard let room = selectedRoom else { return }
         isExplicitStop = true
-        await stop(card)
+        await stopEffect(on: room.id)
+        statusMessage = ""
+    }
+
+    /// Stop all running effects across all rooms.
+    @MainActor
+    func stopAll() async {
+        isExplicitStop = true
+        let roomIDs = Array(runningEffects.keys)
+        for roomID in roomIDs {
+            await stopEffect(on: roomID)
+        }
+        statusMessage = ""
     }
 
     // ──────────────────────────────────────────────

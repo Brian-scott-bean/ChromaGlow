@@ -12,6 +12,7 @@ struct RoomPickerSheetView: View {
     let rooms: [RoomDisplayItem]
     let zones: [RoomDisplayItem]
     let selectedRoom: RoomDisplayItem?
+    let runningEffects: [String: RunningEffect]  // keyed by room ID
     let onSelect: (RoomDisplayItem) -> Void
 
     @State private var searchText = ""
@@ -117,6 +118,18 @@ struct RoomPickerSheetView: View {
                     Image(systemName: "checkmark")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(HuePalette.amber)
+                }
+
+                // Running effect indicator
+                if let effect = runningEffects[item.id] {
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(effect.card.accentColor)
+                            .frame(width: 6, height: 6)
+                        Text(effect.card.name)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(effect.card.accentColor.opacity(0.8))
+                    }
                 }
             }
             .padding(.vertical, 4)

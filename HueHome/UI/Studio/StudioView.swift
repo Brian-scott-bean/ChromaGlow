@@ -38,7 +38,7 @@ struct StudioView: View {
     @State private var blurReady = false  // deferred to avoid first-frame GPU hitch
 
     var body: some View {
-        let mixerVisible = vm.runningCardID != nil
+        let mixerVisible = vm.currentRoomEffect != nil
         let mixerHeight: CGFloat = mixerVisible ? computeMixerHeight() : 0
 
         ZStack {
@@ -93,7 +93,7 @@ struct StudioView: View {
                 withAnimation(.easeIn(duration: 0.4)) { blurReady = true }
             }
         }
-        .animation(HueAnimation.slow, value: vm.runningCardID != nil)
+        .animation(HueAnimation.slow, value: vm.currentRoomEffect != nil)
         .animation(HueAnimation.card, value: vm.runningCardID)
     }
 
@@ -103,8 +103,8 @@ struct StudioView: View {
     }
 
     private func computeMixerHeight() -> CGFloat {
-        guard let card = allCards.first(where: { $0.id == vm.runningCardID }) else { return 0 }
-        let essentialCount = card.params.filter { $0.tier == .essential }.count
+        guard let effect = vm.currentRoomEffect else { return 0 }
+        let essentialCount = effect.card.params.filter { $0.tier == .essential }.count
         // Header (60) + essential sliders (56 each) + chevron row (36) + padding
         return CGFloat(60 + essentialCount * 56 + 36 + 16)
     }
@@ -156,11 +156,10 @@ struct StudioView: View {
         let hasRoom = vm.selectedRoom != nil
 
         // Check if the running card is entertainment-scoped
-        let runningCard: StudioCard? = {
-            guard let id = vm.runningCardID else { return nil }
-            return (vm.effectCards + vm.liveModeCards).first { $0.id == id }
+        let isEntRunning: Bool = {
+            guard let effect = vm.currentRoomEffect else { return false }
+            return effect.card.isEntertainmentScoped
         }()
-        let isEntRunning = runningCard?.isEntertainmentScoped == true
 
         return VStack(spacing: 1) {
             Text("Studio")
@@ -176,7 +175,7 @@ struct StudioView: View {
                     Text("Entertainment Area")
                         .font(.system(size: 16, weight: .semibold))
                 }
-                .foregroundStyle(runningCard?.accentColor ?? .white)
+                .foregroundStyle(vm.currentRoomEffect?.card.accentColor ?? .white)
             } else {
                 HStack(spacing: 5) {
                     Text(displayName)
@@ -262,6 +261,7 @@ struct StudioView: View {
             rooms: orchestrator.allRooms,
             zones: orchestrator.allZones,
             selectedRoom: vm.selectedRoom,
+            runningEffects: vm.runningEffects,
             onSelect: { room in
                 withAnimation(HueAnimation.fast) {
                     vm.selectedRoom = room
@@ -340,10 +340,12 @@ struct StudioView: View {
     // ──────────────────────────────────────────────
 
     private var mixerTray: some View {
-        let card = allCards.first(where: { $0.id == vm.runningCardID })
+        let effect = vm.currentRoomEffect
 
         return VStack(spacing: 0) {
-            if let card {
+            if let effect {
+                let card = effect.card
+
                 // ── Header ───────────────────────────────────
                 HStack(spacing: 10) {
                     // Effect icon
@@ -356,9 +358,14 @@ struct StudioView: View {
                             .foregroundStyle(card.accentColor)
                     }
 
-                    Text(card.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(card.name)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text(effect.room.name)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
 
                     // Live indicator
                     HStack(spacing: 4) {
@@ -367,6 +374,16 @@ struct StudioView: View {
                         Text("LIVE")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(HuePalette.Noir.success)
+                    }
+
+                    // Active rooms count badge
+                    if vm.runningEffects.count > 1 {
+                        Text("\(vm.runningEffects.count) rooms")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(HuePalette.amber)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(HuePalette.amber.opacity(0.15)))
                     }
 
                     Spacer()
@@ -442,7 +459,7 @@ struct StudioView: View {
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
         .padding(.horizontal, HueSpacing.sm)
-        .id(vm.runningCardID)
+        .id(vm.currentRoomEffect?.cardID ?? vm.selectedRoom?.id)
         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
     }
 }
