@@ -263,22 +263,23 @@ struct StudioView: View {
     private var cardGrid: some View {
         TabView(selection: $currentDeck) {
             // Deck 0: Effects
-            deckGrid(cards: vm.effectCards)
+            deckGrid(cards: vm.effectCards, deckIndex: 0)
                 .tag(0)
 
             // Deck 1: Live Modes
-            deckGrid(cards: vm.liveModeCards)
+            deckGrid(cards: vm.liveModeCards, deckIndex: 1)
                 .tag(1)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
         .animation(HueAnimation.card, value: currentDeck)
     }
 
-    private func deckGrid(cards: [StudioCard]) -> some View {
+    private func deckGrid(cards: [StudioCard], deckIndex: Int) -> some View {
         let columns = [
             GridItem(.flexible(), spacing: HueSpacing.md),
             GridItem(.flexible(), spacing: HueSpacing.md)
         ]
+        let visible = currentDeck == deckIndex
 
         return ScrollView(showsIndicators: false) {
             LazyVGrid(columns: columns, spacing: HueSpacing.md) {
@@ -286,7 +287,8 @@ struct StudioView: View {
                     StudioCardView(
                         card: card,
                         isRunning: vm.runningCardID == card.id,
-                        roomSelected: vm.selectedRoom != nil
+                        roomSelected: vm.selectedRoom != nil,
+                        isVisible: visible
                     ) {
                         if vm.runningCardID == card.id {
                             Task { await vm.stop(card) }
@@ -435,12 +437,13 @@ struct StudioView: View {
 struct StudioCardView: View, Equatable {
 
     static func == (lhs: StudioCardView, rhs: StudioCardView) -> Bool {
-        lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected
+        lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected && lhs.isVisible == rhs.isVisible
     }
 
     let card: StudioCard
     let isRunning: Bool
     let roomSelected: Bool
+    let isVisible: Bool
     let onTap: () -> Void
 
     private var accentColor: Color { card.accentColor }
@@ -468,7 +471,8 @@ struct StudioCardView: View, Equatable {
                 StudioCardCanvas(
                     cardID: card.id,
                     accentColor: accentColor,
-                    isRunning: isRunning
+                    isRunning: isRunning,
+                    isVisible: isVisible
                 )
                 .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
                 .allowsHitTesting(false)

@@ -18,6 +18,7 @@ struct StudioCardCanvas: View {
     let cardID: String
     let accentColor: Color
     let isRunning: Bool
+    let isVisible: Bool  // false = off-screen deck, skip animation entirely
 
     // Seed derived from cardID — gives each card a unique animation phase
     private var seed: Double {
@@ -25,28 +26,37 @@ struct StudioCardCanvas: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: isRunning ? nil : 1.0 / 15.0)) { timeline in
-            let time = timeline.date.timeIntervalSinceReferenceDate
+        if isVisible {
+            // Animate: running = full fps, idle = 4fps (subtle, saves GPU)
+            TimelineView(.animation(minimumInterval: isRunning ? nil : 0.25)) { timeline in
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                canvasContent(time: time)
+            }
+        } else {
+            // Off-screen: single static frame, no timer overhead
+            canvasContent(time: 0)
+        }
+    }
 
-            Canvas { context, size in
-                let intensity: Double = isRunning ? 1.0 : 0.35
+    private func canvasContent(time: Double) -> some View {
+        Canvas { context, size in
+            let intensity: Double = isRunning ? 1.0 : 0.35
 
-                switch cardID {
-                case "candle":      drawCandle(context, size, time, intensity)
-                case "fire":        drawFire(context, size, time, intensity)
-                case "sparkle":     drawSparkle(context, size, time, intensity)
-                case "prism":       drawPrism(context, size, time, intensity)
-                case "opal":        drawOpal(context, size, time, intensity)
-                case "glisten":     drawGlisten(context, size, time, intensity)
-                case "colorloop":   drawColorloop(context, size, time, intensity)
-                case "music_sync":  drawMusicSync(context, size, time, intensity)
-                case "gaming":      drawGaming(context, size, time, intensity)
-                case "party":       drawParty(context, size, time, intensity)
-                case "strobe":      drawStrobe(context, size, time, intensity)
-                case "thunderstorm": drawThunderstorm(context, size, time, intensity)
-                case "ambient":     drawAmbient(context, size, time, intensity)
-                default:            break
-                }
+            switch cardID {
+            case "candle":      drawCandle(context, size, time, intensity)
+            case "fire":        drawFire(context, size, time, intensity)
+            case "sparkle":     drawSparkle(context, size, time, intensity)
+            case "prism":       drawPrism(context, size, time, intensity)
+            case "opal":        drawOpal(context, size, time, intensity)
+            case "glisten":     drawGlisten(context, size, time, intensity)
+            case "colorloop":   drawColorloop(context, size, time, intensity)
+            case "music_sync":  drawMusicSync(context, size, time, intensity)
+            case "gaming":      drawGaming(context, size, time, intensity)
+            case "party":       drawParty(context, size, time, intensity)
+            case "strobe":      drawStrobe(context, size, time, intensity)
+            case "thunderstorm": drawThunderstorm(context, size, time, intensity)
+            case "ambient":     drawAmbient(context, size, time, intensity)
+            default:            break
             }
         }
     }
