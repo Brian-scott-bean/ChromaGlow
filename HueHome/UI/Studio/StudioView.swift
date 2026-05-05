@@ -510,6 +510,10 @@ struct StudioParamRow: View {
                 in: min...max
             )
             .tint(HuePalette.amber)
+            .onChange(of: vm.paramValues[param.id]) { _, newValue in
+                guard param.id == "brightness", let brightness = newValue else { return }
+                Task { await vm.sendBrightness(brightness) }
+            }
         }
     }
 

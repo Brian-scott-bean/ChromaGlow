@@ -208,6 +208,30 @@ final class StudioViewModel {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Live Param Updates
+    // ──────────────────────────────────────────────
+
+    private var brightnessTask: Task<Void, Never>?
+
+    /// Debounced brightness update — avoids hammering the bridge on every
+    /// slider tick. Waits 150ms after last change, then sends one PUT.
+    @MainActor
+    func sendBrightness(_ brightness: Double) {
+        brightnessTask?.cancel()
+        brightnessTask = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+
+            guard let room = selectedRoom,
+                  let groupedLightID = room.groupedLightID,
+                  let orchestrator,
+                  let api = orchestrator.hueClient(for: room.bridgeID) else { return }
+
+            try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: brightness)
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Card Catalog
     // ──────────────────────────────────────────────
 
