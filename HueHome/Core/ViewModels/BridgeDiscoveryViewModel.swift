@@ -95,6 +95,7 @@ final class BridgeDiscoveryViewModel {
     let discovery = BridgeDiscoveryService()
     private var cancellables = Set<AnyCancellable>()
     private var scanTimeoutTask: Task<Void, Never>?
+    private var mdnsRetryDone = false   // guards the silent mDNS warm-cache retry
     private let log = Logger(subsystem: "com.lightshade.app", category: "ViewModel.Discovery")
 
     // MARK: Init
@@ -138,6 +139,7 @@ final class BridgeDiscoveryViewModel {
         logLines.removeAll()
         phase = .scanning
         scanningLabel = "Searching your Wi-Fi..."
+        mdnsRetryDone = false
         appendLog("▶️  Scan initiated — mDNS (layer 1).")
         discovery.startScan()
 
@@ -192,8 +194,47 @@ final class BridgeDiscoveryViewModel {
             phase = .bridgeFound(bridge)
 
         } catch {
-            discovery.stopScan()
             appendLog("❌ NUPnP error: \(error.localizedDescription)")
+
+            guard !mdnsRetryDone else {
+                // Already retried once — give up
+                discovery.stopScan()
+                handleError("Bridge not found automatically.\n\nCheck your Wi-Fi connection or tap \"Enter IP Manually\" to connect directly.")
+                return
+            }
+
+            // ── Silent mDNS retry ──────────────────────────────────────────────
+            // NUPnP failed but the first mDNS pass already warmed the OS's
+            // DNS-SD / mDNSResponder cache. Restarting the scan now means the
+            // SRV→A lookup is instant and the NWConnection TCP handshake
+            // completes in < 1 s instead of timing out.
+            mdnsRetryDone = true
+            appendLog("🔄 NUPnP unavailable — restarting mDNS with warm cache…")
+            scanningLabel = "Still searching…"
+            discovery.stopScan()
+
+            // Brief pause so the NWBrowser teardown completes cleanly
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard case .scanning = phase else { return }   // user cancelled during pause
+
+            discovery.startScan()
+
+            // Poll up to 10 s for resolution (0.5 s intervals → 20 checks)
+            for _ in 0..<20 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard case .scanning = phase else { return }  // already resolved
+                if let bridge = discovery.discoveredBridges.first {
+                    discovery.stopScan()
+                    scanTimeoutTask?.cancel()
+                    appendLog("🎉 Bridge found (mDNS retry): '\(bridge.name)' @ \(bridge.host):\(bridge.port)")
+                    appendLog("👆 Press the link button on your Hue Bridge, then tap Pair.")
+                    phase = .bridgeFound(bridge)
+                    return
+                }
+            }
+
+            // 10 s elapsed and still nothing — show the error
+            discovery.stopScan()
             handleError("Bridge not found automatically.\n\nCheck your Wi-Fi connection or tap \"Enter IP Manually\" to connect directly.")
         }
     }
