@@ -210,11 +210,16 @@ final class StudioViewModel {
         switch card.strategy {
         case .bridgeNative:
             try? await api.setGroupedLightNativeEffect(id: groupedLightID, effect: "no_effect")
+            // Bridge-native: we must explicitly turn off
+            try? await api.setGroupedLight(id: groupedLightID, on: false)
         case .appDriven:
             await orchestrator.stopStudioMode()
+            // App-driven loops handle their own cleanup (turn off lights).
+            // Wait briefly for the loop's cancellation + cleanup to finish
+            // before updating UI state — prevents race where we send on:false
+            // and the dying loop sends on:true right after.
+            try? await Task.sleep(for: .milliseconds(200))
         }
-
-        try? await api.setGroupedLight(id: groupedLightID, on: false)
 
         await MainActor.run {
             runningCardID = nil
