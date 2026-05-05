@@ -38,10 +38,17 @@ enum StudioParamKind {
 }
 
 enum StudioStrategy {
-    // Bridge-native: persists, single grouped_light API call
+    // Bridge-native: persists on bridge even after app closes.
+    // colorloop/no_effect → grouped_light endpoint (supported natively).
+    // candle/fire/sparkle/prism/opal/glisten → per-light calls (grouped_light
+    // silently ignores the `effects` field for these; only individual light
+    // resources support the full SupportedEffects enum).
     case bridgeNative(effect: String)
     // App-driven: loops in foreground, uses EffectsEngine/SyncEngine internally
     case appDriven(engineKey: String)
+
+    /// Effects that grouped_light natively supports via its own `effects` schema.
+    static let groupedLightNativeEffects: Set<String> = ["colorloop", "no_effect"]
 }
 
 // MARK: - StudioViewModel
@@ -105,30 +112,54 @@ final class StudioViewModel {
         guard let orchestrator else { return }
         guard let api = orchestrator.hueClient(for: room.bridgeID) else { return }
 
+        let brightness = paramValues["brightness"] ?? 70
+
         switch card.strategy {
         case .bridgeNative(let effectName):
-            let brightness = paramValues["brightness"] ?? 70
-            try? await api.setGroupedLightNativeEffect(id: groupedLightID, effect: effectName)
+            // ── Hybrid API strategy ──────────────────────────────────────────
+            // grouped_light only supports colorloop + no_effect in its effects
+            // schema. The richer effects (candle, fire, sparkle, prism, opal,
+            // glisten) are only supported by individual light resources.
+            // The bridge returns HTTP 200 for grouped_light + complex effect
+            // but silently ignores the field — nothing happens.
+            //
+            // Fix: use grouped_light for colorloop; per-light for everything
+            // else. Swallow per-light 400s (unsupported effect on that bulb
+            // model) so one incompatible bulb doesn't kill the whole room.
+            if StudioStrategy.groupedLightNativeEffects.contains(effectName) {
+                try? await api.setGroupedLightNativeEffect(id: groupedLightID, effect: effectName)
+            } else {
+                let lightIDs = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []
+                if lightIDs.isEmpty {
+                    statusMessage = "⚠ No lights found in this room"
+                    return
+                }
+                await withTaskGroup(of: Void.self) { group in
+                    for id in lightIDs {
+                        group.addTask {
+                            // try? swallows 400 json-schema errors for bulbs
+                            // that don't support this effect (e.g. white-only).
+                            try? await api.setLightNativeEffect(id: id, effect: effectName)
+                        }
+                    }
+                }
+            }
+
             if brightness != 70 {
                 try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: brightness)
             }
-            await MainActor.run {
-                runningCardID = card.id
-                statusMessage = "'\(card.name)' running on bridge — persists after closing ✓"
-            }
+            runningCardID = card.id
+            statusMessage = "'\(card.name)' running on bridge — persists after closing ✓"
 
         case .appDriven(let engineKey):
-            // Delegate to orchestrator's existing effect engine
             await orchestrator.startStudioMode(
                 key: engineKey,
                 room: room,
                 params: paramValues,
                 colors: paramColors
             )
-            await MainActor.run {
-                runningCardID = card.id
-                statusMessage = "'\(card.name)' running"
-            }
+            runningCardID = card.id
+            statusMessage = "'\(card.name)' running"
         }
     }
 

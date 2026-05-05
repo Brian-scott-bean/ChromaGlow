@@ -120,13 +120,32 @@ struct StudioView: View {
 
     private var roomDropdown: some View {
         Menu {
-            ForEach(orchestrator.allRooms, id: \.id) { room in
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        vm.selectedRoom = room
+            // ── Rooms ─────────────────────────────────────────────
+            if !orchestrator.allRooms.isEmpty {
+                Section("ROOMS") {
+                    ForEach(orchestrator.allRooms, id: \.id) { room in
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                vm.selectedRoom = room
+                            }
+                        } label: {
+                            Label(room.name, systemImage: archetypeIcon(for: room.archetype))
+                        }
                     }
-                } label: {
-                    Label(room.name, systemImage: archetypeIcon(for: room.archetype))
+                }
+            }
+            // ── Zones ─────────────────────────────────────────────
+            if !orchestrator.allZones.isEmpty {
+                Section("ZONES") {
+                    ForEach(orchestrator.allZones, id: \.id) { zone in
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                vm.selectedRoom = zone
+                            }
+                        } label: {
+                            Label(zone.name, systemImage: "square.3.layers.3d")
+                        }
+                    }
                 }
             }
         } label: {
@@ -142,7 +161,7 @@ struct StudioView: View {
                     Image(systemName: "house.fill")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(.white.opacity(0.4))
-                    Text("Select a room…")
+                    Text("Select a room or zone…")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.white.opacity(0.45))
                 }
@@ -242,6 +261,9 @@ struct StudioView: View {
                 }
             }
         }
+        // Extra bottom padding so the panel is fully visible above the tab bar.
+        // Tab bar height: 64pt + home indicator: 34pt + gap: 24pt = 122pt
+        .padding(.bottom, 122)
     }
 }
 
@@ -410,7 +432,8 @@ struct StudioParamRow: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.60))
                 Spacer()
-                Text(param.displayValue)
+                // Show live value from paramValues, fallback to defaultValue
+                Text("\(Int(vm.paramValues[param.id] ?? param.defaultValue))")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.40))
             }

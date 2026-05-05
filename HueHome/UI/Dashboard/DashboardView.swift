@@ -45,6 +45,11 @@ struct DashboardView: View {
     @State private var allOffWorking:       Bool     = false
     @State private var activatingFavID:     String?  = nil  // tracks which fav scene pill is activating
 
+    // ── Floating brightness pill (replaces in-card slider near iOS gesture zone)
+    @State private var floatingBrightness:  Double?  = nil  // nil = hidden
+    @State private var floatingRoomName:    String   = ""
+    @State private var floatingGlowColor:   Color    = Color(hex: "#FFC107")
+
     // ── Favorite Scenes (shared with RoomDetailView via @AppStorage) ────────────
     @AppStorage("favoriteSceneIDs") private var favoriteSceneIDsRaw: String = ""
     private var favoriteSceneIDs: [String] {
@@ -104,6 +109,17 @@ struct DashboardView: View {
                 }
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: presetToast)
             }
+            // ── Floating brightness pill — above tab bar, below toasts ─────
+            // Appears during drag to avoid iOS home indicator gesture conflict.
+            if let brightness = floatingBrightness {
+                VStack {
+                    Spacer()
+                    floatingBrightnessPill(brightness: brightness)
+                        .padding(.bottom, 80)  // 64pt tab bar + 16pt gap
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .animation(.spring(response: 0.30, dampingFraction: 0.80), value: floatingBrightness)
+            }
         }
         .navigationTitle(orchestrator.isDemoMode ? "My Lights  ✦ Demo" : "My Lights")
         .navigationBarTitleDisplayMode(.large)
@@ -138,6 +154,34 @@ struct DashboardView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Floating Brightness Pill
+    // ──────────────────────────────────────────────
+
+    @ViewBuilder
+    private func floatingBrightnessPill(brightness: Double) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sun.max.fill")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(floatingGlowColor)
+            Text(floatingRoomName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text("\(Int(brightness))%")
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(floatingGlowColor)
+                .frame(minWidth: 36, alignment: .trailing)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 11)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(floatingGlowColor.opacity(0.35), lineWidth: 1))
+        .shadow(color: floatingGlowColor.opacity(0.25), radius: 12, x: 0, y: 4)
+        .padding(.horizontal, 40)
     }
 
     // ──────────────────────────────────────────────
@@ -195,13 +239,24 @@ struct DashboardView: View {
                 // Room grid — 1-col (wide) or 2-col (compact) based on user preference.
                 LazyVGrid(columns: gridColumns, spacing: 14) {
                     ForEach(orchestrator.allRooms, id: \.id) { room in
-                        RoomCard(
+                    RoomCard(
                             room: room,
                             onToggle: { desiredOn in
                                 orchestrator.setRoom(room, isOn: desiredOn)
                             },
                             onBrightness: { newBrightness in
                                 orchestrator.setBrightness(newBrightness, for: room)
+                            },
+                            onBrightnessDrag: { dragging, value in
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.80)) {
+                                    if dragging {
+                                        floatingRoomName  = room.name
+                                        floatingGlowColor = RoomCard.resolveGlowColor(for: room)
+                                        floatingBrightness = value
+                                    } else {
+                                        floatingBrightness = nil
+                                    }
+                                }
                             },
                             onNavigate: {
                                 orchestrator.signalNavigationStarted()
@@ -236,6 +291,17 @@ struct DashboardView: View {
                                     },
                                     onBrightness: { newBrightness in
                                         orchestrator.setBrightness(newBrightness, for: zone)
+                                    },
+                                    onBrightnessDrag: { dragging, value in
+                                        withAnimation(.spring(response: 0.25, dampingFraction: 0.80)) {
+                                            if dragging {
+                                                floatingRoomName   = zone.name
+                                                floatingGlowColor  = RoomCard.resolveGlowColor(for: zone)
+                                                floatingBrightness = value
+                                            } else {
+                                                floatingBrightness = nil
+                                            }
+                                        }
                                     },
                                     onNavigate: {
                                         orchestrator.signalNavigationStarted()
@@ -835,10 +901,11 @@ struct DashboardView: View {
 struct RoomCard: View {
 
     let room: RoomDisplayItem
-    let onToggle:      (Bool)   -> Void   // Bool = desired new on-state
-    let onBrightness:  (Double) -> Void   // called ONCE on drag end with final value
-    var onEllipsisTap: (() -> Void)? = nil  // nil = no ··· button shown
-    var onNavigate:    (() -> Void)? = nil  // fired when the card body tap triggers navigation
+    let onToggle:         (Bool)           -> Void   // Bool = desired new on-state
+    let onBrightness:     (Double)         -> Void   // called ONCE on drag end
+    var onBrightnessDrag: ((Bool, Double)  -> Void)? = nil  // (isDragging, liveValue)
+    var onEllipsisTap:    (() -> Void)?    = nil  // nil = no ··· button shown
+    var onNavigate:       (() -> Void)?    = nil  // fired when card body tap triggers navigation
 
     // ── Local optimistic state ────────────────────────────────────────────────
     // localIsOn flips INSTANTLY on tap — no dependency on the @Observable chain.
@@ -861,13 +928,15 @@ struct RoomCard: View {
     init(room: RoomDisplayItem,
          onToggle: @escaping (Bool) -> Void,
          onBrightness: @escaping (Double) -> Void,
+         onBrightnessDrag: ((Bool, Double) -> Void)? = nil,
          onEllipsisTap: (() -> Void)? = nil,
          onNavigate: (() -> Void)? = nil) {
-        self.room          = room
-        self.onToggle      = onToggle
-        self.onBrightness  = onBrightness
-        self.onEllipsisTap = onEllipsisTap
-        self.onNavigate    = onNavigate
+        self.room             = room
+        self.onToggle         = onToggle
+        self.onBrightness     = onBrightness
+        self.onBrightnessDrag = onBrightnessDrag
+        self.onEllipsisTap    = onEllipsisTap
+        self.onNavigate       = onNavigate
         _localIsOn         = State(initialValue: room.isOn)
         _localGlowColor    = State(initialValue: Self.resolveGlowColor(for: room))
     }
@@ -892,6 +961,7 @@ struct RoomCard: View {
                     BrightnessRow(
                         brightness: room.brightness,
                         glowColor: localGlowColor,
+                        onDrag: { dragging, val in onBrightnessDrag?(dragging, val) },
                         onCommit: { onBrightness($0) }
                     )
                     .padding(.top, 10)
@@ -1035,7 +1105,8 @@ struct BrightnessRow: View {
     // ── Inputs ──────────────────────────────────────────
     let brightness: Double   // current "truth" value from parent (read-only)
     let glowColor:  Color
-    let onCommit:   (Double) -> Void   // fires once at gesture end
+    let onDrag:     (Bool, Double) -> Void  // (isDragging, liveValue) — drives floating pill
+    let onCommit:   (Double) -> Void        // fires once at gesture end
 
     // ── Local drag state — NEVER propagated to parent during drag ─────
     @State private var localBrightness: Double
@@ -1043,9 +1114,12 @@ struct BrightnessRow: View {
     @State private var lastNotch:   Int    = 0
     // NOTE: no sensitivity or dragStart — we use absolute position now.
 
-    init(brightness: Double, glowColor: Color, onCommit: @escaping (Double) -> Void) {
+    init(brightness: Double, glowColor: Color,
+         onDrag: @escaping (Bool, Double) -> Void = { _, _ in },
+         onCommit: @escaping (Double) -> Void) {
         self.brightness = brightness
         self.glowColor  = glowColor
+        self.onDrag     = onDrag
         self.onCommit   = onCommit
         _localBrightness = State(initialValue: brightness)
     }
@@ -1086,10 +1160,6 @@ struct BrightnessRow: View {
                 .frame(height: 16)
                 .contentShape(Rectangle().inset(by: -8))
                 .gesture(
-                    // minimumDistance:1 — starts on first movement, avoids conflict
-                    // with the parent scroll view, while still feeling instantaneous.
-                    // Absolute position: value.location.x ÷ track width → 0–100%
-                    // This means wherever the finger lands, the fill goes there.
                     DragGesture(minimumDistance: 1, coordinateSpace: .local)
                         .onChanged { value in
                             if !isDragging {
@@ -1097,10 +1167,10 @@ struct BrightnessRow: View {
                                 lastNotch  = Int(localBrightness / 10)
                                 HapticManager.shared.medium()
                             }
-                            // Absolute mapping — no sensitivity, no dragStart needed
                             let rawPercent = Double(value.location.x / geo.size.width) * 100
                             let newVal     = min(100, max(1, rawPercent))
                             localBrightness = newVal
+                            onDrag(true, newVal)  // update floating pill live
 
                             let notch = Int(newVal / 10)
                             if notch != lastNotch {
@@ -1110,6 +1180,7 @@ struct BrightnessRow: View {
                         }
                         .onEnded { _ in
                             isDragging = false
+                            onDrag(false, localBrightness)  // hide floating pill
                             HapticManager.shared.heavy()
                             onCommit(localBrightness)
                         }
@@ -1117,17 +1188,21 @@ struct BrightnessRow: View {
             }
             .frame(height: 16)
 
-            HStack(spacing: 2) {
-                Image(systemName: "sun.max.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.white.opacity(0.35))
-                Text("\(Int(displayValue))%")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .frame(width: 28, alignment: .trailing)
-                    // numericText transition only runs when NOT dragging (too expensive at 60fps)
-                    .contentTransition(isDragging ? .identity : .numericText())
-                    .animation(isDragging ? .none : .default, value: displayValue)
+            // Hide in-card % when dragging — the floating pill shows it instead
+            if !isDragging {
+                HStack(spacing: 2) {
+                    Image(systemName: "sun.max.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white.opacity(0.35))
+                    Text("\(Int(displayValue))%")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .frame(width: 28, alignment: .trailing)
+                        .contentTransition(.numericText())
+                }
+            } else {
+                // Placeholder to keep layout stable during drag
+                Spacer().frame(width: 28 + 9 + 2)
             }
         }
         .padding(.top, 4)
