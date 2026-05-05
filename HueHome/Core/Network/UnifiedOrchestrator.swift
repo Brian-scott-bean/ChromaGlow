@@ -1380,24 +1380,27 @@ final class UnifiedOrchestrator {
     // ── Studio Mode — delegates to existing effect/sync engines ──────────
     // Called by StudioViewModel for .appDriven cards.
 
+    /// Stored reference to the running studio task (strobe, etc.)
+    /// so stopStudioMode() can cancel it. Without this, loops run forever.
+    private var activeStudioTask: Task<Void, Never>?
+
     func startStudioMode(
         key: String,
         room: RoomDisplayItem,
         params: [String: Double],
         colors: [String: Color]
     ) async {
-        // Route to the appropriate engine based on the key.
-        // This delegates into the same EffectsEngine infrastructure that
-        // the old EffectsView used — no logic duplication.
+        // Cancel any previously running studio task first
+        activeStudioTask?.cancel()
+        activeStudioTask = nil
+
         guard let api = hueClient(for: room.bridgeID),
               let groupedLightID = room.groupedLightID else { return }
 
         switch key {
         case "mic":
-            // Mic/music sync — reuse existing MicSyncEngine if available
             let sensitivity = params["sensitivity"] ?? 70
             let brightness  = params["brightness"]  ?? 80
-            // Mic engine is managed inside SyncModeView's engine; bridge here via notification
             NotificationCenter.default.post(
                 name: .studioStartMicSync,
                 object: nil,
@@ -1407,17 +1410,22 @@ final class UnifiedOrchestrator {
             let speed      = params["speed"]      ?? 50
             let brightness = params["brightness"] ?? 80
             let duration   = Int(1000 / max(1, speed / 10))
-            await startStrobeLoop(api: api, groupedLightID: groupedLightID,
-                                  brightness: brightness, intervalMs: duration)
+            // Store the task so stopStudioMode() can cancel it
+            activeStudioTask = Task {
+                await startStrobeLoop(api: api, groupedLightID: groupedLightID,
+                                      brightness: brightness, intervalMs: duration)
+            }
         default:
-            // For party, thunderstorm, gaming, ambient — apply a base grouped_light state
-            // and mark as running. Full engine delegation in v0.16.0.
             let brightness = params["brightness"] ?? 80
             try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: brightness)
         }
     }
 
     func stopStudioMode() async {
+        // Cancel the running loop task (strobe, etc.)
+        activeStudioTask?.cancel()
+        activeStudioTask = nil
+        // Also notify any mic engines
         NotificationCenter.default.post(name: .studioStopAll, object: nil)
         activeEffectEntries.removeAll()
     }
@@ -1428,14 +1436,22 @@ final class UnifiedOrchestrator {
         brightness: Double,
         intervalMs: Int
     ) async {
-        // Simple strobe: toggle on/off at interval. Runs until stopStudioMode() fires.
+        // Simple strobe: toggle on/off at interval. Runs until task is cancelled.
         let interval = Double(max(50, intervalMs)) / 1000.0
         var on = true
         while !Task.isCancelled {
             try? await api.setGroupedLight(id: groupedLightID, on: on)
             on.toggle()
-            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+            // Use do/try (not try?) so CancellationError breaks the loop
+            do {
+                try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+            } catch {
+                // CancellationError or other — exit the loop
+                break
+            }
         }
+        // Ensure lights are turned off when strobe stops
+        try? await api.setGroupedLight(id: groupedLightID, on: false)
     }
 
     /// Returns the HueAPIClient for a specific bridge ID — used by RoomDetailViewModel
