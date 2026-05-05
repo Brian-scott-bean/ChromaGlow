@@ -202,8 +202,12 @@ struct DashboardView: View {
                             },
                             onBrightness: { newBrightness in
                                 orchestrator.setBrightness(newBrightness, for: room)
+                            },
+                            onNavigate: {
+                                orchestrator.signalNavigationStarted()
                             }
                         )
+                        .equatable()
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .bottom)),
                             removal:   .opacity
@@ -232,8 +236,12 @@ struct DashboardView: View {
                                     },
                                     onBrightness: { newBrightness in
                                         orchestrator.setBrightness(newBrightness, for: zone)
+                                    },
+                                    onNavigate: {
+                                        orchestrator.signalNavigationStarted()
                                     }
                                 )
+                                .equatable()
                                 .transition(.asymmetric(
                                     insertion: .opacity.combined(with: .move(edge: .bottom)),
                                     removal:   .opacity
@@ -830,6 +838,7 @@ struct RoomCard: View {
     let onToggle:      (Bool)   -> Void   // Bool = desired new on-state
     let onBrightness:  (Double) -> Void   // called ONCE on drag end with final value
     var onEllipsisTap: (() -> Void)? = nil  // nil = no ··· button shown
+    var onNavigate:    (() -> Void)? = nil  // fired when the card body tap triggers navigation
 
     // ── Local optimistic state ────────────────────────────────────────────────
     // localIsOn flips INSTANTLY on tap — no dependency on the @Observable chain.
@@ -852,11 +861,13 @@ struct RoomCard: View {
     init(room: RoomDisplayItem,
          onToggle: @escaping (Bool) -> Void,
          onBrightness: @escaping (Double) -> Void,
-         onEllipsisTap: (() -> Void)? = nil) {
+         onEllipsisTap: (() -> Void)? = nil,
+         onNavigate: (() -> Void)? = nil) {
         self.room          = room
         self.onToggle      = onToggle
         self.onBrightness  = onBrightness
         self.onEllipsisTap = onEllipsisTap
+        self.onNavigate    = onNavigate
         _localIsOn         = State(initialValue: room.isOn)
         _localGlowColor    = State(initialValue: Self.resolveGlowColor(for: room))
     }
@@ -904,6 +915,9 @@ struct RoomCard: View {
                     radius: 12, x: 0, y: 4)
         }
         .buttonStyle(.plain)
+        // Fire onNavigate simultaneously with the push so the orchestrator can
+        // suppress SSE rebuilds for the 450 ms animation window.
+        .simultaneousGesture(TapGesture().onEnded { _ in onNavigate?() })
         .overlay(alignment: .topTrailing) {
             // Power toggle — hard-coded to .topTrailing
             Button {
@@ -987,6 +1001,17 @@ struct RoomCard: View {
             Spacer(minLength: 4)
             Spacer().frame(width: 32)   // reserve for power overlay
         }
+    }
+}
+
+// ── RoomCard Equatable ─────────────────────────────────────────────────────
+// Closures (onToggle, onBrightness, onNavigate, onEllipsisTap) are excluded
+// from equality — they are stable captures and never change between body calls.
+// Only the room data determines whether a re-render is needed, allowing
+// .equatable() in the ForEach to skip body evaluation entirely for unchanged cards.
+extension RoomCard: Equatable {
+    static func == (lhs: RoomCard, rhs: RoomCard) -> Bool {
+        lhs.room == rhs.room
     }
 }
 

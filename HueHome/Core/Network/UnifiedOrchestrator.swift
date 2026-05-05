@@ -170,6 +170,19 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private var pendingActionDeadlines: [String: Date] = [:]
 
+    /// Navigation transition guard.
+    /// Set to true by signalNavigationStarted() when a NavigationLink push begins.
+    /// rebuildAllRooms/Zones buffer their work while this is true and apply it
+    /// after the animation window (450 ms) to prevent layout churn mid-transition.
+    @ObservationIgnored
+    private var isNavigating = false
+    @ObservationIgnored
+    private var navigationResetTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var sseRebuildPendingRooms = false
+    @ObservationIgnored
+    private var sseRebuildPendingZones = false
+
     /// Continuation for the orchestrator light-event bus.
     /// RoomDetailViewModel subscribes here instead of opening its own SSE connection.
     /// @ObservationIgnored: infrastructure — views never read this directly.
@@ -970,6 +983,22 @@ final class UnifiedOrchestrator {
         sseTasks.removeAll()
     }
 
+    /// Call this when a NavigationLink push begins (e.g. room card tap).
+    /// Suppresses allRooms/allZones rebuilds for 450 ms so the push animation
+    /// is not interrupted by SSE-driven layout recalculations.
+    /// Pending SSE rebuilds are flushed immediately after the window expires.
+    func signalNavigationStarted() {
+        isNavigating = true
+        navigationResetTask?.cancel()
+        navigationResetTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 450_000_000)   // matches push animation duration
+            guard let self, !Task.isCancelled else { return }
+            self.isNavigating = false
+            if self.sseRebuildPendingRooms { self.rebuildAllRooms(); self.sseRebuildPendingRooms = false }
+            if self.sseRebuildPendingZones { self.rebuildAllZones(); self.sseRebuildPendingZones = false }
+        }
+    }
+
     /// Observe UIApplication lifecycle via NotificationCenter to suspend SSE when backgrounded.
     /// Runs indefinitely for the lifetime of the orchestrator — do NOT call more than once.
     private func observeAppLifecycle() {
@@ -1161,18 +1190,18 @@ final class UnifiedOrchestrator {
     // ──────────────────────────────────────────────
 
     private func rebuildAllRooms() {
+        // Buffer during navigation push to avoid layout churn mid-animation.
+        guard !isNavigating else { sseRebuildPendingRooms = true; return }
         var seen = Set<String>()
         allRooms = roomsByBridge.values
             .flatMap { $0 }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
             .filter { seen.insert($0.id).inserted }
-        // Widget / Watch writes are debounced — see scheduleWidgetWrite().
-        // allRooms is updated synchronously above so SwiftUI re-renders FIRST,
-        // then the disk/network side effects fire 500ms later.
         scheduleWidgetWrite()
     }
 
     private func rebuildAllZones() {
+        guard !isNavigating else { sseRebuildPendingZones = true; return }
         var seen = Set<String>()
         allZones = zonesByBridge.values
             .flatMap { $0 }
