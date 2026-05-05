@@ -70,12 +70,12 @@ final class StudioViewModel {
 
     // ── Preset colors for the color picker param ──────────────
     static let presetColors: [Color] = [
-        Color(hex: "#FF3B30"),   // red
-        Color(hex: "#FF9500"),   // orange
-        Color(hex: "#FFC107"),   // amber
-        Color(hex: "#30D158"),   // green
-        Color(hex: "#0A84FF"),   // blue
-        Color(hex: "#BF5AF2"),   // purple
+        HuePalette.Noir.destructive,   // red
+        HuePalette.amberDeep,          // orange
+        HuePalette.amber,              // amber
+        HuePalette.Noir.success,       // green
+        Color(hex: "#0A84FF"),          // blue — system blue, no token yet
+        Color(hex: "#BF5AF2"),          // purple — no token yet
         Color.white
     ]
 

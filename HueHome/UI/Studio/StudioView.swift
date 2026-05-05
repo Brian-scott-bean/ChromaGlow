@@ -18,10 +18,8 @@ struct StudioView: View {
     @State private var vm = StudioViewModel()
     @State private var showSettings = false
 
-    // ── Accent colors ─────────────────────────────────────────
-    private let amber  = Color(hex: "#FFC107")
-    private let pink   = Color(hex: "#FF4D8C")
-    private let purple = Color(hex: "#8C59FF")
+    // ── Accent colors (from design token system) ────────────
+    private let pink   = Color(hex: "#FF4D8C")  // no token yet — Studio-specific
 
     var body: some View {
         ZStack {
@@ -32,9 +30,9 @@ struct StudioView: View {
 
                     // 1. Room wheel picker
                     roomWheelPicker
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
-                        .padding(.bottom, 12)
+                        .padding(.horizontal, HueSpacing.screenH)
+                        .padding(.top, HueSpacing.sm)
+                        .padding(.bottom, HueSpacing.md)
 
                     // 2. Effects
                     carouselSection(
@@ -46,7 +44,7 @@ struct StudioView: View {
 
                     // 2b. Effects inline controls
                     inlineControls(for: vm.effectCards)
-                        .padding(.bottom, 24)
+                        .padding(.bottom, HueSpacing.xxl)
 
                     // 3. Live Modes
                     carouselSection(
@@ -58,7 +56,7 @@ struct StudioView: View {
 
                     // 3b. Live Modes inline controls
                     inlineControls(for: vm.liveModeCards)
-                        .padding(.bottom, 28)
+                        .padding(.bottom, HueSpacing.xxl + HueSpacing.xs)
 
                     Color.clear.frame(height: 90)
                 }
@@ -80,7 +78,7 @@ struct StudioView: View {
         }
         .preferredColorScheme(.dark)
         .onAppear { vm.configure(orchestrator: orchestrator) }
-        .animation(.spring(response: 0.38, dampingFraction: 0.78), value: vm.runningCardID)
+        .animation(HueAnimation.card, value: vm.runningCardID)
     }
 
     // Combined rooms + zones for the wheel
@@ -95,11 +93,11 @@ struct StudioView: View {
     private var ambientBackground: some View {
         GeometryReader { geo in
             ZStack {
-                Color(hex: "#0E0E14")
+                HuePalette.Noir.background
                 // Amber orb — top right
                 Circle()
                     .fill(RadialGradient(
-                        colors: [amber.opacity(0.20), .clear],
+                        colors: [HuePalette.amber.opacity(0.20), .clear],
                         center: .center, startRadius: 0, endRadius: 180
                     ))
                     .frame(width: 360)
@@ -108,7 +106,7 @@ struct StudioView: View {
                 // Purple orb — bottom left
                 Circle()
                     .fill(RadialGradient(
-                        colors: [purple.opacity(0.18), .clear],
+                        colors: [Color(hex: "#8C59FF").opacity(0.18), .clear],
                         center: .center, startRadius: 0, endRadius: 150
                     ))
                     .frame(width: 300)
@@ -134,7 +132,7 @@ struct StudioView: View {
                 if vm.selectedRoom != nil {
                     Text(vm.selectedRoom!.name)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(amber)
+                        .foregroundStyle(HuePalette.amber)
                 }
             }
 
@@ -190,11 +188,11 @@ struct StudioView: View {
                     .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(subtitleColor)
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, HueSpacing.screenH)
 
             GeometryReader { geo in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 14) {
+                    HStack(spacing: HueSpacing.md + 2) {
                         ForEach(cards) { card in
                             StudioCardView(
                                 card: card,
@@ -216,8 +214,8 @@ struct StudioView: View {
                             .frame(width: geo.size.width * 0.78)
                         }
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, HueSpacing.screenH)
+                    .padding(.vertical, HueSpacing.xs)
                 }
             }
             .frame(height: 200)
@@ -253,19 +251,19 @@ struct StudioView: View {
                             .foregroundStyle(.green)
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, HueSpacing.screenH)
 
-                GlassmorphicCard(isActive: true, glowColor: card.accentColor, padding: 16) {
-                    VStack(spacing: 16) {
+                GlassmorphicCard(isActive: true, glowColor: card.accentColor, padding: HueSpacing.lg) {
+                    VStack(spacing: HueSpacing.lg) {
                         ForEach(card.params) { param in
                             StudioParamRow(param: param, vm: vm)
                         }
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, HueSpacing.screenH)
             }
             .transition(.move(edge: .top).combined(with: .opacity))
-            .animation(.spring(response: 0.38, dampingFraction: 0.78), value: vm.runningCardID)
+            .animation(HueAnimation.card, value: vm.runningCardID)
         }
     }
 
@@ -448,7 +446,7 @@ struct StudioParamRow: View {
                 ),
                 in: min...max
             )
-            .tint(Color(hex: "#FFC107"))
+            .tint(HuePalette.amber)
         }
     }
 
@@ -485,108 +483,9 @@ struct StudioParamRow: View {
                 get: { vm.paramValues[param.id].map { $0 > 0.5 } ?? false },
                 set: { vm.paramValues[param.id] = $0 ? 1 : 0 }
             ))
-            .tint(Color(hex: "#FFC107"))
+            .tint(HuePalette.amber)
             .labelsHidden()
         }
     }
 }
 
-// MARK: - StudioControlsSheet
-//
-// Native iOS bottom sheet — always renders above HueTabBar regardless of Z-order.
-// A ZStack overlay inside a child NavigationStack cannot escape the parent's
-// z-ordering to appear above a sibling HueTabBar layer in MainTabView.
-// A UISheetPresentationController (what .sheet() uses) is a separate window
-// scene layer that sits above the entire app UI, including custom tab bars.
-
-struct StudioControlsSheet: View {
-
-    let card: StudioCard
-    @Bindable var vm: StudioViewModel
-
-    @Environment(\.dismiss) private var dismiss
-
-    private let amber = Color(hex: "#FFC107")
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // ── Header ──────────────────────────────────────────
-            HStack(spacing: 14) {
-                ZStack {
-                    Circle()
-                        .fill(card.accentColor.opacity(0.20))
-                        .frame(width: 40, height: 40)
-                    Image(systemName: card.icon)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(card.accentColor)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(card.name)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text(vm.runningCardID == card.id ? "Running" : "Ready")
-                        .font(.system(size: 11))
-                        .foregroundStyle(vm.runningCardID == card.id ? .green : .white.opacity(0.40))
-                }
-                Spacer()
-                // Apply / Stop
-                if vm.runningCardID == card.id {
-                    Button {
-                        Task { await vm.stop(card) }
-                        dismiss()
-                    } label: {
-                        Text("Stop")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 9)
-                            .background(Capsule().fill(Color.red.opacity(0.15)))
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Button {
-                        Task { await vm.apply(card) }
-                        dismiss()
-                    } label: {
-                        Text(card.requiresForeground ? "Start" : "Apply")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.black)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 9)
-                            .background(Capsule().fill(card.accentColor))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(vm.selectedRoom == nil)
-                    .opacity(vm.selectedRoom == nil ? 0.45 : 1.0)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 20)
-            .padding(.bottom, 16)
-
-            Divider().background(Color.white.opacity(0.10))
-
-            // ── Params ─────────────────────────────────────────
-            if card.params.isEmpty {
-                Text("No adjustable parameters")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.35))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-            } else {
-                VStack(spacing: 18) {
-                    ForEach(card.params) { param in
-                        StudioParamRow(param: param, vm: vm)
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 20)
-            }
-        }
-        .background(Color(hex: "#17171F"))
-        .presentationDetents([.height(CGFloat(100 + card.params.count * 72))])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(Color(hex: "#17171F"))
-        .preferredColorScheme(.dark)
-    }
-}

@@ -15,10 +15,10 @@ struct MoreView: View {
     @State private var showAutomations   = false
     @State private var showDevices       = false
 
-    private let amber  = Color(hex: "#FFC107")
-    private let purple = Color(hex: "#8C59FF")
-    private let teal   = Color(hex: "#40D9BF")
-    private let blue   = Color(hex: "#668AFF")
+    // ── Accent colors (from design token system) ────────────
+    private let purple = Color(hex: "#8C59FF")  // no token yet
+    private let teal   = Color(hex: "#40D9BF")  // no token yet
+    private let blue   = Color(hex: "#668AFF")  // no token yet
 
     var body: some View {
         ZStack {
@@ -31,8 +31,8 @@ struct MoreView: View {
                     systemSection
                     appSection
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
+                .padding(.horizontal, HueSpacing.screenH)
+                .padding(.top, HueSpacing.xxl)
                 .padding(.bottom, 80)
             }
         }
@@ -54,9 +54,9 @@ struct MoreView: View {
 
     private var ambientBackground: some View {
         ZStack {
-            Color(hex: "#0E0E14").ignoresSafeArea()
+            HuePalette.Noir.background.ignoresSafeArea()
             Circle()
-                .fill(RadialGradient(colors: [amber.opacity(0.14), .clear],
+                .fill(RadialGradient(colors: [HuePalette.amber.opacity(0.14), .clear],
                                      center: .center, startRadius: 0, endRadius: 200))
                 .frame(width: 340)
                 .offset(x: 100, y: -200)
@@ -98,12 +98,12 @@ struct MoreView: View {
 
     private var peopleSection: some View {
         moreGroup(header: "PEOPLE") {
-            moreRow(icon: "person.2.fill", iconColor: amber,
+            moreRow(icon: "person.2.fill", iconColor: HuePalette.amber,
                     title: "Profiles & Access",
                     subtitle: "Family and guest room control",
                     badge: "Coming Soon") { }
             moreDivider
-            moreRow(icon: "qrcode", iconColor: amber,
+            moreRow(icon: "qrcode", iconColor: HuePalette.amber,
                     title: "Share Invite",
                     subtitle: "Grant access via QR code",
                     badge: "Coming Soon") { }
@@ -114,7 +114,7 @@ struct MoreView: View {
         moreGroup(header: "SYSTEM") {
             NavigationLink(destination: BridgeManagerView()) {
                 moreRowContent(
-                    icon: "network", iconColor: amber,
+                    icon: "network", iconColor: HuePalette.amber,
                     title: "Bridge Manager",
                     subtitle: "\(orchestrator.activeBridgeCount) bridge\(orchestrator.activeBridgeCount == 1 ? "" : "s") connected"
                 )
@@ -139,7 +139,7 @@ struct MoreView: View {
                         .frame(width: 44, height: 44)
                     Image(systemName: "lightbulb.fill")
                         .font(.system(size: 20))
-                        .foregroundStyle(amber)
+                        .foregroundStyle(HuePalette.amber)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("ChromaGlow")
@@ -172,7 +172,7 @@ struct MoreView: View {
             } label: {
                 moreRowContent(
                     icon: orchestrator.isDemoMode ? "sparkles.slash" : "sparkles",
-                    iconColor: orchestrator.isDemoMode ? .orange : amber,
+                    iconColor: orchestrator.isDemoMode ? .orange : HuePalette.amber,
                     title: orchestrator.isDemoMode ? "Exit Demo Mode" : "Demo Mode",
                     subtitle: orchestrator.isDemoMode ? "Resume real bridge" : "Explore with mock data",
                     badge: orchestrator.isDemoMode ? "LIVE" : nil,
@@ -238,7 +238,7 @@ struct MoreView: View {
                 .foregroundStyle(.white.opacity(0.45))
                 .padding(.leading, 4)
 
-            GlassmorphicCard(isActive: false, glowColor: amber) {
+            GlassmorphicCard(isActive: false, glowColor: HuePalette.amber) {
                 VStack(spacing: 12) { built }
             }
         }
@@ -251,7 +251,7 @@ struct MoreView: View {
         title: String,
         subtitle: String,
         badge: String? = nil,
-        badgeColor: Color = Color(hex: "#FFC107"),
+        badgeColor: Color = HuePalette.amber,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -268,7 +268,7 @@ struct MoreView: View {
         title: String,
         subtitle: String,
         badge: String? = nil,
-        badgeColor: Color = Color(hex: "#FFC107")
+        badgeColor: Color = HuePalette.amber
     ) -> some View {
         HStack(spacing: 12) {
             iconCircle(icon, color: iconColor)
