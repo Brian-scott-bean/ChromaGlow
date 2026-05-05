@@ -410,80 +410,81 @@ struct StudioCardView: View, Equatable {
     let roomSelected: Bool     // value type
     let onTap: () -> Void      // closure (excluded from ==)
 
-    @State private var pressing = false
-
     private var accentColor: Color { card.accentColor }
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            // ── Card background ─────────────────────────────
-            RoundedRectangle(cornerRadius: HueRadius.xl)
-                .fill(isRunning
-                      ? accentColor.opacity(0.13)
-                      : Color.white.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: HueRadius.xl)
-                        .strokeBorder(
-                            isRunning ? accentColor.opacity(0.55) : Color.white.opacity(0.08),
-                            lineWidth: isRunning ? 1.5 : 1
-                        )
-                )
+        Button {
+            onTap()
+            HapticManager.shared.medium()
+        } label: {
+            ZStack(alignment: .bottomLeading) {
+                // ── Card background ─────────────────────────────
+                RoundedRectangle(cornerRadius: HueRadius.xl)
+                    .fill(isRunning
+                          ? accentColor.opacity(0.13)
+                          : Color.white.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: HueRadius.xl)
+                            .strokeBorder(
+                                isRunning ? accentColor.opacity(0.55) : Color.white.opacity(0.08),
+                                lineWidth: isRunning ? 1.5 : 1
+                            )
+                    )
 
-            // ── Content ─────────────────────────────────────
-            VStack(alignment: .leading, spacing: 0) {
-                // Icon
-                ZStack {
-                    Circle()
-                        .fill(accentColor.opacity(isRunning ? 0.28 : 0.15))
-                        .frame(width: 40, height: 40)
-                    Image(systemName: card.icon)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(accentColor)
-                        .symbolEffect(.pulse.byLayer, isActive: isRunning)
-                }
-
-                Spacer(minLength: HueSpacing.sm)
-
-                // Name
-                HStack(spacing: 5) {
-                    Text(card.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-
-                    if isRunning {
+                // ── Content ─────────────────────────────────────
+                VStack(alignment: .leading, spacing: 0) {
+                    // Icon
+                    ZStack {
                         Circle()
-                            .fill(HuePalette.Noir.success)
-                            .frame(width: 6, height: 6)
+                            .fill(accentColor.opacity(isRunning ? 0.28 : 0.15))
+                            .frame(width: 40, height: 40)
+                        Image(systemName: card.icon)
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(accentColor)
+                            .symbolEffect(.pulse.byLayer, isActive: isRunning)
                     }
-                }
 
-                // Tagline (Phase 1 — removed in Phase 2 when animations arrive)
-                Text(card.tagline)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.40))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(HueSpacing.lg)
-        }
-        .aspectRatio(0.9, contentMode: .fit)
-        .scaleEffect(pressing ? 0.96 : 1.0)
-        .contentShape(RoundedRectangle(cornerRadius: HueRadius.xl))
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    if !pressing {
-                        withAnimation(HueAnimation.fast) { pressing = true }
+                    Spacer(minLength: HueSpacing.sm)
+
+                    // Name
+                    HStack(spacing: 5) {
+                        Text(card.name)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+
+                        if isRunning {
+                            Circle()
+                                .fill(HuePalette.Noir.success)
+                                .frame(width: 6, height: 6)
+                        }
                     }
+
+                    // Tagline (Phase 1 — removed in Phase 2 when animations arrive)
+                    Text(card.tagline)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.40))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .onEnded { _ in
-                    withAnimation(HueAnimation.fast) { pressing = false }
-                    onTap()
-                    HapticManager.shared.medium()
-                }
-        )
+                .padding(HueSpacing.lg)
+            }
+            .aspectRatio(0.9, contentMode: .fit)
+        }
+        .buttonStyle(StudioCardButtonStyle())
         .animation(HueAnimation.normal, value: isRunning)
+    }
+}
+
+// MARK: - StudioCardButtonStyle
+// ButtonStyle cooperates with parent TabView(.page) gestures.
+// DragGesture(minimumDistance: 0) was eating horizontal swipes.
+
+struct StudioCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .animation(HueAnimation.fast, value: configuration.isPressed)
     }
 }
 
