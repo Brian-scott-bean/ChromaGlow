@@ -53,14 +53,6 @@ struct StudioView: View {
                         cards: vm.liveModeCards
                     )
                     .padding(.bottom, 28)
-
-                    // 4. Controls panel (only when a card is selected)
-                    if vm.selectedCard != nil {
-                        controlsPanel
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 32)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
                 }
             }
         }
@@ -73,6 +65,14 @@ struct StudioView: View {
                 Button { showSettings = true } label: {
                     Image(systemName: "gear").foregroundStyle(.white.opacity(0.8))
                 }
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { vm.selectedCard != nil },
+            set: { if !$0 { vm.selectedCard = nil } }
+        )) {
+            if let card = vm.selectedCard {
+                StudioControlsSheet(card: card, vm: vm)
             }
         }
         .sheet(isPresented: $showSettings) {
@@ -241,30 +241,11 @@ struct StudioView: View {
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Controls Panel
+    // MARK: - Controls Panel (now rendered as a .sheet)
+    // Sheet always renders above the entire view hierarchy — tab bar included.
+    // This is the canonical iOS approach; ZStack overlays inside a child view
+    // cannot escape the parent's z-ordering to appear above HueTabBar.
     // ──────────────────────────────────────────────
-
-    private var controlsPanel: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("CONTROLS")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
-                .tracking(0.8)
-
-            GlassmorphicCard(isActive: false, glowColor: amber, padding: 16) {
-                VStack(spacing: 16) {
-                    if let card = vm.selectedCard {
-                        ForEach(card.params) { param in
-                            StudioParamRow(param: param, vm: vm)
-                        }
-                    }
-                }
-            }
-        }
-        // Extra bottom padding so the panel is fully visible above the tab bar.
-        // Tab bar height: 64pt + home indicator: 34pt + gap: 24pt = 122pt
-        .padding(.bottom, 122)
-    }
 }
 
 // MARK: - StudioCardView
@@ -484,5 +465,105 @@ struct StudioParamRow: View {
             .tint(Color(hex: "#FFC107"))
             .labelsHidden()
         }
+    }
+}
+
+// MARK: - StudioControlsSheet
+//
+// Native iOS bottom sheet — always renders above HueTabBar regardless of Z-order.
+// A ZStack overlay inside a child NavigationStack cannot escape the parent's
+// z-ordering to appear above a sibling HueTabBar layer in MainTabView.
+// A UISheetPresentationController (what .sheet() uses) is a separate window
+// scene layer that sits above the entire app UI, including custom tab bars.
+
+struct StudioControlsSheet: View {
+
+    let card: StudioCard
+    @Bindable var vm: StudioViewModel
+
+    @Environment(\.dismiss) private var dismiss
+
+    private let amber = Color(hex: "#FFC107")
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // ── Header ──────────────────────────────────────────
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(card.accentColor.opacity(0.20))
+                        .frame(width: 40, height: 40)
+                    Image(systemName: card.icon)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(card.accentColor)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(card.name)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text(vm.runningCardID == card.id ? "Running" : "Ready")
+                        .font(.system(size: 11))
+                        .foregroundStyle(vm.runningCardID == card.id ? .green : .white.opacity(0.40))
+                }
+                Spacer()
+                // Apply / Stop
+                if vm.runningCardID == card.id {
+                    Button {
+                        Task { await vm.stop(card) }
+                        dismiss()
+                    } label: {
+                        Text("Stop")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 9)
+                            .background(Capsule().fill(Color.red.opacity(0.15)))
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        Task { await vm.apply(card) }
+                        dismiss()
+                    } label: {
+                        Text(card.requiresForeground ? "Start" : "Apply")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 9)
+                            .background(Capsule().fill(card.accentColor))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.selectedRoom == nil)
+                    .opacity(vm.selectedRoom == nil ? 0.45 : 1.0)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 16)
+
+            Divider().background(Color.white.opacity(0.10))
+
+            // ── Params ─────────────────────────────────────────
+            if card.params.isEmpty {
+                Text("No adjustable parameters")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+            } else {
+                VStack(spacing: 18) {
+                    ForEach(card.params) { param in
+                        StudioParamRow(param: param, vm: vm)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
+            }
+        }
+        .background(Color(hex: "#17171F"))
+        .presentationDetents([.height(CGFloat(100 + card.params.count * 72))])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Color(hex: "#17171F"))
+        .preferredColorScheme(.dark)
     }
 }
