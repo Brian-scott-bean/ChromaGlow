@@ -101,28 +101,39 @@ final class StudioViewModel {
 
     @MainActor
     func apply(_ card: StudioCard) async {
+        print("[Studio] apply '\(card.name)' — selectedRoom: \(selectedRoom?.name ?? "nil")")
         guard let room = selectedRoom else {
             statusMessage = "⚠ Select a room first"
+            print("[Studio] ❌ No room selected")
             return
         }
         guard let groupedLightID = room.groupedLightID else {
             statusMessage = "⚠ Room '\(room.name)' has no grouped light"
+            print("[Studio] ❌ Room '\(room.name)' has no groupedLightID")
             return
         }
-        guard let orchestrator else { return }
-        guard let api = orchestrator.hueClient(for: room.bridgeID) else { return }
+        guard let orchestrator else {
+            print("[Studio] ❌ orchestrator is nil")
+            return
+        }
+        guard let api = orchestrator.hueClient(for: room.bridgeID) else {
+            print("[Studio] ❌ hueClient(for: \(room.bridgeID ?? "nil")) returned nil")
+            return
+        }
+        print("[Studio] ✅ All guards passed — groupedLightID: \(groupedLightID), bridgeID: \(room.bridgeID ?? "nil"), strategy: \(card.strategy)")
 
         // ── Stop any currently running effect first ─────────────────
-        // Without this, stacking conflicting effects on the same room
-        // leaves the bridge in an undefined state (especially per-light
-        // effects like candle/sparkle that don't get cleared by a new
-        // grouped_light command).
         if let runningID = runningCardID,
            let runningCard = (effectCards + liveModeCards).first(where: { $0.id == runningID }) {
+            print("[Studio] Stopping previous: \(runningCard.name)")
             await stop(runningCard)
         }
 
         let brightness = paramValues["brightness"] ?? 70
+
+        // ── Ensure lights are on first ──────────────────────────────
+        // Bridge ignores effects on lights that are off.
+        try? await api.setGroupedLight(id: groupedLightID, on: true)
 
         switch card.strategy {
         case .bridgeNative(let effectName):

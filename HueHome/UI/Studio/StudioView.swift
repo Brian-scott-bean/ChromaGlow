@@ -453,18 +453,18 @@ struct StudioCardView: View {
         .aspectRatio(0.9, contentMode: .fit)
         .scaleEffect(pressing ? 0.96 : 1.0)
         .contentShape(RoundedRectangle(cornerRadius: HueRadius.xl))
-        .onTapGesture {
-            onTap()
-            HapticManager.shared.medium()
-        }
-        .onLongPressGesture(
-            minimumDuration: 0,
-            pressing: { isPressing in
-                withAnimation(HueAnimation.fast) {
-                    pressing = isPressing
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if !pressing {
+                        withAnimation(HueAnimation.fast) { pressing = true }
+                    }
                 }
-            },
-            perform: {}
+                .onEnded { _ in
+                    withAnimation(HueAnimation.fast) { pressing = false }
+                    onTap()
+                    HapticManager.shared.medium()
+                }
         )
         .animation(HueAnimation.normal, value: isRunning)
     }
