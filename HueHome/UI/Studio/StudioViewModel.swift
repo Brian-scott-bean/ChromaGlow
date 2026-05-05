@@ -112,6 +112,16 @@ final class StudioViewModel {
         guard let orchestrator else { return }
         guard let api = orchestrator.hueClient(for: room.bridgeID) else { return }
 
+        // ── Stop any currently running effect first ─────────────────
+        // Without this, stacking conflicting effects on the same room
+        // leaves the bridge in an undefined state (especially per-light
+        // effects like candle/sparkle that don't get cleared by a new
+        // grouped_light command).
+        if let runningID = runningCardID,
+           let runningCard = (effectCards + liveModeCards).first(where: { $0.id == runningID }) {
+            await stop(runningCard)
+        }
+
         let brightness = paramValues["brightness"] ?? 70
 
         switch card.strategy {

@@ -22,10 +22,6 @@ struct StudioView: View {
     @State private var vm = StudioViewModel()
     @State private var showSettings = false
 
-    // ── Rolodex state ──────────────────────────────────────────
-    @State private var rolodexExpanded = false
-    @Namespace private var rolodexNS
-
     // ── Deck paging ────────────────────────────────────────────
     @State private var currentDeck: Int = 0  // 0 = Effects, 1 = Live
 
@@ -38,12 +34,10 @@ struct StudioView: View {
                 ambientBackground
 
                 VStack(spacing: 0) {
-                    // ── Zone A: Rolodex Room Selector ─────────────
-                    rolodexSelector
-                        .padding(.horizontal, HueSpacing.screenH)
+                    // ── Zone A: Room Pill Strip ───────────────
+                    roomPillStrip
                         .padding(.top, HueSpacing.sm)
                         .padding(.bottom, HueSpacing.md)
-                        .zIndex(10)  // floats above grid when expanded
 
                     // ── Zone B: Living Card Grid ──────────────────
                     cardGrid
@@ -129,112 +123,53 @@ struct StudioView: View {
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Zone A: Rolodex Room Selector
+    // MARK: - Zone A: Room Pill Strip
+    // One-tap room switching. All rooms visible.
     // ──────────────────────────────────────────────
 
-    private var rolodexSelector: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // ── Collapsed capsule (always visible) ───────────
-            Button {
-                withAnimation(HueAnimation.toggle) {
-                    rolodexExpanded.toggle()
-                }
-                HapticManager.shared.selection()
-            } label: {
-                HStack(spacing: HueSpacing.sm) {
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.35))
-                        .rotationEffect(.degrees(rolodexExpanded ? 180 : 0))
+    private var roomPillStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: HueSpacing.sm) {
+                ForEach(allPickerItems, id: \.id) { item in
+                    let isSelected = vm.selectedRoom?.id == item.id
+                    let isZone = orchestrator.allZones.contains(where: { $0.id == item.id })
 
-                    if let room = vm.selectedRoom {
-                        Text(room.name)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .matchedGeometryEffect(id: "room_\(room.id)", in: rolodexNS)
-                    } else {
-                        Text("Select a room")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.45))
-                    }
-
-                    Spacer()
-
-                    if vm.selectedRoom != nil {
-                        // Subtle room type indicator
-                        Image(systemName: archetypeIcon(for: vm.selectedRoom?.archetype))
-                            .font(.system(size: 12))
-                            .foregroundStyle(HuePalette.amber.opacity(0.6))
-                    }
-                }
-                .padding(.horizontal, HueSpacing.lg)
-                .padding(.vertical, 10)
-                .background(
-                    Capsule()
-                        .fill(HuePalette.Noir.surface)
+                    Button {
+                        withAnimation(HueAnimation.fast) {
+                            vm.selectedRoom = item
+                        }
+                        HapticManager.shared.selection()
+                    } label: {
+                        HStack(spacing: 5) {
+                            if isZone {
+                                Image(systemName: "square.3.layers.3d")
+                                    .font(.system(size: 9, weight: .medium))
+                            }
+                            Text(item.name)
+                                .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(isSelected ? .black : .white.opacity(0.55))
+                        .padding(.horizontal, HueSpacing.md)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule()
+                                .fill(isSelected
+                                      ? HuePalette.amber
+                                      : HuePalette.Noir.surface)
+                        )
                         .overlay(
                             Capsule()
-                                .strokeBorder(HuePalette.Noir.surfaceBorder, lineWidth: 1)
-                        )
-                )
-            }
-            .buttonStyle(.plain)
-
-            // ── Expanded room list (floats below capsule) ────
-            if rolodexExpanded {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(allPickerItems.enumerated()), id: \.element.id) { index, item in
-                        let isSelected = vm.selectedRoom?.id == item.id
-                        let isZone = orchestrator.allZones.contains(where: { $0.id == item.id })
-
-                        Button {
-                            withAnimation(HueAnimation.toggle) {
-                                vm.selectedRoom = item
-                                rolodexExpanded = false
-                            }
-                            HapticManager.shared.selection()
-                        } label: {
-                            HStack(spacing: HueSpacing.sm) {
-                                if isZone {
-                                    Text("⬡")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.white.opacity(0.30))
-                                }
-                                Text(item.name)
-                                    .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
-                                    .foregroundStyle(isSelected ? .white : .white.opacity(0.35))
-                                    .matchedGeometryEffect(id: "room_\(item.id)", in: rolodexNS)
-                                Spacer()
-                                if isSelected {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(HuePalette.amber)
-                                }
-                            }
-                            .padding(.horizontal, HueSpacing.lg)
-                            .padding(.vertical, 10)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .transition(.opacity.combined(with: .offset(y: -4)))
-                        .animation(
-                            HueAnimation.toggle.delay(Double(index) * 0.04),
-                            value: rolodexExpanded
+                                .strokeBorder(
+                                    isSelected ? Color.clear : HuePalette.Noir.surfaceBorder,
+                                    lineWidth: 1
+                                )
                         )
                     }
+                    .buttonStyle(.plain)
                 }
-                .padding(.top, HueSpacing.xs)
-                .background(
-                    RoundedRectangle(cornerRadius: HueRadius.lg)
-                        .fill(HuePalette.Noir.surface.opacity(0.95))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: HueRadius.lg)
-                                .strokeBorder(HuePalette.Noir.surfaceBorder, lineWidth: 1)
-                        )
-                        .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
-                )
-                .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
             }
+            .padding(.horizontal, HueSpacing.screenH)
         }
     }
 
