@@ -1261,7 +1261,7 @@ Critical for the "Home" zone which contains ALL lights — applying to Home corr
 
 The Composer is a **dynamic scene creation engine** integrated into Studio as Deck 3. Users build any lighting experience from scratch by composing four independent layers in real time.
 
-> Status update (2026-05-06): Core Composer implementation is now shipped in-tree (engine, Deck 3, mixer layer tabs, save flow, and preset CRUD). Treat this section as architectural reference plus intent; remaining work is mainly polish, QA, and transport UX validation.
+> Status update (2026-05-06): Core Composer implementation is now shipped in-tree (engine, Deck 3, mixer layer tabs, save flow, and preset CRUD). Additional polish shipped same day: inline AI generation entry inside the `+ Create` pill, Composer layer-activity chips on cards, and seasonal deck banner affordance. Treat this section as architectural reference plus intent; remaining work is mainly cross-device QA, transport UX validation, and provider-backed AI generation.
 
 **Core UX principle:** Same one-tap flow as every other Studio card. Tap "+ Create" → lights respond instantly in a default state → mixer tray shows layer tabs → drag any slider → lights respond live → save.
 

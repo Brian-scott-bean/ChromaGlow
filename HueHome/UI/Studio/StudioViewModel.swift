@@ -18,6 +18,7 @@ struct StudioCard: Identifiable, Hashable {
     let requiresForeground: Bool
     let params: [StudioParam]
     let strategy: StudioStrategy
+    let compositionLayerActivity: CompositionLayerActivity?
 
     /// True for cards that use the Entertainment API (Strobe, Party, Thunderstorm).
     /// These affect the entire entertainment area, not just the selected room.
@@ -28,6 +29,13 @@ struct StudioCard: Identifiable, Hashable {
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (lhs: StudioCard, rhs: StudioCard) -> Bool { lhs.id == rhs.id }
+}
+
+struct CompositionLayerActivity: Hashable {
+    let palette: Bool
+    let motion: Bool
+    let envelope: Bool
+    let reaction: Bool
 }
 
 struct StudioParam: Identifiable {
@@ -61,6 +69,140 @@ enum StudioStrategy: Equatable {
     /// (candle, fire, sparkle, etc.) must be sent per-light.
     /// The grouped_light schema does NOT include an effects field.
     static let groupedLightOnlyEffects: Set<String> = ["no_effect"]
+}
+
+private struct AICompositionDraft {
+    let name: String
+    let icon: String
+    let accentColorHex: String
+    let palette: PaletteConfig
+    let motion: MotionConfig
+    let envelope: EnvelopeConfig
+    let reaction: ReactionConfig
+}
+
+private enum AICompositionGeneratorError: LocalizedError {
+    case promptTooShort
+
+    var errorDescription: String? {
+        switch self {
+        case .promptTooShort:
+            return "Give me at least a few words to build from."
+        }
+    }
+}
+
+/// Local-first generator abstraction.
+/// This is intentionally deterministic and offline-safe so UX can ship now,
+/// while keeping a clean seam for FoundationModels/cloud providers later.
+private struct AICompositionGenerator {
+    func generateDraft(from rawPrompt: String) async throws -> AICompositionDraft {
+        let prompt = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard prompt.count >= 4 else { throw AICompositionGeneratorError.promptTooShort }
+
+        // Small delay for realistic loading state and smoother UX transition.
+        try? await Task.sleep(for: .milliseconds(450))
+
+        let p = prompt.lowercased()
+        let isEnergetic = p.contains("party") || p.contains("club") || p.contains("hype") || p.contains("energetic") || p.contains("workout")
+        let isCalm = p.contains("calm") || p.contains("chill") || p.contains("relax") || p.contains("sleep") || p.contains("cozy")
+        let isOcean = p.contains("ocean") || p.contains("sea") || p.contains("wave") || p.contains("aqua")
+        let isFire = p.contains("fire") || p.contains("sunset") || p.contains("ember") || p.contains("warm")
+        let isStorm = p.contains("storm") || p.contains("thunder") || p.contains("lightning")
+        let isMusicReactive = p.contains("music") || p.contains("beat") || p.contains("bass")
+
+        let icon: String
+        let accent: String
+        let palette: PaletteConfig
+        let motion: MotionConfig
+        let envelope: EnvelopeConfig
+        let reaction: ReactionConfig
+
+        if isStorm {
+            icon = "cloud.bolt.fill"
+            accent = "#668AFF"
+            palette = PaletteConfig(
+                mode: .gradient,
+                color1: CodableColor(x: 0.1700, y: 0.1400),
+                color2: CodableColor(x: 0.3127, y: 0.3290)
+            )
+            motion = MotionConfig(pattern: .scatter, speed: 58, forward: true, spread: 80, offset: 65, mirror: false)
+            envelope = EnvelopeConfig(shape: .flicker, bpm: 92, depth: 72, attack: 55, decay: 45, dutyCycle: 40, minBrightness: 8, maxBrightness: 100)
+            reaction = ReactionConfig(source: .none, sensitivity: 70, targets: [.brightness], smoothing: 30, intensity: 65, threshold: 12)
+        } else if isEnergetic {
+            icon = "party.popper.fill"
+            accent = "#BF5AF2"
+            palette = PaletteConfig(mode: .spectrum, color1: .warmWhite, color2: .white, color3: nil, hueShift: 0, saturation: 100, temperature: 366, randomize: false)
+            motion = MotionConfig(pattern: .cascade, speed: 78, forward: true, spread: 70, offset: 60, mirror: false)
+            envelope = EnvelopeConfig(shape: .pulse, bpm: 132, depth: 76, attack: 55, decay: 45, dutyCycle: 48, minBrightness: 5, maxBrightness: 100)
+            reaction = ReactionConfig(
+                source: isMusicReactive ? .micBass : .none,
+                sensitivity: isMusicReactive ? 82 : 70,
+                targets: [.brightness],
+                smoothing: 28,
+                intensity: isMusicReactive ? 80 : 65,
+                threshold: 10
+            )
+        } else if isOcean {
+            icon = "water.waves"
+            accent = "#0A84FF"
+            palette = PaletteConfig(
+                mode: .gradient,
+                color1: CodableColor(x: 0.1600, y: 0.2300),
+                color2: CodableColor(x: 0.1500, y: 0.0600)
+            )
+            motion = MotionConfig(pattern: .wave, speed: 34, forward: true, spread: 72, offset: 55, mirror: false)
+            envelope = EnvelopeConfig(shape: .swell, bpm: 30, depth: 30, attack: 60, decay: 50, dutyCycle: 50, minBrightness: 12, maxBrightness: 90)
+            reaction = ReactionConfig(source: .none, sensitivity: 70, targets: [.brightness], smoothing: 35, intensity: 60, threshold: 10)
+        } else if isFire {
+            icon = "flame.fill"
+            accent = "#FF6B35"
+            palette = PaletteConfig(
+                mode: .gradient,
+                color1: CodableColor(x: 0.5500, y: 0.3900),
+                color2: CodableColor(x: 0.6400, y: 0.3300)
+            )
+            motion = MotionConfig(pattern: .cascade, speed: 38, forward: true, spread: 68, offset: 52, mirror: false)
+            envelope = EnvelopeConfig(shape: .flicker, bpm: 58, depth: 58, attack: 55, decay: 45, dutyCycle: 50, minBrightness: 10, maxBrightness: 96)
+            reaction = ReactionConfig(source: .none, sensitivity: 70, targets: [.brightness], smoothing: 30, intensity: 65, threshold: 10)
+        } else if isCalm {
+            icon = "moon.stars.fill"
+            accent = "#40D9BF"
+            palette = PaletteConfig(
+                mode: .gradient,
+                color1: CodableColor.warmWhite,
+                color2: CodableColor(x: 0.3127, y: 0.3290)
+            )
+            motion = MotionConfig(pattern: .static, speed: 22, forward: true, spread: 70, offset: 50, mirror: false)
+            envelope = EnvelopeConfig(shape: .breathe, bpm: 24, depth: 24, attack: 55, decay: 55, dutyCycle: 50, minBrightness: 12, maxBrightness: 82)
+            reaction = ReactionConfig(source: .none, sensitivity: 70, targets: [.brightness], smoothing: 35, intensity: 55, threshold: 12)
+        } else {
+            icon = "sparkles"
+            accent = "#FFB340"
+            palette = PaletteConfig(mode: .gradient, color1: CodableColor.warmWhite, color2: CodableColor(x: 0.5500, y: 0.3900))
+            motion = MotionConfig(pattern: .cascade, speed: 35, forward: true, spread: 70, offset: 50, mirror: false)
+            envelope = EnvelopeConfig(shape: .breathe, bpm: 36, depth: 36, attack: 50, decay: 50, dutyCycle: 50, minBrightness: 10, maxBrightness: 92)
+            reaction = ReactionConfig(source: .none, sensitivity: 70, targets: [.brightness], smoothing: 30, intensity: 60, threshold: 10)
+        }
+
+        let rawTitle = prompt
+            .split(separator: " ")
+            .prefix(4)
+            .map(String.init)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = rawTitle.isEmpty ? "AI Composition" : rawTitle.prefix(1).uppercased() + rawTitle.dropFirst()
+
+        return AICompositionDraft(
+            name: String(title),
+            icon: icon,
+            accentColorHex: accent,
+            palette: palette,
+            motion: motion,
+            envelope: envelope,
+            reaction: reaction
+        )
+    }
 }
 
 // MARK: - StudioViewModel
@@ -153,6 +295,9 @@ final class StudioViewModel {
 
     // ── Composition store ─────────────────────────────────────
     let compositionStore = CompositionStore()
+    private let aiGenerator = AICompositionGenerator()
+    var isGeneratingAIComposition = false
+    var aiGenerationErrorMessage: String?
 
     /// Template preset for "+ Create" — kept in the store for `apply()` lookup, hidden from Deck 3 grid.
     static let composerStarterDraftPresetID = UUID(uuidString: "00000000-0000-0000-0000-00000000C0DA")!
@@ -648,7 +793,8 @@ final class StudioViewModel {
     }
 
     func studioCard(for preset: CompositionPreset) -> StudioCard {
-        StudioCard(
+        let activity = compositionLayerActivity(for: preset)
+        return StudioCard(
             id: "comp_\(preset.id.uuidString)",
             name: preset.name,
             tagline: "\(preset.palette.mode.rawValue.capitalized) • \(preset.motion.pattern.rawValue.capitalized) • \(preset.envelope.shape.rawValue.capitalized)",
@@ -656,13 +802,14 @@ final class StudioViewModel {
             accentColor: Color(hex: preset.accentColorHex),
             requiresForeground: true,
             params: [],
-            strategy: .composition(presetID: preset.id)
+            strategy: .composition(presetID: preset.id),
+            compositionLayerActivity: activity
         )
     }
 
     /// Card used exclusively by the `+ Create` control.
     func starterCompositionCard() -> StudioCard {
-        StudioCard(
+        return StudioCard(
             id: Self.composerStarterCardID,
             name: "New Composition",
             tagline: "Warm gradient • Breathe • Shape it in the mixer",
@@ -670,7 +817,56 @@ final class StudioViewModel {
             accentColor: HuePalette.amber,
             requiresForeground: true,
             params: [],
-            strategy: .composition(presetID: Self.composerStarterDraftPresetID)
+            strategy: .composition(presetID: Self.composerStarterDraftPresetID),
+            compositionLayerActivity: CompositionLayerActivity(
+                palette: false,
+                motion: false,
+                envelope: false,
+                reaction: false
+            )
+        )
+    }
+
+    private func compositionLayerActivity(for preset: CompositionPreset) -> CompositionLayerActivity {
+        let paletteActive =
+            preset.palette.mode != .gradient ||
+            preset.palette.hueShift != 0 ||
+            preset.palette.saturation != 100 ||
+            preset.palette.temperature != 366 ||
+            preset.palette.randomize ||
+            preset.palette.color3 != nil
+
+        let motionActive =
+            preset.motion.pattern != .cascade ||
+            preset.motion.speed != 40 ||
+            preset.motion.forward != true ||
+            preset.motion.spread != 70 ||
+            preset.motion.offset != 50 ||
+            preset.motion.mirror
+
+        let envelopeActive =
+            preset.envelope.shape != .breathe ||
+            preset.envelope.bpm != 60 ||
+            preset.envelope.depth != 50 ||
+            preset.envelope.attack != 50 ||
+            preset.envelope.decay != 50 ||
+            preset.envelope.dutyCycle != 50 ||
+            preset.envelope.minBrightness != 10 ||
+            preset.envelope.maxBrightness != 100
+
+        let reactionActive =
+            preset.reaction.source != .none ||
+            preset.reaction.sensitivity != 70 ||
+            preset.reaction.smoothing != 30 ||
+            preset.reaction.intensity != 70 ||
+            preset.reaction.threshold != 10 ||
+            Set(preset.reaction.targets) != Set([.brightness])
+
+        return CompositionLayerActivity(
+            palette: paletteActive,
+            motion: motionActive,
+            envelope: envelopeActive,
+            reaction: reactionActive
         )
     }
 
@@ -705,6 +901,48 @@ final class StudioViewModel {
     func applyStarterComposition() async {
         ensureComposerStarterDraft()
         await apply(starterCompositionCard())
+    }
+
+    @MainActor
+    func generateCompositionFromPrompt(_ rawPrompt: String) async -> CompositionPreset? {
+        let prompt = String(rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines).prefix(220))
+        guard !isGeneratingAIComposition else { return nil }
+        guard !prompt.isEmpty else {
+            aiGenerationErrorMessage = "Type a prompt first."
+            return nil
+        }
+
+        isGeneratingAIComposition = true
+        aiGenerationErrorMessage = nil
+        defer { isGeneratingAIComposition = false }
+
+        do {
+            let draft = try await aiGenerator.generateDraft(from: prompt)
+            let now = Date()
+            let preset = CompositionPreset(
+                id: UUID(),
+                name: draft.name,
+                icon: draft.icon,
+                accentColorHex: draft.accentColorHex,
+                isBuiltIn: false,
+                category: .myCreations,
+                seasonMonths: nil,
+                palette: draft.palette,
+                motion: draft.motion,
+                envelope: draft.envelope,
+                reaction: draft.reaction,
+                createdAt: now,
+                updatedAt: now
+            )
+            compositionStore.save(preset)
+            statusMessage = "✨ Generated '\(preset.name)'"
+            return preset
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? "Couldn’t generate composition. Try a different prompt."
+            aiGenerationErrorMessage = message
+            statusMessage = "⚠ \(message)"
+            return nil
+        }
     }
 
     /// Persist the currently running composition params as a new user preset.
@@ -797,7 +1035,8 @@ final class StudioViewModel {
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 500, tier: .advanced),
                 ],
-                strategy: .bridgeNative(effect: "candle")
+                strategy: .bridgeNative(effect: "candle"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "fire",
@@ -812,7 +1051,8 @@ final class StudioViewModel {
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 300, tier: .advanced),
                 ],
-                strategy: .bridgeNative(effect: "fire")
+                strategy: .bridgeNative(effect: "fire"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "sparkle",
@@ -826,7 +1066,8 @@ final class StudioViewModel {
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 400, tier: .advanced),
                 ],
-                strategy: .bridgeNative(effect: "sparkle")
+                strategy: .bridgeNative(effect: "sparkle"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "prism",
@@ -841,7 +1082,8 @@ final class StudioViewModel {
                     StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 1000, tier: .advanced),
                     StudioParam(id: "saturation", label: "Saturation", kind: .slider(min: 0, max: 100), defaultValue: 100, tier: .advanced),
                 ],
-                strategy: .bridgeNative(effect: "prism")
+                strategy: .bridgeNative(effect: "prism"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "opal",
@@ -856,7 +1098,8 @@ final class StudioViewModel {
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 800, tier: .advanced),
                 ],
-                strategy: .bridgeNative(effect: "opal")
+                strategy: .bridgeNative(effect: "opal"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "glisten",
@@ -870,7 +1113,8 @@ final class StudioViewModel {
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 300, tier: .advanced),
                 ],
-                strategy: .bridgeNative(effect: "glisten")
+                strategy: .bridgeNative(effect: "glisten"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "colorloop",
@@ -884,7 +1128,8 @@ final class StudioViewModel {
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 1000, tier: .advanced),
                 ],
-                strategy: .bridgeNative(effect: "colorloop")
+                strategy: .bridgeNative(effect: "colorloop"),
+                compositionLayerActivity: nil
             ),
         ]
     }
@@ -906,7 +1151,8 @@ final class StudioViewModel {
                     StudioParam(id: "smoothness", label: "Smoothness", kind: .slider(min: 0, max: 100), defaultValue: 30, tier: .advanced),
                     StudioParam(id: "saturation", label: "Saturation", kind: .slider(min: 0, max: 100), defaultValue: 100, tier: .advanced),
                 ],
-                strategy: .appDriven(engineKey: "mic")
+                strategy: .appDriven(engineKey: "mic"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "gaming",
@@ -922,7 +1168,8 @@ final class StudioViewModel {
                     StudioParam(id: "saturation", label: "Saturation", kind: .slider(min: 0, max: 100), defaultValue: 80, tier: .advanced),
                     StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 50), defaultValue: 15, tier: .advanced),
                 ],
-                strategy: .appDriven(engineKey: "gaming")
+                strategy: .appDriven(engineKey: "gaming"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "party",
@@ -939,7 +1186,8 @@ final class StudioViewModel {
                     StudioParam(id: "smoothness", label: "Smoothness", kind: .slider(min: 0, max: 100), defaultValue: 20, tier: .advanced),
                     StudioParam(id: "saturation", label: "Saturation", kind: .slider(min: 0, max: 100), defaultValue: 100, tier: .advanced),
                 ],
-                strategy: .appDriven(engineKey: "party")
+                strategy: .appDriven(engineKey: "party"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "strobe",
@@ -955,7 +1203,8 @@ final class StudioViewModel {
                     StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 0, max: 50), defaultValue: 0, tier: .advanced),
                     StudioParam(id: "duty_cycle", label: "Duty Cycle", kind: .slider(min: 10, max: 90), defaultValue: 50, tier: .advanced),
                 ],
-                strategy: .appDriven(engineKey: "strobe")
+                strategy: .appDriven(engineKey: "strobe"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "thunderstorm",
@@ -971,7 +1220,8 @@ final class StudioViewModel {
                     StudioParam(id: "flash_intensity", label: "Flash Intensity", kind: .slider(min: 20, max: 100), defaultValue: 90, tier: .advanced),
                     StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 30), defaultValue: 5, tier: .advanced),
                 ],
-                strategy: .appDriven(engineKey: "thunderstorm")
+                strategy: .appDriven(engineKey: "thunderstorm"),
+                compositionLayerActivity: nil
             ),
             StudioCard(
                 id: "ambient",
@@ -988,7 +1238,8 @@ final class StudioViewModel {
                     StudioParam(id: "smoothness", label: "Smoothness", kind: .slider(min: 0, max: 100), defaultValue: 70, tier: .advanced),
                     StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 50), defaultValue: 15, tier: .advanced),
                 ],
-                strategy: .appDriven(engineKey: "ambient")
+                strategy: .appDriven(engineKey: "ambient"),
+                compositionLayerActivity: nil
             ),
         ]
     }

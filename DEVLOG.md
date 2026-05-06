@@ -274,3 +274,62 @@ Documentation is now synchronized for current v0.17.x direction; no runtime code
 
 ### Current state
 Primary documentation is synchronized with current implementation state; no production code changes in this pass.
+
+---
+
+## 2026-05-06 — Composer AI Pill + Prompt Generation v1 (Cursor)
+
+### What was built
+- Updated `StudioView.swift` Composer `+ Create` hero to support inline AI mode:
+  - Added a small `wand.and.stars` affordance on the create pill.
+  - Tapping AI expands the same pill into prompt input with `Generate` and `Cancel`.
+  - Added inline loading state and error messaging beneath the hero.
+- Added AI generation pipeline in `StudioViewModel.swift`:
+  - Introduced a local-first `AICompositionGenerator` abstraction (`AICompositionDraft` + error type).
+  - Added `generateCompositionFromPrompt(_:)` with input trimming, prompt-length validation, generation lock, and user-facing error/status messages.
+  - Generated outputs map directly to valid `CompositionPreset` objects and save into `CompositionStore` as `.myCreations`.
+- On successful generation, Studio now auto-applies the generated preset to the captured room snapshot and opens live mixer flow.
+
+### What's working
+- ✅ `xcodebuild` generic iOS build succeeds after changes.
+- ✅ AI flow uses the same creation surface (no modal detour) and keeps one-tap Composer mental model intact.
+- ✅ Guardrails in place for empty prompts, duplicate taps while generating, and recoverable generation failures.
+
+### What's left
+- [ ] Swap local heuristic generator to FoundationModels-backed provider behind the same abstraction.
+- [ ] Add persisted AI badge metadata for generated presets (model field + migration-safe decode path).
+- [ ] Tune prompt UX copy and optional suggested prompt chips.
+
+### Gotchas
+- Nested button interactions in the create hero can cause accidental trigger overlap; implementation avoids this by separating create and AI actions into explicit independent buttons.
+- Generation is currently deterministic/local by design to keep UX stable while backend provider is integrated.
+
+### Current state
+AI entry is now integrated into Deck 3 creation pill and is production-safe for local generation. Foundation model provider wiring is the next implementation slice.
+
+---
+
+## 2026-05-06 — Composer Polish: Layer Activity + Seasonal Banner (Cursor)
+
+### What was built
+- Added Composer layer-activity metadata to `StudioCard` via new `compositionLayerActivity` payload.
+- Implemented preset-derived layer activity detection in `StudioViewModel` to flag active/customized layers (`palette`, `motion`, `envelope`, `reaction`).
+- Updated `StudioCardView` to render compact layer chips (`🎨 🌊 📈 🎤`) with active vs inactive styling for Composer cards.
+- Added a lightweight seasonal banner in Deck 3 when seasonal presets are currently active.
+- Refined composition tab content transition with a subtle fade+scale identity swap for cleaner layer switching feel.
+
+### What's working
+- ✅ Build succeeds after polish updates.
+- ✅ Composer cards now show at-a-glance layer activity affordance.
+- ✅ Seasonal context appears without changing existing deck flow.
+
+### What's left
+- [ ] FoundationModels provider integration behind current AI generator abstraction.
+- [ ] Cross-device screenshot matrix validation for Home + Studio Deck 3.
+- [ ] Final transport UX hardening checks for ENT vs REST labels/behavior.
+
+### Gotchas
+- Adding fields to `StudioCard` required updating every catalog card constructor to keep init sites compiling.
+
+### Current state
+Composer polish advanced with visual layer activity cues and seasonal deck affordance; compile status remains green.

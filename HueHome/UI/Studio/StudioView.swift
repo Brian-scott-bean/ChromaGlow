@@ -48,6 +48,9 @@ struct StudioView: View {
     @State private var showCompositionSaveSheet = false
     @State private var compositionSaveName = ""
     @State private var compositionSaveIcon = "sparkles"
+    @State private var isAIPromptExpanded = false
+    @State private var aiPromptText = ""
+    @FocusState private var aiPromptFocused: Bool
 
     // ── Param sheet ───────────────────────────────────────
     @State private var showParamSheet = false
@@ -409,50 +412,164 @@ struct StudioView: View {
     }
 
     private func composerCreateHero(visible: Bool) -> some View {
-        Button {
-            Task { await vm.applyStarterComposition() }
-            HapticManager.shared.medium()
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: HueRadius.xl)
-                    .fill(Color.white.opacity(0.06))
+        ZStack {
+            RoundedRectangle(cornerRadius: HueRadius.xl)
+                .fill(Color.white.opacity(0.06))
 
-                RoundedRectangle(cornerRadius: HueRadius.xl)
-                    .strokeBorder(
-                        AngularGradient(
-                            colors: [
-                                HuePalette.amber,
-                                Color(hex: "#8C59FF"),
-                                HuePalette.amber.opacity(0.35),
-                                HuePalette.amber
-                            ],
-                            center: .center,
-                            angle: .degrees(composerCreateBorderPhase * 360)
-                        ),
-                        lineWidth: 2
-                    )
+            RoundedRectangle(cornerRadius: HueRadius.xl)
+                .strokeBorder(
+                    AngularGradient(
+                        colors: [
+                            HuePalette.amber,
+                            Color(hex: "#8C59FF"),
+                            HuePalette.amber.opacity(0.35),
+                            HuePalette.amber
+                        ],
+                        center: .center,
+                        angle: .degrees(composerCreateBorderPhase * 360)
+                    ),
+                    lineWidth: 2
+                )
 
-                HStack(spacing: HueSpacing.md) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(HuePalette.amber)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("+ Create")
-                            .font(.system(size: 16, weight: .semibold))
+            Group {
+                if isAIPromptExpanded {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "wand.and.stars")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(HuePalette.amber)
+                            Text("Generate with AI")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white)
+                            Spacer()
+                            if vm.isGeneratingAIComposition {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .tint(HuePalette.amber)
+                            }
+                        }
+
+                        TextField("Describe the vibe (e.g. ocean calm with soft pulse)", text: $aiPromptText, axis: .vertical)
+                            .focused($aiPromptFocused)
+                            .lineLimit(1...2)
+                            .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.white)
-                        Text("Build your own effect")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.42))
-                            .fixedSize(horizontal: false, vertical: true)
+                            .textInputAutocapitalization(.sentences)
+                            .autocorrectionDisabled(false)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.black.opacity(0.22))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+
+                        HStack(spacing: 8) {
+                            Button("Cancel") {
+                                isAIPromptExpanded = false
+                                aiPromptText = ""
+                                aiPromptFocused = false
+                                vm.aiGenerationErrorMessage = nil
+                                HapticManager.shared.light()
+                            }
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule().fill(Color.white.opacity(0.08))
+                            )
+                            .buttonStyle(.plain)
+                            .disabled(vm.isGeneratingAIComposition)
+
+                            Spacer()
+
+                            Button {
+                                let roomSnapshot = vm.selectedRoom
+                                Task {
+                                    if let preset = await vm.generateCompositionFromPrompt(aiPromptText) {
+                                        await vm.apply(vm.studioCard(for: preset), roomOverride: roomSnapshot)
+                                        aiPromptText = ""
+                                        isAIPromptExpanded = false
+                                        aiPromptFocused = false
+                                        HapticManager.shared.medium()
+                                    } else {
+                                        HapticManager.shared.light()
+                                    }
+                                }
+                            } label: {
+                                Text(vm.isGeneratingAIComposition ? "Generating..." : "Generate")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(.black.opacity(vm.isGeneratingAIComposition ? 0.5 : 0.9))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 7)
+                                    .background(
+                                        Capsule().fill(HuePalette.amber.opacity(vm.isGeneratingAIComposition ? 0.45 : 0.95))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(vm.isGeneratingAIComposition || aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
                     }
-                    Spacer(minLength: 0)
+                    .padding(HueSpacing.lg)
+                } else {
+                    HStack(spacing: HueSpacing.md) {
+                        Button {
+                            Task { await vm.applyStarterComposition() }
+                            HapticManager.shared.medium()
+                        } label: {
+                            HStack(spacing: HueSpacing.md) {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.system(size: 22, weight: .semibold))
+                                    .foregroundStyle(HuePalette.amber)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("+ Create")
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(.white)
+                                    Text("Build your own effect")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(.white.opacity(0.42))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            withAnimation(HueAnimation.fast) {
+                                isAIPromptExpanded = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                aiPromptFocused = true
+                            }
+                            vm.aiGenerationErrorMessage = nil
+                            HapticManager.shared.selection()
+                        } label: {
+                            Image(systemName: "wand.and.stars")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(HuePalette.amber)
+                                .padding(10)
+                                .background(
+                                    Circle().fill(HuePalette.amber.opacity(0.14))
+                                )
+                                .overlay(
+                                    Circle().strokeBorder(HuePalette.amber.opacity(0.35), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Generate with AI")
+                    }
+                    .padding(HueSpacing.lg)
                 }
-                .padding(HueSpacing.lg)
             }
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: 76)
         }
-        .buttonStyle(StudioCardButtonStyle())
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: isAIPromptExpanded ? 146 : 76)
+        .animation(HueAnimation.fast, value: isAIPromptExpanded)
         .opacity(visible ? 1 : 0.999)
         .onAppear {
             composerCreateBorderPhase = 0
@@ -474,7 +591,42 @@ struct StudioView: View {
             VStack(alignment: .leading, spacing: HueSpacing.md) {
                 composerCategoryChips
 
+                if vm.hasSeasonalCompositionPreset {
+                    HStack(spacing: 8) {
+                        Text("Seasonal picks are live")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(HuePalette.amber)
+                        Spacer()
+                        Text("Holiday")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(HuePalette.amber)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule().fill(HuePalette.amber.opacity(0.16))
+                            )
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.04))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(HuePalette.amber.opacity(0.20), lineWidth: 1)
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
                 composerCreateHero(visible: visible)
+
+                if let error = vm.aiGenerationErrorMessage, !error.isEmpty {
+                    Text(error)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(HuePalette.Noir.destructive)
+                        .padding(.horizontal, 4)
+                }
 
                 if presets.isEmpty {
                     Text("No presets in this category.")
@@ -772,7 +924,8 @@ struct StudioView: View {
                 case .reaction: compositionReactionControls
                 }
             }
-            .transition(.opacity)
+            .id(activeCompositionTab)
+            .transition(.opacity.combined(with: .scale(scale: 0.985)))
             .animation(HueAnimation.fast, value: activeCompositionTab)
         }
     }
@@ -1100,6 +1253,16 @@ struct StudioCardView: View, Equatable {
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    if let activity = card.compositionLayerActivity {
+                        HStack(spacing: 4) {
+                            layerChip("🎨", isActive: activity.palette)
+                            layerChip("🌊", isActive: activity.motion)
+                            layerChip("📈", isActive: activity.envelope)
+                            layerChip("🎤", isActive: activity.reaction)
+                        }
+                        .padding(.top, 5)
+                    }
+
                     // Entertainment Area badge
                     if card.isEntertainmentScoped {
                         HStack(spacing: 3) {
@@ -1119,6 +1282,25 @@ struct StudioCardView: View, Equatable {
         .buttonStyle(StudioCardButtonStyle())
         .animation(HueAnimation.normal, value: isRunning)
     }
+}
+
+private func layerChip(_ symbol: String, isActive: Bool) -> some View {
+    Text(symbol)
+        .font(.system(size: 10, weight: .semibold))
+        .padding(.horizontal, 5)
+        .padding(.vertical, 3)
+        .foregroundStyle(isActive ? HuePalette.amber : .white.opacity(0.45))
+        .background(
+            Capsule().fill(
+                isActive ? HuePalette.amber.opacity(0.16) : Color.white.opacity(0.06)
+            )
+        )
+        .overlay(
+            Capsule().strokeBorder(
+                isActive ? HuePalette.amber.opacity(0.35) : Color.white.opacity(0.10),
+                lineWidth: 1
+            )
+        )
 }
 
 // MARK: - StudioCardButtonStyle
