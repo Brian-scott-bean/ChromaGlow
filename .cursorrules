@@ -1,0 +1,68 @@
+# ChromaGlow — Cursor Rules
+
+## Project
+- **App:** ChromaGlow (Philips Hue smart lighting iOS app)
+- **Path:** `/Users/brianbean/Desktop/huehome-pro-v0.3.0/`
+- **Xcode project:** `HueHome.xcodeproj`
+- **Bundle:** `com.huehome.pro`
+- **Language:** Swift, SwiftUI (iOS 17+)
+- **Architecture:** @Observable ViewModels + UnifiedOrchestrator singleton
+
+## Dev Documentation
+**Read this file before making any changes:** `DEVDOC.md` in project root.
+It contains the full development history, architecture decisions, API constraints, bug fixes, and design patterns.
+
+## Critical Rules — DO NOT VIOLATE
+
+1. **Never send `effects` to `grouped_light` endpoint** — bridge silently ignores it. Effects MUST be set per-light via `PUT /clip/v2/resource/light/{id}`.
+
+2. **Use `childResourceRefs` from RoomDisplayItem for room membership** — already in memory, no runtime API calls needed.
+
+3. **Entertainment configs are bridge-wide** — only 1 DTLS session at a time. Never pretend they're room-scoped.
+
+4. **All Hashable display items must hash ALL volatile fields** — not just `id`. SwiftUI ForEach uses collection hashing to decide whether to re-diff. ID-only hashing makes ForEach blind to property changes.
+
+5. **Generation counter pattern for async Tasks** — capture `generation` at Task launch, check `self.generation == capturedGen` before applying results. Prevents zombie updates.
+
+6. **RestSender mailbox pattern** — latest-wins, max 1 in-flight REST request. New values overwrite pending. Never queue.
+
+7. **`@Observable` on ALL ViewModels** — NOT `@ObservableObject`. The entire app uses the Observation framework (iOS 17+).
+
+8. **Per-light REST rate limit ~10 PUT/sec aggregate** — batch and stagger. Bridge silently drops excess.
+
+9. **`setGroupedLightEffect` parameter order:** `id, on, brightness, xy, mirek, duration` — duration is LAST.
+
+## Design System
+- Dark mode only, glassmorphic material backgrounds
+- `HuePalette.amber` — primary accent color
+- `HuePalette.Noir.success` — green (live indicators)
+- `HuePalette.Noir.destructive` — red (stop/delete)
+- `HueAnimation.fast` / `.card` / `.slow` — spring animations
+- `HueSpacing.screenH` / `.md` / `.sm` — layout padding
+- `HueRadius.xl` — corner radius
+- All UI uses `HapticManager.shared` for tactile feedback
+
+## Key Files
+| File | Purpose |
+|------|---------|
+| `HueHome/Core/Network/UnifiedOrchestrator.swift` | Central state manager, owns all bridges/rooms/lights |
+| `HueHome/Core/Network/HueAPIClient.swift` | Hue CLIP v2 REST API client |
+| `HueHome/Core/Network/HueEntertainmentClient.swift` | DTLS/UDP streaming at 50fps |
+| `HueHome/UI/Studio/StudioViewModel.swift` | Studio state, card catalogs, apply/stop, multi-room effects |
+| `HueHome/UI/Studio/StudioView.swift` | Studio tab UI, mixer tray, card grid |
+| `HueHome/UI/Sync/SyncModeEngine.swift` | Audio render loop, mic processing |
+| `HueHome/Core/Models/RoomDisplayItem.swift` | Room/zone data model |
+
+## Current State (v0.16.0)
+- Multi-room concurrent effects: ✅ Built and committed
+- Effects are tracked per-room via `runningEffects: [String: RunningEffect]`
+- Entertainment + bridgeNative effects can coexist
+- Next feature: **Composer** (v0.17.0) — dynamic scene creation engine with 4 layers (Palette, Motion, Envelope, Reaction)
+
+## Next Feature: Composer
+See `DEVDOC.md` section "Composer Feature — Complete Technical Design" and the implementation plan artifact for full details. Key points:
+- Lives as Deck 3 in Studio (swipe right past Live modes)
+- Uses mixer tray with layer tabs (not a separate screen)
+- 20 starter presets (ambient + energetic + 12 holidays)
+- `CompositionEngine` renders at 25fps via Entertainment API or 5fps REST fallback
+- Saved compositions become StudioCards with `strategy: .composition(preset:)`
