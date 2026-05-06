@@ -1261,6 +1261,8 @@ Critical for the "Home" zone which contains ALL lights — applying to Home corr
 
 The Composer is a **dynamic scene creation engine** integrated into Studio as Deck 3. Users build any lighting experience from scratch by composing four independent layers in real time.
 
+> Status update (2026-05-06): Core Composer implementation is now shipped in-tree (engine, Deck 3, mixer layer tabs, save flow, and preset CRUD). Treat this section as architectural reference plus intent; remaining work is mainly polish, QA, and transport UX validation.
+
 **Core UX principle:** Same one-tap flow as every other Studio card. Tap "+ Create" → lights respond instantly in a default state → mixer tray shows layer tabs → drag any slider → lights respond live → save.
 
 #### The Four Layers
@@ -1336,7 +1338,7 @@ final class CompositionEngine {
 Transport: DTLS/UDP when entertainment config available (per-light, 25fps). REST fallback via RestSender mailbox (group-level, 5fps). Auto-selected, not user-toggled.
 
 #### Integration with Existing Code
-- New `StudioStrategy.composition(preset:)` case
+- `StudioStrategy.composition(presetID:)` case (current implementation)
 - Compositions stored in `runningEffects[room.id]` — full multi-room support
 - Existing `HueEntertainmentClient.send(channels:)` is the output
 - Existing `RestSender` handles REST fallback
@@ -1353,10 +1355,9 @@ Transport: DTLS/UDP when entertainment config available (per-light, 25fps). REST
 ### Updated Roadmap
 ```
 v0.15.3  ← DONE: Room-scoped effects, entertainment area badges
-v0.16.0  ← DONE: Multi-room concurrent effects (current)
-v0.17.0  ← NEXT: Composer (Palette + Motion + Envelope + Reaction layers)
-         ├── Phase 1: Engine + UI + save/load + categories
-         └── Phase 2: Audio reactivity + 20 starter presets + holidays + polish
+v0.16.0  ← DONE: Multi-room concurrent effects
+v0.17.0  ← DONE: Composer core (engine + UI + save/load + categories + presets)
+v0.17.x  ← CURRENT: Composer polish + cross-device QA + transport UX hardening
 v0.17.5  ← Community share + deep links (export/import compositions)
 v0.18.0  ← Widgets + Siri Shortcuts + Geofencing
 v0.19.0  ← AI text-to-composition

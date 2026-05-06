@@ -4,6 +4,24 @@ Build any dynamic light experience from scratch. Same one-tap flow as every othe
 
 ---
 
+## Implementation Status (Updated 2026-05-06)
+
+### Completed in repository
+- Core models, render engine, and JSON persistence are implemented.
+- Studio integration for Composer deck and mixer tabs is implemented.
+- Save flow and preset CRUD actions are implemented.
+- Starter presets and seasonal ordering behavior are implemented.
+
+### Remaining focus
+- Polish (tab transition feel, haptic consistency, seasonal affordances).
+- Cross-device QA matrix for Deck 3 and mixer sizing.
+- Transport UX validation for Entertainment vs REST fallback behavior.
+
+### Important note
+This spec still contains historical planning sections below. Treat those sections as architecture intent and reference material, not as an all-pending task list.
+
+---
+
 ## The Core Principle
 
 Studio's promise is **one tap, you're live**. Composer doesn't break that. You tap "+ Create" and your lights are already moving. The mixer tray becomes a layered editor. Every slider change hits the lights in real time. When you like what you made, tap save. It becomes a card. Next time, one tap.
@@ -405,7 +423,7 @@ CompositionEngine.render()
 enum StudioStrategy {
     case bridgeNative(effect: String)
     case appDriven(engineKey: String)
-    case composition(preset: CompositionPreset)  // NEW
+    case composition(presetID: String)  // Current implementation
 }
 ```
 
@@ -435,7 +453,7 @@ When a slider is dragged:
 | Mixer tray header | Card name + LIVE + Stop | Same + Save button (for compositions) |
 | Mixer tray content | Flat slider list | Layer tabs → per-layer sliders |
 | Card grid (Deck 3) | N/A | `+ Create` button + saved composition cards |
-| `StudioCard` model | `strategy: bridgeNative/appDriven` | + `composition(preset:)` |
+| `StudioCard` model | `strategy: bridgeNative/appDriven` | + `composition(presetID:)` |
 | `StudioCardView` | Icon + name + tagline | Same + layer activity dots for compositions |
 
 ### What Doesn't Change
@@ -482,6 +500,9 @@ When a slider is dragged:
 
 ## Build Roadmap
 
+> Historical plan: most items below are complete in the current tree.
+> Active work is primarily polish, QA, and transport/UX hardening.
+
 | # | Component | Days | Depends On |
 |---|-----------|------|------------|
 | 1 | Config models (`PaletteConfig`, `MotionConfig`, `EnvelopeConfig`, `ReactionConfig`) | 0.5 | — |
@@ -500,10 +521,10 @@ When a slider is dragged:
 | **Total** | | **~12.5 days** | |
 
 ### Phase 1 (MVP — usable): Items 1-8 = ~9 days
-Create, tune, save, apply compositions. Entertainment + REST transport. Category filter.
+Historical milestone (implemented).
 
 ### Phase 2 (Complete): Items 9-13 = ~3.5 days
-Audio reactivity, 20 starter presets, holiday themes, seasonal surfacing, edit flow, polish.
+Mostly implemented; remaining work is centered on final polish and validation.
 
 ---
 

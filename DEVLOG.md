@@ -227,3 +227,50 @@ SE portrait Home still needs a structural refactor; experimental quick fixes wer
 
 ### Current state
 Architecture and UX artifact is complete and updated with current decisions. No production Studio code changes were applied in this session.
+
+---
+
+## 2026-05-06 — Documentation Refresh (Cursor)
+
+### What was built
+- Updated `CURSOR_KICKOFF.md` from a Composer build-instruction doc to a current-state kickoff.
+- Reframed kickoff around what is already shipped vs what remains (polish, QA, transport/stability checks).
+- Updated `COMPOSER_SPEC.md` with a top-level implementation status section and historical-plan clarifications.
+- Corrected stale strategy references in `COMPOSER_SPEC.md` from `composition(preset:)` to `composition(presetID:)`.
+
+### What's working
+- ✅ Session onboarding docs now align with current implementation state.
+- ✅ Future sessions can start from active priorities instead of already-completed phases.
+
+### What's left
+- [ ] Run cross-device screenshot QA matrix and record outcomes.
+- [ ] Complete remaining Composer polish items (transitions, haptics, seasonal affordances).
+- [ ] Begin first AI Scene Generation implementation slice once UI QA is green.
+
+### Gotchas
+- Large planning docs can quickly become stale after rapid implementation phases; add explicit status headers to prevent accidental rework.
+
+### Current state
+Documentation is now synchronized for current v0.17.x direction; no runtime code paths changed in this session.
+
+---
+
+## 2026-05-06 — DEVDOC Consistency Pass (Cursor)
+
+### What was built
+- Updated `DEVDOC.md` Composer section to include a 2026-05-06 status note clarifying it is mostly implemented and now serves as architecture reference.
+- Corrected stale strategy notation in `DEVDOC.md` from `StudioStrategy.composition(preset:)` to `StudioStrategy.composition(presetID:)`.
+- Updated the roadmap block in `DEVDOC.md` to mark Composer core as done and set `v0.17.x` focus to polish + QA + transport UX hardening.
+
+### What's working
+- ✅ `DEVDOC.md`, `CURSOR_KICKOFF.md`, and `COMPOSER_SPEC.md` now align on Composer status.
+
+### What's left
+- [ ] Cross-device screenshot matrix pass (Home + Studio Deck 3).
+- [ ] Remaining Composer polish items and transport UX validation.
+
+### Gotchas
+- Historical design sections are still useful but need explicit status annotations to prevent duplicate implementation work.
+
+### Current state
+Primary documentation is synchronized with current implementation state; no production code changes in this pass.
