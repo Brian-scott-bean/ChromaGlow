@@ -6,6 +6,9 @@
 
 import SwiftUI
 import Observation
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 
 // MARK: - Data Models
 
@@ -19,6 +22,31 @@ struct StudioCard: Identifiable, Hashable {
     let params: [StudioParam]
     let strategy: StudioStrategy
     let compositionLayerActivity: CompositionLayerActivity?
+    let isAIGenerated: Bool
+
+    init(
+        id: String,
+        name: String,
+        tagline: String,
+        icon: String,
+        accentColor: Color,
+        requiresForeground: Bool,
+        params: [StudioParam],
+        strategy: StudioStrategy,
+        compositionLayerActivity: CompositionLayerActivity?,
+        isAIGenerated: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.tagline = tagline
+        self.icon = icon
+        self.accentColor = accentColor
+        self.requiresForeground = requiresForeground
+        self.params = params
+        self.strategy = strategy
+        self.compositionLayerActivity = compositionLayerActivity
+        self.isAIGenerated = isAIGenerated
+    }
 
     /// True for cards that use the Entertainment API (Strobe, Party, Thunderstorm).
     /// These affect the entire entertainment area, not just the selected room.
@@ -79,128 +107,139 @@ private struct AICompositionDraft {
     let motion: MotionConfig
     let envelope: EnvelopeConfig
     let reaction: ReactionConfig
+    let providerModel: String
 }
 
 private enum AICompositionGeneratorError: LocalizedError {
     case promptTooShort
+    case providerUnavailable
+    case invalidModelResponse
 
     var errorDescription: String? {
         switch self {
         case .promptTooShort:
             return "Give me at least a few words to build from."
+        case .providerUnavailable:
+            return "Apple Foundation Models is unavailable on this device."
+        case .invalidModelResponse:
+            return "AI response was invalid. Try a different prompt."
         }
     }
 }
 
-/// Local-first generator abstraction.
-/// This is intentionally deterministic and offline-safe so UX can ship now,
-/// while keeping a clean seam for FoundationModels/cloud providers later.
 private struct AICompositionGenerator {
+    private struct ModelDraft: Decodable {
+        var name: String
+        var icon: String
+        var accentColorHex: String
+        var palette: PaletteConfig
+        var motion: MotionConfig
+        var envelope: EnvelopeConfig
+        var reaction: ReactionConfig
+    }
+
     func generateDraft(from rawPrompt: String) async throws -> AICompositionDraft {
         let prompt = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard prompt.count >= 4 else { throw AICompositionGeneratorError.promptTooShort }
 
-        // Small delay for realistic loading state and smoother UX transition.
-        try? await Task.sleep(for: .milliseconds(450))
+#if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            guard case .available = SystemLanguageModel.default.availability else {
+                throw AICompositionGeneratorError.providerUnavailable
+            }
+            let session = LanguageModelSession(instructions: """
+            You generate Philips Hue composition presets. Return ONLY JSON. No markdown.
+            Keep values within valid ranges:
+            - Motion speed 0...100, spread 0...100, offset 0...100
+            - Envelope bpm 20...240, depth 0...100, attack 0...100, decay 0...100, dutyCycle 10...90, minBrightness 0...50, maxBrightness 50...100
+            - Reaction sensitivity/smoothing/intensity/threshold 0...100
+            - Palette saturation 0...100, hueShift -180...180, temperature 153...500
+            Use valid enums exactly matching app model raw values.
+            """)
 
-        let p = prompt.lowercased()
-        let isEnergetic = p.contains("party") || p.contains("club") || p.contains("hype") || p.contains("energetic") || p.contains("workout")
-        let isCalm = p.contains("calm") || p.contains("chill") || p.contains("relax") || p.contains("sleep") || p.contains("cozy")
-        let isOcean = p.contains("ocean") || p.contains("sea") || p.contains("wave") || p.contains("aqua")
-        let isFire = p.contains("fire") || p.contains("sunset") || p.contains("ember") || p.contains("warm")
-        let isStorm = p.contains("storm") || p.contains("thunder") || p.contains("lightning")
-        let isMusicReactive = p.contains("music") || p.contains("beat") || p.contains("bass")
+            let promptPayload = """
+            Create a composition preset from this user prompt:
+            \(prompt)
 
-        let icon: String
-        let accent: String
-        let palette: PaletteConfig
-        let motion: MotionConfig
-        let envelope: EnvelopeConfig
-        let reaction: ReactionConfig
-
-        if isStorm {
-            icon = "cloud.bolt.fill"
-            accent = "#668AFF"
-            palette = PaletteConfig(
-                mode: .gradient,
-                color1: CodableColor(x: 0.1700, y: 0.1400),
-                color2: CodableColor(x: 0.3127, y: 0.3290)
-            )
-            motion = MotionConfig(pattern: .scatter, speed: 58, forward: true, spread: 80, offset: 65, mirror: false)
-            envelope = EnvelopeConfig(shape: .flicker, bpm: 92, depth: 72, attack: 55, decay: 45, dutyCycle: 40, minBrightness: 8, maxBrightness: 100)
-            reaction = ReactionConfig(source: .none, sensitivity: 70, targets: [.brightness], smoothing: 30, intensity: 65, threshold: 12)
-        } else if isEnergetic {
-            icon = "party.popper.fill"
-            accent = "#BF5AF2"
-            palette = PaletteConfig(mode: .spectrum, color1: .warmWhite, color2: .white, color3: nil, hueShift: 0, saturation: 100, temperature: 366, randomize: false)
-            motion = MotionConfig(pattern: .cascade, speed: 78, forward: true, spread: 70, offset: 60, mirror: false)
-            envelope = EnvelopeConfig(shape: .pulse, bpm: 132, depth: 76, attack: 55, decay: 45, dutyCycle: 48, minBrightness: 5, maxBrightness: 100)
-            reaction = ReactionConfig(
-                source: isMusicReactive ? .micBass : .none,
-                sensitivity: isMusicReactive ? 82 : 70,
-                targets: [.brightness],
-                smoothing: 28,
-                intensity: isMusicReactive ? 80 : 65,
-                threshold: 10
-            )
-        } else if isOcean {
-            icon = "water.waves"
-            accent = "#0A84FF"
-            palette = PaletteConfig(
-                mode: .gradient,
-                color1: CodableColor(x: 0.1600, y: 0.2300),
-                color2: CodableColor(x: 0.1500, y: 0.0600)
-            )
-            motion = MotionConfig(pattern: .wave, speed: 34, forward: true, spread: 72, offset: 55, mirror: false)
-            envelope = EnvelopeConfig(shape: .swell, bpm: 30, depth: 30, attack: 60, decay: 50, dutyCycle: 50, minBrightness: 12, maxBrightness: 90)
-            reaction = ReactionConfig(source: .none, sensitivity: 70, targets: [.brightness], smoothing: 35, intensity: 60, threshold: 10)
-        } else if isFire {
-            icon = "flame.fill"
-            accent = "#FF6B35"
-            palette = PaletteConfig(
-                mode: .gradient,
-                color1: CodableColor(x: 0.5500, y: 0.3900),
-                color2: CodableColor(x: 0.6400, y: 0.3300)
-            )
-            motion = MotionConfig(pattern: .cascade, speed: 38, forward: true, spread: 68, offset: 52, mirror: false)
-            envelope = EnvelopeConfig(shape: .flicker, bpm: 58, depth: 58, attack: 55, decay: 45, dutyCycle: 50, minBrightness: 10, maxBrightness: 96)
-            reaction = ReactionConfig(source: .none, sensitivity: 70, targets: [.brightness], smoothing: 30, intensity: 65, threshold: 10)
-        } else if isCalm {
-            icon = "moon.stars.fill"
-            accent = "#40D9BF"
-            palette = PaletteConfig(
-                mode: .gradient,
-                color1: CodableColor.warmWhite,
-                color2: CodableColor(x: 0.3127, y: 0.3290)
-            )
-            motion = MotionConfig(pattern: .static, speed: 22, forward: true, spread: 70, offset: 50, mirror: false)
-            envelope = EnvelopeConfig(shape: .breathe, bpm: 24, depth: 24, attack: 55, decay: 55, dutyCycle: 50, minBrightness: 12, maxBrightness: 82)
-            reaction = ReactionConfig(source: .none, sensitivity: 70, targets: [.brightness], smoothing: 35, intensity: 55, threshold: 12)
-        } else {
-            icon = "sparkles"
-            accent = "#FFB340"
-            palette = PaletteConfig(mode: .gradient, color1: CodableColor.warmWhite, color2: CodableColor(x: 0.5500, y: 0.3900))
-            motion = MotionConfig(pattern: .cascade, speed: 35, forward: true, spread: 70, offset: 50, mirror: false)
-            envelope = EnvelopeConfig(shape: .breathe, bpm: 36, depth: 36, attack: 50, decay: 50, dutyCycle: 50, minBrightness: 10, maxBrightness: 92)
-            reaction = ReactionConfig(source: .none, sensitivity: 70, targets: [.brightness], smoothing: 30, intensity: 60, threshold: 10)
+            Return JSON object with keys:
+            {
+              "name": String,
+              "icon": String,
+              "accentColorHex": String,
+              "palette": PaletteConfig,
+              "motion": MotionConfig,
+              "envelope": EnvelopeConfig,
+              "reaction": ReactionConfig
+            }
+            """
+            let response = try await session.respond(to: promptPayload)
+            let raw = extractJSONObject(from: response.content)
+            guard let data = raw.data(using: .utf8) else {
+                throw AICompositionGeneratorError.invalidModelResponse
+            }
+            let decoded = try JSONDecoder().decode(ModelDraft.self, from: data)
+            return clamped(decoded, prompt: prompt, providerModel: "FoundationModels/SystemLanguageModel.default")
         }
+#endif
+        throw AICompositionGeneratorError.providerUnavailable
+    }
 
-        let rawTitle = prompt
+    private func extractJSONObject(from text: String) -> String {
+        if let start = text.firstIndex(of: "{"),
+           let end = text.lastIndex(of: "}") {
+            return String(text[start...end])
+        }
+        return text
+    }
+
+    private func clamped(_ draft: ModelDraft, prompt: String, providerModel: String) -> AICompositionDraft {
+        let fallbackName = prompt
             .split(separator: " ")
             .prefix(4)
             .map(String.init)
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = rawTitle.isEmpty ? "AI Composition" : rawTitle.prefix(1).uppercased() + rawTitle.dropFirst()
+
+        let sanitizedName = (draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallbackName : draft.name)
+        let finalName = sanitizedName.isEmpty ? "AI Composition" : sanitizedName
+        let fallbackIcon = "wand.and.stars"
+        let icon = draft.icon.isEmpty ? fallbackIcon : draft.icon
+        let accent = draft.accentColorHex.hasPrefix("#") ? draft.accentColorHex : "#FFB340"
+
+        var palette = draft.palette
+        palette.saturation = min(100, max(0, palette.saturation))
+        palette.hueShift = min(180, max(-180, palette.hueShift))
+        palette.temperature = min(500, max(153, palette.temperature))
+
+        var motion = draft.motion
+        motion.speed = min(100, max(0, motion.speed))
+        motion.spread = min(100, max(0, motion.spread))
+        motion.offset = min(100, max(0, motion.offset))
+
+        var envelope = draft.envelope
+        envelope.bpm = min(240, max(20, envelope.bpm))
+        envelope.depth = min(100, max(0, envelope.depth))
+        envelope.attack = min(100, max(0, envelope.attack))
+        envelope.decay = min(100, max(0, envelope.decay))
+        envelope.dutyCycle = min(90, max(10, envelope.dutyCycle))
+        envelope.minBrightness = min(50, max(0, envelope.minBrightness))
+        envelope.maxBrightness = min(100, max(50, envelope.maxBrightness))
+
+        var reaction = draft.reaction
+        reaction.sensitivity = min(100, max(0, reaction.sensitivity))
+        reaction.smoothing = min(100, max(0, reaction.smoothing))
+        reaction.intensity = min(100, max(0, reaction.intensity))
+        reaction.threshold = min(100, max(0, reaction.threshold))
 
         return AICompositionDraft(
-            name: String(title),
+            name: finalName,
             icon: icon,
             accentColorHex: accent,
             palette: palette,
             motion: motion,
             envelope: envelope,
-            reaction: reaction
+            reaction: reaction,
+            providerModel: providerModel
         )
     }
 }
@@ -803,7 +842,8 @@ final class StudioViewModel {
             requiresForeground: true,
             params: [],
             strategy: .composition(presetID: preset.id),
-            compositionLayerActivity: activity
+            compositionLayerActivity: activity,
+            isAIGenerated: preset.aiPrompt != nil || preset.providerModel != nil
         )
     }
 
@@ -823,7 +863,8 @@ final class StudioViewModel {
                 motion: false,
                 envelope: false,
                 reaction: false
-            )
+            ),
+            isAIGenerated: false
         )
     }
 
@@ -892,7 +933,9 @@ final class StudioViewModel {
             envelope: EnvelopeConfig(shape: .breathe, bpm: 28, depth: 22, minBrightness: 12, maxBrightness: 95),
             reaction: ReactionConfig(),
             createdAt: now,
-            updatedAt: now
+            updatedAt: now,
+            aiPrompt: nil,
+            providerModel: nil
         )
         compositionStore.save(draft)
     }
@@ -932,7 +975,9 @@ final class StudioViewModel {
                 envelope: draft.envelope,
                 reaction: draft.reaction,
                 createdAt: now,
-                updatedAt: now
+                updatedAt: now,
+                aiPrompt: prompt,
+                providerModel: draft.providerModel
             )
             compositionStore.save(preset)
             statusMessage = "✨ Generated '\(preset.name)'"

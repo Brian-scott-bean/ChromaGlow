@@ -333,3 +333,35 @@ AI entry is now integrated into Deck 3 creation pill and is production-safe for 
 
 ### Current state
 Composer polish advanced with visual layer activity cues and seasonal deck affordance; compile status remains green.
+
+---
+
+## 2026-05-06 — AI Provider + Preset Metadata Migration (Cursor)
+
+### What was built
+- Updated `CompositionPreset` in `CompositionModels.swift` with migration-safe AI metadata:
+  - Added optional `aiPrompt` and `providerModel`.
+  - Implemented custom `init(from:)` to decode both fields with graceful `nil` fallback for legacy JSON.
+  - Implemented explicit `encode(to:)` for forward-compatible persistence.
+- Replaced local heuristic generation path in `StudioViewModel.swift` with FoundationModels-backed generation:
+  - Added `LanguageModelSession` request path (guarded by `canImport(FoundationModels)` and availability).
+  - Added JSON extraction + decode pipeline for structured model output.
+  - Added validation clamp step for all returned numeric fields (palette/motion/envelope/reaction ranges).
+- Added AI-card visual affordance in `StudioCardView` (inside `StudioView.swift`):
+  - Shows compact `wand.and.stars` badge for AI-generated composition cards.
+  - Badge sits alongside layer activity chips and remains compact-layout safe.
+
+### What's working
+- ✅ Generic iOS build succeeds after provider integration and metadata migration.
+- ✅ Existing composition JSON remains readable due decoder fallback behavior.
+- ✅ New AI-generated presets persist prompt/model metadata and show AI badge.
+
+### What's left
+- [ ] Cross-device QA snapshot pass (SE/mini/standard/Max/iPad) for badge/chip density.
+- [ ] Optional: transition from text-JSON parsing to strict guided structured output (`@Generable`) for stronger model guarantees.
+
+### Gotchas
+- FoundationModels can be unavailable per-device/runtime; generator now fails gracefully with clear user-facing message.
+
+### Current state
+AI generation now uses FoundationModels with clamp validation, and preset metadata is migration-safe for older saved compositions.

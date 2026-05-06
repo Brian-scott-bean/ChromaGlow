@@ -338,6 +338,100 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
 
     var createdAt: Date
     var updatedAt: Date
+    var aiPrompt: String?
+    var providerModel: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case icon
+        case accentColorHex
+        case isBuiltIn
+        case category
+        case seasonMonths
+        case palette
+        case motion
+        case envelope
+        case reaction
+        case createdAt
+        case updatedAt
+        case aiPrompt
+        case providerModel
+    }
+
+    init(
+        id: UUID,
+        name: String,
+        icon: String,
+        accentColorHex: String,
+        isBuiltIn: Bool,
+        category: PresetCategory,
+        seasonMonths: [Int]?,
+        palette: PaletteConfig,
+        motion: MotionConfig,
+        envelope: EnvelopeConfig,
+        reaction: ReactionConfig,
+        createdAt: Date,
+        updatedAt: Date,
+        aiPrompt: String? = nil,
+        providerModel: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.icon = icon
+        self.accentColorHex = accentColorHex
+        self.isBuiltIn = isBuiltIn
+        self.category = category
+        self.seasonMonths = seasonMonths
+        self.palette = palette
+        self.motion = motion
+        self.envelope = envelope
+        self.reaction = reaction
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.aiPrompt = aiPrompt
+        self.providerModel = providerModel
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        icon = try container.decode(String.self, forKey: .icon)
+        accentColorHex = try container.decode(String.self, forKey: .accentColorHex)
+        isBuiltIn = try container.decode(Bool.self, forKey: .isBuiltIn)
+        category = try container.decode(PresetCategory.self, forKey: .category)
+        seasonMonths = try container.decodeIfPresent([Int].self, forKey: .seasonMonths)
+        palette = try container.decode(PaletteConfig.self, forKey: .palette)
+        motion = try container.decode(MotionConfig.self, forKey: .motion)
+        envelope = try container.decode(EnvelopeConfig.self, forKey: .envelope)
+        reaction = try container.decode(ReactionConfig.self, forKey: .reaction)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+
+        // Migration-safe decode: older JSON files won't have these fields.
+        aiPrompt = try container.decodeIfPresent(String.self, forKey: .aiPrompt)
+        providerModel = try container.decodeIfPresent(String.self, forKey: .providerModel)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(icon, forKey: .icon)
+        try container.encode(accentColorHex, forKey: .accentColorHex)
+        try container.encode(isBuiltIn, forKey: .isBuiltIn)
+        try container.encode(category, forKey: .category)
+        try container.encodeIfPresent(seasonMonths, forKey: .seasonMonths)
+        try container.encode(palette, forKey: .palette)
+        try container.encode(motion, forKey: .motion)
+        try container.encode(envelope, forKey: .envelope)
+        try container.encode(reaction, forKey: .reaction)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encodeIfPresent(aiPrompt, forKey: .aiPrompt)
+        try container.encodeIfPresent(providerModel, forKey: .providerModel)
+    }
 
     /// Whether this preset is seasonally relevant right now.
     var isInSeason: Bool {

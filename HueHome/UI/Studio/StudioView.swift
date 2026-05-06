@@ -27,6 +27,7 @@ struct StudioView: View {
     }
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var vm = StudioViewModel()
     @State private var showSettings = false
 
@@ -140,14 +141,23 @@ struct StudioView: View {
         orchestrator.allRooms + orchestrator.allZones
     }
 
+    private var isCompactStudio: Bool {
+        UIScreen.main.bounds.height <= 700 || dynamicTypeSize.isAccessibilitySize
+    }
+
+    private var compactMixerContentMaxHeight: CGFloat {
+        isCompactStudio ? 228 : 290
+    }
+
     private func computeMixerHeight() -> CGFloat {
         guard let effect = vm.currentRoomEffect else { return 0 }
         if case .composition = effect.card.strategy {
-            return 380
+            return isCompactStudio ? 330 : 380
         }
         let essentialCount = effect.card.params.filter { $0.tier == .essential }.count
         // Header (60) + essential sliders (56 each) + chevron row (36) + padding
-        return CGFloat(60 + essentialCount * 56 + 36 + 16)
+        let calculated = CGFloat(60 + essentialCount * 56 + 36 + 16)
+        return isCompactStudio ? min(calculated, 330) : calculated
     }
 
     private var allCards: [StudioCard] {
@@ -588,7 +598,7 @@ struct StudioView: View {
         let presets = vm.composerPresets(for: composerCategory)
 
         return ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: HueSpacing.md) {
+            VStack(alignment: .leading, spacing: isCompactStudio ? HueSpacing.sm : HueSpacing.md) {
                 composerCategoryChips
 
                 if vm.hasSeasonalCompositionPreset {
@@ -685,7 +695,7 @@ struct StudioView: View {
                 }
             }
             .padding(.horizontal, HueSpacing.screenH)
-            .padding(.vertical, HueSpacing.sm)
+            .padding(.vertical, isCompactStudio ? 6 : HueSpacing.sm)
         }
     }
 
@@ -830,20 +840,28 @@ struct StudioView: View {
                     .padding(.horizontal, HueSpacing.screenH)
 
                 if case .composition = card.strategy {
-                    compositionMixerBody
-                        .padding(.horizontal, HueSpacing.screenH)
-                        .padding(.top, HueSpacing.md)
+                    ScrollView(showsIndicators: false) {
+                        compositionMixerBody
+                            .padding(.horizontal, HueSpacing.screenH)
+                            .padding(.top, HueSpacing.md)
+                            .padding(.bottom, HueSpacing.sm)
+                    }
+                    .frame(maxHeight: compactMixerContentMaxHeight)
                 } else {
                     // ── Essential parameter sliders ──────────────
                     let essentialParams = card.params.filter { $0.tier == .essential }
                     if !essentialParams.isEmpty {
-                        VStack(spacing: HueSpacing.md) {
-                            ForEach(essentialParams) { param in
-                                StudioParamRow(param: param, cardID: card.id, vm: vm)
+                        ScrollView(showsIndicators: false) {
+                            VStack(spacing: HueSpacing.md) {
+                                ForEach(essentialParams) { param in
+                                    StudioParamRow(param: param, cardID: card.id, vm: vm)
+                                }
                             }
+                            .padding(.horizontal, HueSpacing.screenH)
+                            .padding(.top, HueSpacing.md)
+                            .padding(.bottom, HueSpacing.sm)
                         }
-                        .padding(.horizontal, HueSpacing.screenH)
-                        .padding(.top, HueSpacing.md)
+                        .frame(maxHeight: compactMixerContentMaxHeight)
                     }
 
                     // ── More params chevron ──────────────────────
@@ -931,7 +949,22 @@ struct StudioView: View {
     }
 
     private var compositionPaletteControls: some View {
-        VStack(spacing: HueSpacing.sm) {
+        let hueBinding = Binding<Double>(
+            get: {
+                guard let c = vm.activeCompositionBox?.palette.color1 else { return 36 }
+                let hsb = HueColorUtils.hsb(fromX: c.x, y: c.y, brightness: 100)
+                return hsb.h * 360
+            },
+            set: { degrees in
+                let hue = (degrees / 360).truncatingRemainder(dividingBy: 1)
+                let normalizedHue = hue < 0 ? hue + 1 : hue
+                let saturation = (vm.activeCompositionBox?.palette.saturation ?? 100) / 100
+                let xy = HueColorUtils.xyFrom(hue: normalizedHue, saturation: saturation, brightness: 1.0)
+                vm.activeCompositionBox?.palette.color1 = CodableColor(x: xy.x, y: xy.y)
+            }
+        )
+
+        return VStack(spacing: HueSpacing.sm) {
             Picker("Mode", selection: Binding(
                 get: { vm.activeCompositionBox?.palette.mode ?? .gradient },
                 set: { vm.activeCompositionBox?.palette.mode = $0 }
@@ -941,6 +974,8 @@ struct StudioView: View {
                 }
             }
             .pickerStyle(.segmented)
+
+            hueWheelBar(title: "Hue", value: hueBinding)
 
             HStack(spacing: 8) {
                 ForEach(StudioViewModel.presetColors, id: \.self) { color in
@@ -977,6 +1012,62 @@ struct StudioView: View {
                     range: -180...180
                 )
             }
+        }
+    }
+
+    private func hueWheelBar(title: String, value: Binding<Double>) -> some View {
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.60))
+                Spacer()
+                Text("\(Int(value.wrappedValue.rounded()))°")
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.42))
+            }
+
+            GeometryReader { geo in
+                let trackWidth = max(1, geo.size.width)
+                let clamped = min(360, max(0, value.wrappedValue))
+                let thumbX = CGFloat(clamped / 360) * trackWidth
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    .red, .orange, .yellow, .green, .cyan, .blue, .purple, .red
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(height: 14)
+
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 20, height: 20)
+                        .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
+                        .overlay(
+                            Circle().strokeBorder(Color.black.opacity(0.15), lineWidth: 1)
+                        )
+                        .position(x: thumbX, y: 7)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { gesture in
+                            let x = min(trackWidth, max(0, gesture.location.x))
+                            let ratio = x / trackWidth
+                            value.wrappedValue = Double(ratio) * 360
+                        }
+                        .onEnded { _ in
+                            HapticManager.shared.selection()
+                        }
+                )
+            }
+            .frame(height: 20)
         }
     }
 
@@ -1255,6 +1346,19 @@ struct StudioCardView: View, Equatable {
 
                     if let activity = card.compositionLayerActivity {
                         HStack(spacing: 4) {
+                            if card.isAIGenerated {
+                                Image(systemName: "wand.and.stars")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(HuePalette.amber.opacity(0.95))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 3)
+                                    .background(
+                                        Capsule().fill(HuePalette.amber.opacity(0.14))
+                                    )
+                                    .overlay(
+                                        Capsule().strokeBorder(HuePalette.amber.opacity(0.30), lineWidth: 1)
+                                    )
+                            }
                             layerChip("🎨", isActive: activity.palette)
                             layerChip("🌊", isActive: activity.motion)
                             layerChip("📈", isActive: activity.envelope)
