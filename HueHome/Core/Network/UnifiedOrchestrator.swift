@@ -1398,6 +1398,9 @@ final class UnifiedOrchestrator {
 
     /// Latest-wins REST sender for studio mode — prevents bridge command backlog.
     private let studioRestSender = RestSender()
+    /// Generation counter for studio/composer engine loops.
+    /// Increment on every start/stop; async closures must match to send.
+    private var studioGeneration: Int = 0
 
     /// Live param reference — StudioViewModel updates this dict, engine loops read it.
     /// Using a class wrapper so the Task closure captures a reference, not a copy.
@@ -1427,6 +1430,8 @@ final class UnifiedOrchestrator {
         // Cancel any previously running studio task first
         activeStudioTask?.cancel()
         activeStudioTask = nil
+        studioGeneration += 1
+        await studioRestSender.clear()
         if let entClient = studioEntClient {
             await entClient.stopSession()
             studioEntClient = nil
@@ -1519,7 +1524,7 @@ final class UnifiedOrchestrator {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     /// Start a composition render loop for the given room.
-    /// Tries Entertainment API first (per-light, 25fps), falls back to REST (group, 5fps).
+    /// Tries Entertainment API first (per-light, 25fps), falls back to REST (grouped_light ~1 Hz — bridge limit).
     func startCompositionMode(
         room: RoomDisplayItem,
         paramBox: CompositionParamBox
@@ -1527,6 +1532,9 @@ final class UnifiedOrchestrator {
         // Cancel any previously running studio task
         activeStudioTask?.cancel()
         activeStudioTask = nil
+        studioGeneration += 1
+        let generation = studioGeneration
+        await studioRestSender.clear()
         if let entClient = studioEntClient {
             await entClient.stopSession()
             studioEntClient = nil
@@ -1534,12 +1542,25 @@ final class UnifiedOrchestrator {
 
         guard let api = hueClient(for: room.bridgeID),
               let groupedLightID = room.groupedLightID else { return }
+        print("[Composer] ▶ Start composition for room='\(room.name)' groupedLightID=\(groupedLightID)")
 
-        // Try entertainment first (per-light, 25fps)
-        if let entClient = await tryStartEntertainment(room: room),
-           let config = try? await EntertainmentConfigManager().fetchConfigs(client: api).first {
-            let channelIDs = config.channels.map { UInt8($0.id) }
-            print("[Composer] 🎬 Entertainment mode — \(channelIDs.count) channels at 25fps")
+        // Composer is room-scoped: only stream if an entertainment config
+        // actually contains lights from the selected room. Otherwise use REST.
+        let roomLightRefs = Set(
+            room.childResourceRefs
+                .filter { $0.rtype == "light" }
+                .map(\.rid)
+        )
+
+        if !roomLightRefs.isEmpty,
+           let configs = try? await EntertainmentConfigManager().fetchConfigs(client: api),
+           let matchedConfig = configs.first(where: { config in
+               let configLights = Set(config.channels.flatMap(\.lightServiceIDs))
+               return !configLights.isDisjoint(with: roomLightRefs)
+           }),
+           let entClient = await tryStartEntertainment(room: room, configID: matchedConfig.id) {
+            let channelIDs = matchedConfig.channels.map { UInt8($0.id) }
+            print("[Composer] 🎬 Entertainment mode room='\(room.name)' config='\(matchedConfig.name)' channels=\(channelIDs.count)")
             activeStudioTask = Task {
                 await runCompositionEntertainment(
                     entClient: entClient,
@@ -1548,13 +1569,14 @@ final class UnifiedOrchestrator {
                 )
             }
         } else {
-            // REST fallback — group-level, 5fps
-            print("[Composer] 📡 REST fallback — group-level at ~5fps")
+            // REST fallback — group-level (~1 PUT/sec — bridge limit)
+            print("[Composer] 📡 REST fallback room='\(room.name)' groupedLightID=\(groupedLightID) ~1Hz grouped_light")
             activeStudioTask = Task {
                 await runCompositionREST(
                     api: api,
                     groupedLightID: groupedLightID,
-                    paramBox: paramBox
+                    paramBox: paramBox,
+                    generation: generation
                 )
             }
         }
@@ -1590,16 +1612,28 @@ final class UnifiedOrchestrator {
         }
     }
 
-    /// Composition render loop via REST — group-level color + brightness at ~5fps.
-    /// Uses RestSender mailbox to prevent bridge command backlog.
+    /// Composition render loop via REST — group-level color + brightness.
+    ///
+    /// **Bridge limit:** `HueAPIClient` documents grouped_light at **~1 PUT/sec**.
+    /// Sending faster (this loop previously used 200ms / ~5 Hz) overloads the bridge,
+    /// queues commands, and produces **30–60s apparent lag** as stale PUTs drain.
+    ///
+    /// Tradeoff: Composer REST mode updates ~1×/second. Prefer Entertainment (DTLS)
+    /// when an entertainment config matches the room for smooth motion.
     private func runCompositionREST(
         api: HueAPIClient,
         groupedLightID: String,
-        paramBox: CompositionParamBox
+        paramBox: CompositionParamBox,
+        generation: Int
     ) async {
         let startTime = CFAbsoluteTimeGetCurrent()
+        /// Minimum spacing between grouped_light PUTs (seconds).
+        let groupedLightMinInterval: TimeInterval = 1.05
+        let transitionMs = 900
 
         while !Task.isCancelled {
+            let isCurrent = await MainActor.run { self.studioGeneration == generation }
+            guard isCurrent else { break }
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
 
             // Render a single "virtual channel" for the group
@@ -1614,18 +1648,19 @@ final class UnifiedOrchestrator {
             let bri = max(1, frame.brightness * 100.0)  // 0-1 → 1-100
 
             await studioRestSender.enqueue {
+                let stillCurrent = await MainActor.run { self.studioGeneration == generation }
+                guard stillCurrent else { return }
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: true,
                     brightness: bri,
                     xy: (frame.x, frame.y),
                     mirek: nil,
-                    duration: 200  // smooth transition between frames
+                    duration: transitionMs
                 )
             }
 
             do {
-                // REST rate limit: ~200ms between group commands (5fps)
-                try await Task.sleep(nanoseconds: 200_000_000)
+                try await Task.sleep(for: .seconds(groupedLightMinInterval))
             } catch { break }
         }
     }
@@ -1634,7 +1669,10 @@ final class UnifiedOrchestrator {
         // Cancel the running loop task (strobe, etc.)
         activeStudioTask?.cancel()
         activeStudioTask = nil
+        studioGeneration += 1
+        await studioRestSender.clear()
         activeParamBox = nil
+        print("[Studio] ⏹ stopStudioMode() canceled active engine loop")
 
         // Stop entertainment session
         if let entClient = studioEntClient {
@@ -1651,11 +1689,11 @@ final class UnifiedOrchestrator {
 
     /// Try to open an entertainment DTLS session for the given room.
     /// Returns the client if successful, nil if no entertainment config or connection failed.
-    private func tryStartEntertainment(room: RoomDisplayItem) async -> HueEntertainmentClient? {
+    private func tryStartEntertainment(room: RoomDisplayItem, configID: String? = nil) async -> HueEntertainmentClient? {
         guard let bridgeID = room.bridgeID,
               let api = hueClient(for: bridgeID),
               let clientKey = KeychainManager.shared.loadClientKey(for: bridgeID),
-              let config = await findEntertainmentConfig(bridgeID: bridgeID) else {
+              let config = await findEntertainmentConfig(bridgeID: bridgeID, preferredConfigID: configID) else {
             return nil
         }
 
@@ -1677,10 +1715,15 @@ final class UnifiedOrchestrator {
     }
 
     /// Find an entertainment config on the given bridge.
-    private func findEntertainmentConfig(bridgeID: String?) async -> EntertainmentConfig? {
+    private func findEntertainmentConfig(bridgeID: String?, preferredConfigID: String? = nil) async -> EntertainmentConfig? {
         guard let bid = bridgeID, let api = hueClient(for: bid) else { return nil }
         let manager = EntertainmentConfigManager()
-        return try? await manager.fetchConfigs(client: api).first
+        guard let configs = try? await manager.fetchConfigs(client: api) else { return nil }
+        if let preferredConfigID,
+           let matched = configs.first(where: { $0.id == preferredConfigID }) {
+            return matched
+        }
+        return configs.first
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

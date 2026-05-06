@@ -63,6 +63,11 @@ actor RestSender {
         }
         isInflight = false
     }
+
+    /// Drop any queued pending work (does not interrupt in-flight request).
+    func clear() {
+        pending = nil
+    }
 }
 
 // MARK: - SyncModeEngine

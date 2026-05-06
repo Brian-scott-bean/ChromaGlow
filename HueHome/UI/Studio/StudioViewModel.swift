@@ -154,6 +154,12 @@ final class StudioViewModel {
     // ── Composition store ─────────────────────────────────────
     let compositionStore = CompositionStore()
 
+    /// Template preset for "+ Create" — kept in the store for `apply()` lookup, hidden from Deck 3 grid.
+    static let composerStarterDraftPresetID = UUID(uuidString: "00000000-0000-0000-0000-00000000C0DA")!
+
+    /// Stable card id for `+ Create` (not `comp_{uuid}`).
+    static let composerStarterCardID = "composer_starter"
+
     /// Live composition param box — the render loop reads this each frame.
     /// UI writes to it on slider drag for instant light response.
     nonisolated(unsafe) var activeCompositionBox: CompositionParamBox?
@@ -278,8 +284,15 @@ final class StudioViewModel {
 
     @MainActor
     func apply(_ card: StudioCard) async {
+        await apply(card, roomOverride: nil)
+    }
+
+    /// Apply using a captured room snapshot to avoid room-selection races
+    /// when taps and room-swipes happen close together.
+    @MainActor
+    func apply(_ card: StudioCard, roomOverride: RoomDisplayItem?) async {
         print("[Studio] apply '\(card.name)' — selectedRoom: \(selectedRoom?.name ?? "nil")")
-        guard let room = selectedRoom else {
+        guard let room = roomOverride ?? selectedRoom else {
             statusMessage = "⚠ Select a room first"
             print("[Studio] ❌ No room selected")
             return
@@ -313,6 +326,31 @@ final class StudioViewModel {
             if case .bridgeNative = card.strategy { newIsBridgeNative = true } else { newIsBridgeNative = false }
             if oldIsBridgeNative && newIsBridgeNative {
                 try? await Task.sleep(for: .milliseconds(400))
+            }
+        }
+
+        // ── Studio engine is singleton in orchestrator (one active task). ────────
+        // For app-driven + composition cards, keep behavior explicit and predictable:
+        // stop other running engine-based effects on different rooms first.
+        // Bridge-native per-light effects can coexist and are left untouched.
+        let newUsesStudioEngine: Bool = {
+            switch card.strategy {
+            case .appDriven, .composition: return true
+            case .bridgeNative: return false
+            }
+        }()
+        if newUsesStudioEngine {
+            for (roomID, effect) in runningEffects where roomID != room.id {
+                let effectUsesStudioEngine: Bool = {
+                    switch effect.card.strategy {
+                    case .appDriven, .composition: return true
+                    case .bridgeNative: return false
+                    }
+                }()
+                guard effectUsesStudioEngine else { continue }
+                print("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (single Studio engine loop)")
+                isExplicitStop = false
+                await stopEffect(on: roomID)
             }
         }
 
@@ -512,7 +550,7 @@ final class StudioViewModel {
                   let api = orchestrator.hueClient(for: room.bridgeID) else { return }
 
             // Read current transition setting for this card (used as duration)
-            let card = (effectCards + liveModeCards + composerStudioCards).first(where: { $0.id == cardID })
+            let card = (effectCards + liveModeCards + composerStudioCards + [starterCompositionCard()]).first(where: { $0.id == cardID })
             let transitionMs = Int(paramValue(for: cardID, paramID: "transition", default: card?.params.first(where: { $0.id == "transition" })?.defaultValue ?? 400))
 
             switch paramID {
@@ -586,21 +624,158 @@ final class StudioViewModel {
     // MARK: - Composer Cards (from store)
     // ──────────────────────────────────────────────
 
-    /// Build StudioCards from saved CompositionPresets.
-    /// These appear on Deck 3 alongside the "+ Create" button.
-    var composerStudioCards: [StudioCard] {
-        compositionStore.presets.map { preset in
-            StudioCard(
-                id: "comp_\(preset.id.uuidString)",
-                name: preset.name,
-                tagline: "\(preset.palette.mode.rawValue.capitalized) • \(preset.motion.pattern.rawValue.capitalized) • \(preset.envelope.shape.rawValue.capitalized)",
-                icon: preset.icon,
-                accentColor: Color(hex: preset.accentColorHex),
-                requiresForeground: true,  // compositions need render loop
-                params: [],  // controlled via layer tabs, not flat params
-                strategy: .composition(presetID: preset.id)
+    /// Sorted for Deck 3: in-season presets first, then alphabetical.
+    var composerDeckPresetsSorted: [CompositionPreset] {
+        compositionStore.presets
+            .filter { $0.id != Self.composerStarterDraftPresetID }
+            .sorted { a, b in
+                if a.isInSeason != b.isInSeason { return a.isInSeason && !b.isInSeason }
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
+    }
+
+    /// Deck 3 filter chip — `preset.category` never equals `.all` (virtual category).
+    func composerPresets(for category: PresetCategory) -> [CompositionPreset] {
+        switch category {
+        case .all: return composerDeckPresetsSorted
+        default: return composerDeckPresetsSorted.filter { $0.category == category }
+        }
+    }
+
+    /// Any non-starter preset is in-season (for Holiday chip emphasis).
+    var hasSeasonalCompositionPreset: Bool {
+        composerDeckPresetsSorted.contains(where: \.isInSeason)
+    }
+
+    func studioCard(for preset: CompositionPreset) -> StudioCard {
+        StudioCard(
+            id: "comp_\(preset.id.uuidString)",
+            name: preset.name,
+            tagline: "\(preset.palette.mode.rawValue.capitalized) • \(preset.motion.pattern.rawValue.capitalized) • \(preset.envelope.shape.rawValue.capitalized)",
+            icon: preset.icon,
+            accentColor: Color(hex: preset.accentColorHex),
+            requiresForeground: true,
+            params: [],
+            strategy: .composition(presetID: preset.id)
+        )
+    }
+
+    /// Card used exclusively by the `+ Create` control.
+    func starterCompositionCard() -> StudioCard {
+        StudioCard(
+            id: Self.composerStarterCardID,
+            name: "New Composition",
+            tagline: "Warm gradient • Breathe • Shape it in the mixer",
+            icon: "sparkles",
+            accentColor: HuePalette.amber,
+            requiresForeground: true,
+            params: [],
+            strategy: .composition(presetID: Self.composerStarterDraftPresetID)
+        )
+    }
+
+    /// Ensures the hidden starter template exists so `.composition(starterID)` resolves in `apply()`.
+    @MainActor
+    func ensureComposerStarterDraft() {
+        guard !compositionStore.presets.contains(where: { $0.id == Self.composerStarterDraftPresetID }) else { return }
+        let now = Date()
+        let draft = CompositionPreset(
+            id: Self.composerStarterDraftPresetID,
+            name: "New Composition",
+            icon: "sparkles",
+            accentColorHex: "#FFB340",
+            isBuiltIn: false,
+            category: .myCreations,
+            seasonMonths: nil,
+            palette: PaletteConfig(
+                mode: .gradient,
+                color1: CodableColor.warmWhite,
+                color2: CodableColor(x: 0.5500, y: 0.3900)
+            ),
+            motion: MotionConfig(pattern: .static, speed: 35, forward: true),
+            envelope: EnvelopeConfig(shape: .breathe, bpm: 28, depth: 22, minBrightness: 12, maxBrightness: 95),
+            reaction: ReactionConfig(),
+            createdAt: now,
+            updatedAt: now
+        )
+        compositionStore.save(draft)
+    }
+
+    @MainActor
+    func applyStarterComposition() async {
+        ensureComposerStarterDraft()
+        await apply(starterCompositionCard())
+    }
+
+    /// Persist the currently running composition params as a new user preset.
+    @MainActor
+    func saveActiveComposition(name rawName: String, icon: String) -> CompositionPreset? {
+        guard let box = activeCompositionBox else { return nil }
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let now = Date()
+        let preset = CompositionPreset(
+            id: UUID(),
+            name: trimmed.isEmpty ? "My Composition" : trimmed,
+            icon: icon,
+            accentColorHex: "#FFB340",
+            isBuiltIn: false,
+            category: .myCreations,
+            seasonMonths: nil,
+            palette: box.palette,
+            motion: box.motion,
+            envelope: box.envelope,
+            reaction: box.reaction,
+            createdAt: now,
+            updatedAt: now
+        )
+        compositionStore.save(preset)
+        return preset
+    }
+
+    @MainActor
+    func renameCompositionPreset(id: UUID, to rawName: String) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let idx = compositionStore.presets.firstIndex(where: { $0.id == id }) else { return }
+        var preset = compositionStore.presets[idx]
+        preset.name = name
+        preset.updatedAt = Date()
+        compositionStore.save(preset)
+        guard let fresh = compositionStore.presets.first(where: { $0.id == id }) else { return }
+
+        let roomIDs = Array(runningEffects.keys).filter { roomID in
+            guard let effect = runningEffects[roomID] else { return false }
+            guard case .composition(let pid) = effect.card.strategy else { return false }
+            return pid == id
+        }
+        for roomID in roomIDs {
+            guard let effect = runningEffects[roomID] else { continue }
+            runningEffects[roomID] = RunningEffect(
+                cardID: effect.cardID,
+                card: studioCard(for: fresh),
+                room: effect.room,
+                lightIDs: effect.lightIDs,
+                isEntertainment: effect.isEntertainment
             )
         }
+    }
+
+    @MainActor
+    func duplicateCompositionPreset(_ preset: CompositionPreset) {
+        _ = compositionStore.duplicate(preset)
+    }
+
+    @MainActor
+    func deleteCompositionPreset(_ preset: CompositionPreset) async {
+        let card = studioCard(for: preset)
+        if runningCardID == card.id {
+            await explicitStop(card)
+        }
+        compositionStore.delete(preset)
+    }
+
+    /// Build StudioCards from saved CompositionPresets (Deck 3 grid only — starter template excluded).
+    var composerStudioCards: [StudioCard] {
+        composerDeckPresetsSorted.map { studioCard(for: $0) }
     }
 
     // ──────────────────────────────────────────────
