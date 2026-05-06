@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-05-06 — Home Layout Rebuild + All Day Scenes (Cursor)
+
+### What was built
+- **Home rebuild (`DashboardView.swift`)** — Threw out the per-section ad-hoc padding model entirely and rebuilt Home with the canonical SwiftUI dashboard pattern. The visual design is **identical** — every section component (TimeSuggestionBanner, NextAutomationBanner, presetsBar, RoomCard, summaryHeader, zonesSectionHeader, nowPlayingBar) is unchanged. Only the wrapper layout was rewritten.
+- **New body shape**:
+  - Root: `ScrollView` (no ZStack, no GeometryReader, no custom layout profile).
+  - Content: a single `VStack(alignment: .leading, spacing: 14)` containing every section in order.
+  - Horizontal inset: `.padding(.horizontal, 20)` applied **once** at the ScrollView's content. Sections never set their own horizontal padding.
+  - Background: `DashboardAmbientBackground.ignoresSafeArea()` lives on the `.background { ... }` modifier, not as a ZStack sibling. This decouples its safe-area behavior from content sizing.
+  - Toast: `.overlay(alignment: .top)` for the orchestrator toast and `.overlay(alignment: .bottom)` for the preset toast.
+  - Grid: `[GridItem(.adaptive(minimum: 170))]` — auto-balances to 1 column on iPhone SE (335pt content < 2*170+spacing) and 2+ columns on every larger device with no breakpoint logic. The `useWideCards` AppStorage flag forces 1-column when desired.
+- **Presets row bleed** — `.padding(.horizontal, -20)` then `.padding(.leading, 20)` so the first chip aligns with the rail and the trailing chips scroll under the screen edge (Apple Music / App Store pattern).
+- **Removed dead code** — `HomeLayoutProfile` struct, `homeLayout` computed property, `homeContentRail` wrapper, `roomScrollView`, `roomsGrid`, `zonesGrid`, the unused `sizeClass` and `dynamicTypeSize` environment reads, and the debug HUD in `MainTabView`.
+- **All Day Scenes (Circadian Auto-Pilot)** — One-time location permission, local solar curve (sunrise/sunset), throttled grouped_light updates via `allDayRestSender`, persisted via `UserDefaults`. Settings UI in `AllDayScenesView` (toggle, set/refresh location, anchor summary).
+
+### Functionality preserved (no regressions)
+- ✅ Ambient time-of-day gradient background
+- ✅ Greeting, on/off counter, status dot
+- ✅ Time-aware suggestion banner with one-tap CTA
+- ✅ Next-automation banner with countdown chip + multi-automation sheet
+- ✅ Horizontal preset rail (Energize/Read/Relax/Sleep + favorited room scenes)
+- ✅ Now-playing strip with multi-effect dropdown and "Stop"/"Stop All"
+- ✅ Room cards: glow color, brightness slider, power toggle, ellipsis, scale animations, equatable diffing, SSE-driven optimistic state
+- ✅ Collapsible Zones section, persisted via @AppStorage
+- ✅ Pull-to-refresh, NavigationLink to RoomDetail, simultaneousGesture for SSE suppression
+- ✅ Toast notifications, demo-mode title decoration
+- ✅ Toolbar items (settings, power-all, layout toggle)
+- ✅ Empty state and shimmer state
+
+### What's working
+- ✅ Linter clean (`DashboardView`, `MainTabView`).
+- ✅ All Day Scenes feature compiles, persists state, and respects the latest-wins `RestSender` mailbox.
+
+### What's left
+- [x] User QA pass on iPhone SE (3rd gen) portrait completed via screenshot validation.
+- [ ] User QA pass on iPhone mini / standard / Max + iPad (screenshot matrix).
+- [ ] AI Scene Generation (next differentiator after Home QA).
+
+### Gotchas
+- `.adaptive(minimum:)` is the responsive grid contract — do not replace with custom screen-width math.
+- The presets row bleed uses `.padding(.horizontal, -20)` followed by `.padding(.leading, 20)` — both modifiers are required; removing either breaks leading alignment or collapses the bleed.
+- The ambient background MUST be applied via `.background { … }` modifier (not a ZStack sibling). A sibling with `.ignoresSafeArea()` propagates safe-area behavior to siblings via the ZStack's coordinate space, which is what caused the original SE clipping.
+- Sections that produce intrinsic-width content (e.g. a plain `Text`) will leave whitespace on the right inside the leading-aligned VStack. Every section in `content` either uses HStack+Spacer or a LazyVGrid, both of which fill the proposed width.
+
+### Current state
+SE portrait validation is complete and looks correct. Home layout rebuild is stable; remaining step is cross-device matrix validation (13/14, Pro Max, iPad) before tagging a checkpoint.
+
+---
+
 ## 2026-05-05 — Composer Engine Built (Antigravity/Gemini)
 
 ### What was built

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import CoreLocation
 
 // MARK: - SettingsView
 
@@ -36,6 +37,7 @@ struct SettingsView: View {
                 VStack(spacing: 24) {
                     bridgesSection       // multi-bridge management + connection info
                     exploreSection       // Automations + Devices (moved from tab bar)
+                    allDayScenesSection
                     accountSection
                     developerSection
                     appSection
@@ -79,6 +81,34 @@ struct SettingsView: View {
             Text("All \(bridges.count) bridge(s) will be removed. You'll need to press the link button on each bridge to re-pair.")
         }
         .onAppear { loadCredentials() }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - All Day Scenes Section
+    // ──────────────────────────────────────────────
+
+    private var allDayScenesSection: some View {
+        settingsGroup(header: "ALL DAY") {
+            NavigationLink(destination: AllDayScenesView()) {
+                HStack(spacing: 12) {
+                    iconCircle("sun.max.fill", color: glowColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("All Day Scenes")
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+                        Text("Circadian lighting that follows sunrise & sunset")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.30))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -461,5 +491,272 @@ struct SettingsView: View {
         let raw      = (try? KeychainManager.shared.loadAPIToken()) ?? ""
         tokenPreview = raw.isEmpty ? "Not saved"
                      : String(raw.prefix(6)) + "••••••" + String(raw.suffix(4))
+    }
+}
+
+// MARK: - All Day Scenes (Settings)
+
+private struct AllDayScenesView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(UnifiedOrchestrator.self) private var orchestrator
+
+    @AppStorage("allDayScenes.enabled") private var enabled: Bool = false
+    @AppStorage("allDayScenes.anchor.lat") private var anchorLat: Double = .nan
+    @AppStorage("allDayScenes.anchor.lon") private var anchorLon: Double = .nan
+    @AppStorage("allDayScenes.anchor.tz") private var anchorTz: String = ""
+    @AppStorage("allDayScenes.anchor.updatedAt") private var anchorUpdatedAt: Double = 0
+
+    @State private var isRequestingLocation = false
+    @State private var errorText: String? = nil
+
+    private var hasAnchor: Bool {
+        anchorLat.isFinite && anchorLon.isFinite && !anchorTz.isEmpty
+    }
+
+    private var anchorDate: Date? {
+        anchorUpdatedAt > 0 ? Date(timeIntervalSince1970: anchorUpdatedAt) : nil
+    }
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 18) {
+                    headerCard
+                    controlsCard
+                    if let err = errorText {
+                        Text(err)
+                            .font(.caption)
+                            .foregroundStyle(.red.opacity(0.85))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+                .padding(.bottom, 80)
+            }
+        }
+        .navigationTitle("All Day Scenes")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("Done") { dismiss() }
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var headerCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "sun.max.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Circadian Auto‑Pilot")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text("A gentle all-day curve based on sunrise and sunset.")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+                Spacer()
+                livePill
+            }
+
+            Text("Uses a one-time location anchor to calculate daily solar times. Your location is not tracked continuously.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.45))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.10), lineWidth: 1))
+    }
+
+    private var controlsCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Toggle(isOn: Binding(
+                get: { enabled },
+                set: { newValue in
+                    enabled = newValue
+                    if newValue, let anchor = orchestrator.loadAllDayAnchor() {
+                        orchestrator.startAllDayScenes(anchor: anchor)
+                    } else if !newValue {
+                        orchestrator.stopAllDayScenes()
+                    }
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Enable All Day Scenes")
+                        .foregroundStyle(.white)
+                    Text("Applies a slow, natural shift to all rooms.")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+            }
+            .tint(Color(red: 1.0, green: 0.76, blue: 0.20))
+
+            Divider().background(Color.white.opacity(0.10))
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Location anchor")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Text(hasAnchor ? anchorSummary : "Not set")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(2)
+                }
+                Spacer()
+                Button {
+                    Task { await requestOneTimeLocation() }
+                } label: {
+                    if isRequestingLocation {
+                        ProgressView().tint(.white).scaleEffect(0.85)
+                    } else {
+                        Text(hasAnchor ? "Refresh" : "Set")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.white.opacity(0.12))
+            }
+        }
+        .padding(16)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.10), lineWidth: 1))
+    }
+
+    private var livePill: some View {
+        let isRunning = enabled && hasAnchor
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(isRunning ? HuePalette.Noir.success : Color.white.opacity(0.25))
+                .frame(width: 7, height: 7)
+            Text(isRunning ? "LIVE" : "OFF")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(isRunning ? HuePalette.Noir.success : .white.opacity(0.45))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(.white.opacity(0.06)))
+        .overlay(Capsule().strokeBorder(.white.opacity(0.10), lineWidth: 1))
+    }
+
+    private var anchorSummary: String {
+        var parts: [String] = []
+        parts.append(String(format: "%.2f, %.2f", anchorLat, anchorLon))
+        parts.append(anchorTz)
+        if let d = anchorDate {
+            parts.append("Updated \(d.formatted(date: .abbreviated, time: .shortened))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    @MainActor
+    private func requestOneTimeLocation() async {
+        errorText = nil
+        isRequestingLocation = true
+        defer { isRequestingLocation = false }
+
+        do {
+            let loc = try await OneShotLocation.request()
+            let tz = TimeZone.current.identifier
+            anchorLat = loc.coordinate.latitude
+            anchorLon = loc.coordinate.longitude
+            anchorTz = tz
+            anchorUpdatedAt = Date().timeIntervalSince1970
+
+            orchestrator.saveAllDayAnchor(lat: anchorLat, lon: anchorLon, timeZoneID: tz)
+            if enabled, let anchor = orchestrator.loadAllDayAnchor() {
+                orchestrator.startAllDayScenes(anchor: anchor)
+            }
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - One-shot location helper
+
+private enum OneShotLocation {
+    enum LocationError: LocalizedError {
+        case servicesDisabled
+        case denied
+        case failed
+
+        var errorDescription: String? {
+            switch self {
+            case .servicesDisabled: return "Location Services are disabled."
+            case .denied: return "Location permission was denied."
+            case .failed: return "Could not fetch your location."
+            }
+        }
+    }
+
+    @MainActor
+    static func request() async throws -> CLLocation {
+        guard CLLocationManager.locationServicesEnabled() else { throw LocationError.servicesDisabled }
+
+        let mgr = CLLocationManager()
+        let delegate = Delegate()
+        mgr.delegate = delegate
+        mgr.desiredAccuracy = kCLLocationAccuracyThreeKilometers
+
+        return try await withCheckedThrowingContinuation { cont in
+            delegate.continuation = cont
+
+            switch mgr.authorizationStatus {
+            case .notDetermined:
+                mgr.requestWhenInUseAuthorization()
+            case .authorizedAlways, .authorizedWhenInUse:
+                mgr.requestLocation()
+            case .restricted, .denied:
+                cont.resume(throwing: LocationError.denied)
+            @unknown default:
+                cont.resume(throwing: LocationError.failed)
+            }
+        }
+    }
+
+    final class Delegate: NSObject, CLLocationManagerDelegate {
+        var continuation: CheckedContinuation<CLLocation, Error>?
+
+        func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+            guard let cont = continuation else { return }
+            switch manager.authorizationStatus {
+            case .authorizedAlways, .authorizedWhenInUse:
+                manager.requestLocation()
+            case .restricted, .denied:
+                continuation = nil
+                cont.resume(throwing: LocationError.denied)
+            case .notDetermined:
+                break
+            @unknown default:
+                continuation = nil
+                cont.resume(throwing: LocationError.failed)
+            }
+        }
+
+        func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+            guard let cont = continuation else { return }
+            continuation = nil
+            if let loc = locations.first {
+                cont.resume(returning: loc)
+            } else {
+                cont.resume(throwing: LocationError.failed)
+            }
+        }
+
+        func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+            guard let cont = continuation else { return }
+            continuation = nil
+            cont.resume(throwing: error)
+        }
     }
 }

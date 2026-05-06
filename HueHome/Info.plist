@@ -37,6 +37,8 @@
 	<string>ChromaGlow needs local network access to discover your Philips Hue Bridge via mDNS.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ChromaGlow uses your microphone to react your lights to music and sound in real time.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>ChromaGlow uses your location one time to calculate sunrise and sunset for All Day Scenes. Your location is not tracked continuously.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -19,6 +19,7 @@ import Foundation
 import SwiftUI
 import SwiftData
 import OSLog
+import CoreLocation
 
 // MARK: - Bridge Connection Status
 
@@ -99,6 +100,117 @@ final class UnifiedOrchestrator {
     /// Demo mode — true when exploring the app without a real Bridge.
     /// All state changes work locally; no network calls are made.
     var isDemoMode: Bool = false
+
+    // ── All Day Scenes (Circadian / Solar) ────────────────────────────────────
+    //
+    // Goal: "All day" lighting without requiring continuous location access.
+    // We store a one-time location anchor (lat/lon + timezone) and compute
+    // sunrise/sunset locally. Updates are grouped_light-only and low cadence.
+    private var allDayTask: Task<Void, Never>? = nil
+    private var allDayGeneration: Int = 0
+    private let allDayRestSender = RestSender()
+
+    private enum AllDayKeys {
+        static let enabled = "allDayScenes.enabled"
+        static let lat     = "allDayScenes.anchor.lat"
+        static let lon     = "allDayScenes.anchor.lon"
+        static let tz      = "allDayScenes.anchor.tz"
+        static let updated = "allDayScenes.anchor.updatedAt"
+    }
+
+    struct AllDayAnchor: Equatable, Codable {
+        let lat: Double
+        let lon: Double
+        let timeZoneID: String
+        let updatedAt: Date
+    }
+
+    var allDayScenesEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: AllDayKeys.enabled) }
+        set { UserDefaults.standard.set(newValue, forKey: AllDayKeys.enabled) }
+    }
+
+    func loadAllDayAnchor() -> AllDayAnchor? {
+        let d = UserDefaults.standard
+        guard d.object(forKey: AllDayKeys.lat) != nil,
+              d.object(forKey: AllDayKeys.lon) != nil,
+              let tz = d.string(forKey: AllDayKeys.tz)
+        else { return nil }
+        let lat = d.double(forKey: AllDayKeys.lat)
+        let lon = d.double(forKey: AllDayKeys.lon)
+        let updated = (d.object(forKey: AllDayKeys.updated) as? Date) ?? .distantPast
+        return AllDayAnchor(lat: lat, lon: lon, timeZoneID: tz, updatedAt: updated)
+    }
+
+    func saveAllDayAnchor(lat: Double, lon: Double, timeZoneID: String) {
+        let d = UserDefaults.standard
+        d.set(lat, forKey: AllDayKeys.lat)
+        d.set(lon, forKey: AllDayKeys.lon)
+        d.set(timeZoneID, forKey: AllDayKeys.tz)
+        d.set(Date(), forKey: AllDayKeys.updated)
+    }
+
+    func startAllDayScenesIfNeeded() {
+        guard allDayScenesEnabled, let anchor = loadAllDayAnchor() else { return }
+        startAllDayScenes(anchor: anchor)
+    }
+
+    func startAllDayScenes(anchor: AllDayAnchor) {
+        stopAllDayScenes()
+        allDayScenesEnabled = true
+
+        allDayGeneration &+= 1
+        let gen = allDayGeneration
+
+        // Low cadence: 5 minutes. (Scene changes are gradual; we avoid bridge spam.)
+        let interval: TimeInterval = 5 * 60
+
+        allDayTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                if self.allDayGeneration != gen { return }
+                await self.tickAllDayScenes(anchor: anchor, generation: gen)
+                try? await Task.sleep(for: .seconds(interval))
+            }
+        }
+    }
+
+    func stopAllDayScenes() {
+        allDayScenesEnabled = false
+        allDayGeneration &+= 1
+        allDayTask?.cancel()
+        allDayTask = nil
+        Task { await allDayRestSender.clear() }
+    }
+
+    private func tickAllDayScenes(anchor: AllDayAnchor, generation: Int) async {
+        guard allDayGeneration == generation else { return }
+        guard !isDemoMode else { return }
+
+        let tz = TimeZone(identifier: anchor.timeZoneID) ?? .current
+        let now = Date()
+        let output = AllDayCurve.output(at: now, lat: anchor.lat, lon: anchor.lon, timeZone: tz)
+
+        // Apply to every room grouped_light with a smooth transition.
+        let groupedIDs = allRooms.compactMap(\.groupedLightID)
+
+        for glID in groupedIDs {
+            await allDayRestSender.enqueue { [weak self] in
+                guard let self else { return }
+                guard self.allDayGeneration == generation else { return }
+                guard let api = self.primaryAPIClient else { return }
+                // grouped_light supports on/dimming/ct/color; we do CT + brightness here.
+                try? await api.setGroupedLightEffect(
+                    id: glID,
+                    on: true,
+                    brightness: output.brightnessPercent,
+                    xy: nil,
+                    mirek: output.mirek,
+                    duration: 1200
+                )
+            }
+        }
+    }
 
     // ── Scenes (Stage 2B) ────────────────────────────────────
 
@@ -2323,6 +2435,159 @@ extension UnifiedOrchestrator {
             }
         }
     }
+}
+
+// MARK: - All Day Scenes (Solar Curve)
+
+/// Lightweight solar curve for "All Day Scenes".
+/// - Computes sunrise/sunset from a one-time location anchor.
+/// - Produces target brightness (% 1–100) + CCT (mirek) for grouped_light.
+/// - Intentionally low-fidelity: it’s stable, predictable, and cheap to compute.
+private enum AllDayCurve {
+    struct Output: Equatable {
+        let brightnessPercent: Double
+        let mirek: Int
+    }
+
+    static func output(at date: Date, lat: Double, lon: Double, timeZone: TimeZone) -> Output {
+        let solar = SolarTimes(date: date, lat: lat, lon: lon, timeZone: timeZone)
+
+        // If solar calc fails, fall back to a pleasant warm evening.
+        guard let sunrise = solar.sunrise, let sunset = solar.sunset else {
+            return Output(brightnessPercent: 35, mirek: 420)
+        }
+
+        // Normalize day progress:
+        // - Night: warm + dim
+        // - Day: cooler + brighter with a midday peak
+        let t = date.timeIntervalSince1970
+        let sr = sunrise.timeIntervalSince1970
+        let ss = sunset.timeIntervalSince1970
+
+        if t < sr || t > ss {
+            // Night curve: 8pm–midnight dim warm, midnight–sunrise very dim.
+            // (Simple; avoids harsh late-night brightness.)
+            return Output(brightnessPercent: 12, mirek: 460)
+        }
+
+        let dayProgress = clamp01((t - sr) / max(1, (ss - sr)))
+        let midday = 0.5
+        let dist = abs(dayProgress - midday) / midday
+        let peak = 1.0 - clamp01(dist)              // 0 at edges, 1 at midday
+        let smoothPeak = peak * peak * (3 - 2 * peak) // smoothstep
+
+        // Brightness: 28% morning/evening → 85% midday
+        let bri = lerp(28, 85, smoothPeak)
+
+        // Color temp: warm (450 mirek) at edges → cool (200 mirek) near midday
+        let mirek = Int(round(lerp(450, 200, smoothPeak)))
+        return Output(brightnessPercent: bri, mirek: clamp(mirek, 153, 500))
+    }
+
+    // MARK: - Solar times (NOAA-ish approximation)
+
+    struct SolarTimes {
+        let sunrise: Date?
+        let sunset: Date?
+
+        init(date: Date, lat: Double, lon: Double, timeZone: TimeZone) {
+            // Based on NOAA sunrise equation, simplified for robustness.
+            // Good enough for lighting transitions; not for astronomy.
+            let calendar = Calendar(identifier: .gregorian)
+            var cal = calendar
+            cal.timeZone = timeZone
+
+            let comps = cal.dateComponents([.year, .month, .day], from: date)
+            guard let day = cal.date(from: comps) else {
+                sunrise = nil; sunset = nil; return
+            }
+
+            let n = SolarTimes.dayOfYear(day, calendar: cal)
+            sunrise = SolarTimes.compute(event: .sunrise, dayOfYear: n, lat: lat, lon: lon, date: day, tz: timeZone)
+            sunset  = SolarTimes.compute(event: .sunset,  dayOfYear: n, lat: lat, lon: lon, date: day, tz: timeZone)
+        }
+
+        enum Event { case sunrise, sunset }
+
+        private static func compute(event: Event, dayOfYear n: Int, lat: Double, lon: Double, date: Date, tz: TimeZone) -> Date? {
+            // Constants
+            let zenith: Double = 90.833 // official
+            let lngHour = lon / 15.0
+
+            let t: Double = {
+                switch event {
+                case .sunrise: return Double(n) + ((6 - lngHour) / 24)
+                case .sunset:  return Double(n) + ((18 - lngHour) / 24)
+                }
+            }()
+
+            // Sun's mean anomaly
+            let M = (0.9856 * t) - 3.289
+
+            // Sun's true longitude
+            var L = M + (1.916 * sinDeg(M)) + (0.020 * sinDeg(2 * M)) + 282.634
+            L = normalize360(L)
+
+            // Right ascension
+            var RA = atanDeg(0.91764 * tanDeg(L))
+            RA = normalize360(RA)
+            // Quadrant adjustment
+            let Lquadrant  = floor(L / 90) * 90
+            let RAquadrant = floor(RA / 90) * 90
+            RA = RA + (Lquadrant - RAquadrant)
+            RA = RA / 15
+
+            // Declination
+            let sinDec = 0.39782 * sinDeg(L)
+            let cosDec = cos(asin(sinDec))
+
+            // Local hour angle
+            let cosH = (cosDeg(zenith) - (sinDec * sinDeg(lat))) / (cosDec * cosDeg(lat))
+            if cosH > 1 || cosH < -1 { return nil } // polar day/night edge cases
+
+            var H: Double
+            switch event {
+            case .sunrise: H = 360 - acosDeg(cosH)
+            case .sunset:  H = acosDeg(cosH)
+            }
+            H = H / 15
+
+            // Local mean time
+            let T = H + RA - (0.06571 * t) - 6.622
+            var UT = T - lngHour
+            UT = fmod(UT + 24, 24)
+
+            // Convert UT hours to local Date
+            let seconds = UT * 3600
+            let utcDay = Calendar(identifier: .gregorian).startOfDay(for: date)
+            let utcDate = utcDay.addingTimeInterval(seconds)
+
+            // Shift to timezone (date is already in tz; simplest is to rebuild using tz offset)
+            let offset = TimeInterval(tz.secondsFromGMT(for: utcDate))
+            return utcDate.addingTimeInterval(offset)
+        }
+
+        private static func dayOfYear(_ date: Date, calendar: Calendar) -> Int {
+            calendar.ordinality(of: .day, in: .year, for: date) ?? 1
+        }
+    }
+
+    // MARK: - Math helpers
+
+    private static func clamp01(_ x: Double) -> Double { min(1, max(0, x)) }
+    private static func clamp<T: Comparable>(_ v: T, _ lo: T, _ hi: T) -> T { min(hi, max(lo, v)) }
+    private static func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double { a + (b - a) * t }
+    private static func normalize360(_ x: Double) -> Double {
+        var v = fmod(x, 360)
+        if v < 0 { v += 360 }
+        return v
+    }
+
+    private static func sinDeg(_ deg: Double) -> Double { sin(deg * .pi / 180) }
+    private static func cosDeg(_ deg: Double) -> Double { cos(deg * .pi / 180) }
+    private static func tanDeg(_ deg: Double) -> Double { tan(deg * .pi / 180) }
+    private static func atanDeg(_ x: Double) -> Double { atan(x) * 180 / .pi }
+    private static func acosDeg(_ x: Double) -> Double { acos(x) * 180 / .pi }
 }
 
 // MARK: - SSE Event Models

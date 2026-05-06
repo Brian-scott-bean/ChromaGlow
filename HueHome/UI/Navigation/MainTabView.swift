@@ -52,10 +52,17 @@ struct MainTabView: View {
 
     private var iPhoneLayout: some View {
         ZStack(alignment: .bottom) {
+            // Sizing anchor — guarantees the shell accepts the full proposed
+            // width on compact devices (iPhone SE / mini) where opacity-switcher
+            // children can otherwise collapse to intrinsic widths.
+            Color.clear
+                .ignoresSafeArea()
+
             // Opacity-based switcher — preserves NavigationStack state per tab
             // and eliminates the TabView swipe-between-tabs gesture entirely.
             ForEach(HueTab.allCases, id: \.self) { tab in
                 tabContent(for: tab)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     // HueTabBar is a custom floating capsule in the ZStack;
                     // the system safe area has no knowledge of it.
                     // Height: icon(32) + padding.vertical(12*2) + padding.bottom(8) = 64pt
@@ -67,6 +74,7 @@ struct MainTabView: View {
             }
             HueTabBar(selectedTab: $selectedTab)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: iPad Layout
@@ -105,10 +113,18 @@ struct MainTabView: View {
     @ViewBuilder
     private func tabContent(for tab: HueTab) -> some View {
         switch tab {
-        case .home:   NavigationStack { DashboardView() }
-        case .scenes: NavigationStack { ScenesTabView() }
-        case .studio: NavigationStack { StudioView() }
-        case .more:   NavigationStack { MoreView() }
+        case .home:
+            NavigationStack { DashboardView() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .scenes:
+            NavigationStack { ScenesTabView() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .studio:
+            NavigationStack { StudioView() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .more:
+            NavigationStack { MoreView() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }

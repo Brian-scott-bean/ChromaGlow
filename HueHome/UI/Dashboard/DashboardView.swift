@@ -27,16 +27,29 @@ struct DashboardView: View {
     private var appAutomations: [AppAutomation]
     @Environment(\.modelContext)         private var modelContext
     @Environment(\.scenePhase)           private var scenePhase
-    @Environment(\.horizontalSizeClass)  private var sizeClass
     /// Persist zones section open/closed state across launches.
     @AppStorage("dashboard.zonesExpanded")  private var zonesExpanded: Bool  = true
     @AppStorage("castchroma.useWideCards")  private var useWideCards: Bool   = false
 
-    /// Switches between 1-col (full-width) and 2-col (compact) layout.
+    // MARK: - Layout
+    //
+    // Home uses the canonical SwiftUI dashboard pattern:
+    //   ScrollView → VStack → sections, with ONE horizontal padding on the
+    //   VStack and `.adaptive` LazyVGrid columns. The system handles
+    //   responsiveness — there is no custom layout profile, no GeometryReader,
+    //   no per-section padding. Cards reflow from 1 column on iPhone SE to 2+
+    //   columns on larger devices automatically.
+    //
+    private static let horizontalInset: CGFloat = 20
+    private static let sectionSpacing: CGFloat  = 14
+    private static let gridSpacing: CGFloat     = 14
+    private static let minimumCardWidth: CGFloat = 170
+
     private var gridColumns: [GridItem] {
-        useWideCards
-            ? [GridItem(.flexible())]
-            : [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+        if useWideCards {
+            return [GridItem(.flexible(), spacing: Self.gridSpacing)]
+        }
+        return [GridItem(.adaptive(minimum: Self.minimumCardWidth), spacing: Self.gridSpacing)]
     }
 
     @State private var presetToast:         String?  = nil
@@ -72,49 +85,70 @@ struct DashboardView: View {
     /// Pull-to-refresh always fires immediately regardless.
     private let refreshDebounceInterval: TimeInterval = 120
 
+    // MARK: - Body
+    //
+    // Architecture: ScrollView is the root. The ambient background goes on
+    // the .background modifier (NOT as a sibling in a ZStack) so its
+    // .ignoresSafeArea cannot pollute content sizing. The toast is an
+    // .overlay on the ScrollView. Modal/sheets/lifecycle modifiers attach
+    // to the ScrollView. This is the canonical SwiftUI dashboard pattern.
+    //
     var body: some View {
-        ZStack {
+        ScrollView {
+            content
+                .padding(.horizontal, Self.horizontalInset)
+                .padding(.top, 8)
+                .padding(.bottom, 100) // clear floating tab bar
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollIndicators(.hidden)
+        .refreshable {
+            await orchestrator.loadAll(cacheContext: modelContext)
+        }
+        .background {
             DashboardAmbientBackground(hour: currentHour)
-
-            Group {
-                if orchestrator.allRooms.isEmpty {
-                    if orchestrator.isLoading {
-                        shimmerView
-                    } else {
-                        emptyState
-                    }
-                } else {
-                    roomScrollView
-                }
-            }
-
-            // ── Preset toast ───────────────────────────────────────
-            if let msg = presetToast {
-                VStack {
-                    Spacer()
-                    Text(msg)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 11)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
-                        .padding(.bottom, 104)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: presetToast)
+                .ignoresSafeArea()
+        }
+        .overlay(alignment: .top) {
+            if let msg = orchestrator.toastMessage {
+                HueToastView(message: msg)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .allowsHitTesting(false)
+                    .zIndex(10)
             }
         }
+        .overlay(alignment: .bottom) {
+            if let msg = presetToast {
+                Text(msg)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
+                    .padding(.bottom, 104)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: orchestrator.toastMessage)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: presetToast)
         .navigationTitle(orchestrator.isDemoMode ? "My Lights  ✦ Demo" : "My Lights")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbarItems }
+        .navigationDestination(for: RoomDisplayItem.self) { room in
+            RoomDetailView(room: room)
+        }
         .fullScreenCover(isPresented: $showSettings) {
             NavigationStack {
                 SettingsView(onForget: { showSettings = false })
             }
+        }
+        .sheet(isPresented: $showScheduleSheet) {
+            UpcomingAutomationsSheet(automations: allUpcomingAutomations)
         }
         .onReceive(clockTimer) { _ in
             currentHour = Calendar.current.component(.hour, from: Date())
@@ -141,72 +175,59 @@ struct DashboardView: View {
         .preferredColorScheme(.dark)
     }
 
-    // ──────────────────────────────────────────────
-    // MARK: - Room Scroll
-    // ──────────────────────────────────────────────
-
-    // NOTE: No @Bindable here. RoomCard takes a plain value-type RoomDisplayItem,
-    // so ForEach never needs a Binding. This is intentional — see file header.
-    private var roomScrollView: some View {
-        ScrollView {
-            VStack(spacing: 0) {
+    // MARK: - Content
+    //
+    // ONE VStack. ONE horizontal padding (applied by the parent ScrollView).
+    // No section sets its own horizontal padding — that's the rule that
+    // keeps Home deterministic on every device size.
+    //
+    @ViewBuilder
+    private var content: some View {
+        if orchestrator.allRooms.isEmpty {
+            if orchestrator.isLoading {
+                shimmerView
+            } else {
+                emptyState
+            }
+        } else {
+            VStack(alignment: .leading, spacing: Self.sectionSpacing) {
                 summaryHeader
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-                    .padding(.bottom, 10)
 
-                // ── Time-aware suggestion banner ─────────────────────────
                 if let suggestion = timeSuggestion {
                     TimeSuggestionBanner(suggestion: suggestion) {
                         applyPreset(suggestion.preset)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 6)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                // ── Next automation banner ────────────────────────────
                 if let next = nextAutomation {
                     let upcomingCount = allUpcomingAutomations.count
                     NextAutomationBanner(name: next.automation.name,
-                                        icon: next.automation.action.icon,
-                                        fireDate: next.date,
-                                        moreCount: max(0, upcomingCount - 1))
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 12)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .onTapGesture { if upcomingCount > 1 { showScheduleSheet = true } }
-                    .sheet(isPresented: $showScheduleSheet) {
-                        UpcomingAutomationsSheet(automations: allUpcomingAutomations)
-                    }
+                                         icon: next.automation.action.icon,
+                                         fireDate: next.date,
+                                         moreCount: max(0, upcomingCount - 1))
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .onTapGesture { if upcomingCount > 1 { showScheduleSheet = true } }
                 }
 
+                // Presets row deliberately bleeds past the trailing edge so
+                // chips can scroll under the screen border (Apple-style rail).
                 presetsBar
-                    .padding(.leading, 20)
-                    .padding(.bottom, orchestrator.activeEffectName != nil ? 10 : 16)
+                    .padding(.horizontal, -Self.horizontalInset)
+                    .padding(.leading, Self.horizontalInset)
 
-                // ── Now Playing strip ────────────────────────────
                 if orchestrator.activeEffectName != nil {
                     nowPlayingBar
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 16)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                // Room grid — 1-col (wide) or 2-col (compact) based on user preference.
-                LazyVGrid(columns: gridColumns, spacing: 14) {
+                LazyVGrid(columns: gridColumns, spacing: Self.gridSpacing) {
                     ForEach(orchestrator.allRooms, id: \.id) { room in
-                    RoomCard(
+                        RoomCard(
                             room: room,
-                            onToggle: { desiredOn in
-                                orchestrator.setRoom(room, isOn: desiredOn)
-                            },
-                            onBrightness: { newBrightness in
-                                orchestrator.setBrightness(newBrightness, for: room)
-                            },
-                            onNavigate: {
-                                orchestrator.signalNavigationStarted()
-                            }
+                            onToggle: { desiredOn in orchestrator.setRoom(room, isOn: desiredOn) },
+                            onBrightness: { newBrightness in orchestrator.setBrightness(newBrightness, for: room) },
+                            onNavigate: { orchestrator.signalNavigationStarted() }
                         )
                         .equatable()
                         .transition(.asymmetric(
@@ -215,32 +236,20 @@ struct DashboardView: View {
                         ))
                     }
                 }
-                .padding(.horizontal, 20)
                 .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allRooms.count)
 
-                // ── Zones section ─────────────────────────────────────────────
-                // Zones share RoomCard / RoomDetailView / LightCard with rooms.
-                // Only rendered when the bridge reports at least one zone.
                 if !orchestrator.allZones.isEmpty {
                     zonesSectionHeader
-                        .padding(.horizontal, 20)
-                        .padding(.top, 24)
-                        .padding(.bottom, 8)
+                        .padding(.top, 12)
 
                     if zonesExpanded {
-                        LazyVGrid(columns: gridColumns, spacing: 14) {
+                        LazyVGrid(columns: gridColumns, spacing: Self.gridSpacing) {
                             ForEach(orchestrator.allZones, id: \.id) { zone in
                                 RoomCard(
                                     room: zone,
-                                    onToggle: { desiredOn in
-                                        orchestrator.setRoom(zone, isOn: desiredOn)
-                                    },
-                                    onBrightness: { newBrightness in
-                                        orchestrator.setBrightness(newBrightness, for: zone)
-                                    },
-                                    onNavigate: {
-                                        orchestrator.signalNavigationStarted()
-                                    }
+                                    onToggle: { desiredOn in orchestrator.setRoom(zone, isOn: desiredOn) },
+                                    onBrightness: { newBrightness in orchestrator.setBrightness(newBrightness, for: zone) },
+                                    onNavigate: { orchestrator.signalNavigationStarted() }
                                 )
                                 .equatable()
                                 .transition(.asymmetric(
@@ -249,34 +258,12 @@ struct DashboardView: View {
                                 ))
                             }
                         }
-                        .padding(.horizontal, 20)
                         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: orchestrator.allZones.count)
                     }
                 }
-
-                Color.clear.frame(height: 100)  // clear custom tab bar
             }
         }
-        .overlay(alignment: .top) {
-            if let msg = orchestrator.toastMessage {
-                HueToastView(message: msg)
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .animation(.spring(response: 0.4, dampingFraction: 0.75), value: orchestrator.toastMessage)
-                    .allowsHitTesting(false)
-                    .zIndex(10)
-            }
-        }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: orchestrator.toastMessage)
-        .navigationDestination(for: RoomDisplayItem.self) { room in
-            RoomDetailView(room: room)
-        }
-        .refreshable {
-            await orchestrator.loadAll(cacheContext: modelContext)
-        }
-        .scrollIndicators(.hidden)
     }
-
 
     // ──────────────────────────────────────────────
     // MARK: - Now Playing Bar
@@ -726,13 +713,12 @@ struct DashboardView: View {
     // ──────────────────────────────────────────────
 
     private var shimmerView: some View {
-        LazyVStack(spacing: 14) {
+        VStack(spacing: 14) {
             ForEach(0..<4, id: \.self) { _ in
                 ShimmerCard()
-                    .padding(.horizontal, 20)
             }
         }
-        .padding(.top, 24)
+        .padding(.top, 16)
     }
 
     private var emptyState: some View {
@@ -957,7 +943,10 @@ struct RoomCard: View {
                 .padding(.trailing, 4)
             }
         }
-        .frame(minHeight: 76)
+        // Fill the LazyVGrid column width on compact devices.
+        // Without an explicit maxWidth here, NavigationLink can hug its
+        // intrinsic label width, causing "half-width" cards on SE portrait.
+        .frame(maxWidth: .infinity, minHeight: 76)
         .opacity(localIsOn ? 1.0 : 0.72)
         .scaleEffect(localIsOn ? 1.0 : 0.982)
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: localIsOn)

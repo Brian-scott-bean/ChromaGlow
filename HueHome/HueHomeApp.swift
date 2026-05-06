@@ -69,6 +69,7 @@ struct AppRootView: View {
         Group {
             if isPaired || isDemoMode {
                 MainTabView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .task {
                         if isDemoMode {
                             orchestrator.enterDemoMode()
@@ -78,6 +79,7 @@ struct AppRootView: View {
                             orchestrator.preloadCached(from: cachedRooms)
                             await orchestrator.loadAll(cacheContext: modelContext)
                             orchestrator.startSSE()
+                            orchestrator.startAllDayScenesIfNeeded()
 
                             // ── Pending automation (cold-start: user tapped notification) ──
                             if let presetID = UserDefaults.standard.string(forKey: "pendingAutomationPresetID") {
@@ -131,8 +133,10 @@ struct AppRootView: View {
                     onPaired:  { isPaired   = true },
                     onDemo:    { isDemoMode = true }
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             let hasNewStyle = !bridges.isEmpty
             let hasLegacy   = (try? KeychainManager.shared.loadAPIToken()) != nil
