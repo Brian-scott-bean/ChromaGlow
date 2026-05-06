@@ -196,3 +196,34 @@ Phase 3B–D composer mixer + save shipped in tree; verify on device with Entert
 
 ### Current state
 SE portrait Home still needs a structural refactor; experimental quick fixes were rolled back. Next step is a focused Home layout-system pass while preserving current visual style.
+
+---
+
+## 2026-05-06 — AI Scene Generation Architecture Artifact + UX Decisions (Cursor)
+
+### What was built
+- Created a new canvas artifact at `canvases/ai-scene-gen-and-composer-revamp.canvas.tsx` describing:
+  - AI Scene Generation architecture (`prompt -> provider -> validate -> CompositionPreset -> Composer engine -> lights`)
+  - Provider strategy (FoundationModels-first, optional cloud fallback, local curated fallback)
+  - Data contract constraints for generated `CompositionPreset` values
+  - Progressive disclosure rules for Composer tools (essential vs advanced controls)
+  - Visual flow mockups for top bar, AI generation states, and 2-axis hue control concept
+- Iteratively rewrote the artifact to incorporate product decisions from live review feedback.
+
+### Product/UX decisions captured
+- Keep **room picker** as the primary navigation anchor in Studio (explicitly prioritized).
+- Remove top deck-name labels if there is a conflict with room-picker clarity.
+- Keep AI entry as a **pill**.
+- Keep visible **AI badge** on generated cards.
+- Default AI apply scope = **current room**.
+- Regenerate flow clarified with simple UX framing (live regenerate + card-level regenerate).
+
+### Follow-up decision (latest)
+- User requested to **keep room picker exactly as-is** for now (no immediate room-picker redesign implementation).
+
+### What's left
+- [ ] Choose first implementation slice (recommended: AI pill shell + state handling, or HueRail prototype behind flag).
+- [ ] Convert selected parts of artifact into concrete StudioView/StudioViewModel tickets.
+
+### Current state
+Architecture and UX artifact is complete and updated with current decisions. No production Studio code changes were applied in this session.
