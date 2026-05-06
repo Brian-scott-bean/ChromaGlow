@@ -102,6 +102,9 @@
 		B2RPSH9FF07852E320B7354B /* RoomPickerSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1RPSHEC5402CA37A711CBB8 /* RoomPickerSheetView.swift */; };
 		5C010330BA69003015BD0FD0 /* StudioViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0F56D4CFF98F22595FF4143 /* StudioViewModel.swift */; };
 		3703A6704D1E838A0BF402C0 /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468C7402382CCA5F09F9C65F /* MoreView.swift */; };
+		30FA38B7726B382D54F58DB7 /* CompositionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8090A732A95BB7D22AD00660 /* CompositionModels.swift */; };
+		4BF64D53B0E97F7FAFFDD67B /* CompositionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78AC498F54F25255B55133B1 /* CompositionStore.swift */; };
+		0E7CD3AA335189BAFEFFB105 /* CompositionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B06F0F76E068D42895691A4 /* CompositionEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -274,6 +277,9 @@
 		E0F56D4CFF98F22595FF4143 /* StudioViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioViewModel.swift; path = ./HueHome/UI/Studio/StudioViewModel.swift; sourceTree = "<group>"; };
 		CC0CANVAS00000000000002 /* StudioCardCanvas.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioCardCanvas.swift; path = ./HueHome/UI/Studio/StudioCardCanvas.swift; sourceTree = "<group>"; };
 		468C7402382CCA5F09F9C65F /* MoreView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MoreView.swift; path = ./HueHome/UI/More/MoreView.swift; sourceTree = "<group>"; };
+		8090A732A95BB7D22AD00660 /* CompositionModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionModels.swift; path = HueHome/Core/Models/CompositionModels.swift; sourceTree = "<group>"; };
+		78AC498F54F25255B55133B1 /* CompositionStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionStore.swift; path = HueHome/Core/Models/CompositionStore.swift; sourceTree = "<group>"; };
+		7B06F0F76E068D42895691A4 /* CompositionEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionEngine.swift; path = ./HueHome/UI/Studio/CompositionEngine.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -485,6 +491,8 @@
 				2FF21DA93E891B1DDCFE009A /* HueZone.swift */,
 				F57BF74DE7F5F2F1B870513F /* DeviceDisplayItem.swift */,
 				DA281A8CB2DE9C9C10F26015 /* AppAutomation.swift */,
+				8090A732A95BB7D22AD00660 /* CompositionModels.swift */,
+				78AC498F54F25255B55133B1 /* CompositionStore.swift */,
 			);
 			name = Models;
 			sourceTree = "<group>";
@@ -581,6 +589,7 @@
 				8223FA80DC0EC19E9CE6C831 /* StudioView.swift */,
 				CC0CANVAS00000000000002 /* StudioCardCanvas.swift */,
 				B1RPSHEC5402CA37A711CBB8 /* RoomPickerSheetView.swift */,
+				7B06F0F76E068D42895691A4 /* CompositionEngine.swift */,
 				92662E9280D48307551834BA /* CreateGlobalSceneView.swift */,
 			);
 			name = Scenes;
@@ -1056,6 +1065,9 @@
 				65EAEEF3ADF8E94F35AC1D1E /* ScenesTabView.swift in Sources */,
 				3703A6704D1E838A0BF402C0 /* MoreView.swift in Sources */,
 				5C010330BA69003015BD0FD0 /* StudioViewModel.swift in Sources */,
+				30FA38B7726B382D54F58DB7 /* CompositionModels.swift in Sources */,
+				4BF64D53B0E97F7FAFFDD67B /* CompositionStore.swift in Sources */,
+				0E7CD3AA335189BAFEFFB105 /* CompositionEngine.swift in Sources */,
 				A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */,
 				CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */,
 				B2RPSH9FF07852E320B7354B /* RoomPickerSheetView.swift in Sources */,

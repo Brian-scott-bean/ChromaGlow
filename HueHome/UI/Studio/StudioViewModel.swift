@@ -51,9 +51,10 @@ enum StudioParamKind {
     case toggle
 }
 
-enum StudioStrategy {
+enum StudioStrategy: Equatable {
     case bridgeNative(effect: String)
     case appDriven(engineKey: String)
+    case composition(presetID: UUID)
 
     /// Effects that the bridge handles natively on the grouped_light resource.
     /// Only "no_effect" is valid on grouped_light — all actual effects
@@ -149,6 +150,13 @@ final class StudioViewModel {
     // ── Card catalogs ─────────────────────────────────────────
     let effectCards: [StudioCard] = StudioViewModel.buildEffectCards()
     let liveModeCards: [StudioCard] = StudioViewModel.buildLiveModeCards()
+
+    // ── Composition store ─────────────────────────────────────
+    let compositionStore = CompositionStore()
+
+    /// Live composition param box — the render loop reads this each frame.
+    /// UI writes to it on slider drag for instant light response.
+    nonisolated(unsafe) var activeCompositionBox: CompositionParamBox?
 
     // ── Status ────────────────────────────────────────────────
     var statusMessage: String = ""
@@ -390,6 +398,25 @@ final class StudioViewModel {
             )
             let transport = isEnt ? "ENTERTAINMENT" : "REST"
             statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)]"
+
+        case .composition(let presetID):
+            guard let preset = compositionStore.presets.first(where: { $0.id == presetID }) else {
+                statusMessage = "⚠ Composition not found"
+                return
+            }
+            let box = CompositionParamBox(preset: preset)
+            activeCompositionBox = box
+
+            await orchestrator.startCompositionMode(
+                room: room, paramBox: box
+            )
+            let isEnt = orchestrator.studioEntClient != nil
+            runningEffects[room.id] = RunningEffect(
+                cardID: card.id, card: card, room: room,
+                lightIDs: [], isEntertainment: isEnt
+            )
+            let transport = isEnt ? "ENTERTAINMENT" : "REST"
+            statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)]"
         }
 
         print("[Studio] Active effects: \(runningEffects.count) rooms")
@@ -422,6 +449,11 @@ final class StudioViewModel {
 
         case .appDriven:
             await orchestrator.stopStudioMode()
+            try? await Task.sleep(for: .milliseconds(200))
+
+        case .composition:
+            await orchestrator.stopStudioMode()
+            activeCompositionBox = nil
             try? await Task.sleep(for: .milliseconds(200))
         }
 
@@ -480,7 +512,7 @@ final class StudioViewModel {
                   let api = orchestrator.hueClient(for: room.bridgeID) else { return }
 
             // Read current transition setting for this card (used as duration)
-            let card = (effectCards + liveModeCards).first(where: { $0.id == cardID })
+            let card = (effectCards + liveModeCards + composerStudioCards).first(where: { $0.id == cardID })
             let transitionMs = Int(paramValue(for: cardID, paramID: "transition", default: card?.params.first(where: { $0.id == "transition" })?.defaultValue ?? 400))
 
             switch paramID {
@@ -546,6 +578,27 @@ final class StudioViewModel {
                 id: groupedLightID, on: nil,
                 brightness: nil, xy: (xy.x, xy.y), mirek: nil,
                 duration: transitionMs
+            )
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer Cards (from store)
+    // ──────────────────────────────────────────────
+
+    /// Build StudioCards from saved CompositionPresets.
+    /// These appear on Deck 3 alongside the "+ Create" button.
+    var composerStudioCards: [StudioCard] {
+        compositionStore.presets.map { preset in
+            StudioCard(
+                id: "comp_\(preset.id.uuidString)",
+                name: preset.name,
+                tagline: "\(preset.palette.mode.rawValue.capitalized) • \(preset.motion.pattern.rawValue.capitalized) • \(preset.envelope.shape.rawValue.capitalized)",
+                icon: preset.icon,
+                accentColor: Color(hex: preset.accentColorHex),
+                requiresForeground: true,  // compositions need render loop
+                params: [],  // controlled via layer tabs, not flat params
+                strategy: .composition(presetID: preset.id)
             )
         }
     }

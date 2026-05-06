@@ -1514,6 +1514,122 @@ final class UnifiedOrchestrator {
         }
     }
 
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Composition Engine
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Start a composition render loop for the given room.
+    /// Tries Entertainment API first (per-light, 25fps), falls back to REST (group, 5fps).
+    func startCompositionMode(
+        room: RoomDisplayItem,
+        paramBox: CompositionParamBox
+    ) async {
+        // Cancel any previously running studio task
+        activeStudioTask?.cancel()
+        activeStudioTask = nil
+        if let entClient = studioEntClient {
+            await entClient.stopSession()
+            studioEntClient = nil
+        }
+
+        guard let api = hueClient(for: room.bridgeID),
+              let groupedLightID = room.groupedLightID else { return }
+
+        // Try entertainment first (per-light, 25fps)
+        if let entClient = await tryStartEntertainment(room: room),
+           let config = try? await EntertainmentConfigManager().fetchConfigs(client: api).first {
+            let channelIDs = config.channels.map { UInt8($0.id) }
+            print("[Composer] 🎬 Entertainment mode — \(channelIDs.count) channels at 25fps")
+            activeStudioTask = Task {
+                await runCompositionEntertainment(
+                    entClient: entClient,
+                    channelIDs: channelIDs,
+                    paramBox: paramBox
+                )
+            }
+        } else {
+            // REST fallback — group-level, 5fps
+            print("[Composer] 📡 REST fallback — group-level at ~5fps")
+            activeStudioTask = Task {
+                await runCompositionREST(
+                    api: api,
+                    groupedLightID: groupedLightID,
+                    paramBox: paramBox
+                )
+            }
+        }
+    }
+
+    /// Composition render loop via Entertainment API — per-light colors at 25fps.
+    private func runCompositionEntertainment(
+        entClient: HueEntertainmentClient,
+        channelIDs: [UInt8],
+        paramBox: CompositionParamBox
+    ) async {
+        let frameInterval: UInt64 = 40_000_000  // 40ms = 25fps
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        while !Task.isCancelled {
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+
+            // Render all channels in one frame
+            let frames = CompositionEngine.render(
+                time: elapsed,
+                channelIDs: channelIDs,
+                params: paramBox,
+                audioLevel: 0  // TODO: wire mic input in Phase 2
+            )
+
+            // Convert to entertainment send format
+            let channels = frames.map { frame in
+                (id: frame.channelID, x: frame.x, y: frame.y, brightness: frame.brightness)
+            }
+            await entClient.send(channels: channels)
+
+            try? await Task.sleep(nanoseconds: frameInterval)
+        }
+    }
+
+    /// Composition render loop via REST — group-level color + brightness at ~5fps.
+    /// Uses RestSender mailbox to prevent bridge command backlog.
+    private func runCompositionREST(
+        api: HueAPIClient,
+        groupedLightID: String,
+        paramBox: CompositionParamBox
+    ) async {
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        while !Task.isCancelled {
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+
+            // Render a single "virtual channel" for the group
+            let frames = CompositionEngine.render(
+                time: elapsed,
+                channelIDs: [0],
+                params: paramBox,
+                audioLevel: 0
+            )
+
+            guard let frame = frames.first else { continue }
+            let bri = max(1, frame.brightness * 100.0)  // 0-1 → 1-100
+
+            await studioRestSender.enqueue {
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: true,
+                    brightness: bri,
+                    xy: (frame.x, frame.y),
+                    mirek: nil,
+                    duration: 200  // smooth transition between frames
+                )
+            }
+
+            do {
+                // REST rate limit: ~200ms between group commands (5fps)
+                try await Task.sleep(nanoseconds: 200_000_000)
+            } catch { break }
+        }
+    }
+
     func stopStudioMode() async {
         // Cancel the running loop task (strobe, etc.)
         activeStudioTask?.cancel()
