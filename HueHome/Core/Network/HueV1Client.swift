@@ -310,6 +310,35 @@ class HueV1Client: @unchecked Sendable {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Fetch All (for purge/cleanup)
+    // ──────────────────────────────────────────────
+
+    func fetchSchedules() async throws -> [String: [String: Any]] {
+        let data = try await get(path: "/schedules")
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+    }
+
+    func fetchRules() async throws -> [String: [String: Any]] {
+        let data = try await get(path: "/rules")
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+    }
+
+    func fetchSensors() async throws -> [String: [String: Any]] {
+        let data = try await get(path: "/sensors")
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+    }
+
+    func fetchScenes() async throws -> [String: [String: Any]] {
+        let data = try await get(path: "/scenes")
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+    }
+
+    func fetchResourcelinks() async throws -> [String: [String: Any]] {
+        let data = try await get(path: "/resourcelinks")
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Lights (v1 → v2 ID mapping)
     // ──────────────────────────────────────────────
 

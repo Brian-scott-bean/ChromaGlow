@@ -191,67 +191,13 @@ actor BridgeAnimationEngine {
         log.info("[BridgeAnim] Created sensor: \(sensorID)")
 
         // ─── 7. Create rules (one per step) ───
-        // KEY DESIGN: Rules ONLY activate scenes. They do NOT bump the sensor.
-        // The schedule is the sole driver of step advancement.
-        // Rule condition: sensor.status == step AND dx (changed)
-        // Rule action: activate scene for that step
+        // PATTERN: Schedule fires every cycleTotalSeconds, setting sensor → 0.
+        // Rule 0: sensor==0 → activate scene 0, set sensor → 1
+        // Rule 1: sensor==1 → activate scene 1, set sensor → 2
+        // ...
+        // Rule N-1: sensor==N-1 → activate scene N-1 (NO advance — waits for schedule)
+        // Chain: schedule→0→1→2→...→N-1→(wait)→schedule→0→...
         var ruleIDs: [String] = []
-        for step in 0..<stepCount {
-            let ruleName = "CG_\(String(preset.name.prefix(10)))_s\(step)"
-
-            let conditions: [[String: Any]] = [
-                [
-                    "address": "/sensors/\(sensorID)/state/status",
-                    "operator": "eq",
-                    "value": "\(step)"
-                ],
-                // dx condition: fires when sensor state is UPDATED (not just matching)
-                [
-                    "address": "/sensors/\(sensorID)/state/lastupdated",
-                    "operator": "dx"
-                ]
-            ]
-
-            let actions: [[String: Any]] = [
-                // ONLY activate the scene — don't bump the sensor here
-                v1Client.sceneActivationCommand(groupID: groupID, sceneID: sceneIDs[step])
-            ]
-
-            let ruleID = try await v1Client.createRule(
-                name: ruleName,
-                conditions: conditions,
-                actions: actions
-            )
-            ruleIDs.append(ruleID)
-            log.info("[BridgeAnim] Created rule \(step): \(ruleID)")
-
-            try? await Task.sleep(for: .milliseconds(80))
-        }
-
-        // ─── 8. Create a stepping schedule ───
-        // The schedule uses a secondary "stepper" sensor + rules to cycle through steps.
-        // Simpler approach: create N schedules, each firing once per cycle at offset times.
-        //
-        // Actually, the simplest working approach for v1:
-        // ONE recurring schedule that sets sensor to the NEXT step each time.
-        // But v1 schedules can't do arithmetic. So we need a different approach.
-        //
-        // PROVEN PATTERN (iConnectHue-style):
-        // - Schedule fires every T seconds, setting sensor to step 0
-        // - Rule for step 0: activate scene 0, set sensor to step 1
-        // - Rule for step 1: activate scene 1, set sensor to step 2
-        // - ...
-        // - Rule for step N-1: activate scene N-1, set sensor to step 0
-        // - The chain self-advances: schedule→0→1→2→...→N-1→(waits)→schedule→0→...
-        //
-        // This means rules DO need to bump the sensor, but the SCHEDULE only sets to 0.
-
-        // Rebuild rules with sensor advancement (delete old ones first)
-        for ruleID in ruleIDs {
-            try? await v1Client.deleteRule(id: ruleID)
-        }
-        ruleIDs.removeAll()
-
         for step in 0..<stepCount {
             let nextStep = (step + 1) % stepCount
             let ruleName = "CG_\(String(preset.name.prefix(10)))_s\(step)"
@@ -269,47 +215,57 @@ actor BridgeAnimationEngine {
             ]
 
             var actions: [[String: Any]] = [
-                // 1. Activate the scene for this step
+                // Activate the scene for this step
                 v1Client.sceneActivationCommand(groupID: groupID, sceneID: sceneIDs[step])
             ]
 
-            // 2. Advance sensor to next step (ONLY if not the last step)
-            // The last step does NOT advance — it waits for the schedule to restart at 0.
-            // This prevents infinite cascading within one schedule tick.
+            // Advance sensor to next step (ONLY if not the last step).
+            // Last step waits for the schedule to restart at 0.
             if step < stepCount - 1 {
                 actions.append(
                     v1Client.sensorIncrementCommand(sensorID: sensorID, nextStatus: nextStep)
                 )
             }
 
-            let ruleID = try await v1Client.createRule(
-                name: ruleName,
-                conditions: conditions,
-                actions: actions
-            )
-            ruleIDs.append(ruleID)
-            log.info("[BridgeAnim] Created rule \(step): \(ruleID) (advances to \(step < stepCount - 1 ? "\(nextStep)" : "WAIT"))")
+            do {
+                let ruleID = try await v1Client.createRule(
+                    name: ruleName,
+                    conditions: conditions,
+                    actions: actions
+                )
+                ruleIDs.append(ruleID)
+                log.info("[BridgeAnim] Created rule \(step): \(ruleID) → \(step < stepCount - 1 ? "advance to \(nextStep)" : "WAIT for schedule")")
+            } catch {
+                log.error("[BridgeAnim] ❌ Rule \(step) creation FAILED: \(error.localizedDescription)")
+                // Log the full request for debugging
+                log.error("[BridgeAnim] Rule body — conditions: \(conditions), actions: \(actions)")
+                throw error
+            }
 
-            try? await Task.sleep(for: .milliseconds(80))
+            try? await Task.sleep(for: .milliseconds(100))
         }
 
-        // ─── 9. Create recurring schedule ───
-        // Schedule fires every (stepInterval * stepCount) seconds = one full cycle.
-        // It sets the sensor to 0, which triggers the chain: 0→1→2→...→N-1→(wait).
+        // ─── 8. Create recurring schedule ───
         let cycleTotalSeconds = max(5, stepInterval * stepCount)
         let scheduleName = "CG_\(String(preset.name.prefix(14)))_tmr"
         let scheduleCommand = v1Client.sensorIncrementCommand(
             sensorID: sensorID,
-            nextStatus: 0  // Always restart the chain at step 0
+            nextStatus: 0  // Restart the chain at step 0
         )
-        let scheduleID = try await v1Client.createRecurringSchedule(
-            name: scheduleName,
-            intervalSeconds: cycleTotalSeconds,
-            command: scheduleCommand
-        )
-        log.info("[BridgeAnim] Created schedule: \(scheduleID) (every \(cycleTotalSeconds)s = full cycle)")
+        let scheduleID: String
+        do {
+            scheduleID = try await v1Client.createRecurringSchedule(
+                name: scheduleName,
+                intervalSeconds: cycleTotalSeconds,
+                command: scheduleCommand
+            )
+            log.info("[BridgeAnim] Created schedule: \(scheduleID) (every \(cycleTotalSeconds)s)")
+        } catch {
+            log.error("[BridgeAnim] ❌ Schedule creation FAILED: \(error.localizedDescription)")
+            throw error
+        }
 
-        // ─── 10. Group in resourcelink ───
+        // ─── 9. Group in resourcelink ───
         var allLinks: [String] = []
         allLinks.append("/sensors/\(sensorID)")
         allLinks.append("/schedules/\(scheduleID)")
@@ -326,14 +282,14 @@ actor BridgeAnimationEngine {
             )
             log.info("[BridgeAnim] Created resourcelink: \(resourcelinkID ?? "nil")")
         } catch {
-            log.warning("[BridgeAnim] Resourcelink creation failed (non-critical): \(error.localizedDescription)")
+            log.warning("[BridgeAnim] Resourcelink failed (non-critical): \(error.localizedDescription)")
             resourcelinkID = nil
         }
 
-        // ─── 11. Kick off the chain ───
-        // The sensor starts at 99 (from creation). Setting it to 0 triggers dx + eq 0 → rule 0 fires.
+        // ─── 10. Kick off the chain ───
+        // Sensor starts at 99, setting to 0 triggers dx + eq 0 → rule 0 fires → chain starts
         try await v1Client.setSensorStatus(id: sensorID, status: 0)
-        log.info("[BridgeAnim] ⚡ Animation started on bridge! Chain: 0→1→...→\(stepCount-1)→(wait \(cycleTotalSeconds)s)→0→...")
+        log.info("[BridgeAnim] ⚡ Animation started! \(stepCount) steps, \(stepInterval)s each, \(cycleTotalSeconds)s cycle")
 
         let manifest = BridgeAnimationManifest(
             id: UUID(),
@@ -430,6 +386,62 @@ actor BridgeAnimationEngine {
             return max(16, min(120, motionPeriod * 2))
         }
     }
+
+    /// Nuclear cleanup: find and delete ALL ChromaGlow (CG_) resources on the bridge.
+    /// Use this to clean up orphaned resources from failed/interrupted uploads.
+    func purgeAllChromaGlowResources(v1Client: HueV1Client) async {
+        log.info("[BridgeAnim] 🧹 Purging ALL ChromaGlow resources from bridge...")
+
+        // Delete schedules with CG_ prefix
+        if let schedules = try? await v1Client.fetchSchedules() {
+            for (id, schedule) in schedules {
+                if let name = schedule["name"] as? String, name.hasPrefix("CG_") {
+                    try? await v1Client.deleteSchedule(id: id)
+                    log.info("[BridgeAnim] 🧹 Deleted schedule \(id): \(name)")
+                }
+            }
+        }
+
+        // Delete rules with CG_ prefix
+        if let rules = try? await v1Client.fetchRules() {
+            for (id, rule) in rules {
+                if let name = rule["name"] as? String, name.hasPrefix("CG_") {
+                    try? await v1Client.deleteRule(id: id)
+                    log.info("[BridgeAnim] 🧹 Deleted rule \(id): \(name)")
+                }
+            }
+        }
+
+        // Delete sensors with CG_ prefix
+        if let sensors = try? await v1Client.fetchSensors() {
+            for (id, sensor) in sensors {
+                if let name = sensor["name"] as? String, name.hasPrefix("CG_") {
+                    try? await v1Client.deleteSensor(id: id)
+                    log.info("[BridgeAnim] 🧹 Deleted sensor \(id): \(name)")
+                }
+            }
+        }
+
+        // Delete scenes with CG_ prefix
+        if let scenes = try? await v1Client.fetchScenes() {
+            for (id, scene) in scenes {
+                if let name = scene["name"] as? String, name.hasPrefix("CG_") {
+                    try? await v1Client.deleteScene(id: id)
+                    log.info("[BridgeAnim] 🧹 Deleted scene \(id): \(name)")
+                }
+            }
+        }
+
+        // Delete resourcelinks with CG_ prefix
+        if let links = try? await v1Client.fetchResourcelinks() {
+            for (id, link) in links {
+                if let name = link["name"] as? String, name.hasPrefix("CG_") {
+                    try? await v1Client.deleteResourcelink(id: id)
+                    log.info("[BridgeAnim] 🧹 Deleted resourcelink \(id): \(name)")
+                }
+            }
+        }
+
+        log.info("[BridgeAnim] 🧹 Purge complete")
+    }
 }
-
-

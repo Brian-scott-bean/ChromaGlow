@@ -1790,6 +1790,17 @@ final class UnifiedOrchestrator {
         if let preset, preset.canRunOnBridge, !compositionLightIDs.isEmpty {
             do {
                 let v1Client = try api.makeV1Client()
+
+                // Clean up any existing bridge animation for this room first
+                for oldManifest in bridgeAnimationStore.allManifests() where oldManifest.roomID == roomID {
+                    print("[Composer] Cleaning up previous bridge animation for \(oldManifest.presetName)")
+                    await bridgeAnimationEngine.stop(manifest: oldManifest, v1Client: v1Client)
+                    bridgeAnimationStore.remove(presetID: oldManifest.presetID, roomID: roomID)
+                }
+
+                // Purge any orphaned CG_ resources from previous test runs
+                await bridgeAnimationEngine.purgeAllChromaGlowResources(v1Client: v1Client)
+
                 print("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
                 let manifest = try await bridgeAnimationEngine.upload(
                     preset: preset,
