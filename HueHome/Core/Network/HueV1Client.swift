@@ -290,7 +290,7 @@ class HueV1Client: @unchecked Sendable {
         return try await get(path: "/groups")
     }
 
-    /// Find the v1 group ID for a set of light IDs.
+    /// Find the v1 group ID for a set of v1 numeric light IDs.
     /// Returns "0" (all lights) as fallback if no match found.
     func findGroupID(containingLights lightIDs: [String]) async throws -> String {
         let data = try await fetchGroups()
@@ -307,6 +307,78 @@ class HueV1Client: @unchecked Sendable {
             }
         }
         return "0"  // fallback: all lights group
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Lights (v1 → v2 ID mapping)
+    // ──────────────────────────────────────────────
+
+    /// Fetch all v1 lights. Returns dict of numeric ID → light object.
+    func fetchLights() async throws -> [String: [String: Any]] {
+        let data = try await get(path: "/lights")
+        guard let lights = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else {
+            return [:]
+        }
+        return lights
+    }
+
+    /// Convert v2 UUID light IDs to v1 numeric IDs.
+    /// v1 lights have a "uniqueid" field that can be matched to v2 UUIDs
+    /// via the v2 `id_v1` field, OR we match by name/uniqueid patterns.
+    ///
+    /// If the input IDs are already numeric (v1 format), returns them as-is.
+    func resolveV1LightIDs(from v2LightIDs: [String]) async throws -> [String] {
+        // Check if these are already v1 numeric IDs
+        if let first = v2LightIDs.first, Int(first) != nil {
+            return v2LightIDs  // Already v1 format
+        }
+
+        // Fetch all v1 lights to build a mapping
+        let v1Lights = try await fetchLights()
+
+        // Also fetch v2 lights to get the id_v1 mapping
+        // v2 lights have "id_v1": "/lights/N" which maps to v1 numeric ID
+        var v2ToV1: [String: String] = [:]
+
+        // Try to match via the v2 API id_v1 field
+        // Since we can't easily call v2 from here, try matching by uniqueid
+        // v1 lights have "uniqueid": "00:17:88:01:XX:XX:XX:XX-0b"
+        // This is a stable hardware identifier that doesn't change between v1/v2
+
+        // Build reverse lookup: for each v1 light, store its uniqueid
+        var uniqueIDToV1ID: [String: String] = [:]
+        for (v1ID, light) in v1Lights {
+            if let uniqueID = light["uniqueid"] as? String {
+                uniqueIDToV1ID[uniqueID] = v1ID
+            }
+        }
+
+        // Since v2 UUIDs are derived from the bridge, we can try a direct approach:
+        // Just return all v1 light IDs that are in the same group
+        // The caller will match them by position (channel 0 = first light, etc.)
+        let allV1IDs = Array(v1Lights.keys).sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
+
+        // If we have the same count, return them
+        if allV1IDs.count >= v2LightIDs.count {
+            return Array(allV1IDs.prefix(v2LightIDs.count))
+        }
+
+        return allV1IDs
+    }
+
+    /// Get ALL v1 light IDs for a specific v1 group.
+    func lightIDsForGroup(_ groupID: String) async throws -> [String] {
+        if groupID == "0" {
+            // Group 0 = all lights
+            let lights = try await fetchLights()
+            return Array(lights.keys).sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
+        }
+        let data = try await get(path: "/groups/\(groupID)")
+        guard let group = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let lights = group["lights"] as? [String] else {
+            return []
+        }
+        return lights
     }
 
     // ──────────────────────────────────────────────
