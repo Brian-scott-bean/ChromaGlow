@@ -148,9 +148,13 @@ actor BridgeAnimationEngine {
             throw BridgeAnimationError.noLightsResolved
         }
 
-        // ─── 4. Find v1 group ID ───
-        let groupID = try await v1Client.findGroupID(containingLights: v1LightIDs)
-        log.info("[BridgeAnim] Using v1 group ID: \(groupID)")
+        // ─── 4. Use group 0 (all lights) for scene activation ───
+        // v1 scenes already specify which lights they affect, so group 0
+        // is safe — only the scene's listed lights will change.
+        // Custom groups (entertainment areas, zones) often don't support
+        // scene recall in v1 rules (error 608).
+        let groupID = "0"
+        log.info("[BridgeAnim] Using v1 group 0 (all lights) for scene activation")
 
         // ─── 5. Create v1 scenes ───
         var sceneIDs: [String] = []
