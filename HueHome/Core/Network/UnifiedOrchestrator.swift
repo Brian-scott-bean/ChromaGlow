@@ -1532,6 +1532,10 @@ final class UnifiedOrchestrator {
         let roomName: String
         let api: HueAPIClient
         let groupedLightID: String
+        /// Individual light IDs for per-light REST mode.
+        /// When non-empty, each light gets its own color (cascade/wave visible).
+        /// Fallback to grouped_light if empty.
+        let lightIDs: [String]
         let paramBox: CompositionParamBox
         let tier: CompositionTier
         let gamut: HueColorUtils.Gamut
@@ -1764,11 +1768,17 @@ final class UnifiedOrchestrator {
             }
         }
 
+        // Resolve individual light IDs for per-light REST mode.
+        // Reuses the lights already fetched during gamut resolution.
+        let compositionLightIDs = await resolveCompositionLightIDs(for: room, api: api)
+        print("[Composer] 🔍 Resolved \(compositionLightIDs.count) individual lights for per-light REST")
+
         compositionRuntimes[roomID] = CompositionRuntime(
             roomID: roomID,
             roomName: room.name,
             api: api,
             groupedLightID: groupedLightID,
+            lightIDs: compositionLightIDs,
             paramBox: paramBox,
             tier: tier,
             gamut: compositionGamut,
@@ -1914,20 +1924,18 @@ final class UnifiedOrchestrator {
 
     private func runCompositionScheduler() async {
         // ─────────────────────────────────────────────────────────────
-        // Composer REST Scheduler — MAILBOX DESIGN
+        // Composer REST Scheduler — PER-LIGHT MAILBOX DESIGN
         //
-        // The bridge can only process ~1 grouped_light PUT/sec.
-        // If we call the API directly, stale intermediates QUEUE on
-        // the bridge's TCP buffer → 5-60 second lag.
+        // Per-light mode: each light gets its OWN color from the
+        // render engine. Cascade/wave/scatter patterns are now visible.
+        // Bridge handles ~10 individual light PUTs/sec vs 1 grouped/sec.
         //
-        // Solution: all sends go through studioRestSender (latest-wins
-        // mailbox). It keeps max 1 in-flight + 1 pending, dropping any
-        // stale values in between. The bridge always gets the NEWEST
-        // desired state. Zero queue. Zero lag.
+        // All sends go through studioRestSender (latest-wins mailbox).
+        // The mailbox drops stale frames, so the bridge always gets
+        // the NEWEST per-light colors.
         //
-        // The scheduler ticks at ~8fps (120ms) to pick up fresh param
-        // values from slider drags. The mailbox limits actual PUTs to
-        // whatever the bridge can handle (~1/sec).
+        // Fallback: if no individual light IDs were resolved, falls
+        // back to grouped_light (same as before).
         // ─────────────────────────────────────────────────────────────
         let tickInterval: Duration = .milliseconds(120)
 
@@ -1953,29 +1961,37 @@ final class UnifiedOrchestrator {
                 continue
             }
 
-            // Render the current frame
+            // Render the current frame — per-light when IDs are available
             let elapsed = now - runtime.startTime
             let audioLevel = CompositionMicCapture.reactionAudioLevel(for: runtime.paramBox.reaction)
+            let lightCount = runtime.lightIDs.count
+            let usePerLight = lightCount > 0
+
+            // Build channel IDs: one per light for per-light mode, or [0] for grouped
+            let channelIDs: [UInt8] = usePerLight
+                ? (0..<UInt8(min(lightCount, 20))).map { $0 }
+                : [0]
+
             let frames = CompositionEngine.render(
                 time: elapsed,
-                channelIDs: [0],
+                channelIDs: channelIDs,
                 params: runtime.paramBox,
                 audioLevel: audioLevel
             )
-            guard let frame = frames.first else {
+            guard !frames.isEmpty else {
                 try? await Task.sleep(for: tickInterval)
                 continue
             }
 
-            let bri = max(1, frame.brightness * 100.0)
-            let xy = HueColorUtils.clampXYToGamut(x: frame.x, y: frame.y, gamut: runtime.gamut)
-
-            // Skip if nothing visually changed (static preset, no interaction)
+            // Check if anything changed visually (use first frame as proxy)
+            let firstFrame = frames[0]
+            let firstXY = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: runtime.gamut)
+            let firstBri = max(1, firstFrame.brightness * 100.0)
             let colorDelta: Double = {
                 guard let lx = runtime.lastSentX, let ly = runtime.lastSentY else { return .greatestFiniteMagnitude }
-                return hypot(xy.x - lx, xy.y - ly)
+                return hypot(firstXY.x - lx, firstXY.y - ly)
             }()
-            let briDelta = abs(bri - (runtime.lastSentBri ?? -999))
+            let briDelta = abs(firstBri - (runtime.lastSentBri ?? -999))
             if colorDelta < 0.003 && briDelta < 1.0 {
                 try? await Task.sleep(for: tickInterval)
                 continue
@@ -1983,38 +1999,83 @@ final class UnifiedOrchestrator {
 
             // Capture values for the closure
             let capturedAPI = runtime.api
-            let capturedGLID = runtime.groupedLightID
-            let capturedBri = bri
-            let capturedXY = xy
             let capturedGen = runtime.generation
             let latestGen = compositionGenerations[roomID] ?? -1
+            let capturedGamut = runtime.gamut
 
-            // ── THE KEY FIX ──
-            // Route through the latest-wins mailbox. If a previous PUT
-            // is still in-flight, this REPLACES the pending value.
-            // The bridge always gets the NEWEST color, never a backlog.
-            await studioRestSender.enqueue { [weak self] in
-                // Generation check inside closure — skip if stopped while queued
-                guard capturedGen == latestGen else { return }
-                try? await capturedAPI.setGroupedLightEffect(
-                    id: capturedGLID, on: true,
-                    brightness: capturedBri,
-                    xy: (capturedXY.x, capturedXY.y),
-                    mirek: nil,
-                    duration: 200  // smooth transition between frames
-                )
-                #if DEBUG
-                print("[Composer][REST] ✅ room=\(roomID) bri=\(String(format: "%.1f", capturedBri)) xy=(\(String(format: "%.4f", capturedXY.x)),\(String(format: "%.4f", capturedXY.y)))")
-                #endif
+            if usePerLight {
+                // ── PER-LIGHT MODE ──
+                // Each light gets its own color. Cascade/wave patterns visible.
+                // Bridge handles ~10 PUTs/sec for individual lights.
+                let capturedLightIDs = runtime.lightIDs
+                let capturedFrames = frames
+
+                await studioRestSender.enqueue { [weak self] in
+                    guard capturedGen == latestGen else { return }
+
+                    // Send each light its unique color — batched with
+                    // concurrent sends (bridge handles ~10/sec individual)
+                    let batchSize = 5  // safe concurrent limit
+                    for batchStart in stride(from: 0, to: capturedLightIDs.count, by: batchSize) {
+                        let batchEnd = min(batchStart + batchSize, capturedLightIDs.count)
+                        await withTaskGroup(of: Void.self) { group in
+                            for i in batchStart..<batchEnd {
+                                guard i < capturedFrames.count else { continue }
+                                let lightID = capturedLightIDs[i]
+                                let frame = capturedFrames[i]
+                                let xy = HueColorUtils.clampXYToGamut(
+                                    x: frame.x, y: frame.y, gamut: capturedGamut
+                                )
+                                let bri = max(1, frame.brightness * 100.0)
+                                group.addTask {
+                                    try? await capturedAPI.setLightEffect(
+                                        id: lightID, on: true,
+                                        brightness: bri,
+                                        xy: (xy.x, xy.y),
+                                        mirek: nil,
+                                        duration: 200
+                                    )
+                                }
+                            }
+                        }
+                        // Small gap between batches if more remain
+                        if batchEnd < capturedLightIDs.count {
+                            try? await Task.sleep(for: .milliseconds(80))
+                        }
+                    }
+                    #if DEBUG
+                    print("[Composer][REST] ✅ per-light room=\(roomID) lights=\(capturedLightIDs.count)")
+                    #endif
+                }
+            } else {
+                // ── GROUPED FALLBACK ──
+                // No individual light IDs resolved — use grouped_light
+                let capturedGLID = runtime.groupedLightID
+                let capturedBri = firstBri
+                let capturedXY = firstXY
+
+                await studioRestSender.enqueue { [weak self] in
+                    guard capturedGen == latestGen else { return }
+                    try? await capturedAPI.setGroupedLightEffect(
+                        id: capturedGLID, on: true,
+                        brightness: capturedBri,
+                        xy: (capturedXY.x, capturedXY.y),
+                        mirek: nil,
+                        duration: 200
+                    )
+                    #if DEBUG
+                    print("[Composer][REST] ✅ grouped room=\(roomID) bri=\(String(format: "%.1f", capturedBri))")
+                    #endif
+                }
             }
 
             // Track what we enqueued (for delta skip)
-            runtime.lastSentX = xy.x
-            runtime.lastSentY = xy.y
-            runtime.lastSentBri = bri
+            runtime.lastSentX = firstXY.x
+            runtime.lastSentY = firstXY.y
+            runtime.lastSentBri = firstBri
             runtime.lastSentAt = now
             runtime.sendCount += 1
-            runtime.nextDueAt = now + 0.12  // round-robin fairness interval
+            runtime.nextDueAt = now + 0.12
             compositionRuntimes[roomID] = runtime
 
             recordCompositionTelemetry(
@@ -2130,6 +2191,27 @@ final class UnifiedOrchestrator {
             counts[gamut, default: 0] += 1
         }
         return counts.max(by: { $0.value < $1.value })?.key ?? .c
+    }
+
+    /// Resolve individual light IDs for a room/zone — used for per-light REST Composer mode.
+    private func resolveCompositionLightIDs(for room: RoomDisplayItem, api: HueAPIClient) async -> [String] {
+        let refs = room.childResourceRefs
+        guard !refs.isEmpty else { return [] }
+
+        // Zones reference lights directly — zero API calls
+        if refs.contains(where: { $0.rtype == "light" }) {
+            return refs.filter { $0.rtype == "light" }.map { $0.rid }
+        }
+
+        // Rooms reference devices — resolve via light.owner.rid
+        let deviceIDs = Set(refs.map { $0.rid })
+        guard let allLights = try? await api.fetchLights() else { return [] }
+        return allLights
+            .filter { light in
+                guard let ownerRID = light.owner?.rid else { return false }
+                return deviceIDs.contains(ownerRID)
+            }
+            .map { $0.id }
     }
 
     func stopStudioMode() async {
