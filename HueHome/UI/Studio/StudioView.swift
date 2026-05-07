@@ -83,7 +83,6 @@ struct StudioView: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var vm = StudioViewModel()
-    @State private var showSettings = false
 
     // ── Room picker ────────────────────────────────────────
     @State private var showRoomSheet = false
@@ -220,14 +219,6 @@ struct StudioView: View {
             ToolbarItem(placement: .principal) {
                 swipeableRoomTitle
             }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button { showSettings = true } label: {
-                    Image(systemName: "gear").foregroundStyle(.white.opacity(0.8))
-                }
-            }
-        }
-        .sheet(isPresented: $showSettings) {
-            NavigationStack { SettingsView(onForget: { showSettings = false }) }
         }
         .sheet(isPresented: $showRoomSheet) {
             roomPickerSheet

@@ -39,7 +39,6 @@ struct SettingsView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 24) {
                     bridgesSection       // multi-bridge management + connection info
-                    exploreSection       // Automations + Devices (moved from tab bar)
                     allDayScenesSection
                     accountSection
                     developerSection
@@ -140,60 +139,6 @@ struct SettingsView: View {
         }
         .ignoresSafeArea()
     }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Explore Section (Automations + Devices)
-    // ──────────────────────────────────────────────
-
-    private var exploreSection: some View {
-        settingsGroup(header: "EXPLORE") {
-            NavigationLink(destination: AutomationsView()) {
-                HStack(spacing: 12) {
-                    iconCircle("bolt.fill", color: Color(red: 0.55, green: 0.35, blue: 1.0))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Automations")
-                            .font(.subheadline)
-                            .foregroundStyle(.white)
-                        Text("Schedules, wake-up, and routines")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.45))
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.30))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Divider().background(Color.white.opacity(0.08))
-
-            NavigationLink(destination: DevicesView()) {
-                HStack(spacing: 12) {
-                    iconCircle("sensor.fill", color: Color(red: 0.25, green: 0.85, blue: 0.75))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Devices & Firmware")
-                            .font(.subheadline)
-                            .foregroundStyle(.white)
-                        Text("All paired bulbs, switches, and sensors")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.45))
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.30))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Bridges Section
-    // ──────────────────────────────────────────────
 
     private var bridgesSection: some View {
         settingsGroup(header: orchestrator.isDemoMode ? "DEMO MODE" : "BRIDGES") {

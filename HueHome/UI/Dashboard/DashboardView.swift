@@ -19,7 +19,6 @@ struct DashboardView: View {
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var showLog           = false
-    @State private var showSettings      = false
     @State private var showEffectsMenu   = false   // multi-effect stop dropdown
     @State private var showScheduleSheet = false   // upcoming automations dropdown
 
@@ -141,11 +140,6 @@ struct DashboardView: View {
         .toolbar { toolbarItems }
         .navigationDestination(for: RoomDisplayItem.self) { room in
             RoomDetailView(room: room)
-        }
-        .fullScreenCover(isPresented: $showSettings) {
-            NavigationStack {
-                SettingsView(onForget: { showSettings = false })
-            }
         }
         .sheet(isPresented: $showScheduleSheet) {
             UpcomingAutomationsSheet(automations: allUpcomingAutomations)
@@ -776,12 +770,6 @@ struct DashboardView: View {
                             .foregroundStyle(.white.opacity(0.75))
                     }
                 }
-            }
-        }
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Button { showSettings = true } label: {
-                Image(systemName: "gear")
-                    .foregroundStyle(.white.opacity(0.8))
             }
         }
     }

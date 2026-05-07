@@ -22,7 +22,6 @@ struct ScenesTabView: View {
     @State private var searchText:     String            = ""
     @State private var selectedRoomID: String?           = nil
     @State private var speedSheetScene: GlobalSceneItem? = nil   // non-nil = sheet open
-    @State private var showSettings                      = false
 
     // Scene CRUD
     @State private var sceneToDelete:  GlobalSceneItem? = nil
@@ -93,9 +92,6 @@ struct ScenesTabView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
-        .sheet(isPresented: $showSettings) {
-            NavigationStack { SettingsView(onForget: { showSettings = false }) }
-        }
         .sheet(isPresented: $showCreateScene) {
             CreateGlobalSceneView()
         }
@@ -337,12 +333,6 @@ struct ScenesTabView: View {
                 HapticManager.shared.light()
             } label: {
                 Image(systemName: "plus")
-                    .foregroundStyle(.white.opacity(0.8))
-            }
-        }
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Button { showSettings = true } label: {
-                Image(systemName: "gear")
                     .foregroundStyle(.white.opacity(0.8))
             }
         }

@@ -4,6 +4,101 @@
 
 ---
 
+## 2026-05-07 — Settings Consolidation + Navigation Cleanup (Antigravity)
+
+### What was changed
+
+#### Settings is now exclusively in More
+- Removed the gear (⚙) toolbar button and its associated `showSettings` sheet from **5 tabs**: Dashboard, Studio, Scenes, Effects, Sync.
+- Settings is now accessed from **More → Settings** only — consistent with the iOS Settings app convention.
+- `MoreView` is the single owner of `showSettings` state. No other tab manages it.
+
+#### Duplicate content removed from SettingsView
+- Removed the `exploreSection` (Automations + Devices navigation links) from `SettingsView`.
+- These already exist in `MoreView`'s CONTROL section linking to the same destination views (`AutomationsView`, `DevicesView`). Having them in both places caused confusion.
+- **Settings now contains:** Bridges, All Day Scenes, Account (API Token), Developer (Demo Mode + Clean Bridge), App info.
+- **More now contains:** Automations, Devices & Firmware, Accessories, Profiles & Access, Share Invite, Bridge Manager, Connection status, Settings (link), Demo Mode, App version.
+
+#### SyncModeView toolbar cleanup
+- The `toolbarItems` `@ToolbarContentBuilder` was left empty after removing the gear button. Removed the property and the `.toolbar { toolbarItems }` call entirely rather than leaving a dead no-op.
+
+### Files changed
+| File | Change |
+|---|---|
+| `HueHome/UI/Dashboard/DashboardView.swift` | Removed `showSettings` state, `.fullScreenCover`, gear `ToolbarItem` |
+| `HueHome/UI/Studio/StudioView.swift` | Removed `showSettings` state, `.sheet`, gear `ToolbarItem` |
+| `HueHome/UI/Scenes/ScenesTabView.swift` | Removed `showSettings` state, `.sheet`, gear `ToolbarItem` |
+| `HueHome/UI/Effects/EffectsView.swift` | Removed `showSettings` state, `.sheet`, gear `ToolbarItem` (bookmark + stop toolbar items untouched) |
+| `HueHome/UI/Sync/SyncModeView.swift` | Removed `showSettings` state, `.sheet`, entire `toolbarItems` property + `.toolbar` call |
+| `HueHome/UI/Settings/SettingsView.swift` | Removed `exploreSection` property and its call in body |
+
+### What's working
+- Settings is reachable from one place (More tab) — no more gear icon on every tab
+- No duplicate Automations/Devices entries between More and Settings
+- Sync tab toolbar is clean (no leftover empty builder)
+
+### What's next
+- [ ] Harmony engine integration into Studio card color pickers (hue strip + rule chip row)
+- [ ] "Run on Bridge" opt-in button in mixer tray for `runtimeOnly` presets
+- [ ] Manual "Clean Bridge" button already in Settings/Developer — needs soak test
+
+---
+
+## 2026-05-07 — Bridge Animation Fixes + Composer Dynamic Effects Restored (Antigravity)
+
+### Problems fixed (4 bugs, 1 session)
+
+#### 1. Schedule creation failing — error type 6 `"parameter, autoDelete, not available"`
+- `HueV1Client.createRecurringSchedule()` was sending `"autodelete": autoDelete` in the POST body.
+- Bridge firmware rejects this key with error type 6. Removed it — omitting defaults to `false` (schedule persists).
+
+#### 2. Schedule command using wrong address format
+- `sensorIncrementCommand()` returns a **relative** path (`/sensors/{id}/state`), correct for **rule actions**.
+- Schedule `command.address` must be the **full** path `/api/{token}/sensors/{id}/state` — the bridge does NOT append user context for schedule commands (unlike rule actions).
+- **Fix:** Added `sensorIncrementScheduleCommand()` that builds the full path; swapped the call site in `BridgeAnimationEngine`.
+
+#### 3. Composer cards not turning lights on after bridge upload
+- Bridge upload succeeded (rules, sensor, schedule created), but the first rule only fires when the schedule next ticks (~3–18s away). Lights stayed dark after card tap.
+- **Fix:** Added an **immediate prime frame** after `bridgeAnimationStore.save(manifest)` — renders step 0 of the composition and pushes it via `setGroupedLightEffect(on: true)` so the room lights up within ~1s of the tap.
+
+#### 4. Dynamic composer cards (cascade/wave/breathe) frozen — REST scheduler suppressed
+- `canRunOnBridge` was `true` for ALL non-mic presets, so every composition went through bridge upload.
+- Bridge upload returned early without starting the REST scheduler.
+- Bridge rule chains have a **3-second minimum step interval** (bridge firmware limit), making cascade/wave/breathe presets look completely frozen.
+- **Fix:** Gated bridge upload on `preset.capabilityTier == .bridgeOptimized` only. Dynamic presets fall through to REST/Entertainment as before.
+
+### Files changed
+| File | Change |
+|---|---|
+| `HueHome/Core/Network/HueV1Client.swift` | Removed `autodelete` from schedule body; added `sensorIncrementScheduleCommand()` with full address |
+| `HueHome/Core/Network/BridgeAnimationEngine.swift` | Swapped `sensorIncrementCommand` → `sensorIncrementScheduleCommand` for schedule |
+| `HueHome/Core/Network/UnifiedOrchestrator.swift` | Added prime frame after bridge upload; gated bridge path on `.bridgeOptimized` tier |
+
+### Architecture: bridge transport tiers
+```
+bridgeOptimized  (static motion + steady envelope)
+  → Bridge upload automatically: lights persist after app close, prime frame turns on immediately
+
+runtimeOnly  (any motion or non-steady envelope — cascade/wave/breathe/etc.)
+  → REST/Entertainment: continuous 120ms updates, smooth animation
+  → Bridge: NOT auto-uploaded (3s/step would freeze the effect)
+
+hybrid  (mic-reactive)
+  → REST/Entertainment only (bridge has no mic)
+```
+
+### What's working
+- ✅ Schedule creates successfully (no more type 6 errors)
+- ✅ `bridgeOptimized` presets upload, persist after app close, turn on immediately
+- ✅ `runtimeOnly` compositions produce smooth continuous animation via REST
+
+### What's next
+- [ ] "Run on Bridge ⚡" explicit opt-in button in mixer tray for `runtimeOnly` presets
+- [ ] Manual "Clean Bridge" button in Settings
+- [ ] On-device soak test: bridgeOptimized preset, close app, verify lights keep cycling
+
+---
+
 ## 2026-05-06 — Home Layout Rebuild + All Day Scenes (Cursor)
 
 ### What was built

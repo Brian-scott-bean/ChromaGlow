@@ -13,7 +13,6 @@ struct SyncModeView: View {
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var engine: SyncModeEngine?
-    @State private var showSettings = false
     @State private var showCreateArea = false
 
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
@@ -32,10 +31,6 @@ struct SyncModeView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbar { toolbarItems }
-        .sheet(isPresented: $showSettings) {
-            NavigationStack { SettingsView(onForget: { showSettings = false }) }
-        }
         .preferredColorScheme(.dark)
         .onAppear  { if engine == nil { engine = SyncModeEngine(orchestrator: orchestrator) } }
         .onDisappear { engine?.stop() }
@@ -43,18 +38,6 @@ struct SyncModeView: View {
             EntertainmentConfigBuilderView { newConfig in
                 engine?.selectedEntertainmentConfig = newConfig
                 Task { await engine?.loadEntertainmentConfigs() }
-            }
-        }
-    }
-
-    // MARK: - Toolbar
-
-    @ToolbarContentBuilder
-    private var toolbarItems: some ToolbarContent {
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Button { showSettings = true } label: {
-                Image(systemName: "gear")
-                    .foregroundStyle(.white.opacity(0.8))
             }
         }
     }
