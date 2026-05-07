@@ -58,6 +58,7 @@ struct PaletteConfig: Codable, Equatable {
     var saturation: Double = 100    // 0-100%
     var temperature: Int = 366      // 153-500 mirek (only used in .temperature mode)
     var randomize: Bool = false
+    var harmonyRule: String? = nil   // HarmonyRule.rawValue — nil = .none; persisted for re-edit
 
     /// Resolve the output CIE xy color for a given phase position (0.0–1.0).
     /// Phase comes from the Motion layer — it says "where in the palette is this light?"
@@ -118,6 +119,7 @@ struct MotionConfig: Codable, Equatable {
     var spread: Double = 70         // 0-100
     var offset: Double = 50         // 0-100 (phase stagger between lights)
     var mirror: Bool = false
+    var motionAngle: Double = 0     // 0-360° direction for spatial patterns
 
     /// Compute the phase position (0.0–1.0) for a specific light at a given time.
     /// This phase is fed into PaletteConfig.color(at:) to determine what color the light should be.
@@ -156,6 +158,43 @@ struct MotionConfig: Codable, Equatable {
 
         case .bounce:
             // Ping-pong across light array
+            let raw = (normalizedTime * direction * 2.0 + position * stagger)
+                .truncatingRemainder(dividingBy: 2.0)
+            let absRaw = abs(raw)
+            return absRaw <= 1.0 ? absRaw : 2.0 - absRaw
+        }
+    }
+
+    /// Compute phase using a pre-computed spatial position (0.0–1.0).
+    /// Used when entertainment area positions are available for physically-accurate patterns.
+    /// Mirror folds positions toward center for symmetric effects.
+    func phase(spatialPosition: Double, time: Double) -> Double {
+        let period = 20.0 - (speed / 100.0) * 19.5
+        let normalizedTime = time / max(0.01, period)
+        let position = mirror ? abs(spatialPosition - 0.5) * 2.0 : spatialPosition
+        let direction: Double = forward ? 1.0 : -1.0
+        let stagger = offset / 100.0
+
+        switch pattern {
+        case .static:
+            return position
+
+        case .cascade:
+            let raw = (normalizedTime * direction + position * stagger)
+                .truncatingRemainder(dividingBy: 1.0)
+            return raw < 0 ? raw + 1.0 : raw
+
+        case .wave:
+            let sine = sin(2.0 * .pi * (normalizedTime * direction + position * stagger))
+            return (sine + 1.0) / 2.0
+
+        case .scatter:
+            // Scatter is inherently non-directional — hash the position for pseudo-random seed
+            let seed = spatialPosition * 7919.0 + 1.0
+            let noise = sin(seed + normalizedTime * direction * 6.283)
+            return (noise + 1.0) / 2.0
+
+        case .bounce:
             let raw = (normalizedTime * direction * 2.0 + position * stagger)
                 .truncatingRemainder(dividingBy: 2.0)
             let absRaw = abs(raw)

@@ -1,5 +1,5 @@
 // CompositionEngine.swift
-// ChromaGlow — Composer v0.17.0
+// ChromaGlow — Composer v0.18.0
 //
 // Real-time render engine for compositions. Composes four layers
 // (Palette, Motion, Envelope, Reaction) into per-light CIE xy + brightness
@@ -24,6 +24,18 @@ final class CompositionParamBox: @unchecked Sendable {
     /// UI-driven short burst window to bypass REST low-power skipping
     /// so direct user edits flush to the bridge immediately.
     var forceRESTBurstUntil: TimeInterval = 0
+
+    // ── Spatial Motion ────────────────────────────────────────
+    /// Pre-computed normalized spatial positions (0–1) for each channel.
+    /// Ordered to match channelIDs in render(). Empty = use index fallback.
+    var spatialPositions: [Double] = []
+    /// Target positions for smooth lerp transitions when angle changes.
+    var targetSpatialPositions: [Double] = []
+    /// Progress 0→1 for lerp from spatialPositions to targetSpatialPositions.
+    /// 1.0 = transition complete, use targetSpatialPositions directly.
+    var spatialLerpProgress: Double = 1.0
+    /// Timestamp of last render frame — used to advance lerp progress.
+    var lastRenderTime: Double = 0
 
     init(preset: CompositionPreset) {
         self.palette = preset.palette
@@ -61,6 +73,115 @@ struct LightFrame {
 /// The caller (UnifiedOrchestrator) handles transport (DTLS or REST).
 enum CompositionEngine {
 
+    // ──────────────────────────────────────────────
+    // MARK: - Spatial Position Computation
+    // ──────────────────────────────────────────────
+
+    /// Project entertainment channel positions onto a 2D direction vector.
+    /// Returns positions ordered to match the given lightIDs (for REST transport).
+    /// Uses a lightID→position lookup to handle ordering mismatches between
+    /// entertainment channels and REST light resolution order.
+    static func computeSpatialPositions(
+        config: EntertainmentConfig,
+        orderedLightIDs: [String],
+        motionAngle: Double
+    ) -> [Double] {
+        guard orderedLightIDs.count > 1 else {
+            return orderedLightIDs.isEmpty ? [] : [0.5]
+        }
+
+        // Build lightID → position map from entertainment channels
+        var positionByLightID: [String: (x: Double, z: Double)] = [:]
+        for channel in config.channels {
+            for lightID in channel.lightServiceIDs {
+                positionByLightID[lightID] = (x: channel.position.x, z: channel.position.z)
+            }
+        }
+
+        let rad = motionAngle * .pi / 180.0
+        let dx = cos(rad), dz = sin(rad)
+
+        var projections: [Double] = []
+        var hasMissing = false
+        for lightID in orderedLightIDs {
+            if let pos = positionByLightID[lightID] {
+                projections.append(pos.x * dx + pos.z * dz)
+            } else {
+                hasMissing = true
+                projections.append(0)
+            }
+        }
+
+        // If any light has no position, fall back to index-based
+        guard !hasMissing else { return [] }
+
+        return normalizeProjections(projections)
+    }
+
+    /// Project entertainment channel positions onto a 2D direction vector.
+    /// Returns positions in entertainment channel order (for DTLS transport).
+    static func computeSpatialPositionsForEntertainment(
+        channels: [EntertainmentChannel],
+        motionAngle: Double
+    ) -> [Double] {
+        guard channels.count > 1 else {
+            return channels.isEmpty ? [] : [0.5]
+        }
+
+        let rad = motionAngle * .pi / 180.0
+        let dx = cos(rad), dz = sin(rad)
+
+        let projections = channels.map { ch in
+            ch.position.x * dx + ch.position.z * dz
+        }
+
+        return normalizeProjections(projections)
+    }
+
+    /// Normalize projections to 0–1 range.
+    private static func normalizeProjections(_ projections: [Double]) -> [Double] {
+        let minP = projections.min() ?? 0
+        let maxP = projections.max() ?? 1
+        let range = maxP - minP
+        guard range > 0.001 else {
+            return projections.map { _ in 0.5 }
+        }
+        return projections.map { ($0 - minP) / range }
+    }
+
+    /// Compute the principal axis angle (PCA) of entertainment channel positions.
+    /// Returns the angle (0–360°) along which lights have maximum spread.
+    /// Used as the default motionAngle when the user hasn't set one.
+    static func principalAngle(channels: [EntertainmentChannel]) -> Double {
+        guard channels.count > 1 else { return 0 }
+
+        // Compute mean
+        let n = Double(channels.count)
+        let meanX = channels.reduce(0.0) { $0 + $1.position.x } / n
+        let meanZ = channels.reduce(0.0) { $0 + $1.position.z } / n
+
+        // Compute covariance matrix elements [cxx, cxz; cxz, czz]
+        var cxx = 0.0, cxz = 0.0, czz = 0.0
+        for ch in channels {
+            let dx = ch.position.x - meanX
+            let dz = ch.position.z - meanZ
+            cxx += dx * dx
+            cxz += dx * dz
+            czz += dz * dz
+        }
+
+        // Principal eigenvector via atan2 of the 2x2 symmetric matrix
+        // θ = 0.5 * atan2(2 * cxz, cxx - czz)
+        let angle = 0.5 * atan2(2.0 * cxz, cxx - czz)
+        var degrees = angle * 180.0 / .pi
+        if degrees < 0 { degrees += 360 }
+        return degrees
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Render
+    // ──────────────────────────────────────────────
+
     /// Render one frame for all lights.
     ///
     /// - Parameters:
@@ -81,9 +202,34 @@ enum CompositionEngine {
         let envelope = params.envelope
         let reaction = params.reaction
 
+        // Advance lerp progress (0.3s transition)
+        if params.spatialLerpProgress < 1.0 {
+            let deltaTime = params.lastRenderTime > 0 ? time - params.lastRenderTime : 0.04
+            params.spatialLerpProgress = min(1.0, params.spatialLerpProgress + deltaTime / 0.3)
+            // When lerp completes, commit target as current
+            if params.spatialLerpProgress >= 1.0 {
+                params.spatialPositions = params.targetSpatialPositions
+            }
+        }
+        params.lastRenderTime = time
+
         return channelIDs.enumerated().map { (index, channelID) in
             // 1. Motion: where is this light in the palette cycle?
-            let phase = motion.phase(lightIndex: index, total: total, time: time)
+            let phase: Double
+            let useSpatial = index < params.spatialPositions.count
+                && motion.pattern != .scatter
+            if useSpatial {
+                // Interpolate between old and new positions during transition
+                var pos = params.spatialPositions[index]
+                if params.spatialLerpProgress < 1.0,
+                   index < params.targetSpatialPositions.count {
+                    let t = params.spatialLerpProgress
+                    pos = pos * (1.0 - t) + params.targetSpatialPositions[index] * t
+                }
+                phase = motion.phase(spatialPosition: pos, time: time)
+            } else {
+                phase = motion.phase(lightIndex: index, total: total, time: time)
+            }
 
             // 2. Palette: what CIE xy color at this phase?
             let color = palette.color(at: phase)
@@ -112,3 +258,4 @@ enum CompositionEngine {
         }
     }
 }
+

@@ -524,6 +524,8 @@ final class StudioViewModel {
     var isGeneratingAIComposition = false
     var aiGenerationErrorMessage: String?
     var activeCompositionGamut: HueColorUtils.Gamut = .c
+    var roomHasColorLights: Bool = true
+    var restoredHarmonyRule: HarmonyRule? = nil
     let suggestedAIPrompts: [String] = [
         "Static Warm Sunset",
         "Cozy Reading Corner",
@@ -744,13 +746,18 @@ final class StudioViewModel {
             }
         }
 
-        guard !roomLights.isEmpty else { return .c }
+        guard !roomLights.isEmpty else {
+            await MainActor.run { roomHasColorLights = false }
+            return .c
+        }
         var counts: [HueColorUtils.Gamut: Int] = [.a: 0, .b: 0, .c: 0]
         for light in roomLights {
             guard let raw = light.color?.gamut_type?.uppercased(),
                   let gamut = HueColorUtils.Gamut(rawValue: raw) else { continue }
             counts[gamut, default: 0] += 1
         }
+        let totalColorLights = counts.values.reduce(0, +)
+        await MainActor.run { roomHasColorLights = totalColorLights > 0 }
         return counts.max(by: { $0.value < $1.value })?.key ?? .c
     }
 
@@ -956,6 +963,13 @@ final class StudioViewModel {
                 activeCompositionGamut = await gamutTask
                 let box = CompositionParamBox(preset: preset)
                 activeCompositionBox = box
+                // Restore persisted harmony rule for re-edit
+                if let savedRule = preset.palette.harmonyRule,
+                   let rule = HarmonyRule(rawValue: savedRule) {
+                    restoredHarmonyRule = rule
+                } else {
+                    restoredHarmonyRule = nil
+                }
                 let presetPreferEntertainment: Bool?
                 switch preset.preferredTransport {
                 case .roomOnly:

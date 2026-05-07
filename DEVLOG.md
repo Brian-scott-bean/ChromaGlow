@@ -4,6 +4,89 @@
 
 ---
 
+## 2026-05-07 — Spatial Motion Engine (Antigravity)
+
+### What was changed
+
+Upgraded the Composer Motion Layer from array-index-based patterns to physical spatial coordinates. Wave, Cascade, and Bounce patterns now sweep across lights based on their actual positions in the room, not their arbitrary discovery order.
+
+#### Spatial Math (`CompositionEngine.swift`)
+- Added `computeSpatialPositions(config:orderedLightIDs:motionAngle:)` — projects entertainment channel positions onto a 2D direction vector via dot product, returns positions ordered to match REST lightIDs (fixes ordering mismatch between entertainment channels and REST resolution order).
+- Added `computeSpatialPositionsForEntertainment(channels:motionAngle:)` — same math but returns in channel order for DTLS transport.
+- Added `principalAngle(channels:)` — PCA via 2×2 covariance matrix eigenvector to auto-detect the axis of maximum light spread. Used as default `motionAngle` when user hasn't set one.
+- Added lerp system (`targetSpatialPositions` + `spatialLerpProgress`) for smooth 0.3s transitions when angle changes.
+- Render loop updated: uses spatial `phase()` when positions available, falls back to index for scatter pattern (which needs pseudo-random seeding by index).
+
+#### Model (`CompositionModels.swift`)
+- Added `motionAngle: Double = 0` to `MotionConfig` (migration-safe Codable default).
+- Added `phase(spatialPosition:time:)` overload — same switch/case logic as index-based version, replaces `lightIndex/total` with pre-computed 0–1 position. Mirror support: `abs(spatialPosition - 0.5) * 2.0`.
+
+#### Orchestrator Wiring (`UnifiedOrchestrator.swift`)
+- Fetches entertainment config BEFORE transport decision — both REST and DTLS paths get spatial positions.
+- Moved `resolveCompositionLightIDs` earlier to feed the REST-ordered position computation.
+- Added `activeEntertainmentConfig: EntertainmentConfig?` (public, @Observable) — exposed for Studio UI mini-map and direction dial.
+- Auto-detects principal angle on first launch.
+- Clears `activeEntertainmentConfig` on composition stop.
+
+#### Direction UI (`StudioView.swift`, ~280 lines)
+- **Direction presets**: 8 arrow chips (→ ↗ ↑ ↖ ← ↙ ↓ ↘), amber-highlighted when selected.
+- **Angle dial**: 80pt glassmorphic circle with drag-to-rotate, amber indicator line, 5° snap, haptic ticks at 45° boundaries.
+- **Spatial mini-map**: 80pt rounded rect showing light dots at physical (x,z) positions with palette-derived colors + dashed amber direction arrow.
+- **Entertainment area prompt**: When no entertainment config exists, shows a styled button that opens `EntertainmentConfigBuilderView` as a sheet. On creation, spatial positions are computed immediately.
+- **recomputeSpatialPositions()**: Called from Binding setters (NOT onChange — CompositionParamBox is not @Observable). Triggers smooth lerp + REST burst.
+- **Mirror toggle** added to motion controls.
+- Direction UI hidden for scatter pattern (non-directional).
+
+### Bugs prevented by audit (6 found before implementation)
+
+| # | Bug | Prevention |
+|---|---|---|
+| 1 | Scatter breaks with spatial positions (becomes smooth wave) | Render loop skips spatial for `.scatter` |
+| 2 | `onChange` on motionAngle never fires | Use Binding setters, not onChange |
+| 3 | Entertainment config only fetched on DTLS path | Fetch before transport decision |
+| 4 | REST light ordering mismatch (wrong position per light) | lightID→position lookup map |
+| 5 | "L → R" direction labels misleading | Arrow symbols + mini-map |
+| 6 | Static pattern excluded from dial | Show for all except scatter |
+
+### Files changed
+| File | Change |
+|---|---|
+| `HueHome/Core/Models/CompositionModels.swift` | +`motionAngle`, +spatial `phase()` overload |
+| `HueHome/UI/Studio/CompositionEngine.swift` | +spatial fields on ParamBox, +4 static helpers, +lerp in render loop |
+| `HueHome/Core/Network/UnifiedOrchestrator.swift` | +`activeEntertainmentConfig`, spatial wiring, moved lightID resolution |
+| `HueHome/UI/Studio/StudioView.swift` | +direction presets, +angle dial, +mini-map, +entertainment prompt |
+| `HueHome/UI/Studio/StudioViewModel.swift` | Cleanup (moved property to orchestrator) |
+
+### What's next
+- [ ] Test spatial sweep in simulator with multi-light entertainment area
+- [ ] Consider expanding to 3D direction (include Y/height axis)
+- [ ] Auto-suggest optimal direction based on pattern + light layout
+
+---
+
+## 2026-05-07 — Harmony Engine → Studio Composer (Antigravity)
+
+### What was changed
+
+Integrated the existing `HarmonyEngine` (from SceneBuilder) into the Studio Composer Palette tab. Users can select a harmony rule (Analogous, Triadic, Complementary, Split Complementary, Monochromatic) and drag the 2D hue/saturation pad to generate mathematically harmonious 3-color palettes in real-time.
+
+#### Features
+- **Conditional harmony UI**: Chips only appear in `.solid` or `.gradient` modes and only when the current room/zone contains at least one color-capable bulb.
+- **Mode awareness**: Auto-clears `activeHarmonyRule` when switching to non-color modes (Spectrum/Temp).
+- **Swatch editing**: Tappable preview row → ColorWheelView popover for fine-tuning individual harmony colors.
+- **Persistence**: `harmonyRule: String?` on `PaletteConfig` (migration-safe optional).
+- **User guidance**: Contextual hint ("Try Cascade or Wave…") when harmony is selected with static motion.
+
+### Files changed
+| File | Change |
+|---|---|
+| `HueHome/UI/Components/HueColorUtils.swift` | +`codableColor(from:gamut:)` helper |
+| `HueHome/Core/Models/CompositionModels.swift` | +`harmonyRule: String?` to `PaletteConfig` |
+| `HueHome/UI/Studio/StudioViewModel.swift` | +`roomHasColorLights`, +`restoredHarmonyRule` |
+| `HueHome/UI/Studio/StudioView.swift` | +chip row, +swatch preview, +editing popover, +harmony-aware drag |
+
+---
+
 ## 2026-05-07 — Settings Consolidation + Navigation Cleanup (Antigravity)
 
 ### What was changed
