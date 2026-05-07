@@ -1577,6 +1577,9 @@ final class UnifiedOrchestrator {
     /// Whether the active composition is running on the bridge (v1 rules chain).
     /// Exposed for UI badge display.
     var isBridgeStored: Bool = false
+    /// Entertainment config for the active composition's room.
+    /// Exposed so Studio UI can show spatial mini-map and direction dial.
+    var activeEntertainmentConfig: EntertainmentConfig? = nil
 
     /// Live param reference — StudioViewModel updates this dict, engine loops read it.
     /// Using a class wrapper so the Task closure captures a reference, not a copy.
@@ -1746,6 +1749,43 @@ final class UnifiedOrchestrator {
             "[Composer] ▶ Start composition room='\(room.name)' id=\(roomID) gen=\(nextGeneration) groupedLightID=\(groupedLightID) preferEntertainment=\(preferEntertainment)"
         )
 
+        // ── Fetch entertainment config BEFORE transport decision ──
+        // Both REST and DTLS paths benefit from spatial positions.
+        let entConfig = await findEntertainmentConfig(bridgeID: room.bridgeID)
+        await MainActor.run { activeEntertainmentConfig = entConfig }
+
+        // Resolve individual light IDs early — needed for REST spatial positions
+        // AND for per-light REST mode later.
+        let compositionLightIDs = await resolveCompositionLightIDs(for: room, api: api)
+        print("[Composer] 🔍 Resolved \(compositionLightIDs.count) individual lights for per-light REST")
+
+        if let entConfig {
+            // Auto-detect principal angle when user hasn't set one
+            if paramBox.motion.motionAngle < 0 {
+                paramBox.motion.motionAngle = CompositionEngine.principalAngle(channels: entConfig.channels)
+            }
+
+            // ── Build lightID → position map ──
+            // Entertainment channel members point to entertainment services (not light services).
+            // Bridge the IDs: entertainment_service → device → light.
+            let lightPositions = await resolveEntertainmentLightPositions(
+                config: entConfig, api: api
+            )
+
+            // Pre-compute spatial positions for REST path (lightID order)
+            let restPositions = CompositionEngine.computeSpatialPositions(
+                lightPositions: lightPositions,
+                orderedLightIDs: compositionLightIDs,
+                motionAngle: paramBox.motion.motionAngle
+            )
+            if !restPositions.isEmpty {
+                paramBox.spatialPositions = restPositions
+                paramBox.targetSpatialPositions = restPositions
+                paramBox.spatialLerpProgress = 1.0
+            }
+            print("[Composer] 📐 Spatial positions computed: \(paramBox.spatialPositions.count) lights, angle=\(String(format: "%.0f", paramBox.motion.motionAngle))°")
+        }
+
         // Prefer entertainment transport for dynamic compositions when possible.
         // Only one entertainment composition may run at a time.
         if preferEntertainment,
@@ -1753,13 +1793,19 @@ final class UnifiedOrchestrator {
            compositionRuntimes.isEmpty {
             // Mic (when reaction uses it) is already warming during gamut resolution above,
             // overlapping network time with FFT capture startup.
-            async let entClientTask = tryStartEntertainment(room: room)
-            async let configTask = findEntertainmentConfig(bridgeID: room.bridgeID)
-            let entClient = await entClientTask
-            let config = await configTask
-            if let entClient, let config {
-                let channelIDs = config.channels.map { UInt8($0.id) }
+            let entClient = await tryStartEntertainment(room: room)
+            if let entClient, let entConfig {
+                let channelIDs = entConfig.channels.map { UInt8($0.id) }
                 if !channelIDs.isEmpty {
+                    // Override with channel-ordered positions for DTLS transport
+                    let entPositions = CompositionEngine.computeSpatialPositionsForEntertainment(
+                        channels: entConfig.channels,
+                        motionAngle: paramBox.motion.motionAngle
+                    )
+                    if !entPositions.isEmpty {
+                        paramBox.spatialPositions = entPositions
+                        paramBox.targetSpatialPositions = entPositions
+                    }
                     compositionEntRoomID = roomID
                     compositionEntertainmentParamBox = paramBox
                     compositionEntTask?.cancel()
@@ -1779,15 +1825,17 @@ final class UnifiedOrchestrator {
             }
         }
 
-        // Resolve individual light IDs for per-light REST mode.
-        // Reuses the lights already fetched during gamut resolution.
-        let compositionLightIDs = await resolveCompositionLightIDs(for: room, api: api)
-        print("[Composer] 🔍 Resolved \(compositionLightIDs.count) individual lights for per-light REST")
-
         // ─── Try bridge-stored animation (v1 rules chain) ───
-        // If the preset is eligible (no mic), pre-render and upload to bridge.
-        // The bridge loops through scenes autonomously — app can be closed.
-        if let preset, preset.canRunOnBridge, !compositionLightIDs.isEmpty {
+        // Only use bridge-stored for `bridgeOptimized` presets (static motion + steady envelope).
+        // These are single stable color states — perfect for a 3s-interval rule chain.
+        //
+        // `runtimeOnly` and `hybrid` presets need the continuous REST/Entertainment scheduler
+        // (120ms updates) to produce visible dynamic effects (cascade, wave, breathe, etc.).
+        // Routing those through bridge upload caused the rule chain (min 3s/step) to completely
+        // suppress the REST scheduler, making compositions appear frozen.
+        if let preset, preset.canRunOnBridge,
+           preset.capabilityTier == .bridgeOptimized,
+           !compositionLightIDs.isEmpty {
             do {
                 let v1Client = try api.makeV1Client()
 
@@ -1813,6 +1861,32 @@ final class UnifiedOrchestrator {
                 isBridgeStored = true
                 print("[Composer] ⚡ Bridge-stored animation active! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s/step")
                 print("[Composer] ⚡ Close the app — lights will keep going!")
+
+                // ── Immediate prime frame ──
+                // The first bridge rule won't fire until the schedule ticks (up to cycleTotalSeconds away).
+                // Send step-0 of the composition now so the room turns on instantly after the card tap.
+                let paramBox = CompositionParamBox(preset: preset)
+                if let firstFrame = CompositionEngine.render(
+                    time: 0,
+                    channelIDs: [0],
+                    params: paramBox,
+                    audioLevel: 0
+                ).first {
+                    let primeXY = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: compositionGamut)
+                    let primeBri = max(1.0, firstFrame.brightness * 100.0)
+                    do {
+                        try await api.setGroupedLightEffect(
+                            id: groupedLightID, on: true,
+                            brightness: primeBri,
+                            xy: (primeXY.x, primeXY.y),
+                            mirek: nil,
+                            duration: 500
+                        )
+                        print("[Composer][BridgePrime] ✅ room='\(room.name)' bri=\(String(format: "%.1f", primeBri))")
+                    } catch {
+                        print("[Composer][BridgePrime] ⚠ Prime frame failed (bridge animation still active): \(error.localizedDescription)")
+                    }
+                }
                 return  // Don't start app-driven scheduler
             } catch {
                 print("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
@@ -1953,6 +2027,7 @@ final class UnifiedOrchestrator {
             bridgeAnimationStore.remove(presetID: manifest.presetID, roomID: roomID)
         }
         isBridgeStored = false
+        await MainActor.run { activeEntertainmentConfig = nil }
 
         print("[Handoff] Clearing studio REST sender mailbox for roomID=\(roomID)")
         await studioRestSender.clear()
@@ -2275,6 +2350,65 @@ final class UnifiedOrchestrator {
                 return deviceIDs.contains(ownerRID)
             }
             .map { $0.id }
+    }
+
+    /// Resolve lightID → physical (x, z) position from an entertainment config.
+    ///
+    /// Entertainment channel members reference **entertainment** services (not light services).
+    /// This function bridges the gap:
+    ///   1. Fetch `/clip/v2/resource/entertainment` → entertainment service → device owner
+    ///   2. Fetch lights → light → device owner
+    ///   3. Match via shared device ID: entService → device → light
+    ///   4. Return lightID → channel position
+    private func resolveEntertainmentLightPositions(
+        config: EntertainmentConfig,
+        api: HueAPIClient
+    ) async -> [String: (x: Double, z: Double)] {
+        guard let (ip, token) = try? api.credentials() else { return [:] }
+
+        // Fetch entertainment services and lights in parallel
+        async let entServicesData = api.get(
+            path: "/clip/v2/resource/entertainment",
+            ip: ip, token: token
+        )
+        async let lightsFetch = api.fetchLights()
+
+        guard let entData = try? await entServicesData,
+              let lights = try? await lightsFetch else { return [:] }
+
+        // Build entServiceID → deviceID from entertainment services
+        var entServiceToDevice: [String: String] = [:]
+        if let json = try? JSONSerialization.jsonObject(with: entData) as? [String: Any],
+           let items = json["data"] as? [[String: Any]] {
+            for item in items {
+                guard let entID = item["id"] as? String,
+                      let owner = item["owner"] as? [String: Any],
+                      let deviceID = owner["rid"] as? String else { continue }
+                entServiceToDevice[entID] = deviceID
+            }
+        }
+
+        // Build deviceID → lightID from lights
+        var deviceToLightID: [String: String] = [:]
+        for light in lights {
+            if let deviceID = light.owner?.rid {
+                deviceToLightID[deviceID] = light.id
+            }
+        }
+
+        // Map each channel's entertainment service members to light IDs with positions
+        var result: [String: (x: Double, z: Double)] = [:]
+        for channel in config.channels {
+            for entServiceID in channel.lightServiceIDs {
+                if let deviceID = entServiceToDevice[entServiceID],
+                   let lightID = deviceToLightID[deviceID] {
+                    result[lightID] = (x: channel.position.x, z: channel.position.z)
+                }
+            }
+        }
+
+        print("[Composer] 🗺️ Resolved \(result.count) light positions from entertainment config")
+        return result
     }
 
     func stopStudioMode() async {

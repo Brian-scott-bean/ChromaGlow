@@ -247,7 +247,9 @@ actor BridgeAnimationEngine {
         // ─── 8. Create recurring schedule ───
         let cycleTotalSeconds = max(5, stepInterval * stepCount)
         let scheduleName = "CG_\(String(preset.name.prefix(14)))_tmr"
-        let scheduleCommand = v1Client.sensorIncrementCommand(
+        // NOTE: Schedules require the FULL /api/{token}/... path in the command address.
+        // Using sensorIncrementCommand (relative path) here causes error type:6 on creation.
+        let scheduleCommand = v1Client.sensorIncrementScheduleCommand(
             sensorID: sensorID,
             nextStatus: 0  // Restart the chain at step 0
         )

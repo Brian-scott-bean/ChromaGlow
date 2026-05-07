@@ -74,6 +74,18 @@ enum HueColorUtils {
         return closestPointOnTriangle(point: p, triangle: triangle)
     }
 
+    /// Convert a HarmonyEngine palette color to a gamut-clamped CodableColor.
+    /// Used by the Composer Palette tab to write harmony-derived colors into
+    /// the composition's PaletteConfig (color1/color2/color3).
+    static func codableColor(
+        from palette: HarmonyEngine.PaletteColor,
+        gamut: Gamut
+    ) -> CodableColor {
+        let xy = xyFrom(hue: palette.hue, saturation: palette.saturation, brightness: palette.brightness)
+        let clamped = clampXYToGamut(x: xy.x, y: xy.y, gamut: gamut)
+        return CodableColor(x: clamped.x, y: clamped.y)
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - CIE xy → SwiftUI Color
     // ──────────────────────────────────────────────

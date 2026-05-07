@@ -149,9 +149,12 @@ class HueV1Client: @unchecked Sendable {
         let body: [String: Any] = [
             "name": String(name.prefix(32)),
             "command": command,
-            "time": timeStr,       // v1 uses "time" for UTC
-            "localtime": timeStr,  // also set localtime for compatibility
-            "autodelete": autoDelete,
+            // Use only 'localtime' — bridge rejects schedules that set both
+            // 'time' and 'localtime' simultaneously (error 703).
+            "localtime": timeStr,
+            // NOTE: Do NOT include 'autodelete' — bridge firmware rejects it
+            // with error type 6 ("parameter not available"). Omitting it
+            // defaults to false (schedule persists until manually deleted).
             "status": "enabled"
         ]
         let result = try await post(path: "/schedules", body: body)
@@ -271,10 +274,22 @@ class HueV1Client: @unchecked Sendable {
         ]
     }
 
-    /// Build a command dict for incrementing the CLIP sensor status.
+    /// Build a **rule action** dict for incrementing the CLIP sensor status.
+    /// Rule actions use RELATIVE paths — the bridge resolves the user context internally.
     func sensorIncrementCommand(sensorID: String, nextStatus: Int) -> [String: Any] {
         return [
-            "address": "/sensors/\(sensorID)/state",  // RELATIVE path — bridge resolves user context internally
+            "address": "/sensors/\(sensorID)/state",  // relative — correct for rule actions
+            "method": "PUT",
+            "body": ["status": nextStatus]
+        ]
+    }
+
+    /// Build a **schedule command** dict for incrementing the CLIP sensor status.
+    /// Schedule commands require the FULL path including `/api/{token}/` —
+    /// unlike rule actions, the bridge does NOT append user context for schedules.
+    func sensorIncrementScheduleCommand(sensorID: String, nextStatus: Int) -> [String: Any] {
+        return [
+            "address": "/api/\(token)/sensors/\(sensorID)/state",  // full path — required for schedule commands
             "method": "PUT",
             "body": ["status": nextStatus]
         ]

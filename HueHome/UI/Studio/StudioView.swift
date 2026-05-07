@@ -109,6 +109,11 @@ struct StudioView: View {
     @State private var huePadLiveHue: Double = 0
     @State private var huePadLiveSaturation: Double = 1
     @State private var lastHuePadHapticAt: CFAbsoluteTime = 0
+
+    // ── Harmony Engine ────────────────────────────────────────
+    @State private var activeHarmonyRule: HarmonyRule = .none
+    private struct SwatchEditItem: Identifiable { let id: Int }
+    @State private var editingSwatch: SwatchEditItem? = nil
     @State private var mixerDragOffset: CGFloat = 0
     @State private var isMixerCollapsed = false
     @State private var showCompositionTransportPrompt = false
@@ -116,6 +121,7 @@ struct StudioView: View {
     @State private var pendingCompositionRoom: RoomDisplayItem?
     @State private var transportSwitchInFlightRoomIDs: Set<String> = []
     @State private var compositionDeleteTarget: CompositionPreset?
+    @State private var showEntertainmentBuilder = false
     @FocusState private var aiPromptFocused: Bool
 
     // ── Param sheet ───────────────────────────────────────
@@ -236,6 +242,22 @@ struct StudioView: View {
         }
         .onChange(of: vm.runningCardID) { _, newValue in
             if newValue == nil { isMixerCollapsed = false }
+        }
+        .onChange(of: vm.restoredHarmonyRule) { _, rule in
+            if let rule { activeHarmonyRule = rule }
+        }
+        .onChange(of: activeHarmonyRule) { _, newRule in
+            guard let box = vm.activeCompositionBox else { return }
+            if newRule == .none {
+                box.palette.color3 = nil
+                box.palette.color2 = CodableColor(x: 0.6400, y: 0.3300)
+                box.palette.harmonyRule = nil
+            } else {
+                if box.palette.mode != .gradient { box.palette.mode = .gradient }
+                box.palette.harmonyRule = newRule.rawValue
+                applyHarmonyToComposition()
+            }
+            box.triggerRESTBurst()
         }
         .animation(HueAnimation.slow, value: vm.currentRoomEffect != nil)
         .animation(HueAnimation.card, value: vm.runningCardID)
@@ -1489,13 +1511,30 @@ struct StudioView: View {
         }
     }
 
+    /// Harmony chips visible only in solid/gradient mode AND when room has color lights.
+    private var showHarmonyControls: Bool {
+        let mode = vm.activeCompositionBox?.palette.mode ?? .gradient
+        return (mode == .solid || mode == .gradient) && vm.roomHasColorLights
+    }
+
+    /// Rules exposed in the chip row — excludes 4-color rules until color4 is added.
+    private var filteredHarmonyRules: [HarmonyRule] {
+        [.none, .complementary, .triadic, .analogous, .splitComplementary, .monochromatic]
+    }
+
     private var compositionPaletteControls: some View {
         VStack(spacing: HueSpacing.sm) {
             compositionSectionHeader("Color", subtitle: "Palette every light reads before motion and envelope.")
 
             Picker("Mode", selection: Binding(
                 get: { vm.activeCompositionBox?.palette.mode ?? .gradient },
-                set: { vm.activeCompositionBox?.palette.mode = $0 }
+                set: { newMode in
+                    vm.activeCompositionBox?.palette.mode = newMode
+                    // Auto-dismiss harmony when switching to a mode that ignores color fields
+                    if newMode != .solid && newMode != .gradient && activeHarmonyRule != .none {
+                        activeHarmonyRule = .none
+                    }
+                }
             )) {
                 ForEach(PaletteConfig.Mode.allCases, id: \.self) { mode in
                     Text(mode.rawValue.capitalized).tag(mode)
@@ -1504,6 +1543,8 @@ struct StudioView: View {
             .pickerStyle(.segmented)
 
             hueSaturationPad
+
+            harmonyChipRow
 
             if (vm.activeCompositionBox?.palette.mode ?? .gradient) == .spectrum {
                 compositionSlider(
@@ -1516,6 +1557,225 @@ struct StudioView: View {
                 )
             }
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Harmony Chip Row
+    // ──────────────────────────────────────────────
+
+    @ViewBuilder
+    private var harmonyChipRow: some View {
+        if showHarmonyControls {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("HARMONY")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.38))
+                    .tracking(0.6)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(filteredHarmonyRules) { rule in
+                            harmonyChipButton(rule)
+                        }
+                    }
+                }
+
+                if activeHarmonyRule != .none {
+                    harmonySwatchPreview
+                        .popover(item: $editingSwatch) { item in
+                            swatchEditPopover(index: item.id)
+                        }
+
+                    // Hint for static motion
+                    if vm.activeCompositionBox?.motion.pattern == .static {
+                        Text("Try Cascade or Wave to spread harmony across lights")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.40))
+                            .padding(.top, 2)
+                    }
+                }
+            }
+        }
+    }
+
+    private func harmonyChipButton(_ rule: HarmonyRule) -> some View {
+        let isSelected = activeHarmonyRule == rule
+        return Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                activeHarmonyRule = rule
+            }
+            HapticManager.shared.medium()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: rule.icon)
+                    .font(.system(size: 11, weight: .medium))
+                Text(rule.rawValue)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+            }
+            .foregroundStyle(isSelected ? .black : .white.opacity(0.75))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                Capsule().fill(isSelected ? HuePalette.amber : Color.white.opacity(0.08))
+            )
+            .overlay(
+                Capsule().strokeBorder(isSelected ? .clear : .white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(harmonyAccessibilityName(for: rule))
+    }
+
+    private func harmonyAccessibilityName(for rule: HarmonyRule) -> String {
+        switch rule {
+        case .none: return "No harmony"
+        case .complementary: return "Complementary"
+        case .triadic: return "Triadic"
+        case .analogous: return "Analogous"
+        case .splitComplementary: return "Split Complementary"
+        case .monochromatic: return "Monochromatic"
+        case .tetradic: return "Tetradic"
+        case .doubleComp: return "Double Complementary"
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Harmony Preview Swatches
+    // ──────────────────────────────────────────────
+
+    private var harmonySwatchPreview: some View {
+        HStack(spacing: 12) {
+            ForEach(0..<3, id: \.self) { index in
+                let color = harmonySwatchColor(at: index)
+                let isEditing = editingSwatch?.id == index
+                Circle()
+                    .fill(color)
+                    .frame(width: 28, height: 28)
+                    .overlay(Circle().strokeBorder(.white.opacity(isEditing ? 0.9 : 0.5), lineWidth: isEditing ? 2.5 : 1.5))
+                    .shadow(color: color.opacity(isEditing ? 0.7 : 0.4), radius: isEditing ? 8 : 4)
+                    .onTapGesture {
+                        editingSwatch = (editingSwatch?.id == index) ? nil : SwatchEditItem(id: index)
+                        HapticManager.shared.selection()
+                    }
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isEditing)
+            }
+            Spacer()
+            Text("Tap to fine-tune")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.30))
+        }
+    }
+
+    private func harmonySwatchColor(at index: Int) -> Color {
+        guard let box = vm.activeCompositionBox else { return .gray }
+        let c: CodableColor
+        switch index {
+        case 0: c = box.palette.color1
+        case 1: c = box.palette.color2
+        case 2: c = box.palette.color3 ?? box.palette.color2
+        default: c = box.palette.color1
+        }
+        return HueColorUtils.color(fromX: c.x, y: c.y, brightness: 100)
+    }
+
+    private func swatchEditPopover(index: Int) -> some View {
+        VStack(spacing: 12) {
+            Text("Color \(index + 1)")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+            ColorWheelView(
+                hue: swatchHueBinding(index),
+                saturation: swatchSatBinding(index)
+            ) { h, s in
+                commitSwatchEdit(index: index, hue: h, saturation: s)
+            }
+            .frame(width: 180, height: 180)
+        }
+        .padding(16)
+        .background(Color(red: 0.10, green: 0.10, blue: 0.13))
+        .preferredColorScheme(.dark)
+        .presentationCompactAdaptation(.popover)
+    }
+
+    private func swatchHueBinding(_ index: Int) -> Binding<Double> {
+        Binding(
+            get: {
+                guard let box = vm.activeCompositionBox else { return 0 }
+                let c: CodableColor
+                switch index {
+                case 0: c = box.palette.color1
+                case 1: c = box.palette.color2
+                case 2: c = box.palette.color3 ?? box.palette.color2
+                default: c = box.palette.color1
+                }
+                return HueColorUtils.hsb(fromX: c.x, y: c.y, brightness: 100).h
+            },
+            set: { newHue in
+                let sat = swatchSatBinding(index).wrappedValue
+                commitSwatchEdit(index: index, hue: newHue, saturation: sat)
+            }
+        )
+    }
+
+    private func swatchSatBinding(_ index: Int) -> Binding<Double> {
+        Binding(
+            get: {
+                guard let box = vm.activeCompositionBox else { return 1 }
+                let c: CodableColor
+                switch index {
+                case 0: c = box.palette.color1
+                case 1: c = box.palette.color2
+                case 2: c = box.palette.color3 ?? box.palette.color2
+                default: c = box.palette.color1
+                }
+                return HueColorUtils.hsb(fromX: c.x, y: c.y, brightness: 100).s
+            },
+            set: { newSat in
+                let hue = swatchHueBinding(index).wrappedValue
+                commitSwatchEdit(index: index, hue: hue, saturation: newSat)
+            }
+        )
+    }
+
+    private func commitSwatchEdit(index: Int, hue: Double, saturation: Double) {
+        guard let box = vm.activeCompositionBox else { return }
+        let xy = HueColorUtils.xyFrom(hue: hue, saturation: saturation, brightness: 1.0)
+        let clamped = HueColorUtils.clampXYToGamut(x: xy.x, y: xy.y, gamut: vm.activeCompositionGamut)
+        let color = CodableColor(x: clamped.x, y: clamped.y)
+        switch index {
+        case 0: box.palette.color1 = color
+        case 1: box.palette.color2 = color
+        case 2: box.palette.color3 = color
+        default: break
+        }
+        box.triggerRESTBurst()
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Harmony Apply Helper
+    // ──────────────────────────────────────────────
+
+    private func applyHarmonyToComposition() {
+        guard activeHarmonyRule != .none,
+              let box = vm.activeCompositionBox else { return }
+        let current = box.palette.color1
+        let hsb = HueColorUtils.hsb(fromX: current.x, y: current.y, brightness: 100)
+        let paletteColors = HarmonyEngine.palette(
+            rule: activeHarmonyRule,
+            rootHue: hsb.h,
+            saturation: hsb.s,
+            brightness: 1.0,
+            count: 3
+        )
+        let gamut = vm.activeCompositionGamut
+        box.palette.color1 = HueColorUtils.codableColor(from: paletteColors[0], gamut: gamut)
+        box.palette.color2 = HueColorUtils.codableColor(from: paletteColors[1], gamut: gamut)
+        if paletteColors.count >= 3 {
+            box.palette.color3 = HueColorUtils.codableColor(from: paletteColors[2], gamut: gamut)
+        } else {
+            box.palette.color3 = nil
+        }
+        box.triggerRESTBurst()
     }
 
     private var hueSaturationPad: some View {
@@ -1619,7 +1879,25 @@ struct StudioView: View {
                             )
                             huePadLiveHue = clampedHSB.h
                             huePadLiveSaturation = clampedHSB.s
-                            vm.activeCompositionBox?.palette.color1 = CodableColor(x: clampedXY.x, y: clampedXY.y)
+                            if activeHarmonyRule != .none {
+                                let paletteColors = HarmonyEngine.palette(
+                                    rule: activeHarmonyRule,
+                                    rootHue: clampedHSB.h,
+                                    saturation: clampedHSB.s,
+                                    brightness: 1.0,
+                                    count: 3
+                                )
+                                let gamut = vm.activeCompositionGamut
+                                vm.activeCompositionBox?.palette.color1 = HueColorUtils.codableColor(from: paletteColors[0], gamut: gamut)
+                                vm.activeCompositionBox?.palette.color2 = HueColorUtils.codableColor(from: paletteColors[1], gamut: gamut)
+                                if paletteColors.count >= 3 {
+                                    vm.activeCompositionBox?.palette.color3 = HueColorUtils.codableColor(from: paletteColors[2], gamut: gamut)
+                                } else {
+                                    vm.activeCompositionBox?.palette.color3 = nil
+                                }
+                            } else {
+                                vm.activeCompositionBox?.palette.color1 = CodableColor(x: clampedXY.x, y: clampedXY.y)
+                            }
                             vm.activeCompositionBox?.palette.saturation = clampedHSB.s * 100
                         }
                         .onEnded { _ in
@@ -1635,6 +1913,11 @@ struct StudioView: View {
         }
     }
 
+    /// Direction is relevant for all patterns except scatter.
+    private var motionPatternIsSpatial: Bool {
+        vm.activeCompositionBox?.motion.pattern != .scatter
+    }
+
     private var compositionMotionControls: some View {
         VStack(spacing: HueSpacing.sm) {
             compositionSectionHeader("Motion", subtitle: "How color travels across lights over time.")
@@ -1648,6 +1931,15 @@ struct StudioView: View {
                 }
             }
             .pickerStyle(.menu)
+
+            // ── Direction Control ──
+            if motionPatternIsSpatial {
+                if orchestrator.activeEntertainmentConfig != nil {
+                    directionControl
+                } else {
+                    entertainmentAreaPrompt
+                }
+            }
 
             compositionSlider(
                 title: "Speed",
@@ -1672,7 +1964,290 @@ struct StudioView: View {
                 ),
                 range: 0...100
             )
+
+            Toggle("Mirror", isOn: Binding(
+                get: { vm.activeCompositionBox?.motion.mirror ?? false },
+                set: { vm.activeCompositionBox?.motion.mirror = $0 }
+            ))
+            .tint(HuePalette.amber)
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Direction Control
+    // ──────────────────────────────────────────────
+
+    private let directionPresets: [(label: String, angle: Double)] = [
+        ("→", 0), ("↗", 45), ("↑", 90), ("↖", 135),
+        ("←", 180), ("↙", 225), ("↓", 270), ("↘", 315)
+    ]
+
+    private var directionControl: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("DIRECTION")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(0.38))
+                .tracking(0.6)
+
+            HStack(spacing: 16) {
+                // Mini-map
+                spatialMiniMap
+
+                Spacer()
+
+                // Angle dial
+                motionAngleDial
+            }
+
+            // Direction presets
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(0..<directionPresets.count, id: \.self) { i in
+                        let preset = directionPresets[i]
+                        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
+                        let isSelected = abs(currentAngle - preset.angle) < 5 || abs(currentAngle - preset.angle - 360) < 5
+                        Button {
+                            recomputeSpatialPositions(angle: preset.angle)
+                            HapticManager.shared.medium()
+                        } label: {
+                            Text(preset.label)
+                                .font(.system(size: 16, weight: .medium))
+                                .frame(width: 36, height: 36)
+                                .foregroundStyle(isSelected ? .black : .white.opacity(0.7))
+                                .background(
+                                    Circle().fill(isSelected ? HuePalette.amber : Color.white.opacity(0.08))
+                                )
+                                .overlay(
+                                    Circle().strokeBorder(isSelected ? .clear : .white.opacity(0.08), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Direction \(Int(preset.angle)) degrees")
+                    }
+                }
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Angle Dial
+    // ──────────────────────────────────────────────
+
+    private var motionAngleDial: some View {
+        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
+        let size: CGFloat = 80
+
+        return ZStack {
+            // Outer ring
+            Circle()
+                .fill(Color.white.opacity(0.04))
+                .overlay(Circle().strokeBorder(.white.opacity(0.12), lineWidth: 1.5))
+
+            // Tick marks at 45° intervals
+            ForEach(0..<8, id: \.self) { i in
+                let tickAngle = Double(i) * 45.0
+                let rad = (tickAngle - 90) * .pi / 180.0
+                let inner: CGFloat = size / 2 - 10
+                let outer: CGFloat = size / 2 - 4
+                Path { path in
+                    path.move(to: CGPoint(
+                        x: size / 2 + cos(rad) * inner,
+                        y: size / 2 + sin(rad) * inner
+                    ))
+                    path.addLine(to: CGPoint(
+                        x: size / 2 + cos(rad) * outer,
+                        y: size / 2 + sin(rad) * outer
+                    ))
+                }
+                .stroke(.white.opacity(0.2), lineWidth: 1.5)
+            }
+
+            // Direction indicator line
+            let indicatorRad = (currentAngle - 90) * .pi / 180.0
+            Path { path in
+                path.move(to: CGPoint(x: size / 2, y: size / 2))
+                path.addLine(to: CGPoint(
+                    x: size / 2 + cos(indicatorRad) * (size / 2 - 14),
+                    y: size / 2 + sin(indicatorRad) * (size / 2 - 14)
+                ))
+            }
+            .stroke(HuePalette.amber, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+
+            // Center dot
+            Circle()
+                .fill(HuePalette.amber)
+                .frame(width: 6, height: 6)
+
+            // Degree label
+            Text("\(Int(currentAngle))°")
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.45))
+                .offset(y: size / 2 + 10)
+        }
+        .frame(width: size, height: size)
+        .contentShape(Circle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { gesture in
+                    let center = CGPoint(x: size / 2, y: size / 2)
+                    let dx = gesture.location.x - center.x
+                    let dy = gesture.location.y - center.y
+                    var angle = atan2(dy, dx) * 180 / .pi + 90
+                    if angle < 0 { angle += 360 }
+                    // Snap to nearest 5° for precision
+                    let snapped = (angle / 5).rounded() * 5
+                    let final = snapped.truncatingRemainder(dividingBy: 360)
+
+                    // Haptic tick at 45° boundaries
+                    let prev = vm.activeCompositionBox?.motion.motionAngle ?? 0
+                    let prevSlot = Int(prev / 45)
+                    let newSlot = Int(final / 45)
+                    if prevSlot != newSlot {
+                        HapticManager.shared.selection()
+                    }
+
+                    recomputeSpatialPositions(angle: final)
+                }
+        )
+        .animation(.interactiveSpring(response: 0.2), value: currentAngle)
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Spatial Mini-Map
+    // ──────────────────────────────────────────────
+
+    private var spatialMiniMap: some View {
+        let mapSize: CGFloat = 80
+        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
+
+        return ZStack {
+            // Background
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+                )
+
+            // Direction arrow through center
+            let arrowRad = (currentAngle - 90) * .pi / 180.0
+            Path { path in
+                let cx = mapSize / 2, cy = mapSize / 2
+                let len: CGFloat = mapSize / 2 - 8
+                path.move(to: CGPoint(
+                    x: cx - cos(arrowRad) * len * 0.3,
+                    y: cy - sin(arrowRad) * len * 0.3
+                ))
+                path.addLine(to: CGPoint(
+                    x: cx + cos(arrowRad) * len,
+                    y: cy + sin(arrowRad) * len
+                ))
+            }
+            .stroke(
+                HuePalette.amber.opacity(0.35),
+                style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3])
+            )
+
+            // Light position dots
+            if let config = orchestrator.activeEntertainmentConfig {
+                let channels = config.channels
+                // Normalize positions to fit in map
+                let xs = channels.map { $0.position.x }
+                let zs = channels.map { $0.position.z }
+                let minX = xs.min() ?? -1, maxX = xs.max() ?? 1
+                let minZ = zs.min() ?? -1, maxZ = zs.max() ?? 1
+                let rangeX = max(maxX - minX, 0.01)
+                let rangeZ = max(maxZ - minZ, 0.01)
+                let scale = max(rangeX, rangeZ)
+
+                ForEach(0..<channels.count, id: \.self) { i in
+                    let ch = channels[i]
+                    let nx = (ch.position.x - minX) / scale
+                    let nz = (ch.position.z - minZ) / scale
+                    // Center in map with padding
+                    let pad: CGFloat = 14
+                    let usable = mapSize - pad * 2
+                    let dotX = pad + CGFloat(nx) * usable
+                    let dotY = pad + CGFloat(nz) * usable
+                    let dotColor = harmonySwatchColor(at: i % 3)
+
+                    Circle()
+                        .fill(dotColor)
+                        .frame(width: 8, height: 8)
+                        .overlay(Circle().strokeBorder(.white.opacity(0.6), lineWidth: 0.5))
+                        .shadow(color: dotColor.opacity(0.5), radius: 3)
+                        .position(x: dotX, y: dotY)
+                }
+            }
+        }
+        .frame(width: mapSize, height: mapSize)
+        .animation(.interactiveSpring(response: 0.3), value: currentAngle)
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Entertainment Area Prompt
+    // ──────────────────────────────────────────────
+
+    private var entertainmentAreaPrompt: some View {
+        Button {
+            showEntertainmentBuilder = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 14))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Create Entertainment Area")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Unlock directional motion across your room")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.3))
+            }
+            .foregroundStyle(HuePalette.amber.opacity(0.85))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(HuePalette.amber.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(HuePalette.amber.opacity(0.15), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showEntertainmentBuilder) {
+            EntertainmentConfigBuilderView { newConfig in
+                orchestrator.activeEntertainmentConfig = newConfig
+                recomputeSpatialPositions(angle: max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0))
+            }
+            .environment(orchestrator)
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Spatial Position Recomputation
+    // ──────────────────────────────────────────────
+
+    /// Recompute spatial positions when the angle changes.
+    /// Called from Binding setters and chip taps (NOT onChange — CompositionParamBox is not @Observable).
+    private func recomputeSpatialPositions(angle: Double) {
+        guard let config = orchestrator.activeEntertainmentConfig,
+              let box = vm.activeCompositionBox else { return }
+        box.motion.motionAngle = angle
+        let newPositions = CompositionEngine.computeSpatialPositionsForEntertainment(
+            channels: config.channels,
+            motionAngle: angle
+        )
+        guard !newPositions.isEmpty else { return }
+        // Start smooth lerp transition
+        box.targetSpatialPositions = newPositions
+        box.spatialLerpProgress = 0.0
+        box.triggerRESTBurst()
     }
 
     private var compositionEnvelopeControls: some View {
