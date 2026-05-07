@@ -1052,3 +1052,62 @@ Wrong-room apply race is closed at the Studio action layer, startup light fetche
 
 ### Current state
 Composer editor responsiveness is now aggressively biased toward immediacy: the color pad gives live haptic pulses during drag, and REST cadence guardrails are significantly lowered for stress/perf validation. Build is green; next step is focused real-bridge QA before locking production values.
+
+---
+
+## 2026-05-07 — Bridge-Stored Animation Engine: Root Cause + Fix (Antigravity/Gemini)
+
+### Problem
+Compositions applied from Studio did not persist when the app was closed. The bridge-stored v1 animation chain (rules + CLIP sensor + schedule) was failing silently at rule creation with error 608/6.
+
+### Root cause (after 4 iterations of debugging)
+**v1 rule/schedule action addresses must be relative paths** — NOT the full `/api/{token}/...` path.
+
+```diff
+# WRONG (what we were sending):
+- "address": "/api/ZVcY.../lights/1/state"
+
+# CORRECT (what the bridge expects):
++ "address": "/lights/1/state"
+```
+
+The bridge internally resolves the user context for rule/schedule actions. Including the token made the address malformed, causing:
+- Error 608: "Rule actions contain errors or an action on an unsupported resource"
+- Error 6: "parameter, transitiontime/on/address/method, not available" (bridge couldn't parse the action at all)
+
+Additional bugs found and fixed during the debugging process:
+1. **v1/v2 light ID mismatch** — v2 uses UUIDs, v1 uses numeric IDs ("1", "2"). Added `resolveV1LightIDs()`.
+2. **Double rule creation** — Code created rules twice (scene-only, then deleted and recreated with sensor advance). Collapsed to single-pass.
+3. **Scene activation in rules** — v1 rules don't reliably support `{"scene": "id"}` on group actions. Switched to direct per-light state commands (`PUT /lights/{id}/state`).
+4. **Sensor kickoff** — Sensor started at 0; setting to 0 didn't trigger the `dx` condition. Now starts at 99.
+5. **Orphaned resources** — Multiple test runs left 18+ scenes and 3+ sensors on the bridge. Added `purgeAllChromaGlowResources()` and auto-cleanup before upload.
+
+### What was built
+- **`HueV1Client.swift`** — v1 REST client for rules, scenes, CLIP sensors, schedules, resourcelinks. Includes `resolveV1LightIDs()`, fetch methods for all resource types, and `token` exposed for rule action construction.
+- **`BridgeAnimationEngine.swift`** — Pre-renders compositions into v1 rule chains. Direct per-light state commands (no scene activation). Sensor-based step counter with schedule-driven cycling. `purgeAllChromaGlowResources()` for cleanup.
+- **`UnifiedOrchestrator.swift`** — Bridge-stored upload integration with auto-cleanup, `isBridgeStored` state flag, transport priority: Bridge-Stored > Entertainment > Per-light REST > Grouped REST.
+
+### Two implementation paths identified
+
+**Option A: Fix v1 relative paths (3-line fix)** — Change addresses in `sceneActivationCommand()`, `sensorIncrementCommand()`, and direct light actions from `/api/{token}/...` to `/...`. Gets the full v1 rule chain working for ALL composition patterns.
+
+**Option B: v2 Dynamic Scene** — Create v2 scene with `POST /clip/v2/resource/scene`, recall with `{"recall": {"action": "dynamic_palette", "duration": 5000}}`. Bridge autonomously cycles colors. Zero rules/sensors/schedules. Already have `CreateSceneRequest`, `activateScene(id:speed:)`, and `HueScene.isDynamic` in the codebase.
+
+**Decision: Implement both.** Option A for complex motion (cascade/wave/scatter), Option B as fast-path for simple palette presets.
+
+### What's left
+- [ ] Fix v1 relative paths (Option A — 3 lines)
+- [ ] Implement v2 dynamic scene fast-path (Option B)
+- [ ] Add manual "Clean Bridge" button in Settings
+- [ ] On-device soak test: apply animation, close app, verify lights keep going
+- [ ] Resource capacity monitoring (rules/sensors/schedules are finite on bridge)
+
+### Gotchas
+- v1 rule actions: addresses are RELATIVE (`/lights/1/state`), NOT full API paths
+- v1 rules: max 8 actions per rule. With N lights + 1 sensor bump = N+1 actions. Safe for up to 7 lights per room.
+- v2 dynamic scenes: less control over per-light timing (bridge controls cycle), but zero resource overhead
+- Bridge has finite resource limits (~100 rules, ~250 sensors, ~100 schedules). Must clean up between runs.
+- `purgeAllChromaGlowResources()` finds all CG_ prefixed resources and deletes them. Currently runs before every upload.
+
+### Current state
+Root cause identified and documented. Build is green. Two implementation paths approved. Next step: apply the 3-line v1 fix, test on device, then build v2 dynamic scene path.
