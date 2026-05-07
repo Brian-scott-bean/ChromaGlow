@@ -4,6 +4,52 @@
 
 ---
 
+## 2026-05-07 — Audit Bugfixes: 3 Bugs in Spatial Engine (Antigravity)
+
+### What was changed
+
+Post-implementation audit found 3 bugs in the Spatial Motion Engine. All fixed and verified with clean build.
+
+#### Bug #1 — REST Spatial Positions Never Worked (Critical)
+- **Root cause:** `computeSpatialPositions()` used `channel.lightServiceIDs` as map keys, but these are **entertainment** service IDs (from `/clip/v2/resource/entertainment_configuration` → `members[].service.rid`), NOT `light` service IDs. REST `compositionLightIDs` come from `fetchLights().map { $0.id }` — different UUID namespace. Lookup always returned nil → silent fallback to index-based.
+- **Fix:** Added `resolveEntertainmentLightPositions()` to `UnifiedOrchestrator`. Fetches `/clip/v2/resource/entertainment` services in parallel with lights, builds the bridge: `entertainment_service_id → device_id → light_id`. Changed `computeSpatialPositions()` to accept pre-built `lightPositions: [String: (x: Double, z: Double)]` map instead of raw `EntertainmentConfig`.
+
+#### Bug #2 — Mirror Toggle Did Nothing on Index Path
+- **Root cause:** `phase(lightIndex:total:time:)` never read the `mirror` field. Only the spatial overload `phase(spatialPosition:time:)` applied `abs(position - 0.5) * 2.0`.
+- **Fix:** Added `if mirror { position = abs(p - 0.5) * 2.0 }` to the index-based function.
+
+#### Bug #3 — PCA Overrides User's 0° Angle
+- **Root cause:** `motionAngle` defaulted to `0`. Orchestrator checked `== 0` to decide whether to auto-detect. But 0° (→ rightward) is a valid user choice.
+- **Fix:** Changed default to `-1` (sentinel = "auto-detect"). Check changed to `< 0`. UI clamps display to `max(0, angle)`.
+
+### Files changed
+| File | Change |
+|---|---|
+| `CompositionEngine.swift` | `computeSpatialPositions` now takes `lightPositions` map, not `config` |
+| `UnifiedOrchestrator.swift` | +`resolveEntertainmentLightPositions()` (~60 lines), PCA check `< 0` |
+| `CompositionModels.swift` | `motionAngle` default `-1`, mirror in index `phase()` |
+| `StudioView.swift` | `max(0, angle)` at 4 UI read points |
+
+### Git state
+- All work merged to `main` (commit `6c8eb87`)
+- Feature branch `feature/harmony-spatial-engine` deleted locally, still on remote
+- Safe revert point: `7db5c1e` (pre-harmony/spatial, settings cleanup only)
+
+### Known performance issue (not yet fixed)
+- **First tab switch takes ~4-5 seconds** after cold launch. Likely causes:
+  1. `StudioView` is ~2800 lines — first SwiftUI build is expensive
+  2. Synchronous `rebuildAllRooms()` / `rebuildAllZones()` on `@MainActor` blocks UI during large `@Observable` diffs
+  3. `deactivateStuckEntertainmentSessions()` runs sequentially before data load
+- **NOT caused by** `await` blocking the main thread (Swift concurrency yields on `await`)
+- Needs Instruments profiling (Time Profiler + SwiftUI) to confirm bottleneck split
+
+### What's next
+- [ ] Performance optimization: move heavy work off `@MainActor`, investigate StudioView cold build cost
+- [ ] Test harmony + spatial features on device with bridge
+- [ ] Test entertainment area creation flow end-to-end
+
+---
+
 ## 2026-05-07 — Spatial Motion Engine (Antigravity)
 
 ### What was changed
