@@ -39,6 +39,8 @@ struct MainTabView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.horizontalSizeClass) var sizeClass
     @State private var selectedTab: HueTab = .home
+    /// Tabs whose root view has been constructed at least once — avoids building Studio/Scenes/More until first visit (reduces cold-launch work).
+    @State private var realizedTabs: Set<HueTab> = [.home]
 
     var body: some View {
         if sizeClass == .regular {
@@ -72,9 +74,15 @@ struct MainTabView: View {
                     .opacity(selectedTab == tab ? 1 : 0)
                     .allowsHitTesting(selectedTab == tab)
             }
-            HueTabBar(selectedTab: $selectedTab)
+            HueTabBar(selectedTab: $selectedTab, realizedTabs: $realizedTabs)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            realizedTabs.insert(selectedTab)
+        }
+        .onChange(of: selectedTab) { _, newTab in
+            realizedTabs.insert(newTab)
+        }
     }
 
     // MARK: iPad Layout
@@ -84,6 +92,7 @@ struct MainTabView: View {
             List {
                 ForEach(HueTab.allCases, id: \.self) { tab in
                     Button {
+                        realizedTabs.insert(tab)
                         selectedTab = tab
                     } label: {
                         Label(tab.label, systemImage: tab.icon)
@@ -106,6 +115,12 @@ struct MainTabView: View {
         } detail: {
             tabContent(for: selectedTab)
         }
+        .onAppear {
+            realizedTabs.insert(selectedTab)
+        }
+        .onChange(of: selectedTab) { _, newTab in
+            realizedTabs.insert(newTab)
+        }
     }
 
     // MARK: Tab Content Router
@@ -117,14 +132,32 @@ struct MainTabView: View {
             NavigationStack { DashboardView() }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         case .scenes:
-            NavigationStack { ScenesTabView() }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Group {
+                if realizedTabs.contains(.scenes) {
+                    NavigationStack { ScenesTabView() }
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         case .studio:
-            NavigationStack { StudioView() }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Group {
+                if realizedTabs.contains(.studio) {
+                    NavigationStack { StudioView() }
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         case .more:
-            NavigationStack { MoreView() }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Group {
+                if realizedTabs.contains(.more) {
+                    NavigationStack { MoreView() }
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }
@@ -134,6 +167,7 @@ struct MainTabView: View {
 struct HueTabBar: View {
     @Environment(\.colorScheme) var colorScheme
     @Binding var selectedTab: HueTab
+    @Binding var realizedTabs: Set<HueTab>
     @Namespace private var animation
 
     var body: some View {
@@ -144,6 +178,7 @@ struct HueTabBar: View {
                     isSelected: selectedTab == tab,
                     namespace: animation
                 ) {
+                    realizedTabs.insert(tab)
                     withAnimation(HueAnimation.toggle) {
                         selectedTab = tab
                     }

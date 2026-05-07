@@ -1513,6 +1513,59 @@ final class UnifiedOrchestrator {
     /// Generation counter for studio/composer engine loops.
     /// Increment on every start/stop; async closures must match to send.
     private var studioGeneration: Int = 0
+    /// Per-room composition generation counters.
+    private var compositionGenerations: [String: Int] = [:]
+    /// Shared composition scheduler state (room-scoped runtimes, single bridge-fair ticker).
+    private var compositionRuntimes: [String: CompositionRuntime] = [:]
+    private var compositionOrder: [String] = []
+    private var compositionSchedulerTask: Task<Void, Never>?
+
+    private enum CompositionSchedulerProfile {
+        case balanced
+        case ultraResponsive
+    }
+    /// Default profile tuned for low-power smoothness; keep ultra for future A/B.
+    private let compositionSchedulerProfile: CompositionSchedulerProfile = .balanced
+
+    private struct CompositionRuntime {
+        let roomID: String
+        let roomName: String
+        let api: HueAPIClient
+        let groupedLightID: String
+        let paramBox: CompositionParamBox
+        let tier: CompositionTier
+        let gamut: HueColorUtils.Gamut
+        let startTime: CFAbsoluteTime
+        let generation: Int
+        var nextDueAt: CFAbsoluteTime
+        var wasInteracting: Bool
+        var pendingSettle: Bool
+        var interactionBurstUntil: CFAbsoluteTime?
+        var sendCount: Int
+        var lastSentX: Double?
+        var lastSentY: Double?
+        var lastSentBri: Double?
+        var lastSentAt: CFAbsoluteTime?
+    }
+
+    private struct CompositionTelemetry {
+        var sends: Int = 0
+        var lagSumMs: Double = 0
+        var maxLagMs: Double = 0
+        var windowStart: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    }
+    /// Latest observed REST cadence (seconds/update) for composition scheduler.
+    /// Exposed for QA visibility in Studio UI.
+    var activeRESTCadence: Double? = nil
+    /// Per-room cadence in seconds/update.
+    var activeRESTCadenceByRoom: [String: Double] = [:]
+    @ObservationIgnored
+    private var cadenceLastUIUpdateByRoom: [String: CFAbsoluteTime] = [:]
+    private var compositionTelemetryByRoom: [String: CompositionTelemetry] = [:]
+    private var compositionEntTask: Task<Void, Never>?
+    private var compositionEntRoomID: String?
+    /// Weak ref — entertainment composition loop reads reaction (mic demand). Cleared when ENT task ends.
+    private weak var compositionEntertainmentParamBox: CompositionParamBox?
 
     /// Live param reference — StudioViewModel updates this dict, engine loops read it.
     /// Using a class wrapper so the Task closure captures a reference, not a copy.
@@ -1635,88 +1688,175 @@ final class UnifiedOrchestrator {
     // MARK: - Composition Engine
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    private func anyCompositionNeedsMic() -> Bool {
+        if compositionRuntimes.values.contains(where: { $0.paramBox.reaction.requiresMic }) {
+            return true
+        }
+        return compositionEntertainmentParamBox?.reaction.requiresMic == true
+    }
+
+    private func refreshCompositionMicDemand() async {
+        await CompositionMicCapture.shared.syncDemand(anyCompositionNeedsMic())
+    }
+
     /// Start a composition render loop for the given room.
     /// Tries Entertainment API first (per-light, 25fps), falls back to REST (grouped_light ~1 Hz — bridge limit).
     func startCompositionMode(
         room: RoomDisplayItem,
-        paramBox: CompositionParamBox
+        paramBox: CompositionParamBox,
+        gamutOverride: HueColorUtils.Gamut? = nil,
+        preferEntertainment: Bool = true,
+        tier: CompositionTier = .runtimeOnly
     ) async {
-        // Cancel any previously running studio task
-        activeStudioTask?.cancel()
-        activeStudioTask = nil
-        studioGeneration += 1
-        let generation = studioGeneration
-        await studioRestSender.clear()
-        if let entClient = studioEntClient {
-            await entClient.stopSession()
-            studioEntClient = nil
-        }
-
         guard let api = hueClient(for: room.bridgeID),
               let groupedLightID = room.groupedLightID else { return }
-        print("[Composer] ▶ Start composition for room='\(room.name)' groupedLightID=\(groupedLightID)")
-
-        // Composer is room-scoped: only stream if an entertainment config
-        // actually contains lights from the selected room. Otherwise use REST.
-        let roomLightRefs = Set(
-            room.childResourceRefs
-                .filter { $0.rtype == "light" }
-                .map(\.rid)
+        let roomID = room.id
+        let nextGeneration = (compositionGenerations[roomID] ?? 0) + 1
+        compositionGenerations[roomID] = nextGeneration
+        let compositionGamut: HueColorUtils.Gamut
+        if let gamutOverride {
+            compositionGamut = gamutOverride
+            if paramBox.reaction.requiresMic {
+                await CompositionMicCapture.shared.syncDemand(true)
+            }
+        } else if paramBox.reaction.requiresMic {
+            async let gamutResolved = resolveCompositionGamut(for: room, api: api)
+            async let micHeadStart: Void = CompositionMicCapture.shared.syncDemand(true)
+            await micHeadStart
+            compositionGamut = await gamutResolved
+        } else {
+            compositionGamut = await resolveCompositionGamut(for: room, api: api)
+        }
+        print(
+            "[Composer] ▶ Start composition room='\(room.name)' id=\(roomID) gen=\(nextGeneration) groupedLightID=\(groupedLightID) preferEntertainment=\(preferEntertainment)"
         )
 
-        if !roomLightRefs.isEmpty,
-           let configs = try? await EntertainmentConfigManager().fetchConfigs(client: api),
-           let matchedConfig = configs.first(where: { config in
-               let configLights = Set(config.channels.flatMap(\.lightServiceIDs))
-               return !configLights.isDisjoint(with: roomLightRefs)
-           }),
-           let entClient = await tryStartEntertainment(room: room, configID: matchedConfig.id) {
-            let channelIDs = matchedConfig.channels.map { UInt8($0.id) }
-            print("[Composer] 🎬 Entertainment mode room='\(room.name)' config='\(matchedConfig.name)' channels=\(channelIDs.count)")
-            activeStudioTask = Task {
-                await runCompositionEntertainment(
-                    entClient: entClient,
-                    channelIDs: channelIDs,
-                    paramBox: paramBox
-                )
-            }
-        } else {
-            // REST fallback — group-level (~1 PUT/sec — bridge limit)
-            print("[Composer] 📡 REST fallback room='\(room.name)' groupedLightID=\(groupedLightID) ~1Hz grouped_light")
-            activeStudioTask = Task {
-                await runCompositionREST(
-                    api: api,
-                    groupedLightID: groupedLightID,
-                    paramBox: paramBox,
-                    generation: generation
-                )
+        // Prefer entertainment transport for dynamic compositions when possible.
+        // Only one entertainment composition may run at a time.
+        if preferEntertainment,
+           compositionEntRoomID == nil,
+           compositionRuntimes.isEmpty {
+            // Mic (when reaction uses it) is already warming during gamut resolution above,
+            // overlapping network time with FFT capture startup.
+            async let entClientTask = tryStartEntertainment(room: room)
+            async let configTask = findEntertainmentConfig(bridgeID: room.bridgeID)
+            let entClient = await entClientTask
+            let config = await configTask
+            if let entClient, let config {
+                let channelIDs = config.channels.map { UInt8($0.id) }
+                if !channelIDs.isEmpty {
+                    compositionEntRoomID = roomID
+                    compositionEntertainmentParamBox = paramBox
+                    compositionEntTask?.cancel()
+                    compositionEntTask = Task { [weak self] in
+                        guard let self else { return }
+                        await self.runCompositionEntertainment(
+                            entClient: entClient,
+                            channelIDs: channelIDs,
+                            paramBox: paramBox,
+                            gamut: compositionGamut
+                        )
+                    }
+                    await refreshCompositionMicDemand()
+                    print("[Composer] ⚡ Entertainment transport active for room='\(room.name)'")
+                    return
+                }
             }
         }
+
+        compositionRuntimes[roomID] = CompositionRuntime(
+            roomID: roomID,
+            roomName: room.name,
+            api: api,
+            groupedLightID: groupedLightID,
+            paramBox: paramBox,
+            tier: tier,
+            gamut: compositionGamut,
+            startTime: CFAbsoluteTimeGetCurrent(),
+            generation: nextGeneration,
+            nextDueAt: CFAbsoluteTimeGetCurrent(),
+            wasInteracting: false,
+            pendingSettle: false,
+            interactionBurstUntil: nil,
+            sendCount: 0,
+            lastSentX: nil,
+            lastSentY: nil,
+            lastSentBri: nil,
+            lastSentAt: nil
+        )
+        if !compositionOrder.contains(roomID) {
+            compositionOrder.append(roomID)
+        }
+
+        // Prime immediately so newly started rooms visibly turn on without
+        // waiting for the next round-robin scheduler slot.
+        await refreshCompositionMicDemand()
+        let primeAudio = CompositionMicCapture.reactionAudioLevel(for: paramBox.reaction)
+        if let firstFrame = CompositionEngine.render(
+            time: 0,
+            channelIDs: [0],
+            params: paramBox,
+            audioLevel: primeAudio
+        ).first {
+            let xy = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: compositionGamut)
+            let bri = max(1, firstFrame.brightness * 100.0)
+            do {
+                try await api.setGroupedLightEffect(
+                    id: groupedLightID, on: true,
+                    brightness: bri,
+                    xy: (xy.x, xy.y),
+                    mirek: nil,
+                    duration: 140
+                )
+                print(
+                    "[Composer][Prime] ✅ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) bri=\(String(format: "%.1f", bri)) xy=(\(String(format: "%.4f", xy.x)),\(String(format: "%.4f", xy.y)))"
+                )
+            } catch {
+                print("[Composer][Prime] ❌ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) error=\(error)")
+            }
+            if var runtime = compositionRuntimes[roomID] {
+                runtime.lastSentX = xy.x
+                runtime.lastSentY = xy.y
+                runtime.lastSentBri = bri
+                runtime.sendCount = 1
+                runtime.lastSentAt = CFAbsoluteTimeGetCurrent()
+                compositionRuntimes[roomID] = runtime
+            }
+        }
+
+        ensureCompositionSchedulerRunning()
+        await refreshCompositionMicDemand()
+        print("[Composer] 📡 Scheduled room='\(room.name)' on global composition ticker")
     }
 
     /// Composition render loop via Entertainment API — per-light colors at 25fps.
     private func runCompositionEntertainment(
         entClient: HueEntertainmentClient,
         channelIDs: [UInt8],
-        paramBox: CompositionParamBox
+        paramBox: CompositionParamBox,
+        gamut: HueColorUtils.Gamut
     ) async {
+        defer { compositionEntertainmentParamBox = nil }
         let frameInterval: UInt64 = 40_000_000  // 40ms = 25fps
         let startTime = CFAbsoluteTimeGetCurrent()
 
         while !Task.isCancelled {
+            await refreshCompositionMicDemand()
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            let audioLevel = CompositionMicCapture.reactionAudioLevel(for: paramBox.reaction)
 
             // Render all channels in one frame
             let frames = CompositionEngine.render(
                 time: elapsed,
                 channelIDs: channelIDs,
                 params: paramBox,
-                audioLevel: 0  // TODO: wire mic input in Phase 2
+                audioLevel: audioLevel
             )
 
             // Convert to entertainment send format
             let channels = frames.map { frame in
-                (id: frame.channelID, x: frame.x, y: frame.y, brightness: frame.brightness)
+                let xy = HueColorUtils.clampXYToGamut(x: frame.x, y: frame.y, gamut: gamut)
+                return (id: frame.channelID, x: xy.x, y: xy.y, brightness: frame.brightness)
             }
             await entClient.send(channels: channels)
 
@@ -1726,63 +1866,283 @@ final class UnifiedOrchestrator {
 
     /// Composition render loop via REST — group-level color + brightness.
     ///
-    /// **Bridge limit:** `HueAPIClient` documents grouped_light at **~1 PUT/sec**.
-    /// Sending faster (this loop previously used 200ms / ~5 Hz) overloads the bridge,
-    /// queues commands, and produces **30–60s apparent lag** as stale PUTs drain.
-    ///
-    /// Tradeoff: Composer REST mode updates ~1×/second. Prefer Entertainment (DTLS)
-    /// when an entertainment config matches the room for smooth motion.
-    private func runCompositionREST(
-        api: HueAPIClient,
-        groupedLightID: String,
-        paramBox: CompositionParamBox,
-        generation: Int
-    ) async {
-        let startTime = CFAbsoluteTimeGetCurrent()
-        /// Minimum spacing between grouped_light PUTs (seconds).
-        let groupedLightMinInterval: TimeInterval = 1.05
-        let transitionMs = 900
-
-        while !Task.isCancelled {
-            let isCurrent = await MainActor.run { self.studioGeneration == generation }
-            guard isCurrent else { break }
-            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-
-            // Render a single "virtual channel" for the group
-            let frames = CompositionEngine.render(
-                time: elapsed,
-                channelIDs: [0],
-                params: paramBox,
-                audioLevel: 0
-            )
-
-            guard let frame = frames.first else { continue }
-            let bri = max(1, frame.brightness * 100.0)  // 0-1 → 1-100
-
-            await studioRestSender.enqueue {
-                let stillCurrent = await MainActor.run { self.studioGeneration == generation }
-                guard stillCurrent else { return }
-                try? await api.setGroupedLightEffect(
-                    id: groupedLightID, on: true,
-                    brightness: bri,
-                    xy: (frame.x, frame.y),
-                    mirek: nil,
-                    duration: transitionMs
-                )
-            }
-
-            do {
-                try await Task.sleep(for: .seconds(groupedLightMinInterval))
-            } catch { break }
+    /// **Cadence:** Aligned with `SyncModeEngine` REST visualizer — `0.15s × roomCount`
+    /// between sends for dynamic tiers (same bridge fairness model as the dedicated Sync tab).
+    /// Avoid unconstrained fast loops (e.g. fixed 200ms × many rooms): that queues PUTs and
+    /// causes multi‑second apparent lag. Prefer Entertainment (DTLS) when available.
+    private func ensureCompositionSchedulerRunning() {
+        guard compositionSchedulerTask == nil else { return }
+        compositionSchedulerTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runCompositionScheduler()
         }
     }
 
+    func stopCompositionMode(roomID: String) async {
+        print("[Handoff] Composer stop requested for roomID=\(roomID)")
+        compositionGenerations[roomID] = (compositionGenerations[roomID] ?? 0) + 1
+        print("[Handoff] Clearing studio REST sender mailbox for roomID=\(roomID)")
+        await studioRestSender.clear()
+        // Give Hue bridge firmware a brief settle window before any new owner starts writing.
+        try? await Task.sleep(for: .milliseconds(150))
+        print("[Handoff] REST mailbox cleared + settle delay complete for roomID=\(roomID)")
+        if compositionEntRoomID == roomID {
+            compositionEntertainmentParamBox = nil
+            compositionEntTask?.cancel()
+            compositionEntTask = nil
+            compositionEntRoomID = nil
+            if let entClient = studioEntClient {
+                await entClient.stopSession()
+                studioEntClient = nil
+            }
+        }
+        compositionRuntimes.removeValue(forKey: roomID)
+        compositionTelemetryByRoom.removeValue(forKey: roomID)
+        activeRESTCadenceByRoom.removeValue(forKey: roomID)
+        cadenceLastUIUpdateByRoom.removeValue(forKey: roomID)
+        if activeRESTCadenceByRoom.isEmpty {
+            activeRESTCadence = nil
+        }
+        compositionOrder.removeAll { $0 == roomID }
+        if compositionRuntimes.isEmpty {
+            compositionSchedulerTask?.cancel()
+            compositionSchedulerTask = nil
+        }
+        await refreshCompositionMicDemand()
+        print("[Handoff] Composer teardown complete for roomID=\(roomID)")
+    }
+
+    private func runCompositionScheduler() async {
+        // ─────────────────────────────────────────────────────────────
+        // Composer REST Scheduler — MAILBOX DESIGN
+        //
+        // The bridge can only process ~1 grouped_light PUT/sec.
+        // If we call the API directly, stale intermediates QUEUE on
+        // the bridge's TCP buffer → 5-60 second lag.
+        //
+        // Solution: all sends go through studioRestSender (latest-wins
+        // mailbox). It keeps max 1 in-flight + 1 pending, dropping any
+        // stale values in between. The bridge always gets the NEWEST
+        // desired state. Zero queue. Zero lag.
+        //
+        // The scheduler ticks at ~8fps (120ms) to pick up fresh param
+        // values from slider drags. The mailbox limits actual PUTs to
+        // whatever the bridge can handle (~1/sec).
+        // ─────────────────────────────────────────────────────────────
+        let tickInterval: Duration = .milliseconds(120)
+
+        while !Task.isCancelled {
+            if compositionRuntimes.isEmpty {
+                compositionSchedulerTask = nil
+                return
+            }
+
+            await refreshCompositionMicDemand()
+
+            let now = CFAbsoluteTimeGetCurrent()
+            guard let roomID = nextCompositionRoomPriority(now: now),
+                  var runtime = compositionRuntimes[roomID] else {
+                try? await Task.sleep(for: tickInterval)
+                continue
+            }
+
+            // Generation guard — don't send for stale/stopped rooms
+            guard compositionGenerations[roomID] == runtime.generation else {
+                compositionRuntimes.removeValue(forKey: roomID)
+                compositionOrder.removeAll { $0 == roomID }
+                continue
+            }
+
+            // Render the current frame
+            let elapsed = now - runtime.startTime
+            let audioLevel = CompositionMicCapture.reactionAudioLevel(for: runtime.paramBox.reaction)
+            let frames = CompositionEngine.render(
+                time: elapsed,
+                channelIDs: [0],
+                params: runtime.paramBox,
+                audioLevel: audioLevel
+            )
+            guard let frame = frames.first else {
+                try? await Task.sleep(for: tickInterval)
+                continue
+            }
+
+            let bri = max(1, frame.brightness * 100.0)
+            let xy = HueColorUtils.clampXYToGamut(x: frame.x, y: frame.y, gamut: runtime.gamut)
+
+            // Skip if nothing visually changed (static preset, no interaction)
+            let colorDelta: Double = {
+                guard let lx = runtime.lastSentX, let ly = runtime.lastSentY else { return .greatestFiniteMagnitude }
+                return hypot(xy.x - lx, xy.y - ly)
+            }()
+            let briDelta = abs(bri - (runtime.lastSentBri ?? -999))
+            if colorDelta < 0.003 && briDelta < 1.0 {
+                try? await Task.sleep(for: tickInterval)
+                continue
+            }
+
+            // Capture values for the closure
+            let capturedAPI = runtime.api
+            let capturedGLID = runtime.groupedLightID
+            let capturedBri = bri
+            let capturedXY = xy
+            let capturedGen = runtime.generation
+            let latestGen = compositionGenerations[roomID] ?? -1
+
+            // ── THE KEY FIX ──
+            // Route through the latest-wins mailbox. If a previous PUT
+            // is still in-flight, this REPLACES the pending value.
+            // The bridge always gets the NEWEST color, never a backlog.
+            await studioRestSender.enqueue { [weak self] in
+                // Generation check inside closure — skip if stopped while queued
+                guard capturedGen == latestGen else { return }
+                try? await capturedAPI.setGroupedLightEffect(
+                    id: capturedGLID, on: true,
+                    brightness: capturedBri,
+                    xy: (capturedXY.x, capturedXY.y),
+                    mirek: nil,
+                    duration: 200  // smooth transition between frames
+                )
+                #if DEBUG
+                print("[Composer][REST] ✅ room=\(roomID) bri=\(String(format: "%.1f", capturedBri)) xy=(\(String(format: "%.4f", capturedXY.x)),\(String(format: "%.4f", capturedXY.y)))")
+                #endif
+            }
+
+            // Track what we enqueued (for delta skip)
+            runtime.lastSentX = xy.x
+            runtime.lastSentY = xy.y
+            runtime.lastSentBri = bri
+            runtime.lastSentAt = now
+            runtime.sendCount += 1
+            runtime.nextDueAt = now + 0.12  // round-robin fairness interval
+            compositionRuntimes[roomID] = runtime
+
+            recordCompositionTelemetry(
+                roomID: roomID,
+                roomName: runtime.roomName,
+                dueAt: now,
+                sentAt: now
+            )
+
+            try? await Task.sleep(for: tickInterval)
+        }
+    }
+
+    // Simplified cadence functions — mailbox handles actual rate limiting
+    private func minimumComposerRESTInterval(roomCount: Int, tier: CompositionTier) -> Double {
+        return 0.12 * Double(max(1, roomCount))
+    }
+
+    private func minimumComposerBurstFloor(roomCount: Int, tier: CompositionTier) -> Double {
+        return 0.12 * Double(max(1, roomCount))
+    }
+
+    private func preferredComposerIdleInterval(roomCount: Int, tier: CompositionTier) -> Double {
+        return 0.12 * Double(max(1, roomCount))
+    }
+
+    private func lowPowerIdleInterval(roomCount: Int, tier: CompositionTier) -> Double {
+        return 0.25 * Double(max(1, roomCount))
+    }
+
+    private func recordCompositionTelemetry(roomID: String, roomName: String, dueAt: CFAbsoluteTime, sentAt: CFAbsoluteTime) {
+        let lagMs = max(0, (sentAt - dueAt) * 1000)
+        var metric = compositionTelemetryByRoom[roomID] ?? CompositionTelemetry(windowStart: sentAt)
+        metric.sends += 1
+        metric.lagSumMs += lagMs
+        metric.maxLagMs = max(metric.maxLagMs, lagMs)
+
+        let elapsed = max(0.001, sentAt - metric.windowStart)
+        let cadenceSeconds = elapsed / Double(max(1, metric.sends))
+        let lastUIUpdate = cadenceLastUIUpdateByRoom[roomID] ?? 0
+        if sentAt - lastUIUpdate >= 1.5 {
+            activeRESTCadenceByRoom[roomID] = cadenceSeconds
+            activeRESTCadence = cadenceSeconds
+            cadenceLastUIUpdateByRoom[roomID] = sentAt
+        }
+
+        if elapsed >= 5.0 {
+            #if DEBUG
+            let hz = Double(metric.sends) / elapsed
+            let avgLag = metric.lagSumMs / Double(max(1, metric.sends))
+            print(
+                "[Composer][Telemetry] room='\(roomName)' id=\(roomID) hz=\(String(format: "%.2f", hz)) avgLagMs=\(String(format: "%.1f", avgLag)) maxLagMs=\(String(format: "%.1f", metric.maxLagMs))"
+            )
+            #endif
+            metric = CompositionTelemetry(windowStart: sentAt)
+        }
+        compositionTelemetryByRoom[roomID] = metric
+    }
+
+    private func nextCompositionRoomPriority(now: CFAbsoluteTime) -> String? {
+        var selectedRoomID: String?
+        var selectedScore: Double = -.greatestFiniteMagnitude
+
+        for roomID in compositionOrder {
+            guard let runtime = compositionRuntimes[roomID] else { continue }
+            // Not yet due: skip unless we're within a tiny grace window.
+            if now + 0.004 < runtime.nextDueAt { continue }
+
+            let isInteracting = runtime.paramBox.isColorPadInteracting
+            let burstActive = runtime.interactionBurstUntil.map { now < $0 } ?? false
+            let overdue = max(0, now - runtime.nextDueAt)
+            let sinceLastSend = now - (runtime.lastSentAt ?? runtime.startTime)
+
+            var score = 0.0
+            if isInteracting { score += 1000 }
+            if burstActive { score += 500 }
+            if runtime.pendingSettle { score += 260 }
+            score += min(220, overdue * 120)
+            score += min(160, max(0, sinceLastSend - 1.4) * 45)
+            // Small fairness nudge to avoid repeatedly preferring a single hot room.
+            score -= min(60, Double(runtime.sendCount % 120) * 0.35)
+
+            if score > selectedScore {
+                selectedScore = score
+                selectedRoomID = roomID
+            }
+        }
+
+        return selectedRoomID
+    }
+
+    private func resolveCompositionGamut(for room: RoomDisplayItem, api: HueAPIClient) async -> HueColorUtils.Gamut {
+        guard let allLights = try? await api.fetchLights() else { return .c }
+        let refs = room.childResourceRefs
+
+        let roomLights: [HueLight]
+        if refs.contains(where: { $0.rtype == "light" }) {
+            let lightIDs = Set(refs.filter { $0.rtype == "light" }.map(\.rid))
+            roomLights = allLights.filter { lightIDs.contains($0.id) }
+        } else {
+            let deviceIDs = Set(refs.map(\.rid))
+            roomLights = allLights.filter { light in
+                guard let ownerRID = light.owner?.rid else { return false }
+                return deviceIDs.contains(ownerRID)
+            }
+        }
+
+        guard !roomLights.isEmpty else { return .c }
+        var counts: [HueColorUtils.Gamut: Int] = [.a: 0, .b: 0, .c: 0]
+        for light in roomLights {
+            guard let raw = light.color?.gamut_type?.uppercased(),
+                  let gamut = HueColorUtils.Gamut(rawValue: raw) else { continue }
+            counts[gamut, default: 0] += 1
+        }
+        return counts.max(by: { $0.value < $1.value })?.key ?? .c
+    }
+
     func stopStudioMode() async {
+        print("[Handoff] Studio stop requested")
         // Cancel the running loop task (strobe, etc.)
         activeStudioTask?.cancel()
         activeStudioTask = nil
         studioGeneration += 1
+        print("[Handoff] Clearing studio REST sender mailbox")
         await studioRestSender.clear()
+        // Small barrier so bridge transition buffers drain before a new startup sequence.
+        try? await Task.sleep(for: .milliseconds(150))
+        print("[Handoff] REST mailbox cleared + settle delay complete")
         activeParamBox = nil
         print("[Studio] ⏹ stopStudioMode() canceled active engine loop")
 
@@ -1795,6 +2155,7 @@ final class UnifiedOrchestrator {
         // Also notify any mic engines
         NotificationCenter.default.post(name: .studioStopAll, object: nil)
         activeEffectEntries.removeAll()
+        print("[Handoff] Studio teardown complete")
     }
 
     // MARK: - Entertainment Setup Helpers

@@ -31,6 +31,9 @@ extension Notification.Name {
 final class AppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
 
     private let log = Logger(subsystem: "com.lightshade.app", category: "AutomationHandler")
+    private enum OrientationPrefs {
+        static let allowLandscape = "app.allowLandscapeRotation"
+    }
 
     func application(
         _ application: UIApplication,
@@ -39,6 +42,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUser
         UNUserNotificationCenter.current().delegate = self
         log.info("AppDelegate: registered as UNUserNotificationCenter delegate")
         return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        supportedInterfaceOrientationsFor window: UIWindow?
+    ) -> UIInterfaceOrientationMask {
+        let allowLandscape = UserDefaults.standard.bool(forKey: OrientationPrefs.allowLandscape)
+        if allowLandscape {
+            return .allButUpsideDown
+        }
+        return .portrait
     }
 }
 

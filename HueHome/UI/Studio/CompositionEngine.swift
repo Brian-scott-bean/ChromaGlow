@@ -20,6 +20,10 @@ final class CompositionParamBox: @unchecked Sendable {
     var motion: MotionConfig
     var envelope: EnvelopeConfig
     var reaction: ReactionConfig
+    var isColorPadInteracting: Bool = false
+    /// UI-driven short burst window to bypass REST low-power skipping
+    /// so direct user edits flush to the bridge immediately.
+    var forceRESTBurstUntil: TimeInterval = 0
 
     init(preset: CompositionPreset) {
         self.palette = preset.palette
@@ -33,6 +37,11 @@ final class CompositionParamBox: @unchecked Sendable {
         self.motion = motion
         self.envelope = envelope
         self.reaction = reaction
+    }
+
+    func triggerRESTBurst(seconds: TimeInterval = 0.55) {
+        let now = Date().timeIntervalSinceReferenceDate
+        forceRESTBurstUntil = max(forceRESTBurstUntil, now + seconds)
     }
 }
 
@@ -82,8 +91,19 @@ enum CompositionEngine {
             // 3. Envelope: what brightness at this time?
             var bri = envelope.value(at: time)
 
-            // 4. Reaction: modify brightness based on audio input
-            bri = reaction.apply(baseBrightness: bri, audioLevel: audioLevel, time: time)
+            // 4. Reaction: mic bands use external audioLevel; tap tempo is BPM-synced (no mic).
+            let reactionAudio: Float
+            switch reaction.source {
+            case .tapTempo:
+                let hz = envelope.bpm / 60.0
+                reactionAudio = Float(0.5 + 0.5 * sin(2.0 * Double.pi * hz * time))
+            case .micAmplitude, .micBass, .micMid, .micTreble:
+                reactionAudio = audioLevel
+            case .none:
+                reactionAudio = 0
+            }
+
+            bri = reaction.apply(baseBrightness: bri, audioLevel: reactionAudio, time: time)
 
             // Clamp final brightness
             bri = min(1.0, max(0.0, bri))

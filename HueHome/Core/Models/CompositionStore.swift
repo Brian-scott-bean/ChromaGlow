@@ -47,21 +47,23 @@ final class CompositionStore {
     }
 
     func duplicate(_ preset: CompositionPreset) -> CompositionPreset {
-        var copy = preset
-        copy = CompositionPreset(
+        let copy = CompositionPreset(
             id: UUID(),
             name: "\(preset.name) Copy",
             icon: preset.icon,
             accentColorHex: preset.accentColorHex,
             isBuiltIn: false,
             category: .myCreations,
-            seasonMonths: nil,
+            seasonMonths: preset.seasonMonths,
             palette: preset.palette,
             motion: preset.motion,
             envelope: preset.envelope,
             reaction: preset.reaction,
             createdAt: Date(),
-            updatedAt: Date()
+            updatedAt: Date(),
+            aiPrompt: preset.aiPrompt,
+            providerModel: preset.providerModel,
+            preferredTransport: preset.preferredTransport
         )
         presets.append(copy)
         persist()

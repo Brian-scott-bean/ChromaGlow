@@ -143,9 +143,28 @@ final class SyncModeEngine {
     private weak var orchestrator: UnifiedOrchestrator?
     private let log = Logger(subsystem: "com.lightshade.app", category: "SyncMode")
 
+    @ObservationIgnored nonisolated(unsafe) private var composerMicExclusiveObserver: NSObjectProtocol?
+
     init(orchestrator: UnifiedOrchestrator) {
         self.orchestrator = orchestrator
+        composerMicExclusiveObserver = NotificationCenter.default.addObserver(
+            forName: .composerMicExclusiveBegan,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            if self.isRunning {
+                self.stop()
+                self.log.info("Sync stopped — Composer claimed microphone")
+            }
+        }
         Task { await loadEntertainmentConfigs() }
+    }
+
+    deinit {
+        if let composerMicExclusiveObserver {
+            NotificationCenter.default.removeObserver(composerMicExclusiveObserver)
+        }
     }
 
     /// The currently active engine instance.

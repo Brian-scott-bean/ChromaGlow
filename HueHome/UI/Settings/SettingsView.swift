@@ -19,6 +19,7 @@ struct SettingsView: View {
     @Environment(\.dismiss)               private var dismiss
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Query private var bridges: [BridgeRecord]
+    @AppStorage("app.allowLandscapeRotation") private var allowLandscapeRotation: Bool = false
 
     // Loaded from Keychain on appear
     @State private var tokenPreview = "—"
@@ -361,6 +362,20 @@ struct SettingsView: View {
 
                 Spacer()
             }
+
+            Divider().background(Color.white.opacity(0.08))
+
+            Toggle(isOn: $allowLandscapeRotation) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Allow Landscape Rotation")
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                    Text("Off keeps Studio locked to portrait by default.")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+            }
+            .tint(glowColor)
 
             Divider().background(Color.white.opacity(0.08))
 

@@ -11,6 +11,31 @@ import SwiftUI
 // MARK: - HueColorUtils
 
 enum HueColorUtils {
+    enum Gamut: String {
+        case a = "A"
+        case b = "B"
+        case c = "C"
+    }
+
+    private typealias XY = (x: Double, y: Double)
+
+    private static let gamutA: (r: XY, g: XY, b: XY) = (
+        r: (0.704, 0.296),
+        g: (0.2151, 0.7106),
+        b: (0.138, 0.080)
+    )
+
+    private static let gamutB: (r: XY, g: XY, b: XY) = (
+        r: (0.675, 0.322),
+        g: (0.4091, 0.518),
+        b: (0.167, 0.040)
+    )
+
+    private static let gamutC: (r: XY, g: XY, b: XY) = (
+        r: (0.692, 0.308),
+        g: (0.170, 0.700),
+        b: (0.153, 0.048)
+    )
 
     // ──────────────────────────────────────────────
     // MARK: - HSB → CIE xy
@@ -37,6 +62,16 @@ enum HueColorUtils {
         guard sum > 0 else { return (0.3127, 0.3290) }   // D65 white point fallback
 
         return (X / sum, Y / sum)
+    }
+
+    /// Clamp a CIE xy point to a Hue bulb gamut triangle.
+    static func clampXYToGamut(x: Double, y: Double, gamut: Gamut) -> (x: Double, y: Double) {
+        let p = (x: x.clamped(0, 1), y: y.clamped(0, 1))
+        let triangle = triangle(for: gamut)
+        if isInsideTriangle(point: p, triangle: triangle) {
+            return p
+        }
+        return closestPointOnTriangle(point: p, triangle: triangle)
     }
 
     // ──────────────────────────────────────────────
@@ -133,6 +168,58 @@ enum HueColorUtils {
     private static func delinearise(_ v: Double) -> Double {
         let c = Swift.max(0, v)
         return c <= 0.0031308 ? 12.92 * c : 1.055 * pow(c, 1.0 / 2.4) - 0.055
+    }
+
+    private static func triangle(for gamut: Gamut) -> (r: XY, g: XY, b: XY) {
+        switch gamut {
+        case .a: return gamutA
+        case .b: return gamutB
+        case .c: return gamutC
+        }
+    }
+
+    private static func isInsideTriangle(point p: XY, triangle t: (r: XY, g: XY, b: XY)) -> Bool {
+        let d1 = sign(p, t.r, t.g)
+        let d2 = sign(p, t.g, t.b)
+        let d3 = sign(p, t.b, t.r)
+        let hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0)
+        let hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0)
+        return !(hasNeg && hasPos)
+    }
+
+    private static func sign(_ p1: XY, _ p2: XY, _ p3: XY) -> Double {
+        (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+    }
+
+    private static func closestPointOnTriangle(point p: XY, triangle t: (r: XY, g: XY, b: XY)) -> XY {
+        let c1 = closestPointOnSegment(point: p, a: t.r, b: t.g)
+        let c2 = closestPointOnSegment(point: p, a: t.g, b: t.b)
+        let c3 = closestPointOnSegment(point: p, a: t.b, b: t.r)
+
+        let d1 = squaredDistance(p, c1)
+        let d2 = squaredDistance(p, c2)
+        let d3 = squaredDistance(p, c3)
+
+        if d1 <= d2 && d1 <= d3 { return c1 }
+        if d2 <= d1 && d2 <= d3 { return c2 }
+        return c3
+    }
+
+    private static func closestPointOnSegment(point p: XY, a: XY, b: XY) -> XY {
+        let abx = b.x - a.x
+        let aby = b.y - a.y
+        let ab2 = abx * abx + aby * aby
+        guard ab2 > 0 else { return a }
+        let apx = p.x - a.x
+        let apy = p.y - a.y
+        let t = ((apx * abx + apy * aby) / ab2).clamped(0, 1)
+        return (x: a.x + abx * t, y: a.y + aby * t)
+    }
+
+    private static func squaredDistance(_ p1: XY, _ p2: XY) -> Double {
+        let dx = p1.x - p2.x
+        let dy = p1.y - p2.y
+        return dx * dx + dy * dy
     }
 }
 

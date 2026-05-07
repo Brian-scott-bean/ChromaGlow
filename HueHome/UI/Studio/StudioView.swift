@@ -17,13 +17,67 @@ import SwiftUI
 // MARK: - StudioView
 
 struct StudioView: View {
+    private enum CompositionSaveTransportOption: String, CaseIterable, Identifiable {
+        case entertainmentArea
+        case roomOnly
 
-    private enum CompositionLayerTab: String, CaseIterable, Identifiable {
-        case palette = "🎨 Palette"
-        case motion = "🌊 Motion"
-        case envelope = "📈 Envelope"
-        case reaction = "🎤 React"
         var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .entertainmentArea: return "Entertainment Area"
+            case .roomOnly: return "Room Only"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .entertainmentArea: return "Streaming"
+            case .roomOnly: return "REST"
+            }
+        }
+
+        var presetValue: CompositionPreferredTransport {
+            switch self {
+            case .entertainmentArea: return .entertainmentArea
+            case .roomOnly: return .roomOnly
+            }
+        }
+
+        /// Short titles for segmented controls on narrow widths.
+        var segmentTitle: String {
+            switch self {
+            case .entertainmentArea: return "Streaming"
+            case .roomOnly: return "REST"
+            }
+        }
+    }
+
+
+    private enum CompositionLayerTab: String, CaseIterable, Identifiable, Hashable {
+        case palette
+        case motion
+        case envelope
+        case reaction
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .palette: return "Palette"
+            case .motion: return "Motion"
+            case .envelope: return "Envelope"
+            case .reaction: return "React"
+            }
+        }
+
+        var symbolName: String {
+            switch self {
+            case .palette: return "paintpalette.fill"
+            case .motion: return "wind"
+            case .envelope: return "chart.xyaxis.line"
+            case .reaction: return "mic.fill"
+            }
+        }
     }
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
@@ -49,8 +103,20 @@ struct StudioView: View {
     @State private var showCompositionSaveSheet = false
     @State private var compositionSaveName = ""
     @State private var compositionSaveIcon = "sparkles"
+    @State private var compositionSaveTransport: CompositionSaveTransportOption = .entertainmentArea
     @State private var isAIPromptExpanded = false
     @State private var aiPromptText = ""
+    @State private var isHuePadDragging = false
+    @State private var huePadLiveHue: Double = 0
+    @State private var huePadLiveSaturation: Double = 1
+    @State private var lastHuePadHapticAt: CFAbsoluteTime = 0
+    @State private var mixerDragOffset: CGFloat = 0
+    @State private var isMixerCollapsed = false
+    @State private var showCompositionTransportPrompt = false
+    @State private var pendingCompositionCard: StudioCard?
+    @State private var pendingCompositionRoom: RoomDisplayItem?
+    @State private var transportSwitchInFlightRoomIDs: Set<String> = []
+    @State private var compositionDeleteTarget: CompositionPreset?
     @FocusState private var aiPromptFocused: Bool
 
     // ── Param sheet ───────────────────────────────────────
@@ -60,38 +126,97 @@ struct StudioView: View {
     @State private var blurReady = false  // deferred to avoid first-frame GPU hitch
 
     var body: some View {
-        let mixerVisible = vm.currentRoomEffect != nil
-        let mixerHeight: CGFloat = mixerVisible ? computeMixerHeight() : 0
+        GeometryReader { geo in
+            let hasCurrentRoomEffect = vm.currentRoomEffect != nil
+            let mixerVisible = hasCurrentRoomEffect && !isMixerCollapsed
+            let mixerHeight: CGFloat = mixerVisible ? resolvedMixerHeight(proxy: geo) : 0
 
-        ZStack {
-            ambientBackground
+            ZStack {
+                ambientBackground
 
-            VStack(spacing: 0) {
-                // Zone A is now the nav title (no pill strip needed)
-
-                // ── Zone B: Living Card Grid ──────────────────
-                cardGrid
-                    .frame(maxHeight: .infinity)
-
-                // ── Deck page indicator ───────────────────────
-                deckDots
-                    .padding(.bottom, HueSpacing.sm)
-
-                // ── Zone C: Mixer Tray ────────────────────────
                 if mixerVisible {
-                    mixerTray
-                        .frame(height: mixerHeight)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    Color.black.opacity(0.001)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            hideKeyboard()
+                            collapseMixer()
+                            HapticManager.shared.light()
+                        }
                 }
 
-                // Tab bar clearance
-                Color.clear.frame(height: 80)
+                VStack(spacing: 0) {
+                    // ── Zone B: Living Card Grid ──────────────────
+                    cardGrid
+                        .frame(maxHeight: .infinity)
+
+                    // ── Deck page indicator ───────────────────────
+                    deckDots
+                        .padding(.bottom, HueSpacing.sm)
+
+                    if hasCurrentRoomEffect && isMixerCollapsed {
+                        Button {
+                            expandMixer()
+                            HapticManager.shared.selection()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(HuePalette.Noir.success)
+                                    .frame(width: 6, height: 6)
+                                Text("Live Controls")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.9))
+                                Image(systemName: "chevron.up")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(HuePalette.amber.opacity(0.9))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule().fill(Color.white.opacity(0.10))
+                            )
+                            .overlay(
+                                Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.bottom, 6)
+                    }
+
+                    // Tab bar clearance
+                    Color.clear.frame(height: 80)
+                }
+
+                if mixerVisible {
+                    VStack {
+                        Spacer()
+                        mixerTray
+                            .frame(height: mixerHeight)
+                            .offset(y: mixerDragOffset)
+                            .gesture(mixerDismissDragGesture)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    .padding(.bottom, studioTabBarClearance(bottomInset: geo.safeAreaInsets.bottom))
+                }
             }
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                if vm.hasAnyRunningEffect {
+                    Button {
+                        Task { await vm.stopAll() }
+                        HapticManager.shared.medium()
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .foregroundStyle(HuePalette.Noir.destructive)
+                    }
+                    .accessibilityLabel("Stop all running effects")
+                }
+            }
             ToolbarItem(placement: .principal) {
                 swipeableRoomTitle
             }
@@ -115,6 +240,12 @@ struct StudioView: View {
                 withAnimation(.easeIn(duration: 0.4)) { blurReady = true }
             }
         }
+        .onChange(of: vm.selectedRoom?.id) { _, _ in
+            isMixerCollapsed = false
+        }
+        .onChange(of: vm.runningCardID) { _, newValue in
+            if newValue == nil { isMixerCollapsed = false }
+        }
         .animation(HueAnimation.slow, value: vm.currentRoomEffect != nil)
         .animation(HueAnimation.card, value: vm.runningCardID)
         .alert("Rename Composition", isPresented: Binding(
@@ -134,30 +265,94 @@ struct StudioView: View {
         } message: {
             Text("This name appears on the Composer deck.")
         }
+        .confirmationDialog(
+            "Choose Composer Transport",
+            isPresented: $showCompositionTransportPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Room Only (REST)") {
+                guard let card = pendingCompositionCard else { return }
+                let room = pendingCompositionRoom
+                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false) }
+                clearPendingCompositionTransportPrompt()
+            }
+            Button("Entertainment Area (Streaming)") {
+                guard let card = pendingCompositionCard else { return }
+                let room = pendingCompositionRoom
+                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true) }
+                clearPendingCompositionTransportPrompt()
+            }
+            Divider()
+            Button("Always Room Only") {
+                vm.compositionTransportPreference = .roomOnly
+                vm.isCompositionTransportPromptEnabled = false
+                guard let card = pendingCompositionCard else { return }
+                let room = pendingCompositionRoom
+                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false) }
+                clearPendingCompositionTransportPrompt()
+            }
+            Button("Always Entertainment Area") {
+                vm.compositionTransportPreference = .entertainmentArea
+                vm.isCompositionTransportPromptEnabled = false
+                guard let card = pendingCompositionCard else { return }
+                let room = pendingCompositionRoom
+                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true) }
+                clearPendingCompositionTransportPrompt()
+            }
+            Button("Cancel", role: .cancel) {
+                clearPendingCompositionTransportPrompt()
+            }
+        } message: {
+            Text("Entertainment is smoother but controls the whole entertainment area. Room Only keeps scope local with REST pacing.")
+        }
+        .confirmationDialog(
+            "Delete composition?",
+            isPresented: Binding(
+                get: { compositionDeleteTarget != nil },
+                set: { if !$0 { compositionDeleteTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let preset = compositionDeleteTarget {
+                    Task { await vm.deleteCompositionPreset(preset) }
+                }
+                compositionDeleteTarget = nil
+            }
+            Button("Cancel", role: .cancel) {
+                compositionDeleteTarget = nil
+            }
+        } message: {
+            Text("Saved presets are removed from My Creations. Built-in presets reset to their defaults.")
+        }
     }
 
-    // Combined rooms + zones
-    private var allPickerItems: [RoomDisplayItem] {
-        orchestrator.allRooms + orchestrator.allZones
+    /// Floating tab bar + home indicator — keeps mixer aligned above the bar on all phones.
+    private func studioTabBarClearance(bottomInset: CGFloat) -> CGFloat {
+        max(72, 56 + bottomInset)
     }
 
     private var isCompactStudio: Bool {
         UIScreen.main.bounds.height <= 700 || dynamicTypeSize.isAccessibilitySize
     }
 
-    private var compactMixerContentMaxHeight: CGFloat {
-        isCompactStudio ? 228 : 290
+    /// Caps tray height to available tab content so the mixer can use most of the screen on SE while keeping the deck visible.
+    private func resolvedMixerHeight(proxy: GeometryProxy) -> CGFloat {
+        let base = computeMixerHeight()
+        let maxTray = max(300, proxy.size.height * 0.88)
+        return min(base, maxTray)
     }
 
     private func computeMixerHeight() -> CGFloat {
         guard let effect = vm.currentRoomEffect else { return 0 }
         if case .composition = effect.card.strategy {
-            return isCompactStudio ? 330 : 380
+            // Taller tray on small phones; inner `ScrollView` fills remaining space below header.
+            return isCompactStudio ? 390 : 420
         }
         let essentialCount = effect.card.params.filter { $0.tier == .essential }.count
         // Header (60) + essential sliders (56 each) + chevron row (36) + padding
         let calculated = CGFloat(60 + essentialCount * 56 + 36 + 16)
-        return isCompactStudio ? min(calculated, 330) : calculated
+        return isCompactStudio ? min(calculated, 360) : calculated
     }
 
     private var allCards: [StudioCard] {
@@ -199,12 +394,13 @@ struct StudioView: View {
 
     // ──────────────────────────────────────────────
     // MARK: - Zone A: Swipeable Room Title
-    // Swipe L/R = rooms, U/D = zones, tap = sheet
+    // Swipe L/R = zones, U/D = rooms, tap = sheet
     // ──────────────────────────────────────────────
 
     private var swipeableRoomTitle: some View {
         let displayName = vm.selectedRoom?.name ?? "Select a room"
         let hasRoom = vm.selectedRoom != nil
+        let peek = sidePeekNames()
 
         // Check if the running card is entertainment-scoped
         let isEntRunning: Bool = {
@@ -228,23 +424,46 @@ struct StudioView: View {
                 }
                 .foregroundStyle(vm.currentRoomEffect?.card.accentColor ?? .white)
             } else {
-                HStack(spacing: 5) {
+                ZStack {
+                    HStack {
+                        if let left = peek.left {
+                            Text(left)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.26))
+                                .lineLimit(1)
+                                .frame(width: 52, alignment: .leading)
+                        } else {
+                            Color.clear.frame(width: 52)
+                        }
+                        Spacer()
+                        if let right = peek.right {
+                            Text(right)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.26))
+                                .lineLimit(1)
+                                .frame(width: 52, alignment: .trailing)
+                        } else {
+                            Color.clear.frame(width: 52)
+                        }
+                    }
+
                     Text(displayName)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(hasRoom ? .white : .white.opacity(0.45))
+                        .lineLimit(1)
                         .id(displayName)
                         .transition(.asymmetric(
                             insertion: .move(edge: slideDirection).combined(with: .opacity),
                             removal: .move(edge: slideDirection == .trailing ? .leading : .trailing).combined(with: .opacity)
                         ))
-
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.35))
                 }
+                .frame(width: 180)
+                .clipped()
             }
         }
         .contentShape(Rectangle())
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens room and zone search. Swipe horizontally for zones and vertically for rooms.")
         .onTapGesture {
             guard !isEntRunning else { return }  // Disable picker during entertainment
             showRoomSheet = true
@@ -275,8 +494,8 @@ struct StudioView: View {
 
                     if steps != dragRoomSteps {
                         let items = dragAxisLocked == .horizontal
-                            ? orchestrator.allRooms
-                            : orchestrator.allZones
+                            ? orchestrator.allZones
+                            : orchestrator.allRooms
                         guard !items.isEmpty else { return }
 
                         let delta = steps - dragRoomSteps
@@ -300,6 +519,18 @@ struct StudioView: View {
                 }
         )
         .animation(HueAnimation.fast, value: displayName)
+    }
+
+    private func sidePeekNames() -> (left: String?, right: String?) {
+        let zones = orchestrator.allZones
+        guard !zones.isEmpty else { return (nil, nil) }
+        let currentIndex = zones.firstIndex(where: { $0.id == vm.selectedRoom?.id }) ?? 0
+        let leftIndex = (currentIndex - 1 + zones.count) % zones.count
+        let rightIndex = (currentIndex + 1) % zones.count
+        return (
+            zones[leftIndex].name,
+            zones[rightIndex].name
+        )
     }
 
     // ──────────────────────────────────────────────
@@ -345,7 +576,7 @@ struct StudioView: View {
                 .tag(2)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .animation(HueAnimation.card, value: currentDeck)
+        // Avoid animating the entire deck subtree — reduces hitch when paging to Composer.
     }
 
     private func deckGrid(cards: [StudioCard], deckIndex: Int) -> some View {
@@ -364,11 +595,16 @@ struct StudioView: View {
                         roomSelected: vm.selectedRoom != nil,
                         isVisible: visible
                     ) {
-                        let roomSnapshot = vm.selectedRoom
                         if vm.runningCardID == card.id {
-                            Task { await vm.explicitStop(card) }
+                            if isMixerCollapsed {
+                                expandMixer()
+                                HapticManager.shared.selection()
+                            } else {
+                                Task { await vm.explicitStop(card) }
+                            }
                         } else {
-                            Task { await vm.apply(card, roomOverride: roomSnapshot) }
+                            isMixerCollapsed = false
+                            applyCardWithTransportPrompt(card)
                         }
                     }
                 }
@@ -477,6 +713,34 @@ struct StudioView: View {
                                     .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
                             )
 
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(vm.suggestedAIPrompts, id: \.self) { suggestion in
+                                    Button {
+                                        aiPromptText = suggestion
+                                        triggerAIGeneration(with: suggestion)
+                                        HapticManager.shared.selection()
+                                    } label: {
+                                        Text(suggestion)
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundStyle(.white.opacity(0.9))
+                                            .lineLimit(1)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                            .background(
+                                                Capsule().fill(Color.white.opacity(0.08))
+                                            )
+                                            .overlay(
+                                                Capsule()
+                                                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(vm.isGeneratingAIComposition)
+                                }
+                            }
+                        }
+
                         HStack(spacing: 8) {
                             Button("Cancel") {
                                 isAIPromptExpanded = false
@@ -498,18 +762,7 @@ struct StudioView: View {
                             Spacer()
 
                             Button {
-                                let roomSnapshot = vm.selectedRoom
-                                Task {
-                                    if let preset = await vm.generateCompositionFromPrompt(aiPromptText) {
-                                        await vm.apply(vm.studioCard(for: preset), roomOverride: roomSnapshot)
-                                        aiPromptText = ""
-                                        isAIPromptExpanded = false
-                                        aiPromptFocused = false
-                                        HapticManager.shared.medium()
-                                    } else {
-                                        HapticManager.shared.light()
-                                    }
-                                }
+                                triggerAIGeneration(with: aiPromptText)
                             } label: {
                                 Text(vm.isGeneratingAIComposition ? "Generating..." : "Generate")
                                     .font(.system(size: 12, weight: .bold))
@@ -649,47 +902,41 @@ struct StudioView: View {
                 LazyVGrid(columns: columns, spacing: HueSpacing.md) {
                     ForEach(presets) { preset in
                         let card = vm.studioCard(for: preset)
-                        StudioCardView(
-                            card: card,
-                            isRunning: vm.runningCardID == card.id,
-                            roomSelected: vm.selectedRoom != nil,
-                            isVisible: visible
-                        ) {
-                            let roomSnapshot = vm.selectedRoom
-                            if vm.runningCardID == card.id {
-                                Task { await vm.explicitStop(card) }
-                            } else {
-                                Task { await vm.apply(card, roomOverride: roomSnapshot) }
+                        ZStack(alignment: .topTrailing) {
+                            StudioCardView(
+                                card: card,
+                                isRunning: vm.runningCardID == card.id,
+                                roomSelected: vm.selectedRoom != nil,
+                                isVisible: visible
+                            ) {
+                                if vm.runningCardID == card.id {
+                                    if isMixerCollapsed {
+                                        expandMixer()
+                                        HapticManager.shared.selection()
+                                    } else {
+                                        Task { await vm.explicitStop(card) }
+                                    }
+                                } else {
+                                    isMixerCollapsed = false
+                                    applyCardWithTransportPrompt(card)
+                                }
                             }
+
+                            Menu {
+                                composerPresetOverflowActions(preset: preset, card: card)
+                            } label: {
+                                Image(systemName: "ellipsis.circle.fill")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.72))
+                                    .padding(8)
+                                    .background(Circle().fill(Color.black.opacity(0.38)))
+                            }
+                            .menuStyle(.button)
+                            .padding(6)
+                            .accessibilityLabel("Composition actions")
                         }
                         .contextMenu {
-                            Button {
-                                let roomSnapshot = vm.selectedRoom
-                                Task { await vm.apply(vm.studioCard(for: preset), roomOverride: roomSnapshot) }
-                                HapticManager.shared.light()
-                            } label: {
-                                Label("Edit", systemImage: "slider.horizontal.3")
-                            }
-                            Button {
-                                renameCompositionText = preset.name
-                                renameCompositionTarget = preset
-                                HapticManager.shared.light()
-                            } label: {
-                                Label("Rename", systemImage: "pencil")
-                            }
-                            Button {
-                                vm.duplicateCompositionPreset(preset)
-                                HapticManager.shared.light()
-                            } label: {
-                                Label("Duplicate", systemImage: "doc.on.doc")
-                            }
-                            Divider()
-                            Button(role: .destructive) {
-                                Task { await vm.deleteCompositionPreset(preset) }
-                                HapticManager.shared.light()
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
+                            composerPresetOverflowActions(preset: preset, card: card)
                         }
                     }
                 }
@@ -722,6 +969,17 @@ struct StudioView: View {
         return VStack(spacing: 0) {
             if let effect {
                 let card = effect.card
+
+                Capsule()
+                    .fill(Color.white.opacity(0.28))
+                    .frame(width: 36, height: 4)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        collapseMixer()
+                        HapticManager.shared.light()
+                    }
 
                 // ── Header ───────────────────────────────────
                 HStack(spacing: 10) {
@@ -768,18 +1026,50 @@ struct StudioView: View {
                                 )
                             )
                     } else if case .composition = card.strategy {
-                        Text(effect.isEntertainment ? "COMPOSER: ENT AREA" : "COMPOSER: ROOM (REST)")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(effect.isEntertainment ? HuePalette.amber : .white.opacity(0.75))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule().fill(
-                                    effect.isEntertainment
-                                        ? HuePalette.amber.opacity(0.15)
-                                        : Color.white.opacity(0.10)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Menu {
+                                Button {
+                                    switchRunningCompositionTransport(effect, preferEntertainment: true)
+                                } label: {
+                                    Label("Entertainment Area (Streaming)", systemImage: "bolt.fill")
+                                }
+
+                                Button {
+                                    switchRunningCompositionTransport(effect, preferEntertainment: false)
+                                } label: {
+                                    Label("Room Only (REST)", systemImage: "iphone")
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(composerTransportBadgeText(for: effect))
+                                        .font(.system(size: 9, weight: .bold))
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.system(size: 7, weight: .bold))
+                                        .opacity(0.82)
+                                }
+                                .foregroundStyle(effect.isEntertainment ? HuePalette.amber : .white.opacity(0.75))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule().fill(
+                                        effect.isEntertainment
+                                            ? HuePalette.amber.opacity(0.15)
+                                            : Color.white.opacity(0.10)
+                                    )
                                 )
-                            )
+                            }
+                            .buttonStyle(.plain)
+
+                            if effect.transportFallback {
+                                Text("Streaming unavailable on this bridge/session, using REST")
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundStyle(HuePalette.amber.opacity(0.75))
+                            } else if !effect.isEntertainment, card.compositionTier == .runtimeOnly {
+                                Text(runtimeOnlyCadenceText())
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.48))
+                            }
+                        }
                     }
 
                     // Active rooms count badge
@@ -798,6 +1088,7 @@ struct StudioView: View {
                         Button {
                             compositionSaveName = card.name == "New Composition" ? "" : card.name
                             compositionSaveIcon = card.icon
+                            compositionSaveTransport = vm.compositionTransportPreference == .roomOnly ? .roomOnly : .entertainmentArea
                             showCompositionSaveSheet = true
                             HapticManager.shared.light()
                         } label: {
@@ -840,28 +1131,34 @@ struct StudioView: View {
                     .padding(.horizontal, HueSpacing.screenH)
 
                 if case .composition = card.strategy {
-                    ScrollView(showsIndicators: false) {
-                        compositionMixerBody
-                            .padding(.horizontal, HueSpacing.screenH)
-                            .padding(.top, HueSpacing.md)
-                            .padding(.bottom, HueSpacing.sm)
+                    GeometryReader { scrollGeo in
+                        ScrollView(showsIndicators: false) {
+                            compositionMixerBody
+                                .padding(.horizontal, HueSpacing.screenH)
+                                .padding(.top, HueSpacing.md)
+                                .padding(.bottom, HueSpacing.md)
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .frame(height: scrollGeo.size.height)
                     }
-                    .frame(maxHeight: compactMixerContentMaxHeight)
                 } else {
                     // ── Essential parameter sliders ──────────────
                     let essentialParams = card.params.filter { $0.tier == .essential }
                     if !essentialParams.isEmpty {
-                        ScrollView(showsIndicators: false) {
-                            VStack(spacing: HueSpacing.md) {
-                                ForEach(essentialParams) { param in
-                                    StudioParamRow(param: param, cardID: card.id, vm: vm)
+                        GeometryReader { scrollGeo in
+                            ScrollView(showsIndicators: false) {
+                                VStack(spacing: HueSpacing.md) {
+                                    ForEach(essentialParams) { param in
+                                        StudioParamRow(param: param, cardID: card.id, vm: vm)
+                                    }
                                 }
+                                .padding(.horizontal, HueSpacing.screenH)
+                                .padding(.top, HueSpacing.md)
+                                .padding(.bottom, HueSpacing.md)
                             }
-                            .padding(.horizontal, HueSpacing.screenH)
-                            .padding(.top, HueSpacing.md)
-                            .padding(.bottom, HueSpacing.sm)
+                            .scrollBounceBehavior(.basedOnSize)
+                            .frame(height: scrollGeo.size.height)
                         }
-                        .frame(maxHeight: compactMixerContentMaxHeight)
                     }
 
                     // ── More params chevron ──────────────────────
@@ -905,8 +1202,249 @@ struct StudioView: View {
         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
     }
 
+    private var mixerDismissDragGesture: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                // Only capture drags that begin near the tray header so child controls
+                // (like the hue/saturation pad) keep their own drag semantics.
+                guard value.startLocation.y <= 56 else { return }
+                let downward = max(0, value.translation.height)
+                mixerDragOffset = downward
+            }
+            .onEnded { value in
+                guard value.startLocation.y <= 56 else {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                        mixerDragOffset = 0
+                    }
+                    return
+                }
+                let dragDistance = value.translation.height
+                let predictedDistance = value.predictedEndTranslation.height
+                let shouldDismiss = dragDistance > 100 || predictedDistance > 160
+                if shouldDismiss {
+                    hideKeyboard()
+                    collapseMixer()
+                    HapticManager.shared.medium()
+                }
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                    mixerDragOffset = 0
+                }
+            }
+    }
+
+    private func collapseMixer() {
+        withAnimation(HueAnimation.fast) {
+            isMixerCollapsed = true
+        }
+    }
+
+    private func expandMixer() {
+        withAnimation(HueAnimation.fast) {
+            isMixerCollapsed = false
+        }
+    }
+
+    private func triggerAIGeneration(with prompt: String) {
+        let roomSnapshot = vm.selectedRoom
+        Task {
+            if let preset = await vm.generateCompositionFromPrompt(prompt) {
+                await vm.apply(vm.studioCard(for: preset), roomOverride: roomSnapshot, preferEntertainmentOverride: nil)
+                aiPromptText = ""
+                isAIPromptExpanded = false
+                aiPromptFocused = false
+                HapticManager.shared.medium()
+            } else {
+                HapticManager.shared.light()
+            }
+        }
+    }
+
+    private func runtimeOnlyCadenceText() -> String {
+        guard let cadence = vm.activeRESTCadenceForSelectedRoom else {
+            return "Runtime-only REST is rate-capped"
+        }
+        return "Runtime-only REST is rate-capped (Live: ~\(String(format: "%.1f", cadence))s)"
+    }
+
+    private func applyCardWithTransportPrompt(_ card: StudioCard) {
+        let roomSnapshot = vm.selectedRoom
+        guard case .composition = card.strategy else {
+            Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: nil) }
+            return
+        }
+        if card.compositionTier == .bridgeOptimized || !vm.isCompositionTransportPromptEnabled {
+            Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: nil) }
+            return
+        }
+        pendingCompositionCard = card
+        pendingCompositionRoom = roomSnapshot
+        showCompositionTransportPrompt = true
+    }
+
+    private func clearPendingCompositionTransportPrompt() {
+        pendingCompositionCard = nil
+        pendingCompositionRoom = nil
+    }
+
+    private func composerTransportBadgeText(for effect: RunningEffect) -> String {
+        if effect.transportFallback {
+            return "COMPOSER: ROOM (REST FALLBACK)"
+        }
+        return effect.isEntertainment ? "COMPOSER: ENT AREA" : "COMPOSER: ROOM (REST)"
+    }
+
+    private func switchRunningCompositionTransport(_ effect: RunningEffect, preferEntertainment: Bool) {
+        guard case .composition = effect.card.strategy else { return }
+        let roomID = effect.room.id
+        if transportSwitchInFlightRoomIDs.contains(roomID) { return }
+        if preferEntertainment == effect.isEntertainment {
+            HapticManager.shared.selection()
+            return
+        }
+        isMixerCollapsed = false
+        transportSwitchInFlightRoomIDs.insert(roomID)
+        Task {
+            await vm.apply(
+                effect.card,
+                roomOverride: effect.room,
+                preferEntertainmentOverride: preferEntertainment
+            )
+            transportSwitchInFlightRoomIDs.remove(roomID)
+        }
+        HapticManager.shared.light()
+    }
+
+    private enum CompositionQuickApply {
+        case defaultStudioRules
+        case streaming
+        case roomREST
+        case matchSavedPreset
+    }
+
+    /// Applies a composition card with an explicit transport choice (skips the transport confirmation sheet).
+    private func applyCompositionQuick(_ card: StudioCard, mode: CompositionQuickApply) {
+        let roomSnapshot = vm.selectedRoom
+        guard case .composition = card.strategy else { return }
+        switch mode {
+        case .defaultStudioRules:
+            applyCardWithTransportPrompt(card)
+        case .streaming:
+            isMixerCollapsed = false
+            Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: true) }
+        case .roomREST:
+            isMixerCollapsed = false
+            Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: false) }
+        case .matchSavedPreset:
+            isMixerCollapsed = false
+            Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: nil) }
+        }
+    }
+
+    @ViewBuilder
+    private func composerPresetOverflowActions(preset: CompositionPreset, card: StudioCard) -> some View {
+        Button {
+            applyCompositionQuick(card, mode: .defaultStudioRules)
+            HapticManager.shared.light()
+        } label: {
+            Label("Apply to Current Room", systemImage: "play.fill")
+        }
+
+        Menu {
+            Button {
+                applyCompositionQuick(card, mode: .streaming)
+                HapticManager.shared.light()
+            } label: {
+                Label("Entertainment Area (Streaming)", systemImage: "bolt.fill")
+            }
+            Button {
+                applyCompositionQuick(card, mode: .roomREST)
+                HapticManager.shared.light()
+            } label: {
+                Label("Room Only (REST)", systemImage: "iphone")
+            }
+            Button {
+                applyCompositionQuick(card, mode: .matchSavedPreset)
+                HapticManager.shared.light()
+            } label: {
+                Label("Match Saved Preset", systemImage: "bookmark.fill")
+            }
+        } label: {
+            Label("Apply with Transport…", systemImage: "arrow.triangle.branch")
+        }
+
+        Divider()
+
+        Button {
+            renameCompositionText = preset.name
+            renameCompositionTarget = preset
+            HapticManager.shared.light()
+        } label: {
+            Label("Rename…", systemImage: "pencil")
+        }
+
+        Button {
+            vm.duplicateCompositionPreset(preset)
+            HapticManager.shared.light()
+        } label: {
+            Label("Duplicate", systemImage: "doc.on.doc")
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            compositionDeleteTarget = preset
+            HapticManager.shared.light()
+        } label: {
+            Label("Delete…", systemImage: "trash")
+        }
+    }
+
+    private func compositionSectionHeader(_ title: String, subtitle: String?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(0.38))
+                .tracking(0.6)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func reactionTargetLabel(_ target: ReactionConfig.Target) -> String {
+        switch target {
+        case .brightness: return "Brightness"
+        case .color: return "Color"
+        case .speed: return "Speed"
+        }
+    }
+
+    private func reactionTargetToggleBinding(_ target: ReactionConfig.Target) -> Binding<Bool> {
+        Binding(
+            get: { vm.activeCompositionBox?.reaction.targets.contains(target) ?? false },
+            set: { on in
+                guard let box = vm.activeCompositionBox else { return }
+                var targets = box.reaction.targets
+                if on {
+                    if !targets.contains(target) { targets.append(target) }
+                } else {
+                    targets.removeAll { $0 == target }
+                }
+                if targets.isEmpty { targets = [.brightness] }
+                box.reaction.targets = targets
+            }
+        )
+    }
+
     private var compositionMixerBody: some View {
         VStack(alignment: .leading, spacing: HueSpacing.md) {
+            compositionSectionHeader("Layers", subtitle: "Choose a layer to edit live.")
+                .padding(.bottom, -2)
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(CompositionLayerTab.allCases) { tab in
@@ -915,9 +1453,10 @@ struct StudioView: View {
                             activeCompositionTab = tab
                             HapticManager.shared.selection()
                         } label: {
-                            Text(tab.rawValue)
+                            Label(tab.title, systemImage: tab.symbolName)
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(selected ? HuePalette.amber : .white.opacity(0.75))
+                                .labelStyle(.titleAndIcon)
+                                .foregroundStyle(selected ? HuePalette.amber : .white.opacity(0.78))
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                                 .background(
@@ -932,7 +1471,10 @@ struct StudioView: View {
                         .buttonStyle(.plain)
                     }
                 }
+                .scrollTargetLayout()
             }
+            .contentMargins(.horizontal, 12, for: .scrollContent)
+            .scrollTargetBehavior(.viewAligned)
 
             Group {
                 switch activeCompositionTab {
@@ -949,22 +1491,9 @@ struct StudioView: View {
     }
 
     private var compositionPaletteControls: some View {
-        let hueBinding = Binding<Double>(
-            get: {
-                guard let c = vm.activeCompositionBox?.palette.color1 else { return 36 }
-                let hsb = HueColorUtils.hsb(fromX: c.x, y: c.y, brightness: 100)
-                return hsb.h * 360
-            },
-            set: { degrees in
-                let hue = (degrees / 360).truncatingRemainder(dividingBy: 1)
-                let normalizedHue = hue < 0 ? hue + 1 : hue
-                let saturation = (vm.activeCompositionBox?.palette.saturation ?? 100) / 100
-                let xy = HueColorUtils.xyFrom(hue: normalizedHue, saturation: saturation, brightness: 1.0)
-                vm.activeCompositionBox?.palette.color1 = CodableColor(x: xy.x, y: xy.y)
-            }
-        )
+        VStack(spacing: HueSpacing.sm) {
+            compositionSectionHeader("Color", subtitle: "Palette every light reads before motion and envelope.")
 
-        return VStack(spacing: HueSpacing.sm) {
             Picker("Mode", selection: Binding(
                 get: { vm.activeCompositionBox?.palette.mode ?? .gradient },
                 set: { vm.activeCompositionBox?.palette.mode = $0 }
@@ -975,32 +1504,7 @@ struct StudioView: View {
             }
             .pickerStyle(.segmented)
 
-            hueWheelBar(title: "Hue", value: hueBinding)
-
-            HStack(spacing: 8) {
-                ForEach(StudioViewModel.presetColors, id: \.self) { color in
-                    Circle()
-                        .fill(color)
-                        .frame(width: 24, height: 24)
-                        .onTapGesture {
-                            vm.activeCompositionBox?.palette.color1 = CodableColor.from(color: color)
-                            HapticManager.shared.selection()
-                        }
-                        .onLongPressGesture {
-                            vm.activeCompositionBox?.palette.color2 = CodableColor.from(color: color)
-                            HapticManager.shared.selection()
-                        }
-                }
-            }
-
-            compositionSlider(
-                title: "Saturation",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.palette.saturation ?? 100 },
-                    set: { vm.activeCompositionBox?.palette.saturation = $0 }
-                ),
-                range: 0...100
-            )
+            hueSaturationPad
 
             if (vm.activeCompositionBox?.palette.mode ?? .gradient) == .spectrum {
                 compositionSlider(
@@ -1015,25 +1519,46 @@ struct StudioView: View {
         }
     }
 
-    private func hueWheelBar(title: String, value: Binding<Double>) -> some View {
+    private var hueSaturationPad: some View {
+        let canonicalHSB: (h: Double, s: Double) = {
+            guard let c = vm.activeCompositionBox?.palette.color1 else { return (0.0, 1.0) }
+            let clampedXY = HueColorUtils.clampXYToGamut(
+                x: c.x,
+                y: c.y,
+                gamut: vm.activeCompositionGamut
+            )
+            let hsb = HueColorUtils.hsb(fromX: clampedXY.x, y: clampedXY.y, brightness: 100)
+            return (h: hsb.h, s: hsb.s)
+        }()
+        let currentHue: Double = canonicalHSB.h
+        let currentSat: Double = canonicalHSB.s
+        let displayHue = isHuePadDragging ? huePadLiveHue : currentHue
+        let displaySat = isHuePadDragging ? huePadLiveSaturation : currentSat
+        let thumbColor = Color(hue: displayHue, saturation: displaySat, brightness: 1.0)
+
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(title)
+                Text("Hue + Saturation")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.60))
                 Spacer()
-                Text("\(Int(value.wrappedValue.rounded()))°")
+                Circle()
+                    .fill(thumbColor)
+                    .frame(width: 12, height: 12)
+                    .overlay(Circle().strokeBorder(.white.opacity(0.7), lineWidth: 1))
+                Text("\(Int((displayHue * 360).rounded()))° • \(Int((displaySat * 100).rounded()))%")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.42))
             }
 
             GeometryReader { geo in
-                let trackWidth = max(1, geo.size.width)
-                let clamped = min(360, max(0, value.wrappedValue))
-                let thumbX = CGFloat(clamped / 360) * trackWidth
+                let w = max(1, geo.size.width)
+                let h = max(1, geo.size.height)
+                let thumbX = CGFloat(displayHue) * w
+                let thumbY = (1.0 - CGFloat(displaySat)) * h
 
-                ZStack(alignment: .leading) {
-                    Capsule()
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
                         .fill(
                             LinearGradient(
                                 colors: [
@@ -1043,36 +1568,78 @@ struct StudioView: View {
                                 endPoint: .trailing
                             )
                         )
-                        .frame(height: 14)
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    .white, .white.opacity(0.0)
+                                ],
+                                startPoint: .bottom,
+                                endPoint: .top
+                            )
+                        )
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
 
                     Circle()
-                        .fill(Color.white)
-                        .frame(width: 20, height: 20)
+                        .fill(thumbColor)
+                        .frame(width: 22, height: 22)
+                        .overlay(Circle().strokeBorder(Color.white, lineWidth: 2))
                         .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
-                        .overlay(
-                            Circle().strokeBorder(Color.black.opacity(0.15), lineWidth: 1)
-                        )
-                        .position(x: thumbX, y: 7)
+                        .position(x: thumbX, y: thumbY)
                 }
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { gesture in
-                            let x = min(trackWidth, max(0, gesture.location.x))
-                            let ratio = x / trackWidth
-                            value.wrappedValue = Double(ratio) * 360
+                            let clampedX = min(max(gesture.location.x, 0), w)
+                            let clampedY = min(max(gesture.location.y, 0), h)
+                            let hue = Double(clampedX / w)
+                            let sat = Double(1.0 - (clampedY / h))
+                            let clampedSat = min(1.0, max(0.0, sat))
+                            isHuePadDragging = true
+                            vm.activeCompositionBox?.isColorPadInteracting = true
+                            vm.activeCompositionBox?.triggerRESTBurst()
+                            huePadLiveHue = hue
+                            huePadLiveSaturation = clampedSat
+                            let now = CFAbsoluteTimeGetCurrent()
+                            if now - lastHuePadHapticAt >= 0.08 {
+                                HapticManager.shared.selection()
+                                lastHuePadHapticAt = now
+                            }
+                            let xy = HueColorUtils.xyFrom(hue: hue, saturation: clampedSat, brightness: 1.0)
+                            let clampedXY = HueColorUtils.clampXYToGamut(
+                                x: xy.x,
+                                y: xy.y,
+                                gamut: vm.activeCompositionGamut
+                            )
+                            let clampedHSB = HueColorUtils.hsb(
+                                fromX: clampedXY.x,
+                                y: clampedXY.y,
+                                brightness: 100
+                            )
+                            huePadLiveHue = clampedHSB.h
+                            huePadLiveSaturation = clampedHSB.s
+                            vm.activeCompositionBox?.palette.color1 = CodableColor(x: clampedXY.x, y: clampedXY.y)
+                            vm.activeCompositionBox?.palette.saturation = clampedHSB.s * 100
                         }
                         .onEnded { _ in
+                            isHuePadDragging = false
+                            vm.activeCompositionBox?.isColorPadInteracting = false
+                            vm.activeCompositionBox?.triggerRESTBurst()
+                            lastHuePadHapticAt = 0
                             HapticManager.shared.selection()
                         }
                 )
             }
-            .frame(height: 20)
+            .frame(height: isCompactStudio ? 118 : 156)
         }
     }
 
     private var compositionMotionControls: some View {
         VStack(spacing: HueSpacing.sm) {
+            compositionSectionHeader("Motion", subtitle: "How color travels across lights over time.")
+
             Picker("Pattern", selection: Binding(
                 get: { vm.activeCompositionBox?.motion.pattern ?? .cascade },
                 set: { vm.activeCompositionBox?.motion.pattern = $0 }
@@ -1111,6 +1678,8 @@ struct StudioView: View {
 
     private var compositionEnvelopeControls: some View {
         VStack(spacing: HueSpacing.sm) {
+            compositionSectionHeader("Envelope", subtitle: "Brightness shape over time.")
+
             Picker("Shape", selection: Binding(
                 get: { vm.activeCompositionBox?.envelope.shape ?? .breathe },
                 set: { vm.activeCompositionBox?.envelope.shape = $0 }
@@ -1160,6 +1729,8 @@ struct StudioView: View {
 
     private var compositionReactionControls: some View {
         VStack(spacing: HueSpacing.sm) {
+            compositionSectionHeader("Reaction", subtitle: "Audio and responsiveness layered on top.")
+
             Picker("Source", selection: Binding(
                 get: { vm.activeCompositionBox?.reaction.source ?? .none },
                 set: { vm.activeCompositionBox?.reaction.source = $0 }
@@ -1169,6 +1740,16 @@ struct StudioView: View {
                 }
             }
             .pickerStyle(.menu)
+
+            if (vm.activeCompositionBox?.reaction.source ?? .none) != .none {
+                VStack(alignment: .leading, spacing: 8) {
+                    compositionSectionHeader("Targets", subtitle: "Which outputs the reaction modulates.")
+                    ForEach(ReactionConfig.Target.allCases, id: \.self) { target in
+                        Toggle(reactionTargetLabel(target), isOn: reactionTargetToggleBinding(target))
+                            .tint(HuePalette.amber)
+                    }
+                }
+            }
 
             compositionSlider(
                 title: "Sensitivity",
@@ -1239,6 +1820,22 @@ struct StudioView: View {
                         }
                     }
                 }
+                Section("Transport") {
+                    Picker("Target", selection: $compositionSaveTransport) {
+                        ForEach(CompositionSaveTransportOption.allCases) { option in
+                            Text(option.segmentTitle).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text("Streaming uses the entertainment area when available. REST stays on this room’s grouped light.")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                hideKeyboard()
             }
             .navigationTitle("Save Composition")
             .toolbar {
@@ -1247,7 +1844,11 @@ struct StudioView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        _ = vm.saveActiveComposition(name: compositionSaveName, icon: compositionSaveIcon)
+                        _ = vm.saveActiveComposition(
+                            name: compositionSaveName,
+                            icon: compositionSaveIcon,
+                            preferredTransport: compositionSaveTransport.presetValue
+                        )
                         showCompositionSaveSheet = false
                         HapticManager.shared.medium()
                     }
@@ -1256,6 +1857,17 @@ struct StudioView: View {
         }
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
+    }
+}
+
+private extension View {
+    func hideKeyboard() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
     }
 }
 
@@ -1367,6 +1979,14 @@ struct StudioCardView: View, Equatable {
                         .padding(.top, 5)
                     }
 
+                    if let tier = card.compositionTier {
+                        HStack(spacing: 4) {
+                            compactTierBadge(tier)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.top, 4)
+                    }
+
                     // Entertainment Area badge
                     if card.isEntertainmentScoped {
                         HStack(spacing: 3) {
@@ -1404,6 +2024,42 @@ private func layerChip(_ symbol: String, isActive: Bool) -> some View {
                 isActive ? HuePalette.amber.opacity(0.35) : Color.white.opacity(0.10),
                 lineWidth: 1
             )
+        )
+}
+
+private func compactTierBadge(_ tier: CompositionTier) -> some View {
+    let title: String
+    let icon: String
+    let tint: Color
+    switch tier {
+    case .bridgeOptimized:
+        title = "Bridge"
+        icon = "bolt.fill"
+        tint = HuePalette.amber
+    case .hybrid:
+        title = "Hybrid"
+        icon = "arrow.triangle.merge"
+        tint = HuePalette.amber
+    case .runtimeOnly:
+        title = "App Driven"
+        icon = "iphone"
+        tint = Color.white.opacity(0.78)
+    }
+
+    return HStack(spacing: 3) {
+        Image(systemName: icon)
+            .font(.system(size: 8, weight: .bold))
+        Text(title)
+            .font(.system(size: 9, weight: .bold))
+            .lineLimit(1)
+    }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .foregroundStyle(tint)
+        .background(Capsule().fill(tint.opacity(0.14)))
+        .overlay(
+            Capsule()
+                .strokeBorder(tint.opacity(0.30), lineWidth: 1)
         )
 }
 

@@ -365,3 +365,690 @@ Composer polish advanced with visual layer activity cues and seasonal deck affor
 
 ### Current state
 AI generation now uses FoundationModels with clamp validation, and preset metadata is migration-safe for older saved compositions.
+
+---
+
+## 2026-05-06 — Composer UX Stabilization + Gamut-Aware Color Pipeline (Cursor)
+
+### What was built
+- Hardened AI generation reliability in `StudioViewModel.swift`:
+  - Added markdown-fence sanitization before JSON decoding.
+  - Added detailed decode failure logging (raw JSON candidate + decode error details).
+  - Added tolerant decode path for variant provider payloads (including missing palette fields / `colors` array fallback mapping).
+  - Added local fallback draft generator when FoundationModels fails/unavailable (notably simulator/runtime generation failures).
+- Replaced fragmented Palette controls with a unified 2D Hue/Saturation pad in `StudioView.swift`:
+  - Removed separate hue slider, saturation slider, and color-dot row.
+  - Added 2D drag pad with thumb, clamp-safe drag math, and compact-layout-safe sizing.
+  - Added live thumb tracking while dragging to eliminate perceived input lag.
+- Improved Composer mixer tray interactions/lifecycle:
+  - Added tap-outside dismissal overlay.
+  - Added swipe-down-to-dismiss for inline mixer with threshold/predicted-end handling.
+  - Added header drag-indicator tap dismiss.
+  - Added keyboard dismissal utility (`hideKeyboard()`) and applied it to relevant tap backgrounds.
+  - Re-anchored tray as a bottom overlay to reduce lock/unlock geometry glitches.
+- Fixed hue pad visual consistency:
+  - Corrected saturation axis orientation.
+  - Added selected-color thumb fill + color preview dot to better reflect selected values.
+  - Lifted tray above tab bar to avoid lower-edge clipping on compact devices.
+- Implemented gamut-aware color accuracy improvements (Step 1 + 2):
+  - Added Hue gamut triangles (A/B/C) and `clampXYToGamut` in `HueColorUtils.swift`.
+  - Added room-dominant gamut resolution in `StudioViewModel` and `UnifiedOrchestrator`.
+  - Clamped Composer color output to resolved gamut in both Entertainment and REST render paths.
+  - Refactored hue pad to canonical clamp-first flow so displayed thumb/readout track post-clamp output (not pre-clamp gesture values).
+- Tuned REST fallback responsiveness during color scrubbing:
+  - Added interaction-aware cadence in `runCompositionREST`:
+    - drag: faster interval + shorter transition
+    - idle: conservative interval + smoother transition
+  - Added post-drag settle write for cleaner final color landing.
+
+### What's working
+- ✅ AI generation succeeds more consistently across phone + simulator with graceful fallback path.
+- ✅ 2D hue pad interaction is smoother (live tracking, clamp-safe drag, consistent thumb/readout).
+- ✅ Mixer dismissal is easier and more native-feeling (tap-outside, swipe-down, header tap).
+- ✅ Composer color output is now gamut-clamped end-to-end, reducing unreachable-color mismatch.
+- ✅ Build and lint checks passed after each major slice.
+
+### What's left
+- [ ] Optional follow-up: switch Composer pad to full xy-native editing surface for even tighter perceptual parity.
+- [ ] Optional follow-up: tune drag REST profile further (e.g., 0.7s/140ms) based on bridge/device QA.
+- [ ] Product decision pending: enforce portrait-only orientation to avoid landscape UI regressions.
+
+### Gotchas
+- Hue bridge grouped_light path remains rate-limited; REST fallback will never feel as fluid as Entertainment streaming.
+- Mixed-gamut rooms still require compromise mapping; dominant-gamut strategy is a practical middle ground.
+
+### Current state
+Composer UX is significantly more stable and color handling is now gamut-aware from picker input through transport output, with improved simulator resilience for AI generation.
+
+---
+
+## 2026-05-06 — Composer Multi-Room Runtime + Scheduler Tuning (Cursor)
+
+### What was built
+- Implemented non-destructive mixer dismissal in `StudioView.swift`:
+  - Dismiss gestures (tap outside / swipe down / header tap) now collapse controls instead of stopping the running composition.
+  - Added `Live Controls` quick chip to reopen the mixer while effect continues.
+- Enabled multi-room concurrent compositions:
+  - Refactored Composer orchestration from single global task semantics to room-scoped runtime state in `UnifiedOrchestrator`.
+  - Updated `StudioViewModel` apply/stop logic so composition no longer force-stops other composition rooms.
+- Replaced per-room composition REST loops with a global fair scheduler:
+  - Added round-robin scheduler over active composition rooms to prevent one room from monopolizing bridge updates.
+  - Added room-scoped start/stop generation guards and lifecycle cleanup.
+- Added debug telemetry for Composer scheduler:
+  - Per-room effective send rate (`hz`), average lag (`avgLagMs`), max lag (`maxLagMs`) logged in DEBUG builds.
+- Improved startup responsiveness and pacing:
+  - Added immediate prime write when a composition starts so newly selected rooms visibly turn on immediately.
+  - Reduced smoothing/transition durations for faster visual response.
+  - Passed pre-resolved gamut from `StudioViewModel` into `startCompositionMode` to avoid redundant fetch overhead at start.
+
+### What's working
+- ✅ Composition cards can now run concurrently across multiple rooms (REST path).
+- ✅ Mixer can be hidden/reopened without canceling live composition playback.
+- ✅ Scheduler fairness improved vs independent per-room loops.
+- ✅ New composition start feels more immediate due to prime write.
+- ✅ Build and lint checks passed after each slice.
+
+### What's left
+- [ ] Final scheduler calibration from fresh telemetry after latest transition/tick tuning.
+- [ ] Decide whether to introduce "Bridge Optimized" vs "Custom Live Engine" mode badges.
+- [ ] Optional: portrait-only lock decision if landscape regression costs remain high.
+
+### Gotchas
+- Native Hue dynamic effects remain smoother because they execute in bridge firmware; Composer remains app-driven for custom behavior.
+- Multi-room Composer on grouped_light is bounded by bridge rate limits; scheduling can optimize fairness but not fully bypass hardware limits.
+
+### Current state
+Composer now supports practical multi-room concurrency with fair scheduling, faster start behavior, and a cleaner non-destructive mixer UX, while preserving custom composition flexibility.
+
+---
+
+## 2026-05-06 — Composer Responsiveness Investigation + Final Tuning Pass (Cursor)
+
+### What was built
+- Ran iterative tuning on Composer runtime behavior with repeated full build verification.
+- Added and used DEBUG scheduler telemetry (`hz`, `avgLagMs`, `maxLagMs`) to validate runtime pacing and fairness.
+- Tuned composition transition durations and startup behavior:
+  - Shorter live transitions for Composer REST writes.
+  - Immediate prime write on composition start so newly activated rooms visibly respond right away.
+- Optimized startup path:
+  - Reused `StudioViewModel`-resolved gamut by passing a `gamutOverride` into `startCompositionMode(...)` to avoid redundant fetches during room activation.
+- Refined scheduler pacing strategy:
+  - Maintained round-robin fairness and interaction-aware behavior.
+  - Reduced burst-like write behavior in follow-up tuning attempts.
+
+### What was verified
+- ✅ Full iOS build succeeds after all tuning passes.
+- ✅ Multi-room composition concurrency remains functional.
+- ✅ Startup responsiveness improved via prime write.
+- ✅ Native dynamic effects remain noticeably smoother than Composer under equivalent conditions.
+
+### Findings from logs/telemetry
+- Composer can show low scheduler lag (`avgLagMs` near 0) while still feeling visually laggy.
+- This indicates the main bottleneck is not app-side queue backlog, but grouped_light REST animation granularity/cadence limits vs bridge-native dynamic effects.
+- Native dynamic effects feel smoother because they execute in bridge firmware after one-shot effect commands.
+- Composer (custom 4-layer runtime) still requires continuous grouped_light updates in REST mode, which has a lower smoothness ceiling.
+
+### What's left
+- [ ] Decide/implement Bridge-optimized composition identifiers and tiers (bridgeOptimized/hybrid/runtimeOnly) for each preset.
+- [ ] Add clear user-facing capability badge so saveability/smoothness expectations are explicit.
+- [ ] Evaluate transport strategy for best smoothness:
+  - prioritized active-room cadence,
+  - adaptive per-room degradation,
+  - optional bridge-optimized compile path where possible.
+
+### Current state
+Composer is materially improved and instrumented, but logs confirm that REST grouped_light remains the limiting factor for “native-like” smoothness; next milestone is capability-tiering and bridge-optimized pathways.
+
+---
+
+## 2026-05-06 — Composition Optimization Tier Metadata + UI Badge (Cursor)
+
+### What was built
+- Added composition optimization identifiers directly to preset metadata in `CompositionModels.swift`:
+  - `optimizationTier: bridgeOptimized | hybrid | runtimeOnly`
+  - `bridgeOptimizationFlags: [BridgeOptimizationFlag]`
+  - `bridgeOptimizationReason` computed string for UI/debug visibility.
+- Implemented migration-safe decoding for existing saved presets:
+  - if new fields are missing, flags are inferred from layer configs and tier is auto-derived.
+- Added tier/reason propagation into Studio cards in `StudioViewModel.swift`:
+  - `StudioCard` now carries `compositionOptimizationTier` + `bridgeOptimizationReason` for Composer presets.
+- Added compact Composer card badge UI in `StudioView.swift`:
+  - Tier capsule (`Bridge Optimized`, `Hybrid`, `Runtime Only`)
+  - concise reason hint sourced from optimization flags.
+
+### What’s working
+- ✅ Every composition preset now stores optimization metadata on the model.
+- ✅ Existing stored JSON presets remain compatible via decode-time inference.
+- ✅ Composer cards show a compact optimization tier badge.
+- ✅ Reason flags are visible in a compact, user-facing hint line.
+
+### What’s left
+- [ ] Optional: tune inference heuristics per preset family if product wants stricter tier semantics.
+- [ ] Optional: surface full reason list in detail UI (e.g., context menu/details sheet) instead of compact hint truncation.
+
+### Gotchas
+- Existing presets in user storage did not contain new keys, so migration-safe defaults were required to avoid breaking decode.
+- Tiering here is intentionally deterministic and model-based (layer config analysis), not runtime transport performance telemetry.
+
+### Current state
+Composer presets now have persisted bridge optimization identifiers and reason flags, and Studio displays a compact badge for immediate user clarity about bridge optimization capability level.
+
+---
+
+## 2026-05-06 — Composer Transport Hardening (Cursor)
+
+### What was built
+- Hardened Composer transport/scheduler behavior in `UnifiedOrchestrator`:
+  - Added per-room due-time pacing using `nextDueAt` (instead of high-frequency global sleep clamp).
+  - Set steady-state target to ~1Hz per room for grouped_light REST sends.
+  - Added bounded interaction burst mode (short faster window) with automatic decay.
+  - Added optional Entertainment-first path in `startCompositionMode(..., preferEntertainment:)` with REST fallback.
+- Improved overlap safety in `StudioViewModel`:
+  - Apply path now resolves room light IDs for composition/app-driven cards too.
+  - Overlap detection now prevents competing effects across overlapping room/zone scopes beyond bridge-native-only cases.
+- Added panic-stop affordance in `StudioView`:
+  - New `stop.circle.fill` toolbar action appears while anything is running and calls `vm.stopAll()`.
+
+### What’s working
+- ✅ Full iOS build succeeds after transport hardening.
+- ✅ Composer REST cadence is now significantly less burst-prone and closer to bridge limits.
+- ✅ Quick slider interaction gets temporary responsiveness boost, then auto-returns to stable pacing.
+- ✅ Overlapping room/zone runs are reduced by broader overlap checks.
+- ✅ One-tap panic stop now available at top nav while effects are active.
+
+### What’s left
+- [ ] On-device validation pass for Entertainment-first composition route with multiple bridge layouts.
+- [ ] Tune burst window/interval based on real bridge telemetry in live household scenarios.
+- [ ] Optional: add explicit UI transport indicator per running composition room (REST vs Entertainment).
+
+### Gotchas
+- Entertainment API remains bridge-wide/single-session; composer entertainment preference must still gracefully fall back when unavailable.
+- REST grouped_light smoothness remains bounded by bridge behavior even with improved scheduler pacing.
+
+### Current state
+Composer now uses a safer pacing model, broader overlap protection, bounded burst behavior, and optional entertainment-preferred transport, with a global panic-stop control for runaway room effects.
+
+---
+
+## 2026-05-06 — Composer Tier Guardrails + Runtime Hint (Cursor)
+
+### What was built
+- Added strict per-tier Composer REST cadence guardrails in `UnifiedOrchestrator`:
+  - `CompositionRuntime` now tracks `tier`.
+  - Scheduler enforces minimum interval by tier via `minIntervalForCompositionTier(_)`.
+  - Current policy: `bridgeOptimized`, `hybrid`, and `runtimeOnly` all clamp to **>= 1.0s** per room/zone when on REST.
+- Added debug clamp diagnostics:
+  - When interaction burst requests faster updates than allowed, DEBUG builds log `[Composer][Guardrail] clamped cadence ...` with requested vs allowed interval.
+- Wired tier into orchestrator start path:
+  - `StudioViewModel` now passes `tier` into `startCompositionMode(..., tier:)` so cadence policy is centrally enforced.
+- Added runtime-only expectation cue in mixer UI (`StudioView`):
+  - For composition cards running on REST with `runtimeOnly` tier, mixer shows: `Runtime-only REST is rate-capped`.
+
+### What’s working
+- ✅ Full iOS build succeeds after guardrail/hint changes.
+- ✅ REST cadence now respects the explicit 1.0s policy regardless of temporary burst requests.
+- ✅ Users now get a visible smoothness expectation hint during runtime-only REST playback.
+
+### What’s left
+- [ ] Optional: expose active effective cadence value (e.g., `1.00s`) in mixer for QA visibility.
+- [ ] Optional: differentiate future tier policy (e.g., slower bridgeOptimized cadence if needed).
+
+### Gotchas
+- The clamp is intentionally conservative and will trade responsiveness for reliability on grouped_light REST.
+- Entertainment path remains preferred for high-motion smoothness; REST guardrails reduce lag/fighting but cannot match DTLS fluidity.
+
+### Current state
+Composer now has a centralized tier-aware REST safety policy, debug observability for cadence clamping, and a user-facing runtime-only rate-limit hint, improving predictability and reducing bridge overload behavior.
+
+---
+
+## 2026-05-06 — Composer Transport Choice + QA Cadence Visibility + AI Prompt Chips (Cursor)
+
+### What was built
+- Added explicit Composer transport choice UX in `StudioView`:
+  - For non-bridgeOptimized composition cards, applying now prompts:
+    - `Room Only (REST)`
+    - `Entertainment Area (Streaming)`
+    - `Always Room Only`
+    - `Always Entertainment Area`
+  - Persisted preference and prompt behavior are stored via `UserDefaults`.
+- Added transport preference model in `StudioViewModel`:
+  - `CompositionTransportPreference` enum (`auto`, `roomOnly`, `entertainmentArea`)
+  - `compositionTransportPreference` + `isCompositionTransportPromptEnabled`
+  - apply path now supports `preferEntertainmentOverride` and routes preference into `startCompositionMode(...)`.
+- Added real-time REST cadence exposure in `UnifiedOrchestrator`:
+  - `activeRESTCadence: Double?`
+  - `activeRESTCadenceByRoom: [String: Double]`
+  - cadence UI updates throttled (~1.5s) to avoid observation churn.
+- Wired cadence into Studio UI:
+  - Runtime-only mixer hint now appends live cadence when available, e.g.:
+    - `Runtime-only REST is rate-capped (Live: ~1.0s)`.
+- Added AI suggested prompt chips for Composer generation in expanded AI panel:
+  - `Static Warm Sunset`
+  - `Cozy Reading Corner`
+  - `Energetic Club Pulse`
+  - `Blinking Christmas Lights`
+  - Tapping a chip fills prompt and immediately triggers generate+apply flow.
+
+### What’s working
+- ✅ Full iOS build succeeds after all changes.
+- ✅ Composer transport is now user-selectable with optional persisted default.
+- ✅ Runtime-only REST cadence is visible in mixer for QA.
+- ✅ AI chip affordance works and triggers generation quickly.
+
+### What’s left
+- [ ] Optional: add a lightweight reset action for transport preference in settings/studio overflow.
+- [ ] Optional: show active transport scope tag directly on card before apply (not only in mixer).
+
+### Gotchas
+- Entertainment remains bridge-wide/single-session; selection still depends on config/session availability and may fall back to REST.
+- Runtime-only compositions on REST are intentionally capped for bridge safety; cadence visibility clarifies this but cannot make REST as smooth as DTLS.
+
+### Current state
+Composer now has explicit user-controlled transport scope, observable REST cadence for QA validation, and stronger AI prompt affordances to steer generation quality while preserving bridge-safe scheduling constraints.
+
+---
+
+## 2026-05-06 — Field QA Observation: Composer Start Order Contention (Cursor)
+
+### What was observed
+- In live testing, effect stacking behavior depends on apply order:
+  - If Composer card is applied **last**, multi-effect behavior appears smooth and stable.
+  - If Composer card is applied **first**, later effects feel laggy / delayed.
+- User hypothesis (likely correct): Composer path is still competing for transport/state ownership when started first.
+
+### Evidence pattern
+- Symptoms look like transport contention rather than bridge rejection:
+  - Composer telemetry still reports near-target cadence (~1 Hz REST in tested cases).
+  - Other effects degrade primarily when Composer owns early lifecycle.
+- This points to orchestration/order arbitration rather than pure rate limit failure.
+
+### Likely root-cause area (next debugging slice)
+- Cross-mode coordination between Composer runtime and subsequent effect engines:
+  - ownership handoff sequencing,
+  - overlap arbitration timing,
+  - shared resource/session release timing (REST/Entertainment),
+  - residual grouped_light transition/state settling from Composer startup.
+
+### What to do next
+- Add explicit “mode ownership handoff” instrumentation:
+  - log per-room owner transitions (Composer ↔ bridgeNative/appDriven),
+  - log overlap-stop decisions with timestamps,
+  - log transport/session active state before/after each apply.
+- Reproduce with deterministic sequence tests:
+  1) Composer first → native/appDriven cards
+  2) native/appDriven first → Composer
+  3) same sequence with/without entertainment selection.
+- If confirmed, add a small guarded handoff delay or hard ownership barrier when transitioning away from Composer-first starts.
+
+### Current state
+- Transport controls, cadence guardrails, and UI diagnostics are materially improved.
+- A reproducible sequencing edge case remains: **Composer-first startup can still degrade subsequent effect smoothness**.
+
+---
+
+## 2026-05-06 — Composer Handoff Barrier + Sequencing Instrumentation (Cursor)
+
+### What was built
+- `HueHome/Core/Network/UnifiedOrchestrator.swift`
+  - Added `[Handoff]` lifecycle logs in `stopCompositionMode(roomID:)` for:
+    - stop requested,
+    - `studioRestSender.clear()` moment,
+    - post-clear settle complete,
+    - teardown complete.
+  - Added `try await Task.sleep(for: .milliseconds(150))` immediately after `studioRestSender.clear()` in `stopCompositionMode(roomID:)`.
+  - Added matching `[Handoff]` lifecycle logs in `stopStudioMode()` and a 150ms settle delay right after `studioRestSender.clear()`.
+- `HueHome/UI/Studio/StudioViewModel.swift`
+  - In overlap arbitration inside `apply(_:roomOverride:preferEntertainmentOverride:)`, added `[Handoff]` logs around `await stopEffect(on:)` to make the barrier observable.
+  - Added explicit `[Handoff]` startup log right before new effect startup sequence begins.
+  - In `stopEffect(on:)` bridge-native cleanup path, added:
+    - `[Handoff]` log before per-light `no_effect`,
+    - 150ms settle delay after batched `no_effect`,
+    - `[Handoff]` completion log after settle.
+
+### What’s working
+- ✅ Hard async barrier already present in overlap flow remains intact (`await stopEffect(on:)`).
+- ✅ New startup is now instrumented to begin only after overlap cleanup + settle barrier.
+- ✅ Teardown paths now include explicit bridge settle windows after REST sender clear / `no_effect` cleanup.
+- ✅ Project builds successfully with:
+  - `xcodebuild -project HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+
+### What’s left
+- [ ] Run on-device/simulator sequencing QA and confirm `[Handoff]` logs appear in strict order during rapid override scenarios.
+- [ ] Validate no perceptible regression in perceived responsiveness when quickly swapping cards (150ms barrier tradeoff).
+
+### Gotchas
+- `xcodebuild` in sandbox failed due to host permission/simulator service constraints; non-sandbox build succeeded.
+- Handoff delay is intentionally short (150ms) to avoid bridge queue flooding while minimizing UX lag.
+- Entertainment remains bridge-wide and single-session; sequencing barriers do not change that hardware constraint.
+
+### What to test
+- 1) **Composer -> Native immediate override**
+  - Select room A, start a Composer card, immediately tap a bridge-native card.
+  - Expect `[Handoff]` teardown logs to complete before startup log appears.
+- 2) **Composer -> appDriven immediate override**
+  - Start Composer, immediately tap Strobe/Party/Thunderstorm.
+  - Expect same strict ordering and no interleaved startup before teardown completion.
+- 3) **Overlap path (Home zone vs room)**
+  - Run effect in room A, switch to Home zone and start another card.
+  - Expect overlap detection log, awaited stop barrier, then startup barrier-clear log.
+- 4) **Rapid repeated taps**
+  - Repeatedly switch between two cards in same room.
+  - Confirm no stuck effect state and no bridge command flood behavior.
+- 5) **Cross-room non-overlap sanity**
+  - Run room A effect, then room B effect with no shared lights.
+  - Confirm independent behavior remains unchanged.
+
+### Current state
+Composer handoff now has explicit teardown instrumentation and guarded settle barriers at ownership boundaries. Build is green; remaining work is runtime QA to verify strict log ordering and user-perceived smoothness under rapid card switching.
+
+---
+
+## 2026-05-06 — Portrait Lock + Studio SE Mixer Fit + Title Picker Cleanup (Cursor)
+
+### What was built
+- `HueHome/Info.plist`
+  - Locked app orientation to portrait by reducing `UISupportedInterfaceOrientations` to:
+    - `UIInterfaceOrientationPortrait`
+- `HueHome/Core/Services/AutomationHandler.swift`
+  - Added AppDelegate runtime orientation lock:
+    - `application(_:supportedInterfaceOrientationsFor:) -> .portrait`
+- `HueHome/UI/Studio/StudioView.swift`
+  - Kept the original rolodex room/zone title interaction (swipe L/R rooms, U/D zones, tap for search sheet).
+  - Removed the room/zone chevron icon from the Studio title row.
+  - Added accessibility traits/hint so the title still reads as tappable control for the room/zone sheet.
+  - Reworked mixer sizing for compact devices:
+    - wrapped root in `GeometryReader`
+    - dynamic tray cap based on available viewport (`resolvedMixerHeight(proxy:)`)
+    - tab-bar/home-indicator aware bottom clearance
+  - Reworked mixer scroll behavior:
+    - composition controls now use a fill-height scroll region (`GeometryReader` + `ScrollView`)
+    - essential parameter controls use same pattern
+    - prevents bottom content from being clipped on iPhone SE-sized screens.
+
+### What’s working
+- ✅ Build succeeds:
+  - `xcodebuild -project HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+- ✅ Studio title remains tappable for room/zone search without visual chevron clutter.
+- ✅ Mixer can grow taller on compact devices and keeps content scrollable to reach bottom controls.
+- ✅ Orientation is portrait-only at plist and runtime delegate levels.
+
+### What’s left
+- [ ] Validate on real iPhone SE that all composition controls (including lower controls) are reachable without clipping.
+- [ ] Verify no unexpected layout regressions on larger phones after dynamic tray cap changes.
+
+### Gotchas
+- Portrait lock is now enforced in two places (plist + AppDelegate delegate callback) intentionally for consistency.
+- Mixer tray now consumes more vertical space on compact devices; this is deliberate to preserve control visibility.
+
+### What to test
+- 1) **Portrait lock**
+  - Launch app and rotate device/simulator to landscape.
+  - Expect UI to remain portrait with no layout rotation.
+- 2) **Studio title row interaction**
+  - In Studio, tap the room/zone title (no chevron now).
+  - Expect Room/Zone search sheet to open exactly as before.
+- 3) **Rolodex navigation still intact**
+  - Swipe title left/right to cycle rooms; up/down to cycle zones.
+  - Confirm transitions remain smooth and selection updates correctly.
+- 4) **iPhone SE mixer fit (critical)**
+  - On Composer card, open mixer and scroll through controls.
+  - Confirm bottom controls are reachable and not hidden behind tab bar/home indicator.
+- 5) **Non-composer mixer fit**
+  - Use bridge-native and app-driven cards with several sliders.
+  - Confirm lower rows remain reachable via scroll on compact height.
+- 6) **Regression sanity**
+  - Verify card grid remains visible when mixer is expanded/collapsed.
+  - Verify stop/save buttons remain visible and tappable.
+
+### Current state
+App is now portrait-locked and Studio mixer layout is hardened for compact screens (including SE) with viewport-aware tray sizing and scrollable content regions. Next step is focused SE device QA for final visual tuning.
+
+---
+
+## 2026-05-06 — App Store Orientation Compliance + Runtime Rotation Toggle (Cursor)
+
+### What was built
+- `HueHome/Info.plist`
+  - Restored full iPhone orientation set required for App Store upload validation:
+    - `UIInterfaceOrientationPortrait`
+    - `UIInterfaceOrientationPortraitUpsideDown`
+    - `UIInterfaceOrientationLandscapeLeft`
+    - `UIInterfaceOrientationLandscapeRight`
+- `HueHome/Core/Services/AutomationHandler.swift`
+  - Updated `AppDelegate.application(_:supportedInterfaceOrientationsFor:)` to be user-preference-driven:
+    - default behavior remains portrait-only,
+    - optional landscape via user setting.
+  - Added `OrientationPrefs.allowLandscape` (`"app.allowLandscapeRotation"`) UserDefaults key.
+- `HueHome/UI/Settings/SettingsView.swift`
+  - Added new `APP` section toggle:
+    - `Allow Landscape Rotation`
+    - Backed by `@AppStorage("app.allowLandscapeRotation")`
+    - Default is `false` (portrait lock remains default behavior).
+
+### What’s working
+- ✅ Upload-blocking orientation metadata issue is addressed by plist orientation restoration.
+- ✅ Runtime behavior still defaults to portrait lock for normal users.
+- ✅ Landscape can be explicitly enabled by testers/power users from Settings.
+- ✅ Build succeeds:
+  - `xcodebuild -project HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+
+### What’s left
+- [ ] Verify App Store upload path no longer returns error 90474.
+- [ ] Validate that toggling landscape in Settings updates runtime behavior as expected across major app screens.
+
+### Gotchas
+- App Store validation checks declared plist orientations, not only runtime locks.
+- Runtime orientation changes can appear delayed until next screen transition in some UIKit/SwiftUI stacks.
+
+### What to test
+- 1) **Upload compliance**
+  - Archive + upload; confirm no orientation validation error (90474).
+- 2) **Default lock behavior**
+  - Fresh install / default settings: rotate device.
+  - Expect portrait lock.
+- 3) **Landscape opt-in**
+  - Settings -> App -> enable `Allow Landscape Rotation`.
+  - Rotate on Studio/Home/Settings; expect landscape support.
+- 4) **Toggle off regression**
+  - Disable toggle and retest rotation.
+  - Expect portrait lock restored.
+
+### Current state
+Orientation handling is now split correctly between App Store compliance (full plist support) and product UX preference (portrait-first runtime lock with optional tester override). Build is green; next checkpoint is successful archive upload and quick on-device rotation QA.
+
+---
+
+## 2026-05-06 — Composer Mic + REST Snappiness + Tab Lazy-Load + Perf (Cursor)
+
+### What was built
+
+**Composer microphone (reaction layer)**  
+- New `HueHome/UI/Studio/CompositionMicCapture.swift` — FFT band splits aligned with `VisualizerEngine`, lock-protected levels, `syncDemand(_:)` lifecycle.  
+- `UnifiedOrchestrator` wires `CompositionMicCapture.reactionAudioLevel(for:)` into all `CompositionEngine.render` paths (REST scheduler, ENT loop, prime frame); `refreshCompositionMicDemand()` tied to composition lifecycle; weak `compositionEntertainmentParamBox` for mic-demand when ENT transport is active.  
+- `HueHome/HueHomeApp.swift` — `Notification.Name` extensions: `composerMicExclusiveBegan`, `compositionMicPermissionDenied`.  
+- `SyncModeEngine` observes `composerMicExclusiveBegan` and calls `stop()` if Sync is running (avoid dual `AVAudioEngine`).  
+- `CompositionEngine` — **tap tempo** uses envelope BPM sine wave (no mic); mic sources still use passed `audioLevel`.  
+- Exclusive handoff delay after posting mic notification: **35ms** (was 60ms).  
+- **Parallel warmup**: When gamut must be fetched and reaction uses mic, mic `syncDemand(true)` runs **concurrently** with `resolveCompositionGamut` / `resolveDominantGamut`, and mic completion is **awaited before** blocking on gamut result (`StudioViewModel` + `UnifiedOrchestrator`).  
+- ENT path: `tryStartEntertainment` and `findEntertainmentConfig` run **in parallel** when choosing streaming transport.
+
+**REST Composer cadence (Sync-aligned)**  
+- Scheduler uses **`0.15s × active composition room count`** as baseline (matches `SyncModeEngine` REST visualizer spacing model).  
+- Separate **burst floors** for color-pad interaction vs idle tier guardrails (`bridgeOptimized` remains more conservative).  
+- Idle/settle transition durations tightened slightly for grouped_light; post-send scheduler yield **40ms → 20ms**.
+
+**Shell performance**  
+- `MainTabView` — **lazy tab realization** (`realizedTabs`): Scenes / Studio / More roots not constructed until first visit; tab bar inserts current tab on tap; `onAppear`/`onChange` register selection for restoration.  
+- `StudioView` — removed `.animation(..., value: currentDeck)` on deck `TabView` to reduce paging hitch.
+
+### Files touched (high level)
+- `CompositionMicCapture.swift` (new), `UnifiedOrchestrator.swift`, `CompositionEngine.swift`, `HueHomeApp.swift`, `SyncModeEngine.swift`, `StudioViewModel.swift`, `StudioView.swift`, `MainTabView.swift`, `HueHome.xcodeproj/project.pbxproj`
+
+### What’s working
+- ✅ `xcodebuild` HueHome scheme — BUILD SUCCEEDED (`generic/platform=iOS`)
+
+### Gotchas
+- Hue does not stream “voice” over the bridge — mic only improves **client-derived** levels fed into Composer; bridge latency unchanged.  
+- `grouped_light` REST remains throughput-sensitive; burst paths must not defeat tier guardrails on weak bridges.  
+- Lazy tabs: first open of Studio still pays full `StudioView` cost once.
+
+### What to test (QA checklist)
+
+**A — Composer mic**  
+1. **Permission** — Fresh install or revoke mic: apply a composition with reaction source **Mic** (amplitude / bass / mid / treble). Expect system prompt once; if denied, capture still fails gracefully (optional toast pipeline not wired — verify no crash).  
+2. **Reaction vs tap tempo** — Preset with **Tap tempo**: lights should pulse to **envelope BPM**, not room noise. Switch to **Mic amplitude**: verify motion follows voice/claps.  
+3. **Sync exclusivity** — Start **Music Sync** (or any Sync mode using mic), then start **Composer** with mic reaction. Expect Sync to stop and Composer mic to work (no stuck dual-engine state).  
+4. **ENT vs REST Composer + mic** — Same mic preset: room with entertainment area (streaming) and force **Room only (REST)** via transport prompt; verify both paths show reactive brightness (REST will be lower cadence).  
+5. **Background** — Composer + mic running: send app to background; verify capture stops / no runaway session (resume foreground).
+
+**B — REST Composer snappiness**  
+6. **Single room** — Runtime composition on **one** room: updates should feel closer to **Sync visualizer** pacing (~150ms scale), not 1 Hz slideshow.  
+7. **Multi-room** — Two+ rooms with compositions: verify fair rotation and **no** bridge lag storm (no 30–60s drain — back off if observed).  
+8. **Interaction burst** — Drag color pad / interact: expect snappier bursts than idle (within reason).  
+9. **bridgeOptimized tier** — Still more conservative cadence; confirm acceptable on real bridge.
+
+**C — Startup / Studio shell**  
+10. **Cold launch** — From quit: land on **Home**; first tap **Studio** — should avoid building Studio until then (may feel faster than when all tabs eager-loaded).  
+11. **Deck paging** — Swipe Effects → Live → Composer; confirm no extra animation jank on deck switch.  
+12. **iPad** — Sidebar tab switch still realizes tabs and shows content.
+
+**D — Regressions**  
+13. Apply **bridge-native** cards (candle, fire, …) — unchanged path.  
+14. **Stop composition / handoff** — Stop Composer then apply another Studio card; no stuck lights or duplicate sessions.
+
+### Current state
+Composer reactions can use real microphone levels with Sync-safe exclusivity; REST Composer pacing matches the app’s Sync REST model for dynamic tiers; main shell defers heavy tabs until first visit. Ready for **device QA** (mic + multi-room + bridge load).
+
+---
+
+## 2026-05-06 — Studio Room Target Race + Composer REST Efficiency Pass (Cursor)
+
+### Problem observed
+- Composer apply could target the wrong room under rapid UI interaction.
+- Logs showed mismatches like `selectedRoom: Main bedroom` while `groupedLightID` resolved to Bathroom.
+- Composer REST mode still generated heavy traffic (frequent `PUT /grouped_light/...`) and startup duplicated `GET /light` work.
+
+### What was fixed
+
+**1) Room-targeting race in Studio UI**
+- `HueHome/UI/Studio/StudioView.swift`
+  - Removed render-time `roomSnapshot` captures from card/grid/menu paths.
+  - Room is now captured at action time inside apply helpers, so apply always uses current selection.
+  - Updated helper signatures:
+    - `applyCardWithTransportPrompt(_:)`
+    - `applyCompositionQuick(_:mode:)`
+    - `composerPresetOverflowActions(preset:card:)`
+
+**2) Startup GET dedupe in apply flow**
+- `HueHome/UI/Studio/StudioViewModel.swift`
+  - Added cached-light overloads:
+    - `resolveLightIDs(for:api:cachedLights:)`
+    - `resolveDominantGamut(for:api:cachedLights:)`
+  - Apply now fetches bridge light inventory once (only when needed for device-backed rooms) and reuses it for:
+    - overlap detection / room light resolution
+    - dominant gamut resolution
+  - Eliminates redundant back-to-back `GET /light` calls at composition startup.
+
+**3) Balanced scheduler efficiency tightening**
+- `HueHome/Core/Network/UnifiedOrchestrator.swift`
+  - Added extra balanced-profile skip gate for tiny deltas sent too recently.
+  - Increased balanced idle / low-power intervals for `.hybrid` and `.runtimeOnly` tiers.
+  - Goal: preserve interaction responsiveness while reducing sustained REST chatter in non-interacting periods.
+
+### Verification
+- ✅ Lints clean on edited files.
+- ✅ Build succeeded:
+  - `xcodebuild -project HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+
+### What to test
+- 1) **Room correctness under fast interaction**
+  - Rapidly change room/zone and immediately tap composer cards / overflow actions.
+  - Confirm `selectedRoom` and `groupedLightID` always map to the same target room.
+- 2) **Composer startup traffic**
+  - Start a composition and confirm reduced duplicate `GET /light` bursts.
+- 3) **REST efficiency in Balanced**
+  - Let a composition run idle for 30-60s; expect fewer PUTs than prior runs.
+  - During active slider/pad interaction, responsiveness should remain acceptable.
+
+### Current state
+Wrong-room apply race is closed at the Studio action layer, startup light fetches are deduplicated, and Balanced REST cadence is more conservative when visual deltas are small. Ready for on-device validation focused on room-target integrity and perceived smoothness vs call volume.
+
+---
+
+## 2026-05-06 — Composer Color Edit Immediate Flush (REST burst override)
+
+### Problem observed
+- In Composer REST mode, user hue/saturation pad edits could be treated as "not meaningful" by balanced low-power gating, causing delayed/no visible color response immediately after drag.
+- Logs showed low-power skips right after pad interaction (`Δxy` near zero after gamut clamp), even though user expected instant feedback.
+
+### What was built
+
+**User-edit forced burst path**
+- `HueHome/UI/Studio/CompositionEngine.swift`
+  - `CompositionParamBox` now includes:
+    - `forceRESTBurstUntil: TimeInterval`
+    - `triggerRESTBurst(seconds: 0.55)`
+  - Purpose: mark a short post-edit window where REST scheduler should prioritize sending.
+
+- `HueHome/UI/Studio/StudioView.swift`
+  - Hue/saturation pad now calls `triggerRESTBurst()`:
+    - on drag change
+    - on drag end
+  - Keeps existing `isColorPadInteracting` semantics.
+
+- `HueHome/Core/Network/UnifiedOrchestrator.swift`
+  - Scheduler reads `userEditBurstActive = runtime.paramBox.forceRESTBurstUntil > now`.
+  - During this window:
+    - bypass low-power + efficiency skip gates
+    - use burst cadence/floor path (same responsiveness class as interaction burst)
+
+### Why this works
+- Even if gamut clamp results in tiny `Δxy`, a direct UI edit now forces near-term sends so the bridge gets an immediate state update.
+- Balanced mode remains efficient outside the short user-edit burst window.
+
+### Verification
+- ✅ Lints clean on edited files.
+- ✅ Build succeeded:
+  - `xcodebuild -project HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+
+### What to test
+- 1) Start Composer in Bathroom (REST transport).
+- 2) Drag hue/saturation pad briefly and release.
+- 3) Confirm visible color response occurs immediately after drag (no perceived dead period).
+- 4) Let composition idle for 20-30s; verify cadence still backs off in balanced mode.
+
+---
+
+## 2026-05-06 — Composer Color Pad Haptics + Ultra-Low REST Cadence Constants (Cursor)
+
+### What was built
+- `HueHome/UI/Studio/StudioView.swift`
+  - Added continuous, throttled haptic feedback while dragging the Composer hue/saturation pad:
+    - New state: `lastHuePadHapticAt`
+    - During `DragGesture.onChanged`, fires `HapticManager.shared.selection()` at most once every ~80ms.
+    - Resets haptic timer on drag end; existing end-of-drag haptic remains.
+- `HueHome/Core/Network/UnifiedOrchestrator.swift`
+  - Aggressively lowered Composer REST scheduler interval constants for fast-response testing:
+    - Lowered idle baseline (`preferredComposerIdleInterval`) and all tier minimums.
+    - Lowered non-burst floors (`minimumComposerRESTInterval`) and burst floors (`minimumComposerBurstFloor`).
+    - Tightened burst interval calculation (`max(0.03, syncRestInterval * 0.25)`).
+    - Lowered low-power idle intervals to keep cadence high even during small-delta periods.
+
+### What's working
+- ✅ Lints clean on edited files (`StudioView.swift`, `UnifiedOrchestrator.swift`).
+- ✅ Build succeeded:
+  - `xcodebuild -project /Users/brianbean/Desktop/huehome-pro-v0.3.0/HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+- ✅ Composer color pad now provides tactile feedback during drag (not only on drag end).
+
+### What's left
+- [ ] On-device bridge QA for overload/lag behavior with the new ultra-low intervals (single room + multi-room).
+- [ ] Confirm no command-flood side effects (dropped updates, delayed bridge recovery, or perceived jitter).
+- [ ] Decide final production cadence policy after telemetry review (`hz`, `avgLagMs`, `maxLagMs`).
+
+### Gotchas
+- REST grouped_light still has practical bridge throughput limits; very low interval constants can reduce stability even if app-side scheduler lag remains near zero.
+- Haptic feedback is intentionally throttled to avoid excessive vibration spam during continuous drags.
+
+### Current state
+Composer editor responsiveness is now aggressively biased toward immediacy: the color pad gives live haptic pulses during drag, and REST cadence guardrails are significantly lowered for stress/perf validation. Build is green; next step is focused real-bridge QA before locking production values.

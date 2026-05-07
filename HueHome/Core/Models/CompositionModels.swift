@@ -320,6 +320,17 @@ enum PresetCategory: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum CompositionTier: String, Codable, CaseIterable {
+    case bridgeOptimized
+    case hybrid
+    case runtimeOnly
+}
+
+enum CompositionPreferredTransport: String, Codable, CaseIterable {
+    case entertainmentArea = "entertainment_area"
+    case roomOnly = "room_only"
+}
+
 // MARK: - CompositionPreset
 
 struct CompositionPreset: Codable, Identifiable, Equatable {
@@ -340,6 +351,7 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
     var updatedAt: Date
     var aiPrompt: String?
     var providerModel: String?
+    var preferredTransport: CompositionPreferredTransport?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -357,6 +369,7 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         case updatedAt
         case aiPrompt
         case providerModel
+        case preferredTransport
     }
 
     init(
@@ -374,7 +387,8 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         createdAt: Date,
         updatedAt: Date,
         aiPrompt: String? = nil,
-        providerModel: String? = nil
+        providerModel: String? = nil,
+        preferredTransport: CompositionPreferredTransport? = nil
     ) {
         self.id = id
         self.name = name
@@ -391,6 +405,7 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         self.updatedAt = updatedAt
         self.aiPrompt = aiPrompt
         self.providerModel = providerModel
+        self.preferredTransport = preferredTransport
     }
 
     init(from decoder: Decoder) throws {
@@ -412,6 +427,7 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         // Migration-safe decode: older JSON files won't have these fields.
         aiPrompt = try container.decodeIfPresent(String.self, forKey: .aiPrompt)
         providerModel = try container.decodeIfPresent(String.self, forKey: .providerModel)
+        preferredTransport = try container.decodeIfPresent(CompositionPreferredTransport.self, forKey: .preferredTransport)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -431,6 +447,7 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(aiPrompt, forKey: .aiPrompt)
         try container.encodeIfPresent(providerModel, forKey: .providerModel)
+        try container.encodeIfPresent(preferredTransport, forKey: .preferredTransport)
     }
 
     /// Whether this preset is seasonally relevant right now.
@@ -438,5 +455,18 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         guard let months = seasonMonths else { return false }
         let currentMonth = Calendar.current.component(.month, from: Date())
         return months.contains(currentMonth)
+    }
+
+    var capabilityTier: CompositionTier {
+        if motion.pattern == .static &&
+            envelope.shape == .steady &&
+            reaction.source == .none {
+            return .bridgeOptimized
+        }
+        if reaction.source != .none &&
+            motion.pattern == .static {
+            return .hybrid
+        }
+        return .runtimeOnly
     }
 }

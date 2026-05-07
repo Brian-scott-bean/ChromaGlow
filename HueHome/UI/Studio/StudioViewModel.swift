@@ -22,6 +22,7 @@ struct StudioCard: Identifiable, Hashable {
     let params: [StudioParam]
     let strategy: StudioStrategy
     let compositionLayerActivity: CompositionLayerActivity?
+    let compositionTier: CompositionTier?
     let isAIGenerated: Bool
 
     init(
@@ -34,6 +35,7 @@ struct StudioCard: Identifiable, Hashable {
         params: [StudioParam],
         strategy: StudioStrategy,
         compositionLayerActivity: CompositionLayerActivity?,
+        compositionTier: CompositionTier? = nil,
         isAIGenerated: Bool = false
     ) {
         self.id = id
@@ -45,6 +47,7 @@ struct StudioCard: Identifiable, Hashable {
         self.params = params
         self.strategy = strategy
         self.compositionLayerActivity = compositionLayerActivity
+        self.compositionTier = compositionTier
         self.isAIGenerated = isAIGenerated
     }
 
@@ -114,6 +117,7 @@ private enum AICompositionGeneratorError: LocalizedError {
     case promptTooShort
     case providerUnavailable
     case invalidModelResponse
+    case decodeFailure(raw: String, details: String)
 
     var errorDescription: String? {
         switch self {
@@ -123,6 +127,8 @@ private enum AICompositionGeneratorError: LocalizedError {
             return "Apple Foundation Models is unavailable on this device."
         case .invalidModelResponse:
             return "AI response was invalid. Try a different prompt."
+        case .decodeFailure:
+            return "Couldn’t decode AI composition. Try a different prompt."
         }
     }
 }
@@ -136,6 +142,99 @@ private struct AICompositionGenerator {
         var motion: MotionConfig
         var envelope: EnvelopeConfig
         var reaction: ReactionConfig
+
+        init(
+            name: String,
+            icon: String,
+            accentColorHex: String,
+            palette: PaletteConfig,
+            motion: MotionConfig,
+            envelope: EnvelopeConfig,
+            reaction: ReactionConfig
+        ) {
+            self.name = name
+            self.icon = icon
+            self.accentColorHex = accentColorHex
+            self.palette = palette
+            self.motion = motion
+            self.envelope = envelope
+            self.reaction = reaction
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case name, icon, accentColorHex, palette, motion, envelope, reaction
+        }
+
+        private struct ModelPaletteDraft: Decodable {
+            var mode: String?
+            var colors: [String]?
+            var color1: String?
+            var color2: String?
+            var color3: String?
+            var saturation: Double?
+            var hueShift: Double?
+            var temperature: Int?
+            var randomize: Bool?
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            name = try container.decodeIfPresent(String.self, forKey: .name) ?? "AI Composition"
+            icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? "wand.and.stars"
+            accentColorHex = try container.decodeIfPresent(String.self, forKey: .accentColorHex) ?? "#FFB340"
+
+            if let strictPalette = try? container.decode(PaletteConfig.self, forKey: .palette) {
+                palette = strictPalette
+            } else if let loosePalette = try? container.decode(ModelPaletteDraft.self, forKey: .palette) {
+                palette = Self.normalizedPalette(from: loosePalette)
+            } else {
+                palette = PaletteConfig()
+            }
+
+            motion = (try? container.decode(MotionConfig.self, forKey: .motion)) ?? MotionConfig()
+            envelope = (try? container.decode(EnvelopeConfig.self, forKey: .envelope)) ?? EnvelopeConfig()
+            reaction = (try? container.decode(ReactionConfig.self, forKey: .reaction)) ?? ReactionConfig()
+        }
+
+        private static func normalizedPalette(from loose: ModelPaletteDraft) -> PaletteConfig {
+            var normalized = PaletteConfig()
+
+            if let rawMode = loose.mode?.lowercased(),
+               let mode = PaletteConfig.Mode(rawValue: rawMode) {
+                normalized.mode = mode
+            }
+
+            let paletteColors = (loose.colors ?? []).compactMap { hexToCodableColor($0) }
+            if let first = paletteColors.first { normalized.color1 = first }
+            if paletteColors.count > 1 {
+                normalized.color2 = paletteColors[1]
+            } else if let c2 = hexToCodableColor(loose.color2) {
+                normalized.color2 = c2
+            } else {
+                normalized.color2 = normalized.color1
+            }
+
+            if paletteColors.count > 2 {
+                normalized.color3 = paletteColors[2]
+            } else {
+                normalized.color3 = hexToCodableColor(loose.color3)
+            }
+
+            if paletteColors.isEmpty, let c1 = hexToCodableColor(loose.color1) {
+                normalized.color1 = c1
+            }
+
+            normalized.saturation = loose.saturation ?? normalized.saturation
+            normalized.hueShift = loose.hueShift ?? normalized.hueShift
+            normalized.temperature = loose.temperature ?? normalized.temperature
+            normalized.randomize = loose.randomize ?? normalized.randomize
+            return normalized
+        }
+
+        private static func hexToCodableColor(_ hex: String?) -> CodableColor? {
+            guard let raw = hex?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+            return CodableColor.from(color: Color(hex: raw))
+        }
     }
 
     func generateDraft(from rawPrompt: String) async throws -> AICompositionDraft {
@@ -145,7 +244,8 @@ private struct AICompositionGenerator {
 #if canImport(FoundationModels)
         if #available(iOS 26.0, *) {
             guard case .available = SystemLanguageModel.default.availability else {
-                throw AICompositionGeneratorError.providerUnavailable
+                print("[AI] FoundationModels unavailable; using local fallback draft.")
+                return fallbackDraft(from: prompt, providerModel: "fallback/local_unavailable")
             }
             let session = LanguageModelSession(instructions: """
             You generate Philips Hue composition presets. Return ONLY JSON. No markdown.
@@ -155,6 +255,7 @@ private struct AICompositionGenerator {
             - Reaction sensitivity/smoothing/intensity/threshold 0...100
             - Palette saturation 0...100, hueShift -180...180, temperature 153...500
             Use valid enums exactly matching app model raw values.
+            Palette must include mode, color1, and color2 keys (no "colors" array).
             """)
 
             let promptPayload = """
@@ -172,16 +273,35 @@ private struct AICompositionGenerator {
               "reaction": ReactionConfig
             }
             """
-            let response = try await session.respond(to: promptPayload)
-            let raw = extractJSONObject(from: response.content)
-            guard let data = raw.data(using: .utf8) else {
-                throw AICompositionGeneratorError.invalidModelResponse
+            do {
+                let response = try await session.respond(to: promptPayload)
+                let sanitized = sanitizeModelResponse(response.content)
+                let raw = extractJSONObject(from: sanitized)
+                guard let data = raw.data(using: .utf8) else {
+                    throw AICompositionGeneratorError.invalidModelResponse
+                }
+                let decoded: ModelDraft
+                do {
+                    decoded = try JSONDecoder().decode(ModelDraft.self, from: data)
+                } catch {
+                    throw AICompositionGeneratorError.decodeFailure(raw: raw, details: String(describing: error))
+                }
+                return clamped(decoded, prompt: prompt, providerModel: "FoundationModels/SystemLanguageModel.default")
+            } catch {
+                print("[AI] FoundationModels generation failed; using local fallback draft. Error: \(error)")
+                return fallbackDraft(from: prompt, providerModel: "fallback/local_generation_error")
             }
-            let decoded = try JSONDecoder().decode(ModelDraft.self, from: data)
-            return clamped(decoded, prompt: prompt, providerModel: "FoundationModels/SystemLanguageModel.default")
         }
 #endif
-        throw AICompositionGeneratorError.providerUnavailable
+        print("[AI] FoundationModels unsupported in this build; using local fallback draft.")
+        return fallbackDraft(from: prompt, providerModel: "fallback/local_unsupported")
+    }
+
+    private func sanitizeModelResponse(_ text: String) -> String {
+        var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        cleaned = cleaned.replacingOccurrences(of: "```json", with: "", options: .caseInsensitive)
+        cleaned = cleaned.replacingOccurrences(of: "```", with: "")
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func extractJSONObject(from text: String) -> String {
@@ -242,6 +362,64 @@ private struct AICompositionGenerator {
             providerModel: providerModel
         )
     }
+
+    private func fallbackDraft(from prompt: String, providerModel: String) -> AICompositionDraft {
+        let lower = prompt.lowercased()
+        let isForest = lower.contains("forest") || lower.contains("woods") || lower.contains("nature")
+        let isSmooth = lower.contains("smooth") || lower.contains("calm") || lower.contains("soft")
+        let isNight = lower.contains("night") || lower.contains("moon") || lower.contains("dark")
+
+        let primaryHue: Double = isForest ? 0.33 : (isNight ? 0.60 : 0.11)
+        let secondaryHue: Double = isForest ? 0.28 : (isNight ? 0.68 : 0.06)
+        let sat: Double = isSmooth ? 0.45 : 0.70
+
+        let c1 = HueColorUtils.xyFrom(hue: primaryHue, saturation: sat, brightness: 1.0)
+        let c2 = HueColorUtils.xyFrom(hue: secondaryHue, saturation: sat * 0.9, brightness: 1.0)
+
+        let palette = PaletteConfig(
+            mode: .gradient,
+            color1: CodableColor(x: c1.x, y: c1.y),
+            color2: CodableColor(x: c2.x, y: c2.y),
+            color3: nil,
+            hueShift: 0,
+            saturation: sat * 100,
+            temperature: isNight ? 420 : 340,
+            randomize: false
+        )
+
+        let motion = MotionConfig(
+            pattern: isSmooth ? .wave : .cascade,
+            speed: isSmooth ? 28 : 44,
+            forward: true,
+            spread: 68,
+            offset: 42,
+            mirror: false
+        )
+
+        let envelope = EnvelopeConfig(
+            shape: isSmooth ? .breathe : .swell,
+            bpm: isSmooth ? 36 : 52,
+            depth: isSmooth ? 28 : 45,
+            attack: 55,
+            decay: 48,
+            dutyCycle: 50,
+            minBrightness: isNight ? 8 : 14,
+            maxBrightness: isNight ? 70 : 88
+        )
+
+        let reaction = ReactionConfig()
+
+        let draft = ModelDraft(
+            name: prompt.split(separator: " ").prefix(3).map(String.init).joined(separator: " ").capitalized,
+            icon: isForest ? "leaf.fill" : "wand.and.stars",
+            accentColorHex: isForest ? "#4EA26D" : (isNight ? "#6A7DFF" : "#FFB340"),
+            palette: palette,
+            motion: motion,
+            envelope: envelope,
+            reaction: reaction
+        )
+        return clamped(draft, prompt: prompt, providerModel: providerModel)
+    }
 }
 
 // MARK: - StudioViewModel
@@ -253,6 +431,14 @@ struct RunningEffect {
     let room: RoomDisplayItem
     let lightIDs: [String]     // for per-light cleanup (bridgeNative)
     let isEntertainment: Bool  // true = DTLS session active
+    let requestedTransport: CompositionPreferredTransport?
+    let transportFallback: Bool
+}
+
+enum CompositionTransportPreference: String {
+    case auto
+    case roomOnly
+    case entertainmentArea
 }
 
 @Observable
@@ -337,6 +523,13 @@ final class StudioViewModel {
     private let aiGenerator = AICompositionGenerator()
     var isGeneratingAIComposition = false
     var aiGenerationErrorMessage: String?
+    var activeCompositionGamut: HueColorUtils.Gamut = .c
+    let suggestedAIPrompts: [String] = [
+        "Static Warm Sunset",
+        "Cozy Reading Corner",
+        "Energetic Club Pulse",
+        "Blinking Christmas Lights"
+    ]
 
     /// Template preset for "+ Create" — kept in the store for `apply()` lookup, hidden from Deck 3 grid.
     static let composerStarterDraftPresetID = UUID(uuidString: "00000000-0000-0000-0000-00000000C0DA")!
@@ -357,6 +550,54 @@ final class StudioViewModel {
         if selectedRoom == nil, let first = orchestrator.allRooms.first {
             selectedRoom = first
         }
+    }
+
+    private enum PrefKeys {
+        static let compositionTransportPreference = "compositionTransportPreference"
+        static let compositionTransportPromptEnabled = "compositionTransportPromptEnabled"
+    }
+
+    var compositionTransportPreference: CompositionTransportPreference {
+        get {
+            let raw = UserDefaults.standard.string(forKey: PrefKeys.compositionTransportPreference) ?? CompositionTransportPreference.auto.rawValue
+            return CompositionTransportPreference(rawValue: raw) ?? .auto
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: PrefKeys.compositionTransportPreference)
+        }
+    }
+
+    var isCompositionTransportPromptEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: PrefKeys.compositionTransportPromptEnabled) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: PrefKeys.compositionTransportPromptEnabled)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: PrefKeys.compositionTransportPromptEnabled)
+        }
+    }
+
+    func preferredEntertainmentForCompositionTier(_ tier: CompositionTier) -> Bool {
+        switch compositionTransportPreference {
+        case .auto:
+            return tier != .bridgeOptimized
+        case .roomOnly:
+            return false
+        case .entertainmentArea:
+            return true
+        }
+    }
+
+    @MainActor
+    var activeRESTCadenceForSelectedRoom: Double? {
+        guard let orchestrator else { return nil }
+        if let roomID = selectedRoom?.id,
+           let roomCadence = orchestrator.activeRESTCadenceByRoom[roomID] {
+            return roomCadence
+        }
+        return orchestrator.activeRESTCadence
     }
 
     // ──────────────────────────────────────────────
@@ -441,7 +682,11 @@ final class StudioViewModel {
     /// Resolve individual light IDs for a room/zone using its in-memory child refs.
     /// - Zone children have rtype "light" → rid IS the light ID (zero API calls)
     /// - Room children have rtype "device" → need one fetchLights() to match owner.rid
-    private func resolveLightIDs(for room: RoomDisplayItem, api: HueAPIClient) async -> [String] {
+    private func resolveLightIDs(
+        for room: RoomDisplayItem,
+        api: HueAPIClient,
+        cachedLights: [HueLight]? = nil
+    ) async -> [String] {
         let refs = room.childResourceRefs
         guard !refs.isEmpty else { return [] }
 
@@ -455,7 +700,13 @@ final class StudioViewModel {
 
         // Rooms reference devices — resolve via light.owner.rid
         let deviceIDs = Set(refs.map { $0.rid })
-        guard let allLights = try? await api.fetchLights() else { return [] }
+        let allLights: [HueLight]
+        if let cachedLights {
+            allLights = cachedLights
+        } else {
+            guard let fetchedLights = try? await api.fetchLights() else { return [] }
+            allLights = fetchedLights
+        }
         let roomLightIDs = allLights
             .filter { light in
                 guard let ownerRID = light.owner?.rid else { return false }
@@ -466,15 +717,52 @@ final class StudioViewModel {
         return roomLightIDs
     }
 
+    /// Resolve a room-dominant Hue gamut for color-clamping in Composer.
+    private func resolveDominantGamut(
+        for room: RoomDisplayItem,
+        api: HueAPIClient,
+        cachedLights: [HueLight]? = nil
+    ) async -> HueColorUtils.Gamut {
+        let allLights: [HueLight]
+        if let cachedLights {
+            allLights = cachedLights
+        } else {
+            guard let fetchedLights = try? await api.fetchLights() else { return .c }
+            allLights = fetchedLights
+        }
+
+        let refs = room.childResourceRefs
+        let roomLights: [HueLight]
+        if refs.contains(where: { $0.rtype == "light" }) {
+            let lightIDs = Set(refs.filter { $0.rtype == "light" }.map(\.rid))
+            roomLights = allLights.filter { lightIDs.contains($0.id) }
+        } else {
+            let deviceIDs = Set(refs.map(\.rid))
+            roomLights = allLights.filter { light in
+                guard let ownerRID = light.owner?.rid else { return false }
+                return deviceIDs.contains(ownerRID)
+            }
+        }
+
+        guard !roomLights.isEmpty else { return .c }
+        var counts: [HueColorUtils.Gamut: Int] = [.a: 0, .b: 0, .c: 0]
+        for light in roomLights {
+            guard let raw = light.color?.gamut_type?.uppercased(),
+                  let gamut = HueColorUtils.Gamut(rawValue: raw) else { continue }
+            counts[gamut, default: 0] += 1
+        }
+        return counts.max(by: { $0.value < $1.value })?.key ?? .c
+    }
+
     @MainActor
     func apply(_ card: StudioCard) async {
-        await apply(card, roomOverride: nil)
+        await apply(card, roomOverride: nil, preferEntertainmentOverride: nil)
     }
 
     /// Apply using a captured room snapshot to avoid room-selection races
     /// when taps and room-swipes happen close together.
     @MainActor
-    func apply(_ card: StudioCard, roomOverride: RoomDisplayItem?) async {
+    func apply(_ card: StudioCard, roomOverride: RoomDisplayItem?, preferEntertainmentOverride: Bool?) async {
         print("[Studio] apply '\(card.name)' — selectedRoom: \(selectedRoom?.name ?? "nil")")
         guard let room = roomOverride ?? selectedRoom else {
             statusMessage = "⚠ Select a room first"
@@ -513,22 +801,20 @@ final class StudioViewModel {
             }
         }
 
-        // ── Studio engine is singleton in orchestrator (one active task). ────────
-        // For app-driven + composition cards, keep behavior explicit and predictable:
-        // stop other running engine-based effects on different rooms first.
-        // Bridge-native per-light effects can coexist and are left untouched.
+        // ── Studio engine is singleton in orchestrator for app-driven cards. ────────
+        // Composition now runs per-room and can coexist across rooms.
         let newUsesStudioEngine: Bool = {
             switch card.strategy {
-            case .appDriven, .composition: return true
-            case .bridgeNative: return false
+            case .appDriven: return true
+            case .composition, .bridgeNative: return false
             }
         }()
         if newUsesStudioEngine {
             for (roomID, effect) in runningEffects where roomID != room.id {
                 let effectUsesStudioEngine: Bool = {
                     switch effect.card.strategy {
-                    case .appDriven, .composition: return true
-                    case .bridgeNative: return false
+                    case .appDriven: return true
+                    case .composition, .bridgeNative: return false
                     }
                 }()
                 guard effectUsesStudioEngine else { continue }
@@ -549,25 +835,25 @@ final class StudioViewModel {
 
         // ── Check for light overlap with other running rooms ─────────
         // (e.g. Home zone overlaps individual rooms)
-        let newLightIDs: [String]
-        switch card.strategy {
-        case .bridgeNative:
-            newLightIDs = await resolveLightIDs(for: room, api: api)
-        default:
-            newLightIDs = []  // appDriven doesn't use per-light IDs
-        }
+        let needsBridgeLightInventory = room.childResourceRefs.contains { $0.rtype != "light" }
+        let bridgeLights: [HueLight]? =
+            needsBridgeLightInventory ? (try? await api.fetchLights()) : nil
+        let newLightIDs = await resolveLightIDs(for: room, api: api, cachedLights: bridgeLights)
 
         if !newLightIDs.isEmpty {
             let newLightSet = Set(newLightIDs)
             for (roomID, effect) in runningEffects {
                 let overlap = Set(effect.lightIDs).intersection(newLightSet)
                 if !overlap.isEmpty {
-                    print("[Studio] Light overlap: \(overlap.count) lights shared with \(effect.room.name) — stopping")
+                    print("[Handoff] Light overlap detected: \(overlap.count) lights shared with \(effect.room.name) — awaiting teardown barrier")
                     isExplicitStop = false
                     await stopEffect(on: roomID)
+                    print("[Handoff] Overlap teardown barrier complete for \(effect.room.name)")
                 }
             }
         }
+
+        print("[Handoff] Startup barrier clear for '\(card.name)' on \(room.name); beginning startup sequence")
 
         let brightness = paramValue(for: card.id, paramID: "brightness", default: 70)
 
@@ -580,7 +866,9 @@ final class StudioViewModel {
             )
 
             // Step 2: Apply effect per-light.
-            let lightIDs = newLightIDs.isEmpty ? await resolveLightIDs(for: room, api: api) : newLightIDs
+            let lightIDs = newLightIDs.isEmpty
+                ? await resolveLightIDs(for: room, api: api, cachedLights: bridgeLights)
+                : newLightIDs
             if lightIDs.isEmpty {
                 statusMessage = "⚠ No lights found in \(room.name)"
                 return
@@ -592,7 +880,8 @@ final class StudioViewModel {
 
             runningEffects[room.id] = RunningEffect(
                 cardID: card.id, card: card, room: room,
-                lightIDs: lightIDs, isEntertainment: false
+                lightIDs: lightIDs, isEntertainment: false,
+                requestedTransport: nil, transportFallback: false
             )
             statusMessage = "🟢 \(card.name) → \(room.name)"
 
@@ -616,7 +905,8 @@ final class StudioViewModel {
             let isEnt = orchestrator.studioEntClient != nil
             runningEffects[room.id] = RunningEffect(
                 cardID: card.id, card: card, room: room,
-                lightIDs: [], isEntertainment: isEnt
+                lightIDs: newLightIDs, isEntertainment: isEnt,
+                requestedTransport: nil, transportFallback: false
             )
             let transport = isEnt ? "ENTERTAINMENT" : "REST"
             statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)]"
@@ -626,19 +916,88 @@ final class StudioViewModel {
                 statusMessage = "⚠ Composition not found"
                 return
             }
-            let box = CompositionParamBox(preset: preset)
-            activeCompositionBox = box
+            let tier = preset.capabilityTier
+            if tier == .bridgeOptimized {
+                let phase = preset.motion.phase(lightIndex: 0, total: 1, time: 0)
+                let color = preset.palette.color(at: phase)
+                var brightnessNorm = preset.envelope.value(at: 0)
+                brightnessNorm = preset.reaction.apply(baseBrightness: brightnessNorm, audioLevel: 0, time: 0)
+                let brightnessPct = min(100.0, max(1.0, brightnessNorm * 100.0))
 
-            await orchestrator.startCompositionMode(
-                room: room, paramBox: box
-            )
-            let isEnt = orchestrator.studioEntClient != nil
+                if preset.palette.mode == .temperature {
+                    try? await api.setGroupedLightEffect(
+                        id: groupedLightID,
+                        on: true,
+                        brightness: brightnessPct,
+                        xy: nil,
+                        mirek: preset.palette.temperature,
+                        duration: 500
+                    )
+                } else {
+                    try? await api.setGroupedLightEffect(
+                        id: groupedLightID,
+                        on: true,
+                        brightness: brightnessPct,
+                        xy: (color.x, color.y),
+                        mirek: nil,
+                        duration: 500
+                    )
+                }
+                print("[Composer] ⚡ bridgeOptimized one-shot applied for '\(preset.name)' on \(room.name)")
+            } else {
+                // Overlap mic startup with gamut fetch so voice-derived levels exist sooner (Sync-style responsiveness).
+                async let gamutTask = resolveDominantGamut(for: room, api: api, cachedLights: bridgeLights)
+                async let micHeadStart: Void = {
+                    guard preset.reaction.requiresMic else { return }
+                    await CompositionMicCapture.shared.syncDemand(true)
+                }()
+                // Prefer completing mic handoff before blocking on gamut result — bridge fetch still runs in parallel.
+                await micHeadStart
+                activeCompositionGamut = await gamutTask
+                let box = CompositionParamBox(preset: preset)
+                activeCompositionBox = box
+                let presetPreferEntertainment: Bool?
+                switch preset.preferredTransport {
+                case .roomOnly:
+                    presetPreferEntertainment = false
+                case .entertainmentArea:
+                    presetPreferEntertainment = true
+                case nil:
+                    presetPreferEntertainment = nil
+                }
+                let requestedEntertainment = preferEntertainmentOverride
+                    ?? presetPreferEntertainment
+                    ?? preferredEntertainmentForCompositionTier(tier)
+                let requestedTransport: CompositionPreferredTransport = requestedEntertainment ? .entertainmentArea : .roomOnly
+
+                await orchestrator.startCompositionMode(
+                    room: room,
+                    paramBox: box,
+                    gamutOverride: activeCompositionGamut,
+                    preferEntertainment: requestedEntertainment,
+                    tier: tier
+                )
+                let isEnt = orchestrator.studioEntClient != nil
+                runningEffects[room.id] = RunningEffect(
+                    cardID: card.id, card: card, room: room,
+                    lightIDs: newLightIDs, isEntertainment: isEnt,
+                    requestedTransport: requestedTransport,
+                    transportFallback: requestedTransport == .entertainmentArea && !isEnt
+                )
+                let transport = isEnt ? "ENTERTAINMENT" : "REST"
+                statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)]"
+                if requestedTransport == .entertainmentArea && !isEnt {
+                    statusMessage = "⚠ Streaming unavailable, running \(room.name) in Room (REST)"
+                }
+                print("[Studio] Active effects: \(runningEffects.count) rooms")
+                return
+            }
             runningEffects[room.id] = RunningEffect(
                 cardID: card.id, card: card, room: room,
-                lightIDs: [], isEntertainment: isEnt
+                lightIDs: newLightIDs, isEntertainment: false,
+                requestedTransport: nil, transportFallback: false
             )
-            let transport = isEnt ? "ENTERTAINMENT" : "REST"
-            statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)]"
+            statusMessage = "🟢 \(card.name) → \(room.name) [REST_ONE_SHOT]"
         }
 
         print("[Studio] Active effects: \(runningEffects.count) rooms")
@@ -658,10 +1017,13 @@ final class StudioViewModel {
         case .bridgeNative:
             // Clean up per-light effects (the ONLY way to clear them)
             if !effect.lightIDs.isEmpty {
-                print("[Studio] 📡 Clearing per-light effects on \(effect.lightIDs.count) lights")
+                print("[Handoff] Clearing per-light no_effect on \(effect.lightIDs.count) lights for \(effect.room.name)")
                 await sendPerLightBatched(lightIDs: effect.lightIDs, api: api) { id in
                     try? await api.setLightNativeEffect(id: id, effect: "no_effect")
                 }
+                // Allow bridge-side effect transition buffers to settle before a new owner starts.
+                try? await Task.sleep(for: .milliseconds(150))
+                print("[Handoff] Per-light no_effect cleanup + settle delay complete for \(effect.room.name)")
             }
 
             if isExplicitStop {
@@ -674,8 +1036,13 @@ final class StudioViewModel {
             try? await Task.sleep(for: .milliseconds(200))
 
         case .composition:
-            await orchestrator.stopStudioMode()
+            await orchestrator.stopCompositionMode(roomID: roomID)
             activeCompositionBox = nil
+            if isExplicitStop {
+                // Ensure composition cards (including bridge one-shot tier)
+                // fully release control and don't appear "stuck on".
+                try? await api.setGroupedLight(id: groupedLightID, on: false)
+            }
             try? await Task.sleep(for: .milliseconds(200))
         }
 
@@ -843,6 +1210,7 @@ final class StudioViewModel {
             params: [],
             strategy: .composition(presetID: preset.id),
             compositionLayerActivity: activity,
+            compositionTier: preset.capabilityTier,
             isAIGenerated: preset.aiPrompt != nil || preset.providerModel != nil
         )
     }
@@ -943,7 +1311,8 @@ final class StudioViewModel {
     @MainActor
     func applyStarterComposition() async {
         ensureComposerStarterDraft()
-        await apply(starterCompositionCard())
+        // +Create should stay scoped to the selected room by default.
+        await apply(starterCompositionCard(), roomOverride: nil, preferEntertainmentOverride: false)
     }
 
     @MainActor
@@ -962,10 +1331,16 @@ final class StudioViewModel {
         do {
             let draft = try await aiGenerator.generateDraft(from: prompt)
             let now = Date()
+            let safeIcon = sanitizedSymbolName(draft.icon)
+            #if DEBUG
+            if safeIcon != draft.icon {
+                print("[AI] Invalid SF Symbol '\(draft.icon)' from model. Falling back to '\(safeIcon)'.")
+            }
+            #endif
             let preset = CompositionPreset(
                 id: UUID(),
                 name: draft.name,
-                icon: draft.icon,
+                icon: safeIcon,
                 accentColorHex: draft.accentColorHex,
                 isBuiltIn: false,
                 category: .myCreations,
@@ -983,6 +1358,12 @@ final class StudioViewModel {
             statusMessage = "✨ Generated '\(preset.name)'"
             return preset
         } catch {
+            if case let AICompositionGeneratorError.decodeFailure(raw: raw, details: details) = error {
+                print("[AI] Decode failure details: \(details)")
+                print("[AI] Raw model response JSON candidate: \(raw)")
+            } else {
+                print("[AI] Generation failure: \(error)")
+            }
             let message = (error as? LocalizedError)?.errorDescription ?? "Couldn’t generate composition. Try a different prompt."
             aiGenerationErrorMessage = message
             statusMessage = "⚠ \(message)"
@@ -992,14 +1373,19 @@ final class StudioViewModel {
 
     /// Persist the currently running composition params as a new user preset.
     @MainActor
-    func saveActiveComposition(name rawName: String, icon: String) -> CompositionPreset? {
+    func saveActiveComposition(
+        name rawName: String,
+        icon: String,
+        preferredTransport: CompositionPreferredTransport?
+    ) -> CompositionPreset? {
         guard let box = activeCompositionBox else { return nil }
         let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeIcon = sanitizedSymbolName(icon)
         let now = Date()
         let preset = CompositionPreset(
             id: UUID(),
             name: trimmed.isEmpty ? "My Composition" : trimmed,
-            icon: icon,
+            icon: safeIcon,
             accentColorHex: "#FFB340",
             isBuiltIn: false,
             category: .myCreations,
@@ -1009,10 +1395,17 @@ final class StudioViewModel {
             envelope: box.envelope,
             reaction: box.reaction,
             createdAt: now,
-            updatedAt: now
+            updatedAt: now,
+            preferredTransport: preferredTransport
         )
         compositionStore.save(preset)
         return preset
+    }
+
+    private func sanitizedSymbolName(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "sparkles" }
+        return UIImage(systemName: trimmed) != nil ? trimmed : "sparkles"
     }
 
     @MainActor
@@ -1037,7 +1430,9 @@ final class StudioViewModel {
                 card: studioCard(for: fresh),
                 room: effect.room,
                 lightIDs: effect.lightIDs,
-                isEntertainment: effect.isEntertainment
+                isEntertainment: effect.isEntertainment,
+                requestedTransport: effect.requestedTransport,
+                transportFallback: effect.transportFallback
             )
         }
     }
