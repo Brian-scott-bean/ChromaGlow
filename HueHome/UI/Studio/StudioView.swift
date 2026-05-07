@@ -2004,7 +2004,7 @@ struct StudioView: View {
                 HStack(spacing: 6) {
                     ForEach(0..<directionPresets.count, id: \.self) { i in
                         let preset = directionPresets[i]
-                        let currentAngle = vm.activeCompositionBox?.motion.motionAngle ?? 0
+                        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
                         let isSelected = abs(currentAngle - preset.angle) < 5 || abs(currentAngle - preset.angle - 360) < 5
                         Button {
                             recomputeSpatialPositions(angle: preset.angle)
@@ -2034,7 +2034,7 @@ struct StudioView: View {
     // ──────────────────────────────────────────────
 
     private var motionAngleDial: some View {
-        let currentAngle = vm.activeCompositionBox?.motion.motionAngle ?? 0
+        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
         let size: CGFloat = 80
 
         return ZStack {
@@ -2118,7 +2118,7 @@ struct StudioView: View {
 
     private var spatialMiniMap: some View {
         let mapSize: CGFloat = 80
-        let currentAngle = vm.activeCompositionBox?.motion.motionAngle ?? 0
+        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
 
         return ZStack {
             // Background
@@ -2223,7 +2223,7 @@ struct StudioView: View {
         .sheet(isPresented: $showEntertainmentBuilder) {
             EntertainmentConfigBuilderView { newConfig in
                 orchestrator.activeEntertainmentConfig = newConfig
-                recomputeSpatialPositions(angle: vm.activeCompositionBox?.motion.motionAngle ?? 0)
+                recomputeSpatialPositions(angle: max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0))
             }
             .environment(orchestrator)
         }

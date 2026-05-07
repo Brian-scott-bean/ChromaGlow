@@ -1761,12 +1761,20 @@ final class UnifiedOrchestrator {
 
         if let entConfig {
             // Auto-detect principal angle when user hasn't set one
-            if paramBox.motion.motionAngle == 0 {
+            if paramBox.motion.motionAngle < 0 {
                 paramBox.motion.motionAngle = CompositionEngine.principalAngle(channels: entConfig.channels)
             }
+
+            // ── Build lightID → position map ──
+            // Entertainment channel members point to entertainment services (not light services).
+            // Bridge the IDs: entertainment_service → device → light.
+            let lightPositions = await resolveEntertainmentLightPositions(
+                config: entConfig, api: api
+            )
+
             // Pre-compute spatial positions for REST path (lightID order)
             let restPositions = CompositionEngine.computeSpatialPositions(
-                config: entConfig,
+                lightPositions: lightPositions,
                 orderedLightIDs: compositionLightIDs,
                 motionAngle: paramBox.motion.motionAngle
             )
@@ -2342,6 +2350,65 @@ final class UnifiedOrchestrator {
                 return deviceIDs.contains(ownerRID)
             }
             .map { $0.id }
+    }
+
+    /// Resolve lightID → physical (x, z) position from an entertainment config.
+    ///
+    /// Entertainment channel members reference **entertainment** services (not light services).
+    /// This function bridges the gap:
+    ///   1. Fetch `/clip/v2/resource/entertainment` → entertainment service → device owner
+    ///   2. Fetch lights → light → device owner
+    ///   3. Match via shared device ID: entService → device → light
+    ///   4. Return lightID → channel position
+    private func resolveEntertainmentLightPositions(
+        config: EntertainmentConfig,
+        api: HueAPIClient
+    ) async -> [String: (x: Double, z: Double)] {
+        guard let (ip, token) = try? api.credentials() else { return [:] }
+
+        // Fetch entertainment services and lights in parallel
+        async let entServicesData = api.get(
+            path: "/clip/v2/resource/entertainment",
+            ip: ip, token: token
+        )
+        async let lightsFetch = api.fetchLights()
+
+        guard let entData = try? await entServicesData,
+              let lights = try? await lightsFetch else { return [:] }
+
+        // Build entServiceID → deviceID from entertainment services
+        var entServiceToDevice: [String: String] = [:]
+        if let json = try? JSONSerialization.jsonObject(with: entData) as? [String: Any],
+           let items = json["data"] as? [[String: Any]] {
+            for item in items {
+                guard let entID = item["id"] as? String,
+                      let owner = item["owner"] as? [String: Any],
+                      let deviceID = owner["rid"] as? String else { continue }
+                entServiceToDevice[entID] = deviceID
+            }
+        }
+
+        // Build deviceID → lightID from lights
+        var deviceToLightID: [String: String] = [:]
+        for light in lights {
+            if let deviceID = light.owner?.rid {
+                deviceToLightID[deviceID] = light.id
+            }
+        }
+
+        // Map each channel's entertainment service members to light IDs with positions
+        var result: [String: (x: Double, z: Double)] = [:]
+        for channel in config.channels {
+            for entServiceID in channel.lightServiceIDs {
+                if let deviceID = entServiceToDevice[entServiceID],
+                   let lightID = deviceToLightID[deviceID] {
+                    result[lightID] = (x: channel.position.x, z: channel.position.z)
+                }
+            }
+        }
+
+        print("[Composer] 🗺️ Resolved \(result.count) light positions from entertainment config")
+        return result
     }
 
     func stopStudioMode() async {

@@ -77,25 +77,21 @@ enum CompositionEngine {
     // MARK: - Spatial Position Computation
     // ──────────────────────────────────────────────
 
-    /// Project entertainment channel positions onto a 2D direction vector.
+    /// Project light positions onto a 2D direction vector.
     /// Returns positions ordered to match the given lightIDs (for REST transport).
-    /// Uses a lightID→position lookup to handle ordering mismatches between
-    /// entertainment channels and REST light resolution order.
+    ///
+    /// - Parameters:
+    ///   - lightPositions: Pre-built map of lightID → (x, z) position.
+    ///     Built by the orchestrator by bridging entertainment service IDs → device → light IDs.
+    ///   - orderedLightIDs: REST light IDs in render order.
+    ///   - motionAngle: Direction angle in degrees (0–360).
     static func computeSpatialPositions(
-        config: EntertainmentConfig,
+        lightPositions: [String: (x: Double, z: Double)],
         orderedLightIDs: [String],
         motionAngle: Double
     ) -> [Double] {
         guard orderedLightIDs.count > 1 else {
             return orderedLightIDs.isEmpty ? [] : [0.5]
-        }
-
-        // Build lightID → position map from entertainment channels
-        var positionByLightID: [String: (x: Double, z: Double)] = [:]
-        for channel in config.channels {
-            for lightID in channel.lightServiceIDs {
-                positionByLightID[lightID] = (x: channel.position.x, z: channel.position.z)
-            }
         }
 
         let rad = motionAngle * .pi / 180.0
@@ -104,7 +100,7 @@ enum CompositionEngine {
         var projections: [Double] = []
         var hasMissing = false
         for lightID in orderedLightIDs {
-            if let pos = positionByLightID[lightID] {
+            if let pos = lightPositions[lightID] {
                 projections.append(pos.x * dx + pos.z * dz)
             } else {
                 hasMissing = true

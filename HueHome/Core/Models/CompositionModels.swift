@@ -119,7 +119,7 @@ struct MotionConfig: Codable, Equatable {
     var spread: Double = 70         // 0-100
     var offset: Double = 50         // 0-100 (phase stagger between lights)
     var mirror: Bool = false
-    var motionAngle: Double = 0     // 0-360° direction for spatial patterns
+    var motionAngle: Double = -1    // -1 = auto-detect via PCA; 0-360° = user-set direction
 
     /// Compute the phase position (0.0–1.0) for a specific light at a given time.
     /// This phase is fed into PaletteConfig.color(at:) to determine what color the light should be.
@@ -130,7 +130,10 @@ struct MotionConfig: Codable, Equatable {
         let period = 20.0 - (speed / 100.0) * 19.5
         let normalizedTime = time / max(0.01, period)
 
-        let position = Double(lightIndex) / Double(max(1, total - 1))
+        let position: Double = {
+            let p = Double(lightIndex) / Double(max(1, total - 1))
+            return mirror ? abs(p - 0.5) * 2.0 : p
+        }()
         let direction: Double = forward ? 1.0 : -1.0
         let stagger = (offset / 100.0)
 
