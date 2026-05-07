@@ -1060,7 +1060,11 @@ struct StudioView: View {
                             }
                             .buttonStyle(.plain)
 
-                            if effect.transportFallback {
+                            if orchestrator.isBridgeStored {
+                                Text("Running on bridge — close the app, lights keep going")
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundStyle(HuePalette.amber.opacity(0.9))
+                            } else if effect.transportFallback {
                                 Text("Streaming unavailable on this bridge/session, using REST")
                                     .font(.system(size: 8, weight: .medium))
                                     .foregroundStyle(HuePalette.amber.opacity(0.75))
@@ -1287,6 +1291,10 @@ struct StudioView: View {
     }
 
     private func composerTransportBadgeText(for effect: RunningEffect) -> String {
+        // Bridge-stored animations run on the bridge hardware itself
+        if orchestrator.isBridgeStored {
+            return "BRIDGE ⚡"
+        }
         if effect.transportFallback {
             return "COMPOSER: ROOM (REST FALLBACK)"
         }

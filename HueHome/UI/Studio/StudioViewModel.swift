@@ -975,7 +975,8 @@ final class StudioViewModel {
                     paramBox: box,
                     gamutOverride: activeCompositionGamut,
                     preferEntertainment: requestedEntertainment,
-                    tier: tier
+                    tier: tier,
+                    preset: preset
                 )
                 let isEnt = orchestrator.studioEntClient != nil
                 runningEffects[room.id] = RunningEffect(

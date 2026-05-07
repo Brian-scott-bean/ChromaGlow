@@ -1571,6 +1571,13 @@ final class UnifiedOrchestrator {
     /// Weak ref — entertainment composition loop reads reaction (mic demand). Cleared when ENT task ends.
     private weak var compositionEntertainmentParamBox: CompositionParamBox?
 
+    // MARK: Bridge-Stored Animation (v1 API)
+    private let bridgeAnimationEngine = BridgeAnimationEngine()
+    private let bridgeAnimationStore = BridgeAnimationStore.shared
+    /// Whether the active composition is running on the bridge (v1 rules chain).
+    /// Exposed for UI badge display.
+    var isBridgeStored: Bool = false
+
     /// Live param reference — StudioViewModel updates this dict, engine loops read it.
     /// Using a class wrapper so the Task closure captures a reference, not a copy.
     final class StudioParamBox: @unchecked Sendable {
@@ -1704,13 +1711,17 @@ final class UnifiedOrchestrator {
     }
 
     /// Start a composition render loop for the given room.
-    /// Tries Entertainment API first (per-light, 25fps), falls back to REST (grouped_light ~1 Hz — bridge limit).
+    /// Transport priority:
+    ///   1. Bridge-stored (v1 rules chain) — if preset is eligible, upload to bridge. Close app, lights keep going.
+    ///   2. Entertainment API (DTLS 25fps) — if entertainment area exists.
+    ///   3. Per-light REST (~10 PUTs/sec) — fallback with per-light color variation.
     func startCompositionMode(
         room: RoomDisplayItem,
         paramBox: CompositionParamBox,
         gamutOverride: HueColorUtils.Gamut? = nil,
         preferEntertainment: Bool = true,
-        tier: CompositionTier = .runtimeOnly
+        tier: CompositionTier = .runtimeOnly,
+        preset: CompositionPreset? = nil
     ) async {
         guard let api = hueClient(for: room.bridgeID),
               let groupedLightID = room.groupedLightID else { return }
@@ -1772,6 +1783,34 @@ final class UnifiedOrchestrator {
         // Reuses the lights already fetched during gamut resolution.
         let compositionLightIDs = await resolveCompositionLightIDs(for: room, api: api)
         print("[Composer] 🔍 Resolved \(compositionLightIDs.count) individual lights for per-light REST")
+
+        // ─── Try bridge-stored animation (v1 rules chain) ───
+        // If the preset is eligible (no mic), pre-render and upload to bridge.
+        // The bridge loops through scenes autonomously — app can be closed.
+        if let preset, preset.canRunOnBridge, !compositionLightIDs.isEmpty {
+            do {
+                let v1Client = try api.makeV1Client()
+                print("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
+                let manifest = try await bridgeAnimationEngine.upload(
+                    preset: preset,
+                    room: room,
+                    lightIDs: compositionLightIDs,
+                    gamut: compositionGamut,
+                    v1Client: v1Client
+                )
+                bridgeAnimationStore.save(manifest)
+                isBridgeStored = true
+                print("[Composer] ⚡ Bridge-stored animation active! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s/step")
+                print("[Composer] ⚡ Close the app — lights will keep going!")
+                return  // Don't start app-driven scheduler
+            } catch {
+                print("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
+                isBridgeStored = false
+                // Fall through to REST/Entertainment path
+            }
+        } else {
+            isBridgeStored = false
+        }
 
         compositionRuntimes[roomID] = CompositionRuntime(
             roomID: roomID,
@@ -1891,6 +1930,19 @@ final class UnifiedOrchestrator {
     func stopCompositionMode(roomID: String) async {
         print("[Handoff] Composer stop requested for roomID=\(roomID)")
         compositionGenerations[roomID] = (compositionGenerations[roomID] ?? 0) + 1
+
+        // ─── Stop bridge-stored animation if active ───
+        // Search all manifests for this room and clean up
+        for manifest in bridgeAnimationStore.allManifests() where manifest.roomID == roomID {
+            // Create v1 client from the manifest's bridge IP + primary API token
+            if let api = primaryAPIClient,
+               let v1Client = try? api.makeV1Client() {
+                await bridgeAnimationEngine.stop(manifest: manifest, v1Client: v1Client)
+            }
+            bridgeAnimationStore.remove(presetID: manifest.presetID, roomID: roomID)
+        }
+        isBridgeStored = false
+
         print("[Handoff] Clearing studio REST sender mailbox for roomID=\(roomID)")
         await studioRestSender.clear()
         // Give Hue bridge firmware a brief settle window before any new owner starts writing.

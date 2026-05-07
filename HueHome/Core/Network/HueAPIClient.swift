@@ -83,6 +83,14 @@ class HueAPIClient: @unchecked Sendable {
         return (ip, token)
     }
 
+    /// Create a v1 API client using the same credentials as this v2 client.
+    /// The v1 API uses the same token — it's just placed in the URL path
+    /// instead of the hue-application-key header.
+    func makeV1Client() throws -> HueV1Client {
+        let (ip, token) = try credentials()
+        return HueV1Client(ip: ip, token: token)
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - GET Resources
     // ──────────────────────────────────────────────

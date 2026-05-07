@@ -106,6 +106,9 @@
 		4BF64D53B0E97F7FAFFDD67B /* CompositionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78AC498F54F25255B55133B1 /* CompositionStore.swift */; };
 		0E7CD3AA335189BAFEFFB105 /* CompositionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B06F0F76E068D42895691A4 /* CompositionEngine.swift */; };
 		F1E2D3C4B5A68990ABCDEF03 /* CompositionMicCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */; };
+		E1B00002AAAA000000000001 /* HueV1Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000001 /* HueV1Client.swift */; };
+		E1B00002AAAA000000000002 /* BridgeAnimationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */; };
+		E1B00002AAAA000000000003 /* BridgeAnimationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000003 /* BridgeAnimationStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -282,6 +285,9 @@
 		78AC498F54F25255B55133B1 /* CompositionStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionStore.swift; path = HueHome/Core/Models/CompositionStore.swift; sourceTree = "<group>"; };
 		7B06F0F76E068D42895691A4 /* CompositionEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionEngine.swift; path = ./HueHome/UI/Studio/CompositionEngine.swift; sourceTree = "<group>"; };
 		F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionMicCapture.swift; path = ./HueHome/UI/Studio/CompositionMicCapture.swift; sourceTree = "<group>"; };
+		E1B00001AAAA000000000001 /* HueV1Client.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueV1Client.swift; path = HueHome/Core/Network/HueV1Client.swift; sourceTree = "<group>"; };
+		E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationEngine.swift; path = HueHome/Core/Network/BridgeAnimationEngine.swift; sourceTree = "<group>"; };
+		E1B00001AAAA000000000003 /* BridgeAnimationStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationStore.swift; path = HueHome/Core/Persistence/BridgeAnimationStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -435,6 +441,9 @@
 				F4E1000100000000 /* HueEntertainmentClient.swift */,
 				6278B21D6E2592BB36A4CB8F /* BridgeDiscoveryService.swift */,
 				1E394B8CB521A7239F42E2C2 /* HueAPIClient.swift */,
+				E1B00001AAAA000000000001 /* HueV1Client.swift */,
+				E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */,
+				E1B00001AAAA000000000003 /* BridgeAnimationStore.swift */,
 				2A4E5AC65C9D7C704980C395 /* HueSSEService.swift */,
 				4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */,
 				013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */,
@@ -1032,6 +1041,9 @@
 				5018BCF991BE3F3C5FBEB15D /* HueLight.swift in Sources */,
 				E3ED0638F1205B9278E91308 /* HueGroupedLight.swift in Sources */,
 				727B56C4888384A217723C7F /* HueAPIClient.swift in Sources */,
+				E1B00002AAAA000000000001 /* HueV1Client.swift in Sources */,
+				E1B00002AAAA000000000002 /* BridgeAnimationEngine.swift in Sources */,
+				E1B00002AAAA000000000003 /* BridgeAnimationStore.swift in Sources */,
 				0C12896D88428F2FA94BFB93 /* HapticManager.swift in Sources */,
 				E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */,
 				84A2F3E0A417A58CAD2BDB08 /* RoomDetailView.swift in Sources */,

@@ -469,4 +469,12 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         }
         return .runtimeOnly
     }
+
+    /// Whether this preset can be uploaded as a bridge-stored v1 animation.
+    /// ANY non-mic preset can be pre-rendered into v1 scenes — the bridge
+    /// loops through them autonomously (close the app, lights keep going).
+    /// Only mic-reactive presets are excluded (bridge has no mic).
+    var canRunOnBridge: Bool {
+        !reaction.requiresMic
+    }
 }
