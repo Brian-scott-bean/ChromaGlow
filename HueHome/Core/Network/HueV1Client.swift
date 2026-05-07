@@ -46,7 +46,7 @@ struct BridgeResourceCapacity {
 class HueV1Client: @unchecked Sendable {
 
     private let ip: String
-    private let token: String
+    let token: String  // Internal: used by BridgeAnimationEngine for rule action paths
     private let log = Logger(subsystem: "com.chromaglow.app", category: "V1API")
 
     /// Expose bridge IP for manifest storage.

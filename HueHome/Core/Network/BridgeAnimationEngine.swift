@@ -148,60 +148,50 @@ actor BridgeAnimationEngine {
             throw BridgeAnimationError.noLightsResolved
         }
 
-        // ─── 4. Use group 0 (all lights) for scene activation ───
-        // v1 scenes already specify which lights they affect, so group 0
-        // is safe — only the scene's listed lights will change.
-        // Custom groups (entertainment areas, zones) often don't support
-        // scene recall in v1 rules (error 608).
-        let groupID = "0"
-        log.info("[BridgeAnim] Using v1 group 0 (all lights) for scene activation")
-
-        // ─── 5. Create v1 scenes ───
-        var sceneIDs: [String] = []
+        // ─── 4. Pre-compute per-step light states ───
+        // We'll embed these directly in rule actions (no scene activation).
+        // v1 rules support PUT /lights/{id}/state which is more reliable
+        // than scene activation via /groups/{id}/action.
+        var perStepLightStates: [[[String: Any]]] = []  // [step][lightIndex] -> state dict
         for (stepIndex, frames) in renderedFrames.enumerated() {
-            var lightstates: [String: [String: Any]] = [:]
+            var stepStates: [[String: Any]] = []
             for (lightIndex, v1LightID) in v1LightIDs.enumerated() {
                 guard lightIndex < frames.count else { continue }
                 let frame = frames[lightIndex]
                 let xy = HueColorUtils.clampXYToGamut(x: frame.x, y: frame.y, gamut: gamut)
                 let bri = max(1, min(254, Int(frame.brightness * 254.0)))
-
-                lightstates[v1LightID] = [
+                stepStates.append([
                     "on": true,
                     "bri": bri,
                     "xy": [xy.x, xy.y],
                     "transitiontime": transitionDeciSeconds
-                ]
+                ])
             }
-            let sceneName = "CG_\(String(preset.name.prefix(12)))_\(stepIndex)"
-            let sceneID = try await v1Client.createScene(
-                name: sceneName,
-                lightIDs: v1LightIDs,
-                lightstates: lightstates
-            )
-            sceneIDs.append(sceneID)
-            log.info("[BridgeAnim] Created scene \(stepIndex): \(sceneID)")
-
-            // Brief pause between scene creates to avoid overwhelming bridge
-            try? await Task.sleep(for: .milliseconds(100))
+            perStepLightStates.append(stepStates)
         }
+        log.info("[BridgeAnim] Pre-computed \(perStepLightStates.count) step states for \(v1LightIDs.count) lights")
 
-        // ─── 6. Create CLIP sensor (step counter) ───
+        // ─── 5. Create CLIP sensor (step counter) ───
         let sensorName = "CG_\(String(preset.name.prefix(16)))_ctr"
         let sensorID = try await v1Client.createCLIPSensor(
             name: sensorName,
-            initialStatus: 99  // Start at 99 so first schedule tick triggers dx
+            initialStatus: 99  // Start at 99 so first set→0 triggers dx
         )
         log.info("[BridgeAnim] Created sensor: \(sensorID)")
 
-        // ─── 7. Create rules (one per step) ───
-        // PATTERN: Schedule fires every cycleTotalSeconds, setting sensor → 0.
-        // Rule 0: sensor==0 → activate scene 0, set sensor → 1
-        // Rule 1: sensor==1 → activate scene 1, set sensor → 2
-        // ...
-        // Rule N-1: sensor==N-1 → activate scene N-1 (NO advance — waits for schedule)
-        // Chain: schedule→0→1→2→...→N-1→(wait)→schedule→0→...
+        // ─── 6. Create rules (one per step) ───
+        // Each rule sets individual light states directly — no scene activation.
+        // This avoids the error 608 from scene recall on groups.
+        //
+        // CHAIN: schedule sets sensor→0 → rule 0 fires → sets lights + advances to 1
+        //   → rule 1 fires → sets lights + advances to 2 → ... → rule N-1 WAITS
+        //   → schedule fires again → sets sensor→0 → repeat
+        //
+        // Max 8 actions per rule. With N lights + 1 sensor bump = N+1 actions.
+        // Safe for up to 7 lights per rule.
         var ruleIDs: [String] = []
+        let sceneIDs: [String] = []  // No scenes created — using direct light states
+
         for step in 0..<stepCount {
             let nextStep = (step + 1) % stepCount
             let ruleName = "CG_\(String(preset.name.prefix(10)))_s\(step)"
@@ -218,13 +208,19 @@ actor BridgeAnimationEngine {
                 ]
             ]
 
-            var actions: [[String: Any]] = [
-                // Activate the scene for this step
-                v1Client.sceneActivationCommand(groupID: groupID, sceneID: sceneIDs[step])
-            ]
+            // Build actions: one PUT per light + optional sensor advance
+            var actions: [[String: Any]] = []
+            let stepStates = perStepLightStates[step]
+            for (lightIndex, v1LightID) in v1LightIDs.enumerated() {
+                guard lightIndex < stepStates.count else { continue }
+                actions.append([
+                    "address": "/api/\(v1Client.token)/lights/\(v1LightID)/state",
+                    "method": "PUT",
+                    "body": stepStates[lightIndex]
+                ])
+            }
 
-            // Advance sensor to next step (ONLY if not the last step).
-            // Last step waits for the schedule to restart at 0.
+            // Advance sensor (except last step — waits for schedule)
             if step < stepCount - 1 {
                 actions.append(
                     v1Client.sensorIncrementCommand(sensorID: sensorID, nextStatus: nextStep)
@@ -238,11 +234,10 @@ actor BridgeAnimationEngine {
                     actions: actions
                 )
                 ruleIDs.append(ruleID)
-                log.info("[BridgeAnim] Created rule \(step): \(ruleID) → \(step < stepCount - 1 ? "advance to \(nextStep)" : "WAIT for schedule")")
+                log.info("[BridgeAnim] Created rule \(step): \(ruleID) (\(actions.count) actions) → \(step < stepCount - 1 ? "advance to \(nextStep)" : "WAIT for schedule")")
             } catch {
                 log.error("[BridgeAnim] ❌ Rule \(step) creation FAILED: \(error.localizedDescription)")
-                // Log the full request for debugging
-                log.error("[BridgeAnim] Rule body — conditions: \(conditions), actions: \(actions)")
+                log.error("[BridgeAnim] Rule had \(actions.count) actions for \(v1LightIDs.count) lights")
                 throw error
             }
 
