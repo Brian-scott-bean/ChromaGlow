@@ -265,7 +265,7 @@ class HueV1Client: @unchecked Sendable {
     /// for embedding in rule actions.
     func sceneActivationCommand(groupID: String, sceneID: String) -> [String: Any] {
         return [
-            "address": "/api/\(token)/groups/\(groupID)/action",
+            "address": "/groups/\(groupID)/action",  // RELATIVE path — bridge resolves user context internally
             "method": "PUT",
             "body": ["scene": sceneID]
         ]
@@ -274,7 +274,7 @@ class HueV1Client: @unchecked Sendable {
     /// Build a command dict for incrementing the CLIP sensor status.
     func sensorIncrementCommand(sensorID: String, nextStatus: Int) -> [String: Any] {
         return [
-            "address": "/api/\(token)/sensors/\(sensorID)/state",
+            "address": "/sensors/\(sensorID)/state",  // RELATIVE path — bridge resolves user context internally
             "method": "PUT",
             "body": ["status": nextStatus]
         ]

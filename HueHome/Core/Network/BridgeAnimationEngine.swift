@@ -214,7 +214,7 @@ actor BridgeAnimationEngine {
             for (lightIndex, v1LightID) in v1LightIDs.enumerated() {
                 guard lightIndex < stepStates.count else { continue }
                 actions.append([
-                    "address": "/api/\(v1Client.token)/lights/\(v1LightID)/state",
+                    "address": "/lights/\(v1LightID)/state",  // RELATIVE — bridge resolves user internally
                     "method": "PUT",
                     "body": stepStates[lightIndex]
                 ])
@@ -443,4 +443,111 @@ actor BridgeAnimationEngine {
 
         log.info("[BridgeAnim] 🧹 Purge complete")
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - V2 Dynamic Scene (Option B)
+    // ──────────────────────────────────────────────
+
+    /// Upload a composition as a v2 dynamic palette scene.
+    ///
+    /// This is the "zero-overhead" path: creates a single v2 scene with
+    /// multiple color palette entries, then recalls it with `dynamic_palette`.
+    /// The bridge firmware handles cycling through colors autonomously.
+    /// No rules, sensors, or schedules are consumed.
+    ///
+    /// Best for simple compositions with static motion and gradient palettes.
+    /// Complex patterns (cascade, wave, scatter) need the v1 rules chain instead.
+    func uploadV2DynamicScene(
+        preset: CompositionPreset,
+        room: RoomDisplayItem,
+        lightIDs: [String],
+        gamut: HueColorUtils.Gamut,
+        api: HueAPIClient
+    ) async throws -> V2DynamicSceneManifest {
+        guard !lightIDs.isEmpty else {
+            throw BridgeAnimationError.noLightsResolved
+        }
+        guard !preset.reaction.requiresMic else {
+            throw BridgeAnimationError.presetRequiresMic
+        }
+
+        // ─── 1. Calculate timing ───
+        let cycleDuration = calculateCycleDuration(for: preset)
+        let durationMs = max(1000, Int(cycleDuration * 1000))  // min 1 second per transition
+
+        log.info("[BridgeAnim-v2] Upload '\(preset.name)' → dynamic_palette, cycle=\(durationMs)ms")
+
+        // ─── 2. Render one snapshot frame per light for the palette ───
+        let paramBox = CompositionParamBox(preset: preset)
+        let channelIDs: [UInt8] = (0..<UInt8(min(lightIDs.count, 20))).map { $0 }
+        let frames = CompositionEngine.render(
+            time: 0,
+            channelIDs: channelIDs,
+            params: paramBox,
+            audioLevel: 0
+        )
+
+        // ─── 3. Build v2 scene actions ───
+        let actions: [CreateSceneRequest.SceneAction] = lightIDs.enumerated().compactMap { (index, lightID) in
+            guard index < frames.count else { return nil }
+            let frame = frames[index]
+            let xy = HueColorUtils.clampXYToGamut(x: frame.x, y: frame.y, gamut: gamut)
+            let bri = max(1.0, min(100.0, frame.brightness * 100.0))
+
+            return CreateSceneRequest.SceneAction(
+                target: .init(rid: lightID, rtype: "light"),
+                action: .init(
+                    on: .init(on: true),
+                    dimming: .init(brightness: bri),
+                    color: .init(xy: .init(x: xy.x, y: xy.y)),
+                    color_temperature: nil
+                )
+            )
+        }
+
+        // ─── 4. Create v2 scene ───
+        let sceneName = "CG_\(String(preset.name.prefix(16)))"
+        let groupRtype = room.kind == .zone ? "zone" : "room"
+        let request = CreateSceneRequest(
+            metadata: .init(name: sceneName),
+            group: .init(rid: room.id, rtype: groupRtype),
+            actions: actions
+        )
+
+        let sceneID = try await api.createSceneReturningID(request)
+        log.info("[BridgeAnim-v2] Created v2 scene: \(sceneID)")
+
+        // ─── 5. Activate in dynamic palette mode ───
+        try await api.activateDynamicScene(id: sceneID, durationMs: durationMs)
+        log.info("[BridgeAnim-v2] ⚡ Dynamic palette activated! duration=\(durationMs)ms")
+
+        return V2DynamicSceneManifest(
+            id: UUID(),
+            presetID: preset.id,
+            presetName: preset.name,
+            roomID: room.id,
+            roomName: room.name,
+            v2SceneID: sceneID,
+            durationMs: durationMs,
+            createdAt: Date()
+        )
+    }
+}
+
+// MARK: - V2 Dynamic Scene Manifest
+
+/// Tracks a v2 dynamic scene created for bridge-stored animation.
+/// Much simpler than the v1 manifest — only one scene, no rules/sensors/schedules.
+struct V2DynamicSceneManifest: Codable, Identifiable {
+    let id: UUID
+    let presetID: UUID
+    let presetName: String
+    let roomID: String
+    let roomName: String
+    let v2SceneID: String
+    let durationMs: Int
+    let createdAt: Date
+
+    /// Composite key for lookup
+    var key: String { "\(presetID.uuidString)_\(roomID)" }
 }

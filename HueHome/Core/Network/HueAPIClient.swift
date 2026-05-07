@@ -159,6 +159,50 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "POST /scene '\(request.metadata.name)'")
     }
 
+    /// Create a new scene and return its bridge-assigned UUID.
+    /// Used by BridgeAnimationEngine for v2 dynamic scene uploads.
+    func createSceneReturningID(_ request: CreateSceneRequest) async throws -> String {
+        let (ip, token) = try credentials()
+        var req = try buildRequest(method: "POST", path: "/clip/v2/resource/scene", ip: ip, token: token)
+        let encoded = try JSONEncoder().encode(request)
+        req.httpBody = encoded
+        if let bodyStr = String(data: encoded, encoding: .utf8) {
+            log.debug("POST /scene body: \(bodyStr, privacy: .public)")
+        }
+        let data = try await execute(req)
+        logRaw(data, label: "POST /scene '\(request.metadata.name)'")
+
+        // Parse response to extract created resource ID
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let dataArray = json["data"] as? [[String: Any]],
+              let first = dataArray.first,
+              let rid = first["rid"] as? String else {
+            throw HueAPIError.decodingFailed("Cannot extract scene ID from POST response")
+        }
+        return rid
+    }
+
+    /// Activate a scene in dynamic palette mode (bridge cycles through colors autonomously).
+    /// The bridge handles all timing — no rules, sensors, or schedules needed.
+    ///
+    /// - Parameters:
+    ///   - id:       Bridge scene UUID.
+    ///   - duration: Cycle duration in milliseconds (e.g. 5000 = 5 seconds per transition).
+    func activateDynamicScene(id: String, durationMs: Int) async throws {
+        let (ip, token) = try credentials()
+        let body: [String: Any] = [
+            "recall": [
+                "action": "dynamic_palette",
+                "duration": durationMs
+            ]
+        ]
+        let data = try await put(
+            path: "/clip/v2/resource/scene/\(id)",
+            body: body, ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /scene/\(id) dynamic_palette duration=\(durationMs)ms")
+    }
+
     /// Delete a scene by its V2 resource UUID.
     func deleteScene(id: String) async throws {
         let (ip, token) = try credentials()

@@ -25,6 +25,8 @@ struct SettingsView: View {
     @State private var tokenPreview = "—"
 
     @State private var showForgetAlert = false
+    @State private var isCleaningBridge = false
+    @State private var cleanBridgeResult: String? = nil
 
     private let glowColor = Color(red: 1.0, green: 0.76, blue: 0.2)
 
@@ -309,6 +311,33 @@ struct SettingsView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+
+            Divider().background(Color.white.opacity(0.08))
+
+            // ── Clean Bridge Resources ───────────────────────────────
+            Button {
+                Task { await cleanBridgeResources() }
+            } label: {
+                HStack(spacing: 12) {
+                    iconCircle("trash.circle", color: Color(red: 1.0, green: 0.55, blue: 0.25))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Clean Bridge Resources")
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+                        Text(cleanBridgeResult ?? "Remove orphaned CG_ animation data from bridge")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                    Spacer()
+                    if isCleaningBridge {
+                        ProgressView().tint(.white).scaleEffect(0.7)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isCleaningBridge || orchestrator.isDemoMode)
+            .opacity(orchestrator.isDemoMode ? 0.4 : 1.0)
         }
     }
 
@@ -506,6 +535,29 @@ struct SettingsView: View {
         let raw      = (try? KeychainManager.shared.loadAPIToken()) ?? ""
         tokenPreview = raw.isEmpty ? "Not saved"
                      : String(raw.prefix(6)) + "••••••" + String(raw.suffix(4))
+    }
+
+    @MainActor
+    private func cleanBridgeResources() async {
+        isCleaningBridge = true
+        cleanBridgeResult = nil
+        defer { isCleaningBridge = false }
+
+        do {
+            let api = HueAPIClient.shared
+            let v1Client = try api.makeV1Client()
+            let engine = BridgeAnimationEngine()
+            await engine.purgeAllChromaGlowResources(v1Client: v1Client)
+            cleanBridgeResult = "✓ Cleaned successfully"
+
+            // Auto-clear the success message after a few seconds
+            Task {
+                try? await Task.sleep(for: .seconds(4))
+                cleanBridgeResult = nil
+            }
+        } catch {
+            cleanBridgeResult = "✗ \(error.localizedDescription)"
+        }
     }
 }
 
