@@ -411,6 +411,7 @@ final class UnifiedOrchestrator {
         // matching record gets a client. This prevents dual SSE streams and duplicate
         // room fetches from the same bridge.
         var seenHostIPs = Set<String>()
+        var widgetBridgeCreds: [String: WidgetBridgeCredentials] = [:]
         for bridge in bridges where bridge.isActive {
             guard let creds = try? keychain.loadCredentials(for: bridge.id) else {
                 log.warning("No credentials for bridge \(bridge.id) — skipping")
@@ -429,10 +430,13 @@ final class UnifiedOrchestrator {
             )
             clients[bridge.id] = client
             connectionStatus[bridge.id] = .connecting
-            // Write credentials to App Group so Siri Intents and widgets can reach them
-            // without going through the main app process.
-            WidgetDataStore.shared.write(ip: creds.ip, token: creds.token)
+            widgetBridgeCreds[bridge.id] = WidgetBridgeCredentials(
+                bridgeID: bridge.id,
+                ip: creds.ip,
+                token: creds.token
+            )
         }
+        WidgetDataStore.shared.write(bridges: widgetBridgeCreds)
 
         // Mark disabled bridges
         for bridge in bridges where !bridge.isActive {
@@ -451,6 +455,7 @@ final class UnifiedOrchestrator {
         )
         clients[record.id] = client
         connectionStatus[record.id] = .connecting
+        publishWidgetBridgeCredentials()
         log.info("Added bridge \(record.id) (\(record.name)) to orchestrator")
     }
 
@@ -462,8 +467,18 @@ final class UnifiedOrchestrator {
         roomsByBridge.removeValue(forKey: id)
         connectionStatus.removeValue(forKey: id)
         keychain.deleteCredentials(for: id)
+        publishWidgetBridgeCredentials()
         rebuildAllRooms()
         log.info("Removed bridge \(id)")
+    }
+
+    private func publishWidgetBridgeCredentials() {
+        var map: [String: WidgetBridgeCredentials] = [:]
+        for bridgeID in clients.keys {
+            guard let creds = try? keychain.loadCredentials(for: bridgeID) else { continue }
+            map[bridgeID] = WidgetBridgeCredentials(bridgeID: bridgeID, ip: creds.ip, token: creds.token)
+        }
+        WidgetDataStore.shared.write(bridges: map)
     }
 
     // ──────────────────────────────────────────────
@@ -1346,21 +1361,22 @@ final class UnifiedOrchestrator {
                     isOn:           r.isOn,
                     brightness:     r.brightness,
                     lightCount:     r.lightCount,
-                    groupedLightId: r.groupedLightID
+                    groupedLightId: r.groupedLightID,
+                    bridgeID:       r.bridgeID
                 )
             }
             let zoneSnaps = self.allZones.map { z in
                 WidgetRoomSnapshot(id: z.id, name: z.name, archetype: z.archetype,
                                    isOn: z.isOn, brightness: z.brightness,
-                                   lightCount: z.lightCount, groupedLightId: z.groupedLightID)
+                                   lightCount: z.lightCount, groupedLightId: z.groupedLightID,
+                                   bridgeID: z.bridgeID)
             }
             WidgetDataStore.shared.write(rooms: roomSnaps)
-            if let ip    = WidgetDataStore.shared.bridgeIP,
-               let token = WidgetDataStore.shared.token {
-                WatchSessionManager.shared.push(
-                    rooms: roomSnaps, zones: zoneSnaps, ip: ip, token: token
-                )
-            }
+            WatchSessionManager.shared.push(
+                rooms: roomSnaps,
+                zones: zoneSnaps,
+                bridges: WidgetDataStore.shared.bridges
+            )
         }
     }
 

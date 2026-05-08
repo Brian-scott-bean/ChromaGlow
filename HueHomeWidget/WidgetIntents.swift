@@ -72,9 +72,8 @@ struct ToggleRoomIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let store = WidgetDataStore.shared
-        guard let ip    = store.bridgeIP,
-              let token = store.token,
-              let room  = store.rooms.first(where: { $0.id == roomID }),
+        guard let room  = store.rooms.first(where: { $0.id == roomID }),
+              let creds = store.credentials(for: room.bridgeID),
               let glID  = room.groupedLightId else {
             return .result()
         }
@@ -82,7 +81,7 @@ struct ToggleRoomIntent: AppIntent {
         await BridgeWriter.patchGroupedLight(
             id: glID,
             body: ["on": ["on": newState]],
-            ip: ip, token: token
+            ip: creds.ip, token: creds.token
         )
         // Update cached snapshot so widget shows correct state before next refresh
         var updated = store.rooms
@@ -111,20 +110,25 @@ struct ApplyPresetIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let store = WidgetDataStore.shared
-        guard let ip = store.bridgeIP, let token = store.token else { return .result() }
         let (brightness, mirek) = Self.params(for: presetID)
-        let body: [String: Any] = [
-            "on":      ["on": true],
-            "dimming": ["brightness": brightness],
-            "color_temperature": ["mirek": mirek],
-            "dynamics": ["duration": 800]
-        ]
         await withTaskGroup(of: Void.self) { group in
             for room in store.rooms {
-                guard let glID = room.groupedLightId else { continue }
+                guard let glID = room.groupedLightId,
+                      let creds = store.credentials(for: room.bridgeID) else { continue }
                 let capturedID = glID
+                let body: [String: Any] = [
+                    "on":      ["on": true],
+                    "dimming": ["brightness": brightness],
+                    "color_temperature": ["mirek": mirek],
+                    "dynamics": ["duration": 800]
+                ]
                 group.addTask {
-                    await BridgeWriter.patchGroupedLight(id: capturedID, body: body, ip: ip, token: token)
+                    await BridgeWriter.patchGroupedLight(
+                        id: capturedID,
+                        body: body,
+                        ip: creds.ip,
+                        token: creds.token
+                    )
                 }
             }
         }
@@ -155,14 +159,19 @@ struct AllOffIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let store = WidgetDataStore.shared
-        guard let ip = store.bridgeIP, let token = store.token else { return .result() }
-        let body: [String: Any] = ["on": ["on": false]]
         await withTaskGroup(of: Void.self) { group in
             for room in store.rooms {
-                guard let glID = room.groupedLightId else { continue }
+                guard let glID = room.groupedLightId,
+                      let creds = store.credentials(for: room.bridgeID) else { continue }
                 let capturedID = glID
+                let body: [String: Any] = ["on": ["on": false]]
                 group.addTask {
-                    await BridgeWriter.patchGroupedLight(id: capturedID, body: body, ip: ip, token: token)
+                    await BridgeWriter.patchGroupedLight(
+                        id: capturedID,
+                        body: body,
+                        ip: creds.ip,
+                        token: creds.token
+                    )
                 }
             }
         }

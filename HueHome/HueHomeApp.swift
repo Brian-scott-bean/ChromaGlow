@@ -177,17 +177,25 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
 
     // MARK: - Push to Watch
 
-    func push(rooms: [WidgetRoomSnapshot], zones: [WidgetRoomSnapshot], ip: String, token: String) {
+    func push(
+        rooms: [WidgetRoomSnapshot],
+        zones: [WidgetRoomSnapshot],
+        bridges: [String: WidgetBridgeCredentials]
+    ) {
         guard WCSession.default.activationState == .activated,
               WCSession.default.isPaired,
               WCSession.default.isWatchAppInstalled else { return }
         guard let roomsData = try? JSONEncoder().encode(rooms),
-              let zonesData = try? JSONEncoder().encode(zones) else { return }
+              let zonesData = try? JSONEncoder().encode(zones),
+              let bridgesData = try? JSONEncoder().encode(bridges) else { return }
+        let fallback = bridges.values.first
         let context: [String: Any] = [
             "wc_rooms_v1" : roomsData,
             "wc_zones_v1" : zonesData,
-            "wc_bridge_ip": ip,
-            "wc_token"    : token
+            "wc_bridges_v1": bridgesData,
+            // Legacy fallback keys for older watch payload readers.
+            "wc_bridge_ip": fallback?.ip ?? "",
+            "wc_token"    : fallback?.token ?? ""
         ]
         try? WCSession.default.updateApplicationContext(context)
     }

@@ -23,6 +23,33 @@ struct WidgetRoomSnapshot: Codable, Identifiable {
     var brightness:     Double   // 1–100
     let lightCount:     Int
     let groupedLightId: String?  // enables fresh fetch without re-fetching rooms
+    let bridgeID:       String?  // bridge routing key for multi-bridge intent writes
+
+    init(
+        id: String,
+        name: String,
+        archetype: String?,
+        isOn: Bool,
+        brightness: Double,
+        lightCount: Int,
+        groupedLightId: String?,
+        bridgeID: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.archetype = archetype
+        self.isOn = isOn
+        self.brightness = brightness
+        self.lightCount = lightCount
+        self.groupedLightId = groupedLightId
+        self.bridgeID = bridgeID
+    }
+}
+
+struct WidgetBridgeCredentials: Codable {
+    let bridgeID: String
+    let ip: String
+    let token: String
 }
 
 // MARK: - WidgetDataStore
@@ -36,6 +63,7 @@ final class WidgetDataStore: @unchecked Sendable {
 
     private enum Key {
         static let rooms     = "hue_widget_rooms_v1"
+        static let bridges   = "hue_widget_bridges_v1"
         static let bridgeIP  = "hue_widget_bridge_ip"
         static let token     = "hue_widget_token"
         static let updatedAt = "hue_widget_updated_at"
@@ -56,6 +84,19 @@ final class WidgetDataStore: @unchecked Sendable {
         ud?.set(token, forKey: Key.token)
     }
 
+    func write(bridges: [String: WidgetBridgeCredentials]) {
+        guard let data = try? JSONEncoder().encode(bridges) else { return }
+        ud?.set(data, forKey: Key.bridges)
+        if let first = bridges.values.first {
+            // Legacy fallback keys used by older widget/watch code paths.
+            ud?.set(first.ip,    forKey: Key.bridgeIP)
+            ud?.set(first.token, forKey: Key.token)
+        } else {
+            ud?.removeObject(forKey: Key.bridgeIP)
+            ud?.removeObject(forKey: Key.token)
+        }
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - Read (called from widget)
     // ──────────────────────────────────────────────
@@ -67,10 +108,25 @@ final class WidgetDataStore: @unchecked Sendable {
         return r
     }
 
+    var bridges: [String: WidgetBridgeCredentials] {
+        guard let data = ud?.data(forKey: Key.bridges),
+              let decoded = try? JSONDecoder().decode([String: WidgetBridgeCredentials].self, from: data)
+        else { return [:] }
+        return decoded
+    }
+
     var bridgeIP:    String? { ud?.string(forKey: Key.bridgeIP) }
     var token:       String? { ud?.string(forKey: Key.token) }
     var lastUpdated: Date?   { ud?.object(forKey: Key.updatedAt) as? Date }
-    var isPaired:    Bool    { !(bridgeIP?.isEmpty ?? true) }
+    var isPaired:    Bool    { !bridges.isEmpty || !(bridgeIP?.isEmpty ?? true) }
+
+    func credentials(for bridgeID: String?) -> WidgetBridgeCredentials? {
+        if let bridgeID, let creds = bridges[bridgeID] { return creds }
+        if let ip = bridgeIP, let token = token {
+            return WidgetBridgeCredentials(bridgeID: bridgeID ?? "legacy-default", ip: ip, token: token)
+        }
+        return nil
+    }
 
     // ──────────────────────────────────────────────
     // MARK: - TTL

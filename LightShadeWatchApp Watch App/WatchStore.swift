@@ -30,6 +30,13 @@ struct WatchRoom: Identifiable, Codable {
     var brightness:     Double   // 1–100
     let lightCount:     Int
     let groupedLightId: String?
+    let bridgeID:       String?
+}
+
+struct WatchBridgeCredentials: Codable {
+    let bridgeID: String
+    let ip: String
+    let token: String
 }
 
 // MARK: - Preset
@@ -94,6 +101,7 @@ final class WatchStore: NSObject, ObservableObject {
     // Watch-local cache keys (UserDefaults.standard on the WATCH device)
     private enum CacheKey {
         static let rooms    = "wc_rooms_v1"
+        static let bridges  = "wc_bridges_v1"
         static let bridgeIP = "wc_bridge_ip"
         static let token    = "wc_token"
     }
@@ -103,6 +111,12 @@ final class WatchStore: NSObject, ObservableObject {
 
     private var bridgeIP: String? { UserDefaults.standard.string(forKey: CacheKey.bridgeIP) }
     private var token:    String? { UserDefaults.standard.string(forKey: CacheKey.token) }
+    private var bridges: [String: WatchBridgeCredentials] {
+        guard let data = UserDefaults.standard.data(forKey: CacheKey.bridges),
+              let decoded = try? JSONDecoder().decode([String: WatchBridgeCredentials].self, from: data)
+        else { return [:] }
+        return decoded
+    }
 
     private override init() {
         super.init()
@@ -129,7 +143,7 @@ final class WatchStore: NSObject, ObservableObject {
            let decoded = try? JSONDecoder().decode([WatchRoom].self, from: data) {
             zones = decoded
         }
-        isPaired = !(bridgeIP?.isEmpty ?? true)
+        isPaired = !bridges.isEmpty || !(bridgeIP?.isEmpty ?? true)
     }
 
     private func saveToLocalCache() {
@@ -138,20 +152,30 @@ final class WatchStore: NSObject, ObservableObject {
         // Mirror into App Group so watch complications can read it
         watchGroup?.set(data,       forKey: "hue_widget_rooms_v1")
         watchGroup?.set(Date(),     forKey: "hue_widget_updated_at")
+        if let bridgesData = UserDefaults.standard.data(forKey: CacheKey.bridges) {
+            watchGroup?.set(bridgesData, forKey: "hue_widget_bridges_v1")
+        }
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    private func credentials(for bridgeID: String?) -> WatchBridgeCredentials? {
+        if let bridgeID, let creds = bridges[bridgeID] { return creds }
+        if let ip = bridgeIP, let token = token {
+            return WatchBridgeCredentials(bridgeID: bridgeID ?? "legacy-default", ip: ip, token: token)
+        }
+        return nil
     }
 
     // MARK: - Toggle Room
 
     func toggleRoom(_ room: WatchRoom) async {
         guard let glID = room.groupedLightId,
-              let ip   = bridgeIP,
-              let tok  = token else { return }
+              let creds = credentials(for: room.bridgeID) else { return }
         let newState = !room.isOn
         if let idx = rooms.firstIndex(where: { $0.id == room.id }) {
             rooms[idx].isOn = newState
         }
-        await patch(id: glID, body: ["on": ["on": newState]], ip: ip, token: tok)
+        await patch(id: glID, body: ["on": ["on": newState]], ip: creds.ip, token: creds.token)
         saveToLocalCache()
     }
 
@@ -159,8 +183,7 @@ final class WatchStore: NSObject, ObservableObject {
 
     func setBrightness(_ brightness: Double, for room: WatchRoom) async {
         guard let glID = room.groupedLightId,
-              let ip   = bridgeIP,
-              let tok  = token else { return }
+              let creds = credentials(for: room.bridgeID) else { return }
         if let idx = rooms.firstIndex(where: { $0.id == room.id }) {
             rooms[idx].brightness = brightness
             rooms[idx].isOn       = brightness > 0
@@ -169,15 +192,13 @@ final class WatchStore: NSObject, ObservableObject {
             "on":      ["on": brightness > 0],
             "dimming": ["brightness": brightness]
         ]
-        await patch(id: glID, body: body, ip: ip, token: tok)
+        await patch(id: glID, body: body, ip: creds.ip, token: creds.token)
         saveToLocalCache()
     }
 
     // MARK: - Apply Preset (all rooms)
 
     func applyPreset(_ preset: WatchPreset) async {
-        guard let ip  = bridgeIP,
-              let tok = token else { return }
         let body: [String: Any] = [
             "on":                ["on": true],
             "dimming":           ["brightness": preset.brightness],
@@ -190,9 +211,12 @@ final class WatchStore: NSObject, ObservableObject {
         }
         await withTaskGroup(of: Void.self) { group in
             for room in rooms {
-                guard let glID = room.groupedLightId else { continue }
+                guard let glID = room.groupedLightId,
+                      let creds = credentials(for: room.bridgeID) else { continue }
                 let gid = glID
-                group.addTask { await self.patch(id: gid, body: body, ip: ip, token: tok) }
+                group.addTask {
+                    await self.patch(id: gid, body: body, ip: creds.ip, token: creds.token)
+                }
             }
         }
         saveToLocalCache()
@@ -201,15 +225,16 @@ final class WatchStore: NSObject, ObservableObject {
     // MARK: - All Off
 
     func allOff() async {
-        guard let ip  = bridgeIP,
-              let tok = token else { return }
         for i in rooms.indices { rooms[i].isOn = false }
         let body: [String: Any] = ["on": ["on": false]]
         await withTaskGroup(of: Void.self) { group in
             for room in rooms {
-                guard let glID = room.groupedLightId else { continue }
+                guard let glID = room.groupedLightId,
+                      let creds = credentials(for: room.bridgeID) else { continue }
                 let gid = glID
-                group.addTask { await self.patch(id: gid, body: body, ip: ip, token: tok) }
+                group.addTask {
+                    await self.patch(id: gid, body: body, ip: creds.ip, token: creds.token)
+                }
             }
         }
         saveToLocalCache()
@@ -255,6 +280,7 @@ extension WatchStore: WCSessionDelegate {
 
         let ip    = applicationContext["wc_bridge_ip"] as? String ?? ""
         let token = applicationContext["wc_token"]     as? String ?? ""
+        let bridgesData = applicationContext["wc_bridges_v1"] as? Data
 
         // Decode zones (optional — older payloads may not include them)
         let decodedZones: [WatchRoom]
@@ -270,6 +296,9 @@ extension WatchStore: WCSessionDelegate {
         if let zonesData = applicationContext["wc_zones_v1"] as? Data {
             UserDefaults.standard.set(zonesData, forKey: "wc_zones_v1")
         }
+        if let bridgesData {
+            UserDefaults.standard.set(bridgesData, forKey: CacheKey.bridges)
+        }
         if !ip.isEmpty    { UserDefaults.standard.set(ip,    forKey: "wc_bridge_ip") }
         if !token.isEmpty { UserDefaults.standard.set(token, forKey: "wc_token") }
 
@@ -277,6 +306,9 @@ extension WatchStore: WCSessionDelegate {
         let watchGroup = UserDefaults(suiteName: "group.com.huehome.pro")
         watchGroup?.set(roomsData, forKey: "hue_widget_rooms_v1")
         watchGroup?.set(Date(),    forKey: "hue_widget_updated_at")
+        if let bridgesData {
+            watchGroup?.set(bridgesData, forKey: "hue_widget_bridges_v1")
+        }
         if !ip.isEmpty    { watchGroup?.set(ip,    forKey: "hue_widget_bridge_ip") }
         if !token.isEmpty { watchGroup?.set(token, forKey: "hue_widget_token") }
 
@@ -284,7 +316,7 @@ extension WatchStore: WCSessionDelegate {
         Task { @MainActor [weak self] in
             self?.rooms    = decoded
             self?.zones    = decodedZones
-            self?.isPaired = !ip.isEmpty
+            self?.isPaired = !(decoded.isEmpty && decodedZones.isEmpty) || !ip.isEmpty || bridgesData != nil
             WidgetCenter.shared.reloadAllTimelines()
         }
     }

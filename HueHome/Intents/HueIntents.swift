@@ -22,14 +22,18 @@ struct ToggleRoomIntent: AppIntent {
     var turnOn: Bool
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        guard let ip    = WidgetDataStore.shared.bridgeIP,
-              let token = WidgetDataStore.shared.token else {
+        guard let creds = WidgetDataStore.shared.credentials(for: room.bridgeID) else {
             throw IntentError.noBridgeConnection
         }
         guard let glId = room.groupedLightId else {
             throw IntentError.noGroupedLight(room.name)
         }
-        try await HueIntentAPIClient.setGroupedLight(id: glId, on: turnOn, ip: ip, token: token)
+        try await HueIntentAPIClient.setGroupedLight(
+            id: glId,
+            on: turnOn,
+            ip: creds.ip,
+            token: creds.token
+        )
         let state = turnOn ? "on" : "off"
         return .result(dialog: "\(room.name) is now \(state).")
     }
@@ -54,15 +58,17 @@ struct SetBrightnessIntent: AppIntent {
     var brightness: Int
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        guard let ip    = WidgetDataStore.shared.bridgeIP,
-              let token = WidgetDataStore.shared.token else {
+        guard let creds = WidgetDataStore.shared.credentials(for: room.bridgeID) else {
             throw IntentError.noBridgeConnection
         }
         guard let glId = room.groupedLightId else {
             throw IntentError.noGroupedLight(room.name)
         }
         try await HueIntentAPIClient.setGroupedLight(
-            id: glId, brightness: Double(brightness), ip: ip, token: token
+            id: glId,
+            brightness: Double(brightness),
+            ip: creds.ip,
+            token: creds.token
         )
         return .result(dialog: "\(room.name) brightness set to \(brightness)%.")
     }

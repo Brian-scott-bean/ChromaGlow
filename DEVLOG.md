@@ -1491,3 +1491,35 @@ Additional bugs found and fixed during the debugging process:
 
 ### Current state
 Root cause identified and documented. Build is green. Two implementation paths approved. Next step: apply the 3-line v1 fix, test on device, then build v2 dynamic scene path.
+
+---
+
+## 2026-05-08 — Multi-Bridge Routing Foundation for Widget/Watch (Cursor)
+
+### What was built
+- **`HueHome/Core/Network/WidgetDataStore.swift`** — Extended shared snapshot contract with `bridgeID` on `WidgetRoomSnapshot`, added `WidgetBridgeCredentials`, added bridge map persistence (`hue_widget_bridges_v1`), and added `credentials(for:)` resolver with legacy fallback.
+- **`HueHome/Core/Network/UnifiedOrchestrator.swift`** — Writes bridge-aware room/zone snapshots, publishes active bridge credential map for App Group consumers, and pushes bridge map through watch sync path.
+- **`HueHome/HueHomeApp.swift`** — Updated `WatchSessionManager.push` payload to include `wc_bridges_v1` (plus legacy fallback keys).
+- **`HueHomeWidget/WidgetIntents.swift`** — Switched interactive widget intents to resolve per-room bridge credentials instead of global single-bridge creds.
+- **`HueHome/Intents/HueRoomEntity.swift` + `HueHome/Intents/HueIntents.swift`** — Added `bridgeID` to intent entities and routed Siri intents through per-bridge credential resolution.
+- **`LightShadeWatchApp Watch App/WatchStore.swift` + `LightShadeWatch/WatchWidgetStore.swift`** — Added bridge map decoding/storage and per-room bridge credential resolution on watch/watch-widget paths.
+
+### What's working
+- ✅ iOS app target (`HueHome`) compiles successfully after multi-bridge routing changes.
+- ✅ watchOS app target (`LightShadeWatchApp Watch App`) compiles successfully after watch sync/store updates.
+- ✅ Widget/intent/watch code paths now have a deterministic per-room bridge routing key (`bridgeID`) and a shared bridge credential map.
+- ✅ Legacy single-bridge keys are still emitted/read as fallback for backward compatibility.
+
+### What's left
+- [ ] Add interactive watch complication/widget toggle intent wiring in `LightShadeWatch` (UI currently non-interactive).
+- [ ] Validate on physical watch that Bridge 2 toggles now route correctly under real-world stale-cache conditions.
+- [ ] Add explicit failure surfacing/telemetry when room routing metadata is missing or stale.
+- [ ] Optionally add groupedLightID→bridgeID fallback map for extra resilience if room bridge metadata is absent.
+
+### Gotchas
+- Existing watch/widget data can remain stale across sessions; routing fixes require fresh app-driven sync to repopulate bridge-aware payloads.
+- Some watchers still rely on legacy `hue_widget_bridge_ip`/`hue_widget_token`; keeping fallback keys avoids hard breaks while migrating.
+- Multi-bridge correctness depends on `bridgeID` being present in snapshots; missing IDs will fall back to legacy credentials.
+
+### Current state
+Multi-bridge routing foundation is implemented across iOS widget, Siri intent, watch sync, and watch stores. Both iOS and watch targets build cleanly. Next step is on-device verification for Bridge 2 behavior and then watch widget interactivity wiring.
