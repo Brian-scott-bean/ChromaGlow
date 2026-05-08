@@ -4,6 +4,89 @@
 
 ---
 
+## 2026-05-07 — Multi-Bridge Concurrent Entertainment Sessions (Antigravity)
+
+### What was built
+
+Upgraded the entertainment transport layer from a single-session global to a **per-bridge dictionary**, enabling concurrent DTLS sessions across multiple Hue bridges simultaneously.
+
+#### Root cause
+The old guard `compositionEntRoomID == nil` was global — starting entertainment on Bridge A blocked Bridge B from ever using DTLS, silently falling back to choppy REST.
+
+#### Changes
+All single-slot state replaced with `[bridgeID: ...]` dictionaries:
+
+| Old | New |
+|---|---|
+| `compositionEntTask: Task?` | `compositionEntTasks: [String: Task]` |
+| `compositionEntRoomID: String?` | `compositionEntRoomByBridge: [String: String]` |
+| `compositionEntertainmentParamBox` (weak) | `compositionEntParamBoxes: [String: CompositionParamBox]` |
+| `studioEntClient: HueEntertainmentClient?` | `studioEntClients: [String: HueEntertainmentClient]` |
+| `activeEntertainmentConfig: EntertainmentConfig?` (stored var) | `entertainmentConfigsByBridge: [String: EntertainmentConfig]` + `activeEntertainmentConfig(for: RoomDisplayItem?)` method |
+
+#### Impact
+- **2 bridges = 2 simultaneous DTLS sessions = 20 smooth channels**
+- Single-bridge behavior unchanged (dictionary has one entry)
+- StudioView mini-map and direction dial now read config for the **currently selected room's bridge** — correct when switching between bridge rooms
+- Mic demand check updated to `anyOf` across all active param boxes
+- Stop path looks up bridgeID from roomID → cleans only that bridge's session
+
+### Files changed
+| File | Change |
+|---|---|
+| `UnifiedOrchestrator.swift` | Dictionary state, per-bridge guard, start/stop/cleanup paths |
+| `StudioView.swift` | `activeEntertainmentConfig(for:)` at 4 call sites |
+| `StudioViewModel.swift` | `studioEntClients[bridgeID]` at 2 call sites |
+
+### Git state
+- Commit: `f2f360b` on `main`
+- BUILD SUCCEEDED
+
+### How to test
+1. **Single-bridge regression:** Start entertainment composition → verify `⚡ Entertainment transport active` log → stop → verify no crash
+2. **Multi-bridge:** Pair two bridges, both with entertainment areas → start composition on each → both should log `⚡` with different bridgeIDs → mini-map switches correctly when navigating between rooms
+
+---
+
+## 2026-05-07 — Transport Architecture Research (Antigravity)
+
+### What was investigated
+
+Deep dive into why 16-light REST compositions show "room by room" sequential updates.
+
+#### Root cause
+REST per-light mode batches 5 PUTs with 80ms gaps → ~1.1s to cycle all 16 lights per frame. Not a code bug — a fundamental HTTP rate-limit constraint.
+
+#### Transport tiers (current architecture)
+```
+Entertainment (DTLS)   → 25fps, all lights simultaneously, 10 channel limit, 1 session/bridge
+REST per-light         → ~10 PUTs/sec, batches of 5, choppy on 8+ lights
+Bridge v1 rules chain  → 3s min step interval, app-free, bridgeOptimized presets only
+V2 Dynamic Palette     → bridge firmware cycles palette, unlimited lights, smooth, app-free
+```
+
+#### V2 Dynamic Palette — key findings
+- Create scene with `palette.color[]` array + `speed` + `auto_dynamic: true`
+- Recall with `action: "dynamic_palette"`
+- **Bridge firmware handles cycling on the light itself** — zero ongoing network traffic
+- Unlimited lights (whole room via grouped_light), persists after app close
+- Trade-off: no directional patterns (wave/cascade/mirror), no envelope shapes, no mic
+- `BridgeAnimationEngine.uploadV2DynamicScene()` already exists but is **not wired to the composer flow** and missing the `palette` property on `CreateSceneRequest`
+
+#### What's not yet built
+- [ ] `CreateSceneRequest` needs `palette` property (`color[]`, `color_temperature[]`, `speed`, `auto_dynamic`)
+- [ ] `uploadV2DynamicScene` should use composer palette colors (not single t=0 snapshot)
+- [ ] Wire into `startCompositionMode` as a transport tier between DTLS and REST
+- [ ] "Persist on Bridge ⚡" toggle in mixer tray
+- [ ] Cleanup on stop (delete dynamic scene from bridge)
+
+### What's next
+- [ ] Implement V2 Dynamic Palette as a composer transport tier
+- [ ] Map `motion.speed` (0–100) → Hue `speed` (0.0–1.0)
+- [ ] Badge on room card when bridge-powered effect is active
+
+---
+
 ## 2026-05-07 — Codebase Audit: Architecture, Risks, Follow-ups (Cursor)
 
 ### What was reviewed
