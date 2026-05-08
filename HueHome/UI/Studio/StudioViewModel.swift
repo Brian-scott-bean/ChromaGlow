@@ -909,7 +909,7 @@ final class StudioViewModel {
                 key: engineKey, room: room,
                 params: flatValues, colors: flatColors
             )
-            let isEnt = orchestrator.studioEntClient != nil
+            let isEnt = orchestrator.studioEntClients[room.bridgeID ?? ""] != nil
             runningEffects[room.id] = RunningEffect(
                 cardID: card.id, card: card, room: room,
                 lightIDs: newLightIDs, isEntertainment: isEnt,
@@ -992,7 +992,7 @@ final class StudioViewModel {
                     tier: tier,
                     preset: preset
                 )
-                let isEnt = orchestrator.studioEntClient != nil
+                let isEnt = orchestrator.studioEntClients[room.bridgeID ?? ""] != nil
                 runningEffects[room.id] = RunningEffect(
                     cardID: card.id, card: card, room: room,
                     lightIDs: newLightIDs, isEntertainment: isEnt,

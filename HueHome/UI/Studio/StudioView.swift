@@ -1934,7 +1934,7 @@ struct StudioView: View {
 
             // ── Direction Control ──
             if motionPatternIsSpatial {
-                if orchestrator.activeEntertainmentConfig != nil {
+                if orchestrator.activeEntertainmentConfig(for: vm.selectedRoom) != nil {
                     directionControl
                 } else {
                     entertainmentAreaPrompt
@@ -2149,7 +2149,7 @@ struct StudioView: View {
             )
 
             // Light position dots
-            if let config = orchestrator.activeEntertainmentConfig {
+            if let config = orchestrator.activeEntertainmentConfig(for: vm.selectedRoom) {
                 let channels = config.channels
                 // Normalize positions to fit in map
                 let xs = channels.map { $0.position.x }
@@ -2222,7 +2222,8 @@ struct StudioView: View {
         .buttonStyle(.plain)
         .sheet(isPresented: $showEntertainmentBuilder) {
             EntertainmentConfigBuilderView { newConfig in
-                orchestrator.activeEntertainmentConfig = newConfig
+                let bid = vm.selectedRoom?.bridgeID ?? ""
+                orchestrator.entertainmentConfigsByBridge[bid] = newConfig
                 recomputeSpatialPositions(angle: max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0))
             }
             .environment(orchestrator)
@@ -2236,7 +2237,7 @@ struct StudioView: View {
     /// Recompute spatial positions when the angle changes.
     /// Called from Binding setters and chip taps (NOT onChange — CompositionParamBox is not @Observable).
     private func recomputeSpatialPositions(angle: Double) {
-        guard let config = orchestrator.activeEntertainmentConfig,
+        guard let config = orchestrator.activeEntertainmentConfig(for: vm.selectedRoom),
               let box = vm.activeCompositionBox else { return }
         box.motion.motionAngle = angle
         let newPositions = CompositionEngine.computeSpatialPositionsForEntertainment(

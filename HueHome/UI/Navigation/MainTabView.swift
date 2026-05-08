@@ -43,11 +43,26 @@ struct MainTabView: View {
     @State private var realizedTabs: Set<HueTab> = [.home]
 
     var body: some View {
-        if sizeClass == .regular {
-            iPadLayout
-        } else {
-            iPhoneLayout
+        Group {
+            if sizeClass == .regular {
+                iPadLayout
+            } else {
+                iPhoneLayout
+            }
         }
+        .task { await prewarmDeferredTabs() }
+    }
+
+    /// Build deferred tab roots shortly after Home paints so the first tap on Studio /
+    /// Scenes / More does not pay the full SwiftUI cold-compile cost on the critical path.
+    private func prewarmDeferredTabs() async {
+        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(280))
+        realizedTabs.insert(.studio)
+        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(160))
+        realizedTabs.insert(.scenes)
+        realizedTabs.insert(.more)
     }
 
     // MARK: iPhone Layout

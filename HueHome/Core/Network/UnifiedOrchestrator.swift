@@ -571,12 +571,26 @@ final class UnifiedOrchestrator {
         errorMessage = nil
         defer { isLoading = false }
 
-        // ── Clean up stuck entertainment sessions ──────────────────
-        // Entertainment sessions lock the bridge and heavily throttle REST API.
-        // If a previous app session crashed without calling stopSession(), the
-        // bridge stays in entertainment mode. Deactivate ALL active sessions.
-        await deactivateStuckEntertainmentSessions()
+        // Entertainment cleanup + bridge fetches run in parallel so cold launch
+        // does not wait for sequential stuck-session teardown before any room data loads.
+        await withTaskGroup(of: Void.self) { outer in
+            outer.addTask { await self.deactivateStuckEntertainmentSessions() }
+            outer.addTask { await self.fetchAndMergeAllBridges() }
+        }
 
+        // Yield so any pending main-thread interactions (e.g. tab bar) run before
+        // large @Observable room list updates from rebuildAllRooms/Zones.
+        await Task.yield()
+
+        rebuildAllRooms()
+        rebuildAllZones()
+        lastLoadedAt = Date()
+        if let ctx = cacheContext { writeCache(to: ctx) }
+    }
+
+    /// Per-bridge REST fetch + merge into `roomsByBridge` / `zonesByBridge` maps.
+    /// Used by `loadAll` (may run concurrently with `deactivateStuckEntertainmentSessions`).
+    private func fetchAndMergeAllBridges() async {
         // Return type: (bridgeID, rooms?, zones?, roomLightMap, zoneLightMap)
         // nil rooms/zones = fetch failed; keep existing data (stale-while-revalidate).
         await withTaskGroup(
@@ -720,11 +734,6 @@ final class UnifiedOrchestrator {
                 }
             }
         }
-
-        rebuildAllRooms()
-        rebuildAllZones()
-        lastLoadedAt = Date()
-        if let ctx = cacheContext { writeCache(to: ctx) }
     }
 
     // ──────────────────────────────────────────────
@@ -1504,9 +1513,9 @@ final class UnifiedOrchestrator {
     /// so stopStudioMode() can cancel it. Without this, loops run forever.
     private var activeStudioTask: Task<Void, Never>?
 
-    /// Entertainment client for the current studio session.
+    /// Entertainment clients keyed by bridgeID — one per concurrent bridge session.
     /// Internal access so StudioViewModel can report transport mode in debug.
-    var studioEntClient: HueEntertainmentClient?
+    var studioEntClients: [String: HueEntertainmentClient] = [:]
 
     /// Latest-wins REST sender for studio mode — prevents bridge command backlog.
     private let studioRestSender = RestSender()
@@ -1566,10 +1575,12 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private var cadenceLastUIUpdateByRoom: [String: CFAbsoluteTime] = [:]
     private var compositionTelemetryByRoom: [String: CompositionTelemetry] = [:]
-    private var compositionEntTask: Task<Void, Never>?
-    private var compositionEntRoomID: String?
-    /// Weak ref — entertainment composition loop reads reaction (mic demand). Cleared when ENT task ends.
-    private weak var compositionEntertainmentParamBox: CompositionParamBox?
+    /// Per-bridge entertainment tasks — allows concurrent sessions across multiple bridges.
+    private var compositionEntTasks: [String: Task<Void, Never>] = [:]
+    /// Per-bridge active room IDs — guards against starting a second session on the same bridge.
+    private var compositionEntRoomByBridge: [String: String] = [:]
+    /// Per-bridge param boxes for mic-demand tracking. Weak so they don't prevent dealloc.
+    private var compositionEntParamBoxes: [String: CompositionParamBox] = [:]
 
     // MARK: Bridge-Stored Animation (v1 API)
     private let bridgeAnimationEngine = BridgeAnimationEngine()
@@ -1577,9 +1588,16 @@ final class UnifiedOrchestrator {
     /// Whether the active composition is running on the bridge (v1 rules chain).
     /// Exposed for UI badge display.
     var isBridgeStored: Bool = false
-    /// Entertainment config for the active composition's room.
-    /// Exposed so Studio UI can show spatial mini-map and direction dial.
-    var activeEntertainmentConfig: EntertainmentConfig? = nil
+    /// Entertainment configs keyed by bridgeID.
+    /// StudioView reads the config for the currently selected room's bridge.
+    var entertainmentConfigsByBridge: [String: EntertainmentConfig] = [:]
+
+    /// Convenience: returns the entertainment config for the given room's bridge.
+    /// Replaces the old single-slot `activeEntertainmentConfig`.
+    func activeEntertainmentConfig(for room: RoomDisplayItem?) -> EntertainmentConfig? {
+        guard let bridgeID = room?.bridgeID else { return nil }
+        return entertainmentConfigsByBridge[bridgeID]
+    }
 
     /// Live param reference — StudioViewModel updates this dict, engine loops read it.
     /// Using a class wrapper so the Task closure captures a reference, not a copy.
@@ -1611,9 +1629,10 @@ final class UnifiedOrchestrator {
         activeStudioTask = nil
         studioGeneration += 1
         await studioRestSender.clear()
-        if let entClient = studioEntClient {
+        let stopBid = room.bridgeID ?? ""
+        if let entClient = studioEntClients[stopBid] {
             await entClient.stopSession()
-            studioEntClient = nil
+            studioEntClients.removeValue(forKey: stopBid)
         }
 
         guard let api = hueClient(for: room.bridgeID),
@@ -1706,7 +1725,7 @@ final class UnifiedOrchestrator {
         if compositionRuntimes.values.contains(where: { $0.paramBox.reaction.requiresMic }) {
             return true
         }
-        return compositionEntertainmentParamBox?.reaction.requiresMic == true
+        return compositionEntParamBoxes.values.contains { $0.reaction.requiresMic }
     }
 
     private func refreshCompositionMicDemand() async {
@@ -1752,7 +1771,8 @@ final class UnifiedOrchestrator {
         // ── Fetch entertainment config BEFORE transport decision ──
         // Both REST and DTLS paths benefit from spatial positions.
         let entConfig = await findEntertainmentConfig(bridgeID: room.bridgeID)
-        await MainActor.run { activeEntertainmentConfig = entConfig }
+        let capturedBridgeID = room.bridgeID ?? ""
+        await MainActor.run { entertainmentConfigsByBridge[capturedBridgeID] = entConfig }
 
         // Resolve individual light IDs early — needed for REST spatial positions
         // AND for per-light REST mode later.
@@ -1787,9 +1807,10 @@ final class UnifiedOrchestrator {
         }
 
         // Prefer entertainment transport for dynamic compositions when possible.
-        // Only one entertainment composition may run at a time.
+        // One session per bridge — multiple bridges can run simultaneously.
+        let bridgeID = room.bridgeID ?? ""
         if preferEntertainment,
-           compositionEntRoomID == nil,
+           compositionEntRoomByBridge[bridgeID] == nil,
            compositionRuntimes.isEmpty {
             // Mic (when reaction uses it) is already warming during gamut resolution above,
             // overlapping network time with FFT capture startup.
@@ -1806,10 +1827,10 @@ final class UnifiedOrchestrator {
                         paramBox.spatialPositions = entPositions
                         paramBox.targetSpatialPositions = entPositions
                     }
-                    compositionEntRoomID = roomID
-                    compositionEntertainmentParamBox = paramBox
-                    compositionEntTask?.cancel()
-                    compositionEntTask = Task { [weak self] in
+                    compositionEntRoomByBridge[bridgeID] = roomID
+                    compositionEntParamBoxes[bridgeID] = paramBox
+                    compositionEntTasks[bridgeID]?.cancel()
+                    compositionEntTasks[bridgeID] = Task { [weak self] in
                         guard let self else { return }
                         await self.runCompositionEntertainment(
                             entClient: entClient,
@@ -1819,7 +1840,7 @@ final class UnifiedOrchestrator {
                         )
                     }
                     await refreshCompositionMicDemand()
-                    print("[Composer] ⚡ Entertainment transport active for room='\(room.name)'")
+                    print("[Composer] ⚡ Entertainment transport active for room='\(room.name)' bridge='\(bridgeID)'")
                     return
                 }
             }
@@ -1970,7 +1991,7 @@ final class UnifiedOrchestrator {
         paramBox: CompositionParamBox,
         gamut: HueColorUtils.Gamut
     ) async {
-        defer { compositionEntertainmentParamBox = nil }
+        // Note: paramBox cleanup is handled by stopCompositionMode (keyed by bridgeID).
         let frameInterval: UInt64 = 40_000_000  // 40ms = 25fps
         let startTime = CFAbsoluteTimeGetCurrent()
 
@@ -2027,21 +2048,22 @@ final class UnifiedOrchestrator {
             bridgeAnimationStore.remove(presetID: manifest.presetID, roomID: roomID)
         }
         isBridgeStored = false
-        await MainActor.run { activeEntertainmentConfig = nil }
-
         print("[Handoff] Clearing studio REST sender mailbox for roomID=\(roomID)")
         await studioRestSender.clear()
         // Give Hue bridge firmware a brief settle window before any new owner starts writing.
         try? await Task.sleep(for: .milliseconds(150))
         print("[Handoff] REST mailbox cleared + settle delay complete for roomID=\(roomID)")
-        if compositionEntRoomID == roomID {
-            compositionEntertainmentParamBox = nil
-            compositionEntTask?.cancel()
-            compositionEntTask = nil
-            compositionEntRoomID = nil
-            if let entClient = studioEntClient {
+        // Stop entertainment session for this room's bridge (if any)
+        let stopBridgeID = compositionEntRoomByBridge.first(where: { $0.value == roomID })?.key
+        if let bid = stopBridgeID {
+            compositionEntParamBoxes.removeValue(forKey: bid)
+            compositionEntTasks[bid]?.cancel()
+            compositionEntTasks.removeValue(forKey: bid)
+            compositionEntRoomByBridge.removeValue(forKey: bid)
+            entertainmentConfigsByBridge.removeValue(forKey: bid)
+            if let entClient = studioEntClients[bid] {
                 await entClient.stopSession()
-                studioEntClient = nil
+                studioEntClients.removeValue(forKey: bid)
             }
         }
         compositionRuntimes.removeValue(forKey: roomID)
@@ -2425,11 +2447,17 @@ final class UnifiedOrchestrator {
         activeParamBox = nil
         print("[Studio] ⏹ stopStudioMode() canceled active engine loop")
 
-        // Stop entertainment session
-        if let entClient = studioEntClient {
+        // Stop all entertainment sessions (all bridges)
+        for (bid, entClient) in studioEntClients {
             await entClient.stopSession()
-            studioEntClient = nil
+            _ = bid
         }
+        studioEntClients.removeAll()
+        compositionEntTasks.values.forEach { $0.cancel() }
+        compositionEntTasks.removeAll()
+        compositionEntRoomByBridge.removeAll()
+        compositionEntParamBoxes.removeAll()
+        entertainmentConfigsByBridge.removeAll()
 
         // Also notify any mic engines
         NotificationCenter.default.post(name: .studioStopAll, object: nil)
@@ -2458,7 +2486,8 @@ final class UnifiedOrchestrator {
                 restClient: api
             )
             try await entClient.startSession(configID: config.id)
-            studioEntClient = entClient
+            let bid = room.bridgeID ?? ""
+            studioEntClients[bid] = entClient
             return entClient
         } catch {
             print("[Studio] Entertainment start failed: \(error.localizedDescription) — falling back to REST")

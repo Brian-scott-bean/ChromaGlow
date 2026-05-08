@@ -4,6 +4,79 @@
 
 ---
 
+## 2026-05-07 — Codebase Audit: Architecture, Risks, Follow-ups (Cursor)
+
+### What was reviewed
+Thorough pass over critical paths (no line-by-line coverage of every file): `UnifiedOrchestrator`, `HueAPIClient`, Studio/Composer wiring, `RoomDisplayItem`, SSE/optimistic merge, `MainTabView` shell, cold-launch changes, logging patterns.
+
+### Positive findings (keep)
+- `pendingActionDeadlines` for SSE vs optimistic grouped_light updates reduces toggle flicker.
+- Direct `allRooms` mutation in `updateRoom` with documented `@Observable` rationale.
+- Composer generation guards, RestSender mailbox, entertainment vs REST split align with bridge reality.
+- `RoomDisplayItem` uses full-field `==` (not id-only) so SwiftUI sees on/brightness/dominant color changes.
+- Hue self-signed cert handling documented for session + task delegate (iOS 15+).
+
+### Issues / edge cases (prioritized)
+**High — reconcile docs vs code**
+- `.cursorrules` says never send `effects` to `grouped_light`; `HueAPIClient` + `EffectsViewModel` intentionally use `setGroupedLightNativeEffect` for bridge-native effects. Clarify rule (Composer/custom vs firmware native) in `.cursorrules` / `DEVDOC.md` to avoid wrong “fixes.”
+
+**High — correctness**
+- Deprecated `toggleRoom`: rollback uses captured `item.isOn` on failure — stale if state moved; prefer removal or rollback by reading current room by id (`UnifiedOrchestrator`).
+- `RoomDisplayItem`: `hash(into:)` mixes fewer fields than `==` uses — `Hashable` contract risk if identity-related fields change without hash updates.
+
+**Medium**
+- `StudioViewModel`: many `print(...)` calls on apply/handoff/AI paths — migrate to `Logger` + `#if DEBUG` or privacy-redacted `os_log` for release.
+- Concurrent `loadAll`: second caller hits guard and returns early — confirm refresh UX is acceptable.
+- Parallel `loadAll`: `deactivateStuckEntertainmentSessions` + fetch overlap — brief window where data loads before stuck session cleared; monitor if odd throttle on cold launch.
+- SwiftData: `fatalError` on container init — no recovery path (acceptable for corrupt DB but worth knowing).
+
+**Lower**
+- MainTabView tab prewarm: trades idle memory for snappy first switch; optional tuning on low-memory devices.
+- Legacy branding strings (“CastChroma”) still in some file headers — cosmetic.
+
+### What's left
+- [ ] Update `.cursorrules` / `DEVDOC` for grouped_light native effects vs Composer effects.
+- [ ] Fix `RoomDisplayItem` hashing to align with `Equatable`, or document exception.
+- [ ] Remove/fix deprecated `toggleRoom` rollback or delete call sites.
+- [ ] Replace Studio `print` with structured logging for release builds.
+
+### Gotchas
+- Audit did not include full Keychain/remote OAuth review or device QA against a live bridge.
+
+### Current state
+No code changes from this audit entry alone — documentation and small correctness fixes deferred to follow-up tasks.
+
+---
+
+## 2026-05-07 — Cold-Launch First Tab Switch: Prewarm + Parallel loadAll (Cursor)
+
+### What was built
+
+**MainTabView — deferred-tab prewarm**
+- After Home paints, stagger inserting `.studio`, then `.scenes` / `.more` into `realizedTabs` (~280ms + ~160ms) so heavy roots (`StudioView`, etc.) compile off the first-tab-tap critical path.
+- `.task { await prewarmDeferredTabs() }` on the shell `Group` (iPhone + iPad).
+
+**UnifiedOrchestrator — loadAll**
+- `deactivateStuckEntertainmentSessions()` and bridge fetch/merge now run **in parallel** via outer `withTaskGroup` (cleanup no longer gates room data).
+- Extracted `fetchAndMergeAllBridges()` (previous inner task-group body).
+- `await Task.yield()` before `rebuildAllRooms()` / `rebuildAllZones()` so pending UI work can run before large `allRooms` / `allZones` observable updates.
+
+### What's working
+- ✅ `xcodebuild` HueHome — BUILD SUCCEEDED
+
+### What's left
+- [ ] Device QA: confirm first Studio tap feels instant; watch memory with all tabs realized.
+- [ ] Instruments (Time Profiler + SwiftUI) if any hitch remains — optional further split of `StudioView`.
+
+### Gotchas
+- Tapping Studio within ~280ms of launch may still pay cold-build cost (edge case).
+- Prewarm realizes all lazy tabs → higher idle memory; trade for snappy navigation.
+
+### Current state
+Cold-launch tab responsiveness addressed by idle prewarm + shorter loadAll critical path; ready for on-device timing validation.
+
+---
+
 ## 2026-05-07 — Audit Bugfixes: 3 Bugs in Spatial Engine (Antigravity)
 
 ### What was changed
