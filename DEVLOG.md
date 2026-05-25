@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-05-24 — Git Tag `renamedchromaglow` + Operating Model Doc (Cursor)
+
+### What was built
+- Added `docs/migration/operating-model.md` — team workflow (GitHub as source of truth, ChatGPT/Cursor/Miro roles, task packets, Milestone 0 order).
+- Updated `docs/migration/README.md` — link to operating model at top of index.
+- Pushed branch `2026-05-22-ialn` to `origin` and created annotated tag **`renamedchromaglow`** at rebrand commit (includes migration docs, `.gitignore`, full ChromaGlow rename).
+
+### What's working
+- ✅ `xcodebuild -project ChromaGlow.xcodeproj -scheme ChromaGlow` — BUILD SUCCEEDED (verified before tag)
+- ✅ Tag `renamedchromaglow` on GitHub after push
+
+### Gotchas
+- Open **`ChromaGlow.xcodeproj`** — `HueHome.xcodeproj` no longer exists on this branch.
+- Tag marks the rename milestone; merge to `main` via PR when ready (M0-02 branch protection).
+
+### Current state
+Rebrand + migration docs + operating model are on remote `2026-05-22-ialn` with tag `renamedchromaglow`. Dallin should clone/pull and read `docs/migration/operating-model.md` first.
+
+---
+
 ## 2026-05-24 — Full ChromaGlow Rebrand (Folders + Xcode) (Cursor)
 
 ### What was built

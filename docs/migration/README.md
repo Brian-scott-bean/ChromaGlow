@@ -1,6 +1,6 @@
 # ChromaGlow Migration Documentation
 
-This folder is the working source of truth for the ChromaGlow / ChromaGlow migration effort.
+This folder is the working source of truth for the ChromaGlow migration effort (native iOS + Android, minimal backend).
 
 ## Locked Direction
 
@@ -11,6 +11,12 @@ We are moving forward with a native-platform plan:
 - Backend will be minimal and distributed, supporting coordination but not replacing local Hue bridge control.
 - Flutter is not part of the migration strategy.
 - Kotlin Multiplatform may be considered later only for logic that is genuinely portable.
+
+## Operating Model
+
+Start here for how Dallin, Brian, ChatGPT, Cursor, GitHub, and Miro work together:
+
+- [`operating-model.md`](operating-model.md) — source-of-truth order, task packets, branch/PR rules, ChatGPT/Cursor handoffs
 
 ## Documentation Rules
 
