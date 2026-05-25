@@ -1,4 +1,6 @@
-# Xcode
+# =========================
+# Xcode / Swift
+# =========================
 build/
 *.pbxuser
 !default.pbxuser
@@ -18,39 +20,65 @@ DerivedData/
 *.xcscmblueprint
 .xcode.env.local
 
+# =========================
 # Swift Package Manager
+# =========================
 .build/
 .swiftpm/
-*.resolved
+# Package.resolved is committed so both developers use the same package versions.
 
-# CocoaPods (not used, but just in case)
-Pods/
-Podfile.lock
+# =========================
+# IDEs: Cursor & VS Code
+# =========================
+.vscode/
+*.code-workspace
+.history/
 
-# Carthage (not used, but just in case)
-Carthage/Build/
+# Cursor local/session state only — shared rules and skills stay in repo
+.cursor/*
+!.cursor/rules/
+!.cursor/skills/
 
+# =========================
 # macOS
+# =========================
 .DS_Store
 .AppleDouble
 .LSOverride
+Icon
 ._*
 .Spotlight-V100
 .Trashes
 
-# Xcode Previews
-PreviewReplacement*/
+# =========================
+# CocoaPods (if added later)
+# =========================
+Pods/
+# Podfile.lock is committed when using CocoaPods (same rationale as Package.resolved).
+# Do not add *.xcworkspace here — it would ignore HueHome.xcodeproj/project.xcworkspace.
 
-# Instruments
+# =========================
+# Carthage (not used)
+# =========================
+Carthage/Build/
+
+# =========================
+# Xcode Previews / Instruments
+# =========================
+PreviewReplacement*/
 *.trace
 
-# Fastlane (future)
+# =========================
+# Fastlane (for future deployments)
+# =========================
 fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
+# =========================
 # Sensitive / local-only
+# =========================
 *.p12
 *.mobileprovision
 secrets.xcconfig

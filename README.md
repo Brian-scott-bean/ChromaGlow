@@ -55,6 +55,12 @@ HueHome Pro replaces every other Hue app with a feature-rich, premium experience
 
 ---
 
+## Migration (Android / multi-developer)
+
+Cross-platform migration planning, Milestone 0 task packets, and architecture decisions live in [`docs/migration/`](docs/migration/README.md).
+
+---
+
 ## Disclaimer
 
 HueHome Pro is an independent third-party application. Not affiliated with, endorsed by, or connected to Signify or Philips Hue.

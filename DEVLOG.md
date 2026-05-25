@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-05-24 — Migration Documentation Pack in Repo (Cursor)
+
+### What was built
+- Added `docs/migration/` with merged content from Downloads `docs` + `docs 3` migration packs (18 Markdown files).
+- Subfolders: `decisions/0001-native-android-no-flutter.md`, `task-packets/M0-01` … `M0-03`.
+- Merged Dallin README snippet into `docs/migration/README.md` (replaced missing `open-questions-dallin.md` reference with `open-questions-status.md`).
+- Removed transient `README-add-from-dallin-open-questions.md` from repo (snippet-only file).
+- Root `README.md` — link to `docs/migration/`.
+
+### What's working
+- ✅ Full migration doc tree on disk; no iOS/Xcode files touched.
+
+### What's left
+- [ ] M0-01: branch, commit, PR (docs-only) per `task-packets/M0-01-commit-migration-docs.md`.
+- [ ] M0-02 / M0-03 per task packets.
+
+### Gotchas
+- `open-questions.md` (raw list) and `open-questions-status.md` (decisions) are complementary; keep both.
+
+### Current state
+Migration docs live in-repo at `docs/migration/`; ready for documentation-only PR. No commit in this session unless requested.
+
+---
+
 ## 2026-05-07 — Multi-Bridge Concurrent Entertainment Sessions (Antigravity)
 
 ### What was built
