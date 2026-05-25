@@ -5,12 +5,12 @@
 
 require 'xcodeproj'
 
-PROJECT_PATH = File.join(File.dirname(__FILE__), 'HueHome.xcodeproj')
-SOURCE_ROOT  = File.join(File.dirname(__FILE__), 'HueHome')
+PROJECT_PATH = File.join(File.dirname(__FILE__), 'ChromaGlow.xcodeproj')
+SOURCE_ROOT  = File.join(File.dirname(__FILE__), 'ChromaGlow')
 
 project    = Xcodeproj::Project.open(PROJECT_PATH)
-app_target = project.targets.find { |t| t.name == 'HueHome' }
-abort("HueHome target not found.") unless app_target
+app_target = project.targets.find { |t| t.name == 'ChromaGlow' }
+abort("ChromaGlow target not found.") unless app_target
 
 def existing_paths(project)
   project.files.map { |f|
@@ -46,7 +46,7 @@ added    = 0
 
 # Stage 2B — Scenes Tab
 scenes_files = [
-  { path: "UI/Scenes/ScenesTabView.swift",  group: ["HueHome", "UI", "Scenes"] },
+  { path: "UI/Scenes/ScenesTabView.swift",  group: ["ChromaGlow", "UI", "Scenes"] },
 ]
 
 scenes_files.each do |f|

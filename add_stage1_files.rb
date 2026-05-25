@@ -1,20 +1,20 @@
 #!/usr/bin/env ruby
 # add_stage1_files.rb
-# Adds all Stage 1 new files to the HueHome Xcode project.
+# Adds all Stage 1 new files to the ChromaGlow Xcode project.
 # Idempotent — safe to run multiple times.
 
 require 'xcodeproj'
 
-PROJECT_PATH = File.join(File.dirname(__FILE__), 'HueHome.xcodeproj')
-SOURCE_ROOT  = File.join(File.dirname(__FILE__), 'HueHome')
+PROJECT_PATH = File.join(File.dirname(__FILE__), 'ChromaGlow.xcodeproj')
+SOURCE_ROOT  = File.join(File.dirname(__FILE__), 'ChromaGlow')
 
 puts "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-puts "  HueHome Pro — Stage 1 File Sync"
+puts "  ChromaGlow — Stage 1 File Sync"
 puts "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
 project    = Xcodeproj::Project.open(PROJECT_PATH)
-app_target = project.targets.find { |t| t.name == 'HueHome' }
-abort("❌ HueHome target not found.") unless app_target
+app_target = project.targets.find { |t| t.name == 'ChromaGlow' }
+abort("❌ ChromaGlow target not found.") unless app_target
 
 def existing_paths(project)
   project.files.map { |f|
@@ -47,16 +47,16 @@ end
 
 STAGE1_FILES = {
   # Design Token System
-  File.join(SOURCE_ROOT, 'UI', 'Components', 'HueTokens.swift')         => ['HueHome', 'UI', 'Components'],
-  File.join(SOURCE_ROOT, 'UI', 'Components', 'HueTypography.swift')     => ['HueHome', 'UI', 'Components'],
-  File.join(SOURCE_ROOT, 'UI', 'Components', 'HueComponents.swift')     => ['HueHome', 'UI', 'Components'],
+  File.join(SOURCE_ROOT, 'UI', 'Components', 'HueTokens.swift')         => ['ChromaGlow', 'UI', 'Components'],
+  File.join(SOURCE_ROOT, 'UI', 'Components', 'HueTypography.swift')     => ['ChromaGlow', 'UI', 'Components'],
+  File.join(SOURCE_ROOT, 'UI', 'Components', 'HueComponents.swift')     => ['ChromaGlow', 'UI', 'Components'],
 
   # Navigation
-  File.join(SOURCE_ROOT, 'UI', 'Navigation', 'MainTabView.swift')       => ['HueHome', 'UI', 'Navigation'],
-  File.join(SOURCE_ROOT, 'UI', 'Navigation', 'TabShells.swift')         => ['HueHome', 'UI', 'Navigation'],
+  File.join(SOURCE_ROOT, 'UI', 'Navigation', 'MainTabView.swift')       => ['ChromaGlow', 'UI', 'Navigation'],
+  File.join(SOURCE_ROOT, 'UI', 'Navigation', 'TabShells.swift')         => ['ChromaGlow', 'UI', 'Navigation'],
 
   # SwiftData Models
-  File.join(SOURCE_ROOT, 'Core', 'Models', 'HueDataModels.swift')       => ['HueHome', 'Core', 'Models'],
+  File.join(SOURCE_ROOT, 'Core', 'Models', 'HueDataModels.swift')       => ['ChromaGlow', 'Core', 'Models'],
 }
 
 puts "📱 Stage 1 files:"

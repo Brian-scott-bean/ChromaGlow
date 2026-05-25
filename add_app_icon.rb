@@ -1,23 +1,23 @@
 #!/usr/bin/env ruby
 # add_app_icon.rb
-# Registers HueHome/Assets.xcassets in the Xcode project and sets
+# Registers ChromaGlow/Assets.xcassets in the Xcode project and sets
 # the ASSETCATALOG_COMPILER_APPICON_NAME build setting.
 
 require 'xcodeproj'
 
-PROJ_PATH   = File.join(__dir__, 'HueHome.xcodeproj')
-SOURCE_ROOT = File.join(__dir__, 'HueHome')
+PROJ_PATH   = File.join(__dir__, 'ChromaGlow.xcodeproj')
+SOURCE_ROOT = File.join(__dir__, 'ChromaGlow')
 ASSETS_PATH = File.join(SOURCE_ROOT, 'Assets.xcassets')
 
 project = Xcodeproj::Project.open(PROJ_PATH)
 
-# Find the HueHome app target
-target = project.targets.find { |t| t.name == 'HueHome' }
-abort '❌ HueHome target not found' unless target
+# Find the ChromaGlow app target
+target = project.targets.find { |t| t.name == 'ChromaGlow' }
+abort '❌ ChromaGlow target not found' unless target
 
-# Find or create the HueHome group
-hue_group = project.main_group.find_subpath('HueHome', false)
-abort '❌ HueHome group not found in project' unless hue_group
+# Find or create the ChromaGlow group
+hue_group = project.main_group.find_subpath('ChromaGlow', false)
+abort '❌ ChromaGlow group not found in project' unless hue_group
 
 # Check if already added
 already = hue_group.files.any? { |f| f.path&.include?('Assets.xcassets') }
@@ -33,7 +33,7 @@ else
   # Add to Copy Bundle Resources build phase
   phase = target.resources_build_phase
   phase.add_file_reference(ref)
-  puts '✅ Assets.xcassets added to HueHome target.'
+  puts '✅ Assets.xcassets added to ChromaGlow target.'
 end
 
 # Set ASSETCATALOG_COMPILER_APPICON_NAME in all build configs

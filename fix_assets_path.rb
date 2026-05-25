@@ -4,18 +4,18 @@
 
 require 'xcodeproj'
 
-PROJ_PATH   = File.join(__dir__, 'HueHome.xcodeproj')
-ASSETS_PATH = File.join(__dir__, 'HueHome', 'Assets.xcassets')
+PROJ_PATH   = File.join(__dir__, 'ChromaGlow.xcodeproj')
+ASSETS_PATH = File.join(__dir__, 'ChromaGlow', 'Assets.xcassets')
 
 project = Xcodeproj::Project.open(PROJ_PATH)
 
 # Find and fix any broken Assets.xcassets references
 fixed = 0
 project.files.each do |f|
-  if f.path&.include?('Assets.xcassets') && !f.real_path.to_s.include?('/HueHome/')
+  if f.path&.include?('Assets.xcassets') && !f.real_path.to_s.include?('/ChromaGlow/')
     puts "🔧 Fixing reference: #{f.real_path} → #{ASSETS_PATH}"
     f.source_tree = 'SOURCE_ROOT'
-    f.path        = 'HueHome/Assets.xcassets'
+    f.path        = 'ChromaGlow/Assets.xcassets'
     fixed += 1
   end
 end
@@ -26,8 +26,8 @@ if fixed == 0
     if f.path&.include?('Assets.xcassets')
       puts "Found: #{f.path} (source_tree: #{f.source_tree}, real: #{f.real_path})"
       f.source_tree = 'SOURCE_ROOT'
-      f.path        = 'HueHome/Assets.xcassets'
-      puts "  → Fixed to SOURCE_ROOT / HueHome/Assets.xcassets"
+      f.path        = 'ChromaGlow/Assets.xcassets'
+      puts "  → Fixed to SOURCE_ROOT / ChromaGlow/Assets.xcassets"
       fixed += 1
     end
   end
@@ -36,8 +36,8 @@ end
 if fixed == 0
   # Add fresh reference
   puts "⚠️  No existing reference found — adding fresh one."
-  target = project.targets.find { |t| t.name == 'HueHome' }
-  ref = project.main_group.new_file('HueHome/Assets.xcassets', :project)
+  target = project.targets.find { |t| t.name == 'ChromaGlow' }
+  ref = project.main_group.new_file('ChromaGlow/Assets.xcassets', :project)
   ref.last_known_file_type = 'folder.assetcatalog'
   target.resources_build_phase.add_file_reference(ref)
   puts "✅ Added fresh reference."

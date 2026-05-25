@@ -7,12 +7,12 @@ globs:
 # Xcode Project File Rules
 
 ## Adding New Files
-When creating a new .swift file, it MUST be added to `HueHome.xcodeproj/project.pbxproj` in 4 places:
+When creating a new .swift file, it MUST be added to `ChromaGlow.xcodeproj/project.pbxproj` in 4 places:
 
 1. **PBXBuildFile section** — `{isa = PBXBuildFile; fileRef = <REF_ID>; };`
 2. **PBXFileReference section** — `{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = <path>; sourceTree = "<group>"; };`
 3. **PBXGroup section** — Add REF_ID to the appropriate group's children array
-4. **Sources build phase** — Add BUILD_ID to the HueHome target's sources list
+4. **Sources build phase** — Add BUILD_ID to the ChromaGlow target's sources list
 
 ## ID Format
 Use 24-character uppercase hex strings for IDs. Generate deterministically from filename.
@@ -27,5 +27,5 @@ Use 24-character uppercase hex strings for IDs. Generate deterministically from 
 After ANY file change, run:
 ```bash
 PROJ=/Users/brianbean/Desktop/huehome-pro-v0.3.0
-xcodebuild -project "$PROJ/HueHome.xcodeproj" -scheme HueHome -destination 'generic/platform=iOS' build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
+xcodebuild -project "$PROJ/ChromaGlow.xcodeproj" -scheme ChromaGlow -destination 'generic/platform=iOS' build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
 ```

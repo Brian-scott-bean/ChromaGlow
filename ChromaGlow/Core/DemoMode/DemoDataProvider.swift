@@ -1,0 +1,298 @@
+// DemoDataProvider.swift
+// ChromaGlow — Demo Mode
+//
+// Realistic mock data for app exploration without a physical Bridge.
+// Two bridges (Main Home + Guest Suite), seven rooms total.
+// All controls work — state changes are held in memory only.
+
+import Foundation
+
+enum DemoDataProvider {
+
+    // MARK: - Mock Bridge IDs
+
+    static let bridgeMainID  = "demo-bridge-main"
+    static let bridgeGuestID = "demo-bridge-guest"
+
+    // MARK: - Mock Rooms
+
+    /// 7 rooms across 2 bridges with varied states and archetypes.
+    nonisolated(unsafe) static var rooms: [RoomDisplayItem] = [
+
+        // ── Bridge 1: Main Home ────────────────────────────────────────
+        RoomDisplayItem(
+            id: "demo-room-living",
+            name: "Living Room",
+            archetype: "living_room",
+            isOn: true,
+            brightness: 78,
+            groupedLightID: "demo-gl-living",
+            lightCount: 5,
+            bridgeID: bridgeMainID,
+            childResourceRefs: []
+        ),
+        RoomDisplayItem(
+            id: "demo-room-kitchen",
+            name: "Kitchen",
+            archetype: "kitchen",
+            isOn: true,
+            brightness: 100,
+            groupedLightID: "demo-gl-kitchen",
+            lightCount: 8,
+            bridgeID: bridgeMainID,
+            childResourceRefs: []
+        ),
+        RoomDisplayItem(
+            id: "demo-room-bedroom",
+            name: "Master Bedroom",
+            archetype: "bedroom",
+            isOn: false,
+            brightness: 40,
+            groupedLightID: "demo-gl-bedroom",
+            lightCount: 4,
+            bridgeID: bridgeMainID,
+            childResourceRefs: []
+        ),
+        RoomDisplayItem(
+            id: "demo-room-office",
+            name: "Office",
+            archetype: "office",
+            isOn: true,
+            brightness: 55,
+            groupedLightID: "demo-gl-office",
+            lightCount: 2,
+            bridgeID: bridgeMainID,
+            childResourceRefs: []
+        ),
+        RoomDisplayItem(
+            id: "demo-room-bathroom",
+            name: "Bathroom",
+            archetype: "bathroom",
+            isOn: false,
+            brightness: 85,
+            groupedLightID: "demo-gl-bathroom",
+            lightCount: 3,
+            bridgeID: bridgeMainID,
+            childResourceRefs: []
+        ),
+
+        // ── Bridge 2: Guest Suite ──────────────────────────────────────
+        RoomDisplayItem(
+            id: "demo-room-guest",
+            name: "Guest Bedroom",
+            archetype: "bedroom",
+            isOn: false,
+            brightness: 60,
+            groupedLightID: "demo-gl-guest",
+            lightCount: 2,
+            bridgeID: bridgeGuestID,
+            childResourceRefs: []
+        ),
+        RoomDisplayItem(
+            id: "demo-room-patio",
+            name: "Patio",
+            archetype: "terrace",
+            isOn: true,
+            brightness: 90,
+            groupedLightID: "demo-gl-patio",
+            lightCount: 6,
+            bridgeID: bridgeGuestID,
+            childResourceRefs: []
+        ),
+    ]
+
+    // MARK: - Mock Bridge Records (for BridgeManagerView display)
+
+    static func bridgeRecords() -> [BridgeRecord] {
+        let main = BridgeRecord(
+            id: bridgeMainID,
+            name: "Main Home",
+            host: "192.168.1.100",
+            sortOrder: 0
+        )
+        main.locationLabel  = "Living Area"
+        main.accentHex      = "#FFC107"
+        main.deviceCount    = 22
+
+        let guest = BridgeRecord(
+            id: bridgeGuestID,
+            name: "Guest Suite",
+            host: "192.168.1.101",
+            sortOrder: 1
+        )
+        guest.locationLabel = "Back House"
+        guest.accentHex     = "#64B5F6"
+        guest.deviceCount   = 8
+
+        return [main, guest]
+    }
+
+    // MARK: - Mock Lights (per room)
+
+    static func lights(for roomID: String) -> [LightDisplayItem] {
+        switch roomID {
+        case "demo-room-living":
+            return [
+                LightDisplayItem(id: "dl-lv-1", name: "Floor Lamp",    archetype: "floor_lantern",    isOn: true,  brightness: 78,  colorX: 0.45, colorY: 0.41, colorTempMirek: 370, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-lv-2", name: "Sofa Lamp",     archetype: "table_shade",      isOn: true,  brightness: 55,  colorX: 0.48, colorY: 0.40, colorTempMirek: 400, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-lv-3", name: "TV Backlight",  archetype: "hue_lightstrip",   isOn: true,  brightness: 90,  colorX: 0.16, colorY: 0.10, colorTempMirek: nil, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-lv-4", name: "Ceiling 1",     archetype: "sultan_bulb",      isOn: false, brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: 300, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-lv-5", name: "Ceiling 2",     archetype: "sultan_bulb",      isOn: false, brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: 300, mirekMin: 153, mirekMax: 500),
+            ]
+        case "demo-room-kitchen":
+            return [
+                LightDisplayItem(id: "dl-kt-1", name: "Counter Strip", archetype: "hue_lightstrip",   isOn: true,  brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: 233, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-kt-2", name: "Island Light",  archetype: "pendant_round",    isOn: true,  brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: 200, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-kt-3", name: "Spot 1",        archetype: "sultan_bulb",      isOn: true,  brightness: 90,  colorX: nil,  colorY: nil,  colorTempMirek: 220, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-kt-4", name: "Spot 2",        archetype: "sultan_bulb",      isOn: true,  brightness: 90,  colorX: nil,  colorY: nil,  colorTempMirek: 220, mirekMin: 153, mirekMax: 500),
+            ]
+        case "demo-room-bedroom":
+            return [
+                LightDisplayItem(id: "dl-bd-1", name: "Bedside Left",  archetype: "table_shade",      isOn: false, brightness: 30,  colorX: 0.55, colorY: 0.40, colorTempMirek: 450, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-bd-2", name: "Bedside Right", archetype: "table_shade",      isOn: false, brightness: 30,  colorX: 0.55, colorY: 0.40, colorTempMirek: 450, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-bd-3", name: "Overhead",      archetype: "sultan_bulb",      isOn: false, brightness: 80,  colorX: nil,  colorY: nil,  colorTempMirek: 300, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-bd-4", name: "Closet",        archetype: "single_bulb",      isOn: false, brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: nil, mirekMin: 153, mirekMax: 500),
+            ]
+        case "demo-room-office":
+            return [
+                LightDisplayItem(id: "dl-of-1", name: "Desk Lamp",     archetype: "table_shade",      isOn: true,  brightness: 55,  colorX: nil,  colorY: nil,  colorTempMirek: 200, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-of-2", name: "Monitor Light", archetype: "hue_lightstrip",   isOn: true,  brightness: 40,  colorX: nil,  colorY: nil,  colorTempMirek: 167, mirekMin: 153, mirekMax: 500),
+            ]
+        case "demo-room-patio":
+            return [
+                LightDisplayItem(id: "dl-pt-1", name: "String Lights", archetype: "hue_lightstrip",   isOn: true,  brightness: 90,  colorX: 0.48, colorY: 0.41, colorTempMirek: nil, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-pt-2", name: "Post Light 1",  archetype: "floor_lantern",    isOn: true,  brightness: 85,  colorX: nil,  colorY: nil,  colorTempMirek: 370, mirekMin: 153, mirekMax: 500),
+                LightDisplayItem(id: "dl-pt-3", name: "Post Light 2",  archetype: "floor_lantern",    isOn: true,  brightness: 85,  colorX: nil,  colorY: nil,  colorTempMirek: 370, mirekMin: 153, mirekMax: 500),
+            ]
+        default:
+            return [
+                LightDisplayItem(id: "dl-gen-1", name: "Main Light",   archetype: "sultan_bulb",      isOn: false, brightness: 100, colorX: nil,  colorY: nil,  colorTempMirek: 300, mirekMin: 153, mirekMax: 500),
+            ]
+        }
+    }
+
+    // MARK: - Mock Scenes (per room)
+
+    static func scenes(for roomID: String) -> [SceneDisplayItem] {
+        switch roomID {
+        case "demo-room-living":
+            return [
+                SceneDisplayItem(id: "ds-lv-1", name: "Relax",      isActive: false),
+                SceneDisplayItem(id: "ds-lv-2", name: "Energize",   isActive: false),
+                SceneDisplayItem(id: "ds-lv-3", name: "Movie Night",isActive: true),
+                SceneDisplayItem(id: "ds-lv-4", name: "Sunset",     isActive: false),
+            ]
+        case "demo-room-kitchen":
+            return [
+                SceneDisplayItem(id: "ds-kt-1", name: "Bright",     isActive: true),
+                SceneDisplayItem(id: "ds-kt-2", name: "Cooking",    isActive: false),
+                SceneDisplayItem(id: "ds-kt-3", name: "Dimmed",     isActive: false),
+            ]
+        case "demo-room-bedroom":
+            return [
+                SceneDisplayItem(id: "ds-bd-1", name: "Sleep",      isActive: false),
+                SceneDisplayItem(id: "ds-bd-2", name: "Wake Up",    isActive: false),
+                SceneDisplayItem(id: "ds-bd-3", name: "Read",       isActive: false),
+            ]
+        case "demo-room-office":
+            return [
+                SceneDisplayItem(id: "ds-of-1", name: "Focus",      isActive: true),
+                SceneDisplayItem(id: "ds-of-2", name: "Relax",      isActive: false),
+            ]
+        default:
+            return [
+                SceneDisplayItem(id: "ds-gen-1", name: "Default",   isActive: false),
+            ]
+        }
+    }
+
+    // MARK: - Mock Connection Statuses
+
+    static var connectionStatuses: [String: BridgeConnectionStatus] {
+        [
+            bridgeMainID:  .connected,
+            bridgeGuestID: .connected,
+        ]
+    }
+
+    // MARK: - Global Scenes (for ScenesTabView)
+    //
+    // Mirrors the per-room scene data as GlobalSceneItems so the Scenes tab
+    // works in demo mode. Room IDs match DemoDataProvider.rooms.
+
+    static let globalScenes: [GlobalSceneItem] = {
+        let b = bridgeMainID
+        let g = bridgeGuestID
+        return [
+            // Living Room
+            GlobalSceneItem(id: "\(b):ds-lv-1", bridgeSceneID: "ds-lv-1", name: "Relax",       roomID: "demo-room-living",   bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-lv-2", bridgeSceneID: "ds-lv-2", name: "Energize",    roomID: "demo-room-living",   bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-lv-3", bridgeSceneID: "ds-lv-3", name: "Movie Night", roomID: "demo-room-living",   bridgeID: b, isActive: true,  isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-lv-4", bridgeSceneID: "ds-lv-4", name: "Sunset",      roomID: "demo-room-living",   bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-lv-5", bridgeSceneID: "ds-lv-5", name: "Romance",     roomID: "demo-room-living",   bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            // Kitchen
+            GlobalSceneItem(id: "\(b):ds-kt-1", bridgeSceneID: "ds-kt-1", name: "Bright",      roomID: "demo-room-kitchen",  bridgeID: b, isActive: true,  isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-kt-2", bridgeSceneID: "ds-kt-2", name: "Cooking",     roomID: "demo-room-kitchen",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-kt-3", bridgeSceneID: "ds-kt-3", name: "Dimmed",      roomID: "demo-room-kitchen",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            // Bedroom
+            GlobalSceneItem(id: "\(b):ds-bd-1", bridgeSceneID: "ds-bd-1", name: "Sleep",       roomID: "demo-room-bedroom",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-bd-2", bridgeSceneID: "ds-bd-2", name: "Wake Up",     roomID: "demo-room-bedroom",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-bd-3", bridgeSceneID: "ds-bd-3", name: "Read",        roomID: "demo-room-bedroom",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-bd-4", bridgeSceneID: "ds-bd-4", name: "Night Light", roomID: "demo-room-bedroom",  bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            // Office
+            GlobalSceneItem(id: "\(b):ds-of-1", bridgeSceneID: "ds-of-1", name: "Focus",       roomID: "demo-room-office",   bridgeID: b, isActive: true,  isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(b):ds-of-2", bridgeSceneID: "ds-of-2", name: "Relax",       roomID: "demo-room-office",   bridgeID: b, isActive: false, isDynamic: false, speed: 0.5),
+            // Patio (Guest Bridge) — Party & Galaxy are dynamic palette scenes
+            GlobalSceneItem(id: "\(g):ds-pt-1", bridgeSceneID: "ds-pt-1", name: "Warm Glow",   roomID: "demo-room-patio",    bridgeID: g, isActive: true,  isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(g):ds-pt-2", bridgeSceneID: "ds-pt-2", name: "Party",       roomID: "demo-room-patio",    bridgeID: g, isActive: false, isDynamic: true,  speed: 0.6),
+            GlobalSceneItem(id: "\(g):ds-pt-3", bridgeSceneID: "ds-pt-3", name: "Galaxy",      roomID: "demo-room-patio",    bridgeID: g, isActive: false, isDynamic: true,  speed: 0.4),
+        ].sorted {
+            if $0.isActive != $1.isActive { return $0.isActive }
+            return $0.name.localizedCompare($1.name) == .orderedAscending
+        }
+    }()
+
+    // MARK: - Demo Automations
+
+    static let automations: [AutomationDisplayItem] = [
+        AutomationDisplayItem(id: "da-1", name: "Good Morning",       enabled: true,  category: .wakeUp,    status: "running"),
+        AutomationDisplayItem(id: "da-2", name: "Bedtime Wind Down",   enabled: true,  category: .sleep,     status: "waiting"),
+        AutomationDisplayItem(id: "da-3", name: "Natural Light Cycle", enabled: false, category: .circadian, status: "stopped"),
+        AutomationDisplayItem(id: "da-4", name: "Movie Night at 8pm",  enabled: true,  category: .schedule,  status: "waiting"),
+        AutomationDisplayItem(id: "da-5", name: "Dinner Scene",        enabled: false, category: .schedule,  status: nil),
+        AutomationDisplayItem(id: "da-6", name: "15-min Sleep Timer",  enabled: false, category: .timer,     status: nil),
+        AutomationDisplayItem(id: "da-7", name: "Tap: All Off",        enabled: true,  category: .tapToRun,  status: nil),
+        AutomationDisplayItem(id: "da-8", name: "Away Mode",           enabled: false, category: .other,     status: nil),
+    ]
+
+    // MARK: - Demo Devices
+
+    static let devices: [DeviceDisplayItem] = {
+        let b = bridgeMainID
+        let g = bridgeGuestID
+        return [
+            // Lights — Living Room
+            DeviceDisplayItem(id: "\(b):dd-l1", name: "Couch Left",      productName: "Hue color lamp",    modelID: "LCA001", firmwareVersion: "1.104.2", deviceType: .light,   bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-l2", name: "Couch Right",     productName: "Hue color lamp",    modelID: "LCA001", firmwareVersion: "1.104.2", deviceType: .light,   bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-l3", name: "Floor Lamp",      productName: "Hue white ambiance",modelID: "LWA001", firmwareVersion: "1.104.2", deviceType: .light,   bridgeID: b),
+            // Lights — Bedroom
+            DeviceDisplayItem(id: "\(b):dd-l4", name: "Bedside Left",    productName: "Hue color lamp",    modelID: "LCA003", firmwareVersion: "1.101.2", deviceType: .light,   bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-l5", name: "Bedside Right",   productName: "Hue color lamp",    modelID: "LCA003", firmwareVersion: "1.101.2", deviceType: .light,   bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-l6", name: "Ceiling",         productName: "Hue white lamp",    modelID: "LWB010", firmwareVersion: "1.88.1",  deviceType: .light,   bridgeID: b),
+            // Lights — Kitchen / Office
+            DeviceDisplayItem(id: "\(b):dd-l7", name: "Counter",         productName: "Hue GU10 color",    modelID: "LCG002", firmwareVersion: "1.104.2", deviceType: .light,   bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-l8", name: "Desk",            productName: "Hue color lamp",    modelID: "LCA001", firmwareVersion: "1.104.2", deviceType: .light,   bridgeID: b),
+            // Controls
+            DeviceDisplayItem(id: "\(b):dd-c1", name: "Living Room Tap", productName: "Hue Tap Switch",    modelID: "ZGPSWITCH", firmwareVersion: "6.1.1.28576", deviceType: .control, bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-c2", name: "Bedroom Remote",  productName: "Hue dimmer switch", modelID: "RWL022",    firmwareVersion: "2.44.0",      deviceType: .control, bridgeID: b),
+            // Sensors
+            DeviceDisplayItem(id: "\(b):dd-s1", name: "Hallway Motion",  productName: "Hue motion sensor", modelID: "SML001",    firmwareVersion: "1.1.27575",   deviceType: .sensor,  bridgeID: b),
+            DeviceDisplayItem(id: "\(b):dd-s2", name: "Outdoor Motion",  productName: "Hue motion sensor", modelID: "SML002",    firmwareVersion: "1.1.27575",   deviceType: .sensor,  bridgeID: b),
+            // Guest bridge — Patio
+            DeviceDisplayItem(id: "\(g):dd-l9", name: "Patio String",    productName: "Hue Lightstrip",    modelID: "LST002",    firmwareVersion: "1.50.1",      deviceType: .light,   bridgeID: g),
+            DeviceDisplayItem(id: "\(g):dd-la", name: "Patio Spot 1",    productName: "Hue color lamp",    modelID: "LCA001",    firmwareVersion: "1.104.2",     deviceType: .light,   bridgeID: g),
+            DeviceDisplayItem(id: "\(g):dd-c3", name: "Patio Remote",    productName: "Hue dimmer switch", modelID: "RWL022",    firmwareVersion: "2.44.0",      deviceType: .control, bridgeID: g),
+        ]
+    }()
+}
+

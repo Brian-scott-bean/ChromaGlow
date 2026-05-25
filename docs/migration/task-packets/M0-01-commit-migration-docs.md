@@ -22,10 +22,10 @@ Add the initial migration documentation folder to the repo.
 
 ## Files Forbidden To Change
 
-- `HueHome/**`
-- `HueHomeWidget/**`
-- `LightShadeWatch/**`
-- `LightShadeWatchApp Watch App/**`
+- `ChromaGlow/**`
+- `ChromaGlowWidget/**`
+- `ChromaGlowWatchExtension/**`
+- `ChromaGlowWatchApp/**`
 - Xcode project files
 - signing/provisioning files
 

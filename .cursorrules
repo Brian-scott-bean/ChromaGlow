@@ -3,7 +3,7 @@
 ## Project
 - **App:** ChromaGlow (Philips Hue smart lighting iOS app)
 - **Path:** `/Users/brianbean/Desktop/huehome-pro-v0.3.0/`
-- **Xcode project:** `HueHome.xcodeproj`
+- **Xcode project:** `ChromaGlow.xcodeproj`
 - **Bundle:** `com.huehome.pro`
 - **Language:** Swift, SwiftUI (iOS 17+)
 - **Architecture:** @Observable ViewModels + UnifiedOrchestrator singleton
@@ -45,13 +45,13 @@ It contains the full development history, architecture decisions, API constraint
 ## Key Files
 | File | Purpose |
 |------|---------|
-| `HueHome/Core/Network/UnifiedOrchestrator.swift` | Central state manager, owns all bridges/rooms/lights |
-| `HueHome/Core/Network/HueAPIClient.swift` | Hue CLIP v2 REST API client |
-| `HueHome/Core/Network/HueEntertainmentClient.swift` | DTLS/UDP streaming at 50fps |
-| `HueHome/UI/Studio/StudioViewModel.swift` | Studio state, card catalogs, apply/stop, multi-room effects |
-| `HueHome/UI/Studio/StudioView.swift` | Studio tab UI, mixer tray, card grid |
-| `HueHome/UI/Sync/SyncModeEngine.swift` | Audio render loop, mic processing |
-| `HueHome/Core/Models/RoomDisplayItem.swift` | Room/zone data model |
+| `ChromaGlow/Core/Network/UnifiedOrchestrator.swift` | Central state manager, owns all bridges/rooms/lights |
+| `ChromaGlow/Core/Network/HueAPIClient.swift` | Hue CLIP v2 REST API client |
+| `ChromaGlow/Core/Network/HueEntertainmentClient.swift` | DTLS/UDP streaming at 50fps |
+| `ChromaGlow/UI/Studio/StudioViewModel.swift` | Studio state, card catalogs, apply/stop, multi-room effects |
+| `ChromaGlow/UI/Studio/StudioView.swift` | Studio tab UI, mixer tray, card grid |
+| `ChromaGlow/UI/Sync/SyncModeEngine.swift` | Audio render loop, mic processing |
+| `ChromaGlow/Core/Models/RoomDisplayItem.swift` | Room/zone data model |
 
 ## Current State (v0.16.0)
 - Multi-room concurrent effects: ✅ Built and committed

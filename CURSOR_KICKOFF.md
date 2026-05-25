@@ -48,7 +48,7 @@ Read these files before making changes:
 
 ```bash
 PROJ=/Users/brianbean/Desktop/huehome-pro-v0.3.0
-xcodebuild -project "$PROJ/HueHome.xcodeproj" -scheme HueHome -destination 'generic/platform=iOS' build 2>&1 | rg -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
+xcodebuild -project "$PROJ/ChromaGlow.xcodeproj" -scheme ChromaGlow -destination 'generic/platform=iOS' build 2>&1 | rg -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
 ```
 
 ## Suggested Next Slice

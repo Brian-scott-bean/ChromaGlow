@@ -5,16 +5,16 @@
 
 require 'xcodeproj'
 
-PROJECT_PATH = File.join(File.dirname(__FILE__), 'HueHome.xcodeproj')
-SOURCE_ROOT  = File.join(File.dirname(__FILE__), 'HueHome')
+PROJECT_PATH = File.join(File.dirname(__FILE__), 'ChromaGlow.xcodeproj')
+SOURCE_ROOT  = File.join(File.dirname(__FILE__), 'ChromaGlow')
 
 puts "================================================"
-puts "  HueHome Pro -- Stage 2A File Sync"
+puts "  ChromaGlow -- Stage 2A File Sync"
 puts "================================================\n\n"
 
 project    = Xcodeproj::Project.open(PROJECT_PATH)
-app_target = project.targets.find { |t| t.name == 'HueHome' }
-abort("HueHome target not found.") unless app_target
+app_target = project.targets.find { |t| t.name == 'ChromaGlow' }
+abort("ChromaGlow target not found.") unless app_target
 
 def existing_paths(project)
   project.files.map { |f|
@@ -50,10 +50,10 @@ added = 0
 
 FILES = {
   # Network
-  File.join(SOURCE_ROOT, 'Core/Network/BridgeAPIClient.swift')     => ['HueHome', 'Core', 'Network'],
-  File.join(SOURCE_ROOT, 'Core/Network/UnifiedOrchestrator.swift') => ['HueHome', 'Core', 'Network'],
+  File.join(SOURCE_ROOT, 'Core/Network/BridgeAPIClient.swift')     => ['ChromaGlow', 'Core', 'Network'],
+  File.join(SOURCE_ROOT, 'Core/Network/UnifiedOrchestrator.swift') => ['ChromaGlow', 'Core', 'Network'],
   # UI
-  File.join(SOURCE_ROOT, 'UI/BridgeManager/BridgeManagerView.swift') => ['HueHome', 'UI', 'BridgeManager'],
+  File.join(SOURCE_ROOT, 'UI/BridgeManager/BridgeManagerView.swift') => ['ChromaGlow', 'UI', 'BridgeManager'],
 }
 
 FILES.each do |path, grp|

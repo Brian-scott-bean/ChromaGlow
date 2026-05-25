@@ -1,6 +1,6 @@
 # ChromaGlow Migration Documentation
 
-This folder is the working source of truth for the ChromaGlow / HueHome Pro migration effort.
+This folder is the working source of truth for the ChromaGlow / ChromaGlow migration effort.
 
 ## Locked Direction
 

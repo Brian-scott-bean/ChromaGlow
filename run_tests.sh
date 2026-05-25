@@ -1,6 +1,6 @@
 #!/bin/bash
 # run_tests.sh
-# HueHome Pro — Pre-release test runner
+# ChromaGlow — Pre-release test runner
 # Run this before every git tag/release. Exit code: 0 = all pass, 1 = failure.
 #
 # Usage:
@@ -9,11 +9,11 @@
 
 set -euo pipefail
 
-PROJECT="HueHome.xcodeproj"
-SCHEME="HueHome"
+PROJECT="ChromaGlow.xcodeproj"
+SCHEME="ChromaGlow"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  HueHome Pro — Pre-Release Test Suite"
+echo "  ChromaGlow — Pre-Release Test Suite"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -31,7 +31,7 @@ echo ""
 # Build app first
 # ──────────────────────────────────────────────
 
-echo "🔨 Building HueHome..."
+echo "🔨 Building ChromaGlow..."
 xcodebuild build \
   -project "$PROJECT" \
   -scheme "$SCHEME" \

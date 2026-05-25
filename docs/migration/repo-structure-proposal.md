@@ -25,11 +25,11 @@ Safer near-term structure:
 
 ```text
 /
-├── HueHome/
-├── HueHome.xcodeproj/
-├── HueHomeWidget/
-├── LightShadeWatch/
-├── LightShadeWatchApp Watch App/
+├── ChromaGlow/
+├── ChromaGlow.xcodeproj/
+├── ChromaGlowWidget/
+├── ChromaGlowWatchExtension/
+├── ChromaGlowWatchApp/
 ├── android/                 # new native Android app when created
 ├── backend/                 # optional/minimal backend when created
 ├── docs/

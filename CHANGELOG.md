@@ -1,4 +1,4 @@
-# HueHome Pro — Changelog
+# ChromaGlow — Changelog
 
 All notable changes are documented here.
 Format: `[vX.Y.Z] — YYYY-MM-DD`

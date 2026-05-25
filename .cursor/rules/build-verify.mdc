@@ -11,7 +11,7 @@ alwaysApply: false
 Run this build check before saying you're done:
 ```bash
 PROJ=/Users/brianbean/Desktop/huehome-pro-v0.3.0
-xcodebuild -project "$PROJ/HueHome.xcodeproj" -scheme HueHome -destination 'generic/platform=iOS' build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
+xcodebuild -project "$PROJ/ChromaGlow.xcodeproj" -scheme ChromaGlow -destination 'generic/platform=iOS' build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
 ```
 
 ## After Every Successful Build

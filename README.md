@@ -1,4 +1,4 @@
-# HueHome Pro
+# ChromaGlow
 
 **The definitive Philips Hue lighting OS for iPhone, iPad, Mac, and Apple Watch.**
 
@@ -8,7 +8,7 @@
 
 ## What It Is
 
-HueHome Pro replaces every other Hue app with a feature-rich, premium experience:
+ChromaGlow replaces every other Hue app with a feature-rich, premium experience:
 
 - **Full light control** — color, temperature, brightness, gradients, per-bulb detail
 - **Effect Engine** — 10 composable engines, 70+ effects (heartbeat, breathing, Aurora, music sync, and more)
@@ -63,4 +63,4 @@ Cross-platform migration planning, Milestone 0 task packets, and architecture de
 
 ## Disclaimer
 
-HueHome Pro is an independent third-party application. Not affiliated with, endorsed by, or connected to Signify or Philips Hue.
+ChromaGlow is an independent third-party application. Not affiliated with, endorsed by, or connected to Signify or Philips Hue.

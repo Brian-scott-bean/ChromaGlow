@@ -5,17 +5,17 @@
 
 require 'xcodeproj'
 
-PROJECT_PATH = File.join(File.dirname(__FILE__), 'HueHome.xcodeproj')
-SOURCE_ROOT  = File.join(File.dirname(__FILE__), 'HueHome')
-TESTS_ROOT   = File.join(File.dirname(__FILE__), 'HueHomeTests')
+PROJECT_PATH = File.join(File.dirname(__FILE__), 'ChromaGlow.xcodeproj')
+SOURCE_ROOT  = File.join(File.dirname(__FILE__), 'ChromaGlow')
+TESTS_ROOT   = File.join(File.dirname(__FILE__), 'ChromaGlowTests')
 
 puts "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-puts "  HueHome Pro — Sync Project Files"
+puts "  ChromaGlow — Sync Project Files"
 puts "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
 project      = Xcodeproj::Project.open(PROJECT_PATH)
-app_target   = project.targets.find { |t| t.name == 'HueHome' }
-abort("❌ HueHome target not found.") unless app_target
+app_target   = project.targets.find { |t| t.name == 'ChromaGlow' }
+abort("❌ ChromaGlow target not found.") unless app_target
 
 # ──────────────────────────────────────────────
 # Helpers
@@ -58,31 +58,31 @@ existing = existing_paths(project)
 added = 0
 
 APP_FILES = {
-  File.join(SOURCE_ROOT, 'UI',   'Splash',      'SplashView.swift')           => ['HueHome', 'UI', 'Splash'],
-  File.join(SOURCE_ROOT, 'UI',   'Dashboard',   'DashboardView.swift')         => ['HueHome', 'UI', 'Dashboard'],
-  File.join(SOURCE_ROOT, 'UI',   'Settings',    'SettingsView.swift')          => ['HueHome', 'UI', 'Settings'],
-  File.join(SOURCE_ROOT, 'UI',   'RoomDetail',  'RoomDetailView.swift')        => ['HueHome', 'UI', 'RoomDetail'],
-  File.join(SOURCE_ROOT, 'UI',   'RoomDetail',  'SceneChip.swift')             => ['HueHome', 'UI', 'RoomDetail'],
-  File.join(SOURCE_ROOT, 'UI',   'RoomDetail',  'CreateSceneView.swift')       => ['HueHome', 'UI', 'RoomDetail'],
-  File.join(SOURCE_ROOT, 'UI',   'Automations', 'AutomationsView.swift')       => ['HueHome', 'UI', 'Automations'],
-  File.join(SOURCE_ROOT, 'UI',   'LightControl', 'LightControlView.swift')     => ['HueHome', 'UI', 'LightControl'],
-  File.join(SOURCE_ROOT, 'UI',   'Components',  'HapticManager.swift')         => ['HueHome', 'UI', 'Components'],
-  File.join(SOURCE_ROOT, 'UI',   'Components',  'GlassmorphicCard.swift')      => ['HueHome', 'UI', 'Components'],
-  File.join(SOURCE_ROOT, 'UI',   'Components',  'HueColorUtils.swift')         => ['HueHome', 'UI', 'Components'],
-  File.join(SOURCE_ROOT, 'Core', 'Models',      'HueScene.swift')              => ['HueHome', 'Core', 'Models'],
-  File.join(SOURCE_ROOT, 'Core', 'Models',      'SceneDisplayItem.swift')      => ['HueHome', 'Core', 'Models'],
-  File.join(SOURCE_ROOT, 'Core', 'Models',      'CreateSceneRequest.swift')    => ['HueHome', 'Core', 'Models'],
-  File.join(SOURCE_ROOT, 'Core', 'Models',      'HueBehaviorInstance.swift')   => ['HueHome', 'Core', 'Models'],
-  File.join(SOURCE_ROOT, 'Core', 'ViewModels',  'AutomationsViewModel.swift')  => ['HueHome', 'Core', 'ViewModels'],
-  File.join(SOURCE_ROOT, 'Core', 'Models',      'HueRoom.swift')               => ['HueHome', 'Core', 'Models'],
-  File.join(SOURCE_ROOT, 'Core', 'Models',      'HueLight.swift')              => ['HueHome', 'Core', 'Models'],
-  File.join(SOURCE_ROOT, 'Core', 'Models',      'HueGroupedLight.swift')       => ['HueHome', 'Core', 'Models'],
-  File.join(SOURCE_ROOT, 'Core', 'Models',      'LightDisplayItem.swift')      => ['HueHome', 'Core', 'Models'],
-  File.join(SOURCE_ROOT, 'Core', 'Network',     'HueAPIClient.swift')          => ['HueHome', 'Core', 'Network'],
-  File.join(SOURCE_ROOT, 'Core', 'Network',     'WidgetDataStore.swift')       => ['HueHome', 'Core', 'Network'],
-  File.join(SOURCE_ROOT, 'Core', 'Network',     'HueSSEService.swift')         => ['HueHome', 'Core', 'Network'],
-  File.join(SOURCE_ROOT, 'Core', 'ViewModels',  'DashboardViewModel.swift')    => ['HueHome', 'Core', 'ViewModels'],
-  File.join(SOURCE_ROOT, 'Core', 'ViewModels',  'RoomDetailViewModel.swift')   => ['HueHome', 'Core', 'ViewModels'],
+  File.join(SOURCE_ROOT, 'UI',   'Splash',      'SplashView.swift')           => ['ChromaGlow', 'UI', 'Splash'],
+  File.join(SOURCE_ROOT, 'UI',   'Dashboard',   'DashboardView.swift')         => ['ChromaGlow', 'UI', 'Dashboard'],
+  File.join(SOURCE_ROOT, 'UI',   'Settings',    'SettingsView.swift')          => ['ChromaGlow', 'UI', 'Settings'],
+  File.join(SOURCE_ROOT, 'UI',   'RoomDetail',  'RoomDetailView.swift')        => ['ChromaGlow', 'UI', 'RoomDetail'],
+  File.join(SOURCE_ROOT, 'UI',   'RoomDetail',  'SceneChip.swift')             => ['ChromaGlow', 'UI', 'RoomDetail'],
+  File.join(SOURCE_ROOT, 'UI',   'RoomDetail',  'CreateSceneView.swift')       => ['ChromaGlow', 'UI', 'RoomDetail'],
+  File.join(SOURCE_ROOT, 'UI',   'Automations', 'AutomationsView.swift')       => ['ChromaGlow', 'UI', 'Automations'],
+  File.join(SOURCE_ROOT, 'UI',   'LightControl', 'LightControlView.swift')     => ['ChromaGlow', 'UI', 'LightControl'],
+  File.join(SOURCE_ROOT, 'UI',   'Components',  'HapticManager.swift')         => ['ChromaGlow', 'UI', 'Components'],
+  File.join(SOURCE_ROOT, 'UI',   'Components',  'GlassmorphicCard.swift')      => ['ChromaGlow', 'UI', 'Components'],
+  File.join(SOURCE_ROOT, 'UI',   'Components',  'HueColorUtils.swift')         => ['ChromaGlow', 'UI', 'Components'],
+  File.join(SOURCE_ROOT, 'Core', 'Models',      'HueScene.swift')              => ['ChromaGlow', 'Core', 'Models'],
+  File.join(SOURCE_ROOT, 'Core', 'Models',      'SceneDisplayItem.swift')      => ['ChromaGlow', 'Core', 'Models'],
+  File.join(SOURCE_ROOT, 'Core', 'Models',      'CreateSceneRequest.swift')    => ['ChromaGlow', 'Core', 'Models'],
+  File.join(SOURCE_ROOT, 'Core', 'Models',      'HueBehaviorInstance.swift')   => ['ChromaGlow', 'Core', 'Models'],
+  File.join(SOURCE_ROOT, 'Core', 'ViewModels',  'AutomationsViewModel.swift')  => ['ChromaGlow', 'Core', 'ViewModels'],
+  File.join(SOURCE_ROOT, 'Core', 'Models',      'HueRoom.swift')               => ['ChromaGlow', 'Core', 'Models'],
+  File.join(SOURCE_ROOT, 'Core', 'Models',      'HueLight.swift')              => ['ChromaGlow', 'Core', 'Models'],
+  File.join(SOURCE_ROOT, 'Core', 'Models',      'HueGroupedLight.swift')       => ['ChromaGlow', 'Core', 'Models'],
+  File.join(SOURCE_ROOT, 'Core', 'Models',      'LightDisplayItem.swift')      => ['ChromaGlow', 'Core', 'Models'],
+  File.join(SOURCE_ROOT, 'Core', 'Network',     'HueAPIClient.swift')          => ['ChromaGlow', 'Core', 'Network'],
+  File.join(SOURCE_ROOT, 'Core', 'Network',     'WidgetDataStore.swift')       => ['ChromaGlow', 'Core', 'Network'],
+  File.join(SOURCE_ROOT, 'Core', 'Network',     'HueSSEService.swift')         => ['ChromaGlow', 'Core', 'Network'],
+  File.join(SOURCE_ROOT, 'Core', 'ViewModels',  'DashboardViewModel.swift')    => ['ChromaGlow', 'Core', 'ViewModels'],
+  File.join(SOURCE_ROOT, 'Core', 'ViewModels',  'RoomDetailViewModel.swift')   => ['ChromaGlow', 'Core', 'ViewModels'],
 }
 
 APP_FILES.each do |path, grp|
@@ -94,28 +94,28 @@ end
 # Test Target
 # ──────────────────────────────────────────────
 puts "\n🧪 Test target:"
-test_target = project.targets.find { |t| t.name == 'HueHomeTests' }
+test_target = project.targets.find { |t| t.name == 'ChromaGlowTests' }
 
 unless test_target
-  puts "   🆕 Creating HueHomeTests unit test target…"
-  test_target = project.new_target(:unit_test_bundle, 'HueHomeTests', :ios, '17.0')
+  puts "   🆕 Creating ChromaGlowTests unit test target…"
+  test_target = project.new_target(:unit_test_bundle, 'ChromaGlowTests', :ios, '17.0')
   test_target.add_dependency(app_target)
 
   test_target.build_configurations.each do |config|
     config.build_settings['SWIFT_VERSION']               = '5.9'
     config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']  = '17.0'
     config.build_settings['PRODUCT_BUNDLE_IDENTIFIER']   = 'com.huehome.pro.tests'
-    config.build_settings['TEST_HOST']                   = '$(BUILT_PRODUCTS_DIR)/HueHome.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HueHome'
+    config.build_settings['TEST_HOST']                   = '$(BUILT_PRODUCTS_DIR)/ChromaGlow.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ChromaGlow'
     config.build_settings['BUNDLE_LOADER']               = '$(TEST_HOST)'
     config.build_settings['SWIFT_STRICT_CONCURRENCY']    = 'complete'
   end
-  puts "   ✅ HueHomeTests target created."
+  puts "   ✅ ChromaGlowTests target created."
 end
 
 existing = existing_paths(project)
 TEST_FILES = {
-  File.join(TESTS_ROOT, 'KeychainManagerTests.swift') => ['HueHomeTests'],
-  File.join(TESTS_ROOT, 'HueAPIClientTests.swift')    => ['HueHomeTests'],
+  File.join(TESTS_ROOT, 'KeychainManagerTests.swift') => ['ChromaGlowTests'],
+  File.join(TESTS_ROOT, 'HueAPIClientTests.swift')    => ['ChromaGlowTests'],
 }
 
 TEST_FILES.each do |path, grp|

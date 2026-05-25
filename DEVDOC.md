@@ -1,7 +1,7 @@
-# ChromaGlow (HueHome Pro) — Dev Notes
+# ChromaGlow (ChromaGlow) — Dev Notes
 
 ## Branding
-- **App name:** ChromaGlow (rebranded from CastChroma / ChromaForge / LightShade / HueHome Pro)
+- **App name:** ChromaGlow (rebranded from ChromaGlow / ChromaForge / LightShade / ChromaGlow)
 - **Bundle ID:** `com.lightshade.app` (keep as-is, never user visible)
 - **App Store Connect (ChromaGlow):** Apple ID `6766251782` — name locked, Prepare for Submission
 - **App Store Connect (old):** https://appstoreconnect.apple.com/apps/6765770802
@@ -10,34 +10,34 @@
 
 ## Project Location
 - **Path:** `/Users/brianbean/Desktop/huehome-pro-v0.3.0/`
-- **Xcode project:** `HueHome.xcodeproj`
+- **Xcode project:** `ChromaGlow.xcodeproj`
 - **Git tags:** v0.1.0 → v0.13.0-chromaglow → v0.15.1-studio-dj-ux → v0.15.3-studio-stable
 
 ## Target Structure
 | Target | Bundle ID | Notes |
 |---|---|---|
-| HueHome | com.huehome.pro | Main iOS app |
-| HueHomeWidgetExtension | com.huehome.pro.widget | Home screen widget |
-| LightShadeWatchApp Watch App | com.huehome.pro.watchkitapp | watchOS app |
-| LightShadeWatchExtension | com.huehome.pro.watchkitapp.watch | Watch complication (NOT embedded in iOS app — see known issues) |
-| HueHomeTests | com.huehome.pro.tests | Unit tests |
+| ChromaGlow | com.huehome.pro | Main iOS app |
+| ChromaGlowWidgetExtension | com.huehome.pro.widget | Home screen widget |
+| ChromaGlowWatchApp | com.huehome.pro.watchkitapp | watchOS app |
+| ChromaGlowWatchExtension | com.huehome.pro.watchkitapp.watch | Watch complication (NOT embedded in iOS app — see known issues) |
+| ChromaGlowTests | com.huehome.pro.tests | Unit tests |
 | App Group | group.com.huehome.pro | Shared UserDefaults (widget ↔ main app) |
 
 ## Key File Locations
-- **Main app:** `HueHome/`
-- **Mic Mode:** `HueHome/UI/Effects/MicModeEngine.swift` + `MicModeView.swift`
-- **Bridge Discovery:** `HueHome/Core/ViewModels/BridgeDiscoveryViewModel.swift`
-- **Bridge Setup UI:** `HueHome/UI/BridgeSetup/BridgeSetupView.swift`
-- **Main Tab Nav:** `HueHome/UI/Navigation/MainTabView.swift`
-- **Unified Orchestrator:** `HueHome/Core/Network/UnifiedOrchestrator.swift`
-- **Hue API Client:** `HueHome/Core/Network/HueAPIClient.swift`
-- **Watch App:** `LightShadeWatchApp Watch App/`
-- **Watch Complication:** `LightShadeWatch/`
-- **Widget:** `HueHomeWidget/`
+- **Main app:** `ChromaGlow/`
+- **Mic Mode:** `ChromaGlow/UI/Effects/MicModeEngine.swift` + `MicModeView.swift`
+- **Bridge Discovery:** `ChromaGlow/Core/ViewModels/BridgeDiscoveryViewModel.swift`
+- **Bridge Setup UI:** `ChromaGlow/UI/BridgeSetup/BridgeSetupView.swift`
+- **Main Tab Nav:** `ChromaGlow/UI/Navigation/MainTabView.swift`
+- **Unified Orchestrator:** `ChromaGlow/Core/Network/UnifiedOrchestrator.swift`
+- **Hue API Client:** `ChromaGlow/Core/Network/HueAPIClient.swift`
+- **Watch App:** `ChromaGlowWatchApp/`
+- **Watch Complication:** `ChromaGlowWatchExtension/`
+- **Widget:** `ChromaGlowWidget/`
 
 ## App Icon
-- **iPhone:** `HueHome/Assets.xcassets/AppIcon.appiconset/icon_1024.png`
-- **Watch:** `LightShadeWatchApp Watch App/Assets.xcassets/AppIcon.appiconset/AppIcon.png`
+- **iPhone:** `ChromaGlow/Assets.xcassets/AppIcon.appiconset/icon_1024.png`
+- **Watch:** `ChromaGlowWatchApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png`
 - **Current (v8):** Thin chromatic glass-tube C shape with horizontal power stem. Full hue gradient: gold → green → cyan → violet → magenta. Atmospheric aura glow on black background. Reads as both a C and a power-button-on-its-side.
 - **Icon history:** stained-glass anvil → neon layered C (v1) → power button C (v2) → rainbow power button (v3) → neon power button symmetric (v4) → clown (v5, skipped) → flat cyan-violet C (v6) → 3D glass C (v7) → thin chromatic C final (v8)
 
@@ -53,7 +53,7 @@
 3. **Manual IP** — user-entered IP override via `BridgeSetupView`
 - **Critical bug fixed:** Guard clause in `BridgeDiscoveryViewModel.startScan()` was blocking re-scan after any prior failure
 
-## Mic Mode (`HueHome/UI/Effects/`)
+## Mic Mode (`ChromaGlow/UI/Effects/`)
 - **Engine:** `MicModeEngine` — AVAudioEngine → vDSP FFT → 20 frequency bars
 - **Rate limiting:** 100ms (10fps, Hue bridge spec limit)
 - **Light control:** `setGroupedLightEffect(id:on:brightness:xy:mirek:duration:)` — note parameter ORDER
@@ -73,24 +73,24 @@ func setGroupedLightEffect(
 ```
 
 ## Xcode File Sync Gotcha
-- Xcode's "Add Files to HueHome" with "Copy files to destination" creates DUPLICATE files at the project root
+- Xcode's "Add Files to ChromaGlow" with "Copy files to destination" creates DUPLICATE files at the project root
 - Always use "Create groups" action, or manually verify no root-level duplicates are created
-- MicMode files MUST be in `HueHome/UI/Effects/` and referenced correctly in pbxproj
+- MicMode files MUST be in `ChromaGlow/UI/Effects/` and referenced correctly in pbxproj
 
 ## TestFlight — Resolved Upload Errors
 | Error Code | Description | Fix Applied |
 |---|---|---|
 | 90474 | Missing iPad orientation (PortraitUpsideDown) | Added to Info.plist |
 | 90685 | CFBundleIdentifier collision | Removed rogue CopyFiles phase |
-| 90347 | Bad bundle ID for watch extension in iOS PlugIns | Removed "Embed Watch Extension" phase from HueHome target |
+| 90347 | Bad bundle ID for watch extension in iOS PlugIns | Removed "Embed Watch Extension" phase from ChromaGlow target |
 | 90508 | Invalid DTPlatformName in watch extension | Fixed by removing from iOS app embed |
 | 90092 | armv7 required | Side effect of above, cleared |
 
 ### Watch Extension Embedding (IMPORTANT)
-- `LightShadeWatchExtension.appex` was being embedded in iOS `HueHome` app via "Embed Watch Extension" build phase → wrong
-- Correct location: inside `LightShadeWatchApp Watch App.app/PlugIns/` (embedded in the watch app, not iOS app)
+- `ChromaGlowWatchExtension.appex` was being embedded in iOS `ChromaGlow` app via "Embed Watch Extension" build phase → wrong
+- Correct location: inside `ChromaGlowWatchApp.app/PlugIns/` (embedded in the watch app, not iOS app)
 - **Current state:** Extension has `SKIP_INSTALL = YES` and is NOT embedded in iOS app — complications are not shipping in v0.9.0
-- **TODO:** Properly embed `LightShadeWatchExtension` inside the `LightShadeWatchApp Watch App` target's embed phases
+- **TODO:** Properly embed `ChromaGlowWatchExtension` inside the `ChromaGlowWatchApp` target's embed phases
 
 ## TestFlight Status (v0.9.0 Build 1)
 - **Uploaded:** 2026-05-01 at 4:31PM
@@ -120,7 +120,7 @@ All user-visible "LightShade" replaced with "ChromaForge" via sed across:
 
 ---
 
-## Session Log: 2026-05-03 — Tier 1 UX/UI Overhaul (CastChroma Rebrand Continuation)
+## Session Log: 2026-05-03 — Tier 1 UX/UI Overhaul (ChromaGlow Rebrand Continuation)
 
 ### Goals
 - Unify card design across Home, Scenes, Effects pages
@@ -539,7 +539,7 @@ sheets for all CRUD rather than gesture-only discovery. Decision:
    - `UnifiedOrchestrator`: added matching async methods with optimistic updates + rollback + toast
    - `RoomDisplayItem`: changed `name` and `archetype` from `let` to `var` (required for in-place optimistic mutation)
    - `EditRoomSheet.swift`: new file — large archetype icon preview, name text field, scrollable archetype grid (37 types: Traditional / Outdoor / Other), animated selection, amber Save button
-   - Added to Xcode project via direct `sed` on `project.pbxproj` (path = `HueHome/UI/Dashboard/EditRoomSheet.swift`)
+   - Added to Xcode project via direct `sed` on `project.pbxproj` (path = `ChromaGlow/UI/Dashboard/EditRoomSheet.swift`)
 
 2. **UX Flow Refactor — CRUD moved to Room Detail**
    - Removed `···` button from dashboard `RoomCard` — it was hidden when lights were on (brightness slider overlaps bottom-right)
@@ -553,7 +553,7 @@ sheets for all CRUD rather than gesture-only discovery. Decision:
    - Complex `Binding(get:set:)` in `confirmationDialog` causes type-checker timeout; use plain `@State Bool` instead
 
 ### Critical Patterns — Do Not Forget
-- **Adding files to Xcode project**: use `sed` to set `path = HueHome/UI/SubFolder/File.swift` in `.pbxproj`. All files in this project use full project-relative paths (NOT just filename). The `xcodeproj` gem `new_file()` / `new_reference()` is unreliable.
+- **Adding files to Xcode project**: use `sed` to set `path = ChromaGlow/UI/SubFolder/File.swift` in `.pbxproj`. All files in this project use full project-relative paths (NOT just filename). The `xcodeproj` gem `new_file()` / `new_reference()` is unreliable.
 - **RoomCard custom init**: any new `RoomCard` parameter MUST be added to the custom `init(room:onToggle:onBrightness:onEllipsisTap:)` — Swift will NOT auto-include it.
 - **Optimistic updates**: use `allRooms = allRooms.map { ... }` pattern; for deletes use `withAnimation { allRooms.removeAll { ... } }` with rollback `.append(item)` on catch.
 
@@ -656,7 +656,7 @@ SyncModeView (replaces MicModeView)
 
 ## Session Log: 2026-05-04 — ChromaGlow Rebrand + Sync Engine Overhaul + Bundle ID Migration
 
-### Rebrand: CastChroma / ChromaForge → ChromaGlow
+### Rebrand: ChromaGlow / ChromaForge → ChromaGlow
 
 - `AppBrand.swift`: `displayName` → `"ChromaGlow"`, `hueDeviceType` → `"chromaglow#ios"`
 - `Info.plist`: `CFBundleDisplayName` → `"ChromaGlow"`
@@ -1368,8 +1368,8 @@ v0.19.0  ← AI text-to-composition
 #### Project Structure
 ```
 /Users/brianbean/Desktop/huehome-pro-v0.3.0/
-├── HueHome.xcodeproj
-├── HueHome/
+├── ChromaGlow.xcodeproj
+├── ChromaGlow/
 │   ├── Core/
 │   │   ├── Network/
 │   │   │   ├── UnifiedOrchestrator.swift    ← Central state manager (2182 lines)

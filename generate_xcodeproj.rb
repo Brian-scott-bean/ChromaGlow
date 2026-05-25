@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 # generate_xcodeproj.rb
-# Generates HueHome.xcodeproj for Epic 1 / Story 1.1 using the xcodeproj gem.
+# Generates ChromaGlow.xcodeproj for Epic 1 / Story 1.1 using the xcodeproj gem.
 # Run from: /Users/brianbean/Desktop/huehome-pro-v0.1.0/
 
 require 'xcodeproj'
@@ -9,16 +9,16 @@ require 'fileutils'
 # ─────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────
-PROJECT_NAME      = 'HueHome'
+PROJECT_NAME      = 'ChromaGlow'
 BUNDLE_ID         = 'com.huehome.pro'
 DEPLOYMENT_TARGET = '17.0'
 SWIFT_VERSION     = '5.9'
 PROJECT_ROOT      = File.dirname(__FILE__)
-SOURCE_ROOT       = File.join(PROJECT_ROOT, 'HueHome')
+SOURCE_ROOT       = File.join(PROJECT_ROOT, 'ChromaGlow')
 PROJ_PATH         = File.join(PROJECT_ROOT, "#{PROJECT_NAME}.xcodeproj")
 
 puts "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-puts "  HueHome Pro — Xcode Project Generator"
+puts "  ChromaGlow — Xcode Project Generator"
 puts "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 puts "  Project root : #{PROJECT_ROOT}"
 puts "  Source root  : #{SOURCE_ROOT}"
@@ -59,7 +59,7 @@ unless File.exist?(PLIST_PATH)
         <string>_hue._tcp</string>
       </array>
       <key>NSLocalNetworkUsageDescription</key>
-      <string>HueHome needs local network access to discover your Philips Hue Bridge via mDNS.</string>
+      <string>ChromaGlow needs local network access to discover your Philips Hue Bridge via mDNS.</string>
       <key>UIApplicationSceneManifest</key>
       <dict>
         <key>UIApplicationSupportsMultipleScenes</key>
@@ -115,7 +115,7 @@ puts "   ✅ Groups created.\n\n"
 # STEP 4 — Map source files → Xcode groups
 # ─────────────────────────────────────────────
 SOURCE_FILES = {
-  File.join(SOURCE_ROOT, 'HueHomeApp.swift')                              => hue_group,
+  File.join(SOURCE_ROOT, 'ChromaGlowApp.swift')                              => hue_group,
   File.join(SOURCE_ROOT, 'Info.plist')                                    => hue_group,
   File.join(SOURCE_ROOT, 'Core', 'Keychain', 'KeychainManager.swift')    => keychain_grp,
   File.join(SOURCE_ROOT, 'Core', 'Network', 'BridgeDiscoveryService.swift') => network_grp,
@@ -173,7 +173,7 @@ common_settings = {
   'IPHONEOS_DEPLOYMENT_TARGET'        => DEPLOYMENT_TARGET,
   'PRODUCT_BUNDLE_IDENTIFIER'         => BUNDLE_ID,
   'PRODUCT_NAME'                      => '$(TARGET_NAME)',
-  'INFOPLIST_FILE'                    => 'HueHome/Info.plist',
+  'INFOPLIST_FILE'                    => 'ChromaGlow/Info.plist',
   'SWIFT_EMIT_LOC_STRINGS'            => 'YES',
   'ENABLE_PREVIEWS'                   => 'YES',
   # Strict concurrency for async/await safety

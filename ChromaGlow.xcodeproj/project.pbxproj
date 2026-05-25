@@ -1,0 +1,1856 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 70;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		F4E1000311111111 /* EntertainmentConfigBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000300000000 /* EntertainmentConfigBuilderView.swift */; };
+		F4E1000211111111 /* EntertainmentConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000200000000 /* EntertainmentConfigManager.swift */; };
+		F4E1000111111111 /* HueEntertainmentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000100000000 /* HueEntertainmentClient.swift */; };
+		AB000BRAND002 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000BRAND001 /* AppBrand.swift */; };
+		04DEE771A7499DCB48E4F81A /* WidgetDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */; };
+		06FADE8E35C87CCC9AB5CECB /* LightDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4092578BDBB64A4C0FE7E197 /* LightDisplayItem.swift */; };
+		0999A64D5AFE2FBF068686AE /* HueTokensTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9773CCB15915BAFE26086009 /* HueTokensTests.swift */; };
+		0C12896D88428F2FA94BFB93 /* HapticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E9CDB81C2DBB66BC383759E /* HapticManager.swift */; };
+		0C3BAD9137A6A8F673D0ED0C /* CreateSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29EBA1FCBA708BD5A975524E /* CreateSceneView.swift */; };
+		951658093BEEBEC42FBEB22C /* HarmonyEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 864AC7B556935239B283510D /* HarmonyEngine.swift */; };
+		599068F08EA1513BEAFC8F83 /* ColorPadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F66E4EFC9FC8D416C9EF24D4 /* ColorPadView.swift */; };
+		0A1ABBE9AC1E30BC47E8350A /* HueSpectrumBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89DC6AAD35E92701DACB6EF8 /* HueSpectrumBar.swift */; };
+		53D116C6CB4B5497212ED6E2 /* SceneColorBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B49C42A69FC79EABED9C77FC /* SceneColorBuilderView.swift */; };
+		0C9408FD0363E00A877DA046 /* BridgeDiscoveryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89DFB13E07B2B45F2C43EA9B /* BridgeDiscoveryViewModel.swift */; };
+		0D540DF0048CF5F6706AE881 /* BulkActionBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D31C27C4DBC782DB02FDBDF /* BulkActionBar.swift */; };
+		730F3B9C4A8D4110059DC631 /* SceneEditBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6C9A9397CEEFF6E1ECE8C8 /* SceneEditBar.swift */; };
+		20D48BFFBA68E425B8A696F6 /* SyncEngineProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43985F768FFF71B61A396C41 /* SyncEngineProtocol.swift */; };
+		DADBEE459E4F759FCCB8AEBD /* VisualizerEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */; };
+		AA1234BB5678CCDD00EEFF11 /* GamingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2345CC6789DDEE00FF0022 /* GamingEngine.swift */; };
+		CC3456DD789AEEFF00112233 /* AmbientEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD4567EE89ABFF001122334 /* AmbientEngine.swift */; };
+		02675208BF32B81876B29E75 /* SyncModeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */; };
+		79B2D82F96FC4476430B4F6A /* SyncModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF542C41EE24A79433CB5589 /* SyncModeView.swift */; };
+		17B38DAEE68E25F798E2F817 /* SceneDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23CB308132549DB8EABD0A0 /* SceneDisplayItem.swift */; };
+		18D9D9DDF64FEBF63D82EBEF /* CreateSceneRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE4E9E93C4062E27EC6C4CC /* CreateSceneRequest.swift */; };
+		1B67F13F56DA56C5ACA65D66 /* BridgeManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A38ACEC1527D7223CD105C53 /* BridgeManagerView.swift */; };
+		1C125FE7B5ABB02BCD14BFED /* HueTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 304818D054AC8B4EFCF2AC92 /* HueTypography.swift */; };
+		25A0C7076C0B0342D9B3DA5D /* RoomDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 902129FD7D8F8D92935465A5 /* RoomDetailViewModel.swift */; };
+		2CBD48F48BAACBC512C084BA /* DeviceDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F57BF74DE7F5F2F1B870513F /* DeviceDisplayItem.swift */; };
+		4668FF0EDF1D485E15A77B52 /* EditRoomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4FF8FA2BF756D1FE5830903 /* EditRoomSheet.swift */; };
+		46B962AE1942EC354D5CD0A4 /* UnifiedOrchestrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 697BD602C39CE6B1E1B32E86 /* UnifiedOrchestrator.swift */; };
+		4929C896E29F2AA8CCB99CAC /* TabShells.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22D5AACBE6A445DD84A8299C /* TabShells.swift */; };
+		4CC8ABF8933F3B2A769C1218 /* SceneChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9122685BB2530B50697D4D2 /* SceneChip.swift */; };
+		5018BCF991BE3F3C5FBEB15D /* HueLight.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7885050FC8A417F31C0B04D /* HueLight.swift */; };
+		50A93DA7EE7E5EF001CE4DA5 /* HueRoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD54587B049C752BA3C84CD5 /* HueRoom.swift */; };
+		5329A0B82AD2097453A9DAEE /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B983F6E356486FF116DE5D82 /* Foundation.framework */; };
+		5346410AA668208A625CDE56 /* HueDataModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C79FF00C4642AFCDC55029F /* HueDataModels.swift */; };
+		56C91AABFFCD9705BA5872F0 /* EffectsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42A68AA9726E81686BFC0536 /* EffectsViewModel.swift */; };
+		57552C12E5AD6646689CDC69 /* AppAutomation.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA281A8CB2DE9C9C10F26015 /* AppAutomation.swift */; };
+		5B7FF9289ACAFD32B0ADAA92 /* BridgeDiscoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6278B21D6E2592BB36A4CB8F /* BridgeDiscoveryService.swift */; };
+		65EAEEF3ADF8E94F35AC1D1E /* ScenesTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7284B7AD7CD7BDF665D4B7E /* ScenesTabView.swift */; };
+		665B9753748D3E4CF1D69CF5 /* HueComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE943A83FCAB08B4D0A0AD77 /* HueComponents.swift */; };
+		69C3283411F9F3D071E401C5 /* HueEffect.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FB72B6AA166AE2318281F06 /* HueEffect.swift */; };
+		6A9477AF877444924F210BEB /* HueDataModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21BE543D4BC624B5BC51CC2D /* HueDataModelsTests.swift */; };
+		6C3CEE5283D3C9A740DC162E /* AutomationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DA4F44D15C88C91CEB5C798 /* AutomationsView.swift */; };
+		6CA660D29BB803FE431EA5A9 /* AutomationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9C1B531286D8743DE92175E /* AutomationScheduler.swift */; };
+		6CFE6DBC7CCD9FBEE095DD98 /* LightControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98DD9ECC2BC7B6BB5012428A /* LightControlView.swift */; };
+		6E36AB0D147E9462788961EC /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42D8A158EFAE9D6D53696D3E /* MainTabView.swift */; };
+		705F9B0F725C2186A5B3C80B /* ChromaGlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F0FFA8F2F2B85EFEB2FF25D /* ChromaGlowApp.swift */; };
+		727B56C4888384A217723C7F /* HueAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E394B8CB521A7239F42E2C2 /* HueAPIClient.swift */; };
+		73D4D0E7C3E0D0451914B46E /* HueZone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FF21DA93E891B1DDCFE009A /* HueZone.swift */; };
+		7AFCB8B820A30E0ECC0869C1 /* DevicesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 532AEB39DB4A570EDFB5EB43 /* DevicesViewModel.swift */; };
+		7B25822AB3254E33B91961AE /* SavedEffectPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AFC6DD83A8A43FEA3352BB6 /* SavedEffectPreset.swift */; };
+		81A97C848EAA34AD15696908 /* EffectEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7ACCF18A91D92561912E10F /* EffectEngine.swift */; };
+		834EEE6D6EA013E62EA9F9DF /* HueAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42E682D174C75541F8F57CFC /* HueAPIClientTests.swift */; };
+		83D16D11D9A22B3D443CED94 /* HueTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E53201A81D93BB2967E3651 /* HueTokens.swift */; };
+		84A2F3E0A417A58CAD2BDB08 /* RoomDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E6323A4A87BA23EC3416388 /* RoomDetailView.swift */; };
+		8B83D1FD6A4704FB4465D5B4 /* HueScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBFC326A016A2A68D6EAE794 /* HueScene.swift */; };
+		91A44ACA5E6CD5A45629A2B4 /* CreateAutomationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FA271B19432BA4813305C8A /* CreateAutomationView.swift */; };
+		98241981FA9EF6CA7A3E7A97 /* BridgeSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67D63CB3391ED01349572D57 /* BridgeSetupView.swift */; };
+		9978D5C883C48FC8C14741AF /* HueColorUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A258BF9285E1A9E501678A /* HueColorUtils.swift */; };
+		A47252DC03C35BD018C4DDFF /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B983F6E356486FF116DE5D82 /* Foundation.framework */; };
+		A95DF050FC3DEB539D31A007 /* AutomationHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C70C1F68EEBD0C03E0A62BD /* AutomationHandler.swift */; };
+		AA2222222222222222222222 /* RoomDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1111111111111111111111 /* RoomDisplayItem.swift */; };
+		B8EC85BF69B1476F2C0BD268 /* AutomationsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2A9BD5B62E32B243BDEB862 /* AutomationsViewModel.swift */; };
+		BB2222222222222222222222 /* HueToastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1111111111111111111111 /* HueToastView.swift */; };
+		BB580EB55B2297B55762B180 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A605D920B86B15037E86EE5F /* DashboardView.swift */; };
+		BBF207CC94E61B0ADAB0C9FB /* DemoDataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF677E03890391D6C1A26444 /* DemoDataProvider.swift */; };
+		BC8AE53272967CB94303D19E /* HueSSEService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4E5AC65C9D7C704980C395 /* HueSSEService.swift */; };
+		C07A9632E98ED3D5C7AD2537 /* HueBehaviorInstance.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB11FD37C9FBBFE4470A6DE1 /* HueBehaviorInstance.swift */; };
+		C1F360D81291713EACE0C1FD /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27B5C4A4767211516073798 /* SettingsView.swift */; };
+		C47CF29F24AA56854A38162C /* CreateGlobalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92662E9280D48307551834BA /* CreateGlobalSceneView.swift */; };
+		C5E607457B720B34157DA5DA /* EffectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52EF9DA4A31627EE969ED03D /* EffectsView.swift */; };
+		C9FD3C95694034D599E442F8 /* KeychainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AE302747F21A3DDFB547CD1 /* KeychainManager.swift */; };
+		CB70C04CB7E8C3323F671045 /* BridgeAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */; };
+		D1B8F5410D05D4831B237F16 /* DevicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5454484EA8B91B91C949F06F /* DevicesView.swift */; };
+		D9348A47ECA726BD65E659DD /* KeychainManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5675A53CA2175A97EE572F /* KeychainManagerTests.swift */; };
+		DB9EB477164681E461757330 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7013FAA0255E9B99558A4C15 /* Assets.xcassets */; };
+		DD4BB4C62F8C6AF100BED513 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD4BB4C52F8C6AF100BED513 /* WidgetKit.framework */; };
+		DD4BB4C82F8C6AF100BED513 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD4BB4C72F8C6AF100BED513 /* SwiftUI.framework */; };
+		DD4BB4D52F8C6AF300BED513 /* ChromaGlowWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = DD4BB4C42F8C6AF100BED513 /* ChromaGlowWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		DD4BB4EB2F8C71F300BED513 /* WidgetDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */; };
+		DDC82E622F9FBA7E00324E29 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = DDC82E612F9FBA7E00324E29 /* PrivacyInfo.xcprivacy */; };
+		DDC82E862FA0878E00324E29 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD4BB4C52F8C6AF100BED513 /* WidgetKit.framework */; };
+		DDC82E872FA0878E00324E29 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD4BB4C72F8C6AF100BED513 /* SwiftUI.framework */; };
+		DDC82F452FA1140C00324E29 /* ChromaGlowWatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = DDC82F252FA1140A00324E29 /* ChromaGlowWatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E3ED0638F1205B9278E91308 /* HueGroupedLight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24361D8C8182346A011E7B60 /* HueGroupedLight.swift */; };
+		E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */; };
+		E81712B70CBF1AAFBC4065E3 /* EffectControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D79067D6A4E961A8518EF5C /* EffectControlsView.swift */; };
+		EBD402E37AF2043D8391E87F /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A54B6A1F1A2CC5FAF3CEE /* SplashView.swift */; };
+		F2903EB080E11603E73CED60 /* ShimmerComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 471A0EDBCE4C17624925EAB6 /* ShimmerComponents.swift */; };
+		A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8223FA80DC0EC19E9CE6C831 /* StudioView.swift */; };
+		CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0CANVAS00000000000002 /* StudioCardCanvas.swift */; };
+		B2RPSH9FF07852E320B7354B /* RoomPickerSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1RPSHEC5402CA37A711CBB8 /* RoomPickerSheetView.swift */; };
+		5C010330BA69003015BD0FD0 /* StudioViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0F56D4CFF98F22595FF4143 /* StudioViewModel.swift */; };
+		3703A6704D1E838A0BF402C0 /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468C7402382CCA5F09F9C65F /* MoreView.swift */; };
+		30FA38B7726B382D54F58DB7 /* CompositionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8090A732A95BB7D22AD00660 /* CompositionModels.swift */; };
+		4BF64D53B0E97F7FAFFDD67B /* CompositionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78AC498F54F25255B55133B1 /* CompositionStore.swift */; };
+		0E7CD3AA335189BAFEFFB105 /* CompositionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B06F0F76E068D42895691A4 /* CompositionEngine.swift */; };
+		F1E2D3C4B5A68990ABCDEF03 /* CompositionMicCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */; };
+		E1B00002AAAA000000000001 /* HueV1Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000001 /* HueV1Client.swift */; };
+		E1B00002AAAA000000000002 /* BridgeAnimationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */; };
+		E1B00002AAAA000000000003 /* BridgeAnimationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000003 /* BridgeAnimationStore.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		42E55F43DBED4F06A630AF5D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 516355E054605C50BC2335C2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DDC82E842FA0878E00324E29;
+			remoteInfo = ChromaGlowWatchExtension;
+		};
+		7B1DE774ACFB8E52B7D60A6B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 516355E054605C50BC2335C2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DF2162E15E4CD1BF508535CF;
+			remoteInfo = ChromaGlow;
+		};
+		DD4BB4D32F8C6AF300BED513 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 516355E054605C50BC2335C2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DD4BB4C32F8C6AF100BED513;
+			remoteInfo = ChromaGlowWidgetExtension;
+		};
+		DDC82F322FA1140C00324E29 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 516355E054605C50BC2335C2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DDC82F242FA1140A00324E29;
+			remoteInfo = "ChromaGlowWatchApp";
+		};
+		DDC82F3C2FA1140C00324E29 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 516355E054605C50BC2335C2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DDC82F242FA1140A00324E29;
+			remoteInfo = "ChromaGlowWatchApp";
+		};
+		DDC82F432FA1140C00324E29 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 516355E054605C50BC2335C2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DDC82F242FA1140A00324E29;
+			remoteInfo = "ChromaGlowWatchApp";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		DD4BB4D62F8C6AF300BED513 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				DD4BB4D52F8C6AF300BED513 /* ChromaGlowWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82F462FA1140C00324E29 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				DDC82F452FA1140C00324E29 /* ChromaGlowWatchApp.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		F4E1000300000000 /* EntertainmentConfigBuilderView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentConfigBuilderView.swift; path = ChromaGlow/UI/Sync/EntertainmentConfigBuilderView.swift; sourceTree = "<group>"; };
+		F4E1000200000000 /* EntertainmentConfigManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentConfigManager.swift; path = ChromaGlow/Core/Network/EntertainmentConfigManager.swift; sourceTree = "<group>"; };
+		F4E1000100000000 /* HueEntertainmentClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueEntertainmentClient.swift; path = ChromaGlow/Core/Network/HueEntertainmentClient.swift; sourceTree = "<group>"; };
+		AB000BRAND001 /* AppBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppBrand.swift; path = ChromaGlow/Core/AppBrand.swift; sourceTree = "<group>"; };
+		013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAPIClient.swift; path = ./ChromaGlow/Core/Network/BridgeAPIClient.swift; sourceTree = "<group>"; };
+		0AE302747F21A3DDFB547CD1 /* KeychainManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeychainManager.swift; path = ChromaGlow/Core/Keychain/KeychainManager.swift; sourceTree = "<group>"; };
+		0AFC6DD83A8A43FEA3352BB6 /* SavedEffectPreset.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SavedEffectPreset.swift; path = ChromaGlow/Core/Effects/SavedEffectPreset.swift; sourceTree = "<group>"; };
+		0F0FFA8F2F2B85EFEB2FF25D /* ChromaGlowApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChromaGlowApp.swift; path = ChromaGlow/ChromaGlowApp.swift; sourceTree = "<group>"; };
+		1E394B8CB521A7239F42E2C2 /* HueAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueAPIClient.swift; path = ChromaGlow/Core/Network/HueAPIClient.swift; sourceTree = "<group>"; };
+		21BE543D4BC624B5BC51CC2D /* HueDataModelsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueDataModelsTests.swift; path = ./ChromaGlowTests/HueDataModelsTests.swift; sourceTree = "<group>"; };
+		22D5AACBE6A445DD84A8299C /* TabShells.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TabShells.swift; path = ./ChromaGlow/UI/Navigation/TabShells.swift; sourceTree = "<group>"; };
+		24361D8C8182346A011E7B60 /* HueGroupedLight.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueGroupedLight.swift; path = ChromaGlow/Core/Models/HueGroupedLight.swift; sourceTree = "<group>"; };
+		29EBA1FCBA708BD5A975524E /* CreateSceneView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CreateSceneView.swift; path = ChromaGlow/UI/RoomDetail/CreateSceneView.swift; sourceTree = "<group>"; };
+		864AC7B556935239B283510D /* HarmonyEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HarmonyEngine.swift; path = ChromaGlow/UI/SceneBuilder/HarmonyEngine.swift; sourceTree = "<group>"; };
+		F66E4EFC9FC8D416C9EF24D4 /* ColorPadView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ColorPadView.swift; path = ChromaGlow/UI/SceneBuilder/ColorPadView.swift; sourceTree = "<group>"; };
+		89DC6AAD35E92701DACB6EF8 /* HueSpectrumBar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueSpectrumBar.swift; path = ChromaGlow/UI/SceneBuilder/HueSpectrumBar.swift; sourceTree = "<group>"; };
+		B49C42A69FC79EABED9C77FC /* SceneColorBuilderView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneColorBuilderView.swift; path = ChromaGlow/UI/SceneBuilder/SceneColorBuilderView.swift; sourceTree = "<group>"; };
+		2A4E5AC65C9D7C704980C395 /* HueSSEService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueSSEService.swift; path = ChromaGlow/Core/Network/HueSSEService.swift; sourceTree = "<group>"; };
+		2FF21DA93E891B1DDCFE009A /* HueZone.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/Core/Models/HueZone.swift; sourceTree = "<group>"; };
+		3000CEF6604AF34A2F38DA90 /* ChromaGlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ChromaGlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		304818D054AC8B4EFCF2AC92 /* HueTypography.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueTypography.swift; path = ./ChromaGlow/UI/Components/HueTypography.swift; sourceTree = "<group>"; };
+		4092578BDBB64A4C0FE7E197 /* LightDisplayItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LightDisplayItem.swift; path = ChromaGlow/Core/Models/LightDisplayItem.swift; sourceTree = "<group>"; };
+		4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WidgetDataStore.swift; path = ChromaGlow/Core/Network/WidgetDataStore.swift; sourceTree = "<group>"; };
+		42A68AA9726E81686BFC0536 /* EffectsViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/Core/ViewModels/EffectsViewModel.swift; sourceTree = "<group>"; };
+		42D8A158EFAE9D6D53696D3E /* MainTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MainTabView.swift; path = ./ChromaGlow/UI/Navigation/MainTabView.swift; sourceTree = "<group>"; };
+		42E682D174C75541F8F57CFC /* HueAPIClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueAPIClientTests.swift; path = ChromaGlowTests/HueAPIClientTests.swift; sourceTree = "<group>"; };
+		471A0EDBCE4C17624925EAB6 /* ShimmerComponents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShimmerComponents.swift; path = ChromaGlow/UI/Components/ShimmerComponents.swift; sourceTree = "<group>"; };
+		4E53201A81D93BB2967E3651 /* HueTokens.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueTokens.swift; path = ./ChromaGlow/UI/Components/HueTokens.swift; sourceTree = "<group>"; };
+		4FB72B6AA166AE2318281F06 /* HueEffect.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/Core/Effects/HueEffect.swift; sourceTree = "<group>"; };
+		52EF9DA4A31627EE969ED03D /* EffectsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Effects/EffectsView.swift; sourceTree = "<group>"; };
+		532AEB39DB4A570EDFB5EB43 /* DevicesViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/Core/ViewModels/DevicesViewModel.swift; sourceTree = "<group>"; };
+		5454484EA8B91B91C949F06F /* DevicesView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Devices/DevicesView.swift; sourceTree = "<group>"; };
+		5DA4F44D15C88C91CEB5C798 /* AutomationsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationsView.swift; path = ChromaGlow/UI/Automations/AutomationsView.swift; sourceTree = "<group>"; };
+		6278B21D6E2592BB36A4CB8F /* BridgeDiscoveryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeDiscoveryService.swift; path = ChromaGlow/Core/Network/BridgeDiscoveryService.swift; sourceTree = "<group>"; };
+		654315C307638F717F3A2F27 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = Info.plist; path = ChromaGlow/Info.plist; sourceTree = "<group>"; };
+		67D63CB3391ED01349572D57 /* BridgeSetupView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeSetupView.swift; path = ChromaGlow/UI/BridgeSetup/BridgeSetupView.swift; sourceTree = "<group>"; };
+		697BD602C39CE6B1E1B32E86 /* UnifiedOrchestrator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = UnifiedOrchestrator.swift; path = ./ChromaGlow/Core/Network/UnifiedOrchestrator.swift; sourceTree = "<group>"; };
+		6DE4E9E93C4062E27EC6C4CC /* CreateSceneRequest.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CreateSceneRequest.swift; path = ChromaGlow/Core/Models/CreateSceneRequest.swift; sourceTree = "<group>"; };
+		6E6323A4A87BA23EC3416388 /* RoomDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomDetailView.swift; path = ChromaGlow/UI/RoomDetail/RoomDetailView.swift; sourceTree = "<group>"; };
+		6E9CDB81C2DBB66BC383759E /* HapticManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HapticManager.swift; path = ChromaGlow/UI/Components/HapticManager.swift; sourceTree = "<group>"; };
+		7013FAA0255E9B99558A4C15 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = ChromaGlow/Assets.xcassets; sourceTree = SOURCE_ROOT; };
+		7FA271B19432BA4813305C8A /* CreateAutomationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CreateAutomationView.swift; path = ChromaGlow/UI/Automations/CreateAutomationView.swift; sourceTree = "<group>"; };
+		89DFB13E07B2B45F2C43EA9B /* BridgeDiscoveryViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeDiscoveryViewModel.swift; path = ChromaGlow/Core/ViewModels/BridgeDiscoveryViewModel.swift; sourceTree = "<group>"; };
+		8D79067D6A4E961A8518EF5C /* EffectControlsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Effects/EffectControlsView.swift; sourceTree = "<group>"; };
+		902129FD7D8F8D92935465A5 /* RoomDetailViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomDetailViewModel.swift; path = ChromaGlow/Core/ViewModels/RoomDetailViewModel.swift; sourceTree = "<group>"; };
+		92662E9280D48307551834BA /* CreateGlobalSceneView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CreateGlobalSceneView.swift; path = ./ChromaGlow/UI/Scenes/CreateGlobalSceneView.swift; sourceTree = "<group>"; };
+		9773CCB15915BAFE26086009 /* HueTokensTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueTokensTests.swift; path = ./ChromaGlowTests/HueTokensTests.swift; sourceTree = "<group>"; };
+		98DD9ECC2BC7B6BB5012428A /* LightControlView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LightControlView.swift; path = ChromaGlow/UI/LightControl/LightControlView.swift; sourceTree = "<group>"; };
+		9C70C1F68EEBD0C03E0A62BD /* AutomationHandler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationHandler.swift; path = ChromaGlow/Core/Services/AutomationHandler.swift; sourceTree = "<group>"; };
+		9C79FF00C4642AFCDC55029F /* HueDataModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueDataModels.swift; path = ./ChromaGlow/Core/Models/HueDataModels.swift; sourceTree = "<group>"; };
+		9D31C27C4DBC782DB02FDBDF /* BulkActionBar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/RoomDetail/BulkActionBar.swift; sourceTree = "<group>"; };
+		0B6C9A9397CEEFF6E1ECE8C8 /* SceneEditBar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/RoomDetail/SceneEditBar.swift; sourceTree = "<group>"; };
+		43985F768FFF71B61A396C41 /* SyncEngineProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Sync/SyncEngineProtocol.swift; sourceTree = "<group>"; };
+		ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Sync/VisualizerEngine.swift; sourceTree = "<group>"; };
+		BB2345CC6789DDEE00FF0022 /* GamingEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Sync/GamingEngine.swift; sourceTree = "<group>"; };
+		DD4567EE89ABFF001122334 /* AmbientEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Sync/AmbientEngine.swift; sourceTree = "<group>"; };
+		59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Sync/SyncModeEngine.swift; sourceTree = "<group>"; };
+		EF542C41EE24A79433CB5589 /* SyncModeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Sync/SyncModeView.swift; sourceTree = "<group>"; };
+		9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GlassmorphicCard.swift; path = ChromaGlow/UI/Components/GlassmorphicCard.swift; sourceTree = "<group>"; };
+		A38ACEC1527D7223CD105C53 /* BridgeManagerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeManagerView.swift; path = ./ChromaGlow/UI/BridgeManager/BridgeManagerView.swift; sourceTree = "<group>"; };
+		A605D920B86B15037E86EE5F /* DashboardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DashboardView.swift; path = ChromaGlow/UI/Dashboard/DashboardView.swift; sourceTree = "<group>"; };
+		A6D407538C930D859C433439 /* ChromaGlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChromaGlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A7885050FC8A417F31C0B04D /* HueLight.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueLight.swift; path = ChromaGlow/Core/Models/HueLight.swift; sourceTree = "<group>"; };
+		AA1111111111111111111111 /* RoomDisplayItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChromaGlow/Core/Models/RoomDisplayItem.swift; sourceTree = SOURCE_ROOT; };
+		AF8A54B6A1F1A2CC5FAF3CEE /* SplashView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SplashView.swift; path = ChromaGlow/UI/Splash/SplashView.swift; sourceTree = "<group>"; };
+		B983F6E356486FF116DE5D82 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		BB1111111111111111111111 /* HueToastView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Components/HueToastView.swift; sourceTree = SOURCE_ROOT; };
+		BE943A83FCAB08B4D0A0AD77 /* HueComponents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueComponents.swift; path = ./ChromaGlow/UI/Components/HueComponents.swift; sourceTree = "<group>"; };
+		BF677E03890391D6C1A26444 /* DemoDataProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DemoDataProvider.swift; path = ChromaGlow/Core/DemoMode/DemoDataProvider.swift; sourceTree = "<group>"; };
+		C27B5C4A4767211516073798 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = ChromaGlow/UI/Settings/SettingsView.swift; sourceTree = "<group>"; };
+		C4FF8FA2BF756D1FE5830903 /* EditRoomSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Dashboard/EditRoomSheet.swift; sourceTree = "<group>"; };
+		C9122685BB2530B50697D4D2 /* SceneChip.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneChip.swift; path = ChromaGlow/UI/RoomDetail/SceneChip.swift; sourceTree = "<group>"; };
+		CA5675A53CA2175A97EE572F /* KeychainManagerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeychainManagerTests.swift; path = ChromaGlowTests/KeychainManagerTests.swift; sourceTree = "<group>"; };
+		CB11FD37C9FBBFE4470A6DE1 /* HueBehaviorInstance.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueBehaviorInstance.swift; path = ChromaGlow/Core/Models/HueBehaviorInstance.swift; sourceTree = "<group>"; };
+		CBFC326A016A2A68D6EAE794 /* HueScene.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueScene.swift; path = ChromaGlow/Core/Models/HueScene.swift; sourceTree = "<group>"; };
+		D23CB308132549DB8EABD0A0 /* SceneDisplayItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneDisplayItem.swift; path = ChromaGlow/Core/Models/SceneDisplayItem.swift; sourceTree = "<group>"; };
+		D2A9BD5B62E32B243BDEB862 /* AutomationsViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationsViewModel.swift; path = ChromaGlow/Core/ViewModels/AutomationsViewModel.swift; sourceTree = "<group>"; };
+		D3A258BF9285E1A9E501678A /* HueColorUtils.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueColorUtils.swift; path = ChromaGlow/UI/Components/HueColorUtils.swift; sourceTree = "<group>"; };
+		D7284B7AD7CD7BDF665D4B7E /* ScenesTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScenesTabView.swift; path = ./ChromaGlow/UI/Scenes/ScenesTabView.swift; sourceTree = "<group>"; };
+		D9C1B531286D8743DE92175E /* AutomationScheduler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationScheduler.swift; path = ChromaGlow/Core/Services/AutomationScheduler.swift; sourceTree = "<group>"; };
+		DA281A8CB2DE9C9C10F26015 /* AppAutomation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppAutomation.swift; path = ChromaGlow/Core/Models/AppAutomation.swift; sourceTree = "<group>"; };
+		DD4BB4C42F8C6AF100BED513 /* ChromaGlowWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ChromaGlowWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		DD4BB4C52F8C6AF100BED513 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		DD4BB4C72F8C6AF100BED513 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		DD4BB4DB2F8C6B1400BED513 /* ChromaGlowWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ChromaGlowWidgetExtension.entitlements; sourceTree = "<group>"; };
+		DD4BB4DC2F8C6B5800BED513 /* ChromaGlow.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = ChromaGlow.entitlements; path = ChromaGlow/ChromaGlow.entitlements; sourceTree = "<group>"; };
+		DDC82E612F9FBA7E00324E29 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		DDC82E852FA0878E00324E29 /* ChromaGlowWatchExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ChromaGlowWatchExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		DDC82F252FA1140A00324E29 /* ChromaGlowWatchApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "ChromaGlowWatchApp.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		DDC82F312FA1140C00324E29 /* ChromaGlowWatchAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "ChromaGlowWatchAppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		DDC82F3B2FA1140C00324E29 /* ChromaGlowWatchAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "ChromaGlowWatchAppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		E7ACCF18A91D92561912E10F /* EffectEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/Core/Effects/EffectEngine.swift; sourceTree = "<group>"; };
+		F57BF74DE7F5F2F1B870513F /* DeviceDisplayItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromaGlow/Core/Models/DeviceDisplayItem.swift; sourceTree = "<group>"; };
+		FD54587B049C752BA3C84CD5 /* HueRoom.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueRoom.swift; path = ChromaGlow/Core/Models/HueRoom.swift; sourceTree = "<group>"; };
+		8223FA80DC0EC19E9CE6C831 /* StudioView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioView.swift; path = ./ChromaGlow/UI/Studio/StudioView.swift; sourceTree = "<group>"; };
+		B1RPSHEC5402CA37A711CBB8 /* RoomPickerSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RoomPickerSheetView.swift; path = ./ChromaGlow/UI/Studio/RoomPickerSheetView.swift; sourceTree = "<group>"; };
+		E0F56D4CFF98F22595FF4143 /* StudioViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioViewModel.swift; path = ./ChromaGlow/UI/Studio/StudioViewModel.swift; sourceTree = "<group>"; };
+		CC0CANVAS00000000000002 /* StudioCardCanvas.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioCardCanvas.swift; path = ./ChromaGlow/UI/Studio/StudioCardCanvas.swift; sourceTree = "<group>"; };
+		468C7402382CCA5F09F9C65F /* MoreView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MoreView.swift; path = ./ChromaGlow/UI/More/MoreView.swift; sourceTree = "<group>"; };
+		8090A732A95BB7D22AD00660 /* CompositionModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionModels.swift; path = ChromaGlow/Core/Models/CompositionModels.swift; sourceTree = "<group>"; };
+		78AC498F54F25255B55133B1 /* CompositionStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionStore.swift; path = ChromaGlow/Core/Models/CompositionStore.swift; sourceTree = "<group>"; };
+		7B06F0F76E068D42895691A4 /* CompositionEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionEngine.swift; path = ./ChromaGlow/UI/Studio/CompositionEngine.swift; sourceTree = "<group>"; };
+		F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionMicCapture.swift; path = ./ChromaGlow/UI/Studio/CompositionMicCapture.swift; sourceTree = "<group>"; };
+		E1B00001AAAA000000000001 /* HueV1Client.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueV1Client.swift; path = ChromaGlow/Core/Network/HueV1Client.swift; sourceTree = "<group>"; };
+		E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationEngine.swift; path = ChromaGlow/Core/Network/BridgeAnimationEngine.swift; sourceTree = "<group>"; };
+		E1B00001AAAA000000000003 /* BridgeAnimationStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationStore.swift; path = ChromaGlow/Core/Persistence/BridgeAnimationStore.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		DD4BB4D92F8C6AF300BED513 /* Exceptions for "ChromaGlowWidget" folder in "ChromaGlowWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = DD4BB4C32F8C6AF100BED513 /* ChromaGlowWidgetExtension */;
+		};
+		DDC82E922FA0879000324E29 /* Exceptions for "ChromaGlowWatchExtension" folder in "ChromaGlowWatchExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = DDC82E842FA0878E00324E29 /* ChromaGlowWatchExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		DD4BB4C92F8C6AF100BED513 /* ChromaGlowWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				DD4BB4D92F8C6AF300BED513 /* Exceptions for "ChromaGlowWidget" folder in "ChromaGlowWidgetExtension" target */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = ChromaGlowWidget;
+			sourceTree = "<group>";
+		};
+		DDC82E882FA0878E00324E29 /* ChromaGlowWatchExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				DDC82E922FA0879000324E29 /* Exceptions for "ChromaGlowWatchExtension" folder in "ChromaGlowWatchExtension" target */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = ChromaGlowWatchExtension;
+			sourceTree = "<group>";
+		};
+		DDC82F262FA1140A00324E29 /* ChromaGlowWatchApp */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = "ChromaGlowWatchApp";
+			sourceTree = "<group>";
+		};
+		DDC82F342FA1140C00324E29 /* ChromaGlowWatchAppTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = "ChromaGlowWatchAppTests";
+			sourceTree = "<group>";
+		};
+		DDC82F3E2FA1140C00324E29 /* ChromaGlowWatchAppUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = "ChromaGlowWatchAppUITests";
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		BEB08906D0FB75BB21AE8DD4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5329A0B82AD2097453A9DAEE /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DD4BB4C12F8C6AF100BED513 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DD4BB4C82F8C6AF100BED513 /* SwiftUI.framework in Frameworks */,
+				DD4BB4C62F8C6AF100BED513 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82E822FA0878E00324E29 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DDC82E872FA0878E00324E29 /* SwiftUI.framework in Frameworks */,
+				DDC82E862FA0878E00324E29 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82F222FA1140A00324E29 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82F2E2FA1140C00324E29 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82F382FA1140C00324E29 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E38C29A44FE3685ADF2D02FC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A47252DC03C35BD018C4DDFF /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		05E0DE7E33BBD7B45A6D8281 /* LightControl */ = {
+			isa = PBXGroup;
+			children = (
+				98DD9ECC2BC7B6BB5012428A /* LightControlView.swift */,
+			);
+			name = LightControl;
+			sourceTree = "<group>";
+		};
+		07153DA61129E1EAC37A4D4A /* Network */ = {
+			isa = PBXGroup;
+			children = (
+				F4E1000200000000 /* EntertainmentConfigManager.swift */,
+				F4E1000100000000 /* HueEntertainmentClient.swift */,
+				6278B21D6E2592BB36A4CB8F /* BridgeDiscoveryService.swift */,
+				1E394B8CB521A7239F42E2C2 /* HueAPIClient.swift */,
+				E1B00001AAAA000000000001 /* HueV1Client.swift */,
+				E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */,
+				E1B00001AAAA000000000003 /* BridgeAnimationStore.swift */,
+				2A4E5AC65C9D7C704980C395 /* HueSSEService.swift */,
+				4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */,
+				013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */,
+				697BD602C39CE6B1E1B32E86 /* UnifiedOrchestrator.swift */,
+			);
+			name = Network;
+			sourceTree = "<group>";
+		};
+		08096C4B92327644D07351C8 /* Splash */ = {
+			isa = PBXGroup;
+			children = (
+				AF8A54B6A1F1A2CC5FAF3CEE /* SplashView.swift */,
+			);
+			name = Splash;
+			sourceTree = "<group>";
+		};
+		22CB1F2908CACDFE206C8810 = {
+			isa = PBXGroup;
+			children = (
+				DDC82E612F9FBA7E00324E29 /* PrivacyInfo.xcprivacy */,
+				DD4BB4DB2F8C6B1400BED513 /* ChromaGlowWidgetExtension.entitlements */,
+				DD4BB4C92F8C6AF100BED513 /* ChromaGlowWidget */,
+				DDC82E882FA0878E00324E29 /* ChromaGlowWatchExtension */,
+				DDC82F262FA1140A00324E29 /* ChromaGlowWatchApp */,
+				DDC82F342FA1140C00324E29 /* ChromaGlowWatchAppTests */,
+				DDC82F3E2FA1140C00324E29 /* ChromaGlowWatchAppUITests */,
+				6D40BA073C014CF970DE66D7 /* Products */,
+				B659B5390C0CDC9FEBADD38A /* Frameworks */,
+				E8839A10D98E50D9EEC76ADB /* ChromaGlow */,
+				E1A4E98A3B355C515D0ED69F /* ChromaGlowTests */,
+				DDC82E522F9FBA2600324E29 /* Recovered References */,
+			);
+			sourceTree = "<group>";
+		};
+		262132FF7C57D3D33FD104EE /* Automations */ = {
+			isa = PBXGroup;
+			children = (
+				5DA4F44D15C88C91CEB5C798 /* AutomationsView.swift */,
+				7FA271B19432BA4813305C8A /* CreateAutomationView.swift */,
+			);
+			name = Automations;
+			sourceTree = "<group>";
+		};
+		2D9912634AD1B6758592D644 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				FD54587B049C752BA3C84CD5 /* HueRoom.swift */,
+				A7885050FC8A417F31C0B04D /* HueLight.swift */,
+				24361D8C8182346A011E7B60 /* HueGroupedLight.swift */,
+				4092578BDBB64A4C0FE7E197 /* LightDisplayItem.swift */,
+				CBFC326A016A2A68D6EAE794 /* HueScene.swift */,
+				D23CB308132549DB8EABD0A0 /* SceneDisplayItem.swift */,
+				6DE4E9E93C4062E27EC6C4CC /* CreateSceneRequest.swift */,
+				CB11FD37C9FBBFE4470A6DE1 /* HueBehaviorInstance.swift */,
+				9C79FF00C4642AFCDC55029F /* HueDataModels.swift */,
+				2FF21DA93E891B1DDCFE009A /* HueZone.swift */,
+				F57BF74DE7F5F2F1B870513F /* DeviceDisplayItem.swift */,
+				DA281A8CB2DE9C9C10F26015 /* AppAutomation.swift */,
+				8090A732A95BB7D22AD00660 /* CompositionModels.swift */,
+				78AC498F54F25255B55133B1 /* CompositionStore.swift */,
+			);
+			name = Models;
+			sourceTree = "<group>";
+		};
+		3F5B36155232D53F802FD824 /* BridgeManager */ = {
+			isa = PBXGroup;
+			children = (
+				A38ACEC1527D7223CD105C53 /* BridgeManagerView.swift */,
+			);
+			name = BridgeManager;
+			sourceTree = "<group>";
+		};
+		50230D9C4D8B619EB84E7E0E /* Effects */ = {
+			isa = PBXGroup;
+			children = (
+				4FB72B6AA166AE2318281F06 /* HueEffect.swift */,
+				E7ACCF18A91D92561912E10F /* EffectEngine.swift */,
+				0AFC6DD83A8A43FEA3352BB6 /* SavedEffectPreset.swift */,
+			);
+			name = Effects;
+			sourceTree = "<group>";
+		};
+		598BD88BFF3A6427EDAE1DB9 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				89DFB13E07B2B45F2C43EA9B /* BridgeDiscoveryViewModel.swift */,
+				902129FD7D8F8D92935465A5 /* RoomDetailViewModel.swift */,
+				D2A9BD5B62E32B243BDEB862 /* AutomationsViewModel.swift */,
+				5454484EA8B91B91C949F06F /* DevicesView.swift */,
+				532AEB39DB4A570EDFB5EB43 /* DevicesViewModel.swift */,
+				42A68AA9726E81686BFC0536 /* EffectsViewModel.swift */,
+			);
+			name = ViewModels;
+			sourceTree = "<group>";
+		};
+		6D40BA073C014CF970DE66D7 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				3000CEF6604AF34A2F38DA90 /* ChromaGlow.app */,
+				A6D407538C930D859C433439 /* ChromaGlowTests.xctest */,
+				DD4BB4C42F8C6AF100BED513 /* ChromaGlowWidgetExtension.appex */,
+				DDC82E852FA0878E00324E29 /* ChromaGlowWatchExtension.appex */,
+				DDC82F252FA1140A00324E29 /* ChromaGlowWatchApp.app */,
+				DDC82F312FA1140C00324E29 /* ChromaGlowWatchAppTests.xctest */,
+				DDC82F3B2FA1140C00324E29 /* ChromaGlowWatchAppUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		73A646F16F00FBAEADB52E4C /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				6E9CDB81C2DBB66BC383759E /* HapticManager.swift */,
+				9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */,
+				D3A258BF9285E1A9E501678A /* HueColorUtils.swift */,
+				4E53201A81D93BB2967E3651 /* HueTokens.swift */,
+				304818D054AC8B4EFCF2AC92 /* HueTypography.swift */,
+				BE943A83FCAB08B4D0A0AD77 /* HueComponents.swift */,
+				471A0EDBCE4C17624925EAB6 /* ShimmerComponents.swift */,
+			);
+			name = Components;
+			sourceTree = "<group>";
+		};
+		78DE435CEDAD64AC61A4BD95 /* Devices */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Devices;
+			sourceTree = "<group>";
+		};
+		7A26DEC9426BD75E02ED678C /* DemoMode */ = {
+			isa = PBXGroup;
+			children = (
+				BF677E03890391D6C1A26444 /* DemoDataProvider.swift */,
+			);
+			name = DemoMode;
+			sourceTree = "<group>";
+		};
+		7EDBB1B40FB409D94C0FC48C /* Keychain */ = {
+			isa = PBXGroup;
+			children = (
+				0AE302747F21A3DDFB547CD1 /* KeychainManager.swift */,
+				AB000BRAND001 /* AppBrand.swift */,
+			);
+			name = Keychain;
+			sourceTree = "<group>";
+		};
+		92E66E00E9CE02C9BC81EFCC /* Scenes */ = {
+			isa = PBXGroup;
+			children = (
+				D7284B7AD7CD7BDF665D4B7E /* ScenesTabView.swift */,
+				468C7402382CCA5F09F9C65F /* MoreView.swift */,
+				E0F56D4CFF98F22595FF4143 /* StudioViewModel.swift */,
+				8223FA80DC0EC19E9CE6C831 /* StudioView.swift */,
+				CC0CANVAS00000000000002 /* StudioCardCanvas.swift */,
+				B1RPSHEC5402CA37A711CBB8 /* RoomPickerSheetView.swift */,
+				7B06F0F76E068D42895691A4 /* CompositionEngine.swift */,
+				F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */,
+				92662E9280D48307551834BA /* CreateGlobalSceneView.swift */,
+			);
+			name = Scenes;
+			sourceTree = "<group>";
+		};
+		93B0E2619B484D0D51122AF0 /* Dashboard */ = {
+			isa = PBXGroup;
+			children = (
+				A605D920B86B15037E86EE5F /* DashboardView.swift */,
+				C4FF8FA2BF756D1FE5830903 /* EditRoomSheet.swift */,
+			);
+			name = Dashboard;
+			sourceTree = "<group>";
+		};
+		AC4DD8E6D0AABDE4AD3AEA2D /* Navigation */ = {
+			isa = PBXGroup;
+			children = (
+				42D8A158EFAE9D6D53696D3E /* MainTabView.swift */,
+				22D5AACBE6A445DD84A8299C /* TabShells.swift */,
+			);
+			name = Navigation;
+			sourceTree = "<group>";
+		};
+		B342F1BE744C96F0CB24794B /* BridgeSetup */ = {
+			isa = PBXGroup;
+			children = (
+				67D63CB3391ED01349572D57 /* BridgeSetupView.swift */,
+			);
+			name = BridgeSetup;
+			sourceTree = "<group>";
+		};
+		B659B5390C0CDC9FEBADD38A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				DE763BA61E85E52247D379E2 /* iOS */,
+				DD4BB4C52F8C6AF100BED513 /* WidgetKit.framework */,
+				DD4BB4C72F8C6AF100BED513 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		C2AD2426AB8C66E8F060B556 /* RoomDetail */ = {
+			isa = PBXGroup;
+			children = (
+				6E6323A4A87BA23EC3416388 /* RoomDetailView.swift */,
+				C9122685BB2530B50697D4D2 /* SceneChip.swift */,
+				29EBA1FCBA708BD5A975524E /* CreateSceneView.swift */,
+				864AC7B556935239B283510D /* HarmonyEngine.swift */,
+				F66E4EFC9FC8D416C9EF24D4 /* ColorPadView.swift */,
+				89DC6AAD35E92701DACB6EF8 /* HueSpectrumBar.swift */,
+				B49C42A69FC79EABED9C77FC /* SceneColorBuilderView.swift */,
+				9D31C27C4DBC782DB02FDBDF /* BulkActionBar.swift */,
+				0B6C9A9397CEEFF6E1ECE8C8 /* SceneEditBar.swift */,
+				43985F768FFF71B61A396C41 /* SyncEngineProtocol.swift */,
+				ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */,
+				BB2345CC6789DDEE00FF0022 /* GamingEngine.swift */,
+				DD4567EE89ABFF001122334 /* AmbientEngine.swift */,
+				59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */,
+				EF542C41EE24A79433CB5589 /* SyncModeView.swift */,
+			);
+			name = RoomDetail;
+			sourceTree = "<group>";
+		};
+		D23C38F26D465CA77223B8DF /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				B342F1BE744C96F0CB24794B /* BridgeSetup */,
+				08096C4B92327644D07351C8 /* Splash */,
+				93B0E2619B484D0D51122AF0 /* Dashboard */,
+				73A646F16F00FBAEADB52E4C /* Components */,
+				C2AD2426AB8C66E8F060B556 /* RoomDetail */,
+				05E0DE7E33BBD7B45A6D8281 /* LightControl */,
+				E9DB5AEB4690E3417B72377C /* Settings */,
+				262132FF7C57D3D33FD104EE /* Automations */,
+				AC4DD8E6D0AABDE4AD3AEA2D /* Navigation */,
+				3F5B36155232D53F802FD824 /* BridgeManager */,
+				92E66E00E9CE02C9BC81EFCC /* Scenes */,
+				78DE435CEDAD64AC61A4BD95 /* Devices */,
+				E14B4CD7D94D89FDF98B496C /* Effects */,
+			);
+			name = UI;
+			sourceTree = "<group>";
+		};
+		DDC82E522F9FBA2600324E29 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				AA1111111111111111111111 /* RoomDisplayItem.swift */,
+				BB1111111111111111111111 /* HueToastView.swift */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
+		DE763BA61E85E52247D379E2 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				B983F6E356486FF116DE5D82 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		E14B4CD7D94D89FDF98B496C /* Effects */ = {
+			isa = PBXGroup;
+			children = (
+				52EF9DA4A31627EE969ED03D /* EffectsView.swift */,
+				8D79067D6A4E961A8518EF5C /* EffectControlsView.swift */,
+			);
+			name = Effects;
+			sourceTree = "<group>";
+		};
+		E1A4E98A3B355C515D0ED69F /* ChromaGlowTests */ = {
+			isa = PBXGroup;
+			children = (
+				CA5675A53CA2175A97EE572F /* KeychainManagerTests.swift */,
+				42E682D174C75541F8F57CFC /* HueAPIClientTests.swift */,
+				9773CCB15915BAFE26086009 /* HueTokensTests.swift */,
+				21BE543D4BC624B5BC51CC2D /* HueDataModelsTests.swift */,
+			);
+			name = ChromaGlowTests;
+			sourceTree = "<group>";
+		};
+		E44AF3E912AE191245436392 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				7EDBB1B40FB409D94C0FC48C /* Keychain */,
+				07153DA61129E1EAC37A4D4A /* Network */,
+				598BD88BFF3A6427EDAE1DB9 /* ViewModels */,
+				2D9912634AD1B6758592D644 /* Models */,
+				7A26DEC9426BD75E02ED678C /* DemoMode */,
+				50230D9C4D8B619EB84E7E0E /* Effects */,
+				ECC4B07990955DC6CD4B5CAF /* Services */,
+			);
+			name = Core;
+			sourceTree = "<group>";
+		};
+		E8839A10D98E50D9EEC76ADB /* ChromaGlow */ = {
+			isa = PBXGroup;
+			children = (
+				DD4BB4DC2F8C6B5800BED513 /* ChromaGlow.entitlements */,
+				E44AF3E912AE191245436392 /* Core */,
+				D23C38F26D465CA77223B8DF /* UI */,
+				0F0FFA8F2F2B85EFEB2FF25D /* ChromaGlowApp.swift */,
+				654315C307638F717F3A2F27 /* Info.plist */,
+				7013FAA0255E9B99558A4C15 /* Assets.xcassets */,
+			);
+			name = ChromaGlow;
+			sourceTree = "<group>";
+		};
+		E9DB5AEB4690E3417B72377C /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				C27B5C4A4767211516073798 /* SettingsView.swift */,
+			);
+			name = Settings;
+			sourceTree = "<group>";
+		};
+		ECC4B07990955DC6CD4B5CAF /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				D9C1B531286D8743DE92175E /* AutomationScheduler.swift */,
+				9C70C1F68EEBD0C03E0A62BD /* AutomationHandler.swift */,
+			);
+			name = Services;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		DD4BB4C32F8C6AF100BED513 /* ChromaGlowWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DD4BB4DA2F8C6AF300BED513 /* Build configuration list for PBXNativeTarget "ChromaGlowWidgetExtension" */;
+			buildPhases = (
+				DD4BB4C02F8C6AF100BED513 /* Sources */,
+				DD4BB4C12F8C6AF100BED513 /* Frameworks */,
+				DD4BB4C22F8C6AF100BED513 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				DD4BB4C92F8C6AF100BED513 /* ChromaGlowWidget */,
+			);
+			name = ChromaGlowWidgetExtension;
+			productName = ChromaGlowWidgetExtension;
+			productReference = DD4BB4C42F8C6AF100BED513 /* ChromaGlowWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		DDC82E842FA0878E00324E29 /* ChromaGlowWatchExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DDC82E932FA0879000324E29 /* Build configuration list for PBXNativeTarget "ChromaGlowWatchExtension" */;
+			buildPhases = (
+				DDC82E812FA0878E00324E29 /* Sources */,
+				DDC82E822FA0878E00324E29 /* Frameworks */,
+				DDC82E832FA0878E00324E29 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				DDC82E882FA0878E00324E29 /* ChromaGlowWatchExtension */,
+			);
+			name = ChromaGlowWatchExtension;
+			productName = ChromaGlowWatchExtension;
+			productReference = DDC82E852FA0878E00324E29 /* ChromaGlowWatchExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		DDC82F242FA1140A00324E29 /* ChromaGlowWatchApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DDC82F4D2FA1140C00324E29 /* Build configuration list for PBXNativeTarget "ChromaGlowWatchApp" */;
+			buildPhases = (
+				DDC82F212FA1140A00324E29 /* Sources */,
+				DDC82F222FA1140A00324E29 /* Frameworks */,
+				DDC82F232FA1140A00324E29 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				DDC82F262FA1140A00324E29 /* ChromaGlowWatchApp */,
+			);
+			name = "ChromaGlowWatchApp";
+			productName = "ChromaGlowWatchApp";
+			productReference = DDC82F252FA1140A00324E29 /* ChromaGlowWatchApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+		DDC82F302FA1140C00324E29 /* ChromaGlowWatchAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DDC82F4E2FA1140C00324E29 /* Build configuration list for PBXNativeTarget "ChromaGlowWatchAppTests" */;
+			buildPhases = (
+				DDC82F2D2FA1140C00324E29 /* Sources */,
+				DDC82F2E2FA1140C00324E29 /* Frameworks */,
+				DDC82F2F2FA1140C00324E29 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DDC82F332FA1140C00324E29 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				DDC82F342FA1140C00324E29 /* ChromaGlowWatchAppTests */,
+			);
+			name = "ChromaGlowWatchAppTests";
+			productName = "ChromaGlowWatchAppTests";
+			productReference = DDC82F312FA1140C00324E29 /* ChromaGlowWatchAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		DDC82F3A2FA1140C00324E29 /* ChromaGlowWatchAppUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DDC82F4F2FA1140C00324E29 /* Build configuration list for PBXNativeTarget "ChromaGlowWatchAppUITests" */;
+			buildPhases = (
+				DDC82F372FA1140C00324E29 /* Sources */,
+				DDC82F382FA1140C00324E29 /* Frameworks */,
+				DDC82F392FA1140C00324E29 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DDC82F3D2FA1140C00324E29 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				DDC82F3E2FA1140C00324E29 /* ChromaGlowWatchAppUITests */,
+			);
+			name = "ChromaGlowWatchAppUITests";
+			productName = "ChromaGlowWatchAppUITests";
+			productReference = DDC82F3B2FA1140C00324E29 /* ChromaGlowWatchAppUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		DF2162E15E4CD1BF508535CF /* ChromaGlow */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B93CA9D1B4C255F859F7073D /* Build configuration list for PBXNativeTarget "ChromaGlow" */;
+			buildPhases = (
+				320F1B3A471F23F8ACAB3316 /* Sources */,
+				E38C29A44FE3685ADF2D02FC /* Frameworks */,
+				419A8BB0390C120D583BC94A /* Resources */,
+				DD4BB4D62F8C6AF300BED513 /* Embed Foundation Extensions */,
+				DDC82F462FA1140C00324E29 /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DD4BB4D42F8C6AF300BED513 /* PBXTargetDependency */,
+				4B68FC7A1E0E89B76254C3A7 /* PBXTargetDependency */,
+				DDC82F442FA1140C00324E29 /* PBXTargetDependency */,
+			);
+			name = ChromaGlow;
+			productName = ChromaGlow;
+			productReference = 3000CEF6604AF34A2F38DA90 /* ChromaGlow.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F28E742458072F94D9443FF7 /* ChromaGlowTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BC2DF72A1BD114B553F10F2F /* Build configuration list for PBXNativeTarget "ChromaGlowTests" */;
+			buildPhases = (
+				61AAF0318B3161E33024E093 /* Sources */,
+				BEB08906D0FB75BB21AE8DD4 /* Frameworks */,
+				75E48C4A621DC7FB3A0578EE /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5581D154FFE8D987CBB5C1C9 /* PBXTargetDependency */,
+			);
+			name = ChromaGlowTests;
+			productName = ChromaGlowTests;
+			productReference = A6D407538C930D859C433439 /* ChromaGlowTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		516355E054605C50BC2335C2 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 2640;
+				LastUpgradeCheck = 2640;
+				TargetAttributes = {
+					DD4BB4C32F8C6AF100BED513 = {
+						CreatedOnToolsVersion = 26.4;
+					};
+					DDC82E842FA0878E00324E29 = {
+						CreatedOnToolsVersion = 26.4;
+					};
+					DDC82F242FA1140A00324E29 = {
+						CreatedOnToolsVersion = 26.4;
+					};
+					DDC82F302FA1140C00324E29 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = DDC82F242FA1140A00324E29;
+					};
+					DDC82F3A2FA1140C00324E29 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = DDC82F242FA1140A00324E29;
+					};
+					DF2162E15E4CD1BF508535CF = {
+						DevelopmentTeam = 2H9J347H3T;
+					};
+				};
+			};
+			buildConfigurationList = ABDBD5A4C797D43A8260E1DB /* Build configuration list for PBXProject "ChromaGlow" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 22CB1F2908CACDFE206C8810;
+			productRefGroup = 6D40BA073C014CF970DE66D7 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				DF2162E15E4CD1BF508535CF /* ChromaGlow */,
+				F28E742458072F94D9443FF7 /* ChromaGlowTests */,
+				DD4BB4C32F8C6AF100BED513 /* ChromaGlowWidgetExtension */,
+				DDC82E842FA0878E00324E29 /* ChromaGlowWatchExtension */,
+				DDC82F242FA1140A00324E29 /* ChromaGlowWatchApp */,
+				DDC82F302FA1140C00324E29 /* ChromaGlowWatchAppTests */,
+				DDC82F3A2FA1140C00324E29 /* ChromaGlowWatchAppUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		419A8BB0390C120D583BC94A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DDC82E622F9FBA7E00324E29 /* PrivacyInfo.xcprivacy in Resources */,
+				DB9EB477164681E461757330 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		75E48C4A621DC7FB3A0578EE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DD4BB4C22F8C6AF100BED513 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82E832FA0878E00324E29 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82F232FA1140A00324E29 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82F2F2FA1140C00324E29 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82F392FA1140C00324E29 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		320F1B3A471F23F8ACAB3316 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F4E1000311111111 /* EntertainmentConfigBuilderView.swift in Sources */,
+				F4E1000211111111 /* EntertainmentConfigManager.swift in Sources */,
+				F4E1000111111111 /* HueEntertainmentClient.swift in Sources */,
+				705F9B0F725C2186A5B3C80B /* ChromaGlowApp.swift in Sources */,
+				C9FD3C95694034D599E442F8 /* KeychainManager.swift in Sources */,
+				AB000BRAND002 /* AppBrand.swift in Sources */,
+				5B7FF9289ACAFD32B0ADAA92 /* BridgeDiscoveryService.swift in Sources */,
+				0C9408FD0363E00A877DA046 /* BridgeDiscoveryViewModel.swift in Sources */,
+				98241981FA9EF6CA7A3E7A97 /* BridgeSetupView.swift in Sources */,
+				EBD402E37AF2043D8391E87F /* SplashView.swift in Sources */,
+				BB580EB55B2297B55762B180 /* DashboardView.swift in Sources */,
+				50A93DA7EE7E5EF001CE4DA5 /* HueRoom.swift in Sources */,
+				5018BCF991BE3F3C5FBEB15D /* HueLight.swift in Sources */,
+				E3ED0638F1205B9278E91308 /* HueGroupedLight.swift in Sources */,
+				727B56C4888384A217723C7F /* HueAPIClient.swift in Sources */,
+				E1B00002AAAA000000000001 /* HueV1Client.swift in Sources */,
+				E1B00002AAAA000000000002 /* BridgeAnimationEngine.swift in Sources */,
+				E1B00002AAAA000000000003 /* BridgeAnimationStore.swift in Sources */,
+				0C12896D88428F2FA94BFB93 /* HapticManager.swift in Sources */,
+				E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */,
+				84A2F3E0A417A58CAD2BDB08 /* RoomDetailView.swift in Sources */,
+				06FADE8E35C87CCC9AB5CECB /* LightDisplayItem.swift in Sources */,
+				25A0C7076C0B0342D9B3DA5D /* RoomDetailViewModel.swift in Sources */,
+				BC8AE53272967CB94303D19E /* HueSSEService.swift in Sources */,
+				6CFE6DBC7CCD9FBEE095DD98 /* LightControlView.swift in Sources */,
+				9978D5C883C48FC8C14741AF /* HueColorUtils.swift in Sources */,
+				4CC8ABF8933F3B2A769C1218 /* SceneChip.swift in Sources */,
+				8B83D1FD6A4704FB4465D5B4 /* HueScene.swift in Sources */,
+				17B38DAEE68E25F798E2F817 /* SceneDisplayItem.swift in Sources */,
+				C1F360D81291713EACE0C1FD /* SettingsView.swift in Sources */,
+				04DEE771A7499DCB48E4F81A /* WidgetDataStore.swift in Sources */,
+				0C3BAD9137A6A8F673D0ED0C /* CreateSceneView.swift in Sources */,
+				951658093BEEBEC42FBEB22C /* HarmonyEngine.swift in Sources */,
+				599068F08EA1513BEAFC8F83 /* ColorPadView.swift in Sources */,
+				0A1ABBE9AC1E30BC47E8350A /* HueSpectrumBar.swift in Sources */,
+				53D116C6CB4B5497212ED6E2 /* SceneColorBuilderView.swift in Sources */,
+				18D9D9DDF64FEBF63D82EBEF /* CreateSceneRequest.swift in Sources */,
+				6C3CEE5283D3C9A740DC162E /* AutomationsView.swift in Sources */,
+				C07A9632E98ED3D5C7AD2537 /* HueBehaviorInstance.swift in Sources */,
+				B8EC85BF69B1476F2C0BD268 /* AutomationsViewModel.swift in Sources */,
+				83D16D11D9A22B3D443CED94 /* HueTokens.swift in Sources */,
+				1C125FE7B5ABB02BCD14BFED /* HueTypography.swift in Sources */,
+				665B9753748D3E4CF1D69CF5 /* HueComponents.swift in Sources */,
+				6E36AB0D147E9462788961EC /* MainTabView.swift in Sources */,
+				4929C896E29F2AA8CCB99CAC /* TabShells.swift in Sources */,
+				5346410AA668208A625CDE56 /* HueDataModels.swift in Sources */,
+				CB70C04CB7E8C3323F671045 /* BridgeAPIClient.swift in Sources */,
+				46B962AE1942EC354D5CD0A4 /* UnifiedOrchestrator.swift in Sources */,
+				1B67F13F56DA56C5ACA65D66 /* BridgeManagerView.swift in Sources */,
+				F2903EB080E11603E73CED60 /* ShimmerComponents.swift in Sources */,
+				BBF207CC94E61B0ADAB0C9FB /* DemoDataProvider.swift in Sources */,
+				65EAEEF3ADF8E94F35AC1D1E /* ScenesTabView.swift in Sources */,
+				3703A6704D1E838A0BF402C0 /* MoreView.swift in Sources */,
+				5C010330BA69003015BD0FD0 /* StudioViewModel.swift in Sources */,
+				30FA38B7726B382D54F58DB7 /* CompositionModels.swift in Sources */,
+				4BF64D53B0E97F7FAFFDD67B /* CompositionStore.swift in Sources */,
+				0E7CD3AA335189BAFEFFB105 /* CompositionEngine.swift in Sources */,
+				F1E2D3C4B5A68990ABCDEF03 /* CompositionMicCapture.swift in Sources */,
+				A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */,
+				CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */,
+				B2RPSH9FF07852E320B7354B /* RoomPickerSheetView.swift in Sources */,
+				AA2222222222222222222222 /* RoomDisplayItem.swift in Sources */,
+				BB2222222222222222222222 /* HueToastView.swift in Sources */,
+				73D4D0E7C3E0D0451914B46E /* HueZone.swift in Sources */,
+				0D540DF0048CF5F6706AE881 /* BulkActionBar.swift in Sources */,
+				730F3B9C4A8D4110059DC631 /* SceneEditBar.swift in Sources */,
+				20D48BFFBA68E425B8A696F6 /* SyncEngineProtocol.swift in Sources */,
+				DADBEE459E4F759FCCB8AEBD /* VisualizerEngine.swift in Sources */,
+					AA1234BB5678CCDD00EEFF11 /* GamingEngine.swift in Sources */,
+					CC3456DD789AEEFF00112233 /* AmbientEngine.swift in Sources */,
+				02675208BF32B81876B29E75 /* SyncModeEngine.swift in Sources */,
+				79B2D82F96FC4476430B4F6A /* SyncModeView.swift in Sources */,
+				2CBD48F48BAACBC512C084BA /* DeviceDisplayItem.swift in Sources */,
+				D1B8F5410D05D4831B237F16 /* DevicesView.swift in Sources */,
+				7AFCB8B820A30E0ECC0869C1 /* DevicesViewModel.swift in Sources */,
+				69C3283411F9F3D071E401C5 /* HueEffect.swift in Sources */,
+				81A97C848EAA34AD15696908 /* EffectEngine.swift in Sources */,
+				56C91AABFFCD9705BA5872F0 /* EffectsViewModel.swift in Sources */,
+				C5E607457B720B34157DA5DA /* EffectsView.swift in Sources */,
+				E81712B70CBF1AAFBC4065E3 /* EffectControlsView.swift in Sources */,
+				57552C12E5AD6646689CDC69 /* AppAutomation.swift in Sources */,
+				6CA660D29BB803FE431EA5A9 /* AutomationScheduler.swift in Sources */,
+				91A44ACA5E6CD5A45629A2B4 /* CreateAutomationView.swift in Sources */,
+				A95DF050FC3DEB539D31A007 /* AutomationHandler.swift in Sources */,
+				C47CF29F24AA56854A38162C /* CreateGlobalSceneView.swift in Sources */,
+				7B25822AB3254E33B91961AE /* SavedEffectPreset.swift in Sources */,
+				4668FF0EDF1D485E15A77B52 /* EditRoomSheet.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		61AAF0318B3161E33024E093 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D9348A47ECA726BD65E659DD /* KeychainManagerTests.swift in Sources */,
+				834EEE6D6EA013E62EA9F9DF /* HueAPIClientTests.swift in Sources */,
+				0999A64D5AFE2FBF068686AE /* HueTokensTests.swift in Sources */,
+				6A9477AF877444924F210BEB /* HueDataModelsTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DD4BB4C02F8C6AF100BED513 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DD4BB4EB2F8C71F300BED513 /* WidgetDataStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82E812FA0878E00324E29 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82F212FA1140A00324E29 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82F2D2FA1140C00324E29 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDC82F372FA1140C00324E29 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		4B68FC7A1E0E89B76254C3A7 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ChromaGlowWatchExtension;
+			target = DDC82E842FA0878E00324E29 /* ChromaGlowWatchExtension */;
+			targetProxy = 42E55F43DBED4F06A630AF5D /* PBXContainerItemProxy */;
+		};
+		5581D154FFE8D987CBB5C1C9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ChromaGlow;
+			target = DF2162E15E4CD1BF508535CF /* ChromaGlow */;
+			targetProxy = 7B1DE774ACFB8E52B7D60A6B /* PBXContainerItemProxy */;
+		};
+		DD4BB4D42F8C6AF300BED513 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DD4BB4C32F8C6AF100BED513 /* ChromaGlowWidgetExtension */;
+			targetProxy = DD4BB4D32F8C6AF300BED513 /* PBXContainerItemProxy */;
+		};
+		DDC82F332FA1140C00324E29 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DDC82F242FA1140A00324E29 /* ChromaGlowWatchApp */;
+			targetProxy = DDC82F322FA1140C00324E29 /* PBXContainerItemProxy */;
+		};
+		DDC82F3D2FA1140C00324E29 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DDC82F242FA1140A00324E29 /* ChromaGlowWatchApp */;
+			targetProxy = DDC82F3C2FA1140C00324E29 /* PBXContainerItemProxy */;
+		};
+		DDC82F442FA1140C00324E29 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DDC82F242FA1140A00324E29 /* ChromaGlowWatchApp */;
+			targetProxy = DDC82F432FA1140C00324E29 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		04AA42E47C3895B901BFC504 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.tests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ChromaGlow.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ChromaGlow";
+			};
+			name = Debug;
+		};
+		23C04301B398D3D9D7657757 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.tests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ChromaGlow.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ChromaGlow";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		6DACD504AD3301687CF45FE8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = ChromaGlow/ChromaGlow.entitlements;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_PREVIEWS = YES;
+				INFOPLIST_FILE = ChromaGlow/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MTL_ENABLE_DEBUG_INFO = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		6FF7CCC72043DC213B90E1CE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		97D86E6E8FD33F204BC7C515 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		A11DB52F66195EFD74B81087 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = ChromaGlow/ChromaGlow.entitlements;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				INFOPLIST_FILE = ChromaGlow/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		DD4BB4D72F8C6AF300BED513 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = ChromaGlowWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ChromaGlowWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		DD4BB4D82F8C6AF300BED513 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = ChromaGlowWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ChromaGlowWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		DDC82E942FA0879000324E29 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ChromaGlowWatchExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "ChromaGlow Watch";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchkitapp.watch;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = Debug;
+		};
+		DDC82E952FA0879000324E29 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ChromaGlowWatchExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "ChromaGlow Watch";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchkitapp.watch;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = Release;
+		};
+		DDC82F472FA1140C00324E29 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "ChromaGlowWatchApp/ChromaGlowWatchApp.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.huehome.pro;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = Debug;
+		};
+		DDC82F482FA1140C00324E29 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "ChromaGlowWatchApp/ChromaGlowWatchApp.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.huehome.pro;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = Release;
+		};
+		DDC82F492FA1140C00324E29 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchappTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ChromaGlowWatchApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ChromaGlowWatchApp";
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = Debug;
+		};
+		DDC82F4A2FA1140C00324E29 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchappTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ChromaGlowWatchApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ChromaGlowWatchApp";
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = Release;
+		};
+		DDC82F4B2FA1140C00324E29 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchappUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_TARGET_NAME = "ChromaGlowWatchApp";
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = Debug;
+		};
+		DDC82F4C2FA1140C00324E29 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchappUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_TARGET_NAME = "ChromaGlowWatchApp";
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		ABDBD5A4C797D43A8260E1DB /* Build configuration list for PBXProject "ChromaGlow" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6FF7CCC72043DC213B90E1CE /* Debug */,
+				97D86E6E8FD33F204BC7C515 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B93CA9D1B4C255F859F7073D /* Build configuration list for PBXNativeTarget "ChromaGlow" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6DACD504AD3301687CF45FE8 /* Release */,
+				A11DB52F66195EFD74B81087 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BC2DF72A1BD114B553F10F2F /* Build configuration list for PBXNativeTarget "ChromaGlowTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				23C04301B398D3D9D7657757 /* Release */,
+				04AA42E47C3895B901BFC504 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DD4BB4DA2F8C6AF300BED513 /* Build configuration list for PBXNativeTarget "ChromaGlowWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DD4BB4D72F8C6AF300BED513 /* Debug */,
+				DD4BB4D82F8C6AF300BED513 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DDC82E932FA0879000324E29 /* Build configuration list for PBXNativeTarget "ChromaGlowWatchExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DDC82E942FA0879000324E29 /* Debug */,
+				DDC82E952FA0879000324E29 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DDC82F4D2FA1140C00324E29 /* Build configuration list for PBXNativeTarget "ChromaGlowWatchApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DDC82F472FA1140C00324E29 /* Debug */,
+				DDC82F482FA1140C00324E29 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DDC82F4E2FA1140C00324E29 /* Build configuration list for PBXNativeTarget "ChromaGlowWatchAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DDC82F492FA1140C00324E29 /* Debug */,
+				DDC82F4A2FA1140C00324E29 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DDC82F4F2FA1140C00324E29 /* Build configuration list for PBXNativeTarget "ChromaGlowWatchAppUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DDC82F4B2FA1140C00324E29 /* Debug */,
+				DDC82F4C2FA1140C00324E29 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 516355E054605C50BC2335C2 /* Project object */;
+}

@@ -5,19 +5,19 @@
 
 require 'xcodeproj'
 
-PROJECT_PATH = File.join(File.dirname(__FILE__), 'HueHome.xcodeproj')
-SOURCE_ROOT  = File.join(File.dirname(__FILE__), 'HueHome')
-TESTS_ROOT   = File.join(File.dirname(__FILE__), 'HueHomeTests')
+PROJECT_PATH = File.join(File.dirname(__FILE__), 'ChromaGlow.xcodeproj')
+SOURCE_ROOT  = File.join(File.dirname(__FILE__), 'ChromaGlow')
+TESTS_ROOT   = File.join(File.dirname(__FILE__), 'ChromaGlowTests')
 
 puts "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-puts "  HueHome Pro — Stage 1C File Sync"
+puts "  ChromaGlow — Stage 1C File Sync"
 puts "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
 project    = Xcodeproj::Project.open(PROJECT_PATH)
-app_target  = project.targets.find { |t| t.name == 'HueHome' }
-test_target = project.targets.find { |t| t.name == 'HueHomeTests' }
-abort("❌ HueHome target not found.") unless app_target
-abort("❌ HueHomeTests target not found. Run add_missing_files.rb first.") unless test_target
+app_target  = project.targets.find { |t| t.name == 'ChromaGlow' }
+test_target = project.targets.find { |t| t.name == 'ChromaGlowTests' }
+abort("❌ ChromaGlow target not found.") unless app_target
+abort("❌ ChromaGlowTests target not found. Run add_missing_files.rb first.") unless test_target
 
 def existing_paths(project)
   project.files.map { |f|
@@ -53,9 +53,9 @@ added = 0
 
 puts "🧪 Test files:"
 TEST_FILES = {
-  File.join(TESTS_ROOT, 'HueTokensTests.swift')          => ['HueHomeTests'],
-  File.join(TESTS_ROOT, 'HueDataModelsTests.swift')      => ['HueHomeTests'],
-  File.join(TESTS_ROOT, 'DashboardViewModelTests.swift') => ['HueHomeTests'],
+  File.join(TESTS_ROOT, 'HueTokensTests.swift')          => ['ChromaGlowTests'],
+  File.join(TESTS_ROOT, 'HueDataModelsTests.swift')      => ['ChromaGlowTests'],
+  File.join(TESTS_ROOT, 'DashboardViewModelTests.swift') => ['ChromaGlowTests'],
 }
 
 TEST_FILES.each do |path, grp|

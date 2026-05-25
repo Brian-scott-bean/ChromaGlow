@@ -6,7 +6,7 @@ Accepted.
 
 ## Decision
 
-ChromaGlow / HueHome Pro will move forward with a native Android migration plan.
+ChromaGlow / ChromaGlow will move forward with a native Android migration plan.
 
 We will not use Flutter for the app migration.
 

@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-05-24 — Full ChromaGlow Rebrand (Folders + Xcode) (Cursor)
+
+### What was built
+- Renamed project tree: `HueHome` → `ChromaGlow`, `HueHomeTests` → `ChromaGlowTests`, `HueHomeWidget` → `ChromaGlowWidget`, watch targets → `ChromaGlowWatchApp` / `ChromaGlowWatchExtension`, `HueHome.xcodeproj` → `ChromaGlow.xcodeproj`, scheme `ChromaGlow.xcscheme`.
+- Renamed entry files: `ChromaGlowApp.swift`, widget/watch Swift sources, entitlements.
+- Replaced legacy branding in headers/docs: CastChroma, HueHome Pro, LightShade display strings → ChromaGlow.
+- Added `scripts/rebrand_to_chromaglow.sh` for reference.
+- Scheme: wired `ChromaGlowTests` into Test action; enabled `GENERATE_INFOPLIST_FILE` on test target.
+- Test compile fixes: `KeychainManager.shared`, `override init` in `HueAPIClientTests`.
+
+### What's working
+- ✅ `xcodebuild -project ChromaGlow.xcodeproj -scheme ChromaGlow` — **BUILD SUCCEEDED**
+- ✅ Simulator test run: 1 pre-existing failure (`HueAPIClientTests.testMissingCredentialsThrowsCorrectError`)
+
+### Intentionally unchanged (avoid breaking installs)
+- Bundle IDs: `com.huehome.pro` (+ widget/watch suffixes)
+- Keychain service: `com.lightshade.app`
+- Widget `kind` strings: `com.lightshade.app.*` (existing home-screen widgets keep working)
+- Philips API type names: `HueAPIClient`, `HueLight`, `HuePalette`, etc.
+
+### What's left
+- [ ] Fix flaky/failing `testMissingCredentialsThrowsCorrectError` if desired
+- [ ] Dallin: re-clone / open `ChromaGlow.xcodeproj` (not `HueHome.xcodeproj`)
+
+### Current state
+Repo-wide product naming is ChromaGlow; iOS app builds cleanly. One unit test still fails (likely pre-existing).
+
+---
+
 ## 2026-05-24 — Migration Documentation Pack in Repo (Cursor)
 
 ### What was built
@@ -139,7 +168,7 @@ Thorough pass over critical paths (no line-by-line coverage of every file): `Uni
 
 **Lower**
 - MainTabView tab prewarm: trades idle memory for snappy first switch; optional tuning on low-memory devices.
-- Legacy branding strings (“CastChroma”) still in some file headers — cosmetic.
+- Legacy branding strings (“ChromaGlow”) still in some file headers — cosmetic.
 
 ### What's left
 - [ ] Update `.cursorrules` / `DEVDOC` for grouped_light native effects vs Composer effects.
@@ -169,7 +198,7 @@ No code changes from this audit entry alone — documentation and small correctn
 - `await Task.yield()` before `rebuildAllRooms()` / `rebuildAllZones()` so pending UI work can run before large `allRooms` / `allZones` observable updates.
 
 ### What's working
-- ✅ `xcodebuild` HueHome — BUILD SUCCEEDED
+- ✅ `xcodebuild` ChromaGlow — BUILD SUCCEEDED
 
 ### What's left
 - [ ] Device QA: confirm first Studio tap feels instant; watch memory with all tabs realized.
@@ -277,11 +306,11 @@ Upgraded the Composer Motion Layer from array-index-based patterns to physical s
 ### Files changed
 | File | Change |
 |---|---|
-| `HueHome/Core/Models/CompositionModels.swift` | +`motionAngle`, +spatial `phase()` overload |
-| `HueHome/UI/Studio/CompositionEngine.swift` | +spatial fields on ParamBox, +4 static helpers, +lerp in render loop |
-| `HueHome/Core/Network/UnifiedOrchestrator.swift` | +`activeEntertainmentConfig`, spatial wiring, moved lightID resolution |
-| `HueHome/UI/Studio/StudioView.swift` | +direction presets, +angle dial, +mini-map, +entertainment prompt |
-| `HueHome/UI/Studio/StudioViewModel.swift` | Cleanup (moved property to orchestrator) |
+| `ChromaGlow/Core/Models/CompositionModels.swift` | +`motionAngle`, +spatial `phase()` overload |
+| `ChromaGlow/UI/Studio/CompositionEngine.swift` | +spatial fields on ParamBox, +4 static helpers, +lerp in render loop |
+| `ChromaGlow/Core/Network/UnifiedOrchestrator.swift` | +`activeEntertainmentConfig`, spatial wiring, moved lightID resolution |
+| `ChromaGlow/UI/Studio/StudioView.swift` | +direction presets, +angle dial, +mini-map, +entertainment prompt |
+| `ChromaGlow/UI/Studio/StudioViewModel.swift` | Cleanup (moved property to orchestrator) |
 
 ### What's next
 - [ ] Test spatial sweep in simulator with multi-light entertainment area
@@ -306,10 +335,10 @@ Integrated the existing `HarmonyEngine` (from SceneBuilder) into the Studio Comp
 ### Files changed
 | File | Change |
 |---|---|
-| `HueHome/UI/Components/HueColorUtils.swift` | +`codableColor(from:gamut:)` helper |
-| `HueHome/Core/Models/CompositionModels.swift` | +`harmonyRule: String?` to `PaletteConfig` |
-| `HueHome/UI/Studio/StudioViewModel.swift` | +`roomHasColorLights`, +`restoredHarmonyRule` |
-| `HueHome/UI/Studio/StudioView.swift` | +chip row, +swatch preview, +editing popover, +harmony-aware drag |
+| `ChromaGlow/UI/Components/HueColorUtils.swift` | +`codableColor(from:gamut:)` helper |
+| `ChromaGlow/Core/Models/CompositionModels.swift` | +`harmonyRule: String?` to `PaletteConfig` |
+| `ChromaGlow/UI/Studio/StudioViewModel.swift` | +`roomHasColorLights`, +`restoredHarmonyRule` |
+| `ChromaGlow/UI/Studio/StudioView.swift` | +chip row, +swatch preview, +editing popover, +harmony-aware drag |
 
 ---
 
@@ -334,12 +363,12 @@ Integrated the existing `HarmonyEngine` (from SceneBuilder) into the Studio Comp
 ### Files changed
 | File | Change |
 |---|---|
-| `HueHome/UI/Dashboard/DashboardView.swift` | Removed `showSettings` state, `.fullScreenCover`, gear `ToolbarItem` |
-| `HueHome/UI/Studio/StudioView.swift` | Removed `showSettings` state, `.sheet`, gear `ToolbarItem` |
-| `HueHome/UI/Scenes/ScenesTabView.swift` | Removed `showSettings` state, `.sheet`, gear `ToolbarItem` |
-| `HueHome/UI/Effects/EffectsView.swift` | Removed `showSettings` state, `.sheet`, gear `ToolbarItem` (bookmark + stop toolbar items untouched) |
-| `HueHome/UI/Sync/SyncModeView.swift` | Removed `showSettings` state, `.sheet`, entire `toolbarItems` property + `.toolbar` call |
-| `HueHome/UI/Settings/SettingsView.swift` | Removed `exploreSection` property and its call in body |
+| `ChromaGlow/UI/Dashboard/DashboardView.swift` | Removed `showSettings` state, `.fullScreenCover`, gear `ToolbarItem` |
+| `ChromaGlow/UI/Studio/StudioView.swift` | Removed `showSettings` state, `.sheet`, gear `ToolbarItem` |
+| `ChromaGlow/UI/Scenes/ScenesTabView.swift` | Removed `showSettings` state, `.sheet`, gear `ToolbarItem` |
+| `ChromaGlow/UI/Effects/EffectsView.swift` | Removed `showSettings` state, `.sheet`, gear `ToolbarItem` (bookmark + stop toolbar items untouched) |
+| `ChromaGlow/UI/Sync/SyncModeView.swift` | Removed `showSettings` state, `.sheet`, entire `toolbarItems` property + `.toolbar` call |
+| `ChromaGlow/UI/Settings/SettingsView.swift` | Removed `exploreSection` property and its call in body |
 
 ### What's working
 - Settings is reachable from one place (More tab) — no more gear icon on every tab
@@ -379,9 +408,9 @@ Integrated the existing `HarmonyEngine` (from SceneBuilder) into the Studio Comp
 ### Files changed
 | File | Change |
 |---|---|
-| `HueHome/Core/Network/HueV1Client.swift` | Removed `autodelete` from schedule body; added `sensorIncrementScheduleCommand()` with full address |
-| `HueHome/Core/Network/BridgeAnimationEngine.swift` | Swapped `sensorIncrementCommand` → `sensorIncrementScheduleCommand` for schedule |
-| `HueHome/Core/Network/UnifiedOrchestrator.swift` | Added prime frame after bridge upload; gated bridge path on `.bridgeOptimized` tier |
+| `ChromaGlow/Core/Network/HueV1Client.swift` | Removed `autodelete` from schedule body; added `sensorIncrementScheduleCommand()` with full address |
+| `ChromaGlow/Core/Network/BridgeAnimationEngine.swift` | Swapped `sensorIncrementCommand` → `sensorIncrementScheduleCommand` for schedule |
+| `ChromaGlow/Core/Network/UnifiedOrchestrator.swift` | Added prime frame after bridge upload; gated bridge path on `.bridgeOptimized` tier |
 
 ### Architecture: bridge transport tiers
 ```
@@ -580,7 +609,7 @@ Phase 3B–D composer mixer + save shipped in tree; verify on device with Entert
 
 ### What was built
 - Investigated compact-device clipping reports using iPhone SE (3rd gen) simulator screenshots across Home / Scenes / Studio.
-- Ran multiple adaptive layout experiments on Home and tab-shell sizing (`DashboardView`, `MainTabView`, `HueHomeApp`) to test whether width clamping originated from section padding, grid strategy, or root container sizing.
+- Ran multiple adaptive layout experiments on Home and tab-shell sizing (`DashboardView`, `MainTabView`, `ChromaGlowApp`) to test whether width clamping originated from section padding, grid strategy, or root container sizing.
 - Reverted non-improving runtime layout experiments after validation so no unstable SE workaround remains in shipped UI code.
 - Added roadmap context in `DEVDOC.md` for post-Composer differentiators (AI scene generation first, then sharing, weather-reactive, and Tier 2 items).
 
@@ -1094,7 +1123,7 @@ Composer now has explicit user-controlled transport scope, observable REST caden
 ## 2026-05-06 — Composer Handoff Barrier + Sequencing Instrumentation (Cursor)
 
 ### What was built
-- `HueHome/Core/Network/UnifiedOrchestrator.swift`
+- `ChromaGlow/Core/Network/UnifiedOrchestrator.swift`
   - Added `[Handoff]` lifecycle logs in `stopCompositionMode(roomID:)` for:
     - stop requested,
     - `studioRestSender.clear()` moment,
@@ -1102,7 +1131,7 @@ Composer now has explicit user-controlled transport scope, observable REST caden
     - teardown complete.
   - Added `try await Task.sleep(for: .milliseconds(150))` immediately after `studioRestSender.clear()` in `stopCompositionMode(roomID:)`.
   - Added matching `[Handoff]` lifecycle logs in `stopStudioMode()` and a 150ms settle delay right after `studioRestSender.clear()`.
-- `HueHome/UI/Studio/StudioViewModel.swift`
+- `ChromaGlow/UI/Studio/StudioViewModel.swift`
   - In overlap arbitration inside `apply(_:roomOverride:preferEntertainmentOverride:)`, added `[Handoff]` logs around `await stopEffect(on:)` to make the barrier observable.
   - Added explicit `[Handoff]` startup log right before new effect startup sequence begins.
   - In `stopEffect(on:)` bridge-native cleanup path, added:
@@ -1115,7 +1144,7 @@ Composer now has explicit user-controlled transport scope, observable REST caden
 - ✅ New startup is now instrumented to begin only after overlap cleanup + settle barrier.
 - ✅ Teardown paths now include explicit bridge settle windows after REST sender clear / `no_effect` cleanup.
 - ✅ Project builds successfully with:
-  - `xcodebuild -project HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+  - `xcodebuild -project ChromaGlow.xcodeproj -scheme ChromaGlow -destination 'generic/platform=iOS' build`
 
 ### What’s left
 - [ ] Run on-device/simulator sequencing QA and confirm `[Handoff]` logs appear in strict order during rapid override scenarios.
@@ -1151,13 +1180,13 @@ Composer handoff now has explicit teardown instrumentation and guarded settle ba
 ## 2026-05-06 — Portrait Lock + Studio SE Mixer Fit + Title Picker Cleanup (Cursor)
 
 ### What was built
-- `HueHome/Info.plist`
+- `ChromaGlow/Info.plist`
   - Locked app orientation to portrait by reducing `UISupportedInterfaceOrientations` to:
     - `UIInterfaceOrientationPortrait`
-- `HueHome/Core/Services/AutomationHandler.swift`
+- `ChromaGlow/Core/Services/AutomationHandler.swift`
   - Added AppDelegate runtime orientation lock:
     - `application(_:supportedInterfaceOrientationsFor:) -> .portrait`
-- `HueHome/UI/Studio/StudioView.swift`
+- `ChromaGlow/UI/Studio/StudioView.swift`
   - Kept the original rolodex room/zone title interaction (swipe L/R rooms, U/D zones, tap for search sheet).
   - Removed the room/zone chevron icon from the Studio title row.
   - Added accessibility traits/hint so the title still reads as tappable control for the room/zone sheet.
@@ -1172,7 +1201,7 @@ Composer handoff now has explicit teardown instrumentation and guarded settle ba
 
 ### What’s working
 - ✅ Build succeeds:
-  - `xcodebuild -project HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+  - `xcodebuild -project ChromaGlow.xcodeproj -scheme ChromaGlow -destination 'generic/platform=iOS' build`
 - ✅ Studio title remains tappable for room/zone search without visual chevron clutter.
 - ✅ Mixer can grow taller on compact devices and keeps content scrollable to reach bottom controls.
 - ✅ Orientation is portrait-only at plist and runtime delegate levels.
@@ -1213,18 +1242,18 @@ App is now portrait-locked and Studio mixer layout is hardened for compact scree
 ## 2026-05-06 — App Store Orientation Compliance + Runtime Rotation Toggle (Cursor)
 
 ### What was built
-- `HueHome/Info.plist`
+- `ChromaGlow/Info.plist`
   - Restored full iPhone orientation set required for App Store upload validation:
     - `UIInterfaceOrientationPortrait`
     - `UIInterfaceOrientationPortraitUpsideDown`
     - `UIInterfaceOrientationLandscapeLeft`
     - `UIInterfaceOrientationLandscapeRight`
-- `HueHome/Core/Services/AutomationHandler.swift`
+- `ChromaGlow/Core/Services/AutomationHandler.swift`
   - Updated `AppDelegate.application(_:supportedInterfaceOrientationsFor:)` to be user-preference-driven:
     - default behavior remains portrait-only,
     - optional landscape via user setting.
   - Added `OrientationPrefs.allowLandscape` (`"app.allowLandscapeRotation"`) UserDefaults key.
-- `HueHome/UI/Settings/SettingsView.swift`
+- `ChromaGlow/UI/Settings/SettingsView.swift`
   - Added new `APP` section toggle:
     - `Allow Landscape Rotation`
     - Backed by `@AppStorage("app.allowLandscapeRotation")`
@@ -1235,7 +1264,7 @@ App is now portrait-locked and Studio mixer layout is hardened for compact scree
 - ✅ Runtime behavior still defaults to portrait lock for normal users.
 - ✅ Landscape can be explicitly enabled by testers/power users from Settings.
 - ✅ Build succeeds:
-  - `xcodebuild -project HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+  - `xcodebuild -project ChromaGlow.xcodeproj -scheme ChromaGlow -destination 'generic/platform=iOS' build`
 
 ### What’s left
 - [ ] Verify App Store upload path no longer returns error 90474.
@@ -1268,9 +1297,9 @@ Orientation handling is now split correctly between App Store compliance (full p
 ### What was built
 
 **Composer microphone (reaction layer)**  
-- New `HueHome/UI/Studio/CompositionMicCapture.swift` — FFT band splits aligned with `VisualizerEngine`, lock-protected levels, `syncDemand(_:)` lifecycle.  
+- New `ChromaGlow/UI/Studio/CompositionMicCapture.swift` — FFT band splits aligned with `VisualizerEngine`, lock-protected levels, `syncDemand(_:)` lifecycle.  
 - `UnifiedOrchestrator` wires `CompositionMicCapture.reactionAudioLevel(for:)` into all `CompositionEngine.render` paths (REST scheduler, ENT loop, prime frame); `refreshCompositionMicDemand()` tied to composition lifecycle; weak `compositionEntertainmentParamBox` for mic-demand when ENT transport is active.  
-- `HueHome/HueHomeApp.swift` — `Notification.Name` extensions: `composerMicExclusiveBegan`, `compositionMicPermissionDenied`.  
+- `ChromaGlow/ChromaGlowApp.swift` — `Notification.Name` extensions: `composerMicExclusiveBegan`, `compositionMicPermissionDenied`.  
 - `SyncModeEngine` observes `composerMicExclusiveBegan` and calls `stop()` if Sync is running (avoid dual `AVAudioEngine`).  
 - `CompositionEngine` — **tap tempo** uses envelope BPM sine wave (no mic); mic sources still use passed `audioLevel`.  
 - Exclusive handoff delay after posting mic notification: **35ms** (was 60ms).  
@@ -1287,10 +1316,10 @@ Orientation handling is now split correctly between App Store compliance (full p
 - `StudioView` — removed `.animation(..., value: currentDeck)` on deck `TabView` to reduce paging hitch.
 
 ### Files touched (high level)
-- `CompositionMicCapture.swift` (new), `UnifiedOrchestrator.swift`, `CompositionEngine.swift`, `HueHomeApp.swift`, `SyncModeEngine.swift`, `StudioViewModel.swift`, `StudioView.swift`, `MainTabView.swift`, `HueHome.xcodeproj/project.pbxproj`
+- `CompositionMicCapture.swift` (new), `UnifiedOrchestrator.swift`, `CompositionEngine.swift`, `ChromaGlowApp.swift`, `SyncModeEngine.swift`, `StudioViewModel.swift`, `StudioView.swift`, `MainTabView.swift`, `ChromaGlow.xcodeproj/project.pbxproj`
 
 ### What’s working
-- ✅ `xcodebuild` HueHome scheme — BUILD SUCCEEDED (`generic/platform=iOS`)
+- ✅ `xcodebuild` ChromaGlow scheme — BUILD SUCCEEDED (`generic/platform=iOS`)
 
 ### Gotchas
 - Hue does not stream “voice” over the bridge — mic only improves **client-derived** levels fed into Composer; bridge latency unchanged.  
@@ -1336,7 +1365,7 @@ Composer reactions can use real microphone levels with Sync-safe exclusivity; RE
 ### What was fixed
 
 **1) Room-targeting race in Studio UI**
-- `HueHome/UI/Studio/StudioView.swift`
+- `ChromaGlow/UI/Studio/StudioView.swift`
   - Removed render-time `roomSnapshot` captures from card/grid/menu paths.
   - Room is now captured at action time inside apply helpers, so apply always uses current selection.
   - Updated helper signatures:
@@ -1345,7 +1374,7 @@ Composer reactions can use real microphone levels with Sync-safe exclusivity; RE
     - `composerPresetOverflowActions(preset:card:)`
 
 **2) Startup GET dedupe in apply flow**
-- `HueHome/UI/Studio/StudioViewModel.swift`
+- `ChromaGlow/UI/Studio/StudioViewModel.swift`
   - Added cached-light overloads:
     - `resolveLightIDs(for:api:cachedLights:)`
     - `resolveDominantGamut(for:api:cachedLights:)`
@@ -1355,7 +1384,7 @@ Composer reactions can use real microphone levels with Sync-safe exclusivity; RE
   - Eliminates redundant back-to-back `GET /light` calls at composition startup.
 
 **3) Balanced scheduler efficiency tightening**
-- `HueHome/Core/Network/UnifiedOrchestrator.swift`
+- `ChromaGlow/Core/Network/UnifiedOrchestrator.swift`
   - Added extra balanced-profile skip gate for tiny deltas sent too recently.
   - Increased balanced idle / low-power intervals for `.hybrid` and `.runtimeOnly` tiers.
   - Goal: preserve interaction responsiveness while reducing sustained REST chatter in non-interacting periods.
@@ -1363,7 +1392,7 @@ Composer reactions can use real microphone levels with Sync-safe exclusivity; RE
 ### Verification
 - ✅ Lints clean on edited files.
 - ✅ Build succeeded:
-  - `xcodebuild -project HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+  - `xcodebuild -project ChromaGlow.xcodeproj -scheme ChromaGlow -destination 'generic/platform=iOS' build`
 
 ### What to test
 - 1) **Room correctness under fast interaction**
@@ -1389,19 +1418,19 @@ Wrong-room apply race is closed at the Studio action layer, startup light fetche
 ### What was built
 
 **User-edit forced burst path**
-- `HueHome/UI/Studio/CompositionEngine.swift`
+- `ChromaGlow/UI/Studio/CompositionEngine.swift`
   - `CompositionParamBox` now includes:
     - `forceRESTBurstUntil: TimeInterval`
     - `triggerRESTBurst(seconds: 0.55)`
   - Purpose: mark a short post-edit window where REST scheduler should prioritize sending.
 
-- `HueHome/UI/Studio/StudioView.swift`
+- `ChromaGlow/UI/Studio/StudioView.swift`
   - Hue/saturation pad now calls `triggerRESTBurst()`:
     - on drag change
     - on drag end
   - Keeps existing `isColorPadInteracting` semantics.
 
-- `HueHome/Core/Network/UnifiedOrchestrator.swift`
+- `ChromaGlow/Core/Network/UnifiedOrchestrator.swift`
   - Scheduler reads `userEditBurstActive = runtime.paramBox.forceRESTBurstUntil > now`.
   - During this window:
     - bypass low-power + efficiency skip gates
@@ -1414,7 +1443,7 @@ Wrong-room apply race is closed at the Studio action layer, startup light fetche
 ### Verification
 - ✅ Lints clean on edited files.
 - ✅ Build succeeded:
-  - `xcodebuild -project HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+  - `xcodebuild -project ChromaGlow.xcodeproj -scheme ChromaGlow -destination 'generic/platform=iOS' build`
 
 ### What to test
 - 1) Start Composer in Bathroom (REST transport).
@@ -1427,12 +1456,12 @@ Wrong-room apply race is closed at the Studio action layer, startup light fetche
 ## 2026-05-06 — Composer Color Pad Haptics + Ultra-Low REST Cadence Constants (Cursor)
 
 ### What was built
-- `HueHome/UI/Studio/StudioView.swift`
+- `ChromaGlow/UI/Studio/StudioView.swift`
   - Added continuous, throttled haptic feedback while dragging the Composer hue/saturation pad:
     - New state: `lastHuePadHapticAt`
     - During `DragGesture.onChanged`, fires `HapticManager.shared.selection()` at most once every ~80ms.
     - Resets haptic timer on drag end; existing end-of-drag haptic remains.
-- `HueHome/Core/Network/UnifiedOrchestrator.swift`
+- `ChromaGlow/Core/Network/UnifiedOrchestrator.swift`
   - Aggressively lowered Composer REST scheduler interval constants for fast-response testing:
     - Lowered idle baseline (`preferredComposerIdleInterval`) and all tier minimums.
     - Lowered non-burst floors (`minimumComposerRESTInterval`) and burst floors (`minimumComposerBurstFloor`).
@@ -1442,7 +1471,7 @@ Wrong-room apply race is closed at the Studio action layer, startup light fetche
 ### What's working
 - ✅ Lints clean on edited files (`StudioView.swift`, `UnifiedOrchestrator.swift`).
 - ✅ Build succeeded:
-  - `xcodebuild -project /Users/brianbean/Desktop/huehome-pro-v0.3.0/HueHome.xcodeproj -scheme HueHome -destination 'generic/platform=iOS' build`
+  - `xcodebuild -project /Users/brianbean/Desktop/huehome-pro-v0.3.0/ChromaGlow.xcodeproj -scheme ChromaGlow -destination 'generic/platform=iOS' build`
 - ✅ Composer color pad now provides tactile feedback during drag (not only on drag end).
 
 ### What's left
@@ -1521,16 +1550,16 @@ Root cause identified and documented. Build is green. Two implementation paths a
 ## 2026-05-08 — Multi-Bridge Routing Foundation for Widget/Watch (Cursor)
 
 ### What was built
-- **`HueHome/Core/Network/WidgetDataStore.swift`** — Extended shared snapshot contract with `bridgeID` on `WidgetRoomSnapshot`, added `WidgetBridgeCredentials`, added bridge map persistence (`hue_widget_bridges_v1`), and added `credentials(for:)` resolver with legacy fallback.
-- **`HueHome/Core/Network/UnifiedOrchestrator.swift`** — Writes bridge-aware room/zone snapshots, publishes active bridge credential map for App Group consumers, and pushes bridge map through watch sync path.
-- **`HueHome/HueHomeApp.swift`** — Updated `WatchSessionManager.push` payload to include `wc_bridges_v1` (plus legacy fallback keys).
-- **`HueHomeWidget/WidgetIntents.swift`** — Switched interactive widget intents to resolve per-room bridge credentials instead of global single-bridge creds.
-- **`HueHome/Intents/HueRoomEntity.swift` + `HueHome/Intents/HueIntents.swift`** — Added `bridgeID` to intent entities and routed Siri intents through per-bridge credential resolution.
-- **`LightShadeWatchApp Watch App/WatchStore.swift` + `LightShadeWatch/WatchWidgetStore.swift`** — Added bridge map decoding/storage and per-room bridge credential resolution on watch/watch-widget paths.
+- **`ChromaGlow/Core/Network/WidgetDataStore.swift`** — Extended shared snapshot contract with `bridgeID` on `WidgetRoomSnapshot`, added `WidgetBridgeCredentials`, added bridge map persistence (`hue_widget_bridges_v1`), and added `credentials(for:)` resolver with legacy fallback.
+- **`ChromaGlow/Core/Network/UnifiedOrchestrator.swift`** — Writes bridge-aware room/zone snapshots, publishes active bridge credential map for App Group consumers, and pushes bridge map through watch sync path.
+- **`ChromaGlow/ChromaGlowApp.swift`** — Updated `WatchSessionManager.push` payload to include `wc_bridges_v1` (plus legacy fallback keys).
+- **`ChromaGlowWidget/WidgetIntents.swift`** — Switched interactive widget intents to resolve per-room bridge credentials instead of global single-bridge creds.
+- **`ChromaGlow/Intents/HueRoomEntity.swift` + `ChromaGlow/Intents/HueIntents.swift`** — Added `bridgeID` to intent entities and routed Siri intents through per-bridge credential resolution.
+- **`ChromaGlowWatchApp/WatchStore.swift` + `ChromaGlowWatchExtension/WatchWidgetStore.swift`** — Added bridge map decoding/storage and per-room bridge credential resolution on watch/watch-widget paths.
 
 ### What's working
-- ✅ iOS app target (`HueHome`) compiles successfully after multi-bridge routing changes.
-- ✅ watchOS app target (`LightShadeWatchApp Watch App`) compiles successfully after watch sync/store updates.
+- ✅ iOS app target (`ChromaGlow`) compiles successfully after multi-bridge routing changes.
+- ✅ watchOS app target (`ChromaGlowWatchApp`) compiles successfully after watch sync/store updates.
 - ✅ Widget/intent/watch code paths now have a deterministic per-room bridge routing key (`bridgeID`) and a shared bridge credential map.
 - ✅ Legacy single-bridge keys are still emitted/read as fallback for backward compatibility.
 
