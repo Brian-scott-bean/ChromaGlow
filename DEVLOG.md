@@ -625,6 +625,54 @@ Phase 3B–D composer mixer + save shipped in tree; verify on device with Entert
 
 <!-- NEXT SESSION: Append below this line -->
 
+## 2026-05-27 — IOS-REF-001: Dashboard Display Model Builder (Cursor)
+
+### What was built
+- **IOS-REF-001** — first safe strangler seam around `UnifiedOrchestrator` (no god-object split yet).
+- New pure type: `ChromaGlow/Core/Dashboard/DashboardDisplayModelBuilder.swift`
+  - `DashboardDisplayModelBuilder.makeRooms(from:)` — flattens `roomsByBridge`, sorts by localized name, de-dupes by `RoomDisplayItem.id`.
+- `UnifiedOrchestrator.rebuildAllRooms()` now delegates only the list-composition step to the builder.
+  - **Unchanged in orchestrator:** navigation buffering (`isNavigating` / `sseRebuildPendingRooms`), `scheduleWidgetWrite()`, all networking/SSE/mutations.
+- `ChromaGlow.xcodeproj/project.pbxproj` — added `Dashboard` group + file to ChromaGlow target (required to compile).
+
+### What was NOT changed (explicit scope boundary)
+- No Hue API / networking / Keychain / App Group / widget / watch / App Intent / SSE / scene activation / Studio changes.
+- No extraction of `fetchAndMergeAllBridges` room/zone construction (still in orchestrator).
+- No `rebuildAllZones()` extraction yet (mirror pattern is the obvious IOS-REF-002 follow-up).
+- `UnifiedOrchestrator` remains the facade; do not split the file directly.
+
+### What's working
+- ✅ `xcodebuild -project ChromaGlow.xcodeproj -scheme ChromaGlow -destination 'generic/platform=iOS' build` — BUILD SUCCEEDED
+- ✅ Behavior-preserving refactor only (same sort + de-dupe semantics as inline code)
+
+### What's left
+- [ ] **IOS-REF-002 (optional):** extract `makeZones(from:)` mirroring `makeRooms`
+- [ ] **IOS-REF-003+:** further pure builders (e.g. per-bridge `RoomDisplayItem` assembly from API models) — only after tests or device QA on 001
+- [ ] Commit was on branch `2026-05-22-ialn`; **build-metadata work** starts on `ios-ops/build-metadata-foundation` from `main` (see branch note below)
+
+### Branch / git state (handoff)
+- Feature commit lives on **`2026-05-22-ialn`** (not `main` until merged).
+- Next ops task branch: **`ios-ops/build-metadata-foundation`** — created from updated **`main`** after this commit was pushed.
+- **Device vs remote:** Running Xcode on a physical device uses **local** `HEAD` + any **uncommitted** edits. It is **not** “latest pushed” until `git push` and `git rev-parse HEAD` == `git rev-parse origin/<branch>`.
+
+### How to catch the agent back up (read in order)
+1. **`DEVLOG.md`** (this entry) + **`DEVDOC.md`** (architecture + Hue constraints)
+2. **`.cursorrules`** — non-negotiable bridge/UI rules
+3. **`CURSOR_KICKOFF.md`** — Composer status (do not redo shipped work)
+4. **Code:** `DashboardDisplayModelBuilder.swift`, `UnifiedOrchestrator.rebuildAllRooms()`, `DashboardView` (consumes `orchestrator.allRooms` only — no builder call in UI yet)
+5. **Migration context:** `docs/migration/` — native iOS anchor, minimal backend, no Flutter
+6. **Verify:** `git log -1 --oneline` on `2026-05-22-ialn` for IOS-REF-001; `git diff main...2026-05-22-ialn` for full delta
+
+### Gotchas
+- Folder is `ChromaGlow/Core/Dashboard/` (not `HueHome/` — rebrand complete; bundle IDs still `com.huehome.pro`).
+- New Swift files under `ChromaGlow/` must be added to **`project.pbxproj`** (explicit file refs; not all folders are filesystem-synced).
+- `RoomDisplayItem` must hash volatile fields (`isOn`, brightness, dominant colors) — ID-only hashing breaks `ForEach` live updates.
+
+### Current state
+IOS-REF-001 shipped on `2026-05-22-ialn`. `ios-ops/build-metadata-foundation` branched from `main` for the next workstream; merge IOS-REF PR when ready.
+
+---
+
 ## 2026-05-06 — SE Portrait Layout Spike (Cursor)
 
 ### What was built

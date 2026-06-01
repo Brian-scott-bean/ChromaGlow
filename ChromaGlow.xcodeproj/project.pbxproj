@@ -70,6 +70,7 @@
 		A47252DC03C35BD018C4DDFF /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B983F6E356486FF116DE5D82 /* Foundation.framework */; };
 		A95DF050FC3DEB539D31A007 /* AutomationHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C70C1F68EEBD0C03E0A62BD /* AutomationHandler.swift */; };
 		AA2222222222222222222222 /* RoomDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1111111111111111111111 /* RoomDisplayItem.swift */; };
+		DDB001B1C2D3E4F506070809 /* DashboardDisplayModelBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDB001A1C2D3E4F506070809 /* DashboardDisplayModelBuilder.swift */; };
 		B8EC85BF69B1476F2C0BD268 /* AutomationsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2A9BD5B62E32B243BDEB862 /* AutomationsViewModel.swift */; };
 		BB2222222222222222222222 /* HueToastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1111111111111111111111 /* HueToastView.swift */; };
 		BB580EB55B2297B55762B180 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A605D920B86B15037E86EE5F /* DashboardView.swift */; };
@@ -246,6 +247,7 @@
 		A6D407538C930D859C433439 /* ChromaGlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChromaGlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7885050FC8A417F31C0B04D /* HueLight.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueLight.swift; path = ChromaGlow/Core/Models/HueLight.swift; sourceTree = "<group>"; };
 		AA1111111111111111111111 /* RoomDisplayItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChromaGlow/Core/Models/RoomDisplayItem.swift; sourceTree = SOURCE_ROOT; };
+		DDB001A1C2D3E4F506070809 /* DashboardDisplayModelBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DashboardDisplayModelBuilder.swift; path = ChromaGlow/Core/Dashboard/DashboardDisplayModelBuilder.swift; sourceTree = "<group>"; };
 		AF8A54B6A1F1A2CC5FAF3CEE /* SplashView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SplashView.swift; path = ChromaGlow/UI/Splash/SplashView.swift; sourceTree = "<group>"; };
 		B983F6E356486FF116DE5D82 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		BB1111111111111111111111 /* HueToastView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChromaGlow/UI/Components/HueToastView.swift; sourceTree = SOURCE_ROOT; };
@@ -725,6 +727,7 @@
 		E44AF3E912AE191245436392 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				DDB001C1C2D3E4F506070809 /* Dashboard */,
 				7EDBB1B40FB409D94C0FC48C /* Keychain */,
 				07153DA61129E1EAC37A4D4A /* Network */,
 				598BD88BFF3A6427EDAE1DB9 /* ViewModels */,
@@ -734,6 +737,14 @@
 				ECC4B07990955DC6CD4B5CAF /* Services */,
 			);
 			name = Core;
+			sourceTree = "<group>";
+		};
+		DDB001C1C2D3E4F506070809 /* Dashboard */ = {
+			isa = PBXGroup;
+			children = (
+				DDB001A1C2D3E4F506070809 /* DashboardDisplayModelBuilder.swift */,
+			);
+			name = Dashboard;
 			sourceTree = "<group>";
 		};
 		E8839A10D98E50D9EEC76ADB /* ChromaGlow */ = {
@@ -1088,6 +1099,7 @@
 				CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */,
 				B2RPSH9FF07852E320B7354B /* RoomPickerSheetView.swift in Sources */,
 				AA2222222222222222222222 /* RoomDisplayItem.swift in Sources */,
+				DDB001B1C2D3E4F506070809 /* DashboardDisplayModelBuilder.swift in Sources */,
 				BB2222222222222222222222 /* HueToastView.swift in Sources */,
 				73D4D0E7C3E0D0451914B46E /* HueZone.swift in Sources */,
 				0D540DF0048CF5F6706AE881 /* BulkActionBar.swift in Sources */,
