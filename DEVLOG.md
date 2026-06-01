@@ -1568,3 +1568,55 @@ Multi-bridge routing foundation is implemented across iOS widget, Siri intent, w
 
 ### Current state
 IOS-OPS-001B complete on branch `ios-ops/build-metadata-injection`. Settings footer can show live Git provenance from the built app plist. Not committed unless requested.
+
+---
+
+## 2026-06-01 — Normalize Version and Build Settings (IOS-OPS-001C) (Cursor)
+
+### What was built
+- **`HueHome/Info.plist`** — Replaced hard-coded `0.9.0` / `1` with `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)` plist substitutions.
+- **`HueHome.xcodeproj/project.pbxproj`** — Added `MARKETING_VERSION = 0.9.0` and `CURRENT_PROJECT_VERSION = 1` to HueHome Debug and Release target configurations (authoritative source of truth for the main app).
+- **`HueHome/UI/More/MoreView.swift`** — Replaced direct `CFBundleShortVersionString` / `CFBundleVersion` reads (stale `"0.3.0"` fallback) with `BuildMetadata.current`.
+
+### Version/build normalization policy
+- Xcode build settings are the single source of truth: `MARKETING_VERSION = 0.9.0`, `CURRENT_PROJECT_VERSION = 1`.
+- Main app plist uses build-setting substitutions; IOS-OPS-001B injection continues to write Git provenance keys into the **processed** bundle plist only.
+- Embedded bundles already normalized via `GENERATE_INFOPLIST_FILE = YES` + per-target build settings — no extension/watch plist edits required.
+
+### Pre-edit inventory (shipped bundles)
+| Bundle / target | Info.plist path | Short-version source | Build-number source | Debug | Release | Embedded in main app? |
+|---|---|---|---|---|---|---|
+| HueHome (main) | `HueHome/Info.plist` | Hard-coded → now `$(MARKETING_VERSION)` | Hard-coded → now `$(CURRENT_PROJECT_VERSION)` | 0.9.0 / 1 | 0.9.0 / 1 | — |
+| HueHomeWidgetExtension | `HueHomeWidget/Info.plist` (NSExtension only) | `MARKETING_VERSION` via generated plist | `CURRENT_PROJECT_VERSION` via generated plist | 0.9.0 / 1 | 0.9.0 / 1 | Yes (`PlugIns/`) |
+| LightShadeWatchExtension | `LightShadeWatch/Info.plist` (NSExtension only) | `MARKETING_VERSION` via generated plist | `CURRENT_PROJECT_VERSION` via generated plist | 0.9.0 / 1 | 0.9.0 / 1 | No (watch app embeds separately) |
+| LightShadeWatchApp Watch App | Generated (no source plist) | `MARKETING_VERSION` | `CURRENT_PROJECT_VERSION` | 0.9.0 / 1 | 0.9.0 / 1 | Yes (`Watch/`) |
+
+### Validation
+- `bash Scripts/tests/test_inject_build_metadata.sh` → **19/19 pass** (injector unchanged)
+- Debug `xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -configuration Debug -destination 'generic/platform=iOS' build` → **BUILD SUCCEEDED** (60 pre-existing warnings, none from this change)
+- Release build → **BUILD SUCCEEDED** (55 pre-existing warnings)
+- Built main app plist: `CFBundleShortVersionString = 0.9.0`, `CFBundleVersion = 1`, Git metadata keys present, `ChromaGlowGitDirty = 1` during uncommitted work
+- Nested bundles (widget `.appex`, watch `.app`): all `0.9.0` / `1` in Debug and Release
+- Second incremental Debug build: keys not duplicated, timestamp updated (`2026-06-01T23:22:05Z` → `2026-06-01T23:24:38Z`)
+- Source `HueHome/Info.plist` contains substitution tokens only (no Git keys)
+- `codesign --verify --deep --strict` on Debug and Release built apps → **pass**
+- `git diff --check` → clean
+
+### Physical-device verification
+1. Open **`HueHome.xcodeproj`** (not `ChromaGlow.xcodeproj`)
+2. Scheme **`HueHome 1`** → physical iPhone
+3. Product → Clean Build Folder → Run
+4. **More → Settings** → scroll to footer
+5. Confirm: `Version 0.9.0 · Build 1`, commit prefix matches `git rev-parse --short=8 HEAD`, branch `ios-ops/normalize-version-settings`, UTC timestamp, **Working tree modified** while uncommitted
+6. Force quit → relaunch → footer stable
+7. After commit + clean rebuild → dirty line disappears
+
+### Gotchas
+- Tracked project remains **`HueHome.xcodeproj`**; `ChromaGlow.xcodeproj` is an incomplete local shell
+- HueHomeTests target has no `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` (test bundle only, not shipped)
+
+### What's next
+- [ ] **IOS-OPS-001D** — push-triggered CI build numbering (automatic increment on CI, not local)
+
+### Current state
+IOS-OPS-001C complete on branch `ios-ops/normalize-version-settings` starting from `c660728`. Effective version/build preserved at `0.9.0` / `1`. Not committed unless requested.
