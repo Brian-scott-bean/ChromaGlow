@@ -894,6 +894,7 @@
 				419A8BB0390C120D583BC94A /* Resources */,
 				DD4BB4D62F8C6AF300BED513 /* Embed Foundation Extensions */,
 				DDC82F462FA1140C00324E29 /* Embed Watch Content */,
+				B1LDINJ1000000000000001 /* Inject Build Metadata */,
 			);
 			buildRules = (
 			);
@@ -1034,6 +1035,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		B1LDINJ1000000000000001 /* Inject Build Metadata */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Inject Build Metadata";
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/chromaglow-inject-metadata.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/inject_build_metadata.sh\"\ntouch \"${DERIVED_FILE_DIR}/chromaglow-inject-metadata.stamp\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		320F1B3A471F23F8ACAB3316 /* Sources */ = {
