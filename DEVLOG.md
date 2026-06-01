@@ -1620,3 +1620,51 @@ IOS-OPS-001B complete on branch `ios-ops/build-metadata-injection`. Settings foo
 
 ### Current state
 IOS-OPS-001C complete on branch `ios-ops/normalize-version-settings` starting from `c660728`. Effective version/build preserved at `0.9.0` / `1`. Not committed unless requested.
+
+---
+
+## 2026-06-01 — Push-Triggered CI Build Numbering (IOS-OPS-001D) (Cursor)
+
+### What was built
+- **`.github/workflows/ios-build-provenance.yml`** — Push + manual workflow on `macos-latest` that runs shell tests, builds unsigned Debug iOS app with `CURRENT_PROJECT_VERSION=${GITHUB_RUN_NUMBER}`, verifies metadata, inspects nested widget/watch bundles, writes provenance report, and uploads report + processed main app plist artifact.
+- **`Scripts/verify_built_app_metadata.sh`** — Read-only validator for processed built-app plists (version, build, Git metadata, timestamp format, dirty state).
+- **`Scripts/tests/test_verify_built_app_metadata.sh`** — 17 fixture tests for the verifier.
+- **`Scripts/inject_build_metadata.sh`** — Added `CHROMAGLOW_GIT_BRANCH_OVERRIDE` for CI detached-HEAD branch metadata (local behavior unchanged when unset).
+- **`Scripts/tests/test_inject_build_metadata.sh`** — Added branch-override tests (detached HEAD + slash branch); now **21/21 pass**.
+
+### CI build-number policy
+- **CI:** `CURRENT_PROJECT_VERSION = GITHUB_RUN_NUMBER` via command-line `xcodebuild` override (no source or project-file mutation).
+- **Local Xcode:** unchanged — `CURRENT_PROJECT_VERSION = 1` from project settings → Settings footer shows `Build 1`.
+- **Marketing version:** `0.9.0` everywhere (unchanged).
+
+### Branch metadata in CI
+- Workflow sets `CHROMAGLOW_GIT_BRANCH_OVERRIDE=${GITHUB_REF_NAME}` so detached-HEAD checkouts still inject branch name.
+- Local builds without override preserve existing `git branch --show-current` behavior.
+
+### Validation
+- `bash Scripts/tests/test_inject_build_metadata.sh` → **21/21 pass**
+- `bash Scripts/tests/test_verify_built_app_metadata.sh` → **17/17 pass**
+- Local CI-style unsigned build with `CURRENT_PROJECT_VERSION=4242` + `CODE_SIGNING_ALLOWED=NO` → **BUILD SUCCEEDED** (pre-existing warnings only; `CODE_SIGNING_REQUIRED=NO` not needed)
+- Main app built plist: `0.9.0` / `4242`, Git metadata present, branch override `ios-ops/ci-build-numbering`, dirty `1` during uncommitted work
+- Nested bundles: widget + watch both `0.9.0` / `4242`
+- `git diff -- HueHome/Info.plist` → **no diff**
+- `git diff -- HueHome.xcodeproj/project.pbxproj` → **no diff**
+- Ruby YAML parse of workflow → **PASS**
+
+### Post-push GitHub validation
+1. Commit and push `ios-ops/ci-build-numbering`
+2. GitHub → **Actions** → **iOS Build Provenance** → open branch push run
+3. Confirm job succeeds; summary shows marketing `0.9.0`, CI build number = run number, commit/branch match, dirty `0`
+4. Download artifact `ios-build-provenance-<run_id>-<attempt>`; confirm `ios-build-provenance.txt` values
+5. After merge to `main`, confirm `main` push also triggers and passes
+
+### Gotchas
+- Tracked project remains **`HueHome.xcodeproj`**; `ChromaGlow.xcodeproj` is an incomplete local shell
+- CI builds are **unsigned validation builds** — not installable on physical devices; local Xcode builds still show `Build 1`
+- No signing secrets, TestFlight upload, archive export, or auto-commit in this chunk
+
+### What's next
+- [ ] **IOS-OPS-001E** (optional) — signed archive and TestFlight delivery
+
+### Current state
+IOS-OPS-001D complete on branch `ios-ops/ci-build-numbering` starting from `2497431`. Not committed unless requested.

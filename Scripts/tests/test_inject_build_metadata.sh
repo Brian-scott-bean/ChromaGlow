@@ -145,6 +145,24 @@ else
     pass "detached HEAD omits branch metadata"
 fi
 
+# detached HEAD with branch override
+PLIST_DETACHED_OVERRIDE="${WORK_DIR}/detached-override.plist"
+make_fixture_plist "$PLIST_DETACHED_OVERRIDE"
+CHROMAGLOW_GIT_BRANCH_OVERRIDE="ios-ops/ci-build-numbering" \
+    run_inject "$DETACHED_REPO" "$PLIST_DETACHED_OVERRIDE"
+assert_equals "ios-ops/ci-build-numbering" \
+    "$(plist_value "$PLIST_DETACHED_OVERRIDE" ChromaGlowGitBranch)" \
+    "detached HEAD with override injects branch override"
+
+# branch override on clean repo still works alongside local detection
+PLIST_OVERRIDE="${WORK_DIR}/override.plist"
+make_fixture_plist "$PLIST_OVERRIDE"
+CHROMAGLOW_GIT_BRANCH_OVERRIDE="feature/with/slash" \
+    run_inject "$CLEAN_REPO" "$PLIST_OVERRIDE"
+assert_equals "feature/with/slash" \
+    "$(plist_value "$PLIST_OVERRIDE" ChromaGlowGitBranch)" \
+    "branch override with slash is stored correctly"
+
 # 10 non-Git directory
 NOGIT_DIR="${WORK_DIR}/nogit"
 PLIST_NOGIT="${WORK_DIR}/nogit.plist"
