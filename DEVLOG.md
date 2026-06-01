@@ -1523,3 +1523,48 @@ Root cause identified and documented. Build is green. Two implementation paths a
 
 ### Current state
 Multi-bridge routing foundation is implemented across iOS widget, Siri intent, watch sync, and watch stores. Both iOS and watch targets build cleanly. Next step is on-device verification for Bridge 2 behavior and then watch widget interactivity wiring.
+
+---
+
+## 2026-06-01 — Build-Time Git Metadata Injection (IOS-OPS-001B) (Cursor)
+
+### What was built
+- **`Scripts/inject_build_metadata.sh`** — Injects `ChromaGlowGitCommit`, `ChromaGlowGitBranch`, `ChromaGlowBuildTimestamp`, and `ChromaGlowGitDirty` into the **built** app bundle plist (`${TARGET_BUILD_DIR}/${INFOPLIST_PATH}`) only. Never edits `HueHome/Info.plist`. Supports `CHROMAGLOW_METADATA_PLIST_PATH` and `CHROMAGLOW_REPO_ROOT` for tests.
+- **`Scripts/tests/test_inject_build_metadata.sh`** — 19 fixture cases (clean/dirty/detached/non-git/stale keys/spaces/missing plist).
+- **`HueHome.xcodeproj/project.pbxproj`** — HueHome target only: **Inject Build Metadata** Run Script phase (last phase). Uses dependency analysis with `inputPaths` = processed bundle Info.plist so injection runs **after** `ProcessInfoPlistFile` on incremental builds.
+
+### Injected plist keys
+| Key | Source |
+|---|---|
+| `ChromaGlowGitCommit` | `git rev-parse HEAD` (full SHA) |
+| `ChromaGlowGitBranch` | `git branch --show-current` (omitted on detached HEAD) |
+| `ChromaGlowBuildTimestamp` | UTC `date -u +%Y-%m-%dT%H:%M:%SZ` (always) |
+| `ChromaGlowGitDirty` | `git status --porcelain` → `"1"` / `"0"` |
+
+### Validation
+- `bash Scripts/tests/test_inject_build_metadata.sh` → 19/19 pass
+- `xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'generic/platform=iOS' build` → **BUILD SUCCEEDED**
+- Built `HueHome.app/Info.plist` contains injected keys; `git diff -- HueHome/Info.plist` → no diff
+- Incremental second build retains keys; timestamp updates
+- `codesign --verify --deep --strict` on built app → pass (generic iOS build)
+
+### Physical-device verification
+1. Open **`HueHome.xcodeproj`** (not `ChromaGlow.xcodeproj` — local shell has no `project.pbxproj`)
+2. Scheme **`HueHome 1`** → physical iPhone
+3. Clean Build Folder → Run
+4. **More → Settings** → scroll to footer
+5. Compare commit: `git rev-parse --short=8 HEAD`
+6. With uncommitted changes expect **Working tree modified**; after a clean commit, dirty line should disappear
+7. Force quit → relaunch → Settings stable
+
+### Gotchas
+- `ChromaGlow.xcodeproj` is an incomplete untracked wrapper; use **`HueHome.xcodeproj`**
+- Run Script uses `ENABLE_USER_SCRIPT_SANDBOXING = NO` on HueHome (already set)
+- Do not place `BuildMetadata.swift` under `HueHome/Core/Build/` — `.gitignore` rule `build/` ignores that path
+
+### What's next
+- [ ] **IOS-OPS-001C** — normalized build numbering (separate from Git metadata)
+- [ ] Optionally migrate `MoreView` version line to `BuildMetadata.current`
+
+### Current state
+IOS-OPS-001B complete on branch `ios-ops/build-metadata-injection`. Settings footer can show live Git provenance from the built app plist. Not committed unless requested.
