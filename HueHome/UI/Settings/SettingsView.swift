@@ -43,6 +43,7 @@ struct SettingsView: View {
                     accountSection
                     developerSection
                     appSection
+                    buildMetadataFooter
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 24)
@@ -329,7 +330,7 @@ struct SettingsView: View {
                     Text("ChromaGlow")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
-                    Text("Version \(appVersion)  ·  Build \(buildNumber)")
+                    Text("Version \(BuildMetadata.current.marketingVersion) · Build \(BuildMetadata.current.buildNumber)")
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.40))
                 }
@@ -371,6 +372,45 @@ struct SettingsView: View {
                     .foregroundStyle(.white.opacity(0.30))
                 Spacer()
             }
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Build metadata footer
+    // ──────────────────────────────────────────────
+
+    private var buildMetadataFooter: some View {
+        let metadata = BuildMetadata.current
+        return VStack(spacing: 4) {
+            Text("Version \(metadata.marketingVersion) · Build \(metadata.buildNumber)")
+            buildMetadataCommitLine(metadata)
+            if let branchName = metadata.branchName {
+                Text("Branch \(branchName)")
+            }
+            if let buildTimestamp = metadata.buildTimestamp {
+                Text("Built \(buildTimestamp)")
+            }
+            if metadata.isDirty == true {
+                Text("Working tree modified")
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.white.opacity(0.35))
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+        .padding(.top, 4)
+    }
+
+    @ViewBuilder
+    private func buildMetadataCommitLine(_ metadata: BuildMetadata) -> some View {
+        if let shortSHA = metadata.shortCommitSHA {
+            HStack(spacing: 0) {
+                Text("Commit ")
+                Text(shortSHA)
+                    .font(.system(.caption2, design: .monospaced))
+            }
+        } else {
+            Text("Commit Unavailable")
         }
     }
 
@@ -467,14 +507,6 @@ struct SettingsView: View {
     // ──────────────────────────────────────────────
     // MARK: - Helpers
     // ──────────────────────────────────────────────
-
-    private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
-    }
-
-    private var buildNumber: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-    }
 
     private func loadCredentials() {
         let raw      = (try? KeychainManager.shared.loadAPIToken()) ?? ""
