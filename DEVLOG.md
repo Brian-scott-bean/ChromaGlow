@@ -2197,3 +2197,44 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 - No Swift changes.
 - No project-file changes.
 - No physical-device test required for this docs-only slice.
+
+---
+
+## 2026-06-02 — Composer Fetch-Path Parity Coverage Inventory (IOS-TEST-002A)
+
+### Scope
+- Branch: `ios-test/composer-fetch-path-parity-inventory`
+- Starting SHA: `87432b3`
+- Documentation-only; no Swift, no Xcode project, no commit/push
+
+### Deliverable
+- New inventory: `docs/ios/composer-fetch-path-parity-test-inventory.md`
+
+### Baseline referenced
+- `CompositionLightResolverTests` → 16/16
+- `CompositionRoomPriorityScorerTests` → 19/19
+- `RoomAndZoneDisplayModelBuilderTests` → 6/6
+- `DashboardDisplayModelBuilderTests` → 14/14
+- Signed-simulator `HueHomeTests` → 109/109
+- IOS-REF-006B physical-device Composer smoke pass (prior entry)
+
+### Fetch-path contracts inventoried
+- `resolveCompositionGamut(for:api:)` — always one `fetchLights()`; failure or empty resolved lights → `.c`; majority gamut inline
+- `resolveCompositionLightIDs(for:api:)` — empty refs → `[]` / 0 fetches; direct-light mode → 0 fetches; owner path → 1 fetch or `[]` on failure
+- Pure matching delegated to `CompositionLightResolver` (IOS-REF-006B)
+
+### Test-infrastructure findings
+- `StubURLProtocol` + `TestableAPIClient` exist in `HueHomeTests/HueAPIClientTests.swift` (in target)
+- `injectForTesting` is `#if DEBUG` in `UnifiedOrchestrator`
+- Private fetch helpers are not `@testable`-accessible; `testApplySSEEvent` works only because `applySSEEvent` is `internal`
+- `OrchestratorTests.swift` exists on disk (15 tests) but is not in `HueHome.xcodeproj` — explains 109 on-disk test methods in target vs 124 total in folder
+- Spy subclass overriding `fetchLights()` is viable (`HueAPIClient` is non-`final`)
+
+### IOS-TEST-002B recommendation
+- Proceed: `#if DEBUG` wrappers `testResolveCompositionGamut` / `testResolveCompositionLightIDs`, new `ComposerFetchPathParityTests.swift` with fetch-counting spy, pbxproj membership
+- Reject for this slice: `startCompositionMode` integration tests, `private`→`internal` widening, production fetch-policy helper, URLProtocol-only counting, source-text assertions
+- Physical-device testing not required for IOS-TEST-002B unit slice
+
+### Validation
+- No Xcode build run (docs-only)
+- No physical-device test required for this slice
