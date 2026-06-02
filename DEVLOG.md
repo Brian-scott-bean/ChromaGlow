@@ -2238,3 +2238,45 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 ### Validation
 - No Xcode build run (docs-only)
 - No physical-device test required for this slice
+
+---
+
+## 2026-06-02 — Composer Fetch-Path Parity Tests (IOS-TEST-002B)
+
+### Scope
+- Branch: `ios-test/composer-fetch-path-parity-tests`
+- Starting SHA: `6139154`
+- DEBUG-only forward wrappers around existing private `resolveCompositionGamut(for:api:)` and `resolveCompositionLightIDs(for:api:)` in `UnifiedOrchestrator`
+- New test file: `HueHomeTests/ComposerFetchPathParityTests.swift`
+- Test-only `ComposerFetchCountingAPIClient` spy (`override fetchLights()`)
+- Inventory count correction: IOS-TEST-002A matrix lists **9** core cases (5 ID + 4 GAM), not 8
+- Private production method bodies unchanged; release behavior unchanged
+- `OrchestratorTests.swift` orphan membership intentionally deferred
+
+### Parity cases (9)
+- ID-01 empty refs → 0 fetches, `[]`
+- ID-02 direct refs → 0 fetches, order + duplicates preserved
+- ID-03 mixed refs → 0 fetches, direct IDs only
+- ID-04 owner fallback success → 1 fetch, fetched-light order
+- ID-05 owner fallback failure → 1 fetch, `[]`
+- GAM-01 direct refs majority → 1 fetch, `.a`
+- GAM-02 owner fallback majority → 1 fetch, `.b`
+- GAM-03 fetch failure → 1 fetch, `.c`
+- GAM-04 empty resolved lights → 1 fetch, `.c`
+
+### Validation results
+- Injector shell tests → 21/21 PASS
+- Verifier shell tests → 17/17 PASS
+- Generic unsigned Debug app build → BUILD SUCCEEDED
+- Generic unsigned Release app build → BUILD SUCCEEDED
+- `ComposerFetchPathParityTests` → 9/9 PASS
+- `CompositionLightResolverTests` → 16/16 PASS
+- `CompositionRoomPriorityScorerTests` → 19/19 PASS
+- `RoomAndZoneDisplayModelBuilderTests` → 6/6 PASS
+- `DashboardDisplayModelBuilderTests` → 14/14 PASS
+- Full signed-simulator `HueHomeTests` → 118/118 PASS
+- No physical-device test required for this slice
+
+### Follow-up
+- Optional hygiene slice: register orphaned `OrchestratorTests.swift` in `HueHomeTests` target (15 tests on disk, not in pbxproj)
+- Defer gamut tie-break policy pinning until product defines explicit rules

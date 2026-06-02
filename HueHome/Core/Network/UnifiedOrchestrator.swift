@@ -352,6 +352,20 @@ final class UnifiedOrchestrator {
     func injectForTesting(clients testClients: [String: BridgeAPIClient]) {
         clients = testClients
     }
+
+    func testResolveCompositionGamut(
+        for room: RoomDisplayItem,
+        api: HueAPIClient
+    ) async -> HueColorUtils.Gamut {
+        await resolveCompositionGamut(for: room, api: api)
+    }
+
+    func testResolveCompositionLightIDs(
+        for room: RoomDisplayItem,
+        api: HueAPIClient
+    ) async -> [String] {
+        await resolveCompositionLightIDs(for: room, api: api)
+    }
     #endif
 
     // ──────────────────────────────────────────────
