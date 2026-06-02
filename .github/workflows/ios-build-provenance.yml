@@ -80,9 +80,13 @@ jobs:
         run: |
           set -euo pipefail
           DERIVED_DATA="${RUNNER_TEMP}/DerivedData"
-          MAIN_PLIST="$(find "${DERIVED_DATA}/Build/Products" -path 'Debug-iphoneos/HueHome.app/Info.plist' -print -quit)"
-          if [[ -z "${MAIN_PLIST}" || ! -f "${MAIN_PLIST}" ]]; then
-            echo "error: processed main app Info.plist not found under ${DERIVED_DATA}/Build/Products" >&2
+          MAIN_PLIST="${DERIVED_DATA}/Build/Products/Debug-iphoneos/HueHome.app/Info.plist"
+          if [[ ! -f "${MAIN_PLIST}" ]]; then
+            echo "error: processed main app Info.plist not found: ${MAIN_PLIST}" >&2
+            echo "Available app Info.plist files:" >&2
+            find "${DERIVED_DATA}/Build/Products" \
+              -path "*.app/Info.plist" \
+              -print >&2 || true
             exit 1
           fi
           MAIN_APP_DIR="$(dirname "${MAIN_PLIST}")"
