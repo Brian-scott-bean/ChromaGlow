@@ -1916,3 +1916,47 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 - No Xcode project files modified.
 - No changes to networking, Hue API behavior, SSE cadence, optimistic updates, rollback, persistence, widgets, watch, or Studio/Composer runtime behavior.
 - No new builds or physical-device tests required for IOS-REF-003A (documentation-only).
+
+---
+
+## 2026-06-02 — Room and Zone Display-Model Builder Extraction (IOS-REF-003B)
+
+### What was built
+- **Branch:** `ios-ref/room-zone-display-model-builder`
+- **Starting SHA:** `6ebb0c3`
+- Added pure helper: `HueHome/Core/Dashboard/RoomAndZoneDisplayModelBuilder.swift`
+- Added focused tests: `HueHomeTests/RoomAndZoneDisplayModelBuilderTests.swift`
+- `UnifiedOrchestrator.fetchAndMergeAllBridges()` now delegates deterministic room/zone model construction to `RoomAndZoneDisplayModelBuilder.makeDisplayModels(rooms:zones:lights:groupedLights:bridgeID:)` after the existing async fetches complete.
+
+### Behavior preserved
+- Networking behavior preserved (same per-bridge parallel `fetchRooms/fetchZones/fetchLights/fetchGroupedLights` pattern).
+- Bridge routing preserved (orchestrator still iterates `clients` and merges per bridge).
+- Outer state writes preserved in orchestrator (`roomsByBridge`, `zonesByBridge`, `lightIDToRoomID`, `lightIDToZoneID`, `connectionStatus`).
+- SSE behavior preserved (`startSSE`/`applySSEEvent` paths untouched).
+- Cache behavior preserved (`loadAll` / `writeCache` flow unchanged).
+- Widget/watch write scheduling preserved (`rebuildAllRooms()`, `rebuildAllZones()`, `scheduleWidgetWrite()` unchanged).
+
+### New focused tests
+- Empty input returns empty rooms/zones/maps.
+- Room model contract (name/archetype/kind/bridgeID/grouped light/child refs/isOn/brightness).
+- Zone model contract (name/archetype/kind/bridgeID/grouped light/child refs/isOn/brightness).
+- Room map semantics including room device-owner fallback behavior.
+- Zone map semantics with direct light refs.
+- Overlap behavior (same light can appear in room and zone maps).
+- Dominant visual-state behavior (brightest ON color, mirek fallback, grouped-off fallback).
+- Input immutability.
+
+### Validation
+- Signed simulator results: **pending local run in this slice**
+- Generic unsigned app build result: **pending local run in this slice**
+
+### Physical-device smoke instructions
+1. Open `HueHome.xcodeproj`
+2. Scheme: `HueHome 1`
+3. Destination: physical iPhone
+4. Product → Clean Build Folder
+5. Product → Run
+6. Verify dashboard and room/zone behaviors match pre-extraction baseline.
+
+### Follow-up recommendation
+- Keep future seams similarly bounded and pure (state-only transforms first, orchestration remains facade).
