@@ -1771,3 +1771,30 @@ IOS-REF-001R complete on branch `ios-ref/dashboard-room-builder`. Behavior-neutr
 
 ### Current state
 IOS-REF-002 complete on branch `ios-ref/dashboard-zone-builder`. Behavior-neutral zone-list strangler seam; orchestrator remains facade. Not committed unless requested.
+
+---
+
+## 2026-06-01 — Shared HueHome Unit-Test Scheme Configuration (IOS-TEST-001A)
+
+### What was built
+- **Branch:** `ios-test/configure-huehome-tests`
+- **Starting SHA:** `7e16095`
+- **Existing scheme gap:** shared `HueHome 1` had `<TestAction shouldAutocreateTestPlan="YES">` with no `<Testables>` entries — Xcode reported “no scheme and/or test plan that contains every test you are trying to run”
+- **`HueHomeTests` added to shared scheme TestAction** — `BlueprintIdentifier = F28E742458072F94D9443FF7`, `BuildableName = HueHomeTests.xctest`
+- **Production build action unchanged** — `BuildAction` still lists only `HueHome.app`
+- **`project.pbxproj` unchanged**
+
+### Validation
+- `xmllint --noout` on `HueHome 1.xcscheme` → **valid**
+- `bash Scripts/tests/test_inject_build_metadata.sh` → **21/21 pass**
+- `bash Scripts/tests/test_verify_built_app_metadata.sh` → **17/17 pass**
+- `xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build` → **BUILD SUCCEEDED**
+- **Test discovery:** `xcodebuild test` dependency graph includes `HueHomeTests`; `-only-testing:HueHomeTests/DashboardDisplayModelBuilderTests` accepted — missing `<Testables>` / “no scheme and/or test plan” error **resolved**
+- **Focused test execution:** `xcodebuild test -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:HueHomeTests/DashboardDisplayModelBuilderTests` → **TEST FAILED** (build): `HueHomeTests` — “Cannot code sign because the target does not have an Info.plist file” (`GENERATE_INFOPLIST_FILE` not set on test target; **out of IOS-TEST-001A scope** — needs `project.pbxproj` or follow-up)
+- **Watch AppIcon blocker (still present on direct test-target simulator build):** `LightShadeWatchApp Watch App/Assets.xcassets` — AppIcon did not have any applicable content for iOS Simulator when building `-target HueHomeTests -sdk iphonesimulator` — **not fixed in IOS-TEST-001A**
+
+### Follow-up
+- [ ] **IOS-TEST-001B** — unblock simulator test runs (watch AppIcon / embed graph) without broadening god-object extraction scope
+
+### Current state
+IOS-TEST-001A complete on branch `ios-test/configure-huehome-tests`. Scheme testable wired; no production or pbxproj edits. Not committed unless requested.
