@@ -623,111 +623,29 @@ final class UnifiedOrchestrator {
                         let (rooms, zones, lights, groupedLights) =
                             try await (roomsFetch, zonesFetch, lightsFetch, glFetch)
 
-                        let glByID = Dictionary(uniqueKeysWithValues:
-                            groupedLights.map { ($0.id, $0) }
+                        let displayModels = RoomAndZoneDisplayModelBuilder.makeDisplayModels(
+                            rooms: rooms,
+                            zones: zones,
+                            lights: lights,
+                            groupedLights: groupedLights,
+                            bridgeID: bridgeID
                         )
-
-                        // ── Build room items ───────────────────────────────────────────
-                        var roomItems: [RoomDisplayItem] = []
-                        var roomLightMap: [String: String] = [:]  // lightID → roomID
-                        for room in rooms {
-                            var isOn = false
-                            var brightness = 100.0
-                            if let glID = room.groupedLightID, let gl = glByID[glID] {
-                                isOn = gl.on.on
-                                brightness = max(1, gl.dimming?.brightness ?? 100)
-                            }
-                            let roomLights = lights.filter { light in
-                                room.children.contains { ref in
-                                    ref.rid == light.id || ref.rid == (light.owner?.rid ?? "")
-                                }
-                            }
-                            var dominantColorXY: (x: Double, y: Double)? = nil
-                            var dominantMirek: Int? = nil
-                            if isOn {
-                                let onLights = roomLights.filter { $0.on.on }
-                                if let best = onLights.filter({ $0.color != nil })
-                                    .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }) {
-                                    dominantColorXY = (best.color!.xy.x, best.color!.xy.y)
-                                } else if let best = onLights.filter({ $0.color_temperature?.mirek != nil })
-                                    .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }),
-                                    let mirek = best.color_temperature?.mirek {
-                                    dominantMirek = mirek
-                                }
-                            }
-                            for light in roomLights { roomLightMap[light.id] = room.id }
-                            roomItems.append(RoomDisplayItem(
-                                id:                room.id,
-                                name:              room.metadata.name,
-                                archetype:         room.metadata.archetype,
-                                isOn:              isOn,
-                                brightness:        brightness,
-                                groupedLightID:    room.groupedLightID,
-                                lightCount:        roomLights.count,
-                                bridgeID:          bridgeID,
-                                childResourceRefs: room.children.map { ($0.rid, $0.rtype) },
-                                dominantColorX:    dominantColorXY?.x,
-                                dominantColorY:    dominantColorXY?.y,
-                                dominantMirek:     dominantMirek
-                            ))
-                        }
-
-                        // ── Build zone items ───────────────────────────────────────────
-                        // Zone children are direct light refs (rtype:"light") —
-                        // no device-owner fallback needed.
-                        var zoneItems: [RoomDisplayItem] = []
-                        var zoneLightMap: [String: String] = [:]  // lightID → zoneID
-                        for zone in zones {
-                            var isOn = false
-                            var brightness = 100.0
-                            if let glID = zone.groupedLightID, let gl = glByID[glID] {
-                                isOn = gl.on.on
-                                brightness = max(1, gl.dimming?.brightness ?? 100)
-                            }
-                            let zoneLights = lights.filter { light in
-                                zone.children.contains { $0.rid == light.id }
-                            }
-                            var dominantColorXY: (x: Double, y: Double)? = nil
-                            var dominantMirek: Int? = nil
-                            if isOn {
-                                let onLights = zoneLights.filter { $0.on.on }
-                                if let best = onLights.filter({ $0.color != nil })
-                                    .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }) {
-                                    dominantColorXY = (best.color!.xy.x, best.color!.xy.y)
-                                } else if let best = onLights.filter({ $0.color_temperature?.mirek != nil })
-                                    .max(by: { ($0.dimming?.brightness ?? 0) < ($1.dimming?.brightness ?? 0) }),
-                                    let mirek = best.color_temperature?.mirek {
-                                    dominantMirek = mirek
-                                }
-                            }
-                            for light in zoneLights { zoneLightMap[light.id] = zone.id }
-                            var item = RoomDisplayItem(
-                                id:                zone.id,
-                                name:              zone.metadata.name,
-                                archetype:         zone.metadata.archetype,
-                                isOn:              isOn,
-                                brightness:        brightness,
-                                groupedLightID:    zone.groupedLightID,
-                                lightCount:        zoneLights.count,
-                                bridgeID:          bridgeID,
-                                childResourceRefs: zone.children.map { ($0.rid, $0.rtype) },
-                                dominantColorX:    dominantColorXY?.x,
-                                dominantColorY:    dominantColorXY?.y,
-                                dominantMirek:     dominantMirek
-                            )
-                            item.kind = .zone
-                            zoneItems.append(item)
-                        }
 
                         // Capture counts as constants to avoid capturing mutable vars
                         // across an async boundary (Swift 6 concurrency requirement).
-                        let roomCount = roomItems.count
-                        let zoneCount = zoneItems.count
+                        let roomCount = displayModels.rooms.count
+                        let zoneCount = displayModels.zones.count
                         await MainActor.run {
                             self.connectionStatus[bridgeID] = .connected
                             self.log.info("Bridge \(bridgeID): \(roomCount) rooms, \(zoneCount) zones")
                         }
-                        return (bridgeID, roomItems, zoneItems, roomLightMap, zoneLightMap)
+                        return (
+                            bridgeID,
+                            displayModels.rooms,
+                            displayModels.zones,
+                            displayModels.roomLightMap,
+                            displayModels.zoneLightMap
+                        )
                     } catch {
                         await MainActor.run {
                             self.connectionStatus[bridgeID] = .error(error.localizedDescription)
