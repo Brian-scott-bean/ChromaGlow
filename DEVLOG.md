@@ -1960,3 +1960,40 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 
 ### Follow-up recommendation
 - Keep future seams similarly bounded and pure (state-only transforms first, orchestration remains facade).
+
+---
+
+## 2026-06-02 — Composer Cadence Pure-Seam Inventory (IOS-REF-004A)
+
+### What was done
+- Branch: `ios-ref/composer-cadence-seam-inventory`
+- Starting SHA: `bc1cbbc`
+- Scope: documentation-only inventory of the next bounded pure `UnifiedOrchestrator` seam after IOS-REF-003B.
+- Added inventory doc: `docs/ios/composer-cadence-pure-seam-inventory.md`
+
+### Baseline and context
+- Current validated baseline (project-tracked): signed-simulator `HueHomeTests` 74/74 pass.
+- Prior extraction baseline acknowledged: IOS-REF-003B merged to `main`.
+- IOS-REF-003B physical-device smoke: passed.
+
+### Recommendation
+- Cadence scalar quartet (`minimumComposerRESTInterval`, `minimumComposerBurstFloor`, `preferredComposerIdleInterval`, `lowPowerIdleInterval`) is PURE but currently has zero call sites.
+- No IOS-REF-004B production extraction should proceed for this quartet; extracting unwired helpers would move dead-code-like logic without reducing live orchestrator runtime responsibility.
+- `CompositionTier` is accepted by the quartet but currently does not affect outputs.
+- Live REST scheduling remains driven by fixed cadence behavior inside `runCompositionScheduler()` (`tickInterval` + `nextDueAt` updates), not by the unwired quartet.
+- Do not wire the quartet into scheduler paths as part of this refactor.
+- Do not delete the quartet in this docs-only slice.
+- Optional later dead-code cleanup may evaluate deletion only after explicit approval and Composer smoke planning.
+
+### Recommended next docs-only task
+- `IOS-REF-005A — Inventory a live pure scoring sub-helper inside nextCompositionRoomPriority(now:)`
+
+### Deferred high-risk Composer areas
+- Scheduler loop behavior and task timing (`runCompositionScheduler`, `runCompositionEntertainment`).
+- Room-priority selection and runtime mutation (`nextCompositionRoomPriority`, `compositionRuntimes` lifecycle).
+- REST mailbox behavior, DTLS routing, bridge-stored animation routing, and mic-demand orchestration.
+
+### Constraints for this slice
+- No Swift changes.
+- No project-file changes.
+- No physical-device test required for this docs-only slice.
