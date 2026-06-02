@@ -16,9 +16,6 @@ jobs:
     name: Validate CI Build Numbering
     runs-on: macos-latest
 
-    env:
-      CHROMAGLOW_GIT_BRANCH_OVERRIDE: ${{ github.ref_name }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -50,6 +47,8 @@ jobs:
           bash Scripts/tests/test_verify_built_app_metadata.sh
 
       - name: Build unsigned iOS app
+        env:
+          CHROMAGLOW_GIT_BRANCH_OVERRIDE: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           DERIVED_DATA="${RUNNER_TEMP}/DerivedData"
