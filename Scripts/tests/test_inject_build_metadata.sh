@@ -65,7 +65,7 @@ run_inject() {
 init_clean_repo() {
     local dir="$1"
     mkdir -p "$dir"
-    git -C "$dir" init -q
+    git -C "$dir" init -q -b main
     git -C "$dir" config user.email "test@chromaglow.local"
     git -C "$dir" config user.name "ChromaGlow Test"
     echo "base" >"$dir/README.md"
