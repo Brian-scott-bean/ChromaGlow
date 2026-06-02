@@ -1825,7 +1825,28 @@ IOS-TEST-001A complete on branch `ios-test/configure-huehome-tests`. Scheme test
 - **`HueAPIClientTests.swift:58`** — `overriding declaration requires an 'override' keyword` on `TestableAPIClient.init`
 
 ### Follow-up
-- [ ] **IOS-TEST-001C** (or test-source fix slice) — repair stale `HueHomeTests` compile errors so focused `DashboardDisplayModelBuilderTests` can run (out of IOS-TEST-001B scope)
+- [x] **IOS-TEST-001C** (or test-source fix slice) — repair stale `HueHomeTests` compile errors so focused `DashboardDisplayModelBuilderTests` can run (out of IOS-TEST-001B scope)
 
 ### Current state
 IOS-TEST-001B complete on branch `ios-test/generate-huehome-tests-infoplist`. Two generated-plist settings only; not committed unless requested.
+
+---
+
+## 2026-06-01 — Repair stale HueHomeTests compile errors (IOS-TEST-001C)
+
+### What was built
+- **`HueHomeTests/KeychainManagerTests.swift`** — use `KeychainManager.shared` instead of `KeychainManager()` (production init is `private`)
+- **`HueHomeTests/HueAPIClientTests.swift`** — mark `TestableAPIClient.init(ip:token:)` as `override` and call `super.init(ip:token:)` to match production `HueAPIClient.init(ip:token:)`
+- **No production Swift changed** — `HueHome/` untouched
+- **No pbxproj / scheme / asset changes**
+
+### Validation
+- `xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:HueHomeTests/DashboardDisplayModelBuilderTests test CODE_SIGNING_ALLOWED=NO` → **TEST SUCCEEDED** (14/14 cases)
+- Prior compile blockers (`KeychainManagerTests:12`, `HueAPIClientTests:58`) → **resolved**
+
+### What's left
+- [ ] Commit IOS-TEST-001C slice when requested
+- [ ] Remaining HueHomeTests suites (Orchestrator, HueAPIClient, Keychain, etc.) not run in this focused validation
+
+### Current state
+IOS-TEST-001C complete locally. Test-only diff (2 files + DEVLOG); not committed unless requested.

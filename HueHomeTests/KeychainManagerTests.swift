@@ -9,7 +9,7 @@ import XCTest
 
 final class KeychainManagerTests: XCTestCase {
 
-    let keychain = KeychainManager()
+    let keychain = KeychainManager.shared
 
     // Unique per-test keys to prevent cross-test contamination
     var tokenKey: String { "test_token_\(name)" }
