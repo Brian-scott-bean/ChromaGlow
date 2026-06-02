@@ -1798,3 +1798,34 @@ IOS-REF-002 complete on branch `ios-ref/dashboard-zone-builder`. Behavior-neutra
 
 ### Current state
 IOS-TEST-001A complete on branch `ios-test/configure-huehome-tests`. Scheme testable wired; no production or pbxproj edits. Not committed unless requested.
+
+---
+
+## 2026-06-01 — Generated HueHomeTests Info.plist (IOS-TEST-001B)
+
+### What was built
+- **Branch:** `ios-test/generate-huehome-tests-infoplist`
+- **Starting SHA:** `5080279`
+- **`HueHomeTests` Debug (`04AA42E47C3895B901BFC504`)** — added `GENERATE_INFOPLIST_FILE = YES`
+- **`HueHomeTests` Release (`23C04301B398D3D9D7657757`)** — added `GENERATE_INFOPLIST_FILE = YES`
+- **No production build settings changed** — only the two HueHomeTests configuration blocks above
+- **No Swift code changed** — `HueHome/` and `HueHomeTests/` untouched
+
+### Validation
+- `git diff --check` → **clean**
+- `bash Scripts/tests/test_inject_build_metadata.sh` → **21/21 pass**
+- `bash Scripts/tests/test_verify_built_app_metadata.sh` → **17/17 pass**
+- `xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build` → **BUILD SUCCEEDED**
+- **Focused simulator test:** `xcodebuild test -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:HueHomeTests/DashboardDisplayModelBuilderTests` → **TEST FAILED** (build): Swift compile errors in `HueHomeTests` (not Info.plist)
+- **Info.plist blocker:** **resolved** — `ProcessInfoPlistFile` generates `HueHomeTests.xctest/Info.plist`; no “Cannot code sign because the target does not have an Info.plist file” error
+- **Watch AppIcon blocker:** **not observed** on this scheme-based simulator test run (watch targets built; no AppIcon asset-catalog failure)
+
+### Next blocker
+- **`KeychainManagerTests.swift:12`** — `'KeychainManager' initializer is inaccessible due to 'private' protection level`
+- **`HueAPIClientTests.swift:58`** — `overriding declaration requires an 'override' keyword` on `TestableAPIClient.init`
+
+### Follow-up
+- [ ] **IOS-TEST-001C** (or test-source fix slice) — repair stale `HueHomeTests` compile errors so focused `DashboardDisplayModelBuilderTests` can run (out of IOS-TEST-001B scope)
+
+### Current state
+IOS-TEST-001B complete on branch `ios-test/generate-huehome-tests-infoplist`. Two generated-plist settings only; not committed unless requested.
