@@ -55,10 +55,10 @@ final class TestableAPIClient: HueAPIClient {
     let stubIP:    String
     let stubToken: String
 
-    init(ip: String = "192.168.1.1", token: String = "test-token") {
+    override init(ip: String = "192.168.1.1", token: String = "test-token") {
         self.stubIP    = ip
         self.stubToken = token
-        super.init()
+        super.init(ip: ip, token: token)
     }
 
     override func credentials() throws -> (ip: String, token: String) {
