@@ -2235,22 +2235,20 @@ final class UnifiedOrchestrator {
 
         for roomID in compositionOrder {
             guard let runtime = compositionRuntimes[roomID] else { continue }
-            // Not yet due: skip unless we're within a tiny grace window.
-            if now + 0.004 < runtime.nextDueAt { continue }
-
-            let isInteracting = runtime.paramBox.isColorPadInteracting
-            let burstActive = runtime.interactionBurstUntil.map { now < $0 } ?? false
-            let overdue = max(0, now - runtime.nextDueAt)
-            let sinceLastSend = now - (runtime.lastSentAt ?? runtime.startTime)
-
-            var score = 0.0
-            if isInteracting { score += 1000 }
-            if burstActive { score += 500 }
-            if runtime.pendingSettle { score += 260 }
-            score += min(220, overdue * 120)
-            score += min(160, max(0, sinceLastSend - 1.4) * 45)
-            // Small fairness nudge to avoid repeatedly preferring a single hot room.
-            score -= min(60, Double(runtime.sendCount % 120) * 0.35)
+            guard let score = CompositionRoomPriorityScorer.score(
+                now: now,
+                input: .init(
+                    nextDueAt: runtime.nextDueAt,
+                    isColorPadInteracting: runtime.paramBox.isColorPadInteracting,
+                    interactionBurstUntil: runtime.interactionBurstUntil,
+                    pendingSettle: runtime.pendingSettle,
+                    lastSentAt: runtime.lastSentAt,
+                    startTime: runtime.startTime,
+                    sendCount: runtime.sendCount
+                )
+            ) else {
+                continue
+            }
 
             if score > selectedScore {
                 selectedScore = score

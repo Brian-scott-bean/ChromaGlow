@@ -2027,3 +2027,57 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 - No Swift changes.
 - No project-file changes.
 - No physical-device testing required for this docs-only slice.
+
+---
+
+## 2026-06-02 — Composer Room-Priority Scorer Extraction (IOS-REF-005B)
+
+### What was done
+- Branch: `ios-ref/composer-priority-scorer`
+- Starting SHA: `3d8ee2f`
+- Added pure scorer helper: `HueHome/Core/Composer/CompositionRoomPriorityScorer.swift`
+- Added focused tests: `HueHomeTests/CompositionRoomPriorityScorerTests.swift`
+- Delegated only the eligibility-and-score block inside `nextCompositionRoomPriority(now:)` in `HueHome/Core/Network/UnifiedOrchestrator.swift`
+- Preserved orchestrator-owned `compositionOrder` traversal and strict `score > selectedScore` tie-breaking.
+
+### Preserved behavior contract
+- Due-gate grace preserved exactly: `now + 0.004 < nextDueAt` ineligible.
+- Numeric score terms/formulas preserved exactly:
+  - `+1000` interaction
+  - `+500` interaction burst
+  - `+260` pending settle
+  - `+min(220, overdue * 120)`
+  - `+min(160, max(0, sinceLastSend - 1.4) * 45)`
+  - `-min(60, Double(sendCount % 120) * 0.35)`
+- Scheduler cadence unchanged (`tickInterval` and `nextDueAt` write path unchanged).
+- REST mailbox behavior unchanged (`studioRestSender` usage unchanged).
+- Runtime mutation timing unchanged (writes still in `runCompositionScheduler()` after selection).
+- Transport routing unchanged (REST vs entertainment paths untouched).
+
+### Test and validation notes
+- Focused scorer tests cover due gate, all term contributions/caps, fallback semantics, modulo fairness rollover, combined score, determinism, and input immutability.
+- Existing builder baselines remain expected:
+  - `DashboardDisplayModelBuilderTests` 14/14 pass target.
+  - `RoomAndZoneDisplayModelBuilderTests` 6/6 pass target.
+- Full signed-simulator `HueHomeTests` baseline remains expected to include prior 74 plus new scorer tests.
+- Generic unsigned app build target remains `BUILD SUCCEEDED`.
+
+### Physical-device Composer smoke instructions
+- Open `HueHome.xcodeproj`
+- Scheme: `HueHome 1`
+- Destination: physical iPhone
+- Product -> Clean Build Folder
+- Product -> Run
+- In app, verify Settings footer shows:
+  - Branch `ios-ref/composer-priority-scorer`
+  - Working tree modified
+- Then verify:
+  - App launches without crash
+  - Dashboard opens normally
+  - Studio/Composer start/stop remains responsive
+  - Multi-room interaction remains responsive with no starvation, stuck UI, or unexpected toast
+  - Transport behavior remains unchanged (REST vs entertainment path)
+  - Force quit, relaunch, and re-verify dashboard + Composer responsiveness
+
+### Follow-up recommendation
+- Keep future Composer refactors bounded to pure value helpers first, leaving scheduler ownership and runtime mutation timing in `UnifiedOrchestrator`.
