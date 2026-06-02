@@ -1,0 +1,192 @@
+name: iOS Build Provenance
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-provenance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-provenance:
+    name: Validate CI Build Numbering
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve CI build number
+        run: |
+          set -euo pipefail
+          if ! [[ "${GITHUB_RUN_NUMBER}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "error: GITHUB_RUN_NUMBER must be a positive integer (got '${GITHUB_RUN_NUMBER}')" >&2
+            exit 1
+          fi
+          echo "CI_BUILD_NUMBER=${GITHUB_RUN_NUMBER}" >> "${GITHUB_ENV}"
+
+      - name: Select Xcode 26.3
+        run: |
+          set -euo pipefail
+          XCODE_DEVELOPER_DIR="/Applications/Xcode_26.3.app/Contents/Developer"
+          if [[ ! -d "${XCODE_DEVELOPER_DIR}" ]]; then
+            echo "error: expected hosted-runner Xcode not found: ${XCODE_DEVELOPER_DIR}" >&2
+            ls -1 /Applications | grep '^Xcode' || true
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=${XCODE_DEVELOPER_DIR}" >> "${GITHUB_ENV}"
+          DEVELOPER_DIR="${XCODE_DEVELOPER_DIR}" xcodebuild -version
+
+      - name: Log toolchain
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          echo "CI build number: ${CI_BUILD_NUMBER}"
+          echo "Source ref: ${GITHUB_REF_NAME}"
+          echo "Source commit: ${GITHUB_SHA}"
+
+      - name: Run shell tests
+        run: |
+          set -euo pipefail
+          bash Scripts/tests/test_inject_build_metadata.sh
+          bash Scripts/tests/test_verify_built_app_metadata.sh
+
+      - name: Build unsigned iOS app
+        env:
+          CHROMAGLOW_GIT_BRANCH_OVERRIDE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          DERIVED_DATA="${RUNNER_TEMP}/DerivedData"
+          mkdir -p "${DERIVED_DATA}"
+          xcodebuild \
+            -project HueHome.xcodeproj \
+            -scheme "HueHome 1" \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            CURRENT_PROJECT_VERSION="${CI_BUILD_NUMBER}" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Locate built app plist
+        id: locate
+        run: |
+          set -euo pipefail
+          DERIVED_DATA="${RUNNER_TEMP}/DerivedData"
+          MAIN_PLIST="${DERIVED_DATA}/Build/Products/Debug-iphoneos/HueHome.app/Info.plist"
+          if [[ ! -f "${MAIN_PLIST}" ]]; then
+            echo "error: processed main app Info.plist not found: ${MAIN_PLIST}" >&2
+            echo "Available app Info.plist files:" >&2
+            find "${DERIVED_DATA}/Build/Products" \
+              -path "*.app/Info.plist" \
+              -print >&2 || true
+            exit 1
+          fi
+          MAIN_APP_DIR="$(dirname "${MAIN_PLIST}")"
+          echo "main_plist=${MAIN_PLIST}" >> "${GITHUB_OUTPUT}"
+          echo "main_app_dir=${MAIN_APP_DIR}" >> "${GITHUB_OUTPUT}"
+
+      - name: Inspect nested bundle versions
+        id: nested
+        run: |
+          set -euo pipefail
+          MAIN_APP_DIR="${{ steps.locate.outputs.main_app_dir }}"
+          WIDGET_PLIST="${MAIN_APP_DIR}/PlugIns/HueHomeWidgetExtension.appex/Info.plist"
+          WATCH_PLIST="${MAIN_APP_DIR}/Watch/LightShadeWatchApp Watch App.app/Info.plist"
+
+          for bundle_plist in "${WIDGET_PLIST}" "${WATCH_PLIST}"; do
+            if [[ ! -f "${bundle_plist}" ]]; then
+              echo "error: nested bundle plist not found: ${bundle_plist}" >&2
+              exit 1
+            fi
+          done
+
+          widget_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${WIDGET_PLIST}")"
+          widget_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${WIDGET_PLIST}")"
+          watch_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${WATCH_PLIST}")"
+          watch_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${WATCH_PLIST}")"
+
+          if [[ "${widget_version}" != "0.9.0" || "${widget_build}" != "${CI_BUILD_NUMBER}" ]]; then
+            echo "error: widget bundle mismatch (version=${widget_version}, build=${widget_build})" >&2
+            exit 1
+          fi
+          if [[ "${watch_version}" != "0.9.0" || "${watch_build}" != "${CI_BUILD_NUMBER}" ]]; then
+            echo "error: watch app bundle mismatch (version=${watch_version}, build=${watch_build})" >&2
+            exit 1
+          fi
+
+          echo "widget_version=${widget_version}" >> "${GITHUB_OUTPUT}"
+          echo "widget_build=${widget_build}" >> "${GITHUB_OUTPUT}"
+          echo "watch_version=${watch_version}" >> "${GITHUB_OUTPUT}"
+          echo "watch_build=${watch_build}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify built app metadata
+        id: verify
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          CHROMAGLOW_BUILT_APP_PLIST="${{ steps.locate.outputs.main_plist }}" \
+          CHROMAGLOW_EXPECTED_MARKETING_VERSION="0.9.0" \
+          CHROMAGLOW_EXPECTED_BUILD_NUMBER="${CI_BUILD_NUMBER}" \
+          CHROMAGLOW_EXPECTED_COMMIT="${GITHUB_SHA}" \
+          CHROMAGLOW_EXPECTED_BRANCH="${GITHUB_REF_NAME}" \
+          CHROMAGLOW_EXPECTED_DIRTY="0" \
+          CHROMAGLOW_REPORT_PATH="artifacts/ios-build-provenance.txt" \
+          bash Scripts/verify_built_app_metadata.sh
+
+          marketing_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${{ steps.locate.outputs.main_plist }}")"
+          build_number="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${{ steps.locate.outputs.main_plist }}")"
+          git_commit="$(/usr/libexec/PlistBuddy -c 'Print :ChromaGlowGitCommit' "${{ steps.locate.outputs.main_plist }}")"
+          git_branch="$(/usr/libexec/PlistBuddy -c 'Print :ChromaGlowGitBranch' "${{ steps.locate.outputs.main_plist }}")"
+          build_timestamp="$(/usr/libexec/PlistBuddy -c 'Print :ChromaGlowBuildTimestamp' "${{ steps.locate.outputs.main_plist }}")"
+          git_dirty="$(/usr/libexec/PlistBuddy -c 'Print :ChromaGlowGitDirty' "${{ steps.locate.outputs.main_plist }}")"
+          xcode_version="$(xcodebuild -version | tr '\n' ' ')"
+
+          {
+            echo ""
+            echo "Workflow Context"
+            echo "================"
+            echo "Workflow run number: ${GITHUB_RUN_NUMBER}"
+            echo "Workflow run attempt: ${GITHUB_RUN_ATTEMPT}"
+            echo "Workflow run ID: ${GITHUB_RUN_ID}"
+            echo "Source ref: ${GITHUB_REF_NAME}"
+            echo "Source commit: ${GITHUB_SHA}"
+            echo "Xcode version: ${xcode_version}"
+            echo ""
+            echo "Nested Bundles"
+            echo "=============="
+            echo "Widget CFBundleShortVersionString: ${{ steps.nested.outputs.widget_version }}"
+            echo "Widget CFBundleVersion: ${{ steps.nested.outputs.widget_build }}"
+            echo "Watch CFBundleShortVersionString: ${{ steps.nested.outputs.watch_version }}"
+            echo "Watch CFBundleVersion: ${{ steps.nested.outputs.watch_build }}"
+          } >> artifacts/ios-build-provenance.txt
+
+          {
+            echo "## iOS Build Provenance"
+            echo ""
+            echo "- Marketing version: ${marketing_version}"
+            echo "- CI build number: ${build_number}"
+            echo "- Commit: ${git_commit}"
+            echo "- Branch: ${git_branch}"
+            echo "- Build timestamp: ${build_timestamp}"
+            echo "- Dirty state: ${git_dirty}"
+            echo "- Widget build number: ${{ steps.nested.outputs.widget_build }}"
+            echo "- Watch app build number: ${{ steps.nested.outputs.watch_build }}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload provenance artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-build-provenance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/ios-build-provenance.txt
+            ${{ steps.locate.outputs.main_plist }}
+          retention-days: 14
+          if-no-files-found: error

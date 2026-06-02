@@ -13,6 +13,7 @@
 //   - All colors/spacing/animation via HueTokens
 
 import SwiftUI
+import CoreGraphics
 
 // MARK: - StudioView
 
@@ -2036,49 +2037,56 @@ struct StudioView: View {
     private var motionAngleDial: some View {
         let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
         let size: CGFloat = 80
+        let indicatorRad: CGFloat = (CGFloat(currentAngle) - 90) * .pi / 180
 
         return ZStack {
-            // Outer ring
             Circle()
                 .fill(Color.white.opacity(0.04))
-                .overlay(Circle().strokeBorder(.white.opacity(0.12), lineWidth: 1.5))
+                .overlay(
+                    Circle()
+                        .strokeBorder(.white.opacity(0.12), lineWidth: 1.5)
+                )
 
-            // Tick marks at 45° intervals
             ForEach(0..<8, id: \.self) { i in
-                let tickAngle = Double(i) * 45.0
-                let rad = (tickAngle - 90) * .pi / 180.0
+                let tickAngle: CGFloat = CGFloat(i) * 45
+                let rad: CGFloat = (tickAngle - 90) * .pi / 180
                 let inner: CGFloat = size / 2 - 10
                 let outer: CGFloat = size / 2 - 4
+                let cosRad: CGFloat = CoreGraphics.cos(rad)
+                let sinRad: CGFloat = CoreGraphics.sin(rad)
+
                 Path { path in
                     path.move(to: CGPoint(
-                        x: size / 2 + cos(rad) * inner,
-                        y: size / 2 + sin(rad) * inner
+                        x: size / 2 + cosRad * inner,
+                        y: size / 2 + sinRad * inner
                     ))
                     path.addLine(to: CGPoint(
-                        x: size / 2 + cos(rad) * outer,
-                        y: size / 2 + sin(rad) * outer
+                        x: size / 2 + cosRad * outer,
+                        y: size / 2 + sinRad * outer
                     ))
                 }
                 .stroke(.white.opacity(0.2), lineWidth: 1.5)
             }
 
-            // Direction indicator line
-            let indicatorRad = (currentAngle - 90) * .pi / 180.0
+            let indicatorCos: CGFloat = CoreGraphics.cos(indicatorRad)
+            let indicatorSin: CGFloat = CoreGraphics.sin(indicatorRad)
+
             Path { path in
                 path.move(to: CGPoint(x: size / 2, y: size / 2))
                 path.addLine(to: CGPoint(
-                    x: size / 2 + cos(indicatorRad) * (size / 2 - 14),
-                    y: size / 2 + sin(indicatorRad) * (size / 2 - 14)
+                    x: size / 2 + indicatorCos * (size / 2 - 14),
+                    y: size / 2 + indicatorSin * (size / 2 - 14)
                 ))
             }
-            .stroke(HuePalette.amber, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            .stroke(
+                HuePalette.amber,
+                style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+            )
 
-            // Center dot
             Circle()
                 .fill(HuePalette.amber)
                 .frame(width: 6, height: 6)
 
-            // Degree label
             Text("\(Int(currentAngle))°")
                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.45))
@@ -2094,11 +2102,9 @@ struct StudioView: View {
                     let dy = gesture.location.y - center.y
                     var angle = atan2(dy, dx) * 180 / .pi + 90
                     if angle < 0 { angle += 360 }
-                    // Snap to nearest 5° for precision
                     let snapped = (angle / 5).rounded() * 5
                     let final = snapped.truncatingRemainder(dividingBy: 360)
 
-                    // Haptic tick at 45° boundaries
                     let prev = vm.activeCompositionBox?.motion.motionAngle ?? 0
                     let prevSlot = Int(prev / 45)
                     let newSlot = Int(final / 45)
@@ -2130,17 +2136,19 @@ struct StudioView: View {
                 )
 
             // Direction arrow through center
-            let arrowRad = (currentAngle - 90) * .pi / 180.0
+            let arrowRad: CGFloat = (CGFloat(currentAngle) - 90) * .pi / 180
+            let arrowCos: CGFloat = CoreGraphics.cos(arrowRad)
+            let arrowSin: CGFloat = CoreGraphics.sin(arrowRad)
             Path { path in
                 let cx = mapSize / 2, cy = mapSize / 2
                 let len: CGFloat = mapSize / 2 - 8
                 path.move(to: CGPoint(
-                    x: cx - cos(arrowRad) * len * 0.3,
-                    y: cy - sin(arrowRad) * len * 0.3
+                    x: cx - arrowCos * len * 0.3,
+                    y: cy - arrowSin * len * 0.3
                 ))
                 path.addLine(to: CGPoint(
-                    x: cx + cos(arrowRad) * len,
-                    y: cy + sin(arrowRad) * len
+                    x: cx + arrowCos * len,
+                    y: cy + arrowSin * len
                 ))
             }
             .stroke(

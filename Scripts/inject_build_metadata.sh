@@ -91,7 +91,9 @@ else
 fi
 
 BRANCH_NAME=""
-if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if [[ -n "${CHROMAGLOW_GIT_BRANCH_OVERRIDE:-}" ]]; then
+    BRANCH_NAME="${CHROMAGLOW_GIT_BRANCH_OVERRIDE}"
+elif git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     BRANCH_NAME="$(git -C "$REPO_ROOT" branch --show-current 2>/dev/null || true)"
 fi
 

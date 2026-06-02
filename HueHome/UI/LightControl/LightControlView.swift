@@ -11,6 +11,7 @@
 // Haptic feedback mirrors the room-level brightness scrubber pattern.
 
 import SwiftUI
+import CoreGraphics
 
 // MARK: - LightControlView
 
@@ -394,19 +395,28 @@ struct ColorWheelView: View {
     private func pick(at location: CGPoint, center: CGPoint, radius: CGFloat) {
         let dx = location.x - center.x
         let dy = location.y - center.y
-        let dist = min(sqrt(dx*dx + dy*dy), radius)
-        let angle = atan2(dy, dx)
-        hue = ((angle / (2 * .pi)) + 1).truncatingRemainder(dividingBy: 1)
-        saturation = dist / radius
-        thumbPos = CGPoint(x: center.x + cos(angle) * dist,
-                           y: center.y + sin(angle) * dist)
+        let dist: CGFloat = min(sqrt(dx * dx + dy * dy), radius)
+        let angle: CGFloat = atan2(dy, dx)
+        let normalizedHue = ((angle / (2 * .pi)) + 1)
+            .truncatingRemainder(dividingBy: 1)
+
+        hue = Double(normalizedHue)
+        saturation = Double(dist / radius)
+
+        thumbPos = CGPoint(
+            x: center.x + CoreGraphics.cos(angle) * dist,
+            y: center.y + CoreGraphics.sin(angle) * dist
+        )
     }
 
     private func placeThumb(center: CGPoint, radius: CGFloat) {
-        let angle = hue * 2 * .pi
-        let dist  = saturation * radius
-        thumbPos = CGPoint(x: center.x + cos(angle) * dist,
-                           y: center.y + sin(angle) * dist)
+        let angle: CGFloat = CGFloat(hue) * 2 * .pi
+        let dist: CGFloat = CGFloat(saturation) * radius
+
+        thumbPos = CGPoint(
+            x: center.x + CoreGraphics.cos(angle) * dist,
+            y: center.y + CoreGraphics.sin(angle) * dist
+        )
     }
 }
 
