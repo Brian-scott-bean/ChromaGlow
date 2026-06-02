@@ -2081,3 +2081,49 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 
 ### Follow-up recommendation
 - Keep future Composer refactors bounded to pure value helpers first, leaving scheduler ownership and runtime mutation timing in `UnifiedOrchestrator`.
+
+---
+
+## 2026-06-02 — Composer Light-Resolution Pure-Seam Inventory (IOS-REF-006A)
+
+### What was done
+- Branch: `ios-ref/composer-light-resolution-inventory`
+- Starting SHA: `93a3584`
+- Scope: documentation-only inventory for live Composer light-resolution seams in `UnifiedOrchestrator`.
+- Added inventory doc: `docs/ios/composer-light-resolution-pure-seam-inventory.md`
+- Inspected live methods:
+  - `resolveCompositionGamut(for:api:)`
+  - `resolveCompositionLightIDs(for:api:)`
+  - `resolveEntertainmentLightPositions(config:api:)`
+  - plus caller `startCompositionMode(...)`
+
+### Baseline and prior context acknowledged
+- Current validated baseline: full signed-simulator `HueHomeTests` 93/93 pass.
+- IOS-REF-005B physical-device Composer smoke: passed.
+- Prior extracted seams acknowledged (IOS-REF-001R / IOS-REF-002 / IOS-REF-003B / IOS-REF-005B).
+
+### Recommendation
+- Recommend one narrow IOS-REF-006B production extraction: shared value-only child-resource light resolution helper reused by gamut/light-ID methods.
+- Keep all fetches, credentials access, JSON payload parsing, routing, and runtime mutation inside `UnifiedOrchestrator`.
+- Keep gamut majority selection inline for IOS-REF-006B because tie behavior is currently implicit and should not be changed during this slice.
+
+### Behavioral constraints captured
+- Direct `rtype == "light"` semantics, owner fallback semantics, mixed-ref precedence, and empty-input behavior documented.
+- Ordering/duplicate constraints documented:
+  - direct-ref ID order and duplicate preservation
+  - owner-path dependence on fetched light-array order
+  - entertainment map duplicate overwrite behavior (last-write-wins across mapping layers)
+- Fallback constraints documented:
+  - gamut: `.c` fallbacks
+  - light IDs: `[]` fallbacks
+  - entertainment positions: `[:]` fallbacks
+
+### Deferred high-risk areas
+- Network access, credentials handling, and raw JSON parsing remain deferred.
+- Transport and bridge routing behavior remains deferred.
+- Scheduler cadence, mailbox behavior, generation guards, and runtime mutation remain deferred.
+
+### Constraints for this slice
+- No Swift changes.
+- No project-file changes.
+- No physical-device test required for this docs-only slice.
