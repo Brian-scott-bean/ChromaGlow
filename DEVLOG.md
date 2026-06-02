@@ -1724,3 +1724,50 @@ IOS-OPS-001D merged to `main` via PR #5 (`eb214c4`). Push-triggered **iOS Build 
 
 ### Current state
 IOS-REF-001R complete on branch `ios-ref/dashboard-room-builder`. Behavior-neutral strangler seam; orchestrator remains facade. Not committed unless requested.
+
+---
+
+## 2026-06-01 — Dashboard Zone Builder Extraction (IOS-REF-002)
+
+### What was built
+- **Branch:** `ios-ref/dashboard-zone-builder`
+- **Starting SHA:** `02fa48a`
+- **`DashboardDisplayModelBuilder.makeRooms(from:)`** — left unchanged (IOS-REF-001R)
+- **`DashboardDisplayModelBuilder.makeZones(from:)`** — pure helper: flatten `zonesByBridge` values → localized alphabetical sort by name → ID-only de-duplication
+- **`UnifiedOrchestrator.rebuildAllZones()`** — composition delegates to `makeZones(from:)`; navigation buffering and `scheduleWidgetWrite()` remain orchestrator-only
+- **`HueHomeTests/DashboardDisplayModelBuilderTests.swift`** — seven zone contract tests mirroring room coverage
+
+### Preserved behavior
+- Navigation buffering (`isNavigating` / `sseRebuildPendingZones`)
+- Widget/watch snapshot scheduling via `scheduleWidgetWrite()` (orchestrator-only)
+- ID-only de-duplication (not `(bridgeID, id)`)
+- Localized ascending name sort before dedupe
+- `rebuildAllRooms()`, `scheduleWidgetWrite()`, `updateRoom(...)` untouched
+
+### Validation
+- `bash Scripts/tests/test_inject_build_metadata.sh` → **21/21 pass**
+- `bash Scripts/tests/test_verify_built_app_metadata.sh` → **17/17 pass**
+- `xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build` → **BUILD SUCCEEDED**
+- `xcodebuild -project HueHome.xcodeproj -target HueHomeTests -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build` → **BUILD FAILED** (pre-existing: `LightShadeWatchApp Watch App` `AppIcon` asset catalog has no applicable content for iOS Simulator)
+- Focused `xcodebuild test` → **blocked**: shared scheme `HueHome 1` has `<TestAction shouldAutocreateTestPlan="YES">` but no `<Testables>` entries (unchanged per task scope)
+- `git diff --check` → clean
+- Prohibited files (`project.pbxproj`, `RoomDisplayItem.swift`, etc.) → **no diff**
+
+### Physical-device smoke (Brian)
+1. Open **`HueHome.xcodeproj`**, scheme **`HueHome 1`**, physical iPhone
+2. **Product → Clean Build Folder → Run**
+3. **More → Settings** footer: branch `ios-ref/dashboard-zone-builder`, SHA matches `git rev-parse --short HEAD`
+4. Dashboard: no crash; room cards correct; zone section/cards if configured
+5. Zone cards alphabetically ordered; no duplicate zone cards
+6. Zone detail (if supported) → back; toggle zone if supported; force quit → relaunch
+7. Multi-bridge (if available): zones from both bridges, no duplicate IDs
+8. Widget (if installed): room state still updates after a room action
+
+### Manual test run (Xcode)
+- Test navigator (⌘6) → `DashboardDisplayModelBuilderTests` → run zone tests after app build
+
+### What's next
+- [ ] **IOS-REF-003** (optional) — shared flatten/sort/dedupe helper if a third dashboard list seam appears; not required while duplication stays bounded
+
+### Current state
+IOS-REF-002 complete on branch `ios-ref/dashboard-zone-builder`. Behavior-neutral zone-list strangler seam; orchestrator remains facade. Not committed unless requested.

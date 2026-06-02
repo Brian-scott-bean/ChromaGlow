@@ -1,5 +1,5 @@
 // DashboardDisplayModelBuilderTests.swift
-// ChromaGlow — IOS-REF-001R
+// ChromaGlow — IOS-REF-001R, IOS-REF-002
 
 import XCTest
 @testable import HueHome
@@ -7,6 +7,25 @@ import XCTest
 final class DashboardDisplayModelBuilderTests: XCTestCase {
 
     // MARK: - Helpers
+
+    private func zone(
+        id: String,
+        name: String,
+        bridgeID: String = "bridge-a",
+        isOn: Bool = true,
+        brightness: Double = 50,
+        refs: [(rid: String, rtype: String)] = [("light-1", "light")]
+    ) -> RoomDisplayItem {
+        room(
+            id: id,
+            name: name,
+            kind: .zone,
+            bridgeID: bridgeID,
+            isOn: isOn,
+            brightness: brightness,
+            refs: refs
+        )
+    }
 
     private func room(
         id: String,
@@ -159,6 +178,101 @@ final class DashboardDisplayModelBuilderTests: XCTestCase {
         let snapshot = input
 
         _ = DashboardDisplayModelBuilder.makeRooms(from: input)
+
+        XCTAssertEqual(input.keys.sorted(), snapshot.keys.sorted())
+        XCTAssertEqual(input["bridge-a"]?.map(\.id), snapshot["bridge-a"]?.map(\.id))
+        XCTAssertEqual(input["bridge-a"]?.map(\.name), snapshot["bridge-a"]?.map(\.name))
+    }
+
+    // MARK: - Zone tests (IOS-REF-002)
+
+    func testMakeZones_emptyInput_returnsEmptyArray() {
+        let result = DashboardDisplayModelBuilder.makeZones(from: [:])
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testMakeZones_multiBridgeInput_flattensAndSortsAlphabetically() {
+        let downstairs = zone(id: "z-down", name: "Downstairs", bridgeID: "bridge-b")
+        let kitchen = zone(id: "z-kitchen", name: "Kitchen", bridgeID: "bridge-a")
+        let upstairs = zone(id: "z-up", name: "Upstairs", bridgeID: "bridge-a")
+
+        let input: [String: [RoomDisplayItem]] = [
+            "bridge-b": [upstairs, downstairs],
+            "bridge-a": [kitchen],
+        ]
+
+        let result = DashboardDisplayModelBuilder.makeZones(from: input)
+
+        XCTAssertEqual(result.map(\.name), ["Downstairs", "Kitchen", "Upstairs"])
+    }
+
+    func testMakeZones_duplicateIDs_keepsOneItem() {
+        let first = zone(id: "dup-id", name: "Alpha", bridgeID: "bridge-a")
+        let second = zone(id: "dup-id", name: "Beta", bridgeID: "bridge-b")
+
+        let result = DashboardDisplayModelBuilder.makeZones(from: [
+            "bridge-a": [first],
+            "bridge-b": [second],
+        ])
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].id, "dup-id")
+    }
+
+    func testMakeZones_duplicateIDs_sortsBeforeDeduplicating() {
+        let zulu = zone(id: "dup-id", name: "Zulu", bridgeID: "bridge-b")
+        let alpha = zone(id: "dup-id", name: "Alpha", bridgeID: "bridge-a")
+
+        let result = DashboardDisplayModelBuilder.makeZones(from: [
+            "bridge-b": [zulu],
+            "bridge-a": [alpha],
+        ])
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].name, "Alpha")
+    }
+
+    func testMakeZones_sameNameDifferentIDs_keepsBothItems() {
+        let one = zone(id: "id-1", name: "Office", bridgeID: "bridge-a")
+        let two = zone(id: "id-2", name: "Office", bridgeID: "bridge-b")
+
+        let result = DashboardDisplayModelBuilder.makeZones(from: [
+            "bridge-a": [two],
+            "bridge-b": [one],
+        ])
+
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(Set(result.map(\.id)), ["id-1", "id-2"])
+    }
+
+    func testMakeZones_preservesZoneKindAndDisplayStateFields() {
+        let item = zone(
+            id: "preserve-id",
+            name: "Preserve",
+            bridgeID: "bridge-p",
+            isOn: false,
+            brightness: 12.5,
+            refs: [("rid-a", "light"), ("rid-b", "device")]
+        )
+
+        let result = DashboardDisplayModelBuilder.makeZones(from: [
+            "bridge-p": [item],
+        ])
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].kind, .zone)
+        assertRoomFieldsEqual(result[0], item)
+    }
+
+    func testMakeZones_doesNotMutateInput() {
+        let kitchen = zone(id: "z-kitchen", name: "Kitchen")
+        let upstairs = zone(id: "z-up", name: "Upstairs")
+        var input: [String: [RoomDisplayItem]] = [
+            "bridge-a": [kitchen, upstairs],
+        ]
+        let snapshot = input
+
+        _ = DashboardDisplayModelBuilder.makeZones(from: input)
 
         XCTAssertEqual(input.keys.sorted(), snapshot.keys.sorted())
         XCTAssertEqual(input["bridge-a"]?.map(\.id), snapshot["bridge-a"]?.map(\.id))

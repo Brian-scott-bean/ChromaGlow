@@ -1337,12 +1337,12 @@ final class UnifiedOrchestrator {
     }
 
     private func rebuildAllZones() {
-        guard !isNavigating else { sseRebuildPendingZones = true; return }
-        var seen = Set<String>()
-        allZones = zonesByBridge.values
-            .flatMap { $0 }
-            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
-            .filter { seen.insert($0.id).inserted }
+        guard !isNavigating else {
+            sseRebuildPendingZones = true
+            return
+        }
+
+        allZones = DashboardDisplayModelBuilder.makeZones(from: zonesByBridge)
         scheduleWidgetWrite()
     }
 
