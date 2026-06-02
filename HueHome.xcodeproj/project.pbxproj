@@ -12,6 +12,8 @@
 		F4E1000111111111 /* HueEntertainmentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000100000000 /* HueEntertainmentClient.swift */; };
 		AB000BRAND002 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000BRAND001 /* AppBrand.swift */; };
 		B1LDM3TA000000000000002 /* BuildMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1LDM3TA000000000000001 /* BuildMetadata.swift */; };
+		DASHBD000000000000000002 /* DashboardDisplayModelBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = DASHBD000000000000000001 /* DashboardDisplayModelBuilder.swift */; };
+		DASHBD000000000000000005 /* DashboardDisplayModelBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DASHBD000000000000000004 /* DashboardDisplayModelBuilderTests.swift */; };
 		04DEE771A7499DCB48E4F81A /* WidgetDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */; };
 		06FADE8E35C87CCC9AB5CECB /* LightDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4092578BDBB64A4C0FE7E197 /* LightDisplayItem.swift */; };
 		0999A64D5AFE2FBF068686AE /* HueTokensTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9773CCB15915BAFE26086009 /* HueTokensTests.swift */; };
@@ -189,6 +191,8 @@
 		F4E1000100000000 /* HueEntertainmentClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueEntertainmentClient.swift; path = HueHome/Core/Network/HueEntertainmentClient.swift; sourceTree = "<group>"; };
 		AB000BRAND001 /* AppBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppBrand.swift; path = HueHome/Core/AppBrand.swift; sourceTree = "<group>"; };
 		B1LDM3TA000000000000001 /* BuildMetadata.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BuildMetadata.swift; path = HueHome/Core/App/BuildMetadata.swift; sourceTree = "<group>"; };
+		DASHBD000000000000000001 /* DashboardDisplayModelBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DashboardDisplayModelBuilder.swift; path = HueHome/Core/Dashboard/DashboardDisplayModelBuilder.swift; sourceTree = "<group>"; };
+		DASHBD000000000000000004 /* DashboardDisplayModelBuilderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DashboardDisplayModelBuilderTests.swift; path = ./HueHomeTests/DashboardDisplayModelBuilderTests.swift; sourceTree = "<group>"; };
 		013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAPIClient.swift; path = ./HueHome/Core/Network/BridgeAPIClient.swift; sourceTree = "<group>"; };
 		0AE302747F21A3DDFB547CD1 /* KeychainManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeychainManager.swift; path = HueHome/Core/Keychain/KeychainManager.swift; sourceTree = "<group>"; };
 		0AFC6DD83A8A43FEA3352BB6 /* SavedEffectPreset.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SavedEffectPreset.swift; path = HueHome/Core/Effects/SavedEffectPreset.swift; sourceTree = "<group>"; };
@@ -731,14 +735,24 @@
 				9773CCB15915BAFE26086009 /* HueTokensTests.swift */,
 				21BE543D4BC624B5BC51CC2D /* HueDataModelsTests.swift */,
 				B1LDTEST0000000000000001 /* BuildMetadataTests.swift */,
+				DASHBD000000000000000004 /* DashboardDisplayModelBuilderTests.swift */,
 			);
 			name = HueHomeTests;
+			sourceTree = "<group>";
+		};
+		DASHBD000000000000000003 /* Dashboard */ = {
+			isa = PBXGroup;
+			children = (
+				DASHBD000000000000000001 /* DashboardDisplayModelBuilder.swift */,
+			);
+			name = Dashboard;
 			sourceTree = "<group>";
 		};
 		E44AF3E912AE191245436392 /* Core */ = {
 			isa = PBXGroup;
 			children = (
 				B1LDGRP000000000000000001 /* App */,
+				DASHBD000000000000000003 /* Dashboard */,
 				7EDBB1B40FB409D94C0FC48C /* Keychain */,
 				07153DA61129E1EAC37A4D4A /* Network */,
 				598BD88BFF3A6427EDAE1DB9 /* ViewModels */,
@@ -1067,6 +1081,7 @@
 				C9FD3C95694034D599E442F8 /* KeychainManager.swift in Sources */,
 				AB000BRAND002 /* AppBrand.swift in Sources */,
 				B1LDM3TA000000000000002 /* BuildMetadata.swift in Sources */,
+				DASHBD000000000000000002 /* DashboardDisplayModelBuilder.swift in Sources */,
 				5B7FF9289ACAFD32B0ADAA92 /* BridgeDiscoveryService.swift in Sources */,
 				0C9408FD0363E00A877DA046 /* BridgeDiscoveryViewModel.swift in Sources */,
 				98241981FA9EF6CA7A3E7A97 /* BridgeSetupView.swift in Sources */,
@@ -1160,6 +1175,7 @@
 				0999A64D5AFE2FBF068686AE /* HueTokensTests.swift in Sources */,
 				6A9477AF877444924F210BEB /* HueDataModelsTests.swift in Sources */,
 				B1LDTEST0000000000000002 /* BuildMetadataTests.swift in Sources */,
+				DASHBD000000000000000005 /* DashboardDisplayModelBuilderTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

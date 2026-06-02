@@ -1327,12 +1327,12 @@ final class UnifiedOrchestrator {
 
     private func rebuildAllRooms() {
         // Buffer during navigation push to avoid layout churn mid-animation.
-        guard !isNavigating else { sseRebuildPendingRooms = true; return }
-        var seen = Set<String>()
-        allRooms = roomsByBridge.values
-            .flatMap { $0 }
-            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
-            .filter { seen.insert($0.id).inserted }
+        guard !isNavigating else {
+            sseRebuildPendingRooms = true
+            return
+        }
+
+        allRooms = DashboardDisplayModelBuilder.makeRooms(from: roomsByBridge)
         scheduleWidgetWrite()
     }
 
