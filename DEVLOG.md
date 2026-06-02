@@ -1997,3 +1997,33 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 - No Swift changes.
 - No project-file changes.
 - No physical-device test required for this docs-only slice.
+
+---
+
+## 2026-06-02 — Composer Priority-Scoring Pure-Seam Inventory (IOS-REF-005A)
+
+### What was done
+- Branch: `ios-ref/composer-priority-scoring-inventory`
+- Starting SHA: `cb01e11`
+- Scope: documentation-only inventory for extracting a bounded live pure scoring helper from `nextCompositionRoomPriority(now:)`.
+- Added inventory doc: `docs/ios/composer-priority-scoring-pure-seam-inventory.md`
+
+### Baseline and prior decisions acknowledged
+- Current validated baseline: signed-simulator `HueHomeTests` 74/74 pass.
+- IOS-REF-003B physical-device dashboard/room/zone smoke: passed.
+- IOS-REF-004A decision acknowledged: cadence quartet remains pure but unwired, with no IOS-REF-004B extraction recommended.
+
+### Findings
+- `nextCompositionRoomPriority(now:)` is confirmed live (called by `runCompositionScheduler()`).
+- A value-only score sub-helper is recommended for IOS-REF-005B, with orchestrator-owned iteration/tie-breaking preserved unchanged.
+- Score logic is deterministic and value-only; no network I/O, SSE, Task creation/cancellation, persistence, or routing decisions inside scoring.
+
+### Deferred high-risk Composer areas
+- Scheduler cadence/tick behavior and runtime mutation timing in `runCompositionScheduler()`.
+- REST mailbox semantics (`studioRestSender`) and generation guard lifecycle.
+- Transport routing (bridge-stored vs entertainment vs REST) and mic-demand orchestration.
+
+### Constraints for this slice
+- No Swift changes.
+- No project-file changes.
+- No physical-device testing required for this docs-only slice.
