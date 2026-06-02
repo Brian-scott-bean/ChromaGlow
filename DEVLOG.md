@@ -2280,3 +2280,33 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 ### Follow-up
 - Optional hygiene slice: register orphaned `OrchestratorTests.swift` in `HueHomeTests` target (15 tests on disk, not in pbxproj)
 - Defer gamut tie-break policy pinning until product defines explicit rules
+
+---
+
+## 2026-06-02 — OrchestratorTests Target-Membership Repair Inventory (IOS-TEST-003A)
+
+### Scope
+- Branch: `ios-test/orchestrator-tests-membership-inventory`
+- Starting SHA: `c1d5917`
+- Documentation-only — no Swift, no Xcode project, no target membership changes
+- New inventory: `docs/ios/orchestrator-tests-membership-repair-inventory.md`
+
+### Baseline
+- Full signed-simulator `HueHomeTests` → **118/118** pass (unchanged)
+- `HueHomeTests/OrchestratorTests.swift` tracked on disk but **absent** from `HueHome.xcodeproj` Sources
+
+### Findings
+- Exact orphan XCTest method count: **14** (earlier **15** estimate incorrect — counted helper or stale handoff)
+- Confirmed compile blockers: `BridgeAPIClient` `final` prevents `TestableBridgeAPIClient` subclass; `testApplySSEEvent` shim return-type mismatch; `turnAllOff()` `async` without `await` in test
+- Runtime/fixture drift: missing `/clip/v2/resource/zone` stub breaks all `loadAll` success paths; entertainment cleanup GET unstubbed
+- Concurrency: shared `StubURLProtocol.stubs` **not safe** under scheme `parallelizable="YES"` when multiple stub-using classes run together
+- `applySSEEvent` already **internal** — orphan shim redundant (and invalid as written)
+
+### Recommended IOS-TEST-003B slice
+- **IOS-TEST-003B — Orchestrator cache + demo offline recovery (4 tests)**
+- New file `OrchestratorCacheDemoTests.swift` — preloadCached ×3 + demo-mode loadAll ×1
+- No production edits; no `BridgeAPIClient` finality change; defer remaining 10 orphan tests to B2–B4
+
+### Validation
+- No Xcode build run (docs-only)
+- No physical-device test required for this slice
