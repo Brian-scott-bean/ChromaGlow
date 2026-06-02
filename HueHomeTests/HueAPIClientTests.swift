@@ -62,7 +62,10 @@ final class TestableAPIClient: HueAPIClient {
     }
 
     override func credentials() throws -> (ip: String, token: String) {
-        (stubIP, stubToken)
+        guard !stubIP.isEmpty, !stubToken.isEmpty else {
+            throw HueAPIError.missingCredentials
+        }
+        return (stubIP, stubToken)
     }
 
     // Override the internal session to use the stub protocol

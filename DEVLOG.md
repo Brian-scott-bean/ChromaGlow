@@ -1850,3 +1850,33 @@ IOS-TEST-001B complete on branch `ios-test/generate-huehome-tests-infoplist`. Tw
 
 ### Current state
 IOS-TEST-001C complete locally. Test-only diff (2 files + DEVLOG); not committed unless requested.
+
+---
+
+## 2026-06-01 — Signed Simulator Runtime Test Repair (IOS-TEST-001D)
+
+### Context
+- **Branch:** `ios-test/repair-simulator-runtime-tests`
+- **Starting SHA:** `1038a6a`
+- Prior full-suite baseline on unsigned simulator runs (`CODE_SIGNING_ALLOWED=NO`): **60 passed / 8 failed / 68** (7× `errSecMissingEntitlement` in `KeychainManagerTests`, 1× stale `HueAPIClientTests.testMissingCredentialsThrowsCorrectError` expecting `missingCredentials` but receiving `httpError(404)`)
+
+### Signed simulator baseline (before edit)
+- Destination: `platform=iOS Simulator,name=iPhone 17 Pro` (no `CODE_SIGNING_ALLOWED=NO`)
+- **Keychain entitlement failures:** disappeared — all 7 `KeychainManagerTests` passed
+- **Remaining failure:** `HueAPIClientTests.testMissingCredentialsThrowsCorrectError` only
+- Full `HueHomeTests`: **67 passed / 1 failed / 68**
+
+### Fix (test-only)
+- **`HueHomeTests/HueAPIClientTests.swift`** — `TestableAPIClient.credentials()` now rejects empty `stubIP` / `stubToken` with `HueAPIError.missingCredentials`, matching production `HueAPIClient.credentials()` semantics (no production Swift change)
+
+### Validation (after edit)
+- Shell: `Scripts/tests/test_inject_build_metadata.sh` → **21/21 PASS**; `Scripts/tests/test_verify_built_app_metadata.sh` → **17/17 PASS**
+- Generic unsigned app build (`CODE_SIGNING_ALLOWED=NO`, `generic/platform=iOS`) → **BUILD SUCCEEDED**
+- Focused: `HueHomeTests/DashboardDisplayModelBuilderTests` (signed simulator) → **TEST SUCCEEDED** (14/14)
+- Full: `HueHomeTests` (signed simulator) → **TEST SUCCEEDED** (68/68)
+
+### Keychain isolation review (recommendation)
+- `KeychainManagerTests` use production legacy keys (`hue_api_token`, `hue_bridge_ip`) via `saveAPIToken` / `saveBridgeIP` — not the per-test `tokenKey` / `ipKey` helpers (those apply only to generic `save(for:)` tests). Consider a follow-up harness slice to namespace test credentials or inject a test-only service name without touching production `KeychainManager` until approved.
+
+### Current state
+IOS-TEST-001D test-only slice ready for commit when requested. No production Keychain, entitlements, or pbxproj changes.
