@@ -2261,19 +2261,10 @@ final class UnifiedOrchestrator {
 
     private func resolveCompositionGamut(for room: RoomDisplayItem, api: HueAPIClient) async -> HueColorUtils.Gamut {
         guard let allLights = try? await api.fetchLights() else { return .c }
-        let refs = room.childResourceRefs
-
-        let roomLights: [HueLight]
-        if refs.contains(where: { $0.rtype == "light" }) {
-            let lightIDs = Set(refs.filter { $0.rtype == "light" }.map(\.rid))
-            roomLights = allLights.filter { lightIDs.contains($0.id) }
-        } else {
-            let deviceIDs = Set(refs.map(\.rid))
-            roomLights = allLights.filter { light in
-                guard let ownerRID = light.owner?.rid else { return false }
-                return deviceIDs.contains(ownerRID)
-            }
-        }
+        let roomLights = CompositionLightResolver.resolveLights(
+            childResourceRefs: room.childResourceRefs,
+            lights: allLights
+        )
 
         guard !roomLights.isEmpty else { return .c }
         var counts: [HueColorUtils.Gamut: Int] = [.a: 0, .b: 0, .c: 0]
@@ -2291,19 +2282,19 @@ final class UnifiedOrchestrator {
         guard !refs.isEmpty else { return [] }
 
         // Zones reference lights directly — zero API calls
-        if refs.contains(where: { $0.rtype == "light" }) {
-            return refs.filter { $0.rtype == "light" }.map { $0.rid }
+        if CompositionLightResolver.hasDirectLightReferences(childResourceRefs: refs) {
+            return CompositionLightResolver.resolveLightIDs(
+                childResourceRefs: refs,
+                lights: []
+            )
         }
 
         // Rooms reference devices — resolve via light.owner.rid
-        let deviceIDs = Set(refs.map { $0.rid })
         guard let allLights = try? await api.fetchLights() else { return [] }
-        return allLights
-            .filter { light in
-                guard let ownerRID = light.owner?.rid else { return false }
-                return deviceIDs.contains(ownerRID)
-            }
-            .map { $0.id }
+        return CompositionLightResolver.resolveLightIDs(
+            childResourceRefs: refs,
+            lights: allLights
+        )
     }
 
     /// Resolve lightID → physical (x, z) position from an entertainment config.

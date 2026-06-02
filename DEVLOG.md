@@ -2000,6 +2000,76 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 
 ---
 
+## 2026-06-02 — Composer Light Resolver Extraction (IOS-REF-006B)
+
+### What was done
+- Branch: `ios-ref/composer-light-resolver`
+- Starting SHA: `27d6a16`
+- Added pure helper: `HueHome/Core/Composer/CompositionLightResolver.swift`
+- Added focused tests: `HueHomeTests/CompositionLightResolverTests.swift`
+- Delegated deterministic child-resource resolution from:
+  - `resolveCompositionGamut(for:api:)`
+  - `resolveCompositionLightIDs(for:api:)`
+  in `HueHome/Core/Network/UnifiedOrchestrator.swift`
+
+### Preserved behavior contract
+- Direct-light precedence preserved: any `rtype == "light"` still short-circuits mixed refs to direct mode.
+- ID direct mode preserved: ref order and duplicates preserved; non-light refs ignored.
+- Gamut-path light resolution preserved: direct mode still uses set-membership against fetched lights and returns fetched-light order.
+- Owner fallback preserved for both paths via `light.owner?.rid` matching.
+- Conditional fetch behavior preserved:
+  - gamut path still always fetches lights
+  - light-ID direct mode still bypasses fetch
+  - light-ID owner fallback still fetches lights
+- Fetch-failure fallbacks preserved in orchestrator:
+  - gamut -> `.c`
+  - owner-ID path -> `[]`
+- Gamut majority selection and implicit tie behavior left inline and unchanged.
+- `resolveEntertainmentLightPositions(config:api:)` left untouched.
+
+### Focused test coverage added
+- `CompositionLightResolverTests` covers:
+  - direct-mode detection (`false/true/mixed`)
+  - direct ID semantics (order, duplicates, mixed refs, empty lights)
+  - direct light resolution semantics (fetched-light ordering, deduplicated membership, omitted missing refs, mixed-ref precedence)
+  - owner fallback semantics (owner matching, fetched-light order, duplicate-device refs, non-matching and nil-owner omission)
+  - edge cases (empty refs/lights, non-matching refs, determinism, input immutability)
+
+### Validation plan/results
+- Existing pure-seam baselines expected unchanged:
+  - `CompositionRoomPriorityScorerTests` target: 19/19
+  - `RoomAndZoneDisplayModelBuilderTests` target: 6/6
+  - `DashboardDisplayModelBuilderTests` target: 14/14
+- Full signed-simulator suite target: prior 93 tests plus new resolver tests, all passing.
+- Generic unsigned app build target: `BUILD SUCCEEDED`.
+- Shell metadata tests expected unchanged:
+  - Injector tests -> 21/21 PASS
+  - Verifier tests -> 17/17 PASS
+
+### Physical-device Composer smoke instructions
+- Open `HueHome.xcodeproj`
+- Scheme: `HueHome 1`
+- Destination: physical iPhone
+- Product -> Clean Build Folder
+- Product -> Run
+- Verify Settings footer first:
+  - Branch `ios-ref/composer-light-resolver`
+  - Working tree modified
+- Then verify normal Composer flow:
+  - app launch + dashboard render
+  - Composer start/stop/restart responsiveness
+  - expected lights animate/update with no unexpected toasts or stuck UI
+  - direct-light and mixed-ref topologies (if available) preserve visible behavior
+  - REST-vs-entertainment routing remains unchanged
+  - force-quit + relaunch + re-run Composer
+
+### Follow-up recommendation
+- Keep any future light-resolution slices narrowly scoped:
+  - leave network/credentials/JSON/routing in `UnifiedOrchestrator`
+  - pin gamut tie behavior in a dedicated slice before extracting gamut-majority logic.
+
+---
+
 ## 2026-06-02 — Composer Priority-Scoring Pure-Seam Inventory (IOS-REF-005A)
 
 ### What was done

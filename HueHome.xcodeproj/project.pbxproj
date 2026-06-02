@@ -113,6 +113,8 @@
 		0E7CD3AA335189BAFEFFB105 /* CompositionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B06F0F76E068D42895691A4 /* CompositionEngine.swift */; };
 		C0DEC0DE005B000000000001 /* CompositionRoomPriorityScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE005B000000000002 /* CompositionRoomPriorityScorer.swift */; };
 		C0DEC0DE005B000000000003 /* CompositionRoomPriorityScorerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE005B000000000004 /* CompositionRoomPriorityScorerTests.swift */; };
+		C0DEC0DE006B000000000001 /* CompositionLightResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE006B000000000002 /* CompositionLightResolver.swift */; };
+		C0DEC0DE006B000000000003 /* CompositionLightResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE006B000000000004 /* CompositionLightResolverTests.swift */; };
 		F1E2D3C4B5A68990ABCDEF03 /* CompositionMicCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */; };
 		E1B00002AAAA000000000001 /* HueV1Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000001 /* HueV1Client.swift */; };
 		E1B00002AAAA000000000002 /* BridgeAnimationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */; };
@@ -300,6 +302,8 @@
 		7B06F0F76E068D42895691A4 /* CompositionEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionEngine.swift; path = ./HueHome/UI/Studio/CompositionEngine.swift; sourceTree = "<group>"; };
 		C0DEC0DE005B000000000002 /* CompositionRoomPriorityScorer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionRoomPriorityScorer.swift; path = HueHome/Core/Composer/CompositionRoomPriorityScorer.swift; sourceTree = "<group>"; };
 		C0DEC0DE005B000000000004 /* CompositionRoomPriorityScorerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionRoomPriorityScorerTests.swift; path = ./HueHomeTests/CompositionRoomPriorityScorerTests.swift; sourceTree = "<group>"; };
+		C0DEC0DE006B000000000002 /* CompositionLightResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionLightResolver.swift; path = HueHome/Core/Composer/CompositionLightResolver.swift; sourceTree = "<group>"; };
+		C0DEC0DE006B000000000004 /* CompositionLightResolverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionLightResolverTests.swift; path = ./HueHomeTests/CompositionLightResolverTests.swift; sourceTree = "<group>"; };
 		F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionMicCapture.swift; path = ./HueHome/UI/Studio/CompositionMicCapture.swift; sourceTree = "<group>"; };
 		E1B00001AAAA000000000001 /* HueV1Client.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueV1Client.swift; path = HueHome/Core/Network/HueV1Client.swift; sourceTree = "<group>"; };
 		E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationEngine.swift; path = HueHome/Core/Network/BridgeAnimationEngine.swift; sourceTree = "<group>"; };
@@ -746,6 +750,7 @@
 				DASHBD000000000000000004 /* DashboardDisplayModelBuilderTests.swift */,
 				RZBLD000000000000000003 /* RoomAndZoneDisplayModelBuilderTests.swift */,
 				C0DEC0DE005B000000000004 /* CompositionRoomPriorityScorerTests.swift */,
+				C0DEC0DE006B000000000004 /* CompositionLightResolverTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -763,6 +768,7 @@
 			isa = PBXGroup;
 			children = (
 				C0DEC0DE005B000000000002 /* CompositionRoomPriorityScorer.swift */,
+				C0DEC0DE006B000000000002 /* CompositionLightResolver.swift */,
 			);
 			name = Composer;
 			sourceTree = "<group>";
@@ -1155,6 +1161,7 @@
 				4BF64D53B0E97F7FAFFDD67B /* CompositionStore.swift in Sources */,
 				0E7CD3AA335189BAFEFFB105 /* CompositionEngine.swift in Sources */,
 				C0DEC0DE005B000000000001 /* CompositionRoomPriorityScorer.swift in Sources */,
+				C0DEC0DE006B000000000001 /* CompositionLightResolver.swift in Sources */,
 				F1E2D3C4B5A68990ABCDEF03 /* CompositionMicCapture.swift in Sources */,
 				A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */,
 				CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */,
@@ -1200,6 +1207,7 @@
 				DASHBD000000000000000005 /* DashboardDisplayModelBuilderTests.swift in Sources */,
 				RZBLD000000000000000004 /* RoomAndZoneDisplayModelBuilderTests.swift in Sources */,
 				C0DEC0DE005B000000000003 /* CompositionRoomPriorityScorerTests.swift in Sources */,
+				C0DEC0DE006B000000000003 /* CompositionLightResolverTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
