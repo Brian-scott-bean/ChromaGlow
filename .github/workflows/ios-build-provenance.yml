@@ -32,6 +32,18 @@ jobs:
           fi
           echo "CI_BUILD_NUMBER=${GITHUB_RUN_NUMBER}" >> "${GITHUB_ENV}"
 
+      - name: Select Xcode 26.3
+        run: |
+          set -euo pipefail
+          XCODE_DEVELOPER_DIR="/Applications/Xcode_26.3.app/Contents/Developer"
+          if [[ ! -d "${XCODE_DEVELOPER_DIR}" ]]; then
+            echo "error: expected hosted-runner Xcode not found: ${XCODE_DEVELOPER_DIR}" >&2
+            ls -1 /Applications | grep '^Xcode' || true
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=${XCODE_DEVELOPER_DIR}" >> "${GITHUB_ENV}"
+          DEVELOPER_DIR="${XCODE_DEVELOPER_DIR}" xcodebuild -version
+
       - name: Log toolchain
         run: |
           set -euo pipefail
