@@ -1880,3 +1880,39 @@ IOS-TEST-001C complete locally. Test-only diff (2 files + DEVLOG); not committed
 
 ### Current state
 IOS-TEST-001D test-only slice ready for commit when requested. No production Keychain, entitlements, or pbxproj changes.
+
+---
+
+## 2026-06-02 — UnifiedOrchestrator Pure-Seam Inventory (IOS-REF-003A)
+
+### What was done
+- Branch: `ios-ref/orchestrator-pure-seam-inventory`
+- Starting SHA: `4db4b68`
+- Scope: documentation-only inventory of `UnifiedOrchestrator.swift` responsibilities, state surface, and side-effect boundaries.
+- Added `docs/ios/unified-orchestrator-pure-seam-inventory.md` describing public/private state, responsibility map, classifications, and candidate pure seams.
+- Recorded the existence of the previously extracted dashboard room/zone builder seam (`DashboardDisplayModelBuilder`) and its tests (`DashboardDisplayModelBuilderTests`).
+
+### Baseline and tests
+- Existing automated baseline (from IOS-TEST-001D): `DashboardDisplayModelBuilderTests` → 14/14 pass.
+- Existing full `HueHomeTests` suite baseline: 68/68 pass on signed simulator.
+- No new tests were added or run for IOS-REF-003A; this slice is docs-only.
+
+### Recommended next refactor (IOS-REF-003B)
+- Proposed task ID: `IOS-REF-003B`.
+- Recommended seam: extract the room and zone display-model composition logic from `UnifiedOrchestrator.fetchAndMergeAllBridges()` into a pure helper (proposed `RoomAndZoneDisplayModelBuilder` under `HueHome/Core/Dashboard/`).
+- Delegation point: the loops that build `RoomDisplayItem`/zone `RoomDisplayItem` values and light-to-room/zone maps from `rooms`, `zones`, `lights`, and `groupedLights` (currently around lines 606–751).
+- Expected behavior: no change to network calls, SSE lifecycle, optimistic updates, rollback semantics, persistence, or widgets/watch; only pure transformation code moves behind a helper.
+
+### Deferred high-risk areas
+- SSE connection coordination and event application (`startSSE`, `stopSSE`, `runSSE`, `applySSEEvent`).
+- Pending-action deadline logic and optimistic mutation/rollback for rooms and zones.
+- All-day scenes scheduler and `UserDefaults`-backed anchors.
+- Widget/watch snapshot writing and App Group payload shape.
+- Bridge registry lifecycle and multi-bridge routing (`configure`, `addBridge`, `removeBridge`).
+- Studio/Composer entertainment routing, bridge-stored animation, and Keychain/SwiftData/App Group contracts.
+
+### Constraints for this slice
+- No Swift files modified.
+- No Xcode project files modified.
+- No changes to networking, Hue API behavior, SSE cadence, optimistic updates, rollback, persistence, widgets, watch, or Studio/Composer runtime behavior.
+- No new builds or physical-device tests required for IOS-REF-003A (documentation-only).
