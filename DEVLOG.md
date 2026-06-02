@@ -1616,10 +1616,10 @@ IOS-OPS-001B complete on branch `ios-ops/build-metadata-injection`. Settings foo
 - HueHomeTests target has no `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` (test bundle only, not shipped)
 
 ### What's next
-- [ ] **IOS-OPS-001D** — push-triggered CI build numbering (automatic increment on CI, not local)
+- [x] **IOS-OPS-001D** — push-triggered CI build numbering (see DEVLOG entry below)
 
 ### Current state
-IOS-OPS-001C complete on branch `ios-ops/normalize-version-settings` starting from `c660728`. Effective version/build preserved at `0.9.0` / `1`. Not committed unless requested.
+IOS-OPS-001C merged to `main`. Effective version/build preserved at `0.9.0` / `1`.
 
 ---
 
@@ -1638,33 +1638,45 @@ IOS-OPS-001C complete on branch `ios-ops/normalize-version-settings` starting fr
 - **Marketing version:** `0.9.0` everywhere (unchanged).
 
 ### Branch metadata in CI
-- Workflow sets `CHROMAGLOW_GIT_BRANCH_OVERRIDE=${GITHUB_REF_NAME}` so detached-HEAD checkouts still inject branch name.
+- `CHROMAGLOW_GIT_BRANCH_OVERRIDE=${GITHUB_REF_NAME}` is set **only on the Build unsigned iOS app step** (not job-wide), so shell fixture tests still see fixture repo branch `main`.
 - Local builds without override preserve existing `git branch --show-current` behavior.
+
+### CI workflow hardening (first hosted runs)
+| Fix | Problem | Resolution |
+|---|---|---|
+| Fixture default branch | GitHub runners use `master`; clean-repo test expected `main` | `git init -q -b main` in `init_clean_repo` |
+| Branch override scope | Job-level override leaked into shell tests | Move override to build step `env` only |
+| Xcode toolchain | Default runner Xcode 16.4 vs local 26.4 | **Select Xcode 26.3** step sets `DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer` |
+| Processed plist lookup | `find -path 'Debug-iphoneos/...'` never matched absolute paths | Deterministic `${DERIVED_DATA}/Build/Products/Debug-iphoneos/HueHome.app/Info.plist` + diagnostic `find` fallback |
+
+### Compiler compatibility (Xcode 26.3 CI only; behavior-neutral)
+- **`HueHome/UI/LightControl/LightControlView.swift`** — `ColorWheelView`: explicit `CGFloat` angles + `CoreGraphics.cos` / `CoreGraphics.sin` (resolved ambiguous `cos`/`sin` overloads).
+- **`HueHome/UI/Studio/StudioView.swift`** — `motionAngleDial` + `spatialMiniMap`: same `CGFloat` + `CoreGraphics` pattern (resolved type-check timeout on `ZStack`).
 
 ### Validation
 - `bash Scripts/tests/test_inject_build_metadata.sh` → **21/21 pass**
 - `bash Scripts/tests/test_verify_built_app_metadata.sh` → **17/17 pass**
-- Local CI-style unsigned build with `CURRENT_PROJECT_VERSION=4242` + `CODE_SIGNING_ALLOWED=NO` → **BUILD SUCCEEDED** (pre-existing warnings only; `CODE_SIGNING_REQUIRED=NO` not needed)
-- Main app built plist: `0.9.0` / `4242`, Git metadata present, branch override `ios-ops/ci-build-numbering`, dirty `1` during uncommitted work
+- Local CI-style unsigned build with `CURRENT_PROJECT_VERSION=4242` + `CODE_SIGNING_ALLOWED=NO` → **BUILD SUCCEEDED**
+- Main app built plist: `0.9.0` / `4242`, Git metadata present; deterministic plist path lookup **PASS**
 - Nested bundles: widget + watch both `0.9.0` / `4242`
-- `git diff -- HueHome/Info.plist` → **no diff**
+- `git diff -- HueHome/Info.plist` → **no diff** (IOS-OPS-001D policy unchanged)
 - `git diff -- HueHome.xcodeproj/project.pbxproj` → **no diff**
 - Ruby YAML parse of workflow → **PASS**
 
 ### Post-push GitHub validation
-1. Commit and push `ios-ops/ci-build-numbering`
-2. GitHub → **Actions** → **iOS Build Provenance** → open branch push run
-3. Confirm job succeeds; summary shows marketing `0.9.0`, CI build number = run number, commit/branch match, dirty `0`
-4. Download artifact `ios-build-provenance-<run_id>-<attempt>`; confirm `ios-build-provenance.txt` values
-5. After merge to `main`, confirm `main` push also triggers and passes
+1. Push branch → **Actions** → **iOS Build Provenance** → confirm job succeeds end-to-end
+2. Workflow summary: marketing `0.9.0`, CI build number = run number, commit/branch match, dirty `0`
+3. Download artifact `ios-build-provenance-<run_id>-<attempt>`; confirm `ios-build-provenance.txt` + processed `HueHome.app/Info.plist`
+4. After merge to `main`, confirm `main` push also triggers and passes
 
 ### Gotchas
 - Tracked project remains **`HueHome.xcodeproj`**; `ChromaGlow.xcodeproj` is an incomplete local shell
-- CI builds are **unsigned validation builds** — not installable on physical devices; local Xcode builds still show `Build 1`
+- CI builds are **unsigned validation builds** — not installable on physical devices; local Xcode builds still show **`Build 1`**
+- Hosted runner must have `Xcode_26.3.app`; workflow fails fast with installed Xcode list if missing
 - No signing secrets, TestFlight upload, archive export, or auto-commit in this chunk
 
 ### What's next
 - [ ] **IOS-OPS-001E** (optional) — signed archive and TestFlight delivery
 
 ### Current state
-IOS-OPS-001D complete on branch `ios-ops/ci-build-numbering` starting from `2497431`. Not committed unless requested.
+IOS-OPS-001D merged to `main` via PR #5 (`eb214c4`). Push-triggered **iOS Build Provenance** workflow validates CI build numbering and metadata without mutating source version settings. Local physical-device builds remain `Version 0.9.0 · Build 1`.
