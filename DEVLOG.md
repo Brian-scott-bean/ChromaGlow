@@ -2310,3 +2310,31 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 ### Validation
 - No Xcode build run (docs-only)
 - No physical-device test required for this slice
+
+---
+
+## 2026-06-02 — Orchestrator Cache + Demo Offline Recovery (IOS-TEST-003B)
+
+### Scope
+- Branch: `ios-test/orchestrator-cache-demo-tests`
+- Starting SHA: `ae20fff`
+- New test file: `HueHomeTests/OrchestratorCacheDemoTests.swift`
+- Recovered tests (4): `testPreloadCached_populatesAllRooms`, `testPreloadCached_sortsAlphabetically`, `testPreloadCached_emptyInput_leavesAllRoomsEmpty`, `testDemoMode_loadAll_doesNotMakeNetworkRequests`
+- No production Swift changes
+- No orphan-file edits (`HueHomeTests/OrchestratorTests.swift` remains off-target)
+- No `BridgeAPIClient` finality change
+- No networking fixtures, `StubURLProtocol`, or client injection
+- No shared URLProtocol state
+- No scheme parallelization changes
+
+### Validation
+- Focused signed-simulator `OrchestratorCacheDemoTests` → **4/4** PASS
+- Full signed-simulator `HueHomeTests` → **122/122** PASS (118 baseline + 4 new)
+- Generic unsigned Debug build → **BUILD SUCCEEDED**
+- Generic unsigned Release build → **BUILD SUCCEEDED**
+- Shell injector tests → **21/21** PASS
+- Shell verifier tests → **17/17** PASS
+- No physical-device test required for this slice
+
+### Deferred
+- **IOS-TEST-003B2** — `loadAll` harness recovery (4 orphan tests; zone stub + compile repair for `TestableBridgeAPIClient` subclass blocker)
