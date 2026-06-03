@@ -206,7 +206,7 @@ final class BridgeDiscoveryService: ObservableObject {
                     let portValue  = port.rawValue
                     let bridge = BridgeEndpoint(name: name, host: hostString, port: portValue)
 
-                    guard !self.discoveredBridges.contains(bridge) else { return }
+                    guard !self.discoveredBridges.contains(where: { $0.host == hostString && $0.port == portValue }) else { return }
 
                     self.discoveredBridges.append(bridge)
                     let msg = "🌉 Bridge resolved! Name: '\(name)' | IP: \(hostString) | Port: \(portValue)"

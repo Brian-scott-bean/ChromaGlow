@@ -90,6 +90,8 @@ final class BridgeDiscoveryViewModel {
     var logLines: [String] = []
     /// Human-readable label shown in the scanning UI — updates as fallback methods are tried.
     var scanningLabel: String = "Searching your Wi-Fi..."
+    /// Host+port-deduplicated bridges available for explicit selection during scanning.
+    var discoveredBridgeChoices: [BridgeEndpoint] = []
 
     // MARK: Services
     let discovery = BridgeDiscoveryService()
@@ -108,21 +110,35 @@ final class BridgeDiscoveryViewModel {
             }
             .store(in: &cancellables)
 
-        // Auto-transition to .bridgeFound when the first bridge resolves via mDNS
+        // Keep scanning until the user explicitly selects a discovered bridge.
         discovery.$discoveredBridges
-            .filter { !$0.isEmpty }
-            .compactMap { $0.first }
-            .first()                      // only fire once per scan session
             .receive(on: RunLoop.main)
-            .sink { [weak self] bridge in
+            .sink { [weak self] bridges in
                 guard let self else { return }
-                guard case .scanning = self.phase else { return }
-                self.discovery.stopScan()
-                self.appendLog("🎉 Bridge found via mDNS: '\(bridge.name)' @ \(bridge.host):\(bridge.port)")
-                self.appendLog("👆 Press the link button on your Hue Bridge, then tap Pair.")
-                self.phase = .bridgeFound(bridge)
+                let deduped = Self.deduplicatedByHostAndPort(bridges)
+                let previousKeys = Set(self.discoveredBridgeChoices.map { Self.endpointKey($0) })
+                for bridge in deduped where !previousKeys.contains(Self.endpointKey(bridge)) {
+                    self.appendLog("🌉 Resolved bridge choice: '\(bridge.name)' @ \(bridge.host):\(bridge.port)")
+                }
+                self.discoveredBridgeChoices = deduped
             }
             .store(in: &cancellables)
+    }
+
+    /// Collapses duplicate mDNS resolutions that share the same host and port.
+    nonisolated static func deduplicatedByHostAndPort(_ bridges: [BridgeEndpoint]) -> [BridgeEndpoint] {
+        var seen = Set<String>()
+        var result: [BridgeEndpoint] = []
+        for bridge in bridges {
+            let key = endpointKey(bridge)
+            guard seen.insert(key).inserted else { continue }
+            result.append(bridge)
+        }
+        return result
+    }
+
+    private nonisolated static func endpointKey(_ bridge: BridgeEndpoint) -> String {
+        "\(bridge.host):\(bridge.port)"
     }
 
     // ──────────────────────────────────────────────
@@ -137,6 +153,7 @@ final class BridgeDiscoveryViewModel {
         }
 
         logLines.removeAll()
+        discoveredBridgeChoices.removeAll()
         phase = .scanning
         scanningLabel = "Searching your Wi-Fi..."
         mdnsRetryDone = false
@@ -158,8 +175,20 @@ final class BridgeDiscoveryViewModel {
         scanTimeoutTask?.cancel()
         scanTimeoutTask = nil
         discovery.stopScan()
+        discoveredBridgeChoices.removeAll()
         phase = .idle
         appendLog("🔄 Reset to idle.")
+    }
+
+    /// User picked a discovered bridge; stop scanning and show pairing instructions for that endpoint.
+    func selectDiscoveredBridge(_ bridge: BridgeEndpoint) {
+        guard case .scanning = phase else { return }
+        scanTimeoutTask?.cancel()
+        scanTimeoutTask = nil
+        discovery.stopScan()
+        appendLog("👆 Selected discovered bridge: '\(bridge.name)' @ \(bridge.host):\(bridge.port)")
+        appendLog("👆 Press the link button on your Hue Bridge, then tap Pair.")
+        phase = .bridgeFound(bridge)
     }
 
     // ──────────────────────────────────────────────
@@ -219,23 +248,19 @@ final class BridgeDiscoveryViewModel {
 
             discovery.startScan()
 
-            // Poll up to 10 s for resolution (0.5 s intervals → 20 checks)
+            // Poll up to 10 s for mDNS resolution (0.5 s intervals → 20 checks); user selects from the chooser.
             for _ in 0..<20 {
                 try? await Task.sleep(nanoseconds: 500_000_000)
-                guard case .scanning = phase else { return }  // already resolved
-                if let bridge = discovery.discoveredBridges.first {
-                    discovery.stopScan()
-                    scanTimeoutTask?.cancel()
-                    appendLog("🎉 Bridge found (mDNS retry): '\(bridge.name)' @ \(bridge.host):\(bridge.port)")
-                    appendLog("👆 Press the link button on your Hue Bridge, then tap Pair.")
-                    phase = .bridgeFound(bridge)
-                    return
-                }
+                guard case .scanning = phase else { return }
             }
 
-            // 10 s elapsed and still nothing — show the error
-            discovery.stopScan()
-            handleError("Bridge not found automatically.\n\nCheck your Wi-Fi connection or tap \"Enter IP Manually\" to connect directly.")
+            guard case .scanning = phase else { return }
+            if discoveredBridgeChoices.isEmpty {
+                discovery.stopScan()
+                handleError("Bridge not found automatically.\n\nCheck your Wi-Fi connection or tap \"Enter IP Manually\" to connect directly.")
+            } else {
+                appendLog("✅ mDNS retry found \(discoveredBridgeChoices.count) bridge(s) — select one below.")
+            }
         }
     }
 
