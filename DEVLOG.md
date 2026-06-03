@@ -2401,3 +2401,34 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 
 ### Deferred
 - **IOS-TEST-003B3** — optimistic-update + SSE recovery from orphan suite (6 tests)
+
+## 2026-06-02 — Orchestrator Optimistic-Update Recovery Inventory (IOS-TEST-003B3A)
+
+### Scope
+- Branch: `ios-test/orchestrator-optimistic-update-inventory`
+- Starting SHA: `a0f37be`
+- Documentation-only — no Swift, no `project.pbxproj`, no build run
+
+### Inventory
+- New doc: `docs/ios/orchestrator-optimistic-update-recovery-inventory.md`
+- Three orphan mutation tests inventoried: `testSetRoom_optimisticUpdate_flipsIsOnImmediately`, `testSetRoom_rollback_onAPIError`, `testTurnAllOff_setsAllRoomsOffBeforeAPICallsComplete` (`HueHomeTests/OrchestratorTests.swift`, off-target)
+- Current signed-simulator baseline: **126/126** `HueHomeTests` pass
+
+### Findings
+- **preloadCached fixture seeding:** sufficient when `cachedGroupedLightID` + `bridgeID` set — avoids `loadAll()` for grouped-light routing (`UnifiedOrchestrator.swift:505-537`)
+- **Typed spy:** `BridgeAPIClient` non-final (B2B); override `setGroupedLight` — no URLProtocol, no Keychain
+- **Actor recorder + gate:** recommended for MUT-01/MUT-03; immediate-throw spy for MUT-02 rollback
+- **Fixed sleep:** rejected (`Task.sleep(300ms)` in orphan rollback test)
+- **scheduleStateRefresh:** success-path `setRoom` schedules +1.5s delayed `loadAll()` — avoid via API failure teardown in optimistic-before-completion test
+- **turnAllOff:** production `async`; orphan test omits `await` — B3B must `Task { await turnAllOff() }`
+- **Production / DEBUG hooks:** not required for bounded B3B slice
+
+### Recommended next slice
+- **IOS-TEST-003B3B** — new `HueHomeTests/OrchestratorOptimisticUpdateTests.swift` (3 tests) + `project.pbxproj` membership
+- Expected after B3B: focused **3/3**; full signed-simulator **129/129** (126 + 3)
+- SSE orphan tests remain **IOS-TEST-003B4** (separate)
+
+### Hygiene
+- Preexisting `OrchestratorCacheDemoTests` MainActor lifecycle warnings remain deferred
+- B3B should use per-test `@MainActor` SUT factory (match `OrchestratorLoadAllTests`)
+- No physical-device test required for this docs-only slice
