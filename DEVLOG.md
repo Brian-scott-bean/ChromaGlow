@@ -2760,3 +2760,116 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 - [ ] Physical re-test PHYS-003, PHYS-006, COND-003, COND-004
 - [ ] IOS-BUG-002A — NUPnP 404 inventory (separate)
 - [ ] Android implementation (blocked)
+
+---
+
+## 2026-06-03 — Explicit Discovered-Bridge Selection Repair (IOS-BUG-001B)
+
+### Scope
+- Branch: `ios-bug/discovered-bridge-selection-ui`
+- Starting SHA: `de5a0ec`
+- Confirmed multi-bridge defect: mDNS resolves multiple v2 bridges; flow auto-selected `discoveredBridges.first`, stopped scan, and offered no chooser — second bridge required manual IP
+- Narrow implementation boundary: selection UI + discovery handoff only; no pairing transport, cert trust, Keychain, or NUPnP changes
+
+### Files changed
+- `HueHome/Core/ViewModels/BridgeDiscoveryViewModel.swift`
+- `HueHome/UI/BridgeSetup/BridgeSetupView.swift`
+- `HueHome/Core/Network/BridgeDiscoveryService.swift` (host+port append dedupe only)
+- `DEVLOG.md`
+
+### Selection behavior added
+- Scanning phase shows explicit tappable rows (`name` + `host:port`) via `discoveredBridgeChoices`
+- `selectDiscoveredBridge(_:)` stops scan and transitions to `.bridgeFound(selected)` for pairing
+- DEBUG logs: `🌉 Resolved bridge choice:` on new endpoint; `👆 Selected discovered bridge:` on user tap
+- Normal mDNS first-bridge auto-selection **removed** (init Combine sink)
+- Warm-cache mDNS retry first-bridge auto-selection **removed**; retry surfaces chooser when bridges resolve, errors only if still empty after 10 s poll
+- Manual-IP fallback unchanged; `Pair with Bridge` / type-101 retry / HTTPS:443 + HTTP:80 pairing unchanged
+- NUPnP cloud path unchanged (still auto-selects first cloud result); `GET discovery.meethue.com/api/nupnp` 404 deferred to **IOS-BUG-002A**
+
+### Endpoint deduplication
+- **Service append guard** compares `host` + `port` (not synthesized `Equatable` with random `id`)
+- **ViewModel** `deduplicatedByHostAndPort` for chooser-facing list
+
+### Focused tests
+- **Not added** — selection is UI + `@MainActor` VM wiring; dedupe is trivial static helper; no new test file / pbxproj change to keep slice minimal. Physical re-test packet required.
+
+### Automated validation
+- `git diff --check`: PASS
+- Metadata injector: **21/21 PASS**
+- Metadata verifier: **17/17 PASS**
+- Unsigned Debug build (`HueHome 1`, generic iOS): **BUILD SUCCEEDED**
+- Unsigned Release build: **BUILD SUCCEEDED**
+- Signed simulator suite (`iPhone 17 Pro`, `HueHomeTests` only): **TEST SUCCEEDED**, **132/132 PASS** (no new tests)
+
+### Required physical re-test
+- Brian: IOS-BUG-001B packet (Tests 1–6) on Debug iPhone with two v2 bridges (`.116` / `.117`) — see follow-up entry below
+
+### What's left
+- [x] Brian: physical re-test Tests 1–6 (recorded 2026-06-03)
+- [ ] IOS-BUG-001C — clarify selected-bridge pairing retry feedback (non-blocking UX)
+- [ ] IOS-BUG-002A — NUPnP 404 inventory (separate)
+- [ ] Android implementation (blocked until PR merge + readiness reconciliation)
+
+---
+
+## 2026-06-03 — Explicit Discovery Selection Physical Re-Test (IOS-BUG-001B)
+
+### Scope
+- Branch: `ios-bug/discovered-bridge-selection-ui`
+- Two Hue v2 bridges on same LAN: Bridge A `192.168.40.116:443`, Bridge B `192.168.40.117:443`
+- Debug iPhone physical re-test; docs-only update to `DEVLOG.md` (implementation unchanged)
+
+### IOS-BUG-001B Physical Re-Test
+
+**Test 1 — chooser contents: PASS**
+- Both Hue v2 bridges appear as explicit selectable choices
+- No duplicate rows observed
+- Neither bridge is silently forced as the only pairing target
+
+**Test 2 — pair Bridge A (.116): PASS**
+- Explicit selection of `192.168.40.116:443` pairs successfully after pressing the matching bridge link button
+
+**Test 3 — pair Bridge B (.117) without manual IP: PASS**
+- Explicit selection of `192.168.40.117:443` pairs successfully without manual IP entry after pressing the matching bridge link button
+
+**Test 4 — type 101 retry: PASS WITH UX FOLLOW-UP**
+- Retry behavior remains functional
+- When the selected bridge and pressed physical bridge button do not match, current feedback does not clearly explain the mistake or identify the selected bridge
+
+**Test 5 — manual-IP regression: PASS**
+- Existing manual-IP HTTPS:443 pairing path remains functional
+
+**Test 6 — two-bridge routing regression: PASS**
+- Both registered bridges route room controls to the intended physical bridge
+
+### Outcome
+- Chooser shows both bridges; no duplicate chooser rows observed
+- Bridge A pairs through explicit discovered selection
+- Bridge B pairs through explicit discovered selection without manual IP
+- Type 101 retry remains functional
+- Manual-IP HTTPS:443 regression passes
+- Two-bridge room-routing regression passes
+- **Primary multi-bridge discovery-selection blocker is resolved**
+
+### Android MVP kickoff
+- After this PR merges and the readiness report is reconciled, Android MVP kickoff may move to **READY WITH DOCUMENTED FOLLOW-UPS**
+
+### Follow-up — IOS-BUG-001C (non-blocking)
+**IOS-BUG-001C — Clarify selected-bridge pairing retry feedback**
+
+Observed UX gap:
+When a user selects one discovered bridge but presses the physical link button on another bridge, retry remains functional but the UI does not clearly explain the mismatch or identify the selected bridge.
+
+Boundary:
+Improve user-facing retry feedback in a later narrow slice. Do not change pairing transport or state-machine behavior in IOS-BUG-001B.
+
+### Follow-up — IOS-BUG-002A (separate)
+**IOS-BUG-002A — Inventory Philips cloud-discovery fallback 404**
+
+Not investigated or fixed in IOS-BUG-001B branch.
+
+### What's left
+- [ ] Merge IOS-BUG-001B PR; reconcile readiness report
+- [ ] IOS-BUG-001C — pairing retry UX clarity (narrow slice)
+- [ ] IOS-BUG-002A — NUPnP 404 inventory
+- [ ] Android MVP kickoff (after merge + readiness reconciliation)

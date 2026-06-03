@@ -231,12 +231,59 @@ struct BridgeSetupView: View {
             .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.05)))
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.08), lineWidth: 1))
 
+            if !vm.discoveredBridgeChoices.isEmpty {
+                discoveredBridgeChooser
+            }
+
             secondaryButton("Enter IP Manually", icon: "keyboard") {
                 vm.resetToIdle()
                 showManualEntry = true
             }
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    private var discoveredBridgeChooser: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(vm.discoveredBridgeChoices.count == 1 ? "Bridge found — select to continue" : "Bridges found — select yours")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.70))
+
+            ForEach(vm.discoveredBridgeChoices) { bridge in
+                Button {
+                    vm.selectDiscoveredBridge(bridge)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "wifi.router")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(accentColor)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(bridge.name)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            Text("\(bridge.host):\(bridge.port)")
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.55))
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.35))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.07)))
+                    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(accentColor.opacity(0.25), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.05)))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.08), lineWidth: 1))
     }
 
     private func discoveryStepRow(icon: String, label: String, active: Bool, muted: Bool = false) -> some View {
