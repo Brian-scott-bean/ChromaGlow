@@ -2528,3 +2528,56 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 - Preexisting `OrchestratorCacheDemoTests` MainActor lifecycle warnings remain deferred
 - No physical-device test required (DEBUG-only production edit)
 - Deferred: live SSE line parsing, reconnect/backoff, `HueSSEService` consolidation, zone/light SSE, pending-action guard during SSE
+
+---
+
+## 2026-06-02 — Cache/Demo MainActor Warning Cleanup (IOS-TEST-003B5)
+
+### Scope
+- Branch: `ios-test/orchestrator-cache-demo-warning-cleanup`
+- Starting SHA: `039cb9c`
+- Warning-hygiene slice only — test code + DEVLOG; no production Swift, no Xcode project edits
+
+### Lifecycle warning source
+- `HueHomeTests/OrchestratorCacheDemoTests.swift` was `@MainActor` but stored a shared `orchestrator: UnifiedOrchestrator!` mutated from synchronous `setUp()` / `tearDown()` overrides (nonisolated XCTest lifecycle hooks)
+
+### Cleanup
+- Removed shared orchestrator property
+- Removed synchronous `setUp()` / `tearDown()` overrides
+- Added per-test `@MainActor` factory `makeOrchestratorCacheDemoSUT() -> UnifiedOrchestrator`
+- Each of the four existing tests constructs a fresh local orchestrator; assertions and fixtures unchanged
+
+### Test names (unchanged)
+- `testPreloadCached_populatesAllRooms`
+- `testPreloadCached_sortsAlphabetically`
+- `testPreloadCached_emptyInput_leavesAllRoomsEmpty`
+- `testDemoMode_loadAll_doesNotMakeNetworkRequests`
+
+### Warning inventory — before cleanup
+**FROM_ORCHESTRATOR_CACHE_DEMO_TESTS**
+- `OrchestratorCacheDemoTests.swift:12:9` — main actor-isolated property `orchestrator` can not be mutated from a nonisolated context (`setUp`)
+- `OrchestratorCacheDemoTests.swift:12:24` — call to main actor-isolated initializer `init()` in a synchronous nonisolated context (`setUp`)
+- `OrchestratorCacheDemoTests.swift:16:9` — main actor-isolated property `orchestrator` can not be mutated from a nonisolated context (`tearDown`)
+
+**UNRELATED_PREEXISTING** (unchanged; not edited)
+- Watch target: `WatchStore.swift`, `WatchWidgetStore.swift` MainActor / Codable warnings
+- App icon asset unassigned-child warnings
+- Production Swift 6 concurrency warnings (`StudioView`, `DashboardView`, `BridgeAnimationStore`, `UnifiedOrchestrator`, `StudioViewModel`, `SyncModeEngine`, etc.)
+
+### Warning inventory — after cleanup
+**FROM_ORCHESTRATOR_CACHE_DEMO_TESTS**
+- None — `OrchestratorCacheDemoTests.swift` compiles with zero warnings; no MainActor `setUp()`/`tearDown()` lifecycle warnings
+
+**UNRELATED_PREEXISTING** (unchanged)
+- Same watch, asset, and production Swift 6 concurrency warnings as before slice
+
+### Validation
+- Shell: `test_inject_build_metadata.sh` → **21/21** PASS; `test_verify_built_app_metadata.sh` → **17/17** PASS
+- Focused signed-simulator `OrchestratorCacheDemoTests` → **4/4** PASS (iPhone 17 Pro)
+- Full signed-simulator `HueHomeTests` → **132/132** PASS
+- No MainActor lifecycle warnings emitted from `OrchestratorCacheDemoTests.swift` after cleanup
+- Generic unsigned builds not required for this slice
+- No physical-device test required
+
+### Recommended next stabilization follow-up
+- **IOS-TEST-003B6** (or equivalent) — triage remaining unrelated preexisting Swift 6 / MainActor warnings in production and watch targets if warning-zero CI is desired
