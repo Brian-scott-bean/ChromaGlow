@@ -2496,3 +2496,35 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 - Preexisting `OrchestratorCacheDemoTests` MainActor lifecycle warnings remain deferred
 - B4B should use per-test `@MainActor` SUT factory (match `OrchestratorLoadAllTests` / `OrchestratorOptimisticUpdateTests`)
 - No physical-device test required for this docs-only slice
+
+---
+
+## 2026-06-02 — Bounded Orchestrator SSE Offline Recovery (IOS-TEST-003B4B)
+
+### Scope
+- Branch: `ios-test/orchestrator-sse-tests`
+- Starting SHA: `17f0176`
+- New test path: `HueHomeTests/OrchestratorSSETests.swift` (3 tests)
+- DEBUG-only `testApplySSEEventsAndRebuild` in existing `#if DEBUG` test-injection block (`UnifiedOrchestrator.swift`)
+- Release behavior unchanged — wrapper not compiled in Release
+- `preloadCached` fixture strategy with `cachedGroupedLightID = gl-001`, `bridgeID = bridge-1`
+- `UnifiedOrchestrator.sseDecoder` reuse — no ad-hoc `JSONDecoder`
+- No `loadAll` fixture setup, no URLProtocol, no Keychain, no real network
+- No `startSSE` / `runSSE` / `stopSSE` invocation from tests
+- Public rebuild-gap coverage via DEBUG wrapper (SSE-01); malformed JSON decoder-only boundary (SSE-02); direct `applySSEEvent` for unknown type (SSE-03)
+- `HueSSEService` remains untouched and unwired
+- Orphan `HueHomeTests/OrchestratorTests.swift` not registered; stale `testApplySSEEvent` shim not copied
+
+### Validation
+- Shell: metadata injector **21/21** PASS; verifier **17/17** PASS
+- Generic unsigned Debug build: **BUILD SUCCEEDED**
+- Generic unsigned Release build: **BUILD SUCCEEDED** (DEBUG wrapper not compiled)
+- Focused signed-simulator `OrchestratorSSETests`: **3/3** PASS (iPhone 17 Pro)
+- Full signed-simulator `HueHomeTests`: **132/132** PASS (129 + 3)
+- No new warnings from `OrchestratorSSETests.swift`; preexisting `OrchestratorCacheDemoTests` lifecycle warnings unchanged
+
+### Hygiene
+- Per-test `@MainActor` SUT factory — no `setUp()`/`tearDown()`; no new lifecycle MainActor warnings
+- Preexisting `OrchestratorCacheDemoTests` MainActor lifecycle warnings remain deferred
+- No physical-device test required (DEBUG-only production edit)
+- Deferred: live SSE line parsing, reconnect/backoff, `HueSSEService` consolidation, zone/light SSE, pending-action guard during SSE

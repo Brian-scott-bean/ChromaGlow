@@ -366,6 +366,27 @@ final class UnifiedOrchestrator {
     ) async -> [String] {
         await resolveCompositionLightIDs(for: room, api: api)
     }
+
+    /// Mirrors decoded-event apply + conditional rebuild from `runSSE` (no line parsing or light yields).
+    @discardableResult
+    func testApplySSEEventsAndRebuild(
+        _ events: [SSEEvent],
+        bridgeID: String
+    ) -> (rooms: Bool, zones: Bool) {
+        var roomsMutated = false
+        var zonesMutated = false
+
+        for event in events {
+            let result = applySSEEvent(event, bridgeID: bridgeID)
+            if result.rooms { roomsMutated = true }
+            if result.zones { zonesMutated = true }
+        }
+
+        if roomsMutated { rebuildAllRooms() }
+        if zonesMutated { rebuildAllZones() }
+
+        return (rooms: roomsMutated, zones: zonesMutated)
+    }
     #endif
 
     // ──────────────────────────────────────────────
