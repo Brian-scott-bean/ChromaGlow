@@ -2468,3 +2468,31 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 
 ### Deferred
 - **IOS-TEST-003B4** — SSE orphan tests + `applySSEEvent` access recovery
+
+---
+
+## 2026-06-02 — Orchestrator SSE Recovery Inventory (IOS-TEST-003B4A)
+
+### Scope
+- Branch: `ios-test/orchestrator-sse-inventory`
+- Starting SHA: `359a667`
+- Documentation-only — no Swift, no `project.pbxproj`, no build run
+
+### Inventory
+- New doc: `docs/ios/orchestrator-sse-recovery-inventory.md`
+- Three orphan SSE tests inventoried: `testApplySSEEvent_groupedLight_updatesRoomState`, `testApplySSEEvent_malformedJSON_doesNotCrash`, `testApplySSEEvent_unknownType_doesNotMutateState` (`HueHomeTests/OrchestratorTests.swift`, off-target)
+- Current signed-simulator baseline: **129/129** `HueHomeTests` pass
+
+### Findings
+- **`applySSEEvent` is `internal`** — orphan shim redundant; shim `Bool` return invalid vs production `(rooms: Bool, zones: Bool)`
+- **Public rebuild gap:** reducer mutates `roomsByBridge` only; live `runSSE` calls conditional `rebuildAllRooms`/`rebuildAllZones`; grouped-light visible parity requires rebuild
+- **Malformed JSON test is decoder-only** — does not exercise `runSSE` line parsing; pin `UnifiedOrchestrator.sseDecoder`
+- **`HueSSEService` unwired** — no `HueHome/` call sites; orchestrator owns inline `runSSE`
+- **`preloadCached` + `cachedGroupedLightID` sufficient** — avoids `loadAll`, URLProtocol, Keychain, network
+- **Recommended IOS-TEST-003B4B:** new `OrchestratorSSETests.swift` (3 tests) + DEBUG-only `testApplySSEEventsAndRebuild` in `UnifiedOrchestrator.swift` + `project.pbxproj` membership
+- Expected after B4B: focused **3/3**; full signed-simulator **132/132** (129 + 3)
+
+### Hygiene
+- Preexisting `OrchestratorCacheDemoTests` MainActor lifecycle warnings remain deferred
+- B4B should use per-test `@MainActor` SUT factory (match `OrchestratorLoadAllTests` / `OrchestratorOptimisticUpdateTests`)
+- No physical-device test required for this docs-only slice
