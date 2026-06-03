@@ -2917,3 +2917,64 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - [ ] IOS-BUG-002A — NUPnP fallback 404 inventory
 - [ ] Credential rotation before release signoff
 - [ ] Android MVP foundation implementation (unblocked with documented follow-ups)
+
+---
+
+## 2026-06-03 — Native Android Foundation Scaffold Inventory (ANDROID-001A)
+
+### Scope
+- Branch: `android/foundation-scaffold`
+- Starting SHA: `092fdd7`
+- Docs-only: `docs/android/android-foundation-scaffold-plan.md`, `DEVLOG.md`
+- No Android code, Gradle files, SDK installs, iOS changes, builds, commits, or pushes
+
+### Android kickoff readiness
+- Repo docs: **READY WITH DOCUMENTED FOLLOW-UPS** (per IOS-OPS-FINAL-C / `docs/ios/final-readiness-validation.md`)
+- Greenfield standalone native Android; iOS remains production behavior anchor; do not copy `UnifiedOrchestrator` god-object
+
+### New artifact
+- `docs/android/android-foundation-scaffold-plan.md`
+
+### Existing Android scaffold inventory
+- No Gradle/Kotlin/`AndroidManifest.xml` in repo
+- Only `docs/android/` directory at depth ≤3; **no application scaffold**
+
+### Local toolchain inventory (read-only)
+| Component | Result |
+| --- | --- |
+| Java / `JAVA_HOME` | Unset; `/usr/bin/java` reports no JRE installed |
+| Android Studio | Not found (`/Applications/Android Studio.app` absent) |
+| Android SDK | `$HOME/Library/Android/sdk` missing |
+| `adb` | Not on PATH |
+| `sdkmanager` | Not on PATH |
+| `emulator` | Not on PATH |
+| `gradle` (global) | Not on PATH |
+
+### Toolchain classification
+- **BLOCKED — TOOLCHAIN INSTALL REQUIRED** (ANDROID-001B build verification needs Studio + JDK + SDK)
+
+### Frozen / proposed scaffold decisions
+| Item | Recommendation |
+| --- | --- |
+| Project root | `android/` |
+| Gradle modules | `:app` only initially |
+| Display name | `ChromaGlow` |
+| Namespace | `com.chromaglow.app` — **approval required** |
+| `applicationId` | `com.chromaglow.app` — **approval required** |
+| `minSdk` / `targetSdk` | Propose API 26 min; target/compile from installed SDK at 001B — **approval required** |
+| JDK | Derive from Studio (expect 17) at 001B |
+| AGP / Kotlin / Compose BOM | **Deferred** — resolve from installed template; do not guess |
+
+### Explicitly not done
+- No Android project files or Kotlin sources added
+- No Gradle wrapper added
+- No iOS files changed
+- No builds run; no installs performed
+
+### Recommended next task
+- **ANDROID-001B** — Create standalone native Android foundation scaffold (after Brian approves namespace + `applicationId` and local toolchain install)
+
+### Non-blocking iOS follow-ups (unchanged)
+- IOS-BUG-001C — selected-bridge pairing retry UX
+- IOS-BUG-002A — NUPnP cloud-discovery 404 inventory
+- Credential rotation before iOS release signoff
