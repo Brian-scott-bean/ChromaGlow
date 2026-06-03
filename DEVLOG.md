@@ -2684,3 +2684,40 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 - [ ] Fix discovered-result pairing handoff
 - [ ] Physical re-test PHYS-003 and PHYS-006
 - [ ] Android implementation (blocked until above)
+
+---
+
+## 2026-06-03 — Multi-Bridge Discovery-Selection Evidence (IOS-BUG-001A2)
+
+### Scope
+- Branch: `ios-bug/discovered-bridge-pairing-loop-log-capture`
+- Starting SHA: `88b71cb`
+- Docs-only: `docs/ios/discovered-bridge-pairing-loop-inventory.md`, `DEVLOG.md`
+- Physical DEBUG log capture **completed** — no further transport testing required for tested v2 bridges
+- No Swift changes; no Xcode changes; no tests run by Cursor
+
+### Confirmed physical evidence
+- Two Hue v2 bridges via mDNS: `Hue Bridge - 663C54` → `192.168.40.116:443`; `Hue Bridge - 608DFC` → `192.168.40.117:443`
+- Discovered pairing uses `https://host:443/api` with HTTPS cert trust delegate on both
+- Pairing succeeds when link button matches the bridge in the pairing flow; manual IP succeeds for the other bridge
+
+### Ruled-out hypothesis
+- Port/scheme mismatch **ruled out** for tested v2 bridges (both resolve and pair on HTTPS:443)
+
+### Corrected diagnosis
+- **First-discovered bridge auto-selection** (`discoveredBridges.first`), immediate scan stop, **no discovered-bridge chooser** — user cannot target second LAN bridge without manual IP; adding second bridge may re-offer already-connected bridge A
+
+### Separate issue
+- NUPnP `GET https://discovery.meethue.com/api/nupnp` → **404 page not found**; warm mDNS retry followed — follow-up **IOS-BUG-002A** (not mixed into 001B)
+
+### Recommended IOS-BUG-001B boundary
+- Add discovered-bridge **selection UI** before pairing; preserve host/port/transport/pairing/Keychain; do not normalize ports or fix NUPnP in 001B
+
+### Android-MVP kickoff
+- Remains **blocked** until IOS-BUG-001B physical re-test passes (multi-bridge discovery selection without manual IP for second bridge)
+
+### What's left
+- [ ] IOS-BUG-001B — discovered-bridge selection before pairing
+- [ ] Physical re-test PHYS-003, PHYS-006, COND-003, COND-004
+- [ ] IOS-BUG-002A — NUPnP 404 inventory (separate)
+- [ ] Android implementation (blocked)
