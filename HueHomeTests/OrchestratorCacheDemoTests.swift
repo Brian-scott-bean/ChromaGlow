@@ -5,19 +5,8 @@ import SwiftData
 @MainActor
 final class OrchestratorCacheDemoTests: XCTestCase {
 
-    private var orchestrator: UnifiedOrchestrator!
-
-    override func setUp() {
-        super.setUp()
-        orchestrator = UnifiedOrchestrator()
-    }
-
-    override func tearDown() {
-        orchestrator = nil
-        super.tearDown()
-    }
-
     func testPreloadCached_populatesAllRooms() {
+        let orchestrator = makeOrchestratorCacheDemoSUT()
         let cached = makeLocalRoom(
             id: "room-001",
             name: "Bedroom",
@@ -32,6 +21,7 @@ final class OrchestratorCacheDemoTests: XCTestCase {
     }
 
     func testPreloadCached_sortsAlphabetically() {
+        let orchestrator = makeOrchestratorCacheDemoSUT()
         let rooms = [
             makeLocalRoom(id: "r3", name: "Zara", isOn: true),
             makeLocalRoom(id: "r1", name: "Attic", isOn: true),
@@ -47,12 +37,14 @@ final class OrchestratorCacheDemoTests: XCTestCase {
     }
 
     func testPreloadCached_emptyInput_leavesAllRoomsEmpty() {
+        let orchestrator = makeOrchestratorCacheDemoSUT()
         orchestrator.preloadCached(from: [])
 
         XCTAssertTrue(orchestrator.allRooms.isEmpty)
     }
 
     func testDemoMode_loadAll_doesNotMakeNetworkRequests() async {
+        let orchestrator = makeOrchestratorCacheDemoSUT()
         orchestrator.enterDemoMode()
 
         await orchestrator.loadAll()
@@ -62,6 +54,11 @@ final class OrchestratorCacheDemoTests: XCTestCase {
             "Demo mode should populate allRooms with mock data"
         )
         XCTAssertTrue(orchestrator.isDemoMode)
+    }
+
+    @MainActor
+    private func makeOrchestratorCacheDemoSUT() -> UnifiedOrchestrator {
+        UnifiedOrchestrator()
     }
 
     private func makeLocalRoom(
