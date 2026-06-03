@@ -2338,3 +2338,35 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 
 ### Deferred
 - **IOS-TEST-003B2** — `loadAll` harness recovery (4 orphan tests; zone stub + compile repair for `TestableBridgeAPIClient` subclass blocker)
+
+---
+
+## 2026-06-02 — Orchestrator loadAll Harness Repair Inventory (IOS-TEST-003B2A)
+
+### Scope
+- Branch: `ios-test/orchestrator-loadall-harness-inventory`
+- Starting SHA: `507e278`
+- Documentation-only — no Swift, no Xcode project, no test implementation
+- New inventory: `docs/ios/orchestrator-loadall-harness-repair-inventory.md`
+
+### Baseline
+- Full signed-simulator `HueHomeTests` → **122/122** pass (unchanged)
+- `OrchestratorCacheDemoTests` → **4/4** pass
+- Four deferred `loadAll()` orphan tests inventoried (remain in off-target `OrchestratorTests.swift`)
+
+### Findings
+- `BridgeAPIClient` is `final` — blocks orphan `TestableBridgeAPIClient` subclass; **declaration-only `final` removal required for B2**
+- Recommended **IOS-TEST-003B2 Strategy A**: typed test-only spy in new `OrchestratorLoadAllTests.swift`; reuse existing `#if DEBUG injectForTesting(clients:)`
+- **Avoid URLProtocol** — shared `StubURLProtocol.stubs` not parallel-safe under scheme `parallelizable="YES"`
+- **Cleanup GET must be stubbed explicitly** via spy `get()` override (empty entertainment list); cleanup PUT avoidable
+- **`lastLoadedAt` is completion-based**, not success-only — assigned after outer task group even when per-bridge fetches fail
+- Orphan fixtures stale: missing zone stub; malformed redundant path key in `Fixture.installLoadAll`
+- No `UnifiedOrchestrator.swift` or `HueAPIClient.swift` changes required for bounded B2 slice
+
+### Expected future B2 target
+- Focused `OrchestratorLoadAllTests` → **4/4** pass
+- Full signed-simulator `HueHomeTests` → **126/126** pass (122 + 4)
+
+### Validation
+- No Xcode build run (docs-only)
+- No physical-device test required for this slice
