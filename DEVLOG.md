@@ -2432,3 +2432,39 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 - Preexisting `OrchestratorCacheDemoTests` MainActor lifecycle warnings remain deferred
 - B3B should use per-test `@MainActor` SUT factory (match `OrchestratorLoadAllTests`)
 - No physical-device test required for this docs-only slice
+
+---
+
+## 2026-06-02 — Orchestrator Optimistic-Update Offline Recovery (IOS-TEST-003B3B)
+
+### Scope
+- Branch: `ios-test/orchestrator-optimistic-update-tests`
+- Starting SHA: `f46b887`
+- New test file: `HueHomeTests/OrchestratorOptimisticUpdateTests.swift`
+- Three recovered mutation tests (MUT-01 through MUT-03)
+- `preloadCached(from:)` fixture with `cachedGroupedLightID` — no `loadAll()` fixture setup
+- Typed spy `OrchestratorOptimisticUpdateSpyBridgeClient` overrides `setGroupedLight` only
+- Actor recorder `OrchestratorOptimisticUpdateRecorder` + gate `OrchestratorGroupedLightGate`
+- Bounded eventual rollback helper (`waitUntil` + 10ms polling) — fixed sleeps rejected
+- Per-test `@MainActor` SUT factory — no `setUp()`/`tearDown()` lifecycle overrides
+- No URLProtocol, no Keychain, no real network, no production Swift changes
+- Orphan `HueHomeTests/OrchestratorTests.swift` untouched and off-target
+
+### Recovered tests
+- `testSetRoom_appliesOptimisticState_beforeAPICallCompletes`
+- `testSetRoom_rollsBack_afterAPIError`
+- `testTurnAllOff_appliesOptimisticState_beforeAPICallsComplete`
+
+### Validation
+- Focused `OrchestratorOptimisticUpdateTests` → **3/3** pass (iPhone 17 Pro simulator)
+- Full signed-simulator `HueHomeTests` → **129/129** pass (126 + 3)
+- Shell: `test_inject_build_metadata.sh` → **21/21** pass; `test_verify_built_app_metadata.sh` → **17/17** pass
+- Generic unsigned Debug build → **BUILD SUCCEEDED**
+- Generic unsigned Release build → **BUILD SUCCEEDED**
+- `git diff --check` → clean
+- No new lifecycle MainActor warnings from `OrchestratorOptimisticUpdateTests.swift`
+- Preexisting `OrchestratorCacheDemoTests` `setUp()`/`tearDown()` warnings remain deferred
+- No physical-device test required
+
+### Deferred
+- **IOS-TEST-003B4** — SSE orphan tests + `applySSEEvent` access recovery

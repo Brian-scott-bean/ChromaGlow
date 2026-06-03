@@ -118,6 +118,7 @@
 		C0DEC0DE007B000000000003 /* ComposerFetchPathParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE007B000000000004 /* ComposerFetchPathParityTests.swift */; };
 		C0DEC0DE008C000000000003 /* OrchestratorCacheDemoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE008C000000000004 /* OrchestratorCacheDemoTests.swift */; };
 		C0DEC0DE009D000000000003 /* OrchestratorLoadAllTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE009D000000000004 /* OrchestratorLoadAllTests.swift */; };
+		C0DEC0DE00AE000000000003 /* OrchestratorOptimisticUpdateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE00AE000000000004 /* OrchestratorOptimisticUpdateTests.swift */; };
 		F1E2D3C4B5A68990ABCDEF03 /* CompositionMicCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */; };
 		E1B00002AAAA000000000001 /* HueV1Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000001 /* HueV1Client.swift */; };
 		E1B00002AAAA000000000002 /* BridgeAnimationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */; };
@@ -310,6 +311,7 @@
 		C0DEC0DE007B000000000004 /* ComposerFetchPathParityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ComposerFetchPathParityTests.swift; path = ./HueHomeTests/ComposerFetchPathParityTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE008C000000000004 /* OrchestratorCacheDemoTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OrchestratorCacheDemoTests.swift; path = ./HueHomeTests/OrchestratorCacheDemoTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE009D000000000004 /* OrchestratorLoadAllTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OrchestratorLoadAllTests.swift; path = ./HueHomeTests/OrchestratorLoadAllTests.swift; sourceTree = "<group>"; };
+		C0DEC0DE00AE000000000004 /* OrchestratorOptimisticUpdateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OrchestratorOptimisticUpdateTests.swift; path = ./HueHomeTests/OrchestratorOptimisticUpdateTests.swift; sourceTree = "<group>"; };
 		F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionMicCapture.swift; path = ./HueHome/UI/Studio/CompositionMicCapture.swift; sourceTree = "<group>"; };
 		E1B00001AAAA000000000001 /* HueV1Client.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueV1Client.swift; path = HueHome/Core/Network/HueV1Client.swift; sourceTree = "<group>"; };
 		E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationEngine.swift; path = HueHome/Core/Network/BridgeAnimationEngine.swift; sourceTree = "<group>"; };
@@ -760,6 +762,7 @@
 				C0DEC0DE007B000000000004 /* ComposerFetchPathParityTests.swift */,
 				C0DEC0DE008C000000000004 /* OrchestratorCacheDemoTests.swift */,
 				C0DEC0DE009D000000000004 /* OrchestratorLoadAllTests.swift */,
+				C0DEC0DE00AE000000000004 /* OrchestratorOptimisticUpdateTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1220,6 +1223,7 @@
 				C0DEC0DE007B000000000003 /* ComposerFetchPathParityTests.swift in Sources */,
 				C0DEC0DE008C000000000003 /* OrchestratorCacheDemoTests.swift in Sources */,
 				C0DEC0DE009D000000000003 /* OrchestratorLoadAllTests.swift in Sources */,
+				C0DEC0DE00AE000000000003 /* OrchestratorOptimisticUpdateTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
