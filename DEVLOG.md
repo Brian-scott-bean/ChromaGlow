@@ -2684,3 +2684,42 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 - [ ] Fix discovered-result pairing handoff
 - [ ] Physical re-test PHYS-003 and PHYS-006
 - [ ] Android implementation (blocked until above)
+
+---
+
+## 2026-06-03 — Discovered-Bridge Pairing Loop Inventory (IOS-BUG-001A)
+
+### Scope
+- Branch: `ios-bug/discovered-bridge-pairing-loop-inventory`
+- Starting SHA: `88b71cb`
+- Docs-only: `docs/ios/discovered-bridge-pairing-loop-inventory.md`, `DEVLOG.md`
+- No Swift changes; no Xcode project changes; no build; no simulator or device run by Cursor
+
+### Readiness blocker source
+- [`docs/ios/final-readiness-validation.md`](docs/ios/final-readiness-validation.md) — `IOS-FINAL-PHYS-003` PARTIAL, `IOS-FINAL-PHYS-006` FAIL; `IOS-FINAL-COND-003` PASS (manual IP HTTPS:443)
+- Android MVP kickoff remains **blocked** until discovered-result pairing succeeds without manual IP
+
+### Source-inspected endpoint and pairing facts
+- mDNS (`BridgeDiscoveryService`): `_hue._tcp`, domain `local.`, LAN-only (`includePeerToPeer = false`), IPv4-forced resolve via `NWConnection` → `hostString` + preserved `port.rawValue`; Keychain IP saved on resolve
+- Manual IP (`BridgeSetupView`): `BridgeEndpoint(name: "Hue Bridge", host: ip, port: 443)`
+- Pairing (`BridgeDiscoveryViewModel`): `scheme = bridge.port == 443 ? "https" : "http"`; `BridgeCertTrustDelegate` only when port == 443; type **101** → `.bridgeFound`; URLSession failure → `.error`
+- NUPnP fallback: `port = UInt16(first.port ?? 443)` (aligns with manual path when cloud returns no port)
+
+### Primary hypothesis (not proven)
+- Discovered path may pair over **HTTP:non-443** while manual path uses **HTTPS:443** on the same v2 bridge; manual workaround success is consistent but **runtime logs must confirm** resolved port and `POST` URL before any port normalization
+
+### Inventory deliverables
+- New doc: [`docs/ios/discovered-bridge-pairing-loop-inventory.md`](docs/ios/discovered-bridge-pairing-loop-inventory.md)
+- Physical DEBUG log-capture packet and fill-in table for Brian (pre–IOS-BUG-001B)
+- Existing tests: **no** `BridgeDiscovery` / pairing coverage; `StubURLProtocol` exists for CLIP v2 only
+- Ranked repair strategies: log-capture first; then prefer **Strategy C** (`pairingCandidates`) after evidence — avoid blanket normalize-to-443 (Strategy A) without legacy policy
+- **IOS-BUG-001B boundary:** run log capture; if transport mismatch confirmed, minimal ViewModel candidate ordering (discovered then HTTPS:443), not broad discovery rewrite in first commit
+
+### Required physical re-test (post–001B)
+- `IOS-FINAL-PHYS-003`, `IOS-FINAL-PHYS-005`, `IOS-FINAL-PHYS-006`, `IOS-FINAL-PHYS-007`, `IOS-FINAL-COND-003`, `IOS-FINAL-COND-004`
+
+### What's left
+- [ ] Brian: fill DEBUG log-capture table (discovered vs manual, both v2 bridges)
+- [ ] IOS-BUG-001B — narrow pairing transport repair per inventory boundary
+- [ ] Physical re-test PHYS-003 / PHYS-006 (and related rows)
+- [ ] Android implementation (still blocked)
