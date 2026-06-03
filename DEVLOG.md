@@ -2623,3 +2623,64 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 ### Validation
 - No commit or push in this session
 - Recommended follow-up: merge docs PR, then deferred **iOS physical-device smoke** (dashboard, room/zone, scene activate, SSE) before Android implementation signoff
+
+---
+
+## 2026-06-03 — Final iOS Readiness Validation Handoff (IOS-OPS-FINAL-B)
+
+### Scope
+- Branch: `ios-ops/final-readiness-validation`
+- Starting SHA: `5f7ec3a`
+- Docs-only: `docs/ios/final-readiness-validation.md`, `DEVLOG.md`
+- Draft report finalized at `docs/ios/final-readiness-validation.md`
+- No Swift changes; no Xcode project changes; no Android code added
+- No build rerun required in FINAL-B; no additional device testing run by Cursor
+
+### Automated validation (IOS-OPS-FINAL-A, unchanged)
+- Metadata injector → **21/21** pass
+- Metadata verifier → **17/17** pass
+- Unsigned Debug build → **BUILD SUCCEEDED**
+- Unsigned Release build → **BUILD SUCCEEDED**
+- Full signed-simulator `HueHomeTests` → **132/132** pass
+
+### Physical test context
+- Physical iPhone: `brian's iPhone` — **iPhone 17 Pro Max**, iOS **26.5**
+- App launched from Xcode; local-network permission granted
+- **Two Hue v2 bridges** tested
+
+### Required physical matrix totals (20 rows)
+- **PASS** → 17 / 20
+- **PARTIAL** → 1 / 20 (`IOS-FINAL-PHYS-003` — mDNS finds bridge; discovered-result pairing unreliable)
+- **FAIL** → 1 / 20 (`IOS-FINAL-PHYS-006` — link-button pairing loops from discovered result)
+- **NOT AVAILABLE** → 1 / 20 (`IOS-FINAL-PHYS-015` — no mirek-capable lamp in test environment)
+
+### Conditional hardware matrix totals (7 rows)
+- **PASS** → 5 / 7
+- **NOT TESTED** → 2 / 7
+- **NOT PRACTICAL TODAY** → 1 / 7 (`IOS-FINAL-COND-001`)
+- **NOT AVAILABLE** → 1 / 7 (`IOS-FINAL-COND-002` — no HTTP:80 legacy bridge)
+
+### Verified on hardware
+- Manual IP **HTTPS:443** pairing workaround (link button + manual IP)
+- Two-bridge registration and bridge-specific room routing
+- One-bridge-offline usability while other bridge remains usable
+- External SSE visible-state update without pull-to-refresh
+- Wi-Fi interruption and SSE recovery without app restart
+- Dashboard, room/group controls, per-light controls (except mirek), scenes, stale-state
+
+### Demo mode
+- Demo launches without bridge dependency; **not** full-feature parity with current app
+
+### Android-MVP kickoff blocker
+- **Discovered-bridge pairing loop:** mDNS displays bridge; selecting discovered result does not reliably complete pairing; manual IP path works
+- Android MVP kickoff remains **blocked** until defect is inventoried, repaired, and `IOS-FINAL-PHYS-003` / `IOS-FINAL-PHYS-006` are re-tested on hardware
+
+### Recommended next work
+- Branch: `ios-bug/discovered-bridge-pairing-loop-inventory`
+- Task: **IOS-BUG-001A** — inventory discovered-bridge pairing-loop root cause (do not guess; inspect `BridgeDiscoveryService`, `BridgeDiscoveryViewModel`, `BridgeSetupView`, endpoint IP/port/scheme, mDNS handoff, pairing retry state)
+
+### What's left
+- [ ] IOS-BUG-001A inventory
+- [ ] Fix discovered-result pairing handoff
+- [ ] Physical re-test PHYS-003 and PHYS-006
+- [ ] Android implementation (blocked until above)
