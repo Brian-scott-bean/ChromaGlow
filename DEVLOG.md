@@ -2581,3 +2581,45 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 
 ### Recommended next stabilization follow-up
 - **IOS-TEST-003B6** (or equivalent) — triage remaining unrelated preexisting Swift 6 / MainActor warnings in production and watch targets if warning-zero CI is desired
+
+---
+
+## 2026-06-02 — Native Android MVP Contract Freeze (ANDROID-CONTRACT-001)
+
+### Scope
+- Branch: `docs/android-mvp-contract-freeze`
+- Starting SHA: `b4fbb58`
+- Docs-only: `DEVLOG.md`, `docs/android/android-mvp-contract-freeze.md`
+- No Swift, Kotlin, Xcode project, workflow, or script changes
+- No Android Gradle project created
+- No build, simulator run, or physical-device test required for this slice
+
+### Product direction recorded
+- Native Android (Kotlin + Jetpack Compose), not Flutter
+- Minimal backend optional; **local Hue control remains local**
+- Current iOS at `b4fbb58` is the behavior anchor
+
+### iOS evidence anchor
+- Full signed-simulator `HueHomeTests` → **132/132** PASS (includes orchestrator cache/demo/loadAll/optimistic/SSE suites)
+- Metadata injector **21/21**, verifier **17/17** (per stabilization tooling)
+- Orchestrator cache/demo MainActor lifecycle warnings cleared in **IOS-TEST-003B5** (prior entry)
+
+### New document
+- `docs/android/android-mvp-contract-freeze.md` — authoritative Android MVP contract freeze
+
+### Contracts captured (from iOS source inspection)
+- Discovery ladder: mDNS `_hue._tcp` → 12 s NUPnP `https://discovery.meethue.com/api/nupnp` → manual IP sheet (default port 443)
+- Pairing: `POST /api`, 10 s timeout, devicetype `chromaglow#ios`, error 101 retry to `bridgeFound`, legacy Keychain persistence
+- Credentials: `com.lightshade.app` service, legacy + `hue_bridge_{id}_*` keys, SwiftData `BridgeRecord`, duplicate-IP dedup, widget publish marked iOS-only
+- REST v2: `https://{ip}/clip/v2/...`, `hue-application-key`, 10 s timeout, cert trust delegate; MVP reads/mutations tables
+- Dashboard/room/zone display builders and aggregation rules
+- Cache/stale-state, demo mode, optimistic `setRoom` rollback, `turnAllOff` optimistic behavior
+- Scene MVP boundary: list + `recall.action = active` activation; create/edit/delete/dynamic_palette Post-MVP
+- SSE: live path `UnifiedOrchestrator.runSSE`; `HueSSEService` unwired; reducer + 5→60 s backoff
+- REST v1: **not required** for Android MVP (Composer/bridge animation only)
+- Recommended Android package boundaries + 23-row acceptance matrix
+- TODO-HARDWARE / TODO-SECURITY / TODO-PRODUCT / known `docs/ios` discrepancies listed
+
+### Validation
+- No commit or push in this session
+- Recommended follow-up: merge docs PR, then deferred **iOS physical-device smoke** (dashboard, room/zone, scene activate, SSE) before Android implementation signoff
