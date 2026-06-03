@@ -2,13 +2,14 @@
 
 ## Purpose
 
-**IOS-BUG-001A** documents source-inspected discovery and pairing endpoint construction for the Android-MVP kickoff blocker: mDNS finds a Hue v2 bridge, but pairing initiated from the discovered result does not reliably complete, while manual IP entry followed by link-button press succeeds over HTTPS:443.
+**IOS-BUG-001A** documents source-inspected discovery and pairing endpoint construction for the Android-MVP kickoff blocker. **IOS-BUG-001A2** records physical DEBUG log evidence and corrects the diagnosis: the defect is **multi-bridge auto-selection**, not a confirmed port/scheme mismatch on tested Hue v2 hardware.
 
-This inventory is **documentation-only**. It does not change Swift, Xcode project files, pairing behavior, or tests. **IOS-BUG-001B** implements the narrowest safe repair after physical DEBUG log capture (or equivalent proof).
+This inventory is **documentation-only**. **IOS-BUG-001B** implements the narrowest safe repair: discovered-bridge **selection** before pairing.
 
 | Field | Value |
 | --- | --- |
-| Branch | `ios-bug/discovered-bridge-pairing-loop-inventory` |
+| Branch (inventory) | `ios-bug/discovered-bridge-pairing-loop-inventory` |
+| Evidence capture (001A2) | `ios-bug/discovered-bridge-pairing-loop-log-capture` |
 | Starting SHA | `88b71cb` |
 | Readiness evidence | [`docs/ios/final-readiness-validation.md`](final-readiness-validation.md) |
 | Android contract | [`docs/android/android-mvp-contract-freeze.md`](../android/android-mvp-contract-freeze.md) |
@@ -17,20 +18,30 @@ This inventory is **documentation-only**. It does not change Swift, Xcode projec
 
 ## Physical Regression Evidence
 
-**Proven (IOS-OPS-FINAL-B, 2026-06-03, two Hue v2 bridges):**
+**Proven (IOS-OPS-FINAL-B, 2026-06-03):**
 
 | ID | Result | Observation |
 | --- | --- | --- |
-| IOS-FINAL-PHYS-003 | PARTIAL | mDNS finds and displays the bridge; discovered-result handoff does not reliably complete pairing |
-| IOS-FINAL-PHYS-006 | FAIL | Link-button pairing loops when initiated from the discovered result |
-| IOS-FINAL-COND-003 | PASS | Manual IP + physical link button pairs over HTTPS:443 |
-| IOS-FINAL-PHYS-004 | PASS | Manual IP path reaches bridge-found / pair UI |
-| IOS-FINAL-PHYS-005 | PASS | Type **101** (link button not pressed) shows retryable state on manual path |
-| IOS-FINAL-PHYS-007 | PASS | Credentials persist after force-close (when pairing completed via manual path) |
+| IOS-FINAL-PHYS-003 | PARTIAL | mDNS finds bridge; discovered handoff unreliable without correct bridge targeting |
+| IOS-FINAL-PHYS-006 | FAIL | Pairing “loops” when wrong bridge auto-selected vs link button pressed |
+| IOS-FINAL-COND-003 | PASS | Manual IP + link button pairs over HTTPS:443 |
+| IOS-FINAL-PHYS-004 | PASS | Manual IP reaches bridge-found / pair UI |
+| IOS-FINAL-PHYS-005 | PASS | Type **101** retryable when link button not pressed |
+| IOS-FINAL-PHYS-007 | PASS | Credentials persist after relaunch when pairing completed |
 
-**Also proven (automated baseline, unchanged by this task):** metadata tests 21/21, verifier 17/17, unsigned Debug/Release builds, signed-simulator **132/132** `HueHomeTests`.
+**Proven (IOS-BUG-001A2 DEBUG capture, 2026-06-03, two Hue v2 bridges on LAN):**
 
-**Android MVP kickoff:** remains **blocked** until discovered-result pairing succeeds on physical Hue v2 hardware without manual IP entry.
+| Bridge (mDNS name) | Resolved endpoint | Pairing transport |
+| --- | --- | --- |
+| Hue Bridge - 663C54 | `192.168.40.116:443` | `https://192.168.40.116:443/api` + cert trust delegate |
+| Hue Bridge - 608DFC | `192.168.40.117:443` | `https://192.168.40.117:443/api` + cert trust delegate |
+
+- Both discovered v2 bridges resolve to **port 443** and pair over **HTTPS** with `BridgeCertTrustDelegate`.
+- Pairing **succeeds** when the physical link button pressed belongs to the bridge selected by the flow.
+- Manual IP entry **succeeds** for explicitly targeting the other bridge.
+- Credentials logged as `<REDACTED_APPLICATION_KEY>` / `<REDACTED_CLIENT_KEY>` only — no raw keys in this doc.
+
+**Android MVP kickoff:** remains **blocked** until IOS-BUG-001B physical re-test passes (discovered multi-bridge selection without manual IP).
 
 ---
 
@@ -38,22 +49,97 @@ This inventory is **documentation-only**. It does not change Swift, Xcode projec
 
 ### Known (physical + source)
 
-- mDNS `_hue._tcp` discovery displays at least one Hue v2 bridge on LAN.
-- Discovered-result pairing is unreliable / loops per PHYS-006.
-- Manual IP hardcodes port **443** in `BridgeSetupView`; pairing uses HTTPS and `BridgeCertTrustDelegate` on that path (COND-003 PASS).
-- Pairing scheme is selected strictly from `bridge.port == 443` → `https`, else `http` (`BridgeDiscoveryViewModel`).
-- mDNS resolution preserves `port.rawValue` from `NWConnection.currentPath.remoteEndpoint` hostPort (no normalization to 443).
-- Bridge IP is written to Keychain on mDNS resolve **before** pairing completes.
-- Type **101** returns to `.bridgeFound` for retry; URLSession/network failures call `handleError` → `.error` (not a silent retry loop by themselves).
-- Two Hue v2 bridges were available in the physical pass; legacy HTTP:80 bridge was not available (COND-002 NOT TESTED).
+- Two Hue v2 bridges on LAN both mDNS-resolve to **HTTPS:443**.
+- Discovered pairing POST uses `https://host:443/api` with certificate trust delegate on tested bridges.
+- Automatic flow selects **`discoveredBridges.first`**, stops scan, presents **one** bridge — no chooser (`BridgeDiscoveryViewModel`, `BridgeSetupView`).
+- User cannot pick the second discovered bridge without manual IP.
+- Adding a second bridge may re-offer an **already-connected** first bridge.
+- Manual IP workaround remains valid for explicit targeting.
+- Type **101** returns to `.bridgeFound` when link button not pressed on the **selected** bridge.
+- NUPnP fallback observed: `GET https://discovery.meethue.com/api/nupnp` → **404 page not found**; flow then restarted mDNS warm cache (separate issue).
 
-### Unknown (require DEBUG log capture — do not guess)
+### Unknown / out of scope for 001B
 
-- Exact mDNS-resolved **port** for each failing discovered result.
-- Exact pairing URL (`scheme://host:port/api`) used on the failing discovered flow.
-- Whether failure is HTTP status, bridge JSON error (including 101), URLSession/TLS error, or UI/state oscillation users perceive as a “loop”.
-- Whether both physical v2 bridges advertise the same mDNS SRV port.
-- Whether NUPnP fallback was involved in failing runs (not isolated in FINAL-B).
+- HTTP:80 legacy bridge pairing on discovered path (COND-002 NOT TESTED; no legacy hardware).
+- Whether NUPnP 404 is transient, endpoint drift, or account/network specific (**IOS-BUG-002A**).
+
+---
+
+## Ruled-Out Hypothesis
+
+**Port / scheme mismatch (IOS-BUG-001A primary hypothesis) — ruled out for tested Hue v2 bridges.**
+
+Physical DEBUG capture shows:
+
+```text
+Tested v2 mDNS results do NOT show port/scheme mismatch.
+Both bridges: 192.168.40.116:443 and 192.168.40.117:443
+Pairing: https://host:443/api with HTTPS certificate trust delegate
+Pairing succeeds when link button matches selected bridge
+```
+
+Do **not** implement IOS-BUG-001B as transport normalization or HTTPS fallback for these bridges.
+
+---
+
+## Confirmed Defect (Source-Grounded Diagnosis)
+
+**The defect is not a confirmed port/scheme mismatch.**
+
+On a LAN with multiple Hue bridges, the automatic discovery flow:
+
+1. Selects the **first** resolved bridge (`discoveredBridges.first`).
+2. **Stops scanning** immediately.
+3. Presents **only that bridge** for pairing — no list or picker.
+4. Prevents explicitly targeting another discovered bridge without manual IP.
+5. When adding a second bridge, may select bridge A again even if already connected.
+
+User-visible “pairing loop” on FINAL-B is consistent with **type 101** (link button on bridge B while UI paired to auto-selected bridge A) and retry, not TLS/HTTP transport failure on v2 hardware.
+
+### Source evidence
+
+`BridgeDiscoveryViewModel.init()`:
+
+```swift
+discovery.$discoveredBridges
+  .filter { !$0.isEmpty }
+  .compactMap { $0.first }
+  .first()
+  ...
+  discovery.stopScan()
+  phase = .bridgeFound(bridge)
+```
+
+`discoverViaNUPnP()` warm-cache retry:
+
+```swift
+if let bridge = discovery.discoveredBridges.first
+...
+phase = .bridgeFound(bridge)
+```
+
+`BridgeSetupView.bridgeFoundContent(...)`:
+
+- Renders **one** bridge (name + host).
+- Exposes **Pair with Bridge** and **Scan Again**.
+- Does **not** expose a list or picker of discovered bridges.
+
+---
+
+## Separate Defect (Not IOS-BUG-001B)
+
+**Philips cloud NUPnP fallback returned 404** during capture:
+
+```text
+GET https://discovery.meethue.com/api/nupnp
+→ 404 page not found
+→ flow restarted mDNS with warm cache
+```
+
+| Classification | Follow-up |
+| --- | --- |
+| Separate issue | **IOS-BUG-002A** — Inventory Philips cloud-discovery fallback 404 |
+| Do not mix | Into multi-bridge selection repair (001B) |
 
 ---
 
@@ -65,139 +151,67 @@ This inventory is **documentation-only**. It does not change Swift, Xcode projec
 | --- | --- |
 | mDNS service type | `_hue._tcp` |
 | Domain | `local.` |
-| LAN-only | `NWParameters.includePeerToPeer = false` |
-| IPv4 forcing | `NWProtocolIP.Options.version = .v4` on resolve `NWConnection` (avoids link-local IPv6 zone IDs in URLs) |
-| Resolution mechanism | Per added browse result: `resolveEndpoint` → `NWConnection(to: endpoint, using: tcp+v4)` → on `.ready`, read `connection.currentPath?.remoteEndpoint` |
-| Host normalization | `hostString(from:)` strips `%zone` suffix from NW host debug strings |
-| Port source | `port.rawValue` from `.hostPort(let host, let port)` — **preserved as discovered**; no rewrite to 443 |
-| Port normalization | **None** |
-| Host persisted before pairing | **Yes** — `KeychainManager.shared.saveBridgeIP(hostString)` immediately after resolve |
-| Endpoint equality / dedup | `guard !discoveredBridges.contains(bridge)` uses synthesized `Equatable` on `BridgeEndpoint` (includes `id`) |
-| Duplicate accumulation | Same logical bridge resolved again creates a **new** `UUID()` → typically **not** equal to prior entry; duplicates possible; removal on mDNS `.removed` matches **name** only |
-
-**Log lines (source):** `Bridge resolved! Name: '…' | IP: … | Port: …`
+| LAN-only | `includePeerToPeer = false` |
+| IPv4 forcing | `NWProtocolIP.Options.version = .v4` on resolve |
+| Resolution | `NWConnection` → `currentPath.remoteEndpoint` hostPort |
+| Host normalization | `hostString` strips `%zone` |
+| Port | `port.rawValue` preserved (tested v2: **443**) |
+| Host persisted before pairing | Yes — Keychain IP on resolve |
+| Dedup | `contains(bridge)` includes per-instance `UUID` — weak dedup |
 
 ---
 
 ## Pairing Endpoint Construction
 
-**Source:** `HueHome/Core/ViewModels/BridgeDiscoveryViewModel.swift`
+**Source:** `BridgeDiscoveryViewModel` — **unchanged for 001B** (selection only).
 
 | Step | Behavior |
 | --- | --- |
-| mDNS handoff | `discovery.$discoveredBridges` → first non-empty → `compactMap { $0.first }` → `.first()` publisher → stop scan → `phase = .bridgeFound(bridge)` (first list element only, once per scan) |
-| Pairing URL | `\(scheme)://\(bridge.host):\(bridge.port)/api` |
-| Scheme | `bridge.port == 443 ? "https" : "http"` (in both `pairWithBridge` and `performPairingRequest`) |
-| Certificate delegate | Custom `URLSession` with `BridgeCertTrustDelegate` **only when** `bridge.port == 443`; else `URLSession.shared` |
-| Timeout | 10 s `URLRequest` |
-| Body | `devicetype` from `AppBrand.hueDeviceType`, `generateclientkey: true` |
-| Success | Keychain token + bridge IP; `phase = .paired` |
-| Error 101 | Log + `phase = .bridgeFound(bridge)` (retry) |
-| Other bridge errors | Log + `phase = .bridgeFound(bridge)` for non-101 via same branch (returns to bridgeFound) |
-| URLSession / decode errors | `handleError` → `phase = .error` |
-
-**UI:** `BridgeSetupView` calls `vm.pairWithBridge(bridge)` from discovered and manual paths identically; manual path does not display port in the bridge-found pill (host + name only).
+| Pairing URL | `scheme://host:port/api` |
+| Scheme | `port == 443` → `https`, else `http` |
+| Certificate delegate | Custom session only when `port == 443` |
+| Success | Keychain token + IP; `phase = .paired` |
+| Error 101 | `phase = .bridgeFound(bridge)` — retry on **selected** bridge |
 
 ---
 
 ## mDNS vs NUPnP vs Manual-IP Comparison
 
-| Path | Host source | Port source | Scheme selection | Certificate delegate | Physical result |
+| Path | Host source | Port source | Scheme selection | Certificate delegate | Physical result (tested) |
 | --- | --- | --- | --- | --- | --- |
-| mDNS discovered result | `NWConnection` `currentPath.remoteEndpoint` hostPort → `hostString` | SRV/A resolved `port.rawValue` (preserved) | `port == 443` → HTTPS, else HTTP | Only if port == 443 | PHYS-003 PARTIAL; PHYS-006 FAIL (discovered pairing unreliable / loops) |
-| NUPnP fallback | `internalipaddress` from `https://discovery.meethue.com/api/nupnp` | `UInt16(first.port ?? 443)` | Same port rule | Same port rule | Not isolated in FINAL-B (COND-001 NOT TESTED) |
-| Manual IP | User-entered IPv4 trim | **Hardcoded `443`** in `BridgeSetupView` | HTTPS | `BridgeCertTrustDelegate` | PHYS-004 PASS; COND-003 PASS; reliable workaround |
-
----
-
-## Source-Grounded Primary Hypothesis
-
-**Status: hypothesis only — not proven without runtime logs.**
-
-Two construction paths may diverge on **port and transport** for the same Hue v2 bridge:
-
-```text
-mDNS:  resolve → BridgeEndpoint(host, port from Bonjour/SRV, often 80 on some bridges)
-       → pairing may use http://host:80/api without cert delegate
-
-Manual: BridgeEndpoint(host, port: 443)
-        → pairing uses https://host:443/api with BridgeCertTrustDelegate
-```
-
-Source comment in `BridgeDiscoveryService` notes bridges may advertise port 80 / 443. `BridgeDiscoveryViewModel` treats non-443 as HTTP without self-signed cert trust. Manual-IP success on v2 hardware is consistent with this hypothesis but **does not confirm** discovered port was 80 until DEBUG logs show `Port:` and `POST scheme://…` lines.
-
-**IOS-BUG-001B must not** normalize or rewrite discovered ports until log capture confirms the failing transport difference (or a safer boundary is proven by inspection alone).
+| mDNS discovered (auto-first) | Resolved host | Resolved port (**443** on v2) | HTTPS when 443 | Yes | **Fails UX** when wrong bridge auto-selected; **succeeds** when selected bridge matches link button |
+| mDNS + manual IP | User IP | Hardcoded **443** | HTTPS | Yes | **PASS** — explicit second bridge |
+| NUPnP fallback | Cloud `internalipaddress` | `port ?? 443` | Same rule | Same rule | **404 observed** in capture; warm mDNS retry — **IOS-BUG-002A** |
 
 ---
 
 ## Secondary Findings
 
-1. **First-bridge wins:** mDNS auto-handoff uses `discoveredBridges.first`, not user selection when multiple bridges resolve.
-2. **Early Keychain IP write:** Resolved host is saved before pairing success; manual path saves IP again on success. Unlikely sole cause of loop but affects credential state during failed discovered attempts.
-3. **Error-path asymmetry:** Type 101 → `.bridgeFound`; network failure → `.error`. User “loop” may combine 101 retries, scan again, or error → try again flows.
-4. **NUPnP default port 443:** Cloud fallback aligns with manual IP; mDNS path alone may be the outlier.
-5. **No port in UI:** Operators cannot see discovered port without DEBUG log.
-6. **Removal dedup by name only:** Differs from append dedup semantics (UUID-based `contains`).
+1. **First-bridge wins** — root cause of multi-bridge failure mode.
+2. **Scan stops on first resolve** — second bridge may never be offered in UI.
+3. **NUPnP 404** — separate cloud-discovery follow-up (**IOS-BUG-002A**).
+4. **Early Keychain IP write** on mDNS resolve — unchanged in 001B.
+5. **UUID-based dedup** — list may hold multiple entries; UI still shows `.first` only.
 
 ---
 
 ## Duplicate-Endpoint Equality Assessment
 
-```swift
-struct BridgeEndpoint: Identifiable, Equatable {
-    let id = UUID()
-    let name: String
-    let host: String
-    let port: UInt16
-}
-```
-
-Swift-synthesized `Equatable` includes **`id`**. The dedup guard `!discoveredBridges.contains(bridge)` therefore does **not** treat two endpoints with the same name/host/port as duplicates. Re-resolution can append multiple entries; handoff still uses `.first`.
-
-**Relevance to pairing loop:** Low direct evidence, but can cause wrong bridge ordering with multiple LAN bridges. Not expanded as primary fix scope unless logs show multi-bridge confusion.
+`BridgeEndpoint` synthesized `Equatable` includes `id` (`UUID()` per resolve). Dedup by `contains` is ineffective; ordering in `discoveredBridges` affects which bridge becomes `.first`. Relevant to **which** bridge is auto-selected, not transport.
 
 ---
 
 ## Existing Test Coverage
 
-| Area | Status |
-| --- | --- |
-| `BridgeDiscoveryService` / mDNS | **No** dedicated unit tests in `HueHomeTests` |
-| `BridgeDiscoveryViewModel` / pairing | **No** dedicated tests |
-| `BridgeEndpoint` / port-scheme selection | **Not** covered |
-| `BridgeCertTrustDelegate` | **Not** covered |
-| `URLProtocol` stub | **Yes** — `StubURLProtocol` in `HueHomeTests/HueAPIClientTests.swift`, `OrchestratorTests.swift` for **CLIP v2** `HueAPIClient` only |
-| Pairing transport choice | **Testable in principle** via extracted helper + `URLProtocol`; **not** testable today without refactor — pairing is `private` in ViewModel, no existing pairing stub |
-| Physical Hue pairing | Required for signoff; not automated |
+No `BridgeDiscovery` / pairing / selection tests. `StubURLProtocol` covers CLIP v2 only. IOS-BUG-001B should add pure-unit selection state tests (see matrix below).
 
 ---
 
 ## Physical DEBUG Log-Capture Packet
 
-Run on **Debug** build on Brian’s iPhone before **IOS-BUG-001B** implementation.
+**Status: COMPLETE (IOS-BUG-001A2).** Further pairing transport testing is not required for v2 bridges on this LAN.
 
-1. Run Debug build; open bridge setup.
-2. Expand **DEBUG** log panel (`BridgeSetupView`).
-3. Start mDNS discovery (Scan for Bridge).
-4. Select / wait for discovered Hue v2 bridge (bridge-found UI).
-5. Tap **Pair** once **before** pressing link button.
-6. Press physical link button.
-7. Tap **Pair** again.
-8. Copy discovered-flow log lines.
-9. **Reset** setup (`resetToIdle` / Scan Again flow).
-10. **Enter same bridge IP manually**; Connect.
-11. Repeat pairing steps 5–7.
-12. Copy manual-flow log lines.
-13. Repeat discovered flow for second Hue v2 bridge if practical.
-
-**Required log evidence lines:**
-
-- `Bridge resolved! Name: … | IP: … | Port: …`
-- `Bridge found via mDNS: … @ host:port`
-- `Attempting pairing POST to scheme://host:port/api`
-- `POST scheme://host:port/api`
-- `HTTPS mode — using Bridge certificate trust delegate.` (if HTTPS)
-- `HTTP {code}` / `Raw response:` / `Network error:` / type **101** / `Paired!` as applicable
+Capture sequence and required log line types are documented in IOS-BUG-001A; evidence is summarized in **Log-Capture Table** below.
 
 ---
 
@@ -205,10 +219,10 @@ Run on **Debug** build on Brian’s iPhone before **IOS-BUG-001B** implementatio
 
 | Capture | Bridge | Discovered host | Discovered port | Pairing URL | Result | Error / response | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| mDNS flow | v2 bridge A | | | | | | Fill from DEBUG log |
-| manual-IP flow | v2 bridge A | (same IP) | `443` | | | | Expect HTTPS + cert delegate |
-| mDNS flow | v2 bridge B | | | | | | If practical |
-| manual-IP flow | v2 bridge B | (same IP) | `443` | | | | Regression check |
+| mDNS flow | Hue Bridge - 663C54 | `192.168.40.116` | `443` | `https://192.168.40.116:443/api` | Success when link button on **663C54** | Paired; keys `<REDACTED_*>` | Auto-first may show this bridge |
+| mDNS flow | Hue Bridge - 608DFC | `192.168.40.117` | `443` | `https://192.168.40.117:443/api` | Success when link button on **608DFC** | Paired when explicitly targeted | Requires selection or manual IP today |
+| manual-IP flow | Other bridge | User-entered IP | `443` | `https://host:443/api` | Success | — | Workaround for non-selected bridge |
+| NUPnP | — | — | — | `GET …/api/nupnp` | Cloud error | `404 page not found` | **IOS-BUG-002A** — not 001B |
 
 ---
 
@@ -216,91 +230,102 @@ Run on **Debug** build on Brian’s iPhone before **IOS-BUG-001B** implementatio
 
 | Rank | Strategy | Compatibility | Testability | Runtime risk | Recommendation |
 | --- | --- | --- | --- | --- | --- |
-| 1 | **Log capture first** (no code change) | N/A | Enables evidence-based fix | None | **Required before port/scheme changes** |
-| 2 | **C — `pairingCandidates(for:)` policy helper** | Can try discovered then HTTPS:443; keep HTTP:80 for legacy | High if pure Swift + unit tests | Medium — ordering, duplicate POSTs, 101 semantics | **Preferred implementation shape after logs confirm transport mismatch** |
-| 3 | **B — Ordered pairing attempts inline** | Same as C without extraction | Lower until extracted | Medium — duplicate requests during link window | Acceptable if C is deferred one commit |
-| 4 | **E — UI-only handoff normalize to 443** | May fix v2; bypasses true discovered port | Low | Hides mDNS truth; NUPnP/mDNS inconsistency | Only if logs prove port-only issue and policy accepts hiding port |
-| 5 | **A — Always normalize discovered to HTTPS:443** | Breaks HTTP:80 legacy if still on LAN | Medium | High without generation policy | **Not safe** as first repair |
-| 6 | **D — Pre-probe transport before Pair UI** | Broad | Hard | High — new state machine | **Too broad** for first repair |
+| 1 | **Selection UI before pair** — collect bridges during scan; picker; explicit `pairWithBridge(selected)` | Fixes multi-bridge v2; preserves port/host/transport | High (pure unit + physical) | Low | **IOS-BUG-001B — recommended** |
+| — | ~~A — Normalize all discovered to HTTPS:443~~ | — | — | — | **Ruled out** — v2 already 443 |
+| — | ~~B/C — Transport candidate fallback~~ | — | — | — | **Ruled out** for tested v2 |
+| — | ~~D — Pre-probe transport~~ | — | — | High | **Not needed** |
+| — | **Fix NUPnP 404** | — | — | — | **IOS-BUG-002A** only |
 
 ---
 
 ## Recommended IOS-BUG-001B Boundary
 
-1. **Execute physical DEBUG log-capture packet** (this document). Compare discovered vs manual `Port:` and `POST` URLs for both v2 bridges.
-2. **If logs confirm** discovered port ≠ 443 while manual uses HTTPS:443 → implement **Strategy C** (minimal `pairingCandidates(for:)` or equivalent) in `BridgeDiscoveryViewModel` only:
-   - Try discovered endpoint first (preserve legacy HTTP:80 behavior).
-   - On transport-appropriate failure, try **HTTPS:443** for same host (local Hue v2 policy).
-   - Do **not** change Keychain, REST, SSE, or `BridgeDiscoveryService` mDNS resolution in the first commit unless logs require it.
-3. **If logs contradict** port/scheme hypothesis → re-inventory failure mode (101 loop vs `.error` vs TLS) before any normalization.
-4. **Do not** ship Strategy A (blanket 443 normalize) without legacy-bridge policy and COND-002 hardware.
+**IOS-BUG-001B — Add discovered-bridge selection before pairing**
 
-**Log-capture-first conclusion:** IOS-BUG-001B should start with Brian’s DEBUG log table filled; implementation boundary above applies once transport difference is confirmed.
+### Narrow repair
+
+- Collect resolved bridges during the scan window (do not stop presenting after first resolve only).
+- Present discovered bridges as **selectable choices**.
+- Preserve **host** and **discovered port** on selection.
+- Allow explicit selection before `pairWithBridge(...)`.
+- Keep manual-IP fallback **unchanged**.
+- Keep pairing request behavior **unchanged**.
+- Keep HTTPS certificate delegate behavior **unchanged**.
+- Keep legacy HTTP:80 compatibility **unchanged** (no port rewrite).
+- Keep NUPnP fallback behavior **unchanged** in this slice.
+
+### Explicit do-not-touch (001B)
+
+- Do **not** normalize discovered ports.
+- Do **not** rewrite transport selection.
+- Do **not** change certificate trust behavior.
+- Do **not** change `POST /api` pairing body.
+- Do **not** change Keychain persistence.
+- Do **not** fix NUPnP 404 in IOS-BUG-001B.
+- Do **not** refactor unrelated onboarding UI.
 
 ---
 
 ## Proposed Automated Test Matrix (IOS-BUG-001B)
 
-| Test | Class |
-| --- | --- |
-| Discovered endpoint port 443 → scheme HTTPS | Pure unit (helper or package-visible seam) |
-| Port 443 → pairing uses cert-delegate session path (mock delegate flag or injected factory) | Pure unit / small integration |
-| Port 80 → scheme HTTP, shared session (no delegate) | Pure unit |
-| Manual IP remains port 443 / HTTPS | Pure unit (construct `BridgeEndpoint` as UI does) |
-| Type 101 → returns to retryable `bridgeFound` | Pure unit on state transition helper |
-| Successful pairing persists token and host (mock Keychain) | Offline integration |
-| `pairingCandidates` ordering: discovered then 443 fallback | Pure unit |
-| Candidate fallback does not double-success POST | Unit / URLProtocol if extracted |
+### Pure unit
 
-**Physical Hue:** PHYS-003, PHYS-006, COND-003 after fix.
+- One discovered bridge remains selectable.
+- Two discovered bridges remain available for explicit selection.
+- Selecting bridge B passes bridge B into `pairWithBridge(...)`.
+- Already-connected bridge A does not prevent selecting bridge B.
+- Scan reset clears prior discovery-selection state.
+- Discovered host and port are preserved on selection.
 
-Broad UI automation is **not** required unless extraction blocks unit testing.
+### Physical Hue bridge
+
+- Discover two v2 bridges.
+- Explicitly select bridge A and pair.
+- Explicitly select bridge B and pair.
+- Add second bridge **without** manual IP.
+- Verify manual-IP fallback still works.
+- Verify both bridges route room controls correctly.
+
+Do not add tests during documentation-only tasks.
 
 ---
 
 ## Required Physical Re-Test
 
-After IOS-BUG-001B fix, re-run:
+After IOS-BUG-001B:
 
 | ID | Scenario |
 | --- | --- |
-| IOS-FINAL-PHYS-003 | mDNS discovery and discovered-result handoff |
-| IOS-FINAL-PHYS-005 | Link-button-not-pressed retry (discovered path) |
-| IOS-FINAL-PHYS-006 | Successful link-button pairing **from discovered result** |
+| IOS-FINAL-PHYS-003 | mDNS discovery; **choose** correct bridge from list |
+| IOS-FINAL-PHYS-005 | Link-button-not-pressed retry on **selected** discovered bridge |
+| IOS-FINAL-PHYS-006 | Successful link-button pairing from **user-selected** discovered bridge |
 | IOS-FINAL-PHYS-007 | Credential persistence after relaunch |
 | IOS-FINAL-COND-003 | Manual-IP HTTPS:443 regression |
-| IOS-FINAL-COND-004 | Two bridges registered |
+| IOS-FINAL-COND-004 | Two bridges registered via discovery (no manual IP for second) |
 
-Android MVP kickoff remains blocked until discovered-result pairing succeeds without manual IP.
+Android MVP kickoff remains blocked until the above pass without manual IP for the second bridge.
 
 ---
 
-## Explicit Do-Not-Touch List (IOS-BUG-001B unless explicitly scoped)
+## Explicit Do-Not-Touch List (IOS-BUG-001B)
 
-- `UnifiedOrchestrator`, REST v2 client, SSE, cache, demo mode, optimistic updates
-- Keychain schema / multi-bridge migration behavior (except if pairing success path bug found)
-- `BridgeDiscoveryService` mDNS browser (unless logs require resolution change)
-- Xcode project, signing, entitlements, bundle ID, deployment targets
-- Android docs / Kotlin
-- Composer, Studio, widgets, watch
+See **Recommended IOS-BUG-001B Boundary** do-not-touch bullets. Additionally unchanged: `UnifiedOrchestrator`, REST v2, SSE, cache, demo mode, Composer/Studio/widgets/watch, Android docs, Xcode/signing.
 
 ---
 
 ## Android-MVP Kickoff Impact
 
-Per [`docs/android/android-mvp-contract-freeze.md`](../android/android-mvp-contract-freeze.md), Android copies **current native iOS behavior** as parity anchor. Discovered-bridge pairing is a required first-run flow in the freeze hardware checklist. **Kotlin/Gradle MVP start remains blocked** until IOS-BUG-001B repair and PHYS-003 / PHYS-006 physical PASS without manual IP workaround.
+Discovered **multi-bridge selection** is required for Android first-run parity. **Blocked** until IOS-BUG-001B ships and physical re-test passes. NUPnP 404 is tracked separately as **IOS-BUG-002A** and does not unblock Android by itself.
 
 ---
 
 ## Open Questions
 
-1. What mDNS SRV port do Brian’s two v2 bridges advertise on LAN?
-2. Does discovered pairing fail with HTTP 4xx/bridge JSON, TLS error, or repeated 101?
-3. Is the user-visible “loop” `.bridgeFound` ↔ `.pairing` with 101, or `.error` ↔ retry?
-4. Does NUPnP path (port default 443) pair successfully when mDNS is slow-blocked?
-5. Should UI show host:port in bridge-found pill for supportability?
-6. Should Keychain IP write wait until pairing success?
+1. Should already-paired bridges be filtered from the discovered list?
+2. Should scan continue after first resolve until timeout or user stops?
+3. **IOS-BUG-002A:** Is `https://discovery.meethue.com/api/nupnp` still the correct Philips endpoint?
+4. HTTP:80 legacy discovered port behavior — defer until legacy hardware available.
 
 ---
 
-*Inventory complete — IOS-BUG-001A. No Swift or project changes.*
+*Inventory updated — IOS-BUG-001A + IOS-BUG-001A2. No Swift or project changes.*
