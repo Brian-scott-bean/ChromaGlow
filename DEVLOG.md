@@ -2370,3 +2370,34 @@ IOS-TEST-001D test-only slice ready for commit when requested. No production Key
 ### Validation
 - No Xcode build run (docs-only)
 - No physical-device test required for this slice
+
+---
+
+## 2026-06-02 — Orchestrator loadAll Offline Recovery (IOS-TEST-003B2B)
+
+### Scope
+- Branch: `ios-test/orchestrator-loadall-tests`
+- Starting SHA: `039f0e8`
+- New test file: `HueHomeTests/OrchestratorLoadAllTests.swift`
+- Four recovered `loadAll()` offline tests (LOAD-01 through LOAD-04)
+- Production edit: `BridgeAPIClient` `final` removed (declaration-only; no method-body changes)
+- Typed test-only spy `OrchestratorLoadAllSpyBridgeClient` — no URLProtocol, no shared static stubs, no Keychain, no real bridge access
+- Cleanup GET handled explicitly (`{"errors":[],"data":[]}` for entertainment_configuration); cleanup PUT avoided
+- `lastLoadedAt` completion-based behavior pinned on error path (LOAD-03); production comment mismatch noted here only (not edited in `UnifiedOrchestrator.swift`)
+- Orphan `HueHomeTests/OrchestratorTests.swift` untouched and off-target
+
+### Validation
+- Focused `OrchestratorLoadAllTests` → **4/4** pass (iPhone 17 Pro simulator)
+- Full signed-simulator `HueHomeTests` → **126/126** pass (122 + 4)
+- Shell: `test_inject_build_metadata.sh` → **21/21** pass; `test_verify_built_app_metadata.sh` → **17/17** pass
+- Generic unsigned Debug build → **BUILD SUCCEEDED**
+- Generic unsigned Release build → **BUILD SUCCEEDED**
+- `git diff --check` → clean
+- No physical-device test required (declaration-only production diff)
+
+### Warning cleanup (pre-commit)
+- Removed `setUp()`/`tearDown()` from `OrchestratorLoadAllTests`; per-test `@MainActor makeOrchestratorLoadAllSUT()` eliminates 6 MainActor lifecycle warnings introduced by this slice
+- Deferred: `OrchestratorCacheDemoTests` still uses shared `setUp()`/`tearDown()` with the same MainActor pattern (preexisting; not edited in B2B)
+
+### Deferred
+- **IOS-TEST-003B3** — optimistic-update + SSE recovery from orphan suite (6 tests)
