@@ -2873,3 +2873,47 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - [ ] IOS-BUG-001C — pairing retry UX clarity (narrow slice)
 - [ ] IOS-BUG-002A — NUPnP 404 inventory
 - [ ] Android MVP kickoff (after merge + readiness reconciliation)
+
+---
+
+## 2026-06-03 — Final Readiness Reconciliation After Explicit Bridge Selection Repair (IOS-OPS-FINAL-C)
+
+### Scope
+- Branch: `docs/ios-readiness-reconcile-after-001b`
+- Starting SHA: `72ee5ab`
+- Docs-only: `docs/ios/final-readiness-validation.md`, `DEVLOG.md`
+- IOS-BUG-001B merged at main SHA `72ee5ab`
+- No Swift changes; no Xcode project changes; no Android code added
+- No build rerun required in FINAL-C; no simulator rerun required in FINAL-C; no device tests run by Cursor
+
+### Automated validation (unchanged baseline)
+- Metadata injector → **21/21** pass
+- Metadata verifier → **17/17** pass
+- Unsigned generic Debug build → **BUILD SUCCEEDED**
+- Unsigned generic Release build → **BUILD SUCCEEDED**
+- Full signed-simulator `HueHomeTests` → **132/132** pass
+
+### Physical re-test (two Hue v2 bridges, post–IOS-BUG-001B)
+- Both discovered bridges appear as explicit selectable choices; no duplicate chooser rows observed
+- Bridge A (`192.168.40.116:443`) discovered-selection pairing → **PASS**
+- Bridge B (`192.168.40.117:443`) discovered-selection pairing without manual IP → **PASS**
+- Type-101 retry functional → **PASS WITH UX FOLLOW-UP** (IOS-BUG-001C)
+- Manual-IP HTTPS:443 regression → **PASS**
+- Two-bridge routing regression → **PASS**
+
+### Readiness outcome
+- Multi-bridge discovery-selection blocker → **resolved**
+- Android MVP kickoff → **READY WITH DOCUMENTED FOLLOW-UPS**
+- IOS-BUG-001C → non-blocking UX follow-up (selected-vs-pressed bridge mismatch feedback)
+- IOS-BUG-002A → non-blocking (NUPnP `GET https://discovery.meethue.com/api/nupnp` → 404)
+- Credential rotation required before release signoff (DEBUG logs exposed bridge credentials)
+
+### Historical preservation
+- Original IOS-OPS-FINAL-B physical matrix (including `IOS-FINAL-PHYS-003` PARTIAL and `IOS-FINAL-PHYS-006` FAIL) preserved as pre-repair record
+- Post-IOS-BUG-001B reconciliation section added to `docs/ios/final-readiness-validation.md`
+
+### What's left
+- [ ] IOS-BUG-001C — clarify selected-bridge pairing retry feedback
+- [ ] IOS-BUG-002A — NUPnP fallback 404 inventory
+- [ ] Credential rotation before release signoff
+- [ ] Android MVP foundation implementation (unblocked with documented follow-ups)

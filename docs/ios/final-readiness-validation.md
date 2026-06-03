@@ -4,15 +4,15 @@
 
 This document records the **IOS-OPS-FINAL-A** automated readiness pass and **IOS-OPS-FINAL-B** manual physical Hue smoke for native iOS ChromaGlow at anchor commit `5f7ec3a` on branch `ios-ops/final-readiness-validation`. It verifies repository hygiene, metadata shell tests, unsigned generic builds, the full signed-simulator `HueHomeTests` baseline, and Brian Bean’s physical regression run on 2026-06-03.
 
-**Summary:** Automated validation passed. Physical regression testing completed. One discovered-bridge pairing defect blocks Android MVP kickoff. Manual IP pairing is a verified workaround. The app is **not** fully Android-ready.
+**Summary:** Automated validation passed. Physical regression testing completed. The blocking multi-bridge discovery-selection defect was repaired by IOS-BUG-001B and physically re-tested on two Hue v2 bridges. Android MVP kickoff is **READY WITH DOCUMENTED FOLLOW-UPS**.
 
 ## Validation State
 
 | Layer | State |
 | --- | --- |
-| Automated validation | **Complete** — all gates passed on 2026-06-02 (IOS-OPS-FINAL-A) |
-| Manual physical-device Hue smoke | **Complete with exceptions** — 2026-06-03 (IOS-OPS-FINAL-B) |
-| Android MVP kickoff | **Blocked** — discovered-bridge pairing loop (`IOS-FINAL-PHYS-003` PARTIAL, `IOS-FINAL-PHYS-006` FAIL) |
+| Automated validation | **Complete** — all gates passed |
+| Manual physical-device Hue smoke | **Complete with documented follow-ups** |
+| Android MVP kickoff | **READY WITH DOCUMENTED FOLLOW-UPS** |
 
 ## Anchor Commit
 
@@ -79,7 +79,7 @@ Android freeze hardware checklist (not executed in IOS-OPS-FINAL-A):
 | Warning inventory (non-fix) | PASS | Build/test logs | No blocking metadata, membership, or signing regressions detected; see Warning Inventory |
 | Connected-device inventory (read-only) | PASS | `xcrun xctrace list devices`, `xcrun devicectl list devices` | Physical iPhone and Apple Watch listed; no install/launch/pair performed |
 | Manual physical Hue smoke | PASS (with exceptions) | This document § matrices | IOS-OPS-FINAL-B complete 2026-06-03 |
-| Android MVP implementation start | BLOCKED | Discovered-bridge pairing loop | Manual IP workaround verified; fix required before Android copies contract |
+| Android MVP implementation start | READY WITH DOCUMENTED FOLLOW-UPS | IOS-BUG-001B repair + physical re-test | Multi-bridge discovery-selection blocker resolved; IOS-BUG-001C and IOS-BUG-002A tracked as non-blocking follow-ups |
 
 ## Full Signed-Simulator Test Summary
 
@@ -138,9 +138,9 @@ Brian should use the **paired, available** iPhone reported by `devicectl` for IO
 
 ## Manual Physical Hue Smoke Status
 
-**Status:** `Complete with exceptions` (2026-06-03)
+**Status:** `Complete with documented follow-ups` (2026-06-03)
 
-Physical regression testing on real Hue v2 hardware is complete. **17/20** required rows **PASS**, **1** **PARTIAL**, **1** **FAIL**, **1** **NOT AVAILABLE**. Android MVP kickoff remains **blocked** by the discovered-bridge pairing loop until inventoried, repaired, and re-tested (`IOS-FINAL-PHYS-003`, `IOS-FINAL-PHYS-006`).
+Physical regression testing on real Hue v2 hardware is complete. The original IOS-OPS-FINAL-B matrix below records the pre–IOS-BUG-001B findings (**17/20** PASS, **1** PARTIAL, **1** FAIL, **1** NOT AVAILABLE). Post-repair physical re-test results are recorded in **Post-IOS-BUG-001B Readiness Reconciliation** below.
 
 ## Manual Test Context
 
@@ -216,6 +216,59 @@ Physical regression testing on real Hue v2 hardware is complete. **17/20** requi
 | NOT PRACTICAL TODAY | 1 / 7 |
 | NOT AVAILABLE | 1 / 7 |
 
+## Post-IOS-BUG-001B Readiness Reconciliation
+
+Reconciliation recorded at anchor commit `72ee5ab` on branch `docs/ios-readiness-reconcile-after-001b` (IOS-OPS-FINAL-C, 2026-06-03). IOS-BUG-001B merged to `main` at `72ee5ab`.
+
+### Repair Summary
+
+IOS-BUG-001B added explicit discovered-bridge selection before pairing.
+
+The setup flow now:
+
+- continues collecting resolved Hue bridges during scanning
+- presents explicit selectable bridge choices
+- preserves each bridge host and resolved port
+- deduplicates chooser rows by host + port
+- pairs only the bridge explicitly selected by the user
+- preserves the existing manual-IP fallback
+- preserves pairing transport behavior
+- preserves certificate-trust behavior
+- preserves legacy HTTP:80 compatibility
+
+### Physical Re-Test Results
+
+| Test | Result | Notes |
+| --- | --- | --- |
+| Chooser contents | `PASS` | Both Hue v2 bridges appear as explicit selectable choices; no duplicates; no silent auto-target. |
+| Pair Bridge A (`192.168.40.116:443`) | `PASS` | Explicit discovered selection pairs successfully after pressing the matching bridge button. |
+| Pair Bridge B (`192.168.40.117:443`) | `PASS` | Explicit discovered selection pairs successfully without manual IP. |
+| Type-101 retry | `PASS WITH UX FOLLOW-UP` | Retry remains functional; selected-vs-pressed bridge mismatch feedback is not sufficiently clear. |
+| Manual-IP HTTPS:443 regression | `PASS` | Existing manual-IP path remains functional. |
+| Two-bridge routing regression | `PASS` | Room controls route to the intended physical bridge. |
+
+Previously blocking rows:
+
+- `IOS-FINAL-PHYS-003` → resolved by IOS-BUG-001B physical re-test
+- `IOS-FINAL-PHYS-006` → resolved by IOS-BUG-001B physical re-test
+
+### Remaining Documented Follow-Ups
+
+**IOS-BUG-001C — Clarify selected-bridge pairing retry feedback**
+Status: non-blocking UX follow-up
+
+**IOS-BUG-002A — Inventory Philips cloud-discovery fallback 404**
+Status: non-blocking fallback-discovery follow-up
+
+**Credential rotation**
+Status: required before release signoff because DEBUG logs exposed bridge credentials
+
+### Updated Android-MVP Kickoff State
+
+Android MVP kickoff: **READY WITH DOCUMENTED FOLLOW-UPS**
+
+Reason: The Android-MVP-critical multi-bridge discovery-selection blocker is repaired and physically verified. The remaining IOS-BUG-001C and IOS-BUG-002A items are tracked, bounded follow-ups and do not block Android foundation work.
+
 ## iOS-Only Nonblocking Smoke Notes
 
 Broader regression coverage lives in [`docs/ios/regression-smoke-matrix.md`](regression-smoke-matrix.md). The following surfaces remain **iOS regression surfaces** but are **not Android-MVP kickoff gates** unless a blocking launch regression appears:
@@ -254,58 +307,55 @@ None observed during tested flows.
 
 | Blocker | Status |
 | --- | --- |
-| Automated git/build/test gates | **None** at `5f7ec3a` |
-| Manual Android-MVP critical smoke | **Complete with exceptions** — see matrix totals |
-| Android Gradle / Kotlin implementation | **Blocked** |
+| Automated git/build/test gates | **None** at `72ee5ab` |
+| Manual Android-MVP critical smoke | **Complete with documented follow-ups** — see historical matrix and Post-IOS-BUG-001B reconciliation |
+| Android Gradle / Kotlin implementation | **Ready with documented follow-ups** |
 
-### BLOCKER — Discovered-bridge pairing loop
+### RESOLVED — Discovered-bridge multi-bridge selection (IOS-BUG-001B)
 
-**Observed physical behavior:** mDNS discovery finds and displays a Hue v2 bridge, but selecting the discovered result does not reliably complete the pairing flow. The app loops through the connection / pairing path.
+**Historical behavior (IOS-OPS-FINAL-B):** mDNS discovery found bridges, but the flow auto-selected the first discovered bridge with no chooser; selecting a discovered result did not reliably complete pairing for a second bridge without manual IP.
 
-**Working workaround:** enter the bridge IP manually, press the physical bridge link button, and retry pairing. This succeeds over the HTTPS:443 manual-IP path.
+**Repair (IOS-BUG-001B):** explicit discovered-bridge selection before pairing; host+port deduplication; user-selected bridge drives pairing.
 
-**Why this blocks Android MVP kickoff:** discovery and link-button pairing are required first-run Android MVP flows. The iOS behavior anchor must document and repair the discovered-result handoff before Android copies the contract.
+**Physical re-test (2026-06-03):** both Hue v2 bridges pair via explicit discovered selection; manual-IP path remains verified.
 
-**Do not guess at root cause.** Inspect source before editing. Likely inventory areas include discovered endpoint IP normalization, endpoint port selection, HTTP versus HTTPS scheme selection, mDNS result handoff, and pairing retry-state transitions.
-
-The app is **not** fully Android-ready yet.
+**Remaining non-blocking follow-ups:** IOS-BUG-001C (retry UX clarity), IOS-BUG-002A (NUPnP 404 inventory), credential rotation before release signoff.
 
 ## Signoff State
 
 | Item | State |
 | --- | --- |
 | Automated readiness checks | **PASS** |
-| Physical hardware regression run | **COMPLETE WITH EXCEPTIONS** |
-| Android-MVP kickoff | **BLOCKED** |
-| Reason | Discovered-bridge pairing loop |
-| Manual-IP pairing workaround | **VERIFIED** |
-| Recommended next task | **IOS-BUG-001A** — discovered-bridge pairing-loop inventory |
-
-The app is **not** marked READY for Android MVP implementation.
+| Physical hardware regression run | **COMPLETE WITH DOCUMENTED FOLLOW-UPS** |
+| Multi-bridge discovery-selection blocker | **RESOLVED** |
+| Manual-IP pairing regression | **VERIFIED** |
+| Two-bridge routing regression | **VERIFIED** |
+| Android-MVP kickoff | **READY WITH DOCUMENTED FOLLOW-UPS** |
+| Remaining follow-ups | IOS-BUG-001C, IOS-BUG-002A, credential rotation before release |
 
 ## IOS-OPS-FINAL-B Handoff
 
-**Completed:**
+**Completed (historical):**
 
 - IOS-OPS-FINAL-A automated checks passed.
-- IOS-OPS-FINAL-B physical smoke completed.
-- The stabilized iOS baseline remains usable through manual IP pairing.
-- Android implementation is blocked until the discovered-result pairing defect is inventoried, repaired, and physically re-tested for `IOS-FINAL-PHYS-003` and `IOS-FINAL-PHYS-006`.
+- IOS-OPS-FINAL-B physical smoke completed (pre–IOS-BUG-001B matrix preserved above).
+- IOS-BUG-001A inventory and IOS-BUG-001B repair completed; physical re-test passed 2026-06-03.
+- IOS-OPS-FINAL-C reconciled readiness at `72ee5ab`.
 
-**Recommended next branch:**
-
-```text
-ios-bug/discovered-bridge-pairing-loop-inventory
-```
-
-**Recommended next task:**
+**Recommended next work:**
 
 ```text
-IOS-BUG-001A — Inventory discovered-bridge pairing-loop root cause
+Android MVP foundation (per docs/android/android-mvp-contract-freeze.md)
 ```
 
-Do **not** begin Android Gradle/Kotlin implementation until the blocker is resolved and pairing is re-verified on hardware.
+**Non-blocking iOS follow-ups:**
+
+```text
+IOS-BUG-001C — Clarify selected-bridge pairing retry feedback
+IOS-BUG-002A — Inventory Philips cloud-discovery fallback 404
+Credential rotation before release signoff
+```
 
 ---
 
-*IOS-OPS-FINAL-A: 2026-06-02 (automated only). IOS-OPS-FINAL-B: 2026-06-03 (manual smoke recorded by Brian Bean). Docs-only; no Swift, Xcode project, workflow, or script changes in FINAL-B. Cursor did not re-run builds, simulator tests, or physical-device tests in FINAL-B.*
+*IOS-OPS-FINAL-A: 2026-06-02 (automated only). IOS-OPS-FINAL-B: 2026-06-03 (manual smoke recorded by Brian Bean; historical matrix preserved). IOS-OPS-FINAL-C: 2026-06-03 (readiness reconciliation after IOS-BUG-001B). Docs-only in FINAL-B/FINAL-C; no Swift, Xcode project, workflow, or script changes in those passes. Cursor did not re-run builds, simulator tests, or physical-device tests in FINAL-C.*
