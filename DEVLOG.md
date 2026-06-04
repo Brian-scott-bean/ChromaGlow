@@ -3057,3 +3057,19 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - **iOS follow-ups (appendix only):** IOS-BUG-001C, IOS-BUG-002A — non-blocking
 - **Next recommended task:** **ANDROID-002B** — Apply ChromaGlow dark Material 3 tokens to theme + setup/dashboard placeholders
 - No commit or push in this pass
+
+---
+
+## 2026-06-04 — Android Dark Material Theme and Placeholder Styling (ANDROID-002B)
+
+- **Branch:** `android/dark-material-theme-placeholders`
+- **Starting SHA:** `fb7cd25f755407db48ec3196f59bd1860f5cbc45`
+- **Theme changes:** Fixed Noir-only Material 3 `darkColorScheme`; template purple/pink colors removed; `dynamicColor`, `darkTheme`, `isSystemInDarkTheme`, and light/dynamic scheme paths removed from `ChromaGlowTheme`
+- **Tokens:** ChromaGlow amber, setup gradient stops, and Noir semantic colors in `Color.kt`
+- **Typography:** Expanded `Typography` with verified Material 3 slots (display/headline/title/body/label per parity map)
+- **Setup placeholder:** `Brush.linearGradient` background (no explicit `Offset`); title/subtitle use `onBackground` / `onSurfaceVariant`; default amber `Button` for Enter Demo Mode
+- **Dashboard placeholder:** `background` root fill; themed text; `OutlinedButton` for Back to Setup
+- **Unchanged:** Routing, `ChromaGlowApp`, demo boundary, Gradle, manifest, dependencies, tests, iOS, networking, persistence, Navigation Compose
+- **Automated validation:** `git diff --check` PASS; `./gradlew clean lintDebug testDebugUnitTest assembleDebug` PASS; `./gradlew connectedDebugAndroidTest` PASS (Pixel_10 AVD, 1 test)
+- **Manual:** Pixel_10 visual verification of gradient, amber CTA, Noir dashboard, and setup round-trip still required
+- No commit or push in this pass
