@@ -2978,3 +2978,65 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - IOS-BUG-001C — selected-bridge pairing retry UX
 - IOS-BUG-002A — NUPnP cloud-discovery 404 inventory
 - Credential rotation before iOS release signoff
+
+---
+
+## 2026-06-03 — Native Android Compose Foundation Scaffold (ANDROID-001B)
+
+### Context
+- **Branch:** `android/foundation-scaffold-implementation`
+- **Starting SHA:** `f2cb14a`
+- **Template:** Android Studio Jetpack Compose Empty Activity
+
+### Identity and SDK
+| Item | Value |
+| --- | --- |
+| Namespace | `com.chromaglow.app` |
+| `applicationId` | `com.chromaglow.app` |
+| Hue `devicetype` | `chromaglow#android` |
+| `minSdk` | 26 |
+| `compileSdk` | 37 |
+| `targetSdk` | 36 |
+
+### Toolchain and dependency pins (generated template, unchanged in 001B)
+| Item | Version |
+| --- | --- |
+| Gradle wrapper | 9.4.1 |
+| Android Gradle Plugin | 9.2.1 |
+| Kotlin | 2.2.10 |
+| Compose BOM | 2026.02.01 |
+| Bundled JBR | OpenJDK 21.0.10 (Android Studio) |
+
+### What was built
+- Initial **`:app`-only** module boundary under `android/`
+- Machine-local paths excluded via `android/.gitignore` (`/.idea/`, `/.gradle/`, `/.kotlin/`, `local.properties`, build dirs)
+- Starter **Hello Android** template validated before replacement
+- **ChromaGlow** shell: `MainActivity` → `ChromaGlowTheme` → `ChromaGlowApp`
+- Local setup placeholder destination (`feature.setup`)
+- **Demo-mode entry boundary** (`data.demo.DemoModeBoundary`) — no fixtures, persistence, or networking
+- Dashboard placeholder destination (`feature.dashboard`)
+- Local Compose navigation state only (no Navigation Compose dependency)
+- JVM smoke: `DemoModeBoundaryTest`
+- Compose instrumented smoke: `ChromaGlowAppTest`
+- Updated `docs/android/android-foundation-scaffold-plan.md` post-install record (preserves ANDROID-001A history)
+
+### Explicitly not done
+- Hue networking, discovery, pairing, credentials, Keystore, DataStore, Room, REST/SSE
+- No iOS files changed
+- No commit or push
+
+### Automated validation (ANDROID-001B)
+- **Gradle:** 9.4.1 (JBR 21.0.10)
+- **`lintDebug`:** PASS
+- **`testDebugUnitTest`:** PASS (`DemoModeBoundaryTest`)
+- **`assembleDebug`:** PASS
+- **`connectedDebugAndroidTest`:** PASS (`ChromaGlowAppTest` on Pixel_10 AVD)
+- **APK install:** PASS
+- **`MainActivity` launch:** PASS (`adb shell am start -n com.chromaglow.app/.MainActivity`)
+- Logs: `/tmp/android-001b-build.log`, `/tmp/android-001b-connected-test.log`
+
+### Manual verification required
+- Inspect running emulator: setup copy → **Enter Demo Mode** → dashboard placeholder → **Back to Setup**
+
+### Recommended next task
+- **ANDROID-002A** — Establish Android design-system tokens and screen-shell parity map
