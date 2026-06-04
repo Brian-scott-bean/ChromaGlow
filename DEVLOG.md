@@ -3040,3 +3040,20 @@ Not investigated or fixed in IOS-BUG-001B branch.
 
 ### Recommended next task
 - **ANDROID-002A** — Establish Android design-system tokens and screen-shell parity map
+
+---
+
+## 2026-06-04 — Android Design-System Tokens and Screen-Shell Parity Map (ANDROID-002A)
+
+- **Branch:** `android/design-system-shell-parity-map`
+- **Starting SHA:** `63f35f3324d2294e868873b2b1f162ac9537d504`
+- **Scope:** Docs-only — no Kotlin, Gradle, `AndroidManifest`, Swift, or iOS doc edits
+- **New doc:** [`docs/android/android-design-system-shell-parity-map.md`](docs/android/android-design-system-shell-parity-map.md)
+- **Content:** Material 3 token tables from `HueTokens.swift` / `HueTypography.swift`; setup and dashboard shell parity rows; room-card interaction contract; MVP acceptance traceability
+- **Approved decisions recorded:** `dynamicColor = false` for MVP; Noir-only dark theme; Estate as future reference only; setup gradient = Noir base + subtle purple tint; glass = alpha surface + border + restrained glow (no blur / `RenderEffect`); semantic parity not pixel clone; keep `ChromaGlowDestination` enum navigation — **no Navigation Compose**; deferred presets, now-playing, automations, Studio, More, favorite scenes, wide-card toggle, light theme, haptics; `core.ui` extraction waits for second caller
+- **ANDROID-002B boundary:** Replace template purple/dynamic colors, expand typography, theme two placeholders only — no new destinations, grid, setup phases, or fake rooms
+- **Baseline noted:** `Theme.kt` still ships `dynamicColor = true` and purple starter colors until 002B
+- **Explicit non-goals:** No `UnifiedOrchestrator` copy on Android; no placeholder stubs for deferred features in 002B
+- **iOS follow-ups (appendix only):** IOS-BUG-001C, IOS-BUG-002A — non-blocking
+- **Next recommended task:** **ANDROID-002B** — Apply ChromaGlow dark Material 3 tokens to theme + setup/dashboard placeholders
+- No commit or push in this pass
