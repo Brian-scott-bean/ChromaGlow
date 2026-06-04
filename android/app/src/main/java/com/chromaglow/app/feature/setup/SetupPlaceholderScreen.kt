@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,13 +23,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.chromaglow.app.core.hue.discovery.AndroidNsdBridgeDiscoveryService
 import com.chromaglow.app.core.hue.discovery.BridgeDiscoverySnapshot
 import com.chromaglow.app.core.hue.discovery.BridgeEndpoint
+import com.chromaglow.app.core.hue.discovery.ManualBridgeEndpointParser
 import com.chromaglow.app.ui.theme.SetupGradientEnd
 import com.chromaglow.app.ui.theme.SetupGradientMid
 import com.chromaglow.app.ui.theme.SetupGradientStart
+
+internal const val MANUAL_ENTRY_FIELD_TAG = "setup_manual_entry_field"
 
 @Composable
 fun SetupPlaceholderScreen(
@@ -44,6 +49,9 @@ fun SetupPlaceholderScreen(
         mutableStateOf(BridgeDiscoverySnapshot(isScanning = false, choices = emptyList()))
     }
     var selectedEndpoint by remember { mutableStateOf<BridgeEndpoint?>(null) }
+    var manualVisible by remember { mutableStateOf(false) }
+    var manualText by remember { mutableStateOf("") }
+    var manualError by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(discoveryService) {
         onDispose { discoveryService.stop() }
@@ -82,11 +90,67 @@ fun SetupPlaceholderScreen(
 
             Button(
                 onClick = {
+                    manualVisible = false
+                    manualText = ""
+                    manualError = null
                     selectedEndpoint = null
                     discoveryService.start { snapshot = it }
                 },
             ) {
                 Text(text = "Scan for Bridge")
+            }
+
+            OutlinedButton(
+                onClick = {
+                    discoveryService.stop()
+                    snapshot = BridgeDiscoverySnapshot(isScanning = false, choices = emptyList())
+                    selectedEndpoint = null
+                    manualText = ""
+                    manualError = null
+                    manualVisible = true
+                },
+            ) {
+                Text(text = "Enter IP Manually")
+            }
+
+            if (manualVisible) {
+                OutlinedTextField(
+                    value = manualText,
+                    onValueChange = { manualText = it },
+                    placeholder = { Text(text = "192.168.1.100") },
+                    singleLine = true,
+                    isError = manualError != null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(MANUAL_ENTRY_FIELD_TAG),
+                )
+
+                manualError?.let { error ->
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        when (val result = ManualBridgeEndpointParser.parse(manualText)) {
+                            is ManualBridgeEndpointParser.Parsed.Valid -> {
+                                selectedEndpoint = result.endpoint
+                                manualError = null
+                                manualVisible = false
+                                onDiscoveredBridgeSelected(result.endpoint)
+                            }
+
+                            is ManualBridgeEndpointParser.Parsed.Invalid -> {
+                                manualError = result.message
+                            }
+                        }
+                    },
+                ) {
+                    Text(text = "Use This Bridge")
+                }
             }
 
             val selected = selectedEndpoint
@@ -131,6 +195,9 @@ fun SetupPlaceholderScreen(
             if (snapshot.isScanning || snapshot.choices.isNotEmpty() || selected != null) {
                 OutlinedButton(
                     onClick = {
+                        manualVisible = false
+                        manualText = ""
+                        manualError = null
                         selectedEndpoint = null
                         discoveryService.stop()
                         discoveryService.start { snapshot = it }

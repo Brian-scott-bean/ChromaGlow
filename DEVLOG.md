@@ -3137,3 +3137,22 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - Automated validation: `git diff --check` PASS; scope + forbidden-scope greps PASS; `./gradlew clean lintDebug testDebugUnitTest assembleDebug` PASS; `./gradlew connectedDebugAndroidTest` PASS (Pixel_10 AVD, 13 tests)
 - Manual Pixel_10 LAN verification still required (no physical bridge discovery claimed)
 - No commit or push in this pass
+
+## 2026-06-04 — Android Manual-IP Bridge Entry (ANDROID-005B)
+
+- Branch: `android/manual-ip-bridge-entry`
+- Starting SHA: `f18fb29ef4f83d72a42f32ccb5cbf1201115e6b4`
+- Inline manual-entry path on the setup screen — secondary `Enter IP Manually` action expands an inline section (no `ModalBottomSheet`); preserves landed ANDROID-005A discovery/lifecycle behavior
+- Pure local parser (`ManualBridgeEndpointParser`) — no dependency, no Android networking imports, no DNS, never calls `InetAddress.getByName`; trims input, rejects blanks, schemes (`://`), `/?#@`, internal whitespace, and IPv6 zone IDs (`%`)
+- Fixed local HTTPS port `443`; no custom-port field
+- IPv4 accepted only as exactly four numeric octets in `0..255`; dotted-decimal candidates never fall through to the hostname path (so `256.1.1.1` is rejected, not treated as a name)
+- IPv6 accepted conservatively: at most one `::` compression marker, no `:::`, hex groups 1–4 chars; bracketed literals such as `[2001:db8::1]` have exactly one matched surrounding pair stripped so `BridgeEndpoint.displayAddress` re-adds exactly one pair
+- Safe ASCII hostnames: dot-separated or single-label, each label `1..63` chars of letters/digits/`-`, no leading/trailing `-`, total `≤253`; no resolution performed
+- Bounded `Parsed.Valid`/`Parsed.Invalid` result with fixed inline error strings; valid input builds the existing `BridgeEndpoint(name = "Manual bridge", host, port = 443)`
+- No network request on entry — typing updates local UI state only; selection reuses the existing inert `SelectedBridgeCard` and preserves `Pairing will be added in a later step.`
+- Transitions: `Enter IP Manually` stops discovery, clears chooser rows / prior selection / prior manual input + error, opens the section; valid `Use This Bridge` sets the selected endpoint, closes the form, clears error, shows the inert card; invalid keeps the form open with an inline error and no card; `Scan for Bridge` / `Scan Again` clear manual visibility/text/error and selected state and restart mDNS through the existing service
+- Selection remains read-only; no persistence
+- Tests: `ManualBridgeEndpointParserTest` (JVM — valid IPv4/whitespace-trimmed/`fe80::1`/`[2001:db8::1]`/`bridge.local`/`huebridge`; invalid blank/whitespace/`256.1.1.1`/bad octet counts/malformed IPv6/multiple `::`/`fe80::1%eth0`/`https://…`/`…/api`/embedded whitespace/hyphen-edge labels/over-63 label; default port 443, synthetic name, unbracketed IPv6 storage, one-pair IPv6 display, `host:443` IPv4 display); `SetupManualEntryTest` (Compose — action visible, valid IPv4 renders inert card + `192.168.1.100:443`, invalid renders inline error and no card, `Scan Again` clears selection and returns to scanning); `ChromaGlowAppTest` unchanged
+- No pairing, navigation, persistence, REST, TLS, cloud, backend, NUPnP, credentials, manual network probes, new lifecycle behavior, dependency, manifest, or Gradle changes
+- Physical-device validation remains deferred — no physical Android device is currently available
+- No commit or push in this pass
