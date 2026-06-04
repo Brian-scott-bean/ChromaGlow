@@ -3073,3 +3073,19 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - **Automated validation:** `git diff --check` PASS; `./gradlew clean lintDebug testDebugUnitTest assembleDebug` PASS; `./gradlew connectedDebugAndroidTest` PASS (Pixel_10 AVD, 1 test)
 - **Manual:** Pixel_10 visual verification of gradient, amber CTA, Noir dashboard, and setup round-trip still required
 - No commit or push in this pass
+
+---
+
+## 2026-06-04 — Android Demo-Mode Domain Models and Dashboard Fixtures (ANDROID-003A)
+
+- **Branch:** `android/demo-mode-domain-fixtures`
+- **Starting SHA:** `d5c1ebf9a1ab4e9d0f5fa9c343f5857a03c44e7b`
+- **Domain:** `RoomDisplayModel` with constructor `require` invariants (brightness 1–100, non-blank ids/names/bridgeId)
+- **Fixtures:** `DemoFixtures` — four deterministic in-memory rooms on `demo-bridge-main`, sorted by name
+- **Session:** `DemoModeSession` carries `rooms`; `enterDemoMode()` returns `DemoFixtures.rooms`
+- **Dashboard:** `DashboardPlaceholderScreen` evolved in place — `LazyColumn` of read-only `DemoRoomRow` (`On · N% · N lights` / off alpha 0.72)
+- **Tests:** `DemoFixturesTest` (fixture + invariant coverage); `DemoModeBoundaryTest` and `ChromaGlowAppTest` smoke updated
+- **Unchanged:** `ChromaGlowApp`, setup, theme, Gradle, manifest, dependencies, routing, iOS, networking, persistence, zones, controls, Navigation Compose
+- **Automated validation:** `git diff --check` PASS; `./gradlew clean lintDebug testDebugUnitTest assembleDebug` PASS; `./gradlew connectedDebugAndroidTest` PASS (Pixel_10 AVD, 1 test)
+- **Manual:** Pixel_10 fixture list and setup round-trip still required
+- No commit or push in this pass

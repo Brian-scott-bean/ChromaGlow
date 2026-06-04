@@ -29,6 +29,14 @@ class ChromaGlowAppTest {
         composeTestRule.onNodeWithText("Enter Demo Mode").performClick()
 
         composeTestRule.onNodeWithText("Demo Dashboard").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Living Room").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Master Bedroom").assertIsDisplayed()
+        composeTestRule.onNodeWithText("On · 78% · 5 lights").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Off · 40% · 4 lights").assertIsDisplayed()
         composeTestRule.onNodeWithText("Back to Setup").assertIsDisplayed()
+
+        composeTestRule.onNodeWithText("Back to Setup").performClick()
+
+        composeTestRule.onNodeWithText("Enter Demo Mode").assertIsDisplayed()
     }
 }
