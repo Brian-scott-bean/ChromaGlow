@@ -3089,3 +3089,25 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - **Automated validation:** `git diff --check` PASS; `./gradlew clean lintDebug testDebugUnitTest assembleDebug` PASS; `./gradlew connectedDebugAndroidTest` PASS (Pixel_10 AVD, 1 test)
 - **Manual:** Pixel_10 fixture list and setup round-trip still required
 - No commit or push in this pass
+
+---
+
+## 2026-06-04 — Android Local Credential-Storage Boundary (ANDROID-004A)
+
+- **Branch:** `android/credential-storage-boundary`
+- **Starting SHA:** `6f0f7167da7c2f27bd7d9dcc16d1d8787681ca56`
+- **Scope:** API-token-only local credential boundary — no `CLIENT_KEY`, entertainment keys, secret-kind enums, or future-secret placeholders
+- **Keystore:** Per-bridge `AndroidKeyStore` AES-256-GCM key material (`AES/GCM/NoPadding`)
+- **At-rest blob:** Versioned IV + ciphertext under `Context.noBackupFilesDir/credentials/` (no backup); directory creation fails closed if path is missing, not a directory, or cannot be created
+- **Alias strategy:** Deterministic `chromaglow.bridge.<bridgeId>.api_token` keystore alias and `bridge_<bridgeId>.api_token.enc` filename; unsafe bridge IDs rejected (not sanitized)
+- **Store API:** `BridgeCredentialStore` with `saveApiToken` / `loadApiToken` / `deleteApiToken`; `BridgeSecretResult` = `Present` / `Absent` / `Failure`
+- **Concurrency:** Process-wide `PROCESS_LOCK` shared across store instances
+- **Save:** Validates bridge ID and non-blank token; fails closed before Keystore key creation when ciphertext path exists but is not a regular file; reuses or creates Keystore key; encrypts UTF-8; unique `createTempFile` write with `fd.sync()`; `Files.move` with `ATOMIC_MOVE` + `REPLACE_EXISTING`, falling back to `REPLACE_EXISTING` only; no delete-before-replace window; does not delete Keystore key before overwrite
+- **Filesystem checks:** `Files.exists` / `Files.isRegularFile` use `LinkOption.NOFOLLOW_LINKS` on save, load, and delete (symlinks and other non-regular entries fail closed)
+- **Load:** Neither key nor ciphertext path → `Absent`; path exists but not a regular file → `Failure`; exactly one of key or regular ciphertext file → `Failure`; both present → decrypt with on-disk blob length bounded before `readBytes`; crypto/I/O/format errors → `Failure` (`Exception` only, no token in messages)
+- **Delete:** Non-regular ciphertext path → throw; `Files.deleteIfExists` propagates I/O failure before Keystore removal; idempotent when already absent
+- **Tests:** `BridgeCredentialAliasTest` (JVM alias/filename validation); `AndroidKeystoreBridgeCredentialStoreTest` (round-trip, overwrite, idempotent delete, ciphertext does not contain token bytes, key-without-blob and blob-without-key `Failure`, directory-at-ciphertext-path save/load/delete, oversized encrypted blob rejection)
+- **Deferred:** Biometric/user-presence prompt, metadata persistence, UI wiring, pairing, networking
+- **Unchanged:** Gradle, manifest, dependencies, `MainActivity`, app/feature/ui packages, docs, iOS, DataStore, Room, SharedPreferences
+- **Automated validation:** `git diff --check` PASS; forbidden storage/logging grep PASS; `./gradlew clean lintDebug testDebugUnitTest assembleDebug` PASS; `./gradlew connectedDebugAndroidTest` PASS (Pixel_10 AVD, 13 tests)
+- No commit or push in this pass
