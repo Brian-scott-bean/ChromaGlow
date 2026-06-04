@@ -24,6 +24,7 @@ class ChromaGlowAppTest {
         }
 
         composeTestRule.onNodeWithText("ChromaGlow").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Scan for Bridge").assertIsDisplayed()
         composeTestRule.onNodeWithText("Enter Demo Mode").assertIsDisplayed()
 
         composeTestRule.onNodeWithText("Enter Demo Mode").performClick()
@@ -37,6 +38,7 @@ class ChromaGlowAppTest {
 
         composeTestRule.onNodeWithText("Back to Setup").performClick()
 
+        composeTestRule.onNodeWithText("Scan for Bridge").assertIsDisplayed()
         composeTestRule.onNodeWithText("Enter Demo Mode").assertIsDisplayed()
     }
 }

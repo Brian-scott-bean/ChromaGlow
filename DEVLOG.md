@@ -3111,3 +3111,29 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - **Unchanged:** Gradle, manifest, dependencies, `MainActivity`, app/feature/ui packages, docs, iOS, DataStore, Room, SharedPreferences
 - **Automated validation:** `git diff --check` PASS; forbidden storage/logging grep PASS; `./gradlew clean lintDebug testDebugUnitTest assembleDebug` PASS; `./gradlew connectedDebugAndroidTest` PASS (Pixel_10 AVD, 13 tests)
 - No commit or push in this pass
+
+## 2026-06-04 — Android mDNS Bridge-Discovery Chooser (ANDROID-005A)
+
+- Branch: `android/mdns-bridge-discovery`
+- Starting SHA: `950677ed3b89e999e4304326bc283aa4c7a6daaf`
+- Hue DNS-SD type: `_hue._tcp` (no trailing dot), browsed via `NsdManager.PROTOCOL_DNS_SD`
+- Android `NsdManager` platform adapter (`AndroidNsdBridgeDiscoveryService`) — LAN browse only, no extra dependency
+- Manifest permissions: `CHANGE_WIFI_MULTICAST_STATE`; plus `INTERNET` added on runtime evidence — `getSystemService(NSD_SERVICE)` `NsdManager.<init>` → `INsdManager.connect()` throws `SecurityException` without it (proven by connected test before adding)
+- `WifiManager` multicast lock lifecycle: non-reference-counted, acquired on start, released on stop/stopped/failure; never double-acquired or released-when-unheld
+- API 34+ uses `registerServiceInfoCallback(serviceInfo, mainExecutor, callback)`; one callback tracked per service name; updates restore endpoint, callback loss removes it
+- API 26–33 single-flight `@Suppress("DEPRECATION")` `resolveService` fallback; queued one-at-a-time, next drained after success/failure; stale-generation callbacks ignored
+- Host extraction: API 34+ prefers first `Inet4Address` from `hostAddresses`, else first; legacy uses `serviceInfo.host`; both via `InetAddress.hostAddress`, require non-blank host, preserve `serviceInfo.port`, omit invalid endpoints
+- `BridgeEndpoint` preserves resolved host + port; chooser rows derived from `BridgeEndpointDeduper.deduplicate(endpointByServiceName.values)` (host+port dedupe, first-seen wins, not by service name)
+- No silent auto-selection; chooser row tap stops discovery and sets an inert selected endpoint ("Pairing will be added in a later step.")
+- Generation counter + main-thread state changes guard against zombie callbacks; no `Log.*`/`println`/service-object dumping
+- Lifecycle correction pass: `stopActiveDiscovery()` attempts `stopServiceDiscovery(listener)` whenever a `discoveryListener` exists (including the pre-`onDiscoveryStarted` window), catching `IllegalArgumentException` for not-yet-registered listeners — no longer gated on `isDiscoveryActive`
+- Lifecycle correction pass: `acquireMulticastLock()` + `discoverServices(...)` share one bounded `try` catching `IllegalArgumentException`/`SecurityException`; either fails closed (clear listener/active/scanning, release multicast lock, `DISCOVERY_FAILED_MESSAGE`, publish) with no exception detail logged
+- Lifecycle correction pass: API 26–33 in-flight `resolveService` callbacks cannot resurrect a service lost before resolution — `discoveredServiceNames` gates endpoint publication; `onServiceLost` drops the name, endpoint, queued entries, and queued-name set membership
+- Lifecycle correction pass: legacy resolve queue is name-deduplicated via `queuedLegacyServiceNames` (skip if already queued or currently resolving); `currentlyResolvingServiceName` set before resolve and cleared on success/failure
+- Lifecycle correction pass: API 34+ callback-map cleanup is identity-safe — `removeServiceInfoCallbackIfCurrent(...)` only removes a map entry when it still references the same callback instance, so a later replacement registered for the same service name is preserved
+- Setup screen extended with defaulted `onDiscoveredBridgeSelected` callback (no `ChromaGlowApp.kt` edit); `DisposableEffect` stops discovery on dispose; Noir gradient, title, subtitle, and Enter Demo Mode preserved
+- Tests: `BridgeEndpointDeduperTest` (11 JVM cases — dedupe, first-seen, service-name independence, endpointKey lowercase, IPv4/IPv6 displayAddress, blank name/host and bad port rejection); `ChromaGlowAppTest` adds Scan for Bridge + Enter Demo Mode assertions before/after dashboard round-trip
+- No pairing, manual IP, NUPnP, cloud discovery, credentials, REST, TLS, Gradle, dependency, dashboard, iOS, DataStore, or Room changes
+- Automated validation: `git diff --check` PASS; scope + forbidden-scope greps PASS; `./gradlew clean lintDebug testDebugUnitTest assembleDebug` PASS; `./gradlew connectedDebugAndroidTest` PASS (Pixel_10 AVD, 13 tests)
+- Manual Pixel_10 LAN verification still required (no physical bridge discovery claimed)
+- No commit or push in this pass
