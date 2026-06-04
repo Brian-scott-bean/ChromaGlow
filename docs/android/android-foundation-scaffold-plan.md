@@ -259,3 +259,51 @@ Stop and report (do not scaffold) if:
 - Task scope expands beyond allowed files or implements Hue networking in 001B.
 
 When dependency versions are not grounded in installed toolchain, record the open item — **do not guess**.
+
+---
+
+## Post-Install Toolchain and ANDROID-001B Scaffold Record (2026-06-03)
+
+**Status:** ANDROID-001B scaffold boundary implemented on branch `android/foundation-scaffold-implementation` (starting SHA `f2cb14a`). Preserves ANDROID-001A inventory history above.
+
+| Item | Value |
+| --- | --- |
+| Android Studio | Installed |
+| Bundled JBR | OpenJDK **21.0.10** |
+| SDK root | `/Users/brianbean/Library/Android/sdk` |
+| Installed API platforms | **36.1** and **37** |
+| Installed build tools | **36.1.0** and **37.0.0** |
+| `adb` | Available |
+| `sdkmanager` | Available |
+| `emulator` | Available |
+| AVD | **Pixel_10** |
+| Emulator launch | Verified |
+| Namespace (approved) | `com.chromaglow.app` |
+| `applicationId` (approved) | `com.chromaglow.app` |
+| Hue `devicetype` (approved) | `chromaglow#android` |
+| `minSdk` (approved) | **26** |
+| `compileSdk` (selected) | **37** (Compose BOM metadata failed against API 36.1; build verified against installed API 37) |
+| `targetSdk` (selected) | **36** |
+| Generated Compose template | Validated (Gradle sync, debug build, unit test, connected test, APK install, launcher) |
+| ANDROID-001B boundary | Portable Gradle wrapper; machine-local Studio paths gitignored; ChromaGlow shell with setup + dashboard placeholders; demo-mode entry boundary; JVM + Compose smoke tests; no Hue networking |
+
+**Pinned dependency versions (from generated template, not bumped in 001B):**
+
+| Component | Version |
+| --- | --- |
+| Gradle wrapper | **9.4.1** |
+| Android Gradle Plugin | **9.2.1** |
+| Kotlin | **2.2.10** |
+| Compose BOM | **2026.02.01** |
+
+**001B portable scaffold packages (inside `:app` only):**
+
+```text
+com.chromaglow.app
+com.chromaglow.app.app
+com.chromaglow.app.data.demo
+com.chromaglow.app.feature.setup
+com.chromaglow.app.feature.dashboard
+```
+
+**Still deferred:** mDNS, NUPnP, manual IP, pairing, credentials, Keystore, DataStore, Room, REST/SSE, real dashboard UI, backend, extra Gradle modules, Navigation Compose dependency (local Compose state used for first shell).
