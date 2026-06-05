@@ -207,7 +207,7 @@ See boundary above. Additionally deferred to MVP roadmap slices: design tokens (
 | ANDROID-005A | Inventory and implement mDNS bridge discovery chooser |
 | ANDROID-005B | Add manual-IP bridge entry |
 | ANDROID-005C | Inventory NUPnP fallback behavior after IOS-BUG-002A — **inventory/decision complete; deferred** ([record](android-nupnp-fallback-inventory.md)) |
-| ANDROID-006A | Implement link-button pairing |
+| ANDROID-006A | Implement link-button pairing — **inventory complete; runtime BLOCKED** pending approved TLS-bootstrap + canonical bridge-ID decision ([record](android-pairing-tls-identity-decision.md)) |
 | ANDROID-007A | Add dashboard room / zone models and local stale-state store |
 | ANDROID-008A | Add room and grouped-light control |
 | ANDROID-009A | Add room-detail individual-light control |
@@ -216,6 +216,8 @@ See boundary above. Additionally deferred to MVP roadmap slices: design tokens (
 | ANDROID-012A | Run Android physical bridge parity packet |
 
 **ANDROID-005C status (2026-06-04):** Inventory / decision pass complete. Decision: **defer implementation until IOS-BUG-002A resolves the cloud N-UPnP endpoint contract** (observed `404 page not found`, root cause unresolved). Android proceeds with **ANDROID-005A mDNS chooser + ANDROID-005B manual entry** as the active onboarding baseline. Any cloud-assisted fallback is a future gated follow-up and must feed the existing chooser (never silently auto-select). See [`android-nupnp-fallback-inventory.md`](android-nupnp-fallback-inventory.md).
+
+**ANDROID-006A status (2026-06-04):** Pairing identity / TLS inventory complete. **Runtime implementation is BLOCKED** pending an approved decision record: a safe first-contact TLS-bootstrap policy and a canonical stable bridge-ID contract must both be decided before any live pairing code. The known `POST /api` link-button contract remains documented evidence only; no pairing runtime code, dependencies, or network probe were added. Android onboarding remains **mDNS chooser + manual endpoint entry**; **N-UPnP remains deferred separately under ANDROID-005C**. See [`android-pairing-tls-identity-decision.md`](android-pairing-tls-identity-decision.md).
 
 ## iOS Evidence That Android Must Not Copy Blindly
 

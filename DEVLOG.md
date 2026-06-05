@@ -3173,3 +3173,22 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - No Kotlin, Swift, manifest, Gradle, dependency, test, Xcode, or runtime changes
 - No network probe performed
 - No commit or push in this pass
+
+## 2026-06-04 — Android Pairing TLS / Stable-Identity Decision Blocker (ANDROID-006A)
+
+- Branch: `android/link-button-pairing`
+- Starting SHA: `0571c6d0e67b6e11e314bf7b1e567b55bb60cf8c`
+- Docs-only stable-identity / TLS inventory — read-only investigation reviewed and approved; no pairing runtime code added; no network probe performed
+- New blocker record: `docs/android/android-pairing-tls-identity-decision.md` (status/decision, current onboarding baseline, known pairing contract, stable-identity blocker, TLS-bootstrap blocker, unsafe iOS precedent, why deferred, future preconditions, future sequencing shape, explicit non-goals)
+- Status: `BLOCKED — SAFE TLS BOOTSTRAP AND CANONICAL BRIDGE IDENTITY MUST BE DECIDED BEFORE LIVE PAIRING CODE`
+- Known pairing contract (evidence only): `POST {scheme}://{host}:{port}/api`; `Content-Type: application/json`; ~10s timeout; body `devicetype` + `generateclientkey`; Android device type `chromaglow#android`; JSON-array response; success `username` + optional `clientkey`; retryable type `101` (link button not pressed); type `7` invalid body/devicetype
+- ANDROID-004A credential boundary (`BridgeCredentialStore` / `BridgeCredentialAlias`) requires a stable `bridgeId`, not host or port
+- Android discovery (mDNS) and manual endpoint entry currently produce only `name`, `host`, and `port` via `BridgeEndpoint`; neither yields a canonical bridge ID
+- Pairing response contains no stable bridge ID; host + port is short-lived routing/dedupe only and is not durable identity across DHCP changes; do not fabricate, randomly generate, or substitute a bridge ID; do not copy the iOS random-UUID storage precedent
+- Safe first-contact TLS trust cannot be derived from repo evidence alone — no approved CA, fingerprint, hostname rule, pinning material, or TOFU-bootstrap rule exists; permissive `X509TrustManager` and blind-`true` `HostnameVerifier` are not approved; HTTP-stack selection deferred until trust policy approved
+- iOS permissive local server-trust acceptance is evidence only and must not be copied; Android must not suppress trust failures and continue silently
+- Decision: `C. RECORD A DOCS-ONLY TLS / IDENTITY DECISION BLOCKER BEFORE ANY PAIRING CODE` — runtime pairing blocked until approved TLS-bootstrap and canonical bridge-ID contracts exist; pairing remains the next runtime feature, gated
+- Contract-freeze updated near the pairing + certificate-trust sections; foundation scaffold plan updated near the ANDROID-006A roadmap row; both link the new decision record
+- No Kotlin, Swift, tests, manifest, Gradle, dependency, or runtime changes
+- No network probe performed
+- No commit or push in this pass
