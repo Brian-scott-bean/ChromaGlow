@@ -147,6 +147,8 @@ Recorded at freeze anchor `b4fbb58` (signed-simulator `HueHomeTests` on iPhone 1
 
 **Android implementation suggestion:** OkHttp + explicit certificate policy type; pairing module isolated from dashboard.
 
+**Runtime pairing BLOCKED (ANDROID-006A):** Runtime link-button pairing is blocked pending an approved safe TLS-bootstrap policy and a canonical stable bridge-ID contract. The known `POST /api` contract above remains documented evidence only. The landed **API-token-only** credential store (ANDROID-004A) remains unchanged. Do **not** fabricate bridge ID values. See [`android-pairing-tls-identity-decision.md`](android-pairing-tls-identity-decision.md).
+
 ## Certificate Trust Boundary
 
 | Surface | Current iOS | Android guidance |
@@ -155,7 +157,7 @@ Recorded at freeze anchor `b4fbb58` (signed-simulator `HueHomeTests` on iPhone 1
 | REST v2 (`HueAPIClient`) | `HueCertTrustDelegate` on session **and** task delegate (iOS 15+ task challenges) | Same review; likely needed for `https://{bridgeIP}` |
 | SSE (`UnifiedOrchestrator.runSSE`) | Shared `sseSession` with cert delegate | Same review |
 
-**Explicit:** iOS behavior is evidence, not an approved Android security decision.
+**Explicit:** iOS behavior is evidence, not an approved Android security decision. Do **not** copy unconditional iOS trust behavior into Android. Android first-contact TLS trust is an open blocker — see [`android-pairing-tls-identity-decision.md`](android-pairing-tls-identity-decision.md).
 
 ## Credential Storage Contract
 
