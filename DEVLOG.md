@@ -3156,3 +3156,20 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - No pairing, navigation, persistence, REST, TLS, cloud, backend, NUPnP, credentials, manual network probes, new lifecycle behavior, dependency, manifest, or Gradle changes
 - Physical-device validation remains deferred — no physical Android device is currently available
 - No commit or push in this pass
+
+## 2026-06-04 — Android NUPnP Fallback Inventory and Gated Deferral (ANDROID-005C)
+
+- Branch: `android/nupnp-fallback-inventory`
+- Starting SHA: `785d085949dc22cf14b20c6948cb0268030f2768`
+- Docs-only inventory / decision slice — read-only inventory reviewed and approved; no Android fallback behavior implemented; no network probe performed
+- New decision record: `docs/android/android-nupnp-fallback-inventory.md` (title/status, decision, Android baseline, iOS fallback contract, IOS-BUG-002A evidence, architecture implications, why deferred, future preconditions, future implementation shape, non-goals)
+- Existing iOS fallback contract recorded: cloud-assisted Philips Hue N-UPnP discovery (not LAN SSDP/mDNS, not local NUPnP) — `GET https://discovery.meethue.com/api/nupnp`; expects JSON array of `id`, `internalipaddress`, optional `port`; defaults port to `443` when omitted; runs after ~12s if still scanning; silently selects the first returned bridge; does not inspect HTTP status before decoding; failed decode falls into existing retry path
+- IOS-BUG-002A evidence: physical DEBUG capture observed `GET https://discovery.meethue.com/api/nupnp` returning body `404 page not found`; root cause unresolved (endpoint drift vs transient vs account/network-specific vs other external assumption — not yet known); no fix claimed in this Android slice
+- Decision: `DEFER UNTIL IOS-BUG-002A IS RESOLVED` — gated deferral, not MVP removal
+- Android continues with ANDROID-005A mDNS chooser + ANDROID-005B manual entry as the active local-first onboarding baseline
+- Any future Android cloud-assisted fallback must feed the existing chooser rows and require an explicit row tap — the iOS silent first-result selection must not be copied (would violate the landed ANDROID-005A explicit-chooser invariant); fallback stays optional and never the mandatory lighting-control path
+- Future Android follow-up gated on: confirmed supported endpoint, confirmed response shape + explicit HTTP-status behavior, product approval for the narrow cloud-assisted exception, product approval that cloud results feed the chooser (no silent auto-select), and a bounded future task packet; no future task ID is frozen
+- Foundation scaffold plan updated near the ANDROID-005C roadmap entry to record inventory/decision completion, the deferral, the active mDNS + manual-entry baseline, and a link to the decision record
+- No Kotlin, Swift, manifest, Gradle, dependency, test, Xcode, or runtime changes
+- No network probe performed
+- No commit or push in this pass

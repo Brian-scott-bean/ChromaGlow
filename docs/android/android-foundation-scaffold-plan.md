@@ -206,7 +206,7 @@ See boundary above. Additionally deferred to MVP roadmap slices: design tokens (
 | ANDROID-004A | Inventory and implement local credential-storage boundary |
 | ANDROID-005A | Inventory and implement mDNS bridge discovery chooser |
 | ANDROID-005B | Add manual-IP bridge entry |
-| ANDROID-005C | Inventory NUPnP fallback behavior after IOS-BUG-002A |
+| ANDROID-005C | Inventory NUPnP fallback behavior after IOS-BUG-002A — **inventory/decision complete; deferred** ([record](android-nupnp-fallback-inventory.md)) |
 | ANDROID-006A | Implement link-button pairing |
 | ANDROID-007A | Add dashboard room / zone models and local stale-state store |
 | ANDROID-008A | Add room and grouped-light control |
@@ -214,6 +214,8 @@ See boundary above. Additionally deferred to MVP roadmap slices: design tokens (
 | ANDROID-010A | Add scenes list and activation |
 | ANDROID-011A | Add SSE visible-state updates and reconnect behavior |
 | ANDROID-012A | Run Android physical bridge parity packet |
+
+**ANDROID-005C status (2026-06-04):** Inventory / decision pass complete. Decision: **defer implementation until IOS-BUG-002A resolves the cloud N-UPnP endpoint contract** (observed `404 page not found`, root cause unresolved). Android proceeds with **ANDROID-005A mDNS chooser + ANDROID-005B manual entry** as the active onboarding baseline. Any cloud-assisted fallback is a future gated follow-up and must feed the existing chooser (never silently auto-select). See [`android-nupnp-fallback-inventory.md`](android-nupnp-fallback-inventory.md).
 
 ## iOS Evidence That Android Must Not Copy Blindly
 
