@@ -3192,3 +3192,140 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - No Kotlin, Swift, tests, manifest, Gradle, dependency, or runtime changes
 - No network probe performed
 - No commit or push in this pass
+
+---
+
+## 2026-06-05 — Cursor Review Skill Layer Merged + ANDROID-006B TLS Evidence Capture Paused
+
+### What was completed
+- Installed the reusable personal Cursor skill outside the repo:
+  - `~/.cursor/skills/thermo-nuclear-code-quality-review/SKILL.md`
+  - Manual invocation only: `disable-model-invocation: true`
+  - Review-only by default; broad remediation must become a separately approved bounded slice.
+- Added and merged the thin ChromaGlow repo overlay through PR `#46`:
+  - `.cursor/skills/chromaglow-code-quality-review/SKILL.md`
+  - Manual invocation only: `disable-model-invocation: true`
+  - References the global rubric instead of duplicating it.
+  - Preserves frozen ChromaGlow architecture, protected iOS surfaces, LAN-first Hue control, narrow Android boundaries, and unresolved pairing-security blockers.
+- Verified merged `main` is clean and synchronized:
+  - `HEAD` / `origin/main`: `f6ebe8a576ffae5d307cad807899d1479a08463b`
+  - `origin/main...HEAD`: `0 / 0`
+  - no tracked edits
+  - no untracked files
+
+### ANDROID-006B read-only TLS evidence captured
+A bounded local TLS handshake against Bridge A on LAN port `443` completed successfully.
+
+Captured certificate metadata:
+- chain certificate count: `1`
+- subject: `C=NL, O=Philips Hue, CN=001788FFFE663C54`
+- issuer: `C=NL, O=Philips Hue, CN=root-bridge`
+- SHA-256 fingerprint: `16:17:18:FE:AF:D5:B3:00:14:D5:E1:AF:F8:DD:67:ED:47:52:62:B7:99:11:E0:C4:E4:79:A4:9D:2A:28:B9:82`
+- SAN entries: none printed
+
+The bridge IP was intentionally not persisted.
+
+This evidence is factual only. It does **not** freeze a TLS policy, TOFU rule, fingerprint pin, CN rule, SAN rule, CA rule, or canonical bridge-identity mapping.
+
+### Explicitly not performed
+- no `POST /api`
+- no link-button pairing
+- no Hue API token or `CLIENT_KEY` capture
+- no authenticated Hue request
+- no Philips / Signify cloud request
+- no N-UPnP probe
+- no Kotlin or Swift implementation
+- no TLS policy implementation
+- no credential-store widening
+- no deployment
+
+### SSH multi-account note
+The initial overlay-branch push was rejected because plain `github.com` authenticated as `GrayGrayson1` using the Anonyform key offered by the SSH agent.
+
+The existing ChromaGlow key was verified successfully:
+- key file: `~/.ssh/id_ed25519_github`
+- GitHub identity: `Brian-scott-bean`
+
+The overlay branch push succeeded with a one-off explicit SSH command:
+```bash
+git -c core.sshCommand="ssh -o IdentitiesOnly=yes -i $HOME/.ssh/id_ed25519_github" \
+  push -u origin cursor/chromaglow-code-quality-review-skill
+```
+
+Do not casually overwrite SSH config or remove the Anonyform key. Handle any permanent multi-account SSH cleanup as a separate bounded task.
+
+### Pause point
+ANDROID-006B is paused immediately before the next read-only local probe:
+
+```text
+GET https://<bridge-ip>/api/nouser/config
+```
+
+Purpose:
+- determine whether the unauthenticated local response contains `bridgeid`
+- capture exact case, length, and grammar fit
+- compare the returned `bridgeid` to TLS subject CN `001788FFFE663C54`
+- keep canonical identity and TLS bootstrap as separate later decisions
+
+Do not run the probe until explicitly approved in the next conversation.
+
+### Next-conversation kickoff
+Paste the following into a new ChromaGlow conversation:
+
+```md
+We are in the ChromaGlow project. Use the repo docs on `main` as source of truth.
+
+Current verified baseline:
+- Branch to start from: `main`
+- `HEAD` / `origin/main`: `f6ebe8a576ffae5d307cad807899d1479a08463b`
+- Working tree was clean and synchronized (`0 / 0`) after PR `#46`
+- Global personal Cursor skill installed:
+  - `~/.cursor/skills/thermo-nuclear-code-quality-review/SKILL.md`
+- Repo-local overlay merged:
+  - `.cursor/skills/chromaglow-code-quality-review/SKILL.md`
+- The strict review skills are manual-invocation only. Do not invoke them automatically.
+
+We paused ANDROID-006B — Bounded Hue hardware evidence capture.
+
+Completed read-only local TLS evidence for Bridge A:
+- port: `443`
+- chain certificate count: `1`
+- subject: `C=NL, O=Philips Hue, CN=001788FFFE663C54`
+- issuer: `C=NL, O=Philips Hue, CN=root-bridge`
+- SHA-256 fingerprint: `16:17:18:FE:AF:D5:B3:00:14:D5:E1:AF:F8:DD:67:ED:47:52:62:B7:99:11:E0:C4:E4:79:A4:9D:2A:28:B9:82`
+- SAN entries: none printed
+- bridge IP was intentionally not persisted
+
+Explicit boundaries:
+- no pairing implementation
+- no `POST /api`
+- no link-button press
+- no tokens or `CLIENT_KEY`
+- no authenticated Hue endpoints
+- no Philips / Signify cloud probes
+- no N-UPnP
+- no TLS policy invention
+- no TOFU, pinning, CN, SAN, CA, or fingerprint rule invention
+- no credential-store widening
+- no Kotlin or Swift edits unless a later approved implementation slice permits them
+
+Next intended step:
+1. Verify live repo baseline and DEVLOG state.
+2. Ask for explicit approval before any network command.
+3. If approved, run one bounded read-only LAN probe:
+   `GET https://<bridge-ip>/api/nouser/config`
+4. Capture only safe identity-related fields, especially exact `bridgeid`.
+5. Compare `bridgeid` to certificate CN `001788FFFE663C54`.
+6. Stop and report before running `/api/config`, mDNS, legacy HTTP:80, cloud N-UPnP, pairing, or implementation work.
+
+SSH note:
+- plain `github.com` may authenticate as `GrayGrayson1` due to the Anonyform key in the SSH agent
+- ChromaGlow pushes can use:
+  `git -c core.sshCommand="ssh -o IdentitiesOnly=yes -i $HOME/.ssh/id_ed25519_github" push ...`
+- do not alter SSH config or remove keys without a separate approved task
+
+Do not run any command until you have given me the single next bounded operator step with expected output and stop conditions.
+```
+
+### Current state
+The review-skill layer is durable and merged. ANDROID-006B remains intentionally paused after the first read-only TLS capture and before the unauthenticated `nouser` config identity probe.
