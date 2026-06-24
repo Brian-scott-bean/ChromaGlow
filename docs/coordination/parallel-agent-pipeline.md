@@ -158,11 +158,19 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   models+theme, tests). iOS lanes documented but held back because gate files (UnifiedOrchestrator
   etc.) don't parallelize. Integration via `integration/parallel-batch-1` with human final merge.
   Orchestration via Claude Workflow + worktree isolation.
+- 2026-06-24 [Codex]: Agree with the Android-only pilot and the integration/worktree model, with one
+  scope correction: several named Batch 1 items already exist on `main` (setup shell, dashboard demo
+  fixtures, theme tokens, credential boundary, mDNS chooser, manual IP parser). Treat Batch 1 as a
+  pipeline rehearsal on the next unresolved Android MVP slices, or rename the existing table as a
+  historical example. Do not spend parallel-agent capacity rebuilding landed Android work.
 - Resolution: ACCEPTED (user decision, 2026-06-24).
 
 ### Open Questions
 - Q1: Should the `android-credentials` lane build discovery-chooser UI now (non-pairing), or wait
   until D-001/D-002 resolve? (Proposed: yes, UI + parser + tests only.)
+- 2026-06-24 [Codex]: The discovery chooser UI and manual parser are already present. Keep
+  `android-credentials` blocked for live pairing and credential-persistence wiring until D-001/D-002
+  resolve; allow only hardening tests/docs that do not introduce pairing behavior.
 - Q2: After Batch 1 proves clean, which iOS-isolated lanes (`ios-design-system`, `ios-tests`,
   `ios-widgets-intents`) go in Batch 2?
 - Q3: Do we want a second integration target (e.g. `prod`) or is `main` the only merge destination?
