@@ -1,53 +1,77 @@
-# AGENTS.md — ChromaGlow Coding Agent Instructions
+# AGENTS.md - ChromaGlow Canonical Agent Context
 
-**Purpose:** This file is the standalone coding-agent handoff for ChromaGlow. It is intended for Codex, automated coding agents, and agentic IDEs. It contains current project context, scope, guardrails, exclusions, and near-term implementation order without requiring a separate `cloud.md` file.
+This is the canonical project handoff for Codex, Claude, Cursor, and other coding agents. Do not duplicate this full context into tool-specific files. Tool-specific entry files, including `CLAUDE.md`, should point here.
 
-**Last synthesized:** 2026-06-21
+Last consolidated: 2026-06-24
 
-**Current one-line state:** ChromaGlow is a mature native iOS Philips Hue app; the project is now stabilizing repo/process context and preparing a separate native Android Kotlin / Jetpack Compose MVP focused on bridge pairing, dashboard/room/light control, scenes, secure local storage, and internal testing.
-
----
-
-## 1. Required Agent Startup Sequence
+## Startup Order
 
 Before editing:
 
 1. Read this file completely.
-2. Read `DEVLOG.md` if it exists.
-3. Read `DEVDOC.md`, `COMPOSER_SPEC.md`, `CURSOR_KICKOFF.md`, `.cursorrules`, and `.cursor/rules/*.mdc` when touching iOS, Studio, Composer, or Xcode project structure.
-4. Read the task packet or issue/PR description for the current work.
-5. Confirm the exact scope.
-6. List the files you intend to modify.
-7. Produce a small diff.
+2. Read the "Current Status Snapshot" at the top of `DEVLOG.md`.
+3. Read the latest relevant entries in `DEVLOG.md`.
+4. Read scoped evidence or task packets under `docs/ios/` or `docs/android/` for the work area.
+5. Read `DEVDOC.md`, `COMPOSER_SPEC.md`, `CURSOR_KICKOFF.md`, `.cursorrules`, and `.cursor/rules/*.mdc` when touching iOS, Studio, Composer, Xcode project structure, or legacy Cursor-guided areas.
+6. Confirm branch, scope, files to touch, and validation plan.
+7. Make the smallest reviewable change.
 8. Run narrow validation.
-9. Update `DEVLOG.md` after meaningful implementation changes.
+9. Append `DEVLOG.md` after meaningful implementation, validation, or handoff work.
 
-Do not make broad refactors. Do not infer permission to touch unrelated files.
+Do not perform broad refactors or infer permission to touch unrelated files.
 
----
+## Canonical Information Model
 
-## 2. Current Project Decision
+Use these files by volatility:
 
-The current strategy is:
+| Layer | File(s) | Purpose |
+| --- | --- | --- |
+| Stable agent context | `AGENTS.md` | Project strategy, guardrails, current status, source catalog |
+| Tool entry point | `CLAUDE.md` | Short Claude-specific pointer to this file |
+| Live handoff | `DEVLOG.md` | Append-only session ledger and current snapshot |
+| Scoped evidence | `docs/ios/*`, `docs/android/*` | Task packets, audits, decision records, validation evidence |
+| Historical/product notes | `DEVDOC.md`, `COMPOSER_SPEC.md`, `CURSOR_KICKOFF.md`, `.cursorrules`, `.cursor/rules/*.mdc` | Legacy architecture and workflow context |
+
+Git is the transport between agents. Do not rely on uncommitted scratch files as shared memory.
+
+## Current One-Line State
+
+ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a scaffold, theme, demo fixtures, credential boundary, mDNS chooser, manual-IP entry, and pairing is blocked until safe TLS bootstrap plus canonical bridge identity are decided.
+
+## Current Branch/Repo Facts
+
+- Remote: `git@github.com:Brian-scott-bean/ChromaGlow.git`
+- Default remote branch observed locally: `origin/main`
+- Current integration branch should be treated as `main` unless GitHub rules say otherwise.
+- Always run:
+
+```bash
+git status --short --branch
+git branch --show-current
+git fetch --all --prune
+git log --oneline --decorate --graph --all -n 20
+```
+
+Confirm branch protection/rulesets in GitHub before release or integration work.
+
+## Product Strategy
 
 - Keep iOS native Swift / SwiftUI.
-- Build Android as a standalone native Kotlin / Jetpack Compose app.
-- Add a minimal backend later only for telemetry, feature flags, release cohorts, support diagnostics, optional identity, or optional non-sensitive metadata sync.
-- Do not rewrite the product in Flutter, React Native, Capacitor, PWA, or another single shared UI stack.
+- Build Android as standalone native Kotlin / Jetpack Compose.
+- Use a minimal backend later only for telemetry, feature flags, release cohorts, support diagnostics, optional identity, or optional non-sensitive metadata sync.
+- Do not rewrite in Flutter, React Native, Capacitor, PWA, or another shared UI stack.
 - Do not route normal Hue control through cloud.
-- Do not route local bridge discovery through cloud.
+- Do not route local bridge discovery through cloud as the required path.
 - Do not route Hue Entertainment / DTLS streaming through cloud.
 - Keep Hue control local-first.
 
-Historical note: an earlier report recommended Flutter. That is no longer the current plan. The active plan is **native iOS + standalone native Android + minimal backend, no Flutter**.
+Historical note: earlier materials considered Flutter. That is superseded. The active plan is native iOS plus standalone native Android plus minimal backend later.
 
----
+## Product Identity
 
-## 3. Product Identity
+Use ChromaGlow for current product context.
 
-Use **ChromaGlow** for current project context.
-
-Historical names still appear in code/docs/paths:
+Historical names still appear:
 
 - HueHome Pro
 - LightShade
@@ -55,9 +79,9 @@ Historical names still appear in code/docs/paths:
 - ChromaForge
 - ChromaGlow
 
-Do not perform broad rename work unless explicitly assigned.
+Do not do broad rename work unless explicitly assigned.
 
-Known identity values from the uploaded repo snapshot:
+Current verified identity values:
 
 - iOS app bundle ID: `com.huehome.pro`
 - Widget extension bundle ID: `com.huehome.pro.widget`
@@ -69,122 +93,83 @@ Known identity values from the uploaded repo snapshot:
 - Build number in project: `1`
 - App display name: `ChromaGlow`
 - App Store Connect ChromaGlow Apple ID recorded in docs: `6766251782`
+- Android namespace/applicationId currently in repo: `com.chromaglow.app`
+- Android Hue devicetype recorded in docs: `chromaglow#android`
 
-Some docs mention old identifiers such as `com.lightshade.app` or `group.com.lightshade.app`. Treat those as historical unless verified in the current repo.
+Some historical docs mention `com.lightshade.app` or `group.com.lightshade.app`. Treat those as historical unless current project files prove otherwise.
 
----
+## Source Catalog
 
-## 4. Branch State Warning
+### Root Files
 
-Branch state must be verified before code work.
+| File | Role |
+| --- | --- |
+| `AGENTS.md` | Canonical agent context |
+| `CLAUDE.md` | Claude Code entry point that points here |
+| `DEVLOG.md` | Current snapshot plus append-only session handoff |
+| `DEVDOC.md` | Historical dev notes and architecture context |
+| `COMPOSER_SPEC.md` | Composer behavior/spec history |
+| `CURSOR_KICKOFF.md` | Legacy Cursor startup guidance; verify commands before use |
+| `.cursorrules`, `.cursor/rules/*.mdc` | Cursor-era rules for iOS/Studio/Composer/build work |
+| `README.md` | Public/project overview |
+| `run_tests.sh` | Existing test helper, verify before relying on it |
 
-Known ambiguity:
+### iOS Areas
 
-- Some docs say `main` is the protected integration branch.
-- A later handoff mentioned a merge into `prod`.
+| Path | Role |
+| --- | --- |
+| `HueHome.xcodeproj` | Xcode project |
+| `HueHome/` | Main iOS app |
+| `HueHomeWidget/` | Widget extension |
+| `LightShadeWatch/` | watch widget/complication-like target |
+| `LightShadeWatchApp Watch App/` | Watch app |
+| `HueHomeTests/` | Unit tests |
 
-Run locally:
+### Android Areas
 
-```bash
-git status
-git branch --show-current
-git fetch --all --prune
-git log --oneline --decorate --graph --all -n 20
-```
+| Path | Role |
+| --- | --- |
+| `android/` | Standalone native Android project |
+| `android/app/src/main/java/com/chromaglow/app/` | Kotlin app source |
+| `android/app/src/test/` | JVM tests |
+| `android/app/src/androidTest/` | Instrumented tests |
+| `docs/android/` | Android MVP contracts, inventories, decisions |
 
-Confirm:
+### Documentation Index
 
-- Current branch
-- Default branch
-- Integration branch
-- Whether the previous passing PR merged
-- Branch protection/ruleset status
+Key iOS docs:
 
-Do not start new code work until this is clear.
+- `docs/ios/current-behavior-map.md`
+- `docs/ios/final-readiness-validation.md`
+- `docs/ios/hue-contract-inventory.md`
+- `docs/ios/persistence-and-credentials.md`
+- `docs/ios/regression-smoke-matrix.md`
+- `docs/ios/stabilization-map.md`
+- `docs/ios/large-file-map.md`
+- `docs/ios/discovered-bridge-pairing-loop-inventory.md`
+- `docs/ios/*orchestrator*`
+- `docs/ios/*composer*`
 
----
+Key Android docs:
 
-## 5. Current Phase
+- `docs/android/android-mvp-contract-freeze.md`
+- `docs/android/android-foundation-scaffold-plan.md`
+- `docs/android/android-design-system-shell-parity-map.md`
+- `docs/android/android-nupnp-fallback-inventory.md`
+- `docs/android/android-pairing-tls-identity-decision.md`
 
-The project is between:
+## iOS Current Capabilities
 
-- **Milestone 0: repo/context/process safety**
-- **Milestone 1: Android foundation**
+The iOS app is mature and feature dense:
 
-Near-term order:
-
-1. Update root agent context files: `CLAUDE.md` and `AGENTS.md`.
-2. Verify branch/default/protection state.
-3. Confirm iOS build/TestFlight baseline.
-4. Start first Android foundation PR.
-
-The first Android PR should only add a native Kotlin / Jetpack Compose app shell that builds and launches to a placeholder screen.
-
-It must not include bridge discovery, pairing, TLS pinning, Hue control, Studio, Composer, DTLS entertainment, microphone sync, widgets, Wear OS, Marketplace, web, Google Home, or KMP.
-
----
-
-## 6. Repo Contents and Existing iOS App
-
-Expected repo areas from the snapshot:
-
-- `HueHome.xcodeproj` — native Xcode project
-- `HueHome/` — main iOS app source
-- `HueHomeWidget/` — widget extension
-- `LightShadeWatch/` — watch widget/complication-like target
-- `LightShadeWatchApp Watch App/` — Watch app
-- `HueHomeTests/` — unit tests
-- Watch tests/UI tests — mostly scaffolding
-- `README.md`
-- `DEVDOC.md`
-- `DEVLOG.md`
-- `COMPOSER_SPEC.md`
-- `CURSOR_KICKOFF.md`
-- `.cursorrules`
-- `.cursor/rules/*.mdc`
-- Ruby scripts that generate or mutate Xcode project state
-- `run_tests.sh`
-- Static docs under `docs/`
-
-Approximate code size from the uploaded snapshot:
-
-- Swift files: about 113
-- Swift lines: about 36,627
-- Largest files:
-  - `HueHome/Core/Network/UnifiedOrchestrator.swift`: about 3,290 lines
-  - `HueHome/UI/Studio/StudioView.swift`: about 2,816 lines
-  - `HueHome/UI/Studio/StudioViewModel.swift`: about 1,702 lines
-  - `HueHome/UI/Dashboard/DashboardView.swift`: about 1,438 lines
-  - `HueHome/UI/RoomDetail/RoomDetailView.swift`: about 1,048 lines
-
-These large files are high-risk. Do not modify them unless the task explicitly scopes the change.
-
----
-
-## 7. Existing iOS Capabilities
-
-The iOS app is the production/TestFlight anchor and already includes substantial functionality.
-
-### Platform and Frameworks
-
-- Swift
-- SwiftUI
-- SwiftData
-- Observation framework / `@Observable`
-- URLSession
-- Apple Network framework / Bonjour-style discovery
-- AVFoundation and Accelerate
-- WidgetKit
-- App Intents / Siri Shortcuts
-- WatchConnectivity
-
-### Hue Capabilities
-
-- Bridge discovery via mDNS / Bonjour for `_hue._tcp`
-- NUPnP fallback through Hue discovery endpoint
-- Manual IP fallback
+- Swift, SwiftUI, SwiftData, Observation framework / `@Observable`
+- URLSession, Apple Network framework / Bonjour-style discovery
+- AVFoundation and Accelerate for audio-reactive modes
+- WidgetKit, App Intents / Siri Shortcuts, WatchConnectivity
+- Hue mDNS discovery for `_hue._tcp`
+- NUPnP fallback and manual IP fallback
 - CLIP API pairing
-- Hue application key storage
+- Hue application key storage in Keychain
 - Optional entertainment client key handling
 - Hue CLIP v2 REST client in `HueAPIClient.swift`
 - Hue v1 client in `HueV1Client.swift`
@@ -192,450 +177,152 @@ The iOS app is the production/TestFlight anchor and already includes substantial
 - DTLS/UDP Entertainment transport via `HueEntertainmentClient.swift`
 - Multi-bridge registry
 - Room/light dashboard controls
-- Per-light controls
-- Scene list and activation
-- Scene creation/capture
-- Global scenes
+- Scene list, activation, creation/capture, and global scenes
 - Devices view/model
 - Local notification automations
 - Demo mode
 - Studio/effects engine
 - Composer engine/store/model
 - Sync/microphone-driven modes
-- Widget surfaces
-- Siri/App Intents
-- Watch app/watch sync
+- Widget, Siri/App Intents, watch app/watch sync
 
-### Important Studio / Composer / Sync Areas
+High-risk large iOS files:
 
-- `StudioView.swift`
-- `StudioViewModel.swift`
-- `CompositionModels.swift`
-- `CompositionEngine.swift`
-- `CompositionStore.swift`
-- `CompositionMicCapture.swift`
-- `SyncModeEngine.swift`
-- `VisualizerEngine.swift`
-- `AmbientEngine.swift`
-- `GamingEngine.swift`
+- `HueHome/Core/Network/UnifiedOrchestrator.swift`
+- `HueHome/UI/Studio/StudioView.swift`
+- `HueHome/UI/Studio/StudioViewModel.swift`
+- `HueHome/UI/Dashboard/DashboardView.swift`
+- `HueHome/UI/RoomDetail/RoomDetailView.swift`
 
-Studio, Composer, DTLS, and microphone sync are advanced post-MVP Android items.
+Do not modify these without explicit task scope.
 
----
+## Android Current State
 
-## 8. Persistence and Storage
+Android is no longer "not started." Current repo state includes:
 
-### SwiftData Models
+- Standalone Gradle/Kotlin/Compose project under `android/`
+- App namespace/applicationId `com.chromaglow.app`
+- Compose app shell and setup/dashboard route boundary
+- Noir/dark Material theme placeholders
+- Demo-mode domain fixtures
+- Android Keystore-backed API-token credential boundary
+- mDNS bridge-discovery chooser through `NsdManager`
+- Manual IP/hostname entry parser and setup UI path
+- NUPnP fallback inventory with gated deferral
+- Pairing TLS / stable-identity decision blocker
 
-Expected local models include:
+Current Android blocker:
 
-- `BridgeRecord`
-- `HueLocalRoom`
-- `HueLocalScene`
-- `EffectPreset`
-- `FavouriteColor`
-- `ActivityEvent`
-- `EnergySnapshot`
-- `AppSettings`
-- `AppAutomation`
+- Do not add live pairing code until both are decided:
+  - safe TLS bootstrap for Hue self-signed bridge HTTPS
+  - canonical stable bridge identity for credential aliasing
 
-### Keychain
+Do not implement trust-all TLS managers, permissive hostname verifiers, blind certificate acceptance, or fabricated bridge IDs.
 
-Used for sensitive data such as:
+## Validation Commands
 
-- Bridge API tokens
-- Bridge IP or connection metadata
-- Entertainment keys
+### iOS
 
-### App Group UserDefaults
+The app scheme is `HueHome 1`, not `HueHome`.
 
-Used for:
-
-- Widget/watch snapshots
-- Bridge-aware room metadata
-- Bridge credential maps or references
-- Legacy single-bridge fallback values
-
-Security concern: audits flagged raw Hue credential sharing through unencrypted App Group UserDefaults as risky. Avoid expanding this on iOS. Never reproduce this on Android.
-
----
-
-## 9. Apple Extension Surfaces
-
-Available:
-
-- `HueHomeWidget/`
-  - interactive widgets
-  - widget intents
-  - room selection entities
-- `HueHome/Intents/`
-  - Siri/App Shortcuts
-  - intent entities/actions
-- `LightShadeWatchApp Watch App/`
-  - Watch app and store
-- `LightShadeWatch/`
-  - watch widget/complication-like files
-
-Recent devlog work added bridge-aware routing for widgets, Siri intents, and watch stores.
-
----
-
-## 10. Design System / UI Parity
-
-Current iOS design files/concepts:
-
-- `HueTokens.swift`
-- `HueTypography.swift`
-- `HueComponents.swift`
-- `HueColorUtils.swift`
-- `GlassmorphicCard.swift`
-- `ShimmerComponents.swift`
-- `HueToastView.swift`
-- `HapticManager.swift`
-
-Current visual language:
-
-- Dark-mode first
-- Glassmorphic cards/materials
-- Amber primary accent
-- Success green for live/active states
-- Red/destructive for stop/delete
-- Custom tab bar
-- Studio card decks
-- Layered mixer tray
-
-Android goal: UI parity, not pixel-perfect sameness.
-
-Android MVP UI parity includes:
-
-- Splash/setup
-- Demo mode entry
-- Bridge scan/pairing
-- Dashboard cards
-- Room detail
-- Scene list
-- Scene activation feedback
-- Settings/sign-out
-- Loading/empty/error/permission-denied states
-
----
-
-## 11. Tests and Validation
-
-Known tests include:
-
-- `HueAPIClientTests.swift`
-- `HueDataModelsTests.swift`
-- `HueTokensTests.swift`
-- `KeychainManagerTests.swift`
-- `OrchestratorTests.swift`
-
-Coverage is partial. There is no robust full UI/E2E suite in the snapshot.
-
-Repo build command from existing rules:
+Generic build:
 
 ```bash
-PROJ=/Users/brianbean/Desktop/huehome-pro-v0.3.0
-xcodebuild -project "$PROJ/HueHome.xcodeproj" -scheme HueHome -destination 'generic/platform=iOS' build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
+xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'generic/platform=iOS' build
 ```
 
-Adapt the path to the local repo. Do not assume that path exists.
+Filtered build output:
 
-When adding Swift files, update Xcode project references correctly. The repo uses scripts that can mutate project state; do not run them casually.
+```bash
+xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'generic/platform=iOS' build 2>&1 | rg -e 'error:' -e 'warning:' -e 'BUILD SUCCEEDED' -e 'BUILD FAILED'
+```
 
----
+Simulator tests depend on installed runtimes. First list destinations:
 
-## 12. What Is Not Implemented Yet
+```bash
+xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -showdestinations
+```
 
-Do not assume these exist unless verified:
+Then run a real available destination, for example:
 
-- Native Android app project
-- Backend implementation
-- GitHub Actions / `.github/workflows`
-- Fastlane or formal release automation
-- Production telemetry/crash reporting backend
-- Remote feature flags
-- User accounts
-- Marketplace backend
-- Web app
-- Google Home integration
-- Wear OS app
-- Android widgets
-- KMP shared module
-- HomeKit integration
-- CoreBluetooth integration
-- APNs remote push
-- True BGTaskScheduler implementation
-- Full Mac Catalyst support
-- Robust UI/E2E testing suite
+```bash
+xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0' test
+```
 
----
+### Android
 
-## 13. Latest Known Devlog State
+Android requires a working JDK/Android toolchain. If `/usr/bin/java` reports no runtime, Gradle validation is blocked.
 
-The uploaded repo snapshot’s `DEVLOG.md` ends on **2026-05-08**.
+From `android/`:
 
-Most recent repo-recorded item:
+```bash
+./gradlew testDebugUnitTest lintDebug
+./gradlew assembleDebug
+./gradlew connectedDebugAndroidTest
+```
 
-### 2026-05-08 — Multi-Bridge Routing Foundation for Widget/Watch
+Use the narrowest relevant command for a docs-only or targeted code change.
 
-Built:
+## Security Rules
 
-- Extended `WidgetDataStore.swift` with `bridgeID` in room snapshots.
-- Added `WidgetBridgeCredentials` and bridge map persistence.
-- Updated `UnifiedOrchestrator.swift` to write bridge-aware snapshots and bridge credential maps.
-- Updated watch sync payloads to include bridge map data.
-- Updated widget intents to resolve credentials per room.
-- Updated Siri intent entities/actions to carry `bridgeID`.
-- Updated watch and watch widget stores to decode and resolve per-room bridge credentials.
+- Never log Hue bridge tokens, application keys, or entertainment client keys.
+- Never send Hue bridge credentials to backend services.
+- Never collect raw audio.
+- Avoid collecting room names, light names, local IPs, or user content in telemetry unless explicitly reviewed.
+- Android widgets must not reproduce the iOS App Group plaintext credential pattern.
+- Do not expand iOS App Group credential sharing without explicit review.
+- Never implement trust-all TLS.
+- Never blindly accept all certificates.
+- Treat bridge credentials as local-only secrets.
 
-Working:
+Known iOS security risk:
 
-- iOS app target compiled.
-- watchOS app target compiled.
-- Widget/intent/watch paths now have deterministic per-room bridge routing keys.
-- Legacy single-bridge keys remain as fallback.
+- Current widget/watch/App Intent surfaces use App Group UserDefaults with raw bridge IP/token for external controls. This is existing behavior, not a pattern to expand or copy to Android.
 
-Left:
+Known Android security decision:
 
-- Add interactive watch complication/widget toggle intent wiring.
-- Validate Bridge 2 routing on physical watch under stale-cache conditions.
-- Add explicit failure surfacing/telemetry for missing/stale room routing metadata.
-- Optionally add groupedLightID-to-bridgeID fallback map.
+- API token storage uses Android Keystore-backed AES-GCM blob storage under `noBackupFilesDir`.
+- Live pairing remains blocked until TLS and bridge identity are decided.
 
-Gotchas:
+## Hue API Rules
 
-- Existing widget/watch data may be stale until app-driven sync refreshes payloads.
-- Some external surfaces still depend on legacy fallback keys.
-- Multi-bridge correctness depends on `bridgeID` being present in snapshots.
-
----
-
-## 14. Additional Recent Engineering Context
-
-### Multi-Bridge Concurrent Entertainment Sessions
-
-Direction:
-
-- Move Entertainment session state from global single-slot state to per-bridge dictionaries.
-- Allow Bridge A and Bridge B to have independent entertainment sessions.
-- Preserve single-bridge behavior.
-- Make Studio mini-map/direction config use the selected room’s bridge.
-
-### Spatial Motion Engine
-
-Direction:
-
-- Move Composer away from array-index sweeps.
-- Use Hue physical layout data.
-- Use PCA/covariance concepts to detect maximum spread axis.
-- Project lights onto direction vectors for waves/cascades.
-
-### Composer REST Transport Work
-
-Recent work included:
-
-- Wrong-room apply race fixes
-- Startup `GET /light` request dedupe
-- REST scheduler tuning
-- Immediate REST burst window after color pad edits
-- Composer color pad haptics
-- Mic reaction support with Sync-safe exclusivity
-- Lazy tab loading to reduce cold launch impact
-
-### Bridge-Stored Animation / V1 Rule Chain
-
-Root cause:
-
-- Hue v1 rule/schedule action addresses must be relative paths like `/lights/1/state`.
-- Full `/api/{token}/...` paths fail.
-
-Approved next direction:
-
-- Fix v1 relative paths for complex bridge-stored animation chains.
-- Add v2 Dynamic Scene / Dynamic Palette fast path for simpler palette presets.
-
-### Cold Launch
-
-iOS had several-second cold launch / tab prewarming work. Android should avoid this through architecture, lazy rendering, background work, and clean data caches.
-
----
-
-## 15. Current Workstreams
-
-### A. Operating Model
-
-- Establish durable human/tool workflow.
-- Use repo docs as source of truth.
-- Use small reviewable task packets.
-- Avoid broad refactors.
-- Current status: context files and branch protection/default branch need confirmation.
-
-### B. iOS Stabilization and Baseline
-
-- Keep iOS production/TestFlight stable.
-- Fix critical bugs before freezing Android parity baseline.
-- Avoid risky broad changes.
-- Current status: needs physical-device QA on multi-bridge/widget/watch paths and named baseline TestFlight build.
-
-### C. Native Android Buildout
-
-- Build standalone Android app with Kotlin/Compose.
-- Match MVP user promise.
-- Avoid iOS monolith pattern.
-- Current status: Android not confirmed in uploaded snapshot; first task should be shell/CI only.
-
-### D. Design System / UI Parity
-
-- Translate iOS visual language to Android.
-- UI parity, not pixel-perfect sameness.
-- Current status: iOS tokens/components exist; Android tokens not confirmed.
-
-### E. AI Coding Guardrails
-
-- Make Cursor, Claude, Codex, and other agents follow repo rules.
-- Current status: `.cursorrules` exists; `CLAUDE.md` and `AGENTS.md` are root handoff files.
-
-### F. Backend / Telemetry Research
-
-- Minimal backend only.
-- Start with interfaces.
-- No backend implementation yet.
-
----
-
-## 16. Android MVP Scope
-
-### Include
-
-- Native Android app shell
-- Demo mode
-- Bridge discovery
-- Bridge pairing
-- Secure local credential storage
-- Dashboard
-- Room/light control
-- Scenes list
-- Scene activation
-- Basic settings
-- Basic error/loading states
-- Basic telemetry hooks or local telemetry interface
-- Internal testing distribution
-
-### Exclude
-
-- Studio/composer full parity
-- DTLS entertainment streaming
-- Microphone sync
-- Widgets
-- Wear OS
-- Marketplace
-- User accounts
-- Web
-- Google Home
-- KMP/shared logic extraction
-
-### Post-MVP Order
-
-1. Broader UI parity
-2. Automations
-3. Widgets and Wear OS
-4. Studio/composer
-5. DTLS entertainment / mic sync
-6. Marketplace scene sharing
-7. Web / Google Home / other integrations
-
----
-
-## 17. Backend Rules
-
-Backend may handle:
-
-- Feature flags
-- Crash/health telemetry
-- Release cohorts
-- Optional identity later
-- Optional non-sensitive preset/scene marketplace metadata later
-- Support diagnostics
-- Short-lived pairing handoff tokens later
-
-Backend must not handle:
-
-- Raw Hue bridge credentials
-- Required local light control
-- High-frequency entertainment streaming
-- Microphone/audio processing
-- Required local bridge discovery
-
-Start with interfaces:
-
-- `FeatureFlagProvider`
-- `TelemetrySink`
-- `CrashReporter` or wrapper
-
-Use no-op/local implementations first.
-
-Never collect by default:
-
-- Hue credentials
-- Bridge tokens
-- Raw audio
-- Room names
-- Light names
-- Exact local IP addresses
-- Personal user content
-
----
-
-## 18. Hue API Rules
-
-- Never send `effects` payloads to `grouped_light` endpoints.
-- Native Hue effects are per-light only.
+- Never send custom Composer/app-driven `effects` payloads to `grouped_light` endpoints.
+- Native Hue firmware effects require special care; verify current code and docs before changing.
 - Use `childResourceRefs` from `RoomDisplayItem` for room membership when available.
 - REST loops must use a latest-wins mailbox pattern.
 - Do not queue unlimited bridge writes.
 - Per-light REST is rate-limited and should be batched/staggered.
 - Grouped-light control is good for simple room on/off/brightness/color state.
 - DTLS Entertainment is the correct tier for high-frequency spatial/mic sync.
-- Hue v1 rule/schedule action addresses must be relative paths such as `/lights/1/state`.
+- Hue v1 rule actions use relative paths such as `/lights/1/state`; schedule commands may differ. Verify current `HueV1Client.swift` and `BridgeAnimationEngine.swift` before changing v1 behavior.
 
----
-
-## 19. iOS Rules
+## iOS Engineering Rules
 
 - Prefer `@Observable` / Observation framework.
 - Do not introduce new `ObservableObject` / `@Published` patterns unless intentionally touching legacy code.
 - Preserve generation-counter patterns around async effects.
-- Avoid broad edits to:
-  - `UnifiedOrchestrator.swift`
-  - `StudioView.swift`
-  - `StudioViewModel.swift`
-  - `DashboardView.swift`
-  - `RoomDetailView.swift`
+- Preserve REST latest-wins mailbox patterns.
 - Do not touch signing/provisioning/bundle IDs/App Groups/entitlements casually.
 - When creating Swift files, update Xcode project references correctly.
 - Build after code changes.
 - Append `DEVLOG.md` after meaningful implementation sessions.
 
----
-
-## 20. Android Rules
+## Android Engineering Rules
 
 - Use native Kotlin and Jetpack Compose.
 - Do not build a giant `UnifiedOrchestrator` equivalent.
-- Use clean architecture boundaries.
+- Use clean boundaries: UI, presentation, domain, data, security/storage.
 - Store credentials in Android Keystore / encrypted storage.
 - Do not store credentials in plaintext preferences.
-- Use defensive permission state machines for local network access.
+- Use defensive permission/state machines for local network behavior.
 - Do not use trust-all TLS managers.
-- Do not blindly return `true` in a hostname verifier.
-- Design for TOFU/certificate pinning with Hue self-signed bridge certificates.
-- Expect Android local-network and foreground-service restrictions to evolve.
+- Do not blindly return `true` in hostname verification.
+- Design for explicit Hue self-signed certificate policy.
 - Use Kotlin data classes for UI state where possible.
 - Avoid custom equality/diff bugs.
 - Do not implement Studio/composer/DTLS/mic/widgets/Wear OS before MVP.
 
-Recommended Android structure:
+Recommended Android shape:
 
 ```text
 app/
@@ -652,242 +339,109 @@ app/
   data/storage
 ```
 
-Likely Android components:
+## Android MVP Scope
 
-- `BridgeDiscoveryRepository`
-- `BridgePairingRepository`
-- `BridgeCredentialStore`
-- `HueRestClient`
-- `RoomRepository`
-- `SceneRepository`
-- `DashboardUseCase`
-- `ActivateSceneUseCase`
-- `DemoModeRepository`
+Include:
+
+- Native Android shell
+- Demo mode
+- Bridge discovery
+- Manual IP entry
+- Bridge pairing after TLS/identity decisions
+- Secure local credential storage
+- Dashboard
+- Room/light control
+- Scene list and activation
+- Basic settings/sign-out
+- Basic loading/empty/error states
+- Internal testing distribution
+
+Exclude from Android MVP:
+
+- Studio/composer full parity
+- DTLS entertainment streaming
+- Microphone sync
+- Widgets
+- Wear OS
+- Marketplace
+- User accounts
+- Web
+- Google Home
+- KMP/shared logic extraction
+
+## Backend Rules
+
+Backend may handle later:
+
+- Feature flags
+- Crash/health telemetry
+- Release cohorts
+- Optional identity
+- Optional non-sensitive preset/scene marketplace metadata
+- Support diagnostics
+- Short-lived pairing handoff tokens, only after review
+
+Backend must not handle:
+
+- Raw Hue bridge credentials
+- Required local light control
+- High-frequency entertainment streaming
+- Microphone/audio processing
+- Required local bridge discovery
+
+Start with no-op/local interfaces first:
+
 - `FeatureFlagProvider`
 - `TelemetrySink`
+- `CrashReporter`
 
----
+## Current High-Priority Follow-Ups
 
-## 21. Security Rules
+Process/docs:
 
-- Never log Hue bridge tokens.
-- Never send Hue bridge credentials to backend.
-- Never collect raw audio.
-- Avoid collecting room names, light names, local IPs, or user content in telemetry unless explicitly reviewed.
-- Android widgets must not reproduce the iOS App Group plaintext credential pattern.
-- Never implement trust-all TLS.
-- Never blindly accept all certificates.
-- Treat bridge credentials as local-only secrets.
+- Keep `AGENTS.md` canonical and `CLAUDE.md` thin.
+- Keep `DEVLOG.md` current snapshot accurate.
+- Verify GitHub branch protection/ruleset status.
 
----
+iOS:
 
-## 22. Known Risks
+- Avoid broad refactors in large Swift files.
+- Credential-sharing risk remains for App Group widget/watch paths.
+- Pairing logs should not expose full tokens/client keys.
+- watchOS deployment target should be verified before release work.
+- Swift 6 concurrency warning surface should be reduced over time.
 
-### Large iOS Files
+Android:
 
-High-risk files:
+- Resolve pairing TLS bootstrap policy.
+- Resolve canonical bridge identity contract.
+- Run Gradle validation only when JDK/Android toolchain is available.
+- Continue MVP slices without copying iOS monolith patterns.
 
-- `UnifiedOrchestrator.swift`
-- `StudioView.swift`
-- `StudioViewModel.swift`
-- `DashboardView.swift`
-- `RoomDetailView.swift`
+## Handoff Discipline
 
-Use small task packets only.
+Each meaningful session should append to `DEVLOG.md` with:
 
-### Credential Sharing
+```markdown
+## YYYY-MM-DD - [Codex|Claude|Cursor] Short title
 
-The iOS App Group approach may expose raw bridge credentials in shared UserDefaults. Do not expand it and do not copy it to Android.
+### Branch
+- `branch-name`
 
-### Hashable / Equality Mismatch
+### Did
+- ...
 
-`RoomDisplayItem` reportedly compares more fields in `==` than it combines in `hash(into:)`. This can cause SwiftUI diff/update issues. Treat as targeted iOS stabilization only.
+### Working
+- ...
 
-### Dynamic Palette
+### Left
+- ...
 
-Richer v2 Dynamic Palette transport remains planned/partially investigated, not fully productized.
+### Validation
+- ...
 
-### Bridge-Stored Animation
-
-The v1 relative path bug was root-caused. Verify whether current repo has the actual fix.
-
-### Watch Interactivity
-
-Interactive watch complication/widget toggle intent wiring remains.
-
-### CI/CD
-
-No robust GitHub Actions/Fastlane setup is confirmed.
-
-### Tests
-
-Unit tests exist, but E2E/device/network-lab testing is incomplete.
-
-### watchOS Deployment Target
-
-watchOS deployment target may be suspicious in the snapshot. Verify before release work.
-
----
-
-## 23. Milestones
-
-### Milestone 0 — Repo and Context Safety
-
-- M0-01: commit migration docs
-- M0-02: configure branch protection/ruleset
-- M0-03: document iOS local build/signing setup
-- M0-04: update `CLAUDE.md` and `AGENTS.md`
-- M0-05: resolve `main` vs `prod` ambiguity
-- M0-06: document current TestFlight/iOS baseline status
-
-### Milestone 1 — Android Foundation
-
-- M1-01: Android app shell
-- M1-02: Gradle/Kotlin/Compose baseline
-- M1-03: Android CI build lane
-- M1-04: Android design tokens and placeholder UI shell
-- M1-05: local feature flag interface
-- M1-06: demo mode data model and first screen
-
-### Milestone 2 — Android Hue Pairing Foundation
-
-- M2-01: local-network permission UX/state model
-- M2-02: mDNS discovery via Android NSD
-- M2-03: NUPnP fallback
-- M2-04: manual IP entry
-- M2-05: pairing flow
-- M2-06: secure credential storage
-- M2-07: TLS trust / TOFU design spike
-
-### Milestone 3 — Android Core Control MVP
-
-- M3-01: Hue v2 REST client
-- M3-02: bridge repository and local cache
-- M3-03: dashboard screen
-- M3-04: room detail screen
-- M3-05: light controls
-- M3-06: scenes list
-- M3-07: scene activation
-- M3-08: basic settings and sign-out
-
-### Milestone 4 — Internal Test Readiness
-
-- M4-01: Play internal testing setup
-- M4-02: privacy-safe telemetry interface or local stubs
-- M4-03: crash reporting decision
-- M4-04: device matrix QA
-- M4-05: network failure QA
-- M4-06: release checklist
-
-### Milestone 5 — Post-MVP Parity
-
-1. Automations
-2. Widgets + Wear OS design
-3. Studio/composer parity
-4. DTLS entertainment
-5. Microphone sync
-6. Marketplace
-7. Web / Google Home
-
----
-
-## 24. Immediate Docs-Only Task
-
-If the user asks to update agent context locally, only update:
-
-- `CLAUDE.md`
-- `AGENTS.md`
-
-Do not add:
-
-- `cloud.md`
-- `CHATGPT_CONTEXT.md`
-- extra docs
-- runtime code
-
-Suggested branch:
-
-```bash
-git switch <confirmed-integration-branch>
-git pull
-git switch -c docs/update-agent-context
+### Gotchas
+- ...
 ```
 
-Suggested commit:
-
-```bash
-git add CLAUDE.md AGENTS.md
-git commit -m "docs: update Claude and agent context"
-```
-
-Suggested PR title:
-
-```text
-Update Claude and agent handoff context
-```
-
-Acceptance criteria:
-
-- Only `CLAUDE.md` and `AGENTS.md` changed.
-- Files are standalone.
-- No runtime code changed.
-- No Xcode project files changed.
-- No signing/provisioning changed.
-- Future Claude/Codex sessions can understand project status, scope, exclusions, risks, and next steps from these root files.
-
----
-
-## 25. Safe Changes
-
-Safe with proper task scope:
-
-- Docs-only handoff/context updates
-- Branch protection/setup docs
-- iOS build notes
-- Android app shell
-- Android CI build lane
-- Design token inventory docs
-- Small targeted bug fixes with tests/build validation
-
----
-
-## 26. Unsafe Changes Without Explicit Scope
-
-Do not do these unless explicitly assigned:
-
-- Broad iOS refactors
-- Large edits to major Swift files
-- Signing/provisioning changes
-- Xcode project regeneration
-- Backend implementation
-- Credential storage changes
-- Android Studio/composer work
-- Android DTLS/mic sync work
-- Widgets/Wear OS before MVP
-- Product-wide rebrand
-- Flutter/RN/PWA rewrite
-
----
-
-## 27. Human Questions Still Needed
-
-Ask Brian/Dallin to confirm:
-
-- Actual GitHub repo URL
-- Default branch: `main`, `prod`, or other
-- Branch protection/ruleset status
-- Whether the previous passing PR merged
-- Known-working Xcode version
-- Known-working macOS version
-- Latest TestFlight build number
-- Whether current TestFlight build is acceptable as baseline
-- Automatic signing status
-- Whether Dallin should be added to App Store Connect
-- Android package name
-- Backend/telemetry provider evaluation priority
-
----
-
-## 28. Final Agent Rule
-
-When uncertain, preserve the native iOS app, keep Hue control local-first, avoid broad refactors, and make the smallest reviewable change that advances the current milestone.
+Commit and push handoff updates when another agent needs to read them in a different tool or checkout.

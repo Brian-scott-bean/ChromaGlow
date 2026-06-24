@@ -4,6 +4,72 @@
 
 ---
 
+## Current Status Snapshot
+
+- Canonical agent context: `AGENTS.md`.
+- Claude Code entry point: `CLAUDE.md` points to `AGENTS.md`.
+- Live shared handoff: append-only entries in this `DEVLOG.md`.
+- Git is the shared memory between tools; commit/push handoff updates when another agent needs them.
+- iOS production anchor: native Swift/SwiftUI app in `HueHome/`.
+- iOS build scheme: `HueHome 1` (not `HueHome`).
+- Android baseline: native Kotlin/Jetpack Compose project exists under `android/`.
+- Android completed baseline includes app shell, dark Material theme placeholders, demo fixtures, Android Keystore credential boundary, mDNS chooser, manual IP entry, NUPnP deferral record, and pairing TLS/identity blocker record.
+- Android live pairing is blocked until safe TLS bootstrap and canonical bridge identity are decided.
+- Latest local audit validation observed by Codex: iOS build and tests passed with `HueHome 1`; Android Gradle validation was blocked on this machine when Java runtime was unavailable.
+
+### Handoff Entry Template
+
+```markdown
+## YYYY-MM-DD - [Codex|Claude|Cursor] Short title
+
+### Branch
+- `branch-name`
+
+### Did
+- ...
+
+### Working
+- ...
+
+### Left
+- ...
+
+### Validation
+- ...
+
+### Gotchas
+- ...
+```
+
+---
+
+## 2026-06-24 - [Codex] Agent handoff consolidation
+
+### Branch
+- `docs/consolidate-agent-handoff`
+
+### Did
+- Made `AGENTS.md` the canonical shared context and source catalog.
+- Replaced `CLAUDE.md` with a thin Claude Code entry point that immediately directs Claude to `AGENTS.md` and `DEVLOG.md`.
+- Added this current snapshot and handoff template to the top of `DEVLOG.md`.
+
+### Working
+- Root handoff now follows one-source-of-truth rules instead of maintaining two large duplicated context files.
+- Current iOS scheme and Android status are reflected in the root handoff.
+
+### Left
+- Open/merge PR from GitHub with a collaborator account if repository policy requires review.
+
+### Validation
+- `git diff --check` passed.
+- Scanned root handoff files for stale `HueHome` scheme and old Android-not-started language.
+- Branch push succeeded.
+- Draft PR creation via `gh pr create` was blocked because the authenticated GitHub account is not a collaborator.
+
+### Gotchas
+- `CURSOR_KICKOFF.md` and older historical devlog entries still contain stale `HueHome` scheme references; agents should follow `AGENTS.md` for current validation commands.
+- Pushed branch is available at `origin/docs/consolidate-agent-handoff`; Claude can read it immediately after fetching/checking out that branch.
+
 ## 2026-05-07 — Multi-Bridge Concurrent Entertainment Sessions (Antigravity)
 
 ### What was built
