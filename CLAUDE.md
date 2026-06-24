@@ -18,4 +18,5 @@ Important current facts:
 - iOS scheme is `HueHome 1`, not `HueHome`.
 - Android exists under `android/`.
 - Android pairing is blocked until TLS bootstrap and canonical bridge identity decisions are made.
+- Parallel multi-agent work follows the "Parallel Agent Pipeline" section in `AGENTS.md`; the lane registry and shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`.
 - After meaningful work, append a dated `[Claude]` entry to `DEVLOG.md`.

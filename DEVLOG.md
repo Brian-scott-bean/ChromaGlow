@@ -16,6 +16,7 @@
 - Android completed baseline includes app shell, dark Material theme placeholders, demo fixtures, Android Keystore credential boundary, mDNS chooser, manual IP entry, NUPnP deferral record, and pairing TLS/identity blocker record.
 - Android live pairing is blocked until safe TLS bootstrap and canonical bridge identity are decided.
 - Latest local audit validation observed by Codex: iOS build and tests passed with `HueHome 1`; Android Gradle validation was blocked on this machine when Java runtime was unavailable.
+- Parallel multi-agent pipeline defined: lane registry, collision hotspots, Android-only pilot (Batch 1), and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`; canonical rules in `AGENTS.md` → "Parallel Agent Pipeline".
 
 ### Handoff Entry Template
 
@@ -42,6 +43,31 @@
 ```
 
 ---
+
+## 2026-06-24 - [Claude] Parallel agent pipeline + shared decision log
+
+### Branch
+- `docs/parallel-agent-pipeline` (stacked on `docs/consolidate-agent-handoff`)
+
+### Did
+- Added `docs/coordination/parallel-agent-pipeline.md`: lane registry (Android + iOS + cross-cutting), collision-hotspot list, branch/worktree/merge model, Android-only Batch 1 pilot, and a shared Claude⇄Codex Decision Log (seeded D-001 TLS blocker, D-002 identity blocker, D-003 Batch 1 scope, + Open Questions).
+- Added "Parallel Agent Pipeline" section to `AGENTS.md` (canonical rules) plus branch-naming note and a Documentation Index entry for the new doc.
+- Added a pointer line in `CLAUDE.md` and a snapshot line here in `DEVLOG.md`.
+
+### Working
+- Disjoint-lane model is documented and ready: agents own non-overlapping globs; gate files are single-owner per batch; merges land on `integration/parallel-batch-N` with a human final merge to `main`.
+- Decision Log is the durable, git-backed back-and-forth channel between Claude and Codex.
+
+### Left
+- Codex to review and append to the Decision Log (especially D-001/D-002 and Open Questions Q1–Q3).
+- Run the Android Batch 1 pilot via Claude Workflow + worktree isolation once scope is confirmed.
+- Human collaborator to open/merge the PR (agent `gh` account is not a collaborator).
+
+### Validation
+- Docs-only change; `git diff --check` clean. No runtime/code/Xcode/Gradle files touched.
+
+### Gotchas
+- This branch is stacked on `docs/consolidate-agent-handoff`, which is not yet merged to `main`. Land that first (or merge both together) so the canonical `AGENTS.md`/`CLAUDE.md` and this pipeline doc arrive on `main` consistently.
 
 ## 2026-06-24 - [Codex] Agent handoff consolidation
 

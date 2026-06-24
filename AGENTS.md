@@ -54,6 +54,8 @@ git log --oneline --decorate --graph --all -n 20
 
 Confirm branch protection/rulesets in GitHub before release or integration work.
 
+Branch naming in use: `android/*`, `ios-ref/*`, `ios-test/*`, `ios-bug/*`, `ios-ops/*`, `docs/*`, `cursor/*`. For the parallel pipeline (see "Parallel Agent Pipeline"), lane work uses `lane/<batch>-<slice>` and each batch integrates on `integration/parallel-batch-N`.
+
 ## Product Strategy
 
 - Keep iOS native Swift / SwiftUI.
@@ -157,6 +159,10 @@ Key Android docs:
 - `docs/android/android-design-system-shell-parity-map.md`
 - `docs/android/android-nupnp-fallback-inventory.md`
 - `docs/android/android-pairing-tls-identity-decision.md`
+
+Coordination docs:
+
+- `docs/coordination/parallel-agent-pipeline.md` — lane registry, collision hotspots, pilot, and the shared Claude⇄Codex Decision Log.
 
 ## iOS Current Capabilities
 
@@ -445,3 +451,32 @@ Each meaningful session should append to `DEVLOG.md` with:
 ```
 
 Commit and push handoff updates when another agent needs to read them in a different tool or checkout.
+
+## Parallel Agent Pipeline
+
+Multiple agents can work concurrently, each in its own git worktree on a **disjoint set of files**, so
+their branches merge together without conflict. Operational registry and decision log:
+`docs/coordination/parallel-agent-pipeline.md`.
+
+Core rules:
+
+- A **lane** is a disjoint glob of files one agent owns for a batch. No two active lanes share a glob.
+- **Collision-hotspot** files (the iOS monolith `UnifiedOrchestrator.swift` and other gate files; the
+  Android `build.gradle.kts`/manifest/theme resources — full list in the pipeline doc) may be touched
+  by at most one lane per batch. Feature lanes request changes to them via the Decision Log, not by
+  editing directly.
+- iOS is mostly **not** parallel-safe because most features funnel through the gate files; run iOS
+  lanes one or two at a time. Android's modular layout parallelizes cleanly.
+- Lane branches: `lane/<batch>-<slice>`. Integration branch: `integration/parallel-batch-N` (off
+  `main`). Disjoint lanes merge onto the integration branch; a human collaborator does the final merge
+  to `main` (the agent `gh` account is not a collaborator).
+- Lane lifecycle: claim (mark in registry) → work (edit only the lane's globs, run narrowest
+  validation) → handoff (append `DEVLOG.md` entry) → merge (onto integration branch).
+
+### Shared Decision Log (Claude ⇄ Codex back-and-forth)
+
+The pipeline doc carries a **Decision Log**: the durable, git-backed channel where agents propose,
+debate, and record agreements. Append dated, tagged turns (`YYYY-MM-DD [Claude|Codex]: …`); never
+rewrite another agent's turn. `Status` records the agreed state
+(`PROPOSED | DISCUSSING | ACCEPTED | REJECTED | DEFERRED`). Open, undecided items live under
+"Open Questions". Commit and push so the other tool sees the log on fetch.
