@@ -303,6 +303,9 @@ unblocked 2026-06-28 after resolving D-005.
 
 Launch prompt: `docs/coordination/prompts/parallel-batch-1-launch.md`.
 
+Next prompt after successful integration:
+`docs/coordination/prompts/parallel-batch-2-prepare.md` (planning only; drafts Batch 2 for review).
+
 - **Batch:** `parallel-batch-1`
 - **Base commit:** `origin/main` @ `defe8691345623adac347862cf271320f5d4610d` (fetched 2026-06-28;
   re-fetch and re-pin if `main` advances before launch).

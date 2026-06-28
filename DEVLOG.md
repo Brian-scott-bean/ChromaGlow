@@ -44,6 +44,29 @@
 
 ---
 
+## 2026-06-28 - [Codex] Add Batch 2 preparation prompt
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Added `docs/coordination/prompts/parallel-batch-2-prepare.md` as the second orchestration prompt.
+- Made it planning-only and gated on a completed, fully validated Batch 1 integration result.
+- Directed Batch 2 planning toward parallel feature packages followed by one serialized navigation-integration wave.
+
+### Working
+- The prompt is ready to run after Batch 1 completes; it drafts Batch 2 for review without modifying Android source.
+
+### Left
+- Run the Batch 1 launch prompt first.
+- After Batch 1 integration, run the preparation prompt and review its manifest before creating a Batch 2 launch prompt.
+
+### Validation
+- Docs-only; `git diff --check` passed before publication.
+
+### Gotchas
+- Batch 2 cannot be pinned safely until the actual Batch 1 integration SHA and landed model APIs exist.
+
 ## 2026-06-28 - [Codex] Add canonical Batch 1 launch prompt
 
 ### Branch
