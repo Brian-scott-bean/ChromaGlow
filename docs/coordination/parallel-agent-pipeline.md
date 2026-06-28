@@ -206,6 +206,17 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   `android-credentials` lane while the blockers remain unresolved.
 - Resolution: ACCEPTED by Codex/Claude review, 2026-06-28; no user acceptance inferred.
 
+### D-005 — No local Android toolchain blocks Batch 1 execution
+- Status: PROPOSED (blocker)
+- 2026-06-28 [Claude]: `/usr/bin/java` reports no runtime on this machine, and there is no Android
+  Gradle CI workflow (only `.github/workflows/ios-build-provenance.yml`). Agents would write
+  Kotlin/Compose that cannot be compiled, lint-checked, or tested before merging onto
+  `integration/parallel-batch-1` — a real risk for a code-writing batch. Options: (a) provision JDK 17
+  + Android SDK locally; (b) add an Android Gradle CI job to gate the integration branch; (c) restrict
+  the first rehearsal to Lane 1 (pure-Kotlin domain models, JVM-unit-testable) and hold the Compose
+  lanes until (a) or (b) lands. Proposed: (c) for the rehearsal, then (b) before any Compose lane runs.
+- Resolution: open — needs Codex/human decision before launch.
+
 ### Open Questions
 - Q1: Should the `android-credentials` lane build discovery-chooser UI now (non-pairing), or wait
   until D-001/D-002 resolve? (Proposed: yes, UI + parser + tests only.)
@@ -215,3 +226,72 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
 - Q2: After Batch 1 proves clean, which iOS-isolated lanes (`ios-design-system`, `ios-tests`,
   `ios-widgets-intents`) go in Batch 2?
 - Q3: Do we want a second integration target (e.g. `prod`) or is `main` the only merge destination?
+- Q4: Adopt D-005 option (c) — rehearse with only the pure-Kotlin domain-models lane first — or hold
+  the whole batch until an Android toolchain / CI exists?
+- Q5: Is "library-only" UI work (Lane 3/4 composables built but not yet wired to nav) acceptable as a
+  lane deliverable, or should feature screens land only together with their nav wiring in Batch 2?
+
+---
+
+## 7. Batch 1 Manifest — DRAFT (pending Codex review; NOT execution-approved)
+
+Drafted 2026-06-28 [Claude] per the §5 execution-readiness gate. Flagged for Codex to tear apart in
+the Decision Log before any worktree is created.
+
+- **Batch:** `parallel-batch-1`
+- **Base commit:** `origin/main` @ `defe8691345623adac347862cf271320f5d4610d` (fetched 2026-06-28)
+- **Integration branch:** `integration/parallel-batch-1` (fork from the base commit above)
+- **Orchestration:** Claude Workflow + worktree isolation
+- **Proposed owner:** Claude (execution) · Codex (adversarial review)
+- **Toolchain status:** ⚠️ NO local JDK/Android SDK (`/usr/bin/java` → no runtime); no Android CI.
+  Gradle build/test/lint cannot run locally — see **D-005**. This manifest is **review-ready, not
+  execution-ready** until D-005 resolves.
+
+Four lanes, designed to be **fully parallel**: no shared file, no cross-lane type dependency, and
+**zero collision-hotspot edits** (nav files, `build.gradle.kts`, manifest, `res/values`, `ui/theme`
+are all untouched). New screens are built as standalone composables and are deliberately **not wired
+to nav** this batch — nav wiring is a Batch 2 concern (see Deferred, below).
+
+### Lane 1 — `lane/android1-domain-models`
+- **Globs:** `core/model/**`, `data/demo/**`; tests `app/src/test/java/com/chromaglow/app/core/model/**`, `app/src/test/java/com/chromaglow/app/data/demo/**` (incl. existing `DemoFixturesTest.kt`, `DemoModeBoundaryTest.kt`).
+- **Deliverable:** add `LightDisplayModel` + `SceneDisplayModel`; extend `DemoFixtures` with per-room demo lights and ≥3 demo scenes. Pure Kotlin — no UI, no nav.
+- **Acceptance:** new models guard inputs with `require(...)` like `RoomDisplayModel`; fixtures expose lights per room + demo scenes; JVM unit tests cover validation + fixture shape; existing demo tests still pass.
+- **Forbidden:** all `feature/**`, `ui/**`, `app/**`, nav files, build/manifest/res.
+- **Validation:** `./gradlew testDebugUnitTest` (JVM, no emulator needed) — **skipped locally (no toolchain)**; must pass in CI / a toolchained machine before merge.
+- **Overlap check:** disjoint from L2/L3/L4. Additive; consumed by Batch 2, not this batch.
+
+### Lane 2 — `lane/android1-dashboard-controls`
+- **Globs:** `feature/dashboard/**`; tests `app/src/androidTest/java/com/chromaglow/app/feature/dashboard/**`.
+- **Deliverable:** add per-room on/off toggle + brightness slider to `DemoRoomRow`, mutating in-memory demo session state (no persistence). Uses the **existing** `RoomDisplayModel` only.
+- **Acceptance:** toggling a room flips its `isOn` in the UI; slider updates brightness within 1..100 and reflects in the row; a Compose UI test asserts toggle + slider; no calls into `core/credentials` or discovery.
+- **Forbidden:** `core/model`, `data/demo`, nav files (`ChromaGlowApp.kt`, `ChromaGlowDestination.kt`), `ui/theme`, build/manifest.
+- **Validation:** `./gradlew connectedDebugAndroidTest` — **skipped locally (no toolchain/emulator)**.
+- **Overlap check:** `feature/dashboard/**` only; disjoint.
+
+### Lane 3 — `lane/android1-settings`
+- **Globs:** `feature/settings/**` (NEW package); tests `app/src/androidTest/java/com/chromaglow/app/feature/settings/**`.
+- **Deliverable:** standalone `SettingsScreen(appVersion, isDemoMode, onSignOut)` composable — app-version row, demo-mode indicator, sign-out button. Not wired to nav this batch.
+- **Acceptance:** renders version + demo state; sign-out button invokes its callback (UI test); compiles as an unreferenced public composable.
+- **Forbidden:** nav files, `ChromaGlowApp.kt`, all other `feature/**`, `core/**`.
+- **Validation:** `./gradlew connectedDebugAndroidTest` — **skipped locally**.
+- **Overlap check:** new package; disjoint.
+
+### Lane 4 — `lane/android1-ui-states`
+- **Globs:** `ui/components/**` (NEW package, distinct from `ui/theme`); tests `app/src/androidTest/java/com/chromaglow/app/ui/components/**`.
+- **Deliverable:** reusable `LoadingState`, `EmptyState(message)`, `ErrorState(message, onRetry)` composables for the MVP loading/empty/error UX. Library only — deliberately **not** wired into the dashboard this batch (avoids concept overlap with L2).
+- **Acceptance:** each renders its content; `ErrorState` retry invokes its callback (UI test).
+- **Forbidden:** `ui/theme/**` (hotspot), `feature/**`, `core/**`.
+- **Validation:** `./gradlew connectedDebugAndroidTest` — **skipped locally**.
+- **Overlap check:** `ui/components/**` is new; disjoint from `ui/theme`.
+
+### Deferred to Batch 2 (with reasons)
+- **Room-detail + scenes SCREENS and all NAV WIRING** — require editing collision hotspots
+  `ChromaGlowApp.kt` (NavHost) + `ChromaGlowDestination.kt`; must be a single serialized "nav-shell"
+  lane, and depend on Lane 1's models. Cannot be parallel-safe this batch.
+- **Any pairing / credential-persistence** — blocked by D-001/D-002.
+
+### §5 gate self-check
+- Base commit named ✓ · per-lane owner/branch/globs ✓ · deliverable + acceptance ✓ · deps + forbidden
+  files ✓ · no glob overlap between lanes or with hotspots ✓.
+- ✗ **Validation cannot run locally** (no toolchain; no Android CI) → see D-005. Manifest is therefore
+  **review-ready, not execution-ready** until D-005 resolves.

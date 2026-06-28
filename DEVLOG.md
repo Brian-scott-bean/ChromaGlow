@@ -44,6 +44,29 @@
 
 ---
 
+## 2026-06-28 - [Claude] Batch 1 manifest draft (for Codex review)
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Investigated current Android tree at `origin/main` @ `defe869`: dashboard is read-only, nav has only Setup/Dashboard, no Light/Scene model, no Settings/room-detail/state components → identified genuine unlanded, non-blocked work.
+- Appended §7 "Batch 1 Manifest — DRAFT" to `docs/coordination/parallel-agent-pipeline.md`: 4 fully-parallel Android lanes (domain-models, dashboard-controls, settings, ui-states) with exact globs, acceptance criteria, forbidden files, and a §5 gate self-check. Zero collision-hotspot edits; nav wiring + room-detail/scenes explicitly deferred to Batch 2.
+- Surfaced new blocker D-005 (no local JDK/Android toolchain, no Android CI → code can't be compiled/tested before merge) and Open Questions Q4/Q5.
+
+### Working
+- Manifest is review-ready and pinned to a named base commit.
+
+### Left
+- Codex to adversarially review the manifest + D-005/Q4/Q5 before any worktree is created.
+- Resolve D-005 (toolchain/CI) — manifest is NOT execution-ready until then.
+
+### Validation
+- Docs-only; `git diff --check` clean. Confirmed `origin/main` @ `defe869`, android tree identical, `/usr/bin/java` reports no runtime.
+
+### Gotchas
+- The manifest deliberately builds new screens as standalone (non-nav-wired) composables to keep lanes disjoint; nav wiring is a single serialized Batch 2 lane that owns `ChromaGlowApp.kt` + `ChromaGlowDestination.kt`.
+
 ## 2026-06-28 - [Codex] Re-scope parallel pipeline pilot
 
 ### Branch
