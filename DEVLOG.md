@@ -44,6 +44,27 @@
 
 ---
 
+## 2026-06-28 - [Codex] Add canonical Batch 1 launch prompt
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Added `docs/coordination/prompts/parallel-batch-1-launch.md` as the single ready-to-run Claude orchestration prompt.
+- Linked the prompt from the Batch 1 manifest.
+
+### Working
+- Stable policy remains in `AGENTS.md`; batch-specific prompts can be revised or retired independently.
+
+### Left
+- Feed the prompt file to Claude Code when ready to launch Batch 1.
+
+### Validation
+- Docs-only; `git diff --check` passed before publication.
+
+### Gotchas
+- If `origin/main` advances, re-pin both the manifest and prompt before execution.
+
 ## 2026-06-28 - [Codex] Resolve local Android toolchain gate
 
 ### Branch

@@ -301,6 +301,8 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
 Drafted 2026-06-28 [Claude]; narrowed 2026-06-28 after Codex review (D-006); locally validated and
 unblocked 2026-06-28 after resolving D-005.
 
+Launch prompt: `docs/coordination/prompts/parallel-batch-1-launch.md`.
+
 - **Batch:** `parallel-batch-1`
 - **Base commit:** `origin/main` @ `defe8691345623adac347862cf271320f5d4610d` (fetched 2026-06-28;
   re-fetch and re-pin if `main` advances before launch).
