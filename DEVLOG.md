@@ -44,6 +44,31 @@
 
 ---
 
+## 2026-06-28 - [Codex] Batch 1 adversarial review
+
+### Branch
+- Docs review: `docs/parallel-agent-pipeline`
+- Reviewed integration: `integration/parallel-batch-1` @ `2a156b5`
+
+### Did
+- Confirmed Batch 1 lane branches are disjoint and the integration handoff records a fully green gate.
+- Added D-007 for two pre-Batch-2 contract gaps: room `lightCount` values disagree with per-room demo fixtures, and `SceneDisplayModel` lacks explicit bridge routing required for cross-bridge activation.
+- Confirmed no Batch 2 manifest or launch prompt exists yet; only the planning prompt is present.
+
+### Working
+- Batch 1 integration remains available on origin for correction and revalidation.
+
+### Left
+- Resolve D-007 on the Batch 1 integration branch and rerun the full Android gate.
+- Then run `parallel-batch-2-prepare.md`, review its draft manifest, and create the Batch 2 launch prompt.
+
+### Validation
+- `git diff --check` passed for the docs review before publication.
+- Runtime tests were not rerun; Claude's integrated handoff records 81 unit tests and 20 connected tests passing.
+
+### Gotchas
+- Do not merge Batch 1 to `main` merely because tests are green; the fixture and routing contracts become user-visible dependencies in Batch 2.
+
 ## 2026-06-28 - [Claude] Execute parallel Batch 1 two-lane Android pilot
 
 ### Branch
