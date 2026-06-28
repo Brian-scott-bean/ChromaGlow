@@ -44,6 +44,50 @@
 
 ---
 
+## 2026-06-28 - [Claude] Resolve D-007 — Batch 1 contract corrections
+
+### Branch
+- Correction lane: `lane/android1-contract-corrections` @ `eaa0f49` (off integration `2a156b5`).
+- Corrected integration: `integration/parallel-batch-1` @ `0d7c218` (pushed to origin).
+- Not merged to `main` — awaits the human collaborator's final merge.
+
+### Did
+- Resolved D-007 (Codex's Batch 1 adversarial review) with one serialized correction lane owning only
+  `SceneDisplayModel.kt`, `DemoFixtures.kt`, and their two test files:
+  - Added a non-blank `bridgeId` to `SceneDisplayModel` (`require(bridgeId.isNotBlank())` + a
+    blank/whitespace rejection test) and set every demo scene's `bridgeId = DEMO_BRIDGE_ID`, asserted
+    by a new invariant test — gives scenes explicit cross-bridge routing identity.
+  - Added the missing deterministic demo lights so each room's `lightCount` exactly equals
+    `lightsByRoom[room.id].size` (Bedroom 4, Kitchen 8, Living 5, Office 2) — by ADDING lights, not
+    lowering the established dashboard counts; `rooms` / `DEMO_BRIDGE_ID` left byte-identical.
+  - Added `rooms_lightCountMatchesLightsByRoomSize`, a fixture-consistency test that fails on any
+    room/count mismatch (including a room with no backing fixtures).
+- Ran two independent adversarial verifiers (contract+rigor and build+boundary lenses) before merge —
+  both passed every check. Verified only the four allowed files changed, then merged `--no-ff` into
+  `integration/parallel-batch-1` and pushed it. Marked D-007 RESOLVED and updated §7.
+
+### Working
+- Re-validated integrated gate all green: `testDebugUnitTest` **84/0** failures · `lintDebug` clean ·
+  `assembleDebug` ok · `connectedDebugAndroidTest` **20/0** on the headless `Pixel_10`.
+
+### Left
+- Batch 2 is now unblocked — run `docs/coordination/prompts/parallel-batch-2-prepare.md` (planning
+  only). No Batch 2 manifest/launch prompt exists yet.
+- Human collaborator still performs the final merge of `integration/parallel-batch-1` → `main`.
+
+### Validation
+- Preflight: `origin/integration/parallel-batch-1` confirmed `2a156b5` before correction; D-007 commit
+  `3be8e48` present on the docs branch; toolchain exported.
+- Correction lane: `./gradlew testDebugUnitTest lintDebug assembleDebug` green (84/0).
+- Integrated (post-merge @ `0d7c218`): `testDebugUnitTest lintDebug assembleDebug
+  connectedDebugAndroidTest` all green; `git diff --check` clean.
+
+### Gotchas
+- A whole-file grep of `roomId = "demo-room-*"` shows +1 per room beyond the light count — those are
+  the four scene `roomId` references, not extra lights. Per-light-id counts are exactly 4/8/5/2.
+- `SceneDisplayModel.bridgeId` is required (non-blank); all in-repo callers are the demo fixtures +
+  test (model is otherwise unconsumed), so adding the field broke nothing outside the lane.
+
 ## 2026-06-28 - [Codex] Add Batch 1 contract-corrections prompt
 
 ### Branch

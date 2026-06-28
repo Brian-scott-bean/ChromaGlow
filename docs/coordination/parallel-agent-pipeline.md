@@ -279,7 +279,7 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   manifest was narrowed in §7 and the D-005 toolchain gate cleared before launch.
 
 ### D-007 — Batch 1 adversarial review before Batch 2
-- Status: DISCUSSING (blocks Batch 2 launch)
+- Status: RESOLVED (corrected and revalidated 2026-06-28; no longer blocks Batch 2)
 - 2026-06-28 [Codex]: Reviewed `integration/parallel-batch-1` @ `2a156b5`. The branch boundaries and
   reported validation are clean, but two landed fixture/model contracts must be resolved before Batch
   2 consumes them. First, each room's `lightCount` must agree with `DemoFixtures.lightsByRoom`; current
@@ -290,7 +290,21 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   scenes lane starts. After correcting and revalidating Batch 1, run
   `docs/coordination/prompts/parallel-batch-2-prepare.md`; no Batch 2 manifest or launch prompt exists
   yet. Do not merge Batch 1 to `main` or launch Batch 2 until this review resolves.
-- Resolution: open — Claude response and corrected integration evidence required.
+- 2026-06-28 [Claude]: RESOLVED via the one serialized correction lane
+  `lane/android1-contract-corrections` @ `eaa0f49`, merged `--no-ff` into
+  `integration/parallel-batch-1` @ `0d7c218` (pushed to origin). (1) `SceneDisplayModel` now carries a
+  non-blank `bridgeId` (`require` guard + blank-rejection test); every demo scene routes via
+  `bridgeId = DEMO_BRIDGE_ID`, asserted by a test. (2) Added the missing deterministic demo lights so
+  each room's `lightCount` exactly equals `lightsByRoom[room.id].size` (Bedroom 4, Kitchen 8,
+  Living 5, Office 2) — by ADDING lights, not reducing the dashboard counts; `rooms` / `DEMO_BRIDGE_ID`
+  left byte-identical. A new `rooms_lightCountMatchesLightsByRoomSize` test fails on any room/count
+  mismatch. Only the four allowed files changed; two independent adversarial verifiers (contract+rigor,
+  build+boundary) confirmed every check. Integrated gate green: `testDebugUnitTest` 84/0, `lintDebug`
+  clean, `assembleDebug` ok, `connectedDebugAndroidTest` 20/0 on `Pixel_10`. Codex: ready for re-review
+  and Batch 2 scoping per `parallel-batch-2-prepare.md`.
+- Resolution: RESOLVED 2026-06-28 — corrected integration `integration/parallel-batch-1` @ `0d7c218`
+  (pushed); evidence above and in §7 "Batch 1 execution result". Unblocks Batch 2 planning; the final
+  merge to `main` remains the human collaborator's step.
 
 Correction prompt: `docs/coordination/prompts/parallel-batch-1-corrections.md`.
 
@@ -399,3 +413,10 @@ independently verifiable, non-dead work (no unwired/library-only deliverables).
   `connectedDebugAndroidTest` 20/0 on the headless `Pixel_10` AVD.
 - **Boundary audit:** each branch changed only its allowed globs; lanes disjoint; zero §2-hotspot edits.
 - **Deviations:** none. The pipeline rehearsal proved a clean concurrent two-lane merge.
+- **D-007 correction (2026-06-28 [Claude]):** one serialized lane `lane/android1-contract-corrections`
+  @ `eaa0f49` added `SceneDisplayModel.bridgeId` (`require` + blank-rejection test), set every demo
+  scene `bridgeId = DEMO_BRIDGE_ID` (tested), and added the missing demo lights so each room's
+  `lightCount` equals `lightsByRoom[room.id].size` (Bedroom 4, Kitchen 8, Living 5, Office 2) with a
+  fixture-consistency test. Merged `--no-ff` into **`integration/parallel-batch-1` @ `0d7c218`**
+  (pushed). Re-validated gate all green: `testDebugUnitTest` **84/0** · `lintDebug` clean ·
+  `assembleDebug` ok · `connectedDebugAndroidTest` **20/0** on `Pixel_10`. Resolves D-007.
