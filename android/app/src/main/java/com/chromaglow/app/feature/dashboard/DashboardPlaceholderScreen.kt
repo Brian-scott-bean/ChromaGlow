@@ -12,9 +12,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.chromaglow.app.core.model.RoomDisplayModel
 import com.chromaglow.app.data.demo.DemoModeSession
 
 @Composable
@@ -25,6 +28,12 @@ fun DashboardPlaceholderScreen(
 ) {
     val session = requireNotNull(demoSession) { "Demo session required" }
     require(session.isDemoMode)
+
+    // Hold the rooms in in-memory Compose state so per-room toggle/brightness edits
+    // re-render the rows. No persistence; resets when a new session is supplied.
+    val rooms = remember(session) {
+        mutableStateListOf<RoomDisplayModel>().apply { addAll(session.rooms) }
+    }
 
     Column(
         modifier = modifier
@@ -50,8 +59,22 @@ fun DashboardPlaceholderScreen(
                 .weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(session.rooms, key = { it.id }) { room ->
-                DemoRoomRow(room = room)
+            items(rooms, key = { it.id }) { room ->
+                DemoRoomRow(
+                    room = room,
+                    onToggle = { isOn ->
+                        val index = rooms.indexOfFirst { it.id == room.id }
+                        if (index >= 0) {
+                            rooms[index] = rooms[index].copy(isOn = isOn)
+                        }
+                    },
+                    onBrightnessChange = { brightness ->
+                        val index = rooms.indexOfFirst { it.id == room.id }
+                        if (index >= 0) {
+                            rooms[index] = rooms[index].copy(brightness = brightness.coerceIn(1, 100))
+                        }
+                    },
+                )
             }
         }
         OutlinedButton(onClick = onBackToSetup) {
