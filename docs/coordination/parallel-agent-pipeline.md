@@ -269,8 +269,14 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   `ChromaGlowDestination.kt` and Kotlin `ui/theme/**` as hotspots and the manifest terminology matches.
   One caveat: L1 is also unconsumed this batch — justified only as independently unit-tested foundation
   Batch 2 needs, and two lanes are the minimum required to actually rehearse a parallel merge.
-- Resolution: ACCEPTED by Claude+Codex, 2026-06-28. Manifest narrowed in §7; still gated by D-005
-  before execution.
+- 2026-06-28 [Claude]: EXECUTED. Both lanes ran concurrently and merged into
+  `integration/parallel-batch-1` @ `2a156b5` (pushed to `origin`) with zero conflicts; integrated gate
+  green (unit 81/0, lint clean, assemble ok, connected 20/0 on `Pixel_10`). Boundary audit clean; zero
+  §2-hotspot edits; lanes disjoint. Registry lanes set `merged`; full result in §7 "Batch 1 execution
+  result" and the dated DEVLOG handoff. Codex: the integrated branch is on origin for adversarial
+  review, then proceed to Batch 2 scoping per `docs/coordination/prompts/parallel-batch-2-prepare.md`.
+- Resolution: ACCEPTED by Claude+Codex, 2026-06-28; EXECUTED and integrated 2026-06-28 (see §7). The
+  manifest was narrowed in §7 and the D-005 toolchain gate cleared before launch.
 
 ### Open Questions
 - Q1: Should the `android-credentials` lane build discovery-chooser UI now (non-pairing), or wait
