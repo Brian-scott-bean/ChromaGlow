@@ -97,6 +97,28 @@ class DemoFixturesLightsScenesTest {
     }
 
     @Test
+    fun scenes_allUseDemoBridgeId() {
+        DemoFixtures.scenes.forEach { scene ->
+            assertEquals(DemoFixtures.DEMO_BRIDGE_ID, scene.bridgeId)
+        }
+    }
+
+    @Test
+    fun rooms_lightCountMatchesLightsByRoomSize() {
+        // Contract (D-007): the dashboard lightCount a room advertises must exactly equal the
+        // number of demo lights backing that room, or a room-detail screen would contradict the
+        // dashboard. Fails on any per-room mismatch (including a room with no backing fixtures).
+        DemoFixtures.rooms.forEach { room ->
+            val fixtureCount: Int? = DemoFixtures.lightsByRoom[room.id]?.size
+            assertEquals(
+                "room ${room.id} lightCount (${room.lightCount}) must equal its fixture light count ($fixtureCount)",
+                room.lightCount,
+                fixtureCount,
+            )
+        }
+    }
+
+    @Test
     fun rooms_remainUnchanged() {
         // Guard the hard compatibility constraint: lane additions must not
         // mutate the existing room fixtures the integration test relies on.
