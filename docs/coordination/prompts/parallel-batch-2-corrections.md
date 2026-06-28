@@ -2,7 +2,7 @@
 
 ## Status
 
-- **State:** Ready
+- **State:** Completed 2026-06-28 — D-009 resolved on `lane/android2-state-ownership-correction` @ `16810a1`, integrated `9411d81` (pushed); gate green (unit 84/0, connected 34/0). Not merged to `main`.
 - **Purpose:** Resolve D-009 before Batch 2 merges to `main`
 - **Base:** `integration/parallel-batch-2` @ `4c74beb`
 - **Execution:** One serialized nav/state-owner correction lane

@@ -18,7 +18,7 @@
 - Latest local Android validation observed by Codex: Android Studio's bundled JDK plus `~/Library/Android/sdk` passed unit tests, lint, assembly, and all 17 connected tests on the `Pixel_10` AVD.
 - Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`.
 - Android parallel Batch 1 is COMPLETE and **merged to `main` @ `a3fe54f`** (via integration `0d7c218`): two lanes (demo domain models incl. `LightDisplayModel`/`SceneDisplayModel`; dashboard on/off + brightness controls) plus the D-007 corrections (scene `bridgeId` routing; `lightCount` == `lightsByRoom[room.id].size`). Pre-merge gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on `Pixel_10`. D-007 is RESOLVED. Demo-model/fixture contracts are recorded in `AGENTS.md` → "Android Current State".
-- Android parallel Batch 2 is EXECUTED and integrated on `integration/parallel-batch-2` @ `4c74beb` (pushed): Wave 1 = `roomdetail`/`scenes`/`settings` feature packages, Wave 2 = `nav-shell` integration. Gate independently reproduced green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 33/0 on `Pixel_10`. **Not merged to `main`** — D-009 requires app-owned in-memory demo state so light/scene/dashboard changes survive navigation.
+- Android parallel Batch 2 is EXECUTED, integrated, and **D-009-corrected** on `integration/parallel-batch-2` @ `9411d81` (pushed): Wave 1 = `roomdetail`/`scenes`/`settings` feature packages, Wave 2 = `nav-shell` integration, plus the D-009 state-ownership fix (demo room/light/scene state hoisted into `ChromaGlowApp` so mutations survive navigation). Gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on `Pixel_10` (incl. a persistence E2E). **Not merged to `main`** — eligible (D-009 resolved); awaits human go-ahead.
 
 ### Handoff Entry Template
 
@@ -45,6 +45,52 @@
 ```
 
 ---
+
+## 2026-06-28 - [Claude] Resolve D-009 — hoist Batch 2 demo state across navigation
+
+### Branch
+- Correction lane: `lane/android2-state-ownership-correction` @ `16810a1` (off `integration/parallel-batch-2` @ `4c74beb`).
+- Corrected integration: `integration/parallel-batch-2` @ `9411d81` (pushed).
+- Not merged to `main` — eligible (D-009 resolved); awaits the human collaborator's go-ahead.
+
+### Did
+- Ran `parallel-batch-2-corrections.md` after preflight (origin integration still `4c74beb`; D-009 +
+  prompt on the docs branch). One serialized correction lane resolved D-009 (demo mutations were lost on
+  navigation because the `when`-router disposes inactive destinations and screen-local `remember{}` state
+  reseeded from immutable `DemoFixtures`):
+  - Hoisted demo room/light/scene state into `ChromaGlowApp` as `mutableStateListOf`, seeded from
+    `DemoFixtures` only on entering demo mode and cleared on every return-to-Setup (Dashboard back +
+    Settings `onExitDemo`).
+  - Consumed the existing bridge-aware callbacks: added `onRoomToggle`/`onRoomBrightnessChange` to
+    `DashboardPlaceholderScreen` (removed its screen-local reseed; preserved public params + Switch/Slider/
+    status text), and wired `RoomDetailScreen`'s `(bridgeId, lightId, value)` and `ScenesScreen`'s
+    `(bridgeId, sceneId)` exclusive-activation callbacks into the app-owned state.
+  - Extended `NavIntegrationE2ETest` to prove persistence: change a light → back → reopen room → assert it
+    survived; activate a scene → back → reopen Scenes → assert still active + previous inactive; plus a
+    dashboard-toggle-survives-reopen test. `DemoModeSession`/`DemoFixtures` and all Wave 1 internals
+    unchanged; in-memory only.
+- An independent adversarial verifier confirmed all D-009 acceptance checks. Verified only the 3 allowed
+  files changed, merged `--no-ff` into `integration/parallel-batch-2`, re-ran the full gate, pushed.
+
+### Working
+- Corrected gate all green: `testDebugUnitTest` **84/0** · `lintDebug` clean · `assembleDebug` ok ·
+  `connectedDebugAndroidTest` **34/0** on the headless `Pixel_10`.
+
+### Left
+- Human collaborator: final merge of `integration/parallel-batch-2` @ `9411d81` → `main` (promotion gate
+  met; D-009 resolved). Lane/integration branches retained; worktrees cleaned up.
+
+### Validation
+- Preflight: `origin/integration/parallel-batch-2` confirmed `4c74beb`; D-009 present.
+- Lane self-validated the full gate on-device; batch owner re-ran `testDebugUnitTest lintDebug
+  assembleDebug connectedDebugAndroidTest` on the merged result. `git diff --check` clean.
+
+### Gotchas
+- `ChromaGlowApp` is the single owner of in-memory demo state; feature screens keep their own internal
+  `remember{}` for in-screen feedback but re-seed from app-owned state on reopen (the `when`-router
+  disposes them), so the app shell drives persistence.
+- Bridge-aware callbacks pass `bridgeId` but matching is by `roomId`/`lightId`/`sceneId` (demo ids are
+  unique); a future multi-bridge fixture would need bridge-scoped matching.
 
 ## 2026-06-28 - [Codex] Batch 2 post-execution review
 

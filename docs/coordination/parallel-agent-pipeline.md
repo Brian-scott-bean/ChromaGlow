@@ -338,7 +338,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-1-corrections.md`.
   contract corrections; Batch 2 may execute from pinned `main` @ `a3fe54f` while that ref remains current.
 
 ### D-009 — Persist demo mutations across Batch 2 navigation
-- Status: DISCUSSING (blocks Batch 2 merge to `main`)
+- Status: RESOLVED (corrected and revalidated 2026-06-28; no longer blocks the Batch 2 merge to `main`)
 - 2026-06-28 [Codex]: Adversarially reviewed `integration/parallel-batch-2` @ `4c74beb` and independently
   reran the full gate (84 unit tests, lint, assemble, and 33 connected tests all green). The app shell
   does not consume `RoomDetailScreen`'s bridge-aware light callbacks or `ScenesScreen`'s activation
@@ -349,7 +349,23 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-1-corrections.md`.
   `ChromaGlowApp`, consume the existing callbacks, forward dashboard mutations, and extend the E2E to
   reopen RoomDetail/Scenes and verify state survives navigation. Keep this in-memory only and preserve
   the accepted lane contracts.
-- Resolution: open — corrected integration and persistence E2E evidence required before final merge.
+- 2026-06-28 [Claude]: RESOLVED via the one serialized correction lane
+  `lane/android2-state-ownership-correction` @ `16810a1`, merged `--no-ff` into
+  `integration/parallel-batch-2` @ `9411d81` (pushed to origin). Hoisted the demo room/light/scene state
+  into `ChromaGlowApp` as `mutableStateListOf` collections seeded from `DemoFixtures` ONLY on entering
+  demo mode and cleared on exit (both Dashboard "Back to Setup" and Settings "Exit Demo Mode"). The
+  shell now consumes the existing bridge-aware callbacks: dashboard toggle/brightness
+  (`onRoomToggle`/`onRoomBrightnessChange` added to `DashboardPlaceholderScreen`, screen-local
+  `remember(session)` reseed removed), `RoomDetailScreen`'s `(bridgeId, lightId, value)` callbacks, and
+  `ScenesScreen`'s `(bridgeId, sceneId)` exclusive activation. `DemoModeSession`/`DemoFixtures` and all
+  Wave 1 feature internals are unchanged; in-memory only (no disk/network/REST/pairing/credentials).
+  `NavIntegrationE2ETest` extended to PROVE persistence: change a light → back → reopen the room → assert
+  it survived; activate a scene → back → reopen Scenes → assert it stays active and the prior one
+  inactive; plus a dashboard-toggle-survives-reopen test. Only the three allowed files changed; an
+  independent adversarial verifier confirmed all checks. Gate green: `testDebugUnitTest` 84/0,
+  `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on `Pixel_10`.
+- Resolution: RESOLVED 2026-06-28 — corrected integration `integration/parallel-batch-2` @ `9411d81`
+  (pushed); persistence E2E green. Batch 2 is eligible for the human final merge to `main`.
 
 Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
 
@@ -636,8 +652,8 @@ Wave 2 (one serialized lane — owns the §2 nav hotspots, wires + exercises eve
   scheduling decisions.
 
 ### Batch 2 execution result — 2026-06-28 [Claude, batch owner]
-- **State:** Executed and integrated. Pushed to `origin/integration/parallel-batch-2`. **Not merged to
-  `main`** — D-009 state-ownership correction required after Codex review.
+- **State:** Executed, integrated, and D-009-corrected. Pushed to `origin/integration/parallel-batch-2`
+  @ `9411d81`. **Not merged to `main`** — awaits the human collaborator's go-ahead (D-009 resolved).
 - **Base:** `main` @ `a3fe54f` (re-verified unchanged at launch; D-008 ACCEPTED before launch).
 - **Wave 1** (parallel, compile/unit/lint-checked in isolation; connected run serially by the owner):
   - Lane R `lane/android2-roomdetail` @ `a3cd34a` — `RoomDetailScreen` (per-light Switch/Slider,
@@ -659,6 +675,14 @@ Wave 2 (one serialized lane — owns the §2 nav hotspots, wires + exercises eve
   Batch 1 `ChromaGlowAppTest`/`DemoRoomControlsTest`, still green via additive-only changes).
 - **Boundary audit:** each lane changed only its allowed globs; Wave 1 disjoint; only Wave 2 touched the
   §2 nav hotspots. **Deviations:** none (one in-lane test fix in Lane S, no scope change).
+- **D-009 correction (2026-06-28 [Claude]):** one serialized lane
+  `lane/android2-state-ownership-correction` @ `16810a1` hoisted demo room/light/scene state into
+  `ChromaGlowApp` (seeded on demo enter, cleared on exit) and consumed the dashboard/room-detail/scenes
+  bridge-aware callbacks, so mutations survive navigation; `DemoModeSession`/`DemoFixtures` and Wave 1
+  internals unchanged; in-memory only. `NavIntegrationE2ETest` extended to prove persistence on reopen.
+  Merged `--no-ff` into **`integration/parallel-batch-2` @ `9411d81`** (pushed). Re-validated gate all
+  green: `testDebugUnitTest` **84/0** · `lintDebug` clean · `assembleDebug` ok ·
+  `connectedDebugAndroidTest` **34/0** on `Pixel_10`. Resolves D-009 (see Decision Log).
 - **Codex post-execution review:** build/test gate independently reproduced green, but D-009 blocks
   promotion because demo mutations reset when their destination leaves composition. Run the Batch 2
   correction prompt and revalidate before final merge.
