@@ -16,7 +16,7 @@
 - Android completed baseline includes app shell, dark Material theme placeholders, demo fixtures, Android Keystore credential boundary, mDNS chooser, manual IP entry, NUPnP deferral record, and pairing TLS/identity blocker record.
 - Android live pairing is blocked until safe TLS bootstrap and canonical bridge identity are decided.
 - Latest local audit validation observed by Codex: iOS build and tests passed with `HueHome 1`; Android Gradle validation was blocked on this machine when Java runtime was unavailable.
-- Parallel multi-agent pipeline defined: lane registry, collision hotspots, Android-only pilot (Batch 1), and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`; canonical rules in `AGENTS.md` → "Parallel Agent Pipeline".
+- Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`; the original Android Batch 1 scopes are historical and must be re-scoped from current `origin/main` before launch.
 
 ### Handoff Entry Template
 
@@ -43,6 +43,32 @@
 ```
 
 ---
+
+## 2026-06-28 - [Codex] Re-scope parallel pipeline pilot
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Marked the original Android Batch 1 table as historical and non-executable because its named work has landed.
+- Added an execution-readiness gate requiring a current base SHA, exact disjoint globs, owner/branch, acceptance criteria, dependencies, forbidden files, and narrow validation for every lane.
+- Added the `unscoped` registry state and applied it to Android ownership classes so landed work cannot be claimed as a new deliverable.
+- Recorded D-004 and an independent Claude CLI review; Claude agreed and requested the D-003/registry consistency corrections now reflected in the document.
+
+### Working
+- Android remains the recommended first real parallel run, but no replacement Batch 1 lanes are scoped yet.
+- Pairing and credential-persistence wiring remain blocked by D-001/D-002.
+
+### Left
+- Draft replacement Android lanes from the fetched current `origin/main` tree before creating worktrees.
+- Land the stacked docs branches so the pipeline becomes canonical on `main`.
+
+### Validation
+- `git diff --check` passed.
+- Claude CLI independently reviewed the proposal and agreed after identifying the registry/status consistency correction.
+
+### Gotchas
+- The branch remains stacked on `docs/consolidate-agent-handoff`; merge order still matters.
 
 ## 2026-06-24 - [Claude] Parallel agent pipeline + shared decision log
 
