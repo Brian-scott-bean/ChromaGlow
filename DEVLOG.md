@@ -16,7 +16,8 @@
 - Android completed baseline includes app shell, dark Material theme placeholders, demo fixtures, Android Keystore credential boundary, mDNS chooser, manual IP entry, NUPnP deferral record, and pairing TLS/identity blocker record.
 - Android live pairing is blocked until safe TLS bootstrap and canonical bridge identity are decided.
 - Latest local Android validation observed by Codex: Android Studio's bundled JDK plus `~/Library/Android/sdk` passed unit tests, lint, assembly, and all 17 connected tests on the `Pixel_10` AVD.
-- Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`; the replacement Android Batch 1 manifest is a locally validated, execution-ready two-lane pilot.
+- Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`.
+- Android parallel Batch 1 is EXECUTED and integrated on `integration/parallel-batch-1` @ `0d7c218` (pushed): two lanes (demo domain models incl. `LightDisplayModel`/`SceneDisplayModel`; dashboard on/off + brightness controls) plus the D-007 corrections (scene `bridgeId` routing; `lightCount` == `lightsByRoom[room.id].size`). Gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on `Pixel_10`. D-007 is RESOLVED. Not yet merged to `main` (human final merge). Demo-model/fixture contracts are recorded in `AGENTS.md` → "Android Current State". Batch 2 prep (`docs/coordination/prompts/parallel-batch-2-prepare.md`) is unblocked.
 
 ### Handoff Entry Template
 

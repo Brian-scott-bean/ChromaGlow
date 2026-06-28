@@ -2,7 +2,7 @@
 
 This is the canonical project handoff for Codex, Claude, Cursor, and other coding agents. Do not duplicate this full context into tool-specific files. Tool-specific entry files, including `CLAUDE.md`, should point here.
 
-Last consolidated: 2026-06-24
+Last consolidated: 2026-06-24 · Android parallel Batch 1 result + demo-model/fixture contracts added 2026-06-28 (see "Android Current State").
 
 ## Startup Order
 
@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a scaffold, theme, demo fixtures, credential boundary, mDNS chooser, manual-IP entry, and pairing is blocked until safe TLS bootstrap plus canonical bridge identity are decided.
+ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a scaffold, theme, demo fixtures, credential boundary, mDNS chooser, manual-IP entry, and pairing is blocked until safe TLS bootstrap plus canonical bridge identity are decided. A parallel Batch 1 (demo domain models plus dashboard on/off + brightness controls, with the D-007 fixture/scene contracts below) is integrated on `integration/parallel-batch-1` and awaits the human final merge to `main`.
 
 ## Current Branch/Repo Facts
 
@@ -224,6 +224,19 @@ Current Android blocker:
   - canonical stable bridge identity for credential aliasing
 
 Do not implement trust-all TLS managers, permissive hostname verifiers, blind certificate acceptance, or fabricated bridge IDs.
+
+### Parallel Batch 1 result (integrated on `integration/parallel-batch-1`, not yet on `main`)
+
+Two-lane pilot landed and the D-007 contract corrections applied. Corrected integration SHA `0d7c218`; gate green (`testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on the headless `Pixel_10`). Full record: `DEVLOG.md` and `docs/coordination/parallel-agent-pipeline.md` (§7 + Decision Log D-007). Awaiting the human collaborator's final merge to `main`.
+
+- Demo display models in `core/model`: `RoomDisplayModel`, `LightDisplayModel`, `SceneDisplayModel`. All guard inputs in `init { require(...) }` (non-blank ids/names, `brightness in 1..100`).
+- `feature/dashboard`: `DemoRoomRow` has an on/off `Switch` + brightness `Slider` that mutate in-memory demo session state (no persistence); `DashboardPlaceholderScreen`'s public signature is unchanged (the nav shell calls it).
+
+Demo-model / fixture contracts Batch 2 must honor (each is enforced by a unit test — keep them green):
+
+- **Fixture light-count invariant:** every `RoomDisplayModel.lightCount` MUST equal `DemoFixtures.lightsByRoom[room.id].size`. When adding/removing rooms or demo lights, keep both in sync (test `rooms_lightCountMatchesLightsByRoomSize`). Current demo counts: Bedroom 4, Kitchen 8, Living 5, Office 2.
+- **Scene bridge routing:** `SceneDisplayModel` carries a required non-blank `bridgeId`; all demo scenes use `DemoFixtures.DEMO_BRIDGE_ID`. A scenes lane must select the correct bridge client via this `bridgeId` (do not fabricate or omit it).
+- **Fixture surface:** `DemoFixtures` exposes `rooms`, `lights`, `lightsByRoom` (lights grouped by room id), and `scenes` (≥3); `DEMO_BRIDGE_ID = "demo-bridge-main"`. Do not mutate the existing `rooms` values — connected tests assert their exact text.
 
 ## Validation Commands
 
