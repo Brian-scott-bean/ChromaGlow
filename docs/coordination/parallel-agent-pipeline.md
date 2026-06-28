@@ -213,8 +213,8 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   `android-credentials` lane while the blockers remain unresolved.
 - Resolution: ACCEPTED by Codex/Claude review, 2026-06-28; no user acceptance inferred.
 
-### D-005 — No local Android toolchain blocks Batch 1 execution
-- Status: DISCUSSING (blocker)
+### D-005 — Local Android validation prerequisite
+- Status: ACCEPTED (resolved locally)
 - 2026-06-28 [Claude]: `/usr/bin/java` reports no runtime on this machine, and there is no Android
   Gradle CI workflow (only `.github/workflows/ios-build-provenance.yml`). Agents would write
   Kotlin/Compose that cannot be compiled, lint-checked, or tested before merging onto
@@ -235,8 +235,14 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   `integration/parallel-batch-1` — it unblocks execution and pays off long-term. JVM-unit-test lanes can
   merge on a green build+unit job; any `connectedDebugAndroidTest` (Compose UI) lane additionally needs
   an emulator runner before merge. No code lane runs until (a) a local toolchain or (b) CI exists.
-- Resolution: Claude+Codex agree the toolchain/CI must precede any code lane. Pending a human decision to
-  provision a local JDK 17 + Android SDK (a) or stand up the Android CI job (b). Recommended: (b).
+- 2026-06-28 [Codex]: Resolved the local-toolchain question. Android Studio provides JDK 21 at
+  `/Applications/Android Studio.app/Contents/jbr/Contents/Home`, the Android SDK exists at
+  `~/Library/Android/sdk`, and the `Pixel_10` AVD is installed. With `JAVA_HOME`, `ANDROID_HOME`, and
+  `ANDROID_SDK_ROOT` set explicitly, `testDebugUnitTest lintDebug assembleDebug` passed, followed by
+  `connectedDebugAndroidTest` with all 17 tests passing on the headless `Pixel_10` emulator. Android CI
+  remains recommended defense in depth, but it no longer blocks this local pilot.
+- Resolution: ACCEPTED and locally resolved, 2026-06-28. Every lane must export the explicit toolchain
+  paths and pass its listed validation before merge.
 
 ### D-006 — Narrow the replacement Batch 1 manifest before execution
 - Status: ACCEPTED
@@ -284,11 +290,10 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
 
 ---
 
-## 7. Batch 1 Manifest — Two-Lane Pilot (narrowed per D-006; gated by D-005)
+## 7. Batch 1 Manifest — Two-Lane Pilot (execution-ready)
 
-Drafted 2026-06-28 [Claude]; narrowed 2026-06-28 after Codex review (D-006). **NOT execution-approved:**
-blocked by **D-005** (no Android toolchain/CI) until a local JDK 17 + Android SDK or an Android CI job
-exists.
+Drafted 2026-06-28 [Claude]; narrowed 2026-06-28 after Codex review (D-006); locally validated and
+unblocked 2026-06-28 after resolving D-005.
 
 - **Batch:** `parallel-batch-1`
 - **Base commit:** `origin/main` @ `defe8691345623adac347862cf271320f5d4610d` (fetched 2026-06-28;
@@ -297,6 +302,14 @@ exists.
 - **Orchestration:** Claude Workflow + worktree isolation.
 - **Batch owner:** Claude. **Lane owners:** one Claude Workflow sub-agent per lane (named below).
 - **Adversarial review:** Codex.
+- **Toolchain:** export these values in every lane shell:
+  ```bash
+  export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+  export ANDROID_HOME="$HOME/Library/Android/sdk"
+  export ANDROID_SDK_ROOT="$ANDROID_HOME"
+  ```
+- **Baseline validation:** `testDebugUnitTest lintDebug assembleDebug` passed; all 17
+  `connectedDebugAndroidTest` tests passed on the headless `Pixel_10` AVD before launch.
 - **Hotspot edits:** none. Nav shell (`ChromaGlowApp.kt`, `ChromaGlowDestination.kt`), `ui/theme/**`,
   `build.gradle.kts`, manifest, `res/values/**` are all §2 collision hotspots and stay untouched.
 
@@ -309,7 +322,7 @@ independently verifiable, non-dead work (no unwired/library-only deliverables).
 - **Acceptance:** new models guard inputs with `require(...)` like `RoomDisplayModel`; fixtures expose lights per room + demo scenes; JVM unit tests cover validation + fixture shape; existing demo tests still pass.
 - **Justification (unconsumed this batch):** foundation that Batch 2 (room-detail/scenes) needs; validated independently by unit tests, so not dead code.
 - **Forbidden:** all `feature/**`, `ui/**`, `app/**`, nav files, build/manifest/res.
-- **Validation:** `./gradlew testDebugUnitTest` from `android/` — requires JDK 17 + Android SDK (blocked until D-005). Merge only on green.
+- **Validation:** `./gradlew testDebugUnitTest` from `android/` with the manifest toolchain exports. Merge only on green.
 - **Overlap check:** disjoint from L2.
 
 ### Lane 2 — `lane/android1-dashboard-controls` · registry `android-dashboard` · owner: Claude sub-agent B
@@ -317,7 +330,7 @@ independently verifiable, non-dead work (no unwired/library-only deliverables).
 - **Deliverable:** add per-room on/off toggle + brightness slider to `DemoRoomRow`, mutating in-memory demo session state (no persistence). Uses the **existing** `RoomDisplayModel` only — no dependency on Lane 1.
 - **Acceptance:** toggling a room flips its `isOn` in the UI; slider updates brightness within 1..100 and reflects in the row; a Compose UI test asserts toggle + slider; no calls into `core/credentials` or discovery.
 - **Forbidden:** `core/model`, `data/demo`, nav files, `ui/theme`, build/manifest.
-- **Validation:** `./gradlew connectedDebugAndroidTest` — requires an emulator/device runner (blocked until D-005). Merge only on green.
+- **Validation:** boot `Pixel_10`, then run `./gradlew connectedDebugAndroidTest` with the manifest toolchain exports. Merge only on green.
 - **Overlap check:** `feature/dashboard/**` only; disjoint from L1.
 
 ### Deferred (not in Batch 1, with reasons)
@@ -330,5 +343,4 @@ independently verifiable, non-dead work (no unwired/library-only deliverables).
 ### §5 gate self-check
 - Base commit named ✓ · per-lane owner/branch/globs ✓ · deliverable + acceptance ✓ · deps + forbidden
   files ✓ · no glob overlap; zero §2-hotspot edits ✓ · both lanes mapped to registry entries ✓.
-- ✗ **Validation cannot run** (no toolchain; no Android CI) → **D-005**. Manifest is review-complete but
-  **execution-gated** until D-005 resolves.
+- Local JDK/SDK/AVD discovered ✓ · baseline build/unit/lint passed ✓ · 17 connected tests passed ✓.

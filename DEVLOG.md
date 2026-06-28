@@ -15,8 +15,8 @@
 - Android baseline: native Kotlin/Jetpack Compose project exists under `android/`.
 - Android completed baseline includes app shell, dark Material theme placeholders, demo fixtures, Android Keystore credential boundary, mDNS chooser, manual IP entry, NUPnP deferral record, and pairing TLS/identity blocker record.
 - Android live pairing is blocked until safe TLS bootstrap and canonical bridge identity are decided.
-- Latest local audit validation observed by Codex: iOS build and tests passed with `HueHome 1`; Android Gradle validation was blocked on this machine when Java runtime was unavailable.
-- Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`; the original Android Batch 1 scopes are historical and must be re-scoped from current `origin/main` before launch.
+- Latest local Android validation observed by Codex: Android Studio's bundled JDK plus `~/Library/Android/sdk` passed unit tests, lint, assembly, and all 17 connected tests on the `Pixel_10` AVD.
+- Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`; the replacement Android Batch 1 manifest is a locally validated, execution-ready two-lane pilot.
 
 ### Handoff Entry Template
 
@@ -43,6 +43,32 @@
 ```
 
 ---
+
+## 2026-06-28 - [Codex] Resolve local Android toolchain gate
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Found Android Studio's bundled JDK at `/Applications/Android Studio.app/Contents/jbr/Contents/Home`, the SDK at `~/Library/Android/sdk`, and the existing `Pixel_10` AVD.
+- Updated D-005 from a blocker to a locally resolved validation prerequisite with explicit environment exports.
+- Marked the narrowed two-lane Batch 1 manifest execution-ready and recorded baseline validation evidence.
+
+### Working
+- Batch 1 can launch as two disjoint Claude lanes: domain models/fixtures and dashboard controls.
+- Android CI remains recommended defense in depth but does not block the local pilot.
+
+### Left
+- Create the integration branch and two lane worktrees from the manifest's pinned `origin/main` SHA.
+- Require each lane's listed validation to pass before integration.
+
+### Validation
+- `./gradlew testDebugUnitTest lintDebug assembleDebug` passed with the explicit JDK/SDK environment.
+- `./gradlew connectedDebugAndroidTest` passed all 17 tests on the headless `Pixel_10` AVD.
+- `git diff --check` passed before publication.
+
+### Gotchas
+- `/usr/bin/java` still reports no runtime; lane shells must use the explicit Android Studio `JAVA_HOME`.
 
 ## 2026-06-28 - [Claude] Apply Codex review to pipeline doc
 
