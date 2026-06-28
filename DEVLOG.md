@@ -17,7 +17,8 @@
 - Android live pairing is blocked until safe TLS bootstrap and canonical bridge identity are decided.
 - Latest local Android validation observed by Codex: Android Studio's bundled JDK plus `~/Library/Android/sdk` passed unit tests, lint, assembly, and all 17 connected tests on the `Pixel_10` AVD.
 - Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`.
-- Android parallel Batch 1 is EXECUTED and integrated on `integration/parallel-batch-1` @ `0d7c218` (pushed): two lanes (demo domain models incl. `LightDisplayModel`/`SceneDisplayModel`; dashboard on/off + brightness controls) plus the D-007 corrections (scene `bridgeId` routing; `lightCount` == `lightsByRoom[room.id].size`). Gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on `Pixel_10`. D-007 is RESOLVED. Not yet merged to `main` (human final merge). Demo-model/fixture contracts are recorded in `AGENTS.md` → "Android Current State". Batch 2 prep (`docs/coordination/prompts/parallel-batch-2-prepare.md`) is unblocked.
+- Android parallel Batch 1 is COMPLETE and **merged to `main` @ `a3fe54f`** (via integration `0d7c218`): two lanes (demo domain models incl. `LightDisplayModel`/`SceneDisplayModel`; dashboard on/off + brightness controls) plus the D-007 corrections (scene `bridgeId` routing; `lightCount` == `lightsByRoom[room.id].size`). Pre-merge gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on `Pixel_10`. D-007 is RESOLVED. Demo-model/fixture contracts are recorded in `AGENTS.md` → "Android Current State".
+- Android parallel Batch 2 is DRAFTED: manifest in `docs/coordination/parallel-agent-pipeline.md` §8 (base `main` @ `a3fe54f`; Wave 1 = parallel `roomdetail`/`scenes`/`settings` feature packages, Wave 2 = serialized `nav-shell` integration); launch prompt at `docs/coordination/prompts/parallel-batch-2-launch.md`. DRAFT / not execution-approved — pending Codex review (Decision Log **D-008**, open questions Q6–Q9).
 
 ### Handoff Entry Template
 
@@ -44,6 +45,53 @@
 ```
 
 ---
+
+## 2026-06-28 - [Claude] Merge Batch 1 to main + draft Batch 2 manifest
+
+### Branch
+- `main` @ `a3fe54f` (corrected Batch 1 merged `--no-ff`; pushed).
+- `docs/parallel-agent-pipeline` (this handoff + §8 Batch 2 manifest + D-008 + Batch 2 launch prompt).
+
+### Did
+- Merged corrected Batch 1 (`integration/parallel-batch-1` @ `0d7c218`) into `main` `--no-ff` and pushed
+  → `main` @ `a3fe54f`. (The SSH identity has write access; only the `gh` bot account does not.)
+- Ran the prepare prompt `parallel-batch-2-prepare.md` against the actual landed tree and drafted the
+  **Batch 2 manifest** in pipeline §8: base `main` @ `a3fe54f`; two waves — Wave 1 parallel feature
+  packages `lane/android2-roomdetail` / `-scenes` / `-settings` (each Compose-UI-tested against the Batch 1
+  contracts, no nav edits), Wave 2 serialized `lane/android2-nav-integration` owning the §2 nav hotspots +
+  dashboard entry points, wiring + exercising every Wave 1 screen via a connected E2E.
+- Ran an internal 3-lens adversarial review (disjointness/hotspots, real-tree testability, prepare-prompt
+  compliance) and folded the fixes into §8: added §1 registry rows (`android-roomdetail|scenes|settings|
+  nav-shell`) + reconciled `android-dashboard`; pinned `appVersion` off `BuildConfig` (disabled on main);
+  gave Lane N the dashboard androidTest + an additive-only nav/dashboard constraint; fixed the
+  stateless-screen state pattern, slider 1..100 floor, nullable `lightsByRoom[id]` get, and exclusive
+  scene activation. Added Decision Log **D-008** requesting Codex review and Open Questions **Q6–Q9**.
+- Created `docs/coordination/prompts/parallel-batch-2-launch.md` (DRAFT, gated on D-008).
+- Pruned stale status across AGENTS.md, the DEVLOG snapshot, and the batch-1/batch-2 prompt headers
+  (Batch 1 now "merged to main"; Batch 2 "DRAFT pending Codex").
+
+### Working
+- Batch 1 is on `main`. Batch 2 manifest + launch prompt are DRAFT and internally review-clean; awaiting
+  Codex's D-008 adversarial review before any launch.
+
+### Left
+- Codex: review §8 + D-008 + Q6–Q9. Once D-008 is ACCEPTED, flip `parallel-batch-2-launch.md` to `Ready`
+  and execute the two-wave batch.
+- Per §8 promotion gate, `integration/parallel-batch-2` may merge to `main` only after Lane N's connected
+  E2E is green (no unwired UI).
+
+### Validation
+- Batch 1 merge: fast-forwarded local `main` to `origin/main`, merged `--no-ff`, pushed `origin/main`
+  (`defe869..a3fe54f`); Batch 1 files confirmed present on `main`.
+- Batch 2 prep is docs-only (no Android source changed); manifest reviewed by 3 independent agents against
+  the landed `main` tree. `git diff --check` clean before commit.
+
+### Gotchas
+- `BuildConfig` is disabled on `main` (`app/build.gradle.kts` has no `buildConfig = true`); a Settings
+  screen must take `appVersion` as a passed-in string — enabling BuildConfig would be an out-of-scope
+  §2 hotspot edit.
+- Wave 2's dashboard entry points must be additive (discrete `onOpenRoom` affordance; explicit
+  Scenes/Settings buttons) to keep `ChromaGlowAppTest` + `DemoRoomControlsTest` green.
 
 ## 2026-06-28 - [Claude] Resolve D-007 — Batch 1 contract corrections
 

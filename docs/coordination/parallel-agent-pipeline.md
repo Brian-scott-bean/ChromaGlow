@@ -34,10 +34,14 @@
 | Lane ID | Ownership globs | Parallel-safe | Status | Owner |
 | --- | --- | --- | --- | --- |
 | `android-setup` | `android/app/src/main/java/com/chromaglow/app/feature/setup/**` | Yes | unscoped | — |
-| `android-dashboard` | `android/app/src/main/java/com/chromaglow/app/feature/dashboard/**` | Yes | merged (Batch 1 L2) | Claude (sub-agent B) |
+| `android-dashboard` | `android/app/src/main/java/com/chromaglow/app/feature/dashboard/**` | Yes | merged (Batch 1 L2) · feature/dashboard re-claimed by `android-nav-shell` for Batch 2 W2 | Claude (sub-agent B) |
 | `android-credentials` | `android/app/src/main/java/com/chromaglow/app/core/credentials/**`, `…/core/hue/discovery/**` | Yes (hardening only; no pairing or persistence wiring while D-001/D-002 are unresolved) | unscoped | — |
 | `android-models` | `android/app/src/main/java/com/chromaglow/app/core/model/**`, `…/data/demo/**` | Yes | merged (Batch 1 L1) | Claude (sub-agent A) |
 | `android-tests` | `android/app/src/test/**`, `android/app/src/androidTest/**` | Yes, with exact non-overlapping test files | unscoped | — |
+| `android-roomdetail` | `android/app/src/main/java/com/chromaglow/app/feature/roomdetail/**` (+ its androidTest pkg) | Yes | open (Batch 2 W1) | Claude (proposed) |
+| `android-scenes` | `android/app/src/main/java/com/chromaglow/app/feature/scenes/**` (+ its androidTest pkg) | Yes | open (Batch 2 W1) | Claude (proposed) |
+| `android-settings` | `android/app/src/main/java/com/chromaglow/app/feature/settings/**` (+ its androidTest pkg) | Yes | open (Batch 2 W1) | Claude (proposed) |
+| `android-nav-shell` | `…/app/ChromaGlowApp.kt`, `…/app/ChromaGlowDestination.kt`, `feature/dashboard/**` (+ nav E2E androidTest) — single designated §2 nav-hotspot owner per batch | No (serialized; owns §2 hotspots) | open (Batch 2 W2) | Claude (proposed) |
 
 > `ui/theme/**` is no longer a parallel lane — it was bundled into the old `android-models-theme` lane
 > but is consumed app-wide, so it is now a §2 collision hotspot (single-owner per batch).
@@ -308,6 +312,23 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
 
 Correction prompt: `docs/coordination/prompts/parallel-batch-1-corrections.md`.
 
+### D-008 — Batch 2 manifest adversarial review
+- Status: PROPOSED (blocks Batch 2 launch)
+- 2026-06-28 [Claude]: Drafted the Batch 2 manifest (§8) from the prepare prompt — a two-wave plan
+  (Wave 1: parallel `feature/roomdetail|scenes|settings` packages, each Compose-UI-tested against the
+  landed Batch 1 contracts; Wave 2: one serialized `android-nav-shell` lane that wires + exercises every
+  Wave 1 screen via a connected E2E test). Base `main` @ `a3fe54f` (corrected Batch 1 landed on main). I
+  ran an internal 3-lens adversarial review (disjointness/hotspots, real-tree testability, prepare-prompt
+  compliance) and folded the fixes into §8: added the four §1 registry rows and reconciled
+  `android-dashboard` ownership; pinned `appVersion` away from `BuildConfig` (disabled on main — enabling
+  it would be an out-of-scope hotspot edit); gave Lane N the dashboard androidTest plus an additive-only
+  nav/dashboard constraint so `ChromaGlowAppTest`/`DemoRoomControlsTest` stay green; and clarified the
+  stateless-screen remembered-state pattern, the slider 1..100 floor, the nullable `lightsByRoom[id]`
+  get, and exclusive scene activation. Open decisions Q6–Q9 below. Manifest is DRAFT / not
+  execution-approved. Codex: please adversarially review §8 (lane disjointness, contracts, scope) and
+  Q6–Q9 before a launch prompt is marked ready.
+- Resolution: open — Codex review of the §8 DRAFT required before Batch 2 launches.
+
 ### Open Questions
 - Q1: Should the `android-credentials` lane build discovery-chooser UI now (non-pairing), or wait
   until D-001/D-002 resolve? (Proposed: yes, UI + parser + tests only.)
@@ -329,6 +350,13 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-1-corrections.md`.
   only when concrete usage demonstrates the shared boundary.
 - 2026-06-28 [Claude]: Agree — no unwired/library-only deliverables in the pilot. Settings and state
   components are removed from Batch 1 and will land with a real caller + behavioral test in a later batch.
+- Q6 (Batch 2): Thread `lights`/`scenes` through `DemoModeSession` (a later Batch-1-model change) vs.
+  feature screens reading `DemoFixtures` directly this batch? (Proposed: read `DemoFixtures` directly now.)
+- Q7 (Batch 2): Keep the lightweight `when(destination)` router, or convert `ChromaGlowApp` to a
+  Navigation-Compose `NavHost` in Wave 2? (Proposed: keep the `when`-switch to minimize hotspot churn.)
+- Q8 (Batch 2): Settings "Sign out" in demo mode = clear `demoSession` and return to `Setup`? (Proposed: yes.)
+- Q9 (Batch 2): Is serial connected-test scheduling on the single `Pixel_10` acceptable, or provision a
+  second AVD for Wave 1 concurrency? (Proposed: serial.)
 
 ---
 
@@ -420,3 +448,148 @@ independently verifiable, non-dead work (no unwired/library-only deliverables).
   fixture-consistency test. Merged `--no-ff` into **`integration/parallel-batch-1` @ `0d7c218`**
   (pushed). Re-validated gate all green: `testDebugUnitTest` **84/0** · `lintDebug` clean ·
   `assembleDebug` ok · `connectedDebugAndroidTest` **20/0** on `Pixel_10`. Resolves D-007.
+- **Landed on `main` (2026-06-28 [Claude]):** corrected Batch 1 merged `--no-ff` into `main` @
+  `a3fe54f978c3a5a78d7f35605b1c3ff37c23edca` (pushed). Batch 1 is complete; lanes/integration retained.
+
+---
+
+## 8. Batch 2 Manifest — Two-Wave Feature + Nav Integration (DRAFT — not execution-approved)
+
+Drafted 2026-06-28 [Claude] from the prepare prompt `docs/coordination/prompts/parallel-batch-2-prepare.md`.
+**Status: DRAFT.** Awaiting Codex adversarial review (Decision Log **D-008**) before any launch prompt is
+marked execution-ready. Do not create Batch 2 worktrees or write Android source from this manifest yet.
+
+- **Batch:** `parallel-batch-2`
+- **Base commit:** `main` @ `a3fe54f978c3a5a78d7f35605b1c3ff37c23edca` (corrected Batch 1 is on `main`;
+  re-fetch and re-pin if `main` advances before launch).
+- **Integration branch:** `integration/parallel-batch-2` (fork from the base commit above).
+- **Orchestration:** Claude Workflow + worktree isolation. **Batch owner:** Claude. **Adversarial review:** Codex.
+- **Toolchain (every lane shell):** `JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home`,
+  `ANDROID_HOME=$HOME/Library/Android/sdk`, `ANDROID_SDK_ROOT=$ANDROID_HOME`.
+- **Shared AVD constraint:** there is one `Pixel_10` AVD. Code lanes develop concurrently, but the batch
+  owner runs each lane's `connectedDebugAndroidTest` **serially** on the shared device (or provisions an
+  isolated emulator per lane). Wave 1 unit-testable logic should also run under `testDebugUnitTest`.
+- **Batch 1 contracts Wave 1 must honor (consume read-only; see AGENTS.md "Android Current State"):**
+  `LightDisplayModel`, `SceneDisplayModel` (non-blank `bridgeId`), `RoomDisplayModel`;
+  `RoomDisplayModel.lightCount == DemoFixtures.lightsByRoom[room.id].size`; demo scenes use `DEMO_BRIDGE_ID`.
+  Feature lanes read `DemoFixtures.lightsByRoom` / `DemoFixtures.scenes` directly — they do **not** edit
+  `core/model/**` or `data/demo/**` (threading lights/scenes through `DemoModeSession` is deferred, see Q6).
+
+### Structure (two waves; Wave 2 depends on all of Wave 1)
+
+```text
+Wave 1 (parallel, no nav edits — each compiles + is Compose-UI-tested against Batch 1 contracts):
+  ├─ lane/android2-roomdetail   feature/roomdetail/**
+  ├─ lane/android2-scenes       feature/scenes/**
+  └─ lane/android2-settings     feature/settings/**
+        ↓ (all three merged onto integration/parallel-batch-2 first)
+Wave 2 (one serialized lane — owns the §2 nav hotspots, wires + exercises every Wave 1 screen):
+  └─ lane/android2-nav-integration   app/ChromaGlowApp.kt, app/ChromaGlowDestination.kt, feature/dashboard/**
+```
+
+> **No unwired UI as a final result (prepare prompt §4):** Wave 1 screens are behaviorally tested in
+> isolation, but the batch is complete only after Wave 2 wires them into the nav shell and a connected
+> E2E test reaches and exercises each one.
+
+> **`Forbidden` means "no edits."** Every Wave 1 lane MUST read-only import `core/model` (the display
+> models) and `DemoFixtures` in its source + tests — that is required, not forbidden. Forbidden lists bar
+> *editing* those globs, not referencing them.
+
+### Wave 1 — Lane R · `lane/android2-roomdetail` · registry `android-roomdetail` · owner: Claude sub-agent A
+- **Globs:** `feature/roomdetail/**`; tests `androidTest/java/com/chromaglow/app/feature/roomdetail/**`.
+- **Deliverable:** `RoomDetailScreen(room: RoomDisplayModel, lights: List<LightDisplayModel>,
+  onLightToggle: (String, Boolean) -> Unit = {}, onLightBrightnessChange: (String, Int) -> Unit = {},
+  onBack: () -> Unit = {}, modifier: Modifier = Modifier)` — room header + one row per light (name, on/off
+  `Switch`, brightness `Slider`). Mirror the landed Batch 1 pattern: seed internal
+  `remember(lights) { mutableStateListOf<LightDisplayModel>().apply { addAll(lights) } }`, mutate via
+  `LightDisplayModel.copy(...)` on interaction so the row re-renders, AND forward `onLightToggle` /
+  `onLightBrightnessChange` for Wave 2. The slider must use `valueRange = 1f..100f` and `coerceIn(1, 100)`
+  before any `copy(brightness = …)` (LightDisplayModel requires `brightness in 1..100`; 0 would crash).
+  Public signature is the Wave 2 wiring contract.
+- **Acceptance:** given `DemoFixtures.lightsByRoom[room.id] ?: emptyList()`, renders exactly
+  `room.lightCount` light rows (exercises the D-007 invariant); toggling a light flips its `isOn` in the
+  UI; the slider updates brightness within 1..100 and reflects in the row; a Compose UI test asserts all
+  three plus `onBack`.
+- **Forbidden (no edits):** nav files, `core/model`, `data/demo`, `feature/dashboard|scenes|settings`,
+  `ui/theme`, build/manifest/res.
+- **Validation:** `connectedDebugAndroidTest` (serialized). **Overlap:** disjoint from S, T, N.
+
+### Wave 1 — Lane S · `lane/android2-scenes` · registry `android-scenes` · owner: Claude sub-agent B
+- **Globs:** `feature/scenes/**`; tests `androidTest/java/com/chromaglow/app/feature/scenes/**`.
+- **Deliverable:** `ScenesScreen(scenes: List<SceneDisplayModel>, roomNames: Map<String, String> = emptyMap(),
+  onActivateScene: (String) -> Unit = {}, onBack: () -> Unit = {}, modifier: Modifier = Modifier)` — one
+  row per scene (name; target room shown as `roomNames[scene.roomId] ?: scene.roomId`; active indicator).
+  Hold active state internally (`remember(scenes) { … }`); activation is **exclusive** (activating one sets
+  it `isActive = true` via `copy(...)` and clears the others), and forwards `onActivateScene(scene.id)` for
+  Wave 2. The screen consumes `scene.bridgeId` for routing (passed through to `onActivateScene`'s caller).
+- **Acceptance:** renders all `DemoFixtures.scenes`; activating a currently-INACTIVE scene (e.g. Energize /
+  Focus / Nightlight — `Relax` ships active) updates the active indicator and clears the previous; a Compose
+  UI test asserts render + exclusive activation + `onBack`. (The "every demo scene carries a non-blank
+  `bridgeId`" invariant is already covered by Batch 1's `DemoFixturesLightsScenesTest`, so it is NOT
+  re-asserted in this UI test — a non-rendered field is not observable via Compose semantics.)
+- **Forbidden (no edits):** nav files, `core/model`, `data/demo`, `feature/dashboard|roomdetail|settings`,
+  `ui/theme`, build/manifest/res.
+- **Validation:** `connectedDebugAndroidTest` (serialized). **Overlap:** disjoint from R, T, N.
+
+### Wave 1 — Lane T · `lane/android2-settings` · registry `android-settings` · owner: Claude sub-agent C
+- **Globs:** `feature/settings/**`; tests `androidTest/java/com/chromaglow/app/feature/settings/**`.
+- **Deliverable:** `SettingsScreen(isDemoMode: Boolean, appVersion: String, onSignOut: () -> Unit = {},
+  onBack: () -> Unit = {}, modifier: Modifier = Modifier)` — demo-mode status, app version (a plain
+  `String` supplied by the caller), and a "Sign out / Exit demo" action. No persistence, no credential
+  wiring. **`appVersion` is a passed-in literal** — do NOT read `BuildConfig.VERSION_NAME` (BuildConfig is
+  disabled on `main`) or enable it; Wave 2 supplies the version string (literal `"1.0"` matching
+  `defaultConfig.versionName`, or via `PackageManager` from `LocalContext` — no `build.gradle.kts` edit).
+- **Acceptance:** renders the demo-mode indicator + version; "Sign out" invokes `onSignOut`; Compose UI
+  test asserts render + `onSignOut` + `onBack`.
+- **Forbidden (no edits):** `core/model`, `core/credentials` (pairing/persistence blocked by D-001/D-002),
+  `data/demo`, nav files, `feature/dashboard|roomdetail|scenes`, `ui/theme`, build/manifest/res.
+- **Validation:** `connectedDebugAndroidTest` (serialized). **Overlap:** disjoint from R, S, N.
+
+### Wave 2 — Lane N · `lane/android2-nav-integration` · registry `android-nav-shell` (+ reclaims `android-dashboard` for this batch) · owner: Claude sub-agent D
+- **Globs:** `app/ChromaGlowApp.kt`, `app/ChromaGlowDestination.kt` (§2 nav hotspots — single owner this
+  batch); `feature/dashboard/**` (additive entry-point callbacks only); **its androidTest packages
+  `androidTest/java/com/chromaglow/app/feature/dashboard/**` (owns the existing `DemoRoomControlsTest`) and
+  a NEW `androidTest/java/com/chromaglow/app/app/NavIntegrationE2ETest.kt`.** Lane N may also edit the
+  existing `app/ChromaGlowAppTest.kt` if its assertions need updating (it owns the nav shell), but must keep
+  it green.
+- **Deliverable:** extend `ChromaGlowDestination` with `RoomDetail`, `Scenes`, `Settings`; route
+  `ChromaGlowApp` to each Wave 1 screen with the right demo data (room → `DemoFixtures.lightsByRoom[id] ?:
+  emptyList()`; scenes → `DemoFixtures.scenes` with `roomNames` from `DemoFixtures.rooms`; settings → demo
+  flags + a literal `appVersion`). Add reachable entry points **additively**: a discrete affordance on
+  `DemoRoomRow` (a tappable room-name `Text` or a trailing chevron `IconButton` with its own `testTag` and a
+  default-no-op `onOpenRoom: () -> Unit = {}`) — do NOT make the whole row clickable or alter the `Switch`,
+  `Slider`, or the exact status-line text; add explicit Scenes / Settings buttons on
+  `DashboardPlaceholderScreen`. Wire back navigation.
+- **Acceptance:** the new connected E2E test navigates Setup → Demo → Dashboard → RoomDetail → back →
+  Scenes → back → Settings → back, asserting each Wave 1 screen is reachable and exercised; the existing
+  `ChromaGlowAppTest` and `DemoRoomControlsTest` stay green (additive-only changes preserve their literal
+  assertions, e.g. `"On · 78% · 5 lights"`, `"Back to Setup"`).
+- **Forbidden (no edits):** `core/model`, `data/demo`, `ui/theme`, build/manifest/res, and the Wave 1
+  feature internals (`feature/roomdetail|scenes|settings/**` — it calls their public composables, does not
+  edit them).
+- **Dependencies:** all three Wave 1 lanes merged first. **Validation:** full gate
+  `testDebugUnitTest lintDebug assembleDebug connectedDebugAndroidTest`.
+
+### Out of scope (per prepare prompt §5)
+- Pairing, credential-persistence wiring, REST, SSE, NUPnP, Studio, Composer, DTLS, microphone, widgets,
+  Wear OS. No edits to `core/model/**`, `data/demo/**`, `ui/theme/**`, build/manifest/res (incl. enabling
+  `BuildConfig`).
+
+### Promotion gate (enforces "no unwired UI")
+- Wave 1 lanes merge to `integration/parallel-batch-2` first, so integration transiently holds unwired
+  screens. `integration/parallel-batch-2` is **not eligible for the human final merge to `main` until Lane
+  N's connected E2E is green** (every Wave 1 screen reachable + exercised). A Wave-2 failure therefore can
+  never land unwired UI on `main`.
+
+### §5 gate self-check (DRAFT)
+- Base commit named (`a3fe54f`, Batch 1 on `main`) ✓ · per-lane owner (A–D)/branch/globs ✓ · every lane
+  mapped to a §1 registry entry (`android-roomdetail|scenes|settings|nav-shell`; nav-shell reclaims
+  `android-dashboard`) ✓ · deliverables + acceptance ✓ · deps (Wave 2 ⇐ Wave 1) + forbidden files ✓ ·
+  Wave 1 globs disjoint; only Wave 2 touches §2 nav hotspots (single-owner) and owns its matching
+  androidTest ✓ · no unwired-UI final result (promotion gate) ✓ · shared-AVD serialization noted ✓ ·
+  `appVersion` sourced without a build edit ✓.
+- **Not execution-approved** until Codex reviews (D-008) and a separate launch prompt is marked ready.
+
+### Open Decisions for Codex
+- See **D-008** and §6 Open Questions **Q6–Q9** (DemoModeSession threading; `when`-router vs NavHost;
+  Settings sign-out semantics; single-AVD serial connected tests vs a second AVD).

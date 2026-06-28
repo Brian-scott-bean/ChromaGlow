@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a scaffold, theme, demo fixtures, credential boundary, mDNS chooser, manual-IP entry, and pairing is blocked until safe TLS bootstrap plus canonical bridge identity are decided. A parallel Batch 1 (demo domain models plus dashboard on/off + brightness controls, with the D-007 fixture/scene contracts below) is integrated on `integration/parallel-batch-1` and awaits the human final merge to `main`.
+ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a scaffold, theme, demo fixtures, credential boundary, mDNS chooser, manual-IP entry, and pairing is blocked until safe TLS bootstrap plus canonical bridge identity are decided. A parallel Batch 1 (demo domain models plus dashboard on/off + brightness controls, with the D-007 fixture/scene contracts below) is **merged to `main`** @ `a3fe54f`; Batch 2 (room-detail / scenes / settings feature packages + a serialized nav-integration wave) is drafted in the pipeline doc §8 as a DRAFT pending Codex review (Decision Log D-008).
 
 ## Current Branch/Repo Facts
 
@@ -225,9 +225,9 @@ Current Android blocker:
 
 Do not implement trust-all TLS managers, permissive hostname verifiers, blind certificate acceptance, or fabricated bridge IDs.
 
-### Parallel Batch 1 result (integrated on `integration/parallel-batch-1`, not yet on `main`)
+### Parallel Batch 1 result (merged to `main` @ `a3fe54f`)
 
-Two-lane pilot landed and the D-007 contract corrections applied. Corrected integration SHA `0d7c218`; gate green (`testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on the headless `Pixel_10`). Full record: `DEVLOG.md` and `docs/coordination/parallel-agent-pipeline.md` (§7 + Decision Log D-007). Awaiting the human collaborator's final merge to `main`.
+Two-lane pilot landed and the D-007 contract corrections applied; **merged to `main` @ `a3fe54f` (2026-06-28)** via integration `0d7c218`. Gate green before merge (`testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on the headless `Pixel_10`). Full record: `DEVLOG.md` and `docs/coordination/parallel-agent-pipeline.md` (§7 + Decision Log D-007). **Batch 2** is drafted in pipeline §8 (room-detail / scenes / settings + serialized nav integration) — DRAFT, pending Codex review (D-008); launch prompt at `docs/coordination/prompts/parallel-batch-2-launch.md`.
 
 - Demo display models in `core/model`: `RoomDisplayModel`, `LightDisplayModel`, `SceneDisplayModel`. All guard inputs in `init { require(...) }` (non-blank ids/names, `brightness in 1..100`).
 - `feature/dashboard`: `DemoRoomRow` has an on/off `Switch` + brightness `Slider` that mutate in-memory demo session state (no persistence); `DashboardPlaceholderScreen`'s public signature is unchanged (the nav shell calls it).

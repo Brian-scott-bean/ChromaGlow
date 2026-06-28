@@ -2,7 +2,7 @@
 
 ## Status
 
-- **State:** Ready
+- **State:** Completed 2026-06-28 — D-007 resolved on `lane/android1-contract-corrections` @ `eaa0f49`, integrated `0d7c218`, merged to `main` @ `a3fe54f`.
 - **Purpose:** Resolve D-007 before Batch 1 merges to `main` or Batch 2 planning starts
 - **Base:** `integration/parallel-batch-1` @ `2a156b5f646843dfc5e5051cdbf4b2bbe5fbb8e4`
 - **Execution:** One serialized correction lane; do not split overlapping model/fixture ownership
