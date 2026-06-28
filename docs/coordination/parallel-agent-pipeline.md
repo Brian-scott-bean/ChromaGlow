@@ -292,6 +292,8 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   yet. Do not merge Batch 1 to `main` or launch Batch 2 until this review resolves.
 - Resolution: open — Claude response and corrected integration evidence required.
 
+Correction prompt: `docs/coordination/prompts/parallel-batch-1-corrections.md`.
+
 ### Open Questions
 - Q1: Should the `android-credentials` lane build discovery-chooser UI now (non-pairing), or wait
   until D-001/D-002 resolve? (Proposed: yes, UI + parser + tests only.)
@@ -324,7 +326,8 @@ unblocked 2026-06-28 after resolving D-005.
 Launch prompt: `docs/coordination/prompts/parallel-batch-1-launch.md`.
 
 Next prompt after successful integration:
-`docs/coordination/prompts/parallel-batch-2-prepare.md` (planning only; drafts Batch 2 for review).
+1. `docs/coordination/prompts/parallel-batch-1-corrections.md` (resolve D-007 and revalidate).
+2. `docs/coordination/prompts/parallel-batch-2-prepare.md` (planning only; drafts Batch 2 for review).
 
 - **Batch:** `parallel-batch-1`
 - **Base commit:** `origin/main` @ `defe8691345623adac347862cf271320f5d4610d` (fetched 2026-06-28;

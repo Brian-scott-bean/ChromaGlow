@@ -44,6 +44,29 @@
 
 ---
 
+## 2026-06-28 - [Codex] Add Batch 1 contract-corrections prompt
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Added `docs/coordination/prompts/parallel-batch-1-corrections.md` to resolve D-007 in one serialized ownership lane.
+- Required explicit scene `bridgeId`, exact room/light fixture-count consistency, focused tests, full integrated Android validation, and corrected integration evidence.
+- Updated the prompt sequence and gated Batch 2 preparation on D-007 resolution.
+
+### Working
+- Claude has a ready-to-run correction prompt based on `integration/parallel-batch-1` @ `2a156b5`.
+
+### Left
+- Run the correction prompt and review Claude's D-007 response.
+- Run Batch 2 preparation only after the corrected integration gate is green.
+
+### Validation
+- Docs-only; `git diff --check` passed before publication.
+
+### Gotchas
+- Both corrections touch the same model/fixture ownership area, so they must remain one lane rather than parallel sub-lanes.
+
 ## 2026-06-28 - [Codex] Batch 1 adversarial review
 
 ### Branch

@@ -21,9 +21,12 @@ Preflight:
 1. Fetch all remotes and inspect local branches/worktrees.
 2. Require a completed integration/parallel-batch-1 branch with recorded lane SHAs and a consolidated
    green result for testDebugUnitTest, lintDebug, assembleDebug, and connectedDebugAndroidTest.
-3. If Batch 1 is absent, incomplete, dirty, unvalidated, or differs from its recorded handoff, stop
-   and report the exact missing prerequisite. Do not infer model contracts from the old draft.
-4. Export:
+3. Require D-007 to be resolved with corrected integration evidence for scene bridge routing and exact
+   room/light fixture counts.
+4. If Batch 1 is absent, incomplete, dirty, unvalidated, still blocked by D-007, or differs from its
+   recorded handoff, stop and report the exact missing prerequisite. Do not infer model contracts from
+   the old draft.
+5. Export:
    JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
    ANDROID_HOME="$HOME/Library/Android/sdk"
    ANDROID_SDK_ROOT="$ANDROID_HOME"
