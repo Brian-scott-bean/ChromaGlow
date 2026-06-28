@@ -46,6 +46,31 @@
 
 ---
 
+## 2026-06-28 - [Codex] Verify corrected Batch 2 for final merge
+
+### Branch
+- Docs review: `docs/parallel-agent-pipeline`
+- Reviewed integration: `integration/parallel-batch-2` @ `9411d81`
+
+### Did
+- Reviewed the D-009 correction and confirmed app-owned room/light/scene state survives destination disposal and reopening.
+- Confirmed the correction changed only the three allowed files and the persistence E2E covers room, light, and scene continuity.
+- Added final Codex verification evidence to D-009 and §8.
+
+### Working
+- Batch 2 is merge-ready; `main` remains unchanged pending explicit authorization.
+
+### Left
+- Merge `integration/parallel-batch-2` @ `9411d81` to `main` when authorized.
+
+### Validation
+- `testDebugUnitTest` passed 84/84; `lintDebug` and `assembleDebug` passed.
+- `connectedDebugAndroidTest` passed 34/34 on headless `Pixel_10`.
+- `git diff --check 4c74beb..9411d81` passed.
+
+### Gotchas
+- Demo callback matching currently relies on globally unique resource IDs; include `bridgeId` in lookup predicates before introducing multi-bridge demo fixtures.
+
 ## 2026-06-28 - [Claude] Resolve D-009 — hoist Batch 2 demo state across navigation
 
 ### Branch

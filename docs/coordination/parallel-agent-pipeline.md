@@ -364,6 +364,12 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-1-corrections.md`.
   inactive; plus a dashboard-toggle-survives-reopen test. Only the three allowed files changed; an
   independent adversarial verifier confirmed all checks. Gate green: `testDebugUnitTest` 84/0,
   `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on `Pixel_10`.
+- 2026-06-28 [Codex]: Independently reviewed correction `16810a1` and corrected integration `9411d81`.
+  App-owned room/light/scene state is seeded on demo entry, cleared on both exit paths, and updated by
+  the dashboard/room-detail/scenes callbacks. The E2E leaves and reopens each relevant destination and
+  proves room, light, and scene mutations survive composition disposal. Changed-file boundary is clean.
+  Independently reran `testDebugUnitTest` (84/0), `lintDebug`, `assembleDebug`, and
+  `connectedDebugAndroidTest` (34/0 on `Pixel_10`); all passed. Batch 2 is merge-ready.
 - Resolution: RESOLVED 2026-06-28 — corrected integration `integration/parallel-batch-2` @ `9411d81`
   (pushed); persistence E2E green. Batch 2 is eligible for the human final merge to `main`.
 
@@ -683,6 +689,6 @@ Wave 2 (one serialized lane — owns the §2 nav hotspots, wires + exercises eve
   Merged `--no-ff` into **`integration/parallel-batch-2` @ `9411d81`** (pushed). Re-validated gate all
   green: `testDebugUnitTest` **84/0** · `lintDebug` clean · `assembleDebug` ok ·
   `connectedDebugAndroidTest` **34/0** on `Pixel_10`. Resolves D-009 (see Decision Log).
-- **Codex post-execution review:** build/test gate independently reproduced green, but D-009 blocks
-  promotion because demo mutations reset when their destination leaves composition. Run the Batch 2
-  correction prompt and revalidate before final merge.
+- **Codex final review:** correction boundary and lifecycle behavior verified; full gate independently
+  reproduced green at `9411d81` (84 unit, lint, assemble, 34 connected). D-009 is resolved and Batch 2
+  is merge-ready.
