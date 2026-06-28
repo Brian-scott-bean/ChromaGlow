@@ -34,9 +34,9 @@
 | Lane ID | Ownership globs | Parallel-safe | Status | Owner |
 | --- | --- | --- | --- | --- |
 | `android-setup` | `android/app/src/main/java/com/chromaglow/app/feature/setup/**` | Yes | unscoped | — |
-| `android-dashboard` | `android/app/src/main/java/com/chromaglow/app/feature/dashboard/**` | Yes | open (Batch 1 L2) | Claude (proposed) |
+| `android-dashboard` | `android/app/src/main/java/com/chromaglow/app/feature/dashboard/**` | Yes | merged (Batch 1 L2) | Claude (sub-agent B) |
 | `android-credentials` | `android/app/src/main/java/com/chromaglow/app/core/credentials/**`, `…/core/hue/discovery/**` | Yes (hardening only; no pairing or persistence wiring while D-001/D-002 are unresolved) | unscoped | — |
-| `android-models` | `android/app/src/main/java/com/chromaglow/app/core/model/**`, `…/data/demo/**` | Yes | open (Batch 1 L1) | Claude (proposed) |
+| `android-models` | `android/app/src/main/java/com/chromaglow/app/core/model/**`, `…/data/demo/**` | Yes | merged (Batch 1 L1) | Claude (sub-agent A) |
 | `android-tests` | `android/app/src/test/**`, `android/app/src/androidTest/**` | Yes, with exact non-overlapping test files | unscoped | — |
 
 > `ui/theme/**` is no longer a parallel lane — it was bundled into the old `android-models-theme` lane
@@ -357,3 +357,22 @@ independently verifiable, non-dead work (no unwired/library-only deliverables).
 - Base commit named ✓ · per-lane owner/branch/globs ✓ · deliverable + acceptance ✓ · deps + forbidden
   files ✓ · no glob overlap; zero §2-hotspot edits ✓ · both lanes mapped to registry entries ✓.
 - Local JDK/SDK/AVD discovered ✓ · baseline build/unit/lint passed ✓ · 17 connected tests passed ✓.
+
+### Batch 1 execution result — 2026-06-28 [Claude, batch owner]
+- **State:** Executed and integrated. Not merged to `main` — awaits human final merge.
+- **Base:** `origin/main` @ `defe8691345623adac347862cf271320f5d4610d` (re-fetched and re-verified
+  unchanged at launch).
+- **Lane 1** `lane/android1-domain-models` @ `be51edd14dd44fe010d0764e54687d33c0baeef1` — added
+  `LightDisplayModel` + `SceneDisplayModel` (`require(...)` guards) and additive
+  `DemoFixtures.lights` / `lightsByRoom` / `scenes` (+ JVM unit tests). `rooms` / `DEMO_BRIDGE_ID`
+  left byte-identical. `./gradlew testDebugUnitTest` green (81 tests, 0 failures).
+- **Lane 2** `lane/android1-dashboard-controls` @ `c25b9ac36efe5abd99cc9b633e5132702d01a7ef` — added an
+  on/off `Switch` + brightness `Slider` to `DemoRoomRow` with in-memory session state (no persistence)
+  and a Compose UI test; preserved the status-line text and `DashboardPlaceholderScreen`'s public
+  signature. `./gradlew connectedDebugAndroidTest` green (20 tests, 0 failures) on headless `Pixel_10`.
+- **Integration:** `integration/parallel-batch-1` @ `2a156b5f646843dfc5e5051cdbf4b2bbe5fbb8e4` — both
+  lanes merged `--no-ff`, **zero conflicts** (disjoint by construction).
+- **Integrated gate (all green):** `testDebugUnitTest` 81/0 · `lintDebug` clean · `assembleDebug` ok ·
+  `connectedDebugAndroidTest` 20/0 on the headless `Pixel_10` AVD.
+- **Boundary audit:** each branch changed only its allowed globs; lanes disjoint; zero §2-hotspot edits.
+- **Deviations:** none. The pipeline rehearsal proved a clean concurrent two-lane merge.

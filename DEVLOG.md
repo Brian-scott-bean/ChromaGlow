@@ -44,6 +44,52 @@
 
 ---
 
+## 2026-06-28 - [Claude] Execute parallel Batch 1 two-lane Android pilot
+
+### Branch
+- Integration: `integration/parallel-batch-1` @ `2a156b5` (forked from `origin/main` @ `defe8691`).
+- Lanes: `lane/android1-domain-models` @ `be51edd`, `lane/android1-dashboard-controls` @ `c25b9ac`.
+- Not merged to `main` — awaits the human collaborator's final merge.
+
+### Did
+- Ran the first real parallel-pipeline batch end to end as batch owner. Re-fetched and re-verified the
+  pinned base `defe8691…`, confirmed the local Android toolchain (JDK 21 / SDK / `Pixel_10` AVD),
+  created `integration/parallel-batch-1` and two isolated lane worktrees off the base.
+- Launched both lanes concurrently (Claude Workflow, one sub-agent per lane, disjoint globs):
+  - L1 `android-models`: added `LightDisplayModel` + `SceneDisplayModel` and additive
+    `DemoFixtures.lights` / `lightsByRoom` / `scenes` with JVM unit tests; kept `rooms` /
+    `DEMO_BRIDGE_ID` byte-identical.
+  - L2 `android-dashboard`: added an on/off `Switch` + brightness `Slider` to `DemoRoomRow` (in-memory
+    session state, no persistence) with a Compose UI test; preserved the status-line text and the
+    `DashboardPlaceholderScreen` public signature so the nav-shell caller still compiles.
+- Independently verified each branch changed only its permitted globs (lanes disjoint, zero §2-hotspot
+  edits), then merged both into the integration branch with `--no-ff` (no conflicts).
+- Marked both registry lanes `merged` and recorded the result in pipeline-doc §7.
+
+### Working
+- Integrated gate all green: `testDebugUnitTest` 81/0 failures · `lintDebug` clean · `assembleDebug` ok ·
+  `connectedDebugAndroidTest` 20/0 failures on the headless `Pixel_10`.
+
+### Left
+- Human collaborator performs the final merge of `integration/parallel-batch-1` → `main` (agent `gh`
+  account is not a repo collaborator). Lane/integration branches and worktrees are retained for review.
+- L1 fixtures (`lights` / `lightsByRoom` / `scenes`) are intentionally unconsumed this batch — Batch 2
+  (room-detail / scenes) is their first consumer; see `parallel-batch-2-prepare.md`.
+
+### Validation
+- Pre-launch: base SHA re-pinned and unchanged; toolchain present; baseline already validated (D-005).
+- Per lane: L1 `./gradlew testDebugUnitTest` green; L2 `./gradlew connectedDebugAndroidTest` green.
+- Integrated: `testDebugUnitTest lintDebug assembleDebug` + `connectedDebugAndroidTest` all green with
+  the manifest toolchain exports.
+
+### Gotchas
+- The workflow sub-agents' background emulator is reaped when the run ends; the batch owner re-boots
+  `Pixel_10` for the integrated connected gate.
+- `LightDisplayModel.brightness` and the L2 `Slider` stay in `1..100` even when a light/room is off
+  (stored level), matching `RoomDisplayModel`'s `require(...)`; a 0 would crash `room.copy(...)`.
+- Two concurrent Gradle builds in separate worktrees share `~/.gradle` cleanly (no corruption); only
+  Lane 2 needs the emulator, so there was no device contention.
+
 ## 2026-06-28 - [Codex] Add Batch 2 preparation prompt
 
 ### Branch

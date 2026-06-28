@@ -2,7 +2,7 @@
 
 ## Status
 
-- **State:** Ready
+- **State:** Executed 2026-06-28 — integrated on `integration/parallel-batch-1` @ `2a156b5`; awaits human final merge to `main`. See `parallel-agent-pipeline.md` §7 "Batch 1 execution result".
 - **Batch:** `parallel-batch-1`
 - **Manifest:** `docs/coordination/parallel-agent-pipeline.md` §7
 - **Pinned base:** `origin/main` @ `defe8691345623adac347862cf271320f5d4610d`
