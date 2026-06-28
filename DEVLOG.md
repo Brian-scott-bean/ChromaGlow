@@ -18,7 +18,7 @@
 - Latest local Android validation observed by Codex: Android Studio's bundled JDK plus `~/Library/Android/sdk` passed unit tests, lint, assembly, and all 17 connected tests on the `Pixel_10` AVD.
 - Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`.
 - Android parallel Batch 1 is COMPLETE and **merged to `main` @ `a3fe54f`** (via integration `0d7c218`): two lanes (demo domain models incl. `LightDisplayModel`/`SceneDisplayModel`; dashboard on/off + brightness controls) plus the D-007 corrections (scene `bridgeId` routing; `lightCount` == `lightsByRoom[room.id].size`). Pre-merge gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on `Pixel_10`. D-007 is RESOLVED. Demo-model/fixture contracts are recorded in `AGENTS.md` → "Android Current State".
-- Android parallel Batch 2 is EXECUTION-READY: manifest in `docs/coordination/parallel-agent-pipeline.md` §8 (base `main` @ `a3fe54f`; Wave 1 = parallel `roomdetail`/`scenes`/`settings` feature packages, Wave 2 = serialized `nav-shell` integration); D-008 accepted, Q6–Q9 resolved, and `docs/coordination/prompts/parallel-batch-2-launch.md` is Ready.
+- Android parallel Batch 2 is EXECUTED and integrated on `integration/parallel-batch-2` @ `4c74beb` (pushed): Wave 1 = `roomdetail`/`scenes`/`settings` feature packages (room light controls, exclusive scene activation, settings/exit-demo), Wave 2 = `nav-shell` integration wiring all three into the `when`-router with a behavioral `NavIntegrationE2ETest`. Gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 33/0 on `Pixel_10`. **Not merged to `main`** — promotion gate satisfied (Lane N E2E green); awaits human go-ahead. Manifest/result: pipeline §8.
 
 ### Handoff Entry Template
 
@@ -45,6 +45,55 @@
 ```
 
 ---
+
+## 2026-06-28 - [Claude] Execute parallel Batch 2 — two-wave feature + nav integration
+
+### Branch
+- Integration: `integration/parallel-batch-2` @ `4c74beb` (forked from `main` @ `a3fe54f`; pushed).
+- Wave 1 lanes: `lane/android2-roomdetail` @ `a3cd34a`, `lane/android2-scenes` @ `fbf8a71`,
+  `lane/android2-settings` @ `174ddaa`. Wave 2: `lane/android2-nav-integration` @ `1a419d2`.
+- Not merged to `main` — promotion gate satisfied; awaits the human collaborator's go-ahead.
+
+### Did
+- Executed `parallel-batch-2-launch.md` exactly as written after confirming the preflight gates
+  (origin/main still `a3fe54f`; D-008 ACCEPTED; clean slate).
+- Wave 1 (3 concurrent sub-agents, disjoint feature packages, no nav edits): `RoomDetailScreen`
+  (per-light Switch/Slider, bridge-aware `(bridgeId, lightId, …)` callbacks, slider clamped 1..100),
+  `ScenesScreen`/`SceneRow` (exclusive activation, `(bridgeId, sceneId)` callback), `SettingsScreen`
+  (`onExitDemo`, `appVersion` literal — no BuildConfig). Each compile/unit/lint-checked in isolation.
+- Merged Wave 1 into `integration/parallel-batch-2` and ran the serialized connected gate on the shared
+  `Pixel_10`. It caught a real on-device failure isolated to Lane S (active-indicator assertion against
+  a merged `Surface` semantics node); re-dispatched the scenes lane, which fixed it in-lane with
+  `useUnmergedTree = true` (source untouched) and re-validated connected green.
+- Wave 2 (serialized): extended `ChromaGlowDestination` + the `when`-router to reach all three screens
+  with demo data; added additive dashboard entry points (a discrete tappable room-name affordance and
+  Scenes/Settings buttons) that left `DemoRoomRow`'s Switch/Slider/status-line text intact; wrote
+  `NavIntegrationE2ETest` exercising behavior (toggle a light, change brightness, exclusive scene
+  activation, exit demo → Setup). Merged into integration.
+
+### Working
+- Final integrated gate all green: `testDebugUnitTest` **84/0** · `lintDebug` clean · `assembleDebug`
+  ok · `connectedDebugAndroidTest` **33/0** on the headless `Pixel_10` (incl. the Batch 1
+  `ChromaGlowAppTest`/`DemoRoomControlsTest`, kept green by additive-only dashboard changes).
+
+### Left
+- Human collaborator: final merge of `integration/parallel-batch-2` → `main` (promotion gate met —
+  Lane N E2E green, no unwired UI). Lane/integration branches retained; worktrees cleaned up.
+
+### Validation
+- Per-lane (Wave 1): `testDebugUnitTest lintDebug assembleDebugAndroidTest` (compile/unit/lint, no
+  emulator). Connected validation run serially by the batch owner on the integrated result.
+- Wave 2 + integrated: full gate `testDebugUnitTest lintDebug assembleDebug connectedDebugAndroidTest`.
+- Boundary audit: every lane changed only its allowed globs; Wave 1 disjoint; only Wave 2 touched the
+  §2 nav hotspots.
+
+### Gotchas
+- `Surface(onClick = …)` sets `MergeDescendants = true`, so a child's `testTag` is only an independently
+  "displayed" node in the UNMERGED semantics tree — connected Compose tests on such children must use
+  `onNodeWithTag(tag, useUnmergedTree = true)`.
+- Per the single-AVD rule, Wave 1 lanes only compile-checked their androidTest; the batch owner ran all
+  connected validation serially on `emulator-5554`. The workflow-agent emulator is reaped at run end, so
+  the owner re-boots `Pixel_10` for each owner-run gate.
 
 ## 2026-06-28 - [Codex] Approve Batch 2 manifest and launch prompt
 
