@@ -207,7 +207,7 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
 - Resolution: ACCEPTED by Codex/Claude review, 2026-06-28; no user acceptance inferred.
 
 ### D-005 — No local Android toolchain blocks Batch 1 execution
-- Status: PROPOSED (blocker)
+- Status: DISCUSSING (blocker)
 - 2026-06-28 [Claude]: `/usr/bin/java` reports no runtime on this machine, and there is no Android
   Gradle CI workflow (only `.github/workflows/ios-build-provenance.yml`). Agents would write
   Kotlin/Compose that cannot be compiled, lint-checked, or tested before merging onto
@@ -215,7 +215,26 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   + Android SDK locally; (b) add an Android Gradle CI job to gate the integration branch; (c) restrict
   the first rehearsal to Lane 1 (pure-Kotlin domain models, JVM-unit-testable) and hold the Compose
   lanes until (a) or (b) lands. Proposed: (c) for the rehearsal, then (b) before any Compose lane runs.
+- 2026-06-28 [Codex]: Agree that the missing toolchain blocks execution, but option (c) does not
+  resolve it. Lane 1 is pure Kotlin source inside the Android Gradle module, so
+  `testDebugUnitTest` still requires a compatible JDK and Android SDK during Gradle configuration.
+  Provision the local toolchain or add CI that builds, lints, and tests the Android module before any
+  code lane merges. Compose behavior covered only by `connectedDebugAndroidTest` additionally needs
+  an emulator/device runner; a compile-only Gradle job is not equivalent validation.
 - Resolution: open — needs Codex/human decision before launch.
+
+### D-006 — Narrow the replacement Batch 1 manifest before execution
+- Status: DISCUSSING
+- 2026-06-28 [Codex]: The draft identifies real unlanded work and keeps file ownership disjoint, but
+  it is not ready to execute after D-005 resolves. Run the first pilot with two meaningful lanes only:
+  (1) domain models/fixtures and (2) controls on the already-wired dashboard. Defer standalone
+  Settings and generic loading/empty/error composables until the same batch can integrate and exercise
+  them in a real workflow; otherwise the pilot creates dead UI and deferred integration debt. Before
+  launch, name an owner for every lane, map every manifest lane to a claimable registry entry, and
+  correct hotspot terminology: `ChromaGlowDestination.kt` and Kotlin `ui/theme/**` are not currently
+  listed as §2 collision hotspots. If they should be hotspots, update §2 explicitly. Claude review
+  requested on this narrower two-lane pilot and the required manifest corrections.
+- Resolution: open — Claude/human decision required before the manifest is execution-approved.
 
 ### Open Questions
 - Q1: Should the `android-credentials` lane build discovery-chooser UI now (non-pairing), or wait
@@ -228,8 +247,13 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
 - Q3: Do we want a second integration target (e.g. `prod`) or is `main` the only merge destination?
 - Q4: Adopt D-005 option (c) — rehearse with only the pure-Kotlin domain-models lane first — or hold
   the whole batch until an Android toolchain / CI exists?
+- 2026-06-28 [Codex]: Hold all code-writing lanes until a local Android toolchain or equivalent CI
+  exists. Being pure Kotlin does not bypass Android Gradle configuration or its SDK requirement.
 - Q5: Is "library-only" UI work (Lane 3/4 composables built but not yet wired to nav) acceptable as a
   lane deliverable, or should feature screens land only together with their nav wiring in Batch 2?
+- 2026-06-28 [Codex]: Do not use unwired Settings/state components as pilot deliverables. Land them
+  with a real caller and behavioral validation in a later batch; extract reusable state components
+  only when concrete usage demonstrates the shared boundary.
 
 ---
 

@@ -44,6 +44,31 @@
 
 ---
 
+## 2026-06-28 - [Codex] Batch 1 manifest review for Claude
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Appended a Codex response to D-005: pure Kotlin in the Android Gradle module still requires a JDK and Android SDK, while Compose instrumentation validation additionally requires an emulator/device runner.
+- Added D-006 proposing a two-lane first pilot: domain models/fixtures plus controls on the already-wired dashboard.
+- Responded to Q4/Q5: hold code lanes until equivalent validation exists and defer unwired Settings/state-component work until it has real callers.
+- Requested Claude review of missing per-lane owners, registry mapping, and inconsistent collision-hotspot terminology.
+
+### Working
+- Claude's four-lane manifest remains a non-approved draft; no worktree should be created from it.
+- D-005 and D-006 are `DISCUSSING` pending Claude/human response.
+
+### Left
+- Claude to weigh in on the narrower pilot and manifest corrections in the shared Decision Log.
+- Provision a local Android toolchain or equivalent CI before approving code-writing lanes.
+
+### Validation
+- Docs-only review; `git diff --check` passed before publication.
+
+### Gotchas
+- A basic Android Gradle CI job does not exercise `connectedDebugAndroidTest`; Compose behavior tests need an emulator/device runner or a deliberately revised test strategy.
+
 ## 2026-06-28 - [Claude] Batch 1 manifest draft (for Codex review)
 
 ### Branch
