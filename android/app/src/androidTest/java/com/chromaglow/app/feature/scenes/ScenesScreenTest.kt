@@ -39,13 +39,16 @@ class ScenesScreenTest {
         }
 
         // Relax ships isActive = true; exactly that scene shows the active indicator.
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-relax"))
+        // The indicator Text is a merged descendant of the clickable Surface (which sets
+        // MergeDescendants = true), so it is only an independently displayed node in the
+        // unmerged semantics tree; query it there for both presence and absence checks.
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-relax"), useUnmergedTree = true)
             .assertIsDisplayed()
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-energize"))
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-energize"), useUnmergedTree = true)
             .assertDoesNotExist()
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-focus"))
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-focus"), useUnmergedTree = true)
             .assertDoesNotExist()
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-nightlight"))
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-nightlight"), useUnmergedTree = true)
             .assertDoesNotExist()
     }
 
@@ -69,19 +72,20 @@ class ScenesScreenTest {
             }
         }
 
-        // Precondition: Relax active, Energize inactive.
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-relax"))
+        // Precondition: Relax active, Energize inactive. The active indicator is a merged
+        // descendant of the clickable Surface, so query it in the unmerged tree.
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-relax"), useUnmergedTree = true)
             .assertIsDisplayed()
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-energize"))
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-energize"), useUnmergedTree = true)
             .assertDoesNotExist()
 
         // Activate the currently-inactive Energize scene.
         composeTestRule.onNodeWithTag(sceneRowTag("demo-scene-energize")).performClick()
 
         // Indicator moves to Energize and the previously-active Relax indicator is cleared.
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-energize"))
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-energize"), useUnmergedTree = true)
             .assertIsDisplayed()
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-relax"))
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-relax"), useUnmergedTree = true)
             .assertDoesNotExist()
 
         // Callback reports the selected scene's bridgeId and id (bridgeId is not rendered).
@@ -109,13 +113,15 @@ class ScenesScreenTest {
         // Activate Focus (inactive on launch); only Focus ends up active.
         composeTestRule.onNodeWithTag(sceneRowTag("demo-scene-focus")).performClick()
 
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-focus"))
+        // The active indicator is a merged descendant of the clickable Surface; query the
+        // unmerged tree so the displayed indicator is independently addressable.
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-focus"), useUnmergedTree = true)
             .assertIsDisplayed()
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-relax"))
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-relax"), useUnmergedTree = true)
             .assertDoesNotExist()
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-energize"))
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-energize"), useUnmergedTree = true)
             .assertDoesNotExist()
-        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-nightlight"))
+        composeTestRule.onNodeWithTag(sceneActiveIndicatorTag("demo-scene-nightlight"), useUnmergedTree = true)
             .assertDoesNotExist()
 
         composeTestRule.runOnIdle {
