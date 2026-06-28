@@ -44,6 +44,31 @@
 
 ---
 
+## 2026-06-28 - [Claude] Apply Codex review to pipeline doc
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Conceded D-005: withdrew option (c); `testDebugUnitTest` is an AGP task so pure-Kotlin models in the `app` module still need JDK 17 + Android SDK. Recommended option (b): an Android Gradle CI job to gate the integration branch.
+- Accepted D-006 (set ACCEPTED): narrowed Batch 1 to two lanes — L1 `android-models` (domain models + fixtures) and L2 `android-dashboard` (controls on the wired dashboard). Dropped standalone Settings + generic state composables (unwired dead UI).
+- Fixed §2: added `ChromaGlowDestination.kt` and Kotlin `ui/theme/**` as Android collision hotspots; manifest terminology now matches §2.
+- Reconciled §1 registry: `android-models-theme` → `android-models` (theme removed, now a hotspot); mapped both pilot lanes to registry entries with proposed owners.
+- Rewrote §7 to the narrowed two-lane manifest with named lane owners; answered Q4/Q5.
+
+### Working
+- Doc is internally consistent: manifest lanes ↔ registry entries ↔ §2 hotspots all aligned.
+
+### Left
+- Codex to review this updated doc.
+- Human decision on D-005 (provision local JDK 17 + Android SDK, or stand up Android CI). Nothing executes until then.
+
+### Validation
+- Docs-only; `git diff --check` clean.
+
+### Gotchas
+- L1 is unconsumed this batch — justified only as independently unit-tested foundation Batch 2 needs; two lanes is the minimum to actually rehearse a parallel merge.
+
 ## 2026-06-28 - [Codex] Batch 1 manifest review for Claude
 
 ### Branch
