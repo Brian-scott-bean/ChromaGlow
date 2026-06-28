@@ -11,12 +11,14 @@ class SceneDisplayModelTest {
         name: String = "Relax",
         roomId: String = "room-1",
         brightness: Int = 30,
+        bridgeId: String = "bridge-1",
         isActive: Boolean = false,
     ) = SceneDisplayModel(
         id = id,
         name = name,
         roomId = roomId,
         brightness = brightness,
+        bridgeId = bridgeId,
         isActive = isActive,
     )
 
@@ -28,6 +30,7 @@ class SceneDisplayModelTest {
         assertEquals("Relax", scene.name)
         assertEquals("room-1", scene.roomId)
         assertEquals(30, scene.brightness)
+        assertEquals("bridge-1", scene.bridgeId)
         assertFalse(scene.isActive)
     }
 
@@ -38,6 +41,7 @@ class SceneDisplayModelTest {
             name = "Focus",
             roomId = "room-1",
             brightness = 80,
+            bridgeId = "bridge-1",
         )
 
         assertFalse(scene.isActive)
@@ -59,6 +63,12 @@ class SceneDisplayModelTest {
     fun construct_withBlankRoomId_throws() {
         assertThrows(IllegalArgumentException::class.java) { valid(roomId = "") }
         assertThrows(IllegalArgumentException::class.java) { valid(roomId = "   ") }
+    }
+
+    @Test
+    fun construct_withBlankBridgeId_throws() {
+        assertThrows(IllegalArgumentException::class.java) { valid(bridgeId = "") }
+        assertThrows(IllegalArgumentException::class.java) { valid(bridgeId = "   ") }
     }
 
     @Test

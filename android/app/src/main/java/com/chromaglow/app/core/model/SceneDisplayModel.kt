@@ -5,6 +5,7 @@ data class SceneDisplayModel(
     val name: String,
     val roomId: String,
     val brightness: Int,
+    val bridgeId: String,
     val isActive: Boolean = false,
 ) {
     init {
@@ -12,5 +13,6 @@ data class SceneDisplayModel(
         require(name.isNotBlank())
         require(roomId.isNotBlank())
         require(brightness in 1..100)
+        require(bridgeId.isNotBlank())
     }
 }
