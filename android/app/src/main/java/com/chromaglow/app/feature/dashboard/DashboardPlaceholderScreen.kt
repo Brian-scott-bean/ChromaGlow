@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -16,14 +17,24 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.chromaglow.app.core.model.RoomDisplayModel
 import com.chromaglow.app.data.demo.DemoModeSession
+
+/** Test tag for the dashboard "Scenes" navigation [Button]. */
+const val DASHBOARD_SCENES_TAG: String = "dashboard_scenes"
+
+/** Test tag for the dashboard "Settings" navigation [Button]. */
+const val DASHBOARD_SETTINGS_TAG: String = "dashboard_settings"
 
 @Composable
 fun DashboardPlaceholderScreen(
     demoSession: DemoModeSession?,
     onBackToSetup: () -> Unit,
+    onOpenRoom: (String) -> Unit = {},
+    onOpenScenes: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val session = requireNotNull(demoSession) { "Demo session required" }
@@ -74,8 +85,25 @@ fun DashboardPlaceholderScreen(
                             rooms[index] = rooms[index].copy(brightness = brightness.coerceIn(1, 100))
                         }
                     },
+                    onOpenRoom = { onOpenRoom(room.id) },
                 )
             }
+        }
+        Button(
+            onClick = onOpenScenes,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(DASHBOARD_SCENES_TAG),
+        ) {
+            Text(text = "Scenes")
+        }
+        Button(
+            onClick = onOpenSettings,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(DASHBOARD_SETTINGS_TAG),
+        ) {
+            Text(text = "Settings")
         }
         OutlinedButton(onClick = onBackToSetup) {
             Text(text = "Back to Setup")
