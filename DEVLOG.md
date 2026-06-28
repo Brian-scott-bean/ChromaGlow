@@ -53,6 +53,7 @@
 - Found Android Studio's bundled JDK at `/Applications/Android Studio.app/Contents/jbr/Contents/Home`, the SDK at `~/Library/Android/sdk`, and the existing `Pixel_10` AVD.
 - Updated D-005 from a blocker to a locally resolved validation prerequisite with explicit environment exports.
 - Marked the narrowed two-lane Batch 1 manifest execution-ready and recorded baseline validation evidence.
+- Made coordination files batch-owner-only during execution; lane agents return handoff text instead of concurrently editing `DEVLOG.md` or the manifest.
 
 ### Working
 - Batch 1 can launch as two disjoint Claude lanes: domain models/fixtures and dashboard controls.

@@ -94,6 +94,10 @@ requests through the Decision Log.
   design tokens consumed app-wide.
 - `android/app/src/main/res/values/**` (`strings.xml`, `colors.xml`, `themes.xml`)
 
+**Batch coordination:**
+- `DEVLOG.md` and `docs/coordination/parallel-agent-pipeline.md` are owned by the batch owner while
+  lanes run. Lane agents return structured handoff text; they do not edit these shared files.
+
 > **Why iOS is mostly not parallel-safe:** because `UnifiedOrchestrator.swift` and the other gate
 > files above sit on the path of most iOS features, two "different" iOS lanes frequently want the
 > same file. Run iOS lanes one-or-two at a time, not 10-wide. Android's modular layout has no such
@@ -115,9 +119,11 @@ requests through the Decision Log.
 
 1. **Claim** — mark the lane `claimed` (with owner) in the registry above.
 2. **Work** — edit only the lane's globs in its worktree; run the narrowest validation.
-3. **Handoff** — append a `DEVLOG.md` entry using the standard template
-   (`## YYYY-MM-DD - [Claude|Codex|Cursor] …` / Branch / Did / Working / Left / Validation / Gotchas).
-4. **Merge** — merge the lane branch onto `integration/parallel-batch-1`; set the lane `merged`.
+3. **Handoff** — return the standard structured handoff
+   (`Branch / Did / Working / Left / Validation / Gotchas`) to the batch owner. The owner serially
+   appends `DEVLOG.md`; concurrent lane agents never edit that shared file.
+4. **Merge** — merge the lane branch onto `integration/parallel-batch-1`; the batch owner sets the lane
+   `merged` and records the handoff.
 
 ---
 
@@ -302,6 +308,8 @@ unblocked 2026-06-28 after resolving D-005.
 - **Orchestration:** Claude Workflow + worktree isolation.
 - **Batch owner:** Claude. **Lane owners:** one Claude Workflow sub-agent per lane (named below).
 - **Adversarial review:** Codex.
+- **Coordination owner:** the Claude batch owner alone updates `DEVLOG.md`, this manifest, and lane
+  statuses while sub-agents run; lane sub-agents only return handoff text.
 - **Toolchain:** export these values in every lane shell:
   ```bash
   export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
