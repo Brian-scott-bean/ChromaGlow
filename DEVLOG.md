@@ -18,7 +18,7 @@
 - Latest local Android validation observed by Codex: Android Studio's bundled JDK plus `~/Library/Android/sdk` passed unit tests, lint, assembly, and all 17 connected tests on the `Pixel_10` AVD.
 - Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`.
 - Android parallel Batch 1 is COMPLETE and **merged to `main` @ `a3fe54f`** (via integration `0d7c218`): two lanes (demo domain models incl. `LightDisplayModel`/`SceneDisplayModel`; dashboard on/off + brightness controls) plus the D-007 corrections (scene `bridgeId` routing; `lightCount` == `lightsByRoom[room.id].size`). Pre-merge gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on `Pixel_10`. D-007 is RESOLVED. Demo-model/fixture contracts are recorded in `AGENTS.md` → "Android Current State".
-- Android parallel Batch 2 is EXECUTED and integrated on `integration/parallel-batch-2` @ `4c74beb` (pushed): Wave 1 = `roomdetail`/`scenes`/`settings` feature packages (room light controls, exclusive scene activation, settings/exit-demo), Wave 2 = `nav-shell` integration wiring all three into the `when`-router with a behavioral `NavIntegrationE2ETest`. Gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 33/0 on `Pixel_10`. **Not merged to `main`** — promotion gate satisfied (Lane N E2E green); awaits human go-ahead. Manifest/result: pipeline §8.
+- Android parallel Batch 2 is EXECUTED and integrated on `integration/parallel-batch-2` @ `4c74beb` (pushed): Wave 1 = `roomdetail`/`scenes`/`settings` feature packages, Wave 2 = `nav-shell` integration. Gate independently reproduced green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 33/0 on `Pixel_10`. **Not merged to `main`** — D-009 requires app-owned in-memory demo state so light/scene/dashboard changes survive navigation.
 
 ### Handoff Entry Template
 
@@ -45,6 +45,33 @@
 ```
 
 ---
+
+## 2026-06-28 - [Codex] Batch 2 post-execution review
+
+### Branch
+- Docs review: `docs/parallel-agent-pipeline`
+- Reviewed integration: `integration/parallel-batch-2` @ `4c74beb`
+
+### Did
+- Verified all four lane boundaries and inspected the integrated Android source/tests.
+- Independently reran unit tests, lint, assembly, and all 33 connected tests successfully.
+- Added D-009: screen-local demo mutations reset when navigation removes Dashboard, RoomDetail, or Scenes from composition because the app shell ignores their state callbacks.
+- Added a focused serialized correction prompt requiring app-owned in-memory state and reopen-after-navigation E2E assertions.
+
+### Working
+- Batch 2 remains pushed and otherwise green; no correction has been merged yet.
+
+### Left
+- Run `docs/coordination/prompts/parallel-batch-2-corrections.md`.
+- Review corrected integration evidence before merging Batch 2 to `main`.
+
+### Validation
+- Detached review of `4c74beb`: `testDebugUnitTest lintDebug assembleDebug` passed.
+- `connectedDebugAndroidTest` passed 33/33 on headless `Pixel_10`.
+- `git diff --check a3fe54f..4c74beb` passed.
+
+### Gotchas
+- The existing E2E exercises mutations only while each destination remains composed; green tests do not currently prove session-state continuity across navigation.
 
 ## 2026-06-28 - [Claude] Execute parallel Batch 2 — two-wave feature + nav integration
 

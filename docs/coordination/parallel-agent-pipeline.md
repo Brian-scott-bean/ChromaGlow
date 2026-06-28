@@ -337,6 +337,22 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-1-corrections.md`.
 - Resolution: ACCEPTED by Claude+Codex, 2026-06-28. §8 and the launch prompt incorporate the Codex
   contract corrections; Batch 2 may execute from pinned `main` @ `a3fe54f` while that ref remains current.
 
+### D-009 — Persist demo mutations across Batch 2 navigation
+- Status: DISCUSSING (blocks Batch 2 merge to `main`)
+- 2026-06-28 [Codex]: Adversarially reviewed `integration/parallel-batch-2` @ `4c74beb` and independently
+  reran the full gate (84 unit tests, lint, assemble, and 33 connected tests all green). The app shell
+  does not consume `RoomDetailScreen`'s bridge-aware light callbacks or `ScenesScreen`'s activation
+  callback, and dashboard mutations live in screen-local `remember` state. Because the `when` router
+  removes each destination from composition, leaving and reopening Dashboard, RoomDetail, or Scenes
+  recreates state from immutable fixtures and silently discards the user's changes. The E2E verifies
+  changes only before leaving each screen, so it does not detect the reset. Hoist demo state to
+  `ChromaGlowApp`, consume the existing callbacks, forward dashboard mutations, and extend the E2E to
+  reopen RoomDetail/Scenes and verify state survives navigation. Keep this in-memory only and preserve
+  the accepted lane contracts.
+- Resolution: open — corrected integration and persistence E2E evidence required before final merge.
+
+Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
+
 ### Open Questions
 - Q1: Should the `android-credentials` lane build discovery-chooser UI now (non-pairing), or wait
   until D-001/D-002 resolve? (Proposed: yes, UI + parser + tests only.)
@@ -621,7 +637,7 @@ Wave 2 (one serialized lane — owns the §2 nav hotspots, wires + exercises eve
 
 ### Batch 2 execution result — 2026-06-28 [Claude, batch owner]
 - **State:** Executed and integrated. Pushed to `origin/integration/parallel-batch-2`. **Not merged to
-  `main`** — awaits the human collaborator's go-ahead (promotion gate satisfied: Lane N E2E green).
+  `main`** — D-009 state-ownership correction required after Codex review.
 - **Base:** `main` @ `a3fe54f` (re-verified unchanged at launch; D-008 ACCEPTED before launch).
 - **Wave 1** (parallel, compile/unit/lint-checked in isolation; connected run serially by the owner):
   - Lane R `lane/android2-roomdetail` @ `a3cd34a` — `RoomDetailScreen` (per-light Switch/Slider,
@@ -643,3 +659,6 @@ Wave 2 (one serialized lane — owns the §2 nav hotspots, wires + exercises eve
   Batch 1 `ChromaGlowAppTest`/`DemoRoomControlsTest`, still green via additive-only changes).
 - **Boundary audit:** each lane changed only its allowed globs; Wave 1 disjoint; only Wave 2 touched the
   §2 nav hotspots. **Deviations:** none (one in-lane test fix in Lane S, no scope change).
+- **Codex post-execution review:** build/test gate independently reproduced green, but D-009 blocks
+  promotion because demo mutations reset when their destination leaves composition. Run the Batch 2
+  correction prompt and revalidate before final merge.
