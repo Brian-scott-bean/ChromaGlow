@@ -18,7 +18,7 @@
 - Latest local Android validation observed by Codex: Android Studio's bundled JDK plus `~/Library/Android/sdk` passed unit tests, lint, assembly, and all 17 connected tests on the `Pixel_10` AVD.
 - Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`.
 - Android parallel Batch 1 is COMPLETE and **merged to `main` @ `a3fe54f`** (via integration `0d7c218`): two lanes (demo domain models incl. `LightDisplayModel`/`SceneDisplayModel`; dashboard on/off + brightness controls) plus the D-007 corrections (scene `bridgeId` routing; `lightCount` == `lightsByRoom[room.id].size`). Pre-merge gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on `Pixel_10`. D-007 is RESOLVED. Demo-model/fixture contracts are recorded in `AGENTS.md` → "Android Current State".
-- Android parallel Batch 2 is DRAFTED: manifest in `docs/coordination/parallel-agent-pipeline.md` §8 (base `main` @ `a3fe54f`; Wave 1 = parallel `roomdetail`/`scenes`/`settings` feature packages, Wave 2 = serialized `nav-shell` integration); launch prompt at `docs/coordination/prompts/parallel-batch-2-launch.md`. DRAFT / not execution-approved — pending Codex review (Decision Log **D-008**, open questions Q6–Q9).
+- Android parallel Batch 2 is EXECUTION-READY: manifest in `docs/coordination/parallel-agent-pipeline.md` §8 (base `main` @ `a3fe54f`; Wave 1 = parallel `roomdetail`/`scenes`/`settings` feature packages, Wave 2 = serialized `nav-shell` integration); D-008 accepted, Q6–Q9 resolved, and `docs/coordination/prompts/parallel-batch-2-launch.md` is Ready.
 
 ### Handoff Entry Template
 
@@ -45,6 +45,32 @@
 ```
 
 ---
+
+## 2026-06-28 - [Codex] Approve Batch 2 manifest and launch prompt
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Adversarially reviewed the Batch 2 two-wave manifest against `main` @ `a3fe54f` and accepted D-008.
+- Required bridge-aware room-light and scene-activation callbacks so future multi-bridge callers can route correctly.
+- Resolved Q6–Q9: parameter-injected feature models, existing `when(destination)` router, explicit Exit Demo Mode semantics, and serialized connected tests on the shared AVD.
+- Tightened the Wave 2 E2E to exercise light controls, exclusive scene activation, Settings back, and Exit Demo Mode rather than navigation alone.
+- Marked §8 and `parallel-batch-2-launch.md` execution-ready and synchronized canonical status files.
+
+### Working
+- Claude can execute Batch 2 from the ready launch prompt while `origin/main` remains pinned at `a3fe54f`.
+
+### Left
+- Run `docs/coordination/prompts/parallel-batch-2-launch.md`.
+- Stop and re-pin if `origin/main` advances before launch.
+
+### Validation
+- Docs-only review; `git diff --check` passed before publication.
+- No Android runtime tests were needed because no Android source changed.
+
+### Gotchas
+- Wave 1 code may run concurrently, but the batch owner must serialize connected tests on the single `Pixel_10` AVD.
 
 ## 2026-06-28 - [Claude] Merge Batch 1 to main + draft Batch 2 manifest
 

@@ -2,12 +2,11 @@
 
 ## Status
 
-- **State:** DRAFT — **not execution-approved.** Blocked on Decision Log **D-008** (Codex adversarial
-  review of the §8 manifest). Do not run until D-008 is ACCEPTED and this prompt is flipped to `Ready`.
+- **State:** Ready — Decision Log **D-008** accepted after Codex adversarial review.
 - **Batch:** `parallel-batch-2`
 - **Manifest:** `docs/coordination/parallel-agent-pipeline.md` §8 (two-wave feature + nav integration)
 - **Pinned base:** `main` @ `a3fe54f978c3a5a78d7f35605b1c3ff37c23edca` (corrected Batch 1 landed on `main`)
-- **Last reviewed:** 2026-06-28 (Claude internal 3-lens review folded into §8; Codex review pending)
+- **Last reviewed:** 2026-06-28 (Claude internal review + Codex D-008 approval)
 
 ## Prompt
 
@@ -39,22 +38,23 @@ Agent A: lane/android2-roomdetail (registry android-roomdetail)
 - Own only: android/app/src/main/java/com/chromaglow/app/feature/roomdetail/**
             android/app/src/androidTest/java/com/chromaglow/app/feature/roomdetail/**
 - Implement the Lane R deliverable + acceptance from §8 (RoomDetailScreen; remembered state seeded from
-  lights; slider valueRange 1f..100f + coerceIn(1,100); forwards callbacks). Read-only import core/model
-  and DemoFixtures.
+  lights; slider valueRange 1f..100f + coerceIn(1,100); forwards bridgeId + lightId callbacks). Feature
+  source receives models by parameter; tests may read DemoFixtures. Read-only import core/model/data.
 - Validate: connectedDebugAndroidTest (the owner schedules it serially). Commit and return SHA + handoff.
 
 Agent B: lane/android2-scenes (registry android-scenes)
 - Own only: android/app/src/main/java/com/chromaglow/app/feature/scenes/**
             android/app/src/androidTest/java/com/chromaglow/app/feature/scenes/**
 - Implement the Lane S deliverable + acceptance from §8 (ScenesScreen; exclusive activation; target room
-  via roomNames[scene.roomId] ?: scene.roomId). Read-only import core/model and DemoFixtures.
+  via roomNames[scene.roomId] ?: scene.roomId; forwards bridgeId + sceneId on activation). Feature source
+  receives models by parameter; tests may read DemoFixtures. Read-only import core/model/data.
 - Validate: connectedDebugAndroidTest (serialized). Commit and return SHA + handoff.
 
 Agent C: lane/android2-settings (registry android-settings)
 - Own only: android/app/src/main/java/com/chromaglow/app/feature/settings/**
             android/app/src/androidTest/java/com/chromaglow/app/feature/settings/**
 - Implement the Lane T deliverable + acceptance from §8 (SettingsScreen; appVersion is a passed-in
-  literal — do NOT use or enable BuildConfig). 
+  literal; action is Exit Demo Mode/onExitDemo — do NOT use or enable BuildConfig).
 - Validate: connectedDebugAndroidTest (serialized). Commit and return SHA + handoff.
 
 After Wave 1: verify each branch changed only its permitted files, merge all three into
@@ -75,7 +75,8 @@ Agent D: lane/android2-nav-integration (registry android-nav-shell; reclaims and
   own testTag; explicit Scenes/Settings buttons) without altering the Switch/Slider or the exact
   status-line text. Do not edit Wave 1 feature internals.
 - Validate: full gate testDebugUnitTest lintDebug assembleDebug connectedDebugAndroidTest, with the new
-  E2E reaching + exercising every Wave 1 screen. Commit and return SHA + handoff.
+  E2E exercising room light controls, exclusive scene activation, Settings back, and Exit Demo Mode
+  returning to Setup. Commit and return SHA + handoff.
 
 After Wave 2:
 1. Verify Lane N changed only its permitted files.

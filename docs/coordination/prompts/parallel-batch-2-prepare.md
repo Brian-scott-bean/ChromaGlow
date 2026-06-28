@@ -2,7 +2,8 @@
 
 ## Status
 
-- **State:** Done 2026-06-28 — Batch 2 manifest drafted in `parallel-agent-pipeline.md` §8 (DRAFT, awaiting Codex review D-008); launch prompt at `parallel-batch-2-launch.md`. Re-run only to re-draft.
+- **State:** Done 2026-06-28 — Batch 2 manifest drafted in `parallel-agent-pipeline.md` §8 and accepted
+  after Codex review D-008; launch prompt at `parallel-batch-2-launch.md` is Ready. Re-run only to re-draft.
 - **Purpose:** Inspect the actual Batch 1 result and draft the Batch 2 manifest
 - **Execution:** Planning/docs only; do not launch code lanes
 - **Last reviewed:** 2026-06-28
