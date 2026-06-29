@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a complete demo flow plus discovery/manual entry and a secure credential boundary. The D-001/D-002 TLS and canonical-identity contracts are accepted; Batch 3 is prepared to implement tested pairing foundations (protocol, CA/identity verification, HTTPS transport) without UI wiring or credential persistence. Batches 1 and 2 are merged to `main` @ `7ed6468` (gate green: unit 84/0, connected 34/0).
+ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a complete demo flow plus discovery/manual entry and a secure credential boundary. The D-001/D-002 TLS and canonical-identity contracts are accepted; Batch 3 has implemented and integrated tested pairing foundations (protocol, CA/identity verification, HTTPS transport) on `integration/parallel-batch-3` @ `142ca71` — gate green (unit 173/0, connected 37/0), pushed, NOT yet merged to `main` — without UI wiring or credential persistence. Batches 1 and 2 are merged to `main` @ `7ed6468`.
 
 ## Current Branch/Repo Facts
 
@@ -259,10 +259,16 @@ Log) and the `DEVLOG.md` handoffs.
   as a literal (BuildConfig is disabled — do not enable it). Single `Pixel_10` AVD ⇒ run
   `connectedDebugAndroidTest` serially.
 
-**Pipeline status:** Batches 1 & 2 complete. D-001/D-002/D-011/D-012 are ACCEPTED. The Batch 3 pairing
-foundation manifest and Claude launch prompt are READY in the pipeline doc §10 and
-`docs/coordination/prompts/parallel-batch-3-launch.md`; Batch 3 is not launched or merged. Raise additional
-proposals as D-014+ in the pipeline doc.
+**Pipeline status:** Batches 1 & 2 complete (merged to `main`). D-001/D-002/D-011/D-012/D-013 are ACCEPTED.
+Batch 3 (pairing foundations: deps + bundled CA roots, pure protocol contracts, TLS/identity verification,
+HTTPS transport) is **EXECUTED and integrated** on `integration/parallel-batch-3` @ `142ca71` — gate green
+(unit 173/0, lint, assemble, connected 37/0 on `Pixel_10`); pushed; **NOT merged to `main`** (awaiting
+human go-ahead). It adds no Setup UI, app/nav, discovery, credential write, token persistence, or live
+bridge traffic. Public APIs now available for the follow-up UI/persistence batch:
+`core/hue/pairing/protocol` (request/response/config parsers), `core/hue/pairing/tls`
+(`HueRootCertificates`/`HueRootTrustManager`/`HueLeafHostnameVerifier`/`HueBridgeCommonName`), and
+`core/hue/pairing/transport` (`HuePairingClient`/`OkHttpHuePairingClient.fromContext`). Details: pipeline
+doc §10 "Batch 3 execution result". Raise additional proposals as D-014+ in the pipeline doc.
 
 
 ## Validation Commands
@@ -460,7 +466,9 @@ iOS:
 
 Android:
 
-- Execute and review the bounded Batch 3 pairing-foundation manifest before any setup/persistence wiring.
+- Review the executed Batch 3 pairing foundation on `integration/parallel-batch-3` @ `142ca71` and decide
+  the merge-to-`main` go-ahead; the follow-up batch wires Setup UI + credential persistence + physical
+  pairing on top of the merged protocol/TLS/transport APIs (no live wiring landed in Batch 3).
 - Run Gradle validation only when JDK/Android toolchain is available.
 - Continue MVP slices without copying iOS monolith patterns.
 

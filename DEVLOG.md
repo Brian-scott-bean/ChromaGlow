@@ -13,9 +13,9 @@
 - iOS production anchor: native Swift/SwiftUI app in `HueHome/`.
 - iOS build scheme: `HueHome 1` (not `HueHome`).
 - Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `7ed6468`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
-- Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 is foundations
-  only; Setup UI, credential persistence, and physical pairing remain later scope.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`. Batch 3 manifest/prompt are READY at §10 and `docs/coordination/prompts/parallel-batch-3-launch.md`, not launched. Validation baseline on `main`: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on the `Pixel_10` AVD.
+- Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 (foundations
+  only) is EXECUTED and integrated; Setup UI, credential persistence, and physical pairing remain later scope.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`. Batch 3 pairing foundations are **EXECUTED + integrated** on `integration/parallel-batch-3` @ `142ca71` (pushed; **NOT merged to `main`**, human go-ahead pending) — gate green: `testDebugUnitTest` 173/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 37/0 on the `Pixel_10` AVD. (Pre-Batch-3 `main` baseline was unit 84/0, connected 34/0.)
 
 ### Handoff Entry Template
 
@@ -40,6 +40,57 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-06-29 - [Claude] Execute Batch 3 pairing foundations (integrated, not merged to main)
+
+### Branch
+- `integration/parallel-batch-3` (code, pushed) + this `docs/parallel-agent-pipeline` handoff.
+
+### Did
+- Executed the READY §10 Batch 3 manifest end-to-end as batch owner from pinned `origin/main` @ `7ed6468`.
+  Preflight gates all passed (origin/main SHA exact; both CA source files SHA-256-verified; clean slate;
+  JDK 21 + SDK + `Pixel_10` AVD).
+- **W0** `lane/android3-pairing-bootstrap` @ `0334d2a`: pinned OkHttp `5.4.0`, `kotlinx-serialization-json`
+  `1.11.0` (no compiler plugin), test-only `mockwebserver3` + `okhttp-tls` `5.4.0`; bundled both accepted
+  Hue CA roots to `res/raw/` (SHA-256 re-verified). → integration post-W0 `2c0178c2`.
+- **W1** parallel from `2c0178c2`: `lane/android3-pairing-protocol` @ `ea9610c` (pure JSON
+  request/response/config contracts via kotlinx `JsonElement`; +39 tests) and `lane/android3-pairing-tls`
+  @ `0a01b32` (pinned-CA trust manager, RFC 2253 leaf-CN identity, SAN-less `HostnameVerifier`; +35 unit
+  + 1 instrumented fingerprint test). Merged both `--no-ff` → integration post-W1 `ea212db7`.
+- **W2** from `ea212db7`: `lane/android3-pairing-transport` @ `c829b92` (`HuePairingClient` +
+  `OkHttpHuePairingClient`: HTTPS-only, no redirects, no POST retry, 64 KiB-bounded bodies, 10 s timeout,
+  `HttpUrl`; config→identity check before POST; typed outcomes; MockWebServer3 + test-cert tests, +15).
+  Merged `--no-ff` → integration final `142ca71`.
+
+### Working
+- Public, tested, non-UI pairing foundation under `core/hue/pairing/{protocol,tls,transport}` consumable
+  by a later Setup/persistence batch via `OkHttpHuePairingClient.fromContext(context)`.
+
+### Left
+- NOT merged to `main` — awaiting explicit human go-ahead. No Setup UI, app/nav, discovery, credential
+  write, token persistence, or live bridge traffic was added (deliberately out of Batch 3 scope).
+
+### Validation
+- Integrated gate on `142ca71`: `./gradlew testDebugUnitTest lintDebug assembleDebug` → BUILD SUCCESSFUL,
+  unit **173/0**; `connectedDebugAndroidTest` on the single `Pixel_10` (serial) → **37/0** (34 pre-existing
+  + 3 new `HueRootCertificatesTest` methods that verify the bundled roots' subjects + SHA-256 fingerprints
+  on-device); `git diff --check` clean.
+- Boundary audit: all 28 changed files within Batch 3 globs; zero edits outside (no Setup/app/discovery/
+  credentials/manifest/theme). Prohibited-pattern scan clean (no trust-all, no blanket-true verifier, no
+  emitted `generateclientkey`, no `clientkey`/credential persistence, no secret logging). No deviations;
+  no new decision required.
+
+### Gotchas
+- `javax.naming`/`LdapName` is absent on Android — the TLS lane uses a self-contained RFC 2253 DN
+  tokenizer for structured CN extraction (not `split(",")`).
+- OkHttp 5.4.0 exposes `Response.body`/`code`/`handshake` + `Handshake.peerCertificates` as `val`
+  properties (the `fun` forms are deprecated). MockWebServer3 5.4.0 is builder-based, `useHttps(ssf)` takes
+  one arg, `MockWebServer` is `Closeable` (`close()`, no `shutdown()`), `RecordedRequest` uses
+  `.method`/`.target`/`.url`/`.body` (no `.path`).
+- Lane worktrees live under `/Users/brianbean/Desktop/cg-b3-wt/` (kept for the human's review; remove with
+  `git worktree remove` after merge/abandon). The `Pixel_10` AVD was booted headless for the connected run.
 
 ---
 

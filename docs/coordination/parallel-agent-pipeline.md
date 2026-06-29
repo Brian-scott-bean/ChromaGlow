@@ -10,8 +10,8 @@
 - **Consolidated:** 2026-06-24 · **re-consolidated 2026-06-28** (pruned historical Batch 1/2 manifests
   and resolved questions after both batches landed on `main`).
 - **Current state:** Android pilot Batches 1 & 2 are **complete and merged to `main` @ `7ed6468`**.
-  D-001/D-002/D-011/D-012 are accepted. Batch 3 pairing foundations are **READY, not launched**, from
-  pinned `origin/main` @ `7ed6468` (see §6, §9, §10).
+  D-001/D-002/D-011/D-012/D-013 are accepted. Batch 3 pairing foundations are **EXECUTED and integrated**
+  on `integration/parallel-batch-3` @ `142ca71` (gate green; pushed; NOT merged to `main`) — see §6, §9, §10.
 - **Canonical rules live in:** `AGENTS.md` → "Parallel Agent Pipeline" section + "Android Current State"
   (the durable feature inventory + code contracts). This doc is the operational registry + decision log.
 
@@ -46,10 +46,10 @@ for a future batch).
 | `android-scenes` | `android/app/src/main/java/com/chromaglow/app/feature/scenes/**` (+ its androidTest pkg) | Yes | merged → `main` (Batch 2 W1) | Claude (sub-agent B) |
 | `android-settings` | `android/app/src/main/java/com/chromaglow/app/feature/settings/**` (+ its androidTest pkg) | Yes | merged → `main` (Batch 2 W1) | Claude (sub-agent C) |
 | `android-nav-shell` | the §2 nav hotspots `…/app/ChromaGlowApp.kt` + `…/app/ChromaGlowDestination.kt` (single designated owner per batch), plus its own additive `feature/dashboard/**` entry points and nav E2E androidTest | No (serialized; owns §2 nav hotspots) | merged → `main` (Batch 2 W2) | Claude (sub-agent D) |
-| `android-pairing-bootstrap` | `android/gradle/libs.versions.toml`, `android/app/build.gradle.kts`, `android/app/src/main/res/raw/hue_*.pem` | No (serialized dependency/trust-root bootstrap) | open (Batch 3 W0) | Claude sub-agent A |
-| `android-pairing-protocol` | `…/core/hue/pairing/protocol/**` + exact matching JVM tests | Yes after W0 | open (Batch 3 W1) | Claude sub-agent B |
-| `android-pairing-tls` | `…/core/hue/pairing/tls/**` + exact matching JVM/instrumented tests | Yes after W0 | open (Batch 3 W1) | Claude sub-agent C |
-| `android-pairing-transport` | `…/core/hue/pairing/transport/**` + exact matching JVM tests | No (serialized W2 integration of W1 contracts) | open (Batch 3 W2) | Claude sub-agent D |
+| `android-pairing-bootstrap` | `android/gradle/libs.versions.toml`, `android/app/build.gradle.kts`, `android/app/src/main/res/raw/hue_*.pem` | No (serialized dependency/trust-root bootstrap) | merged → `integration/parallel-batch-3` (Batch 3 W0) | Claude sub-agent A |
+| `android-pairing-protocol` | `…/core/hue/pairing/protocol/**` + exact matching JVM tests | Yes after W0 | merged → `integration/parallel-batch-3` (Batch 3 W1) | Claude sub-agent B |
+| `android-pairing-tls` | `…/core/hue/pairing/tls/**` + exact matching JVM/instrumented tests | Yes after W0 | merged → `integration/parallel-batch-3` (Batch 3 W1) | Claude sub-agent C |
+| `android-pairing-transport` | `…/core/hue/pairing/transport/**` + exact matching JVM tests | No (serialized W2 integration of W1 contracts) | merged → `integration/parallel-batch-3` (Batch 3 W2) | Claude sub-agent D |
 
 > `ui/theme/**` is no longer a parallel lane — it was bundled into the old `android-models-theme` lane
 > but is consumed app-wide, so it is now a §2 collision hotspot (single-owner per batch).
@@ -541,7 +541,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
 - Resolution: ACCEPTED 2026-06-29 by human + Codex.
 
 ### D-013 — Batch 3 implements pairing foundations before UI or persistence
-- Status: ACCEPTED (manifest/launch ready; batch not launched)
+- Status: ACCEPTED (EXECUTED + integrated 2026-06-29; NOT merged to `main` — human go-ahead pending)
 - 2026-06-29 [Codex]: Reviewed `origin/main` @ `7ed6468` and prepared the three-wave §10 manifest plus
   `docs/coordination/prompts/parallel-batch-3-launch.md`. W0 serializes dependency and CA-resource
   hotspots; W1 parallelizes pure protocol and TLS/identity foundations; W2 serially integrates a tested
@@ -549,8 +549,20 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   `kotlinx-serialization-json` `1.11.0` are pinned from their official release repositories. No setup UI,
   app-shell, discovery, credential store, token persistence, live network probe, or physical pairing is
   in scope. This deliberately lands a testable foundation before a later UI/persistence batch.
-- Resolution: ACCEPTED by Codex under the human-approved D-001/D-002/D-012 contract. Launch is ready but
-  still requires the human to tell Claude to execute it; final integration-to-main merge remains gated.
+- 2026-06-29 [Claude]: EXECUTED the READY §10 manifest as batch owner from pinned `origin/main` @
+  `7ed6468`. All preflight gates passed (origin/main SHA exact; both CA source files SHA-256 match; clean
+  worktree slate with no pre-existing Batch 3 branches; JDK 21 + Android SDK + `Pixel_10` AVD present).
+  W0 → W1 (B protocol ‖ C TLS, parallel) → W2 (transport) ran in isolated worktrees and merged `--no-ff`
+  into `integration/parallel-batch-3` @ `142ca71`. Integrated gate green: `testDebugUnitTest` 173/0,
+  `lintDebug` clean, `assembleDebug` ok, `connectedDebugAndroidTest` 37/0 on `Pixel_10` (34 pre-existing +
+  3 new CA-resource fingerprint tests). Boundary audit clean (every changed file within a Batch 3 glob;
+  the only §2-hotspot edits were the W0-owned build catalog/`build.gradle.kts`/`res/raw` files). §10
+  prohibited-pattern scan clean: no trust-all manager, no blanket-true hostname verifier, no emitted
+  `generateclientkey`, no `clientkey`/credential persistence, no token/username/secret logging. No new
+  decision was required. Full result in §10 "Batch 3 execution result". NOT merged to `main`.
+- Resolution: ACCEPTED by Codex under the human-approved D-001/D-002/D-012 contract; EXECUTED and
+  integrated 2026-06-29 (see §10 "Batch 3 execution result"). Final integration-to-`main` merge remains
+  gated on explicit human go-ahead.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
@@ -662,8 +674,14 @@ retained as historical run records. The result record below is the source of tru
   serially.
 - **Pairing decisions accepted:** D-001/D-002/D-011/D-012 are complete. Batch 3 is authorized only for
   protocol, TLS/identity, and HTTPS transport foundations; no UI, credential write, or physical pairing.
-- **Next action:** the human may tell Claude to execute the READY Batch 3 launch prompt at
-  `docs/coordination/prompts/parallel-batch-3-launch.md`. Integration-to-main remains separately gated.
+- **Batch 3 EXECUTED + integrated (2026-06-29 [Claude]):** the pairing foundation (deps + bundled CA
+  roots, pure protocol contracts, TLS/identity verification, HTTPS transport) is merged `--no-ff` to
+  `integration/parallel-batch-3` @ `142ca71` (pushed). Gate green: unit 173/0, lint clean, assemble ok,
+  connected 37/0 on `Pixel_10` (34 pre-existing + 3 new CA-resource fingerprint tests). No UI, discovery,
+  credential write, token persistence, or live bridge request was added. See §10 "Batch 3 execution result".
+- **Next action:** human review of `integration/parallel-batch-3`; the final merge to `main` remains
+  gated on explicit human go-ahead. A later batch separately scopes Setup UI state, credential
+  persistence, and physical-device pairing validation.
 - **For Codex — verifying what's done:** check out `main` @ `7ed6468` (or compare against
   `integration/parallel-batch-2` @ `9411d81`); the per-batch result records are §7/§8; the full decision
   trail is §6 (D-001–D-013). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
@@ -677,7 +695,7 @@ retained as historical run records. The result record below is the source of tru
 
 ---
 
-## 10. Batch 3 — READY (pairing foundations; not launched)
+## 10. Batch 3 — EXECUTED + INTEGRATED (pairing foundations; not merged to `main`)
 
 **Batch:** `parallel-batch-3`
 
@@ -810,3 +828,70 @@ fork from that merged SHA, not directly from `main`.
 5. Push `integration/parallel-batch-3`; do not merge to `main` without explicit human go-ahead.
 6. Batch 3 may promote as a tested foundation despite no runtime UI wiring because it adds no UI. A later
    batch must separately scope Setup state, persistence, and physical-device pairing validation.
+
+### Batch 3 execution result — 2026-06-29 [Claude, batch owner]
+
+- **State:** Executed, integrated on `integration/parallel-batch-3` @ `142ca71`, pushed to origin.
+  **NOT merged to `main`** — final merge awaits explicit human go-ahead.
+- **Base:** pinned `origin/main` @ `7ed64687b600e9456d32510fa86e709c841fefd5` (re-fetched and re-verified
+  exact at launch).
+- **Preflight (all passed):** origin/main SHA exact; D-001/D-002/D-011/D-012/D-013 ACCEPTED + prompt READY;
+  clean worktree slate (no pre-existing Batch 3 branches); both local CA source files SHA-256-verified
+  (`root-bridge.pem` `9eb5d8ee…aef7e44`, `hue-root-ca-01.pem` `dfb5bd1e…b1b363c5`); toolchain present
+  (JDK 21 at Android Studio JBR, Android SDK, single `Pixel_10` AVD). Env exported per the prompt.
+- **W0 — `lane/android3-pairing-bootstrap` @ `0334d2a`** (serialized hotspot bootstrap): pinned OkHttp
+  `5.4.0` + `kotlinx-serialization-json` `1.11.0` (no serialization compiler plugin; structured
+  `JsonElement` API only) as production deps, and test-only `mockwebserver3` + `okhttp-tls` `5.4.0`
+  (added to both `testImplementation` and `androidTestImplementation`). Copied the two accepted CA roots
+  to `res/raw/hue_root_bridge.pem` + `res/raw/hue_root_ca_01.pem` (byte-identical to source; SHA-256
+  re-verified post-copy). Validation: all four coordinates resolve; `assembleDebug` green;
+  `git diff --check` clean. Merged `--no-ff` → integration **post-W0 @ `2c0178c2`** (W1 forked here).
+- **W1 — parallel, both forked from `2c0178c2`:**
+  - **B `lane/android3-pairing-protocol` @ `ea9610c`** — pure-Kotlin Hue pairing JSON contracts via
+    kotlinx `JsonElement`: create-user body emits ONLY `devicetype = "chromaglow#android"` (never
+    `generateclientkey`); JSON-array success parser drops any `clientkey`; error 101 retryable / 7 invalid
+    / unknown explicit; fail-closed on malformed/mixed/empty and any input > 64 KiB; `/api/0/config`
+    `bridgeid` normalized UPPERCASE 16-hex with optional `replacesbridgeid`. +39 JVM tests.
+  - **C `lane/android3-pairing-tls` @ `0a01b32`** — pinned-CA trust manager built from an injected CA set
+    via `TrustManagerFactory` (no system/user fallback; refuses empty set), production raw-resource loader
+    for both roots, a structured **RFC 2253** DN tokenizer (Android-safe — `javax.naming`/`LdapName` is
+    absent on Android) extracting a single 16-hex leaf CN normalized UPPERCASE with optional
+    case-insensitive expected-id match, and a SAN-less-leaf `HostnameVerifier` that returns true only when
+    the CN identity contract holds (never blanket-true; chain trust stays with the trust manager). +35 JVM
+    tests + 1 instrumented `HueRootCertificatesTest` (3 methods) asserting the bundled roots' subjects +
+    SHA-256 fingerprints and that the trust manager trusts exactly the two roots.
+  - Merged B then C `--no-ff` (disjoint `protocol/**` vs `tls/**`) → integration **post-W1 @ `ea212db7`**
+    (W2 forked here). Combined unit suite green at this point: 158/0.
+- **W2 — `lane/android3-pairing-transport` @ `c829b92`** (serialized, forked from `ea212db7`):
+  `HuePairingClient` boundary + `OkHttpHuePairingClient` over the merged B/C APIs. HTTPS-only, redirects
+  disabled, create-user POST not auto-retried, 64 KiB-bounded response bodies (fail-closed without
+  unbounded buffering), 10 s call timeout, URLs via `HttpUrl` (no string concat). `GET /api/0/config`
+  authenticates identity from the CA-validated leaf CN and requires config `bridgeid` + any supplied hint
+  to match case-insensitively **before** `POST /api`; typed success/retryable/failure outcomes; no
+  logging, no credential persistence, no `clientkey` surface; production `fromContext` wires the pinned
+  trust manager (trust-only). +15 JVM tests (MockWebServer3 + okhttp-tls certs: success, case
+  normalization, 101 retry, 7, malformed, oversized, redirect refusal, wrong identity, wrong CA, timeout).
+  Merged `--no-ff` → integration **final @ `142ca71452c78f9edec70e3c4b8007f7997e8f13`**.
+- **Final integrated gate (all green, on `142ca71`):** `./gradlew testDebugUnitTest lintDebug
+  assembleDebug` → BUILD SUCCESSFUL, **unit 173/0**; `connectedDebugAndroidTest` on the single booted
+  `Pixel_10` AVD (run serially by the batch owner) → **37/0** (the 34 pre-existing connected tests + the 3
+  new `HueRootCertificatesTest` methods); `git diff --check` clean.
+- **Boundary audit:** every one of the 28 changed files (vs pinned `main`) lies within an allowed Batch 3
+  glob — the 4 W0-owned hotspot files (`libs.versions.toml`, `app/build.gradle.kts`, the two `res/raw`
+  roots) plus the `core/hue/pairing/{protocol,tls,transport}/**` source/test trees. **Zero** edits to
+  Setup, app shell/nav, discovery, credentials, manifest, theme, or any other resource. W1 source/test
+  globs are disjoint by construction; all merges were conflict-free.
+- **Security/prohibited-pattern scan (clean):** no trust-all `X509TrustManager` / blind cert acceptance
+  (the only trust manager delegates to `TrustManagerFactory` over the pinned roots); no blanket-true
+  hostname verifier; no emitted `generateclientkey`; no `clientkey`/`CLIENT_KEY` retention or credential
+  persistence; no token/username/secret/address logging; create-user body carries `devicetype` only.
+- **Dependency versions:** OkHttp `5.4.0`, `kotlinx-serialization-json` `1.11.0`, `mockwebserver3` `5.4.0`,
+  `okhttp-tls` `5.4.0`. **CA fingerprints (on-device verified):** `root-bridge`
+  `F0:BD:8E:65:09:E8:2F:77:4D:63:BC:00:9D:53:88:C9:69:FE:3D:CF:7D:6D:54:1D:63:51:B7:2B:89:8D:8A:CF`
+  (`C=NL, O=Philips Hue, CN=root-bridge`); `Hue Root CA 01`
+  `D8:B8:94:48:B2:AF:8E:16:76:18:5A:C0:72:19:EE:9D:CB:C8:F0:1C:12:2A:02:6A:2A:4B:7B:5C:FE:03:28:B8`
+  (`C=NL, O=Signify Hue, CN=Hue Root CA 01`).
+- **Deviations:** none — the manifest ran exactly as written. **No new decision was required.**
+- **Remote refs (pushed):** `lane/android3-pairing-bootstrap` `0334d2a`,
+  `lane/android3-pairing-protocol` `ea9610c`, `lane/android3-pairing-tls` `0a01b32`,
+  `lane/android3-pairing-transport` `c829b92`, `integration/parallel-batch-3` `142ca71`.
