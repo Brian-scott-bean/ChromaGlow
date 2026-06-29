@@ -7,10 +7,13 @@
   together without conflict. Also defines the shared **Decision Log** where agents propose, debate,
   and record agreements across tools.
 - **Type:** Process / coordination contract.
-- **Consolidated:** 2026-06-24
-- **Last reviewed:** 2026-06-28
-- **Canonical rules live in:** `AGENTS.md` → "Parallel Agent Pipeline" section. This doc is the
-  operational registry + decision log that section points to.
+- **Consolidated:** 2026-06-24 · **re-consolidated 2026-06-28** (pruned historical Batch 1/2 manifests
+  and resolved questions after both batches landed on `main`).
+- **Current state:** Android pilot Batches 1 & 2 are **complete and merged to `main` @ `7ed6468`**
+  (see §7, §8, §9). Active blockers: **D-001** (pairing TLS) and **D-002** (bridge identity). No batch
+  is in flight.
+- **Canonical rules live in:** `AGENTS.md` → "Parallel Agent Pipeline" section + "Android Current State"
+  (the durable feature inventory + code contracts). This doc is the operational registry + decision log.
 
 ## Rules for this doc
 
@@ -27,21 +30,22 @@
 ## 1. Lane Registry
 
 `unscoped` = ownership class only; no current deliverable · `open` = scoped and unclaimed ·
-`claimed` = an agent owns it this batch · `merged` = landed on integration branch.
+`claimed` = an agent owns it this batch · `merged → main` = shipped to `main` (reclaim with a new owner
+for a future batch).
 
 ### Android lanes (parallel-safe — modular, greenfield)
 
 | Lane ID | Ownership globs | Parallel-safe | Status | Owner |
 | --- | --- | --- | --- | --- |
 | `android-setup` | `android/app/src/main/java/com/chromaglow/app/feature/setup/**` | Yes | unscoped | — |
-| `android-dashboard` | `android/app/src/main/java/com/chromaglow/app/feature/dashboard/**` | Yes | merged (Batch 1 L2) · feature/dashboard re-claimed by `android-nav-shell` for Batch 2 W2 | Claude (sub-agent B) |
+| `android-dashboard` | `android/app/src/main/java/com/chromaglow/app/feature/dashboard/**` | Yes | merged → `main` (Batch 1 controls + Batch 2 nav entry points) | Claude |
 | `android-credentials` | `android/app/src/main/java/com/chromaglow/app/core/credentials/**`, `…/core/hue/discovery/**` | Yes (hardening only; no pairing or persistence wiring while D-001/D-002 are unresolved) | unscoped | — |
-| `android-models` | `android/app/src/main/java/com/chromaglow/app/core/model/**`, `…/data/demo/**` | Yes | merged (Batch 1 L1) | Claude (sub-agent A) |
+| `android-models` | `android/app/src/main/java/com/chromaglow/app/core/model/**`, `…/data/demo/**` | Yes | merged → `main` (Batch 1) | Claude (sub-agent A) |
 | `android-tests` | `android/app/src/test/**`, `android/app/src/androidTest/**` | Yes, with exact non-overlapping test files | unscoped | — |
-| `android-roomdetail` | `android/app/src/main/java/com/chromaglow/app/feature/roomdetail/**` (+ its androidTest pkg) | Yes | merged (Batch 2 W1) | Claude (sub-agent A) |
-| `android-scenes` | `android/app/src/main/java/com/chromaglow/app/feature/scenes/**` (+ its androidTest pkg) | Yes | merged (Batch 2 W1) | Claude (sub-agent B) |
-| `android-settings` | `android/app/src/main/java/com/chromaglow/app/feature/settings/**` (+ its androidTest pkg) | Yes | merged (Batch 2 W1) | Claude (sub-agent C) |
-| `android-nav-shell` | `…/app/ChromaGlowApp.kt`, `…/app/ChromaGlowDestination.kt`, `feature/dashboard/**` (+ nav E2E androidTest) — single designated §2 nav-hotspot owner per batch | No (serialized; owns §2 hotspots) | merged (Batch 2 W2) | Claude (sub-agent D) |
+| `android-roomdetail` | `android/app/src/main/java/com/chromaglow/app/feature/roomdetail/**` (+ its androidTest pkg) | Yes | merged → `main` (Batch 2 W1) | Claude (sub-agent A) |
+| `android-scenes` | `android/app/src/main/java/com/chromaglow/app/feature/scenes/**` (+ its androidTest pkg) | Yes | merged → `main` (Batch 2 W1) | Claude (sub-agent B) |
+| `android-settings` | `android/app/src/main/java/com/chromaglow/app/feature/settings/**` (+ its androidTest pkg) | Yes | merged → `main` (Batch 2 W1) | Claude (sub-agent C) |
+| `android-nav-shell` | the §2 nav hotspots `…/app/ChromaGlowApp.kt` + `…/app/ChromaGlowDestination.kt` (single designated owner per batch), plus its own additive `feature/dashboard/**` entry points and nav E2E androidTest | No (serialized; owns §2 nav hotspots) | merged → `main` (Batch 2 W2) | Claude (sub-agent D) |
 
 > `ui/theme/**` is no longer a parallel lane — it was bundled into the old `android-models-theme` lane
 > but is consumed app-wide, so it is now a §2 collision hotspot (single-owner per batch).
@@ -111,13 +115,14 @@ requests through the Decision Log.
 
 ## 3. Branch / Worktree / Merge Model
 
-- **Lane branch:** `lane/<batch>-<slice>` — e.g. `lane/android1-dashboard`.
-- **Integration branch:** `integration/parallel-batch-1` (forked from `main`).
+- **Lane branch:** `lane/<batch>-<slice>` — e.g. `lane/android2-roomdetail`.
+- **Integration branch:** `integration/parallel-batch-N` (forked from `main`; e.g. `…-batch-1`, `…-batch-2`).
 - **Worktree:** one per lane, forked from `main`, auto-managed by the orchestration run.
 - **Merge model:**
-  `main → integration/parallel-batch-1 → (each clean lane branch merged in) → human review → main`.
-  Disjoint lanes merge without conflict by construction. A human (collaborator) performs the final
-  merge to `main` because the agent `gh` account is not a repo collaborator.
+  `main → integration/parallel-batch-N → (each clean lane branch merged in) → human go-ahead → main`.
+  Disjoint lanes merge without conflict by construction. The final merge to `main` happens on the human
+  collaborator's explicit go-ahead. (Batches 1 & 2 landed this way; the local SSH push identity can push
+  `main` — the documented `gh`-account limitation applies only to the bot account, not the push key.)
 
 ### Lane lifecycle
 
@@ -131,29 +136,11 @@ requests through the Decision Log.
 
 ---
 
-## 4. Original Pilot Draft — Batch 1 (Android-only, ~5 lanes)
+## 4. (Removed) Original Pilot Draft
 
-**Do not launch this batch as written.** It is retained as the original rehearsal proposal, but its
-named implementation scopes landed before the pipeline was operationalized. A replacement Batch 1
-must be drafted from the current `origin/main` tree and pass the execution-readiness gate in §5.
-
-The original proposal used Claude Code's Workflow + worktree isolation. All lanes stayed within the
-frozen Android MVP scope and respected the pairing blocker (see Decision Log D-001/D-002).
-
-| Lane branch | Source lane | Scope notes |
-| --- | --- | --- |
-| `lane/android1-setup` | `android-setup` | Historical: setup shell already exists; replacement scope required. |
-| `lane/android1-dashboard` | `android-dashboard` | Historical: dashboard demo fixtures already exist; replacement scope required. |
-| `lane/android1-credentials` | `android-credentials` | Historical: credential boundary, mDNS chooser, and manual-IP parser already exist. Live pairing and credential-persistence wiring remain blocked by D-001/D-002. |
-| `lane/android1-models-theme` | `android-models-theme` | Historical: demo models/data and theme tokens already exist; replacement scope required. |
-| `lane/android1-tests` | `android-tests` | Historical: tests must be assigned with a specific current subject, not as an unbounded shared lane. |
-
-**Originally held out of Batch 1** (gate files): `android/app/build.gradle.kts`, `AndroidManifest.xml`,
-`settings.gradle.kts`, `res/values/**`. Any needed change → open a Decision Log entry.
-
-**Validation per lane:** from `android/`, `./gradlew testDebugUnitTest lintDebug` **iff** a JDK /
-Android toolchain is present. If `/usr/bin/java` reports no runtime, the lane reports
-`validation skipped: no toolchain` rather than failing.
+The original ~5-lane Batch 1 draft was historical and is superseded by the executed Batch 1 (§7) and
+Batch 2 (§8). Rationale for retiring it is in Decision Log **D-003 / D-004**. Removed during the
+2026-06-28 consolidation to keep this doc current.
 
 ---
 
@@ -371,115 +358,31 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-1-corrections.md`.
   Independently reran `testDebugUnitTest` (84/0), `lintDebug`, `assembleDebug`, and
   `connectedDebugAndroidTest` (34/0 on `Pixel_10`); all passed. Batch 2 is merge-ready.
 - Resolution: RESOLVED 2026-06-28 — corrected integration `integration/parallel-batch-2` @ `9411d81`
-  (pushed); persistence E2E green. Batch 2 is eligible for the human final merge to `main`.
+  (pushed); persistence E2E green. Batch 2 has since merged to `main` @ `7ed6468` (see §8/§9).
 
 Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
 
 ### Open Questions
-- Q1: Should the `android-credentials` lane build discovery-chooser UI now (non-pairing), or wait
-  until D-001/D-002 resolve? (Proposed: yes, UI + parser + tests only.)
-- 2026-06-24 [Codex]: The discovery chooser UI and manual parser are already present. Keep
-  `android-credentials` blocked for live pairing and credential-persistence wiring until D-001/D-002
-  resolve; allow only hardening tests/docs that do not introduce pairing behavior.
-- Q2: After Batch 1 proves clean, which iOS-isolated lanes (`ios-design-system`, `ios-tests`,
-  `ios-widgets-intents`) go in Batch 2?
-- Q3: Do we want a second integration target (e.g. `prod`) or is `main` the only merge destination?
-- Q4: Adopt D-005 option (c) — rehearse with only the pure-Kotlin domain-models lane first — or hold
-  the whole batch until an Android toolchain / CI exists?
-- 2026-06-28 [Codex]: Hold all code-writing lanes until a local Android toolchain or equivalent CI
-  exists. Being pure Kotlin does not bypass Android Gradle configuration or its SDK requirement.
-- 2026-06-28 [Claude]: Agree — hold all code lanes until a toolchain/CI exists (option (c) withdrawn; see D-005).
-- Q5: Is "library-only" UI work (Lane 3/4 composables built but not yet wired to nav) acceptable as a
-  lane deliverable, or should feature screens land only together with their nav wiring in Batch 2?
-- 2026-06-28 [Codex]: Do not use unwired Settings/state components as pilot deliverables. Land them
-  with a real caller and behavioral validation in a later batch; extract reusable state components
-  only when concrete usage demonstrates the shared boundary.
-- 2026-06-28 [Claude]: Agree — no unwired/library-only deliverables in the pilot. Settings and state
-  components are removed from Batch 1 and will land with a real caller + behavioral test in a later batch.
-- Q6 (Batch 2): Thread `lights`/`scenes` through `DemoModeSession` (a later Batch-1-model change) vs.
-  feature screens reading `DemoFixtures` directly this batch? (Proposed: read `DemoFixtures` directly now.)
-- 2026-06-28 [Codex]: Keep `DemoModeSession` unchanged this batch, but do not couple Wave 1 feature
-  source to global fixtures. Screens receive models through parameters; their tests and Wave 2's app
-  shell may read `DemoFixtures` to supply demo data.
-- Q7 (Batch 2): Keep the lightweight `when(destination)` router, or convert `ChromaGlowApp` to a
-  Navigation-Compose `NavHost` in Wave 2? (Proposed: keep the `when`-switch to minimize hotspot churn.)
-- 2026-06-28 [Codex]: Keep the existing `when(destination)` router. Navigation Compose adds no value
-  for this bounded demo flow and would expand hotspot/dependency scope.
-- Q8 (Batch 2): Settings "Sign out" in demo mode = clear `demoSession` and return to `Setup`? (Proposed: yes.)
-- 2026-06-28 [Codex]: Yes, but label and expose it as `Exit Demo Mode` / `onExitDemo`; there is no
-  account session or live bridge credential session to sign out in this batch.
-- Q9 (Batch 2): Is serial connected-test scheduling on the single `Pixel_10` acceptable, or provision a
-  second AVD for Wave 1 concurrency? (Proposed: serial.)
-- 2026-06-28 [Codex]: Serial connected-test scheduling is acceptable. Code lanes remain concurrent;
-  device validation is batch-owner serialized to avoid emulator/package-install contention.
+- Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
+  (credentials scope → D-001/D-002; toolchain → D-005; no-unwired-UI → D-006; fixture injection, the
+  `when`-router, `Exit Demo Mode` semantics, and serial single-AVD connected tests → D-008/D-009). Pruned
+  during the 2026-06-28 consolidation.
+- **Active blockers (only open items):** D-001 (pairing TLS bootstrap) and D-002 (canonical bridge
+  identity). No live pairing or credential-persistence work until both resolve.
+- Codex: raise any new question or proposal as a new Decision Log entry (D-010+).
 
 ---
 
-## 7. Batch 1 Manifest — Two-Lane Pilot (execution-ready)
+## 7. Batch 1 — COMPLETE (merged to `main`)
 
-Drafted 2026-06-28 [Claude]; narrowed 2026-06-28 after Codex review (D-006); locally validated and
-unblocked 2026-06-28 after resolving D-005.
-
-Launch prompt: `docs/coordination/prompts/parallel-batch-1-launch.md`.
-
-Next prompt after successful integration:
-1. `docs/coordination/prompts/parallel-batch-1-corrections.md` (resolve D-007 and revalidate).
-2. `docs/coordination/prompts/parallel-batch-2-prepare.md` (planning only; drafts Batch 2 for review).
-
-- **Batch:** `parallel-batch-1`
-- **Base commit:** `origin/main` @ `defe8691345623adac347862cf271320f5d4610d` (fetched 2026-06-28;
-  re-fetch and re-pin if `main` advances before launch).
-- **Integration branch:** `integration/parallel-batch-1` (fork from the base commit above).
-- **Orchestration:** Claude Workflow + worktree isolation.
-- **Batch owner:** Claude. **Lane owners:** one Claude Workflow sub-agent per lane (named below).
-- **Adversarial review:** Codex.
-- **Coordination owner:** the Claude batch owner alone updates `DEVLOG.md`, this manifest, and lane
-  statuses while sub-agents run; lane sub-agents only return handoff text.
-- **Toolchain:** export these values in every lane shell:
-  ```bash
-  export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-  export ANDROID_HOME="$HOME/Library/Android/sdk"
-  export ANDROID_SDK_ROOT="$ANDROID_HOME"
-  ```
-- **Baseline validation:** `testDebugUnitTest lintDebug assembleDebug` passed; all 17
-  `connectedDebugAndroidTest` tests passed on the headless `Pixel_10` AVD before launch.
-- **Hotspot edits:** none. Nav shell (`ChromaGlowApp.kt`, `ChromaGlowDestination.kt`), `ui/theme/**`,
-  `build.gradle.kts`, manifest, `res/values/**` are all §2 collision hotspots and stay untouched.
-
-Two disjoint lanes — the minimum needed to actually rehearse a parallel merge. Both produce
-independently verifiable, non-dead work (no unwired/library-only deliverables).
-
-### Lane 1 — `lane/android1-domain-models` · registry `android-models` · owner: Claude sub-agent A
-- **Globs:** `core/model/**`, `data/demo/**`; tests `app/src/test/java/com/chromaglow/app/core/model/**`, `app/src/test/java/com/chromaglow/app/data/demo/**` (incl. existing `DemoFixturesTest.kt`, `DemoModeBoundaryTest.kt`).
-- **Deliverable:** add `LightDisplayModel` + `SceneDisplayModel`; extend `DemoFixtures` with per-room demo lights and ≥3 demo scenes. Pure Kotlin — no UI, no nav.
-- **Acceptance:** new models guard inputs with `require(...)` like `RoomDisplayModel`; fixtures expose lights per room + demo scenes; JVM unit tests cover validation + fixture shape; existing demo tests still pass.
-- **Justification (unconsumed this batch):** foundation that Batch 2 (room-detail/scenes) needs; validated independently by unit tests, so not dead code.
-- **Forbidden:** all `feature/**`, `ui/**`, `app/**`, nav files, build/manifest/res.
-- **Validation:** `./gradlew testDebugUnitTest` from `android/` with the manifest toolchain exports. Merge only on green.
-- **Overlap check:** disjoint from L2.
-
-### Lane 2 — `lane/android1-dashboard-controls` · registry `android-dashboard` · owner: Claude sub-agent B
-- **Globs:** `feature/dashboard/**`; tests `app/src/androidTest/java/com/chromaglow/app/feature/dashboard/**`.
-- **Deliverable:** add per-room on/off toggle + brightness slider to `DemoRoomRow`, mutating in-memory demo session state (no persistence). Uses the **existing** `RoomDisplayModel` only — no dependency on Lane 1.
-- **Acceptance:** toggling a room flips its `isOn` in the UI; slider updates brightness within 1..100 and reflects in the row; a Compose UI test asserts toggle + slider; no calls into `core/credentials` or discovery.
-- **Forbidden:** `core/model`, `data/demo`, nav files, `ui/theme`, build/manifest.
-- **Validation:** boot `Pixel_10`, then run `./gradlew connectedDebugAndroidTest` with the manifest toolchain exports. Merge only on green.
-- **Overlap check:** `feature/dashboard/**` only; disjoint from L1.
-
-### Deferred (not in Batch 1, with reasons)
-- **Settings screen + reusable loading/empty/error components** — removed per D-006/Q5: unwired = dead
-  UI. Land later with a real caller + behavioral test.
-- **Room-detail + scenes screens and all nav wiring** — edit §2 hotspots (`ChromaGlowApp.kt` NavHost +
-  `ChromaGlowDestination.kt`) and depend on Lane 1 models; a single serialized nav-shell lane, a later batch.
-- **Pairing / credential-persistence** — blocked by D-001/D-002.
-
-### §5 gate self-check
-- Base commit named ✓ · per-lane owner/branch/globs ✓ · deliverable + acceptance ✓ · deps + forbidden
-  files ✓ · no glob overlap; zero §2-hotspot edits ✓ · both lanes mapped to registry entries ✓.
-- Local JDK/SDK/AVD discovered ✓ · baseline build/unit/lint passed ✓ · 17 connected tests passed ✓.
+Android two-lane pilot (`parallel-batch-1`). Planning rationale lives in Decision Log **D-003–D-007**;
+the durable code contracts it established are in **AGENTS.md → "Android Current State"**. The
+launch/correction/prepare prompts under `docs/coordination/prompts/parallel-batch-1-*.md` are retained
+as historical run records. The result record below is the source of truth for what landed.
 
 ### Batch 1 execution result — 2026-06-28 [Claude, batch owner]
-- **State:** Executed and integrated. Not merged to `main` — awaits human final merge.
+- **State:** Executed, integrated, and **merged to `main` @ `a3fe54f`** (corrected Batch 1; see the
+  "Landed on `main`" bullet below).
 - **Base:** `origin/main` @ `defe8691345623adac347862cf271320f5d4610d` (re-fetched and re-verified
   unchanged at launch).
 - **Lane 1** `lane/android1-domain-models` @ `be51edd14dd44fe010d0764e54687d33c0baeef1` — added
@@ -508,154 +411,12 @@ independently verifiable, non-dead work (no unwired/library-only deliverables).
 
 ---
 
-## 8. Batch 2 Manifest — Two-Wave Feature + Nav Integration (execution-ready)
+## 8. Batch 2 — COMPLETE (merged to `main`)
 
-Drafted 2026-06-28 [Claude] from the prepare prompt `docs/coordination/prompts/parallel-batch-2-prepare.md`.
-**Status: EXECUTED** (2026-06-28) — integrated on `integration/parallel-batch-2` @ `4c74beb`, pushed;
-not merged to `main`. See "Batch 2 execution result" at the end of this section. Codex adversarial review
-was accepted in Decision Log **D-008**.
-
-- **Batch:** `parallel-batch-2`
-- **Base commit:** `main` @ `a3fe54f978c3a5a78d7f35605b1c3ff37c23edca` (corrected Batch 1 is on `main`;
-  re-fetch and re-pin if `main` advances before launch).
-- **Integration branch:** `integration/parallel-batch-2` (fork from the base commit above).
-- **Orchestration:** Claude Workflow + worktree isolation. **Batch owner:** Claude. **Adversarial review:** Codex.
-- **Toolchain (every lane shell):** `JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home`,
-  `ANDROID_HOME=$HOME/Library/Android/sdk`, `ANDROID_SDK_ROOT=$ANDROID_HOME`.
-- **Shared AVD constraint:** there is one `Pixel_10` AVD. Code lanes develop concurrently, but the batch
-  owner runs each lane's `connectedDebugAndroidTest` **serially** on the shared device (or provisions an
-  isolated emulator per lane). Wave 1 unit-testable logic should also run under `testDebugUnitTest`.
-- **Batch 1 contracts Wave 1 must honor (consume read-only; see AGENTS.md "Android Current State"):**
-  `LightDisplayModel`, `SceneDisplayModel` (non-blank `bridgeId`), `RoomDisplayModel`;
-  `RoomDisplayModel.lightCount == DemoFixtures.lightsByRoom[room.id].size`; demo scenes use `DEMO_BRIDGE_ID`.
-  Feature source receives model collections through public parameters and does **not** read global
-  fixtures. Feature tests and Wave 2 may read `DemoFixtures.lightsByRoom` / `DemoFixtures.scenes` to
-  supply demo data; no lane edits `core/model/**` or `data/demo/**` (see Q6).
-
-### Structure (two waves; Wave 2 depends on all of Wave 1)
-
-```text
-Wave 1 (parallel, no nav edits — each compiles + is Compose-UI-tested against Batch 1 contracts):
-  ├─ lane/android2-roomdetail   feature/roomdetail/**
-  ├─ lane/android2-scenes       feature/scenes/**
-  └─ lane/android2-settings     feature/settings/**
-        ↓ (all three merged onto integration/parallel-batch-2 first)
-Wave 2 (one serialized lane — owns the §2 nav hotspots, wires + exercises every Wave 1 screen):
-  └─ lane/android2-nav-integration   app/ChromaGlowApp.kt, app/ChromaGlowDestination.kt, feature/dashboard/**
-```
-
-> **No unwired UI as a final result (prepare prompt §4):** Wave 1 screens are behaviorally tested in
-> isolation, but the batch is complete only after Wave 2 wires them into the nav shell and a connected
-> E2E test reaches and exercises each one.
-
-> **`Forbidden` means "no edits."** Every Wave 1 lane MUST read-only import `core/model` (the display
-> models) and `DemoFixtures` in its source + tests — that is required, not forbidden. Forbidden lists bar
-> *editing* those globs, not referencing them.
-
-### Wave 1 — Lane R · `lane/android2-roomdetail` · registry `android-roomdetail` · owner: Claude sub-agent A
-- **Globs:** `feature/roomdetail/**`; tests `androidTest/java/com/chromaglow/app/feature/roomdetail/**`.
-- **Deliverable:** `RoomDetailScreen(room: RoomDisplayModel, lights: List<LightDisplayModel>,
-  onLightToggle: (String, String, Boolean) -> Unit = {},
-  onLightBrightnessChange: (String, String, Int) -> Unit = {},
-  onBack: () -> Unit = {}, modifier: Modifier = Modifier)` — room header + one row per light (name, on/off
-  `Switch`, brightness `Slider`). Mirror the landed Batch 1 pattern: seed internal
-  `remember(lights) { mutableStateListOf<LightDisplayModel>().apply { addAll(lights) } }`, mutate via
-  `LightDisplayModel.copy(...)` on interaction so the row re-renders, AND forward
-  `onLightToggle(light.bridgeId, light.id, isOn)` /
-  `onLightBrightnessChange(light.bridgeId, light.id, brightness)` for Wave 2. The slider must use
-  `valueRange = 1f..100f` and `coerceIn(1, 100)`
-  before any `copy(brightness = …)` (LightDisplayModel requires `brightness in 1..100`; 0 would crash).
-  Public signature is the Wave 2 wiring contract.
-- **Acceptance:** given `DemoFixtures.lightsByRoom[room.id] ?: emptyList()`, renders exactly
-  `room.lightCount` light rows (exercises the D-007 invariant); toggling a light flips its `isOn` in the
-  UI; the slider updates brightness within 1..100 and reflects in the row; callbacks return the selected
-  light's `bridgeId` and `id`; a Compose UI test asserts all three plus `onBack`.
-- **Forbidden (no edits):** nav files, `core/model`, `data/demo`, `feature/dashboard|scenes|settings`,
-  `ui/theme`, build/manifest/res.
-- **Validation:** `connectedDebugAndroidTest` (serialized). **Overlap:** disjoint from S, T, N.
-
-### Wave 1 — Lane S · `lane/android2-scenes` · registry `android-scenes` · owner: Claude sub-agent B
-- **Globs:** `feature/scenes/**`; tests `androidTest/java/com/chromaglow/app/feature/scenes/**`.
-- **Deliverable:** `ScenesScreen(scenes: List<SceneDisplayModel>, roomNames: Map<String, String> = emptyMap(),
-  onActivateScene: (String, String) -> Unit = {}, onBack: () -> Unit = {}, modifier: Modifier = Modifier)` — one
-  row per scene (name; target room shown as `roomNames[scene.roomId] ?: scene.roomId`; active indicator).
-  Hold active state internally (`remember(scenes) { … }`); activation is **exclusive** (activating one sets
-  it `isActive = true` via `copy(...)` and clears the others), and forwards
-  `onActivateScene(scene.bridgeId, scene.id)` for Wave 2 so the caller can route by bridge.
-- **Acceptance:** renders all `DemoFixtures.scenes`; activating a currently-INACTIVE scene (e.g. Energize /
-  Focus / Nightlight — `Relax` ships active) updates the active indicator and clears the previous; a Compose
-  UI test asserts render + exclusive activation + the selected scene's `bridgeId`/`id` callback + `onBack`.
-  (The "every demo scene carries a non-blank
-  `bridgeId`" invariant is already covered by Batch 1's `DemoFixturesLightsScenesTest`, so it is NOT
-  re-asserted in this UI test — a non-rendered field is not observable via Compose semantics.)
-- **Forbidden (no edits):** nav files, `core/model`, `data/demo`, `feature/dashboard|roomdetail|settings`,
-  `ui/theme`, build/manifest/res.
-- **Validation:** `connectedDebugAndroidTest` (serialized). **Overlap:** disjoint from R, T, N.
-
-### Wave 1 — Lane T · `lane/android2-settings` · registry `android-settings` · owner: Claude sub-agent C
-- **Globs:** `feature/settings/**`; tests `androidTest/java/com/chromaglow/app/feature/settings/**`.
-- **Deliverable:** `SettingsScreen(isDemoMode: Boolean, appVersion: String, onExitDemo: () -> Unit = {},
-  onBack: () -> Unit = {}, modifier: Modifier = Modifier)` — demo-mode status, app version (a plain
-  `String` supplied by the caller), and an "Exit Demo Mode" action. No persistence, no credential
-  wiring. **`appVersion` is a passed-in literal** — do NOT read `BuildConfig.VERSION_NAME` (BuildConfig is
-  disabled on `main`) or enable it; Wave 2 supplies the version string (literal `"1.0"` matching
-  `defaultConfig.versionName`, or via `PackageManager` from `LocalContext` — no `build.gradle.kts` edit).
-- **Acceptance:** renders the demo-mode indicator + version; "Exit Demo Mode" invokes `onExitDemo`;
-  Compose UI test asserts render + `onExitDemo` + `onBack`.
-- **Forbidden (no edits):** `core/model`, `core/credentials` (pairing/persistence blocked by D-001/D-002),
-  `data/demo`, nav files, `feature/dashboard|roomdetail|scenes`, `ui/theme`, build/manifest/res.
-- **Validation:** `connectedDebugAndroidTest` (serialized). **Overlap:** disjoint from R, S, N.
-
-### Wave 2 — Lane N · `lane/android2-nav-integration` · registry `android-nav-shell` (+ reclaims `android-dashboard` for this batch) · owner: Claude sub-agent D
-- **Globs:** `app/ChromaGlowApp.kt`, `app/ChromaGlowDestination.kt` (§2 nav hotspots — single owner this
-  batch); `feature/dashboard/**` (additive entry-point callbacks only); **its androidTest packages
-  `androidTest/java/com/chromaglow/app/feature/dashboard/**` (owns the existing `DemoRoomControlsTest`) and
-  a NEW `androidTest/java/com/chromaglow/app/app/NavIntegrationE2ETest.kt`.** Lane N may also edit the
-  existing `app/ChromaGlowAppTest.kt` if its assertions need updating (it owns the nav shell), but must keep
-  it green.
-- **Deliverable:** extend `ChromaGlowDestination` with `RoomDetail`, `Scenes`, `Settings`; route
-  `ChromaGlowApp` to each Wave 1 screen with the right demo data (room → `DemoFixtures.lightsByRoom[id] ?:
-  emptyList()`; scenes → `DemoFixtures.scenes` with `roomNames` from `DemoFixtures.rooms`; settings → demo
-  flags + a literal `appVersion`). Add reachable entry points **additively**: a discrete affordance on
-  `DemoRoomRow` (a tappable room-name `Text` or a trailing chevron `IconButton` with its own `testTag` and a
-  default-no-op `onOpenRoom: () -> Unit = {}`) — do NOT make the whole row clickable or alter the `Switch`,
-  `Slider`, or the exact status-line text; add explicit Scenes / Settings buttons on
-  `DashboardPlaceholderScreen`. Wire back navigation.
-- **Acceptance:** the new connected E2E test navigates Setup → Demo → Dashboard; opens RoomDetail and
-  toggles one light plus changes brightness; returns and opens Scenes, activates an inactive scene, and
-  verifies exclusive activation; returns and opens Settings, verifies version/demo status, exercises
-  back, reopens Settings, then exits demo mode and verifies Setup. The existing
-  `ChromaGlowAppTest` and `DemoRoomControlsTest` stay green (additive-only changes preserve their literal
-  assertions, e.g. `"On · 78% · 5 lights"`, `"Back to Setup"`).
-- **Forbidden (no edits):** `core/model`, `data/demo`, `ui/theme`, build/manifest/res, and the Wave 1
-  feature internals (`feature/roomdetail|scenes|settings/**` — it calls their public composables, does not
-  edit them).
-- **Dependencies:** all three Wave 1 lanes merged first. **Validation:** full gate
-  `testDebugUnitTest lintDebug assembleDebug connectedDebugAndroidTest`.
-
-### Out of scope (per prepare prompt §5)
-- Pairing, credential-persistence wiring, REST, SSE, NUPnP, Studio, Composer, DTLS, microphone, widgets,
-  Wear OS. No edits to `core/model/**`, `data/demo/**`, `ui/theme/**`, build/manifest/res (incl. enabling
-  `BuildConfig`).
-
-### Promotion gate (enforces "no unwired UI")
-- Wave 1 lanes merge to `integration/parallel-batch-2` first, so integration transiently holds unwired
-  screens. `integration/parallel-batch-2` is **not eligible for the human final merge to `main` until Lane
-  N's connected E2E is green** (every Wave 1 screen reachable + exercised). A Wave-2 failure therefore can
-  never land unwired UI on `main`.
-
-### §5 gate self-check
-- Base commit named (`a3fe54f`, Batch 1 on `main`) ✓ · per-lane owner (A–D)/branch/globs ✓ · every lane
-  mapped to a §1 registry entry (`android-roomdetail|scenes|settings|nav-shell`; nav-shell reclaims
-  `android-dashboard`) ✓ · deliverables + acceptance ✓ · deps (Wave 2 ⇐ Wave 1) + forbidden files ✓ ·
-  Wave 1 globs disjoint; only Wave 2 touches §2 nav hotspots (single-owner) and owns its matching
-  androidTest ✓ · no unwired-UI final result (promotion gate) ✓ · shared-AVD serialization noted ✓ ·
-  `appVersion` sourced without a build edit ✓ · bridge-aware light/scene callbacks ✓ · Q6–Q9 resolved ✓.
-- **Execution-approved:** D-008 accepted; launch prompt marked Ready.
-
-### Resolved Decisions
-- See **D-008** and §6 **Q6–Q9** for fixture injection, router, exit-demo semantics, and shared-AVD
-  scheduling decisions.
+Android two-wave feature + nav-integration batch (`parallel-batch-2`). Planning rationale lives in
+Decision Log **D-008 / D-009**; the durable code contracts are in **AGENTS.md → "Android Current State"**.
+The prepare / launch / correction prompts under `docs/coordination/prompts/parallel-batch-2-*.md` are
+retained as historical run records. The result record below is the source of truth for what landed.
 
 ### Batch 2 execution result — 2026-06-28 [Claude, batch owner]
 - **State:** Executed, integrated, D-009-corrected, and **merged to `main` @ `7ed6468`** (2026-06-28,
@@ -693,3 +454,32 @@ Wave 2 (one serialized lane — owns the §2 nav hotspots, wires + exercises eve
 - **Codex final review:** correction boundary and lifecycle behavior verified; full gate independently
   reproduced green at `9411d81` (84 unit, lint, assemble, 34 connected). D-009 is resolved and Batch 2
   is merge-ready.
+
+---
+
+## 9. Current Pipeline State & Next Steps
+
+- **On `main` @ `7ed6468`** — the Android demo flow is end-to-end: Setup → Dashboard (per-room on/off +
+  brightness) → RoomDetail (per-light controls) / Scenes (exclusive activation) / Settings (Exit Demo
+  Mode); all demo mutations survive navigation (in-memory, owned by `ChromaGlowApp`). Both pilot batches
+  (8 lanes across two batches + two correction lanes) are merged. No batch is in flight.
+- **Durable code contracts** (the acceptance baseline for any future change) live in **AGENTS.md →
+  "Android Current State"**: model `require(...)` guards; `RoomDisplayModel.lightCount ==
+  DemoFixtures.lightsByRoom[id].size`; scenes carry a non-blank `bridgeId` (= `DEMO_BRIDGE_ID`);
+  app-owned demo state seeded on demo-enter and cleared on exit; bridge-aware
+  `(bridgeId, lightId|sceneId, value)` callbacks; the lightweight `when`-router (not Navigation-Compose);
+  `appVersion` passed as a literal (BuildConfig disabled); single `Pixel_10` AVD ⇒ connected tests run
+  serially.
+- **Active blockers:** **D-001** (safe pairing TLS bootstrap) and **D-002** (canonical stable bridge
+  identity). Until both resolve: no live pairing, no credential-persistence wiring; `core/credentials`
+  is hardening-only.
+- **For Codex — verifying what's done:** check out `main` @ `7ed6468` (or compare against
+  `integration/parallel-batch-2` @ `9411d81`); the per-batch result records are §7/§8; the full decision
+  trail is §6 (D-001–D-009). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
+  with the `Pixel_10` AVD booted, `connectedDebugAndroidTest` (expect unit 84/0, connected 34/0).
+- **For Codex — proposing adjustments / corrections / a Batch 3:** append a new Decision Log entry
+  (**D-010+**) describing the change; flag any AGENTS.md contract you want to revise. For a code batch,
+  draft a manifest per §5 from the current `main`, map every lane to a §1 registry entry, keep
+  pairing/persistence behind D-001/D-002, and route any §2 hotspot edit (nav shell, theme, build,
+  manifest, res) through a single serialized lane. Then a launch prompt under
+  `docs/coordination/prompts/` makes it executable.

@@ -12,13 +12,9 @@
 - Git is the shared memory between tools; commit/push handoff updates when another agent needs them.
 - iOS production anchor: native Swift/SwiftUI app in `HueHome/`.
 - iOS build scheme: `HueHome 1` (not `HueHome`).
-- Android baseline: native Kotlin/Jetpack Compose project exists under `android/`.
-- Android completed baseline includes app shell, dark Material theme placeholders, demo fixtures, Android Keystore credential boundary, mDNS chooser, manual IP entry, NUPnP deferral record, and pairing TLS/identity blocker record.
-- Android live pairing is blocked until safe TLS bootstrap and canonical bridge identity are decided.
-- Latest local Android validation observed by Codex: Android Studio's bundled JDK plus `~/Library/Android/sdk` passed unit tests, lint, assembly, and all 17 connected tests on the `Pixel_10` AVD.
-- Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`.
-- Android parallel Batch 1 is COMPLETE and **merged to `main` @ `a3fe54f`** (via integration `0d7c218`): two lanes (demo domain models incl. `LightDisplayModel`/`SceneDisplayModel`; dashboard on/off + brightness controls) plus the D-007 corrections (scene `bridgeId` routing; `lightCount` == `lightsByRoom[room.id].size`). Pre-merge gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on `Pixel_10`. D-007 is RESOLVED. Demo-model/fixture contracts are recorded in `AGENTS.md` → "Android Current State".
-- Android parallel Batch 2 is **merged to `main` @ `7ed6468`** (2026-06-28): Wave 1 = `roomdetail`/`scenes`/`settings` feature packages, Wave 2 = `nav-shell` integration, plus the D-009 state-ownership fix (demo room/light/scene state hoisted into `ChromaGlowApp` so mutations survive navigation). `--no-ff` from `integration/parallel-batch-2` @ `9411d81`; gate green before merge (`testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on `Pixel_10`, incl. a persistence E2E), independently verified by Codex.
+- Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `7ed6468`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
+- Android live pairing + credential-persistence are BLOCKED until D-001 (safe TLS bootstrap) and D-002 (canonical bridge identity) resolve; `core/credentials` is hardening-only.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`; no batch in flight. Validation on `main`: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on the `Pixel_10` AVD.
 
 ### Handoff Entry Template
 
@@ -45,6 +41,41 @@
 ```
 
 ---
+
+## 2026-06-28 - [Claude] Consolidate coordination docs (prune historical batch detail)
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Re-consolidated the agent-facing docs so Codex reads the full current scope with no stale content,
+  now that Batches 1 & 2 are on `main` @ `7ed6468`:
+  - `AGENTS.md` → "Android Current State" rewritten as the single authoritative inventory of what's
+    shipped on `main` (Setup/Dashboard/RoomDetail/Scenes/Settings + app-owned demo state) plus the full
+    durable code-contract list (model guards, lightCount invariant, scene `bridgeId`, fixture surface,
+    state ownership + bridge-aware callbacks, `when`-router, `appVersion` literal, single-AVD serial).
+  - `docs/coordination/parallel-agent-pipeline.md`: removed the obsolete §4 "Original Pilot Draft";
+    pruned the resolved Open Questions (Q1–Q9); condensed the executed §7/§8 manifests to compact
+    COMPLETE records (keeping the execution-result evidence); refreshed §1 registry statuses to
+    `merged → main`; generalized §3 to `batch-N`; added a current-state line to the Status header and a
+    new §9 "Current Pipeline State & Next Steps" with explicit hooks for Codex to verify and to propose
+    D-010+ adjustments / a Batch 3. Decision Log turns (D-001–D-009) were preserved verbatim.
+  - `DEVLOG.md` snapshot consolidated; dropped the superseded pre-pilot "17 connected tests" baseline.
+
+### Working
+- Docs reflect the current `main` (both batches merged); historical/planning scaffolding pruned; the
+  Decision Log audit trail and per-batch result records are intact.
+
+### Left
+- No code change. Next substantive work is Codex review / a Batch 3 proposal as a new Decision Log entry
+  (see pipeline §9). D-001/D-002 remain the active blockers.
+
+### Validation
+- Docs-only; `git diff --check` clean. No Android source touched.
+
+### Gotchas
+- The pipeline Decision Log is append-only ("never rewrite another agent's turn"); consolidation pruned
+  only the operational scaffolding (manifests/draft/resolved questions), never the dated decision turns.
 
 ## 2026-06-28 - [Claude] Merge parallel Batch 2 to main
 

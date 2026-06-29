@@ -2,7 +2,7 @@
 
 This is the canonical project handoff for Codex, Claude, Cursor, and other coding agents. Do not duplicate this full context into tool-specific files. Tool-specific entry files, including `CLAUDE.md`, should point here.
 
-Last consolidated: 2026-06-24 · Android parallel Batch 1 result + demo-model/fixture contracts added 2026-06-28 (see "Android Current State").
+Last consolidated: 2026-06-24 · re-consolidated 2026-06-28 after Android parallel Batches 1 & 2 landed on `main` @ `7ed6468` (see "Android Current State").
 
 ## Startup Order
 
@@ -204,39 +204,58 @@ Do not modify these without explicit task scope.
 
 ## Android Current State
 
-Android is no longer "not started." Current repo state includes:
+Android is a working Kotlin/Compose **demo MVP on `main` @ `7ed6468`**; both parallel-pipeline pilot
+batches are merged. Audit/detail: `docs/coordination/parallel-agent-pipeline.md` (§7, §8, §9 + Decision
+Log) and the `DEVLOG.md` handoffs.
 
-- Standalone Gradle/Kotlin/Compose project under `android/`
-- App namespace/applicationId `com.chromaglow.app`
-- Compose app shell and setup/dashboard route boundary
-- Noir/dark Material theme placeholders
-- Demo-mode domain fixtures
-- Android Keystore-backed API-token credential boundary
-- mDNS bridge-discovery chooser through `NsdManager`
-- Manual IP/hostname entry parser and setup UI path
-- NUPnP fallback inventory with gated deferral
-- Pairing TLS / stable-identity decision blocker
+**Shipped on `main`** (`android/`, package `com.chromaglow.app`):
 
-Current Android blocker:
+- Standalone Gradle/Kotlin/Jetpack Compose project; noir/dark Material theme; `MainActivity` →
+  `ChromaGlowApp` lightweight `when(destination)` router (`ChromaGlowDestination`: Setup, Dashboard,
+  RoomDetail, Scenes, Settings).
+- **Setup** (`feature/setup`): mDNS bridge-discovery chooser via `NsdManager`, manual IP/hostname entry
+  parser, NUPnP-deferral record, "Enter Demo Mode" entry. Pairing not wired (blocked — see below).
+- **Demo domain** (`core/model`, `data/demo`): `RoomDisplayModel`, `LightDisplayModel`,
+  `SceneDisplayModel` (all guard inputs in `init { require(...) }`); `DemoFixtures` (rooms + per-room
+  lights + scenes) and `DemoModeBoundary`/`DemoModeSession`.
+- **Dashboard** (`feature/dashboard`): per-room on/off `Switch` + brightness `Slider`, plus discrete
+  open-room / Scenes / Settings entry points.
+- **Room detail** (`feature/roomdetail`): per-light on/off + brightness controls.
+- **Scenes** (`feature/scenes`): scene list with exclusive activation.
+- **Settings** (`feature/settings`): demo-mode status, app version, "Exit Demo Mode".
+- **App-owned demo state:** `ChromaGlowApp` holds room/light/scene state (seeded on demo-enter, cleared
+  on exit), so all in-memory demo mutations survive navigation. No persistence/networking.
+- **Security boundary:** Android Keystore-backed API-token credential store exists (no live pairing yet).
 
-- Do not add live pairing code until both are decided:
-  - safe TLS bootstrap for Hue self-signed bridge HTTPS
-  - canonical stable bridge identity for credential aliasing
+**Active blockers — do not implement until BOTH are decided:**
 
-Do not implement trust-all TLS managers, permissive hostname verifiers, blind certificate acceptance, or fabricated bridge IDs.
+- **D-001** safe TLS bootstrap for Hue self-signed bridge HTTPS; **D-002** canonical stable bridge
+  identity for credential aliasing. No live pairing or credential-persistence wiring; `core/credentials`
+  is hardening-only.
+- Never implement trust-all TLS managers, permissive hostname verifiers, blind certificate acceptance,
+  or fabricated bridge IDs.
 
-### Parallel Batch 1 result (merged to `main` @ `a3fe54f`)
+**Durable code contracts (acceptance baseline — each enforced by a test; keep green for any change):**
 
-Two-lane pilot landed and the D-007 contract corrections applied; **merged to `main` @ `a3fe54f` (2026-06-28)** via integration `0d7c218`. Gate green before merge (`testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on the headless `Pixel_10`). Full record: `DEVLOG.md` and `docs/coordination/parallel-agent-pipeline.md` (§7 + Decision Log D-007). **Batch 2** is executed and integrated on `integration/parallel-batch-2` @ `4c74beb` (room-detail / scenes / settings feature screens + serialized nav integration); gate independently reproduced green (`testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 33/0 on `Pixel_10`). **D-009 is resolved** (correction `lane/android2-state-ownership-correction` @ `16810a1`): demo room/light/scene state is hoisted into `ChromaGlowApp` (seeded on demo enter, cleared on exit) and the bridge-aware dashboard/room-detail/scenes callbacks are consumed, so in-memory mutations survive navigation; corrected integration `9411d81`, gate green (`testDebugUnitTest` 84/0, `connectedDebugAndroidTest` 34/0, incl. a persistence E2E). Pushed; **not** merged to `main` — eligible, awaiting the human collaborator's go-ahead.
+- **Model guards:** ids/names non-blank; `brightness in 1..100` (0 throws). Sliders use
+  `valueRange = 1f..100f` + `coerceIn(1, 100)` before any `copy(brightness = …)`.
+- **Fixture light-count invariant:** every `RoomDisplayModel.lightCount` == `DemoFixtures.lightsByRoom[room.id].size`
+  (test `rooms_lightCountMatchesLightsByRoomSize`). Current demo counts: Bedroom 4, Kitchen 8, Living 5,
+  Office 2 — keep in sync when changing rooms/lights.
+- **Scene bridge routing:** `SceneDisplayModel` carries a required non-blank `bridgeId`; demo scenes use
+  `DEMO_BRIDGE_ID = "demo-bridge-main"`. Route scene actions by `bridgeId` (do not fabricate/omit it).
+- **Fixture surface:** `DemoFixtures` exposes `rooms`, `lights`, `lightsByRoom` (grouped by room id),
+  `scenes` (≥3). Do not mutate existing `rooms` values — connected tests assert their exact text.
+- **State ownership + callbacks:** `ChromaGlowApp` is the single owner of in-memory demo state; feature
+  screens take models by parameter and expose bridge-aware callbacks `(bridgeId, lightId|sceneId, value)`
+  — only the app shell and tests read `DemoFixtures`. Scene activation is exclusive.
+- **Nav + build:** keep the `when(destination)` router (not Navigation-Compose); `appVersion` is passed
+  as a literal (BuildConfig is disabled — do not enable it). Single `Pixel_10` AVD ⇒ run
+  `connectedDebugAndroidTest` serially.
 
-- Demo display models in `core/model`: `RoomDisplayModel`, `LightDisplayModel`, `SceneDisplayModel`. All guard inputs in `init { require(...) }` (non-blank ids/names, `brightness in 1..100`).
-- `feature/dashboard`: `DemoRoomRow` has an on/off `Switch` + brightness `Slider` that mutate in-memory demo session state (no persistence); `DashboardPlaceholderScreen`'s public signature is unchanged (the nav shell calls it).
+**Pipeline status:** Batches 1 & 2 complete; no batch in flight. To propose a Batch 3 or any correction,
+append a Decision Log entry (D-010+) in the pipeline doc (see its §9).
 
-Demo-model / fixture contracts Batch 2 must honor (each is enforced by a unit test — keep them green):
-
-- **Fixture light-count invariant:** every `RoomDisplayModel.lightCount` MUST equal `DemoFixtures.lightsByRoom[room.id].size`. When adding/removing rooms or demo lights, keep both in sync (test `rooms_lightCountMatchesLightsByRoomSize`). Current demo counts: Bedroom 4, Kitchen 8, Living 5, Office 2.
-- **Scene bridge routing:** `SceneDisplayModel` carries a required non-blank `bridgeId`; all demo scenes use `DemoFixtures.DEMO_BRIDGE_ID`. A scenes lane must select the correct bridge client via this `bridgeId` (do not fabricate or omit it).
-- **Fixture surface:** `DemoFixtures` exposes `rooms`, `lights`, `lightsByRoom` (lights grouped by room id), and `scenes` (≥3); `DEMO_BRIDGE_ID = "demo-bridge-main"`. Do not mutate the existing `rooms` values — connected tests assert their exact text.
 
 ## Validation Commands
 
