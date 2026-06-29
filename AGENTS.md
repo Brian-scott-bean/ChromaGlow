@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a scaffold, theme, demo fixtures, credential boundary, mDNS chooser, manual-IP entry, and pairing is blocked until safe TLS bootstrap plus canonical bridge identity are decided. Parallel Batch 1 is merged to `main` @ `a3fe54f`; Batch 2 (room-detail / scenes / settings + nav integration, with the D-009 state-ownership correction so demo mutations survive navigation) is **merged to `main` @ `7ed6468`** (gate green: unit 84/0, connected 34/0).
+ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a complete demo flow plus discovery/manual entry and a secure credential boundary. The D-001/D-002 TLS and canonical-identity contracts are accepted; Batch 3 is prepared to implement tested pairing foundations (protocol, CA/identity verification, HTTPS transport) without UI wiring or credential persistence. Batches 1 and 2 are merged to `main` @ `7ed6468` (gate green: unit 84/0, connected 34/0).
 
 ## Current Branch/Repo Facts
 
@@ -214,7 +214,7 @@ Log) and the `DEVLOG.md` handoffs.
   `ChromaGlowApp` lightweight `when(destination)` router (`ChromaGlowDestination`: Setup, Dashboard,
   RoomDetail, Scenes, Settings).
 - **Setup** (`feature/setup`): mDNS bridge-discovery chooser via `NsdManager`, manual IP/hostname entry
-  parser, NUPnP-deferral record, "Enter Demo Mode" entry. Pairing not wired (blocked — see below).
+  parser, NUPnP-deferral record, "Enter Demo Mode" entry. Pairing UI is not wired yet.
 - **Demo domain** (`core/model`, `data/demo`): `RoomDisplayModel`, `LightDisplayModel`,
   `SceneDisplayModel` (all guard inputs in `init { require(...) }`); `DemoFixtures` (rooms + per-room
   lights + scenes) and `DemoModeBoundary`/`DemoModeSession`.
@@ -227,13 +227,19 @@ Log) and the `DEVLOG.md` handoffs.
   on exit), so all in-memory demo mutations survive navigation. No persistence/networking.
 - **Security boundary:** Android Keystore-backed API-token credential store exists (no live pairing yet).
 
-**Active blockers — do not implement until BOTH are decided:**
+**Accepted Android pairing security contract (D-001/D-002/D-012, 2026-06-29):**
 
-- **D-001** safe TLS bootstrap for Hue self-signed bridge HTTPS; **D-002** canonical stable bridge
-  identity for credential aliasing. No live pairing or credential-persistence wiring; `core/credentials`
-  is hardening-only.
-- Never implement trust-all TLS managers, permissive hostname verifiers, blind certificate acceptance,
-  or fabricated bridge IDs.
+- Bundle the two human-supplied Hue CA roots verified at
+  `/Users/brianbean/Desktop/chromaglow-hue-ca/`; accept only chains to those roots.
+- Current SAN-less Hue bridge leaves are identified by a narrowly scoped, case-insensitive leaf-CN ==
+  normalized `bridgeid` check after chain validation. Never use a trust-all manager, always-true hostname
+  verifier, TOFU, blind certificate acceptance, or fabricated bridge ID.
+- Canonical identity is uppercase 16-hex `bridgeid`; mDNS name/TXT, host, and port are discovery hints.
+  A CA-validated leaf CN establishes identity; `/api/0/config.bridgeid` must then match it.
+- MVP supports CA-signed bridges only. Legacy self-signed bridges fail closed with firmware-update
+  guidance. Omit `generateclientkey`; do not persist `CLIENT_KEY`.
+- D-001/D-002 acceptance authorizes the bounded Batch 3 foundation manifest only. Live setup UI,
+  credential persistence wiring, and physical pairing remain out of scope until a later accepted batch.
 
 **Durable code contracts (acceptance baseline — each enforced by a test; keep green for any change):**
 
@@ -253,11 +259,10 @@ Log) and the `DEVLOG.md` handoffs.
   as a literal (BuildConfig is disabled — do not enable it). Single `Pixel_10` AVD ⇒ run
   `connectedDebugAndroidTest` serially.
 
-**Pipeline status:** Batches 1 & 2 complete; no batch in flight. D-011/D-012 evidence is complete: the
-human-supplied two-certificate Hue CA bundle is locally verified outside Git at
-`/Users/brianbean/Desktop/chromaglow-hue-ca/`. D-001/D-002 remain DEFERRED only until explicit human/Codex
-acceptance of the recorded TLS/identity/legacy policy. No pairing-focused Batch 3 is authorized before
-that acceptance. Raise additional proposals as D-013+ in the pipeline doc (see its §9).
+**Pipeline status:** Batches 1 & 2 complete. D-001/D-002/D-011/D-012 are ACCEPTED. The Batch 3 pairing
+foundation manifest and Claude launch prompt are READY in the pipeline doc §10 and
+`docs/coordination/prompts/parallel-batch-3-launch.md`; Batch 3 is not launched or merged. Raise additional
+proposals as D-014+ in the pipeline doc.
 
 
 ## Validation Commands
@@ -323,7 +328,8 @@ Known iOS security risk:
 Known Android security decision:
 
 - API token storage uses Android Keystore-backed AES-GCM blob storage under `noBackupFilesDir`.
-- Live pairing remains blocked until TLS and bridge identity are decided.
+- Pairing trust/identity contracts are accepted as documented above. Batch 3 implements foundations only;
+  no live UI or credential write is authorized in that batch.
 
 ## Hue API Rules
 
@@ -358,7 +364,7 @@ Known Android security decision:
 - Use defensive permission/state machines for local network behavior.
 - Do not use trust-all TLS managers.
 - Do not blindly return `true` in hostname verification.
-- Design for explicit Hue self-signed certificate policy.
+- Enforce the accepted Hue CA-signed-only certificate and canonical-identity policy.
 - Use Kotlin data classes for UI state where possible.
 - Avoid custom equality/diff bugs.
 - Do not implement Studio/composer/DTLS/mic/widgets/Wear OS before MVP.
@@ -454,8 +460,7 @@ iOS:
 
 Android:
 
-- Resolve pairing TLS bootstrap policy.
-- Resolve canonical bridge identity contract.
+- Execute and review the bounded Batch 3 pairing-foundation manifest before any setup/persistence wiring.
 - Run Gradle validation only when JDK/Android toolchain is available.
 - Continue MVP slices without copying iOS monolith patterns.
 

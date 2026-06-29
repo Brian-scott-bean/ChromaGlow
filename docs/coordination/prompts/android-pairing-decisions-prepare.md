@@ -2,9 +2,8 @@
 
 ## Status
 
-- **State:** COMPLETED 2026-06-28 — proposal committed at `02c7271`, Codex-reviewed at `80d8c0c`, and
-  supplemented by the redacted real-bridge probe at `a92fa6c`. Do not rerun; continue with
-  `android-pairing-evidence-close.md`.
+- **State:** COMPLETED — proposal, probe, CA verification, and final D-001/D-002 acceptance are recorded.
+  Do not rerun; Batch 3 continues at `parallel-batch-3-launch.md`.
 - **Purpose:** Produce reviewable resolutions for D-001 (TLS bootstrap) and D-002 (canonical bridge
   identity) before any Android pairing implementation or Batch 3 manifest.
 - **Pinned code base:** `origin/main` @ `7ed64687b600e9456d32510fa86e709c841fefd5`

@@ -2,8 +2,8 @@
 
 ## Status
 
-- **State:** COMPLETED 2026-06-28 at `46d9cda`; the human supplied the CA bundle on 2026-06-29 and Codex
-  verified it locally. See the decision doc verification section. Do not rerun.
+- **State:** COMPLETED — the human supplied the CA bundle on 2026-06-29, Codex verified it locally, and
+  D-001/D-002/D-012 are ACCEPTED. Do not rerun; Batch 3 continues at `parallel-batch-3-launch.md`.
 - **Purpose:** Close the remaining D-001/D-002 evidence, propose the legacy-bridge policy, and prepare
   an explicit acceptance packet before any Batch 3 implementation manifest.
 - **Pinned code base:** `origin/main` @ `7ed64687b600e9456d32510fa86e709c841fefd5`

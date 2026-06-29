@@ -13,8 +13,9 @@
 - iOS production anchor: native Swift/SwiftUI app in `HueHome/`.
 - iOS build scheme: `HueHome 1` (not `HueHome`).
 - Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `7ed6468`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
-- Android live pairing + credential-persistence are BLOCKED until D-001 (safe TLS bootstrap) and D-002 (canonical bridge identity) resolve; `core/credentials` is hardening-only.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`; no batch in flight. D-011/D-012 evidence is complete and the supplied Hue CA bundle is locally verified outside Git; next action is explicit human/Codex acceptance. No Batch 3 until D-001/D-002 acceptance. Validation on `main`: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on the `Pixel_10` AVD.
+- Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 is foundations
+  only; Setup UI, credential persistence, and physical pairing remain later scope.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`. Batch 3 manifest/prompt are READY at §10 and `docs/coordination/prompts/parallel-batch-3-launch.md`, not launched. Validation baseline on `main`: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on the `Pixel_10` AVD.
 
 ### Handoff Entry Template
 
@@ -41,6 +42,33 @@
 ```
 
 ---
+
+## 2026-06-29 - [Codex] Accept pairing contract and prepare Batch 3 foundations
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Recorded the human's explicit D-001/D-002/D-012 acceptance and marked D-001/D-002/D-011/D-012
+  ACCEPTED. Added the accepted pairing security contract to `AGENTS.md`.
+- Reviewed current `origin/main` @ `7ed6468` and prepared the READY three-wave Batch 3 manifest plus
+  `docs/coordination/prompts/parallel-batch-3-launch.md` under D-013.
+
+### Working
+- Batch 3 serializes dependency/CA bootstrap, parallelizes protocol and TLS/identity foundations, then
+  serially integrates an HTTPS transport. It uses the two locally verified CA files and structured JSON.
+
+### Left
+- Batch 3 is ready but not launched. Claude may execute the launch prompt; final integration-to-main
+  merge still requires explicit human go-ahead. Setup UI/persistence/physical pairing are not in Batch 3.
+
+### Validation
+- Docs-only; manifest reviewed against `origin/main` @ `7ed6468`; dependency versions verified against
+  official release repositories; `git diff --check` clean. No Android source or certificate bytes changed.
+
+### Gotchas
+- The docs branch does not contain Batch 2 source, so all Batch 3 source/path review used Git objects from
+  `origin/main`, not the docs-branch working tree.
 
 ## 2026-06-29 - [Codex] Store and verify supplied Hue CA bundle
 

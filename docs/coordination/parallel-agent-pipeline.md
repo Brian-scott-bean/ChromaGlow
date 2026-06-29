@@ -9,9 +9,9 @@
 - **Type:** Process / coordination contract.
 - **Consolidated:** 2026-06-24 · **re-consolidated 2026-06-28** (pruned historical Batch 1/2 manifests
   and resolved questions after both batches landed on `main`).
-- **Current state:** Android pilot Batches 1 & 2 are **complete and merged to `main` @ `7ed6468`**
-  (see §7, §8, §9). Active blockers: **D-001** (pairing TLS) and **D-002** (bridge identity). No batch
-  is in flight.
+- **Current state:** Android pilot Batches 1 & 2 are **complete and merged to `main` @ `7ed6468`**.
+  D-001/D-002/D-011/D-012 are accepted. Batch 3 pairing foundations are **READY, not launched**, from
+  pinned `origin/main` @ `7ed6468` (see §6, §9, §10).
 - **Canonical rules live in:** `AGENTS.md` → "Parallel Agent Pipeline" section + "Android Current State"
   (the durable feature inventory + code contracts). This doc is the operational registry + decision log.
 
@@ -39,13 +39,17 @@ for a future batch).
 | --- | --- | --- | --- | --- |
 | `android-setup` | `android/app/src/main/java/com/chromaglow/app/feature/setup/**` | Yes | unscoped | — |
 | `android-dashboard` | `android/app/src/main/java/com/chromaglow/app/feature/dashboard/**` | Yes | merged → `main` (Batch 1 controls + Batch 2 nav entry points) | Claude |
-| `android-credentials` | `android/app/src/main/java/com/chromaglow/app/core/credentials/**`, `…/core/hue/discovery/**` | Yes (hardening only; no pairing or persistence wiring while D-001/D-002 are unresolved) | unscoped | — |
+| `android-credentials` | `android/app/src/main/java/com/chromaglow/app/core/credentials/**`, `…/core/hue/discovery/**` | Yes (no persistence wiring in Batch 3) | unscoped | — |
 | `android-models` | `android/app/src/main/java/com/chromaglow/app/core/model/**`, `…/data/demo/**` | Yes | merged → `main` (Batch 1) | Claude (sub-agent A) |
 | `android-tests` | `android/app/src/test/**`, `android/app/src/androidTest/**` | Yes, with exact non-overlapping test files | unscoped | — |
 | `android-roomdetail` | `android/app/src/main/java/com/chromaglow/app/feature/roomdetail/**` (+ its androidTest pkg) | Yes | merged → `main` (Batch 2 W1) | Claude (sub-agent A) |
 | `android-scenes` | `android/app/src/main/java/com/chromaglow/app/feature/scenes/**` (+ its androidTest pkg) | Yes | merged → `main` (Batch 2 W1) | Claude (sub-agent B) |
 | `android-settings` | `android/app/src/main/java/com/chromaglow/app/feature/settings/**` (+ its androidTest pkg) | Yes | merged → `main` (Batch 2 W1) | Claude (sub-agent C) |
 | `android-nav-shell` | the §2 nav hotspots `…/app/ChromaGlowApp.kt` + `…/app/ChromaGlowDestination.kt` (single designated owner per batch), plus its own additive `feature/dashboard/**` entry points and nav E2E androidTest | No (serialized; owns §2 nav hotspots) | merged → `main` (Batch 2 W2) | Claude (sub-agent D) |
+| `android-pairing-bootstrap` | `android/gradle/libs.versions.toml`, `android/app/build.gradle.kts`, `android/app/src/main/res/raw/hue_*.pem` | No (serialized dependency/trust-root bootstrap) | open (Batch 3 W0) | Claude sub-agent A |
+| `android-pairing-protocol` | `…/core/hue/pairing/protocol/**` + exact matching JVM tests | Yes after W0 | open (Batch 3 W1) | Claude sub-agent B |
+| `android-pairing-tls` | `…/core/hue/pairing/tls/**` + exact matching JVM/instrumented tests | Yes after W0 | open (Batch 3 W1) | Claude sub-agent C |
+| `android-pairing-transport` | `…/core/hue/pairing/transport/**` + exact matching JVM tests | No (serialized W2 integration of W1 contracts) | open (Batch 3 W2) | Claude sub-agent D |
 
 > `ui/theme/**` is no longer a parallel lane — it was bundled into the old `android-models-theme` lane
 > but is consumed app-wide, so it is now a §2 collision hotspot (single-owner per batch).
@@ -92,7 +96,8 @@ requests through the Decision Log.
 - `HueHome/Info.plist`, `HueHome/HueHome.entitlements`
 
 **Android:**
-- `android/app/build.gradle.kts`, `android/settings.gradle.kts`, `android/gradle.properties`
+- `android/app/build.gradle.kts`, `android/settings.gradle.kts`, `android/gradle.properties`,
+  `android/gradle/libs.versions.toml`
 - `android/app/src/main/AndroidManifest.xml`
 - `android/app/src/main/java/com/chromaglow/app/app/ChromaGlowApp.kt` (router shell) and
   `android/app/src/main/java/com/chromaglow/app/app/ChromaGlowDestination.kt` (nav destination enum) —
@@ -101,6 +106,7 @@ requests through the Decision Log.
 - `android/app/src/main/java/com/chromaglow/app/ui/theme/**` (`Color.kt`, `Theme.kt`, `Type.kt`) —
   design tokens consumed app-wide.
 - `android/app/src/main/res/values/**` (`strings.xml`, `colors.xml`, `themes.xml`)
+- Pairing trust roots under `android/app/src/main/res/raw/hue_*.pem` (security-sensitive; one owner)
 
 **Batch coordination:**
 - `DEVLOG.md` and `docs/coordination/parallel-agent-pipeline.md` are owned by the batch owner while
@@ -168,7 +174,7 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
 `PROPOSED | DISCUSSING | ACCEPTED | REJECTED | DEFERRED`.
 
 ### D-001 — Android pairing TLS bootstrap policy
-- Status: DEFERRED (blocker)
+- Status: ACCEPTED
 - 2026-06-24 [Claude]: Recorded from `docs/android/android-pairing-tls-identity-decision.md`. Live
   pairing must not ship until a safe TLS bootstrap for Hue self-signed bridge HTTPS is decided. No
   trust-all TLS, no permissive hostname verifier, no blind cert acceptance.
@@ -209,11 +215,15 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   the probed current-leaf issuer profile. Bytes remain outside Git at
   `/Users/brianbean/Desktop/chromaglow-hue-ca/`. D-001 evidence is complete and ready for explicit
   acceptance; this does not authorize code by itself.
-- Resolution: open — DEFERRED pending explicit human/Codex acceptance only. The certificate-byte gate is
-  complete; no pairing lane writes code until acceptance is recorded.
+- 2026-06-29 [Human]: Explicitly accepted D-001 as documented at `7c485a1`: bundled Hue CA roots,
+  validated certificate chain, case-insensitive CN == `bridgeid`, CA-signed bridges only, and fail closed
+  on legacy self-signed bridges.
+- 2026-06-29 [Codex]: ACCEPTED. Batch 3 may implement the bounded trust foundation in §10. This does not
+  authorize setup UI, credential persistence, or a live physical pairing attempt.
+- Resolution: ACCEPTED 2026-06-29 by human + Codex under the bounded §10 implementation scope.
 
 ### D-002 — Canonical stable bridge identity for credential aliasing
-- Status: DEFERRED (blocker)
+- Status: ACCEPTED
 - 2026-06-24 [Claude]: Credential storage needs a canonical stable bridge identity; no fabricated
   bridge IDs. Blocks credential-persistence work in the `android-credentials` lane.
 - 2026-06-28 [Claude]: PROPOSAL (packet in the decision doc "Resolution proposal"). Proposed canonical
@@ -247,7 +257,11 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
 - 2026-06-29 [Codex]: The out-of-band CA bundle is now supplied and locally verified, closing D-002's
   coupled trust-anchor dependency. The normalized `bridgeid` contract is ready for explicit acceptance;
   no credential persistence is authorized yet.
-- Resolution: open — DEFERRED pending explicit human/Codex acceptance only. Evidence is complete.
+- 2026-06-29 [Human]: Explicitly accepted D-002 as documented at `7c485a1`, including normalized
+  uppercase `bridgeid`, case-insensitive certificate/config comparison, and discovery endpoints as hints.
+- 2026-06-29 [Codex]: ACCEPTED. Credential aliasing may use the accepted canonical identity, but Batch 3
+  does not wire or write credentials.
+- Resolution: ACCEPTED 2026-06-29 by human + Codex; persistence wiring remains separately scoped.
 
 ### D-003 — Batch 1 scope = Android-only, ~5 lanes
 - Status: ACCEPTED
@@ -445,7 +459,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   product, Android contract, lane boundary, blocker, or validation expectation changed.
 
 ### D-011 — Resolve pairing TLS and bridge identity before preparing Batch 3
-- Status: DISCUSSING (evidence complete; explicit acceptance pending; implementation blocked)
+- Status: ACCEPTED
 - 2026-06-28 [Codex]: The next critical-path work is one coupled evidence pass over D-001 and D-002,
   not a parallel code batch. The Android endpoint currently carries only `name`/`host`/`port`, while
   credential aliases require a stable `bridgeId`; the repository also has no approved first-contact
@@ -486,12 +500,11 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   `C=NL, O=Philips Hue, CN=root-bridge`; the second is `C=NL, O=Signify Hue, CN=Hue Root CA 01`.
   Fingerprints and file hashes are recorded in the decision doc. Evidence is complete; explicit
   human/Codex contract acceptance remains before Batch 3.
-- Resolution: proposal delivered, Codex-reviewed, and probe-validated 2026-06-28; pending official `.pem`
-  verification + explicit human/Codex acceptance. The `.pem` verification completed 2026-06-29; only
-  explicit acceptance remains. D-001 and D-002 stay DEFERRED meanwhile.
+- 2026-06-29 [Human]: Accepted the complete D-001/D-002 contract at `7c485a1`.
+- Resolution: ACCEPTED 2026-06-29; evidence and acceptance gates are complete.
 
 ### D-012 — Close official pairing evidence and choose the legacy-bridge MVP policy
-- Status: DISCUSSING (evidence complete; explicit acceptance pending)
+- Status: ACCEPTED
 - 2026-06-28 [Codex]: Prepared the final docs-only closure packet at
   `docs/coordination/prompts/android-pairing-evidence-close.md`. Claude must use an existing
   human-authenticated Hue developer session to byte-verify the official `root-bridge` CA and capture the
@@ -521,17 +534,32 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   SHA-256 `2ff54626fc51de587cce0f3f0339552f89da781b5d5949fa0c90ec30ddf8acfa`; both CA fingerprints and
   metadata are in the decision doc and local `VERIFICATION.md`. The evidence packet is ready for explicit
   acceptance; no code authorization is implied.
-- Resolution: evidence complete as of 2026-06-29; pending explicit human/Codex acceptance. D-001/D-002
-  remain DEFERRED and no Batch 3 work is authorized until that acceptance is recorded.
+- 2026-06-29 [Human]: Explicitly accepted D-012 as documented at `7c485a1`: CA-signed-only MVP,
+  fail-closed legacy handling, omit `generateclientkey`, and no `CLIENT_KEY` persistence.
+- 2026-06-29 [Codex]: ACCEPTED. The accepted policy is now canonical in `AGENTS.md`; §10 is the only
+  authorized implementation scope.
+- Resolution: ACCEPTED 2026-06-29 by human + Codex.
+
+### D-013 — Batch 3 implements pairing foundations before UI or persistence
+- Status: ACCEPTED (manifest/launch ready; batch not launched)
+- 2026-06-29 [Codex]: Reviewed `origin/main` @ `7ed6468` and prepared the three-wave §10 manifest plus
+  `docs/coordination/prompts/parallel-batch-3-launch.md`. W0 serializes dependency and CA-resource
+  hotspots; W1 parallelizes pure protocol and TLS/identity foundations; W2 serially integrates a tested
+  HTTPS pairing transport. OkHttp `5.4.0`, MockWebServer/OkHttp TLS `5.4.0`, and
+  `kotlinx-serialization-json` `1.11.0` are pinned from their official release repositories. No setup UI,
+  app-shell, discovery, credential store, token persistence, live network probe, or physical pairing is
+  in scope. This deliberately lands a testable foundation before a later UI/persistence batch.
+- Resolution: ACCEPTED by Codex under the human-approved D-001/D-002/D-012 contract. Launch is ready but
+  still requires the human to tell Claude to execute it; final integration-to-main merge remains gated.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
   (credentials scope → D-001/D-002; toolchain → D-005; no-unwired-UI → D-006; fixture injection, the
   `when`-router, `Exit Demo Mode` semantics, and serial single-AVD connected tests → D-008/D-009). Pruned
   during the 2026-06-28 consolidation.
-- **Active blockers (only open items):** D-001 (pairing TLS bootstrap) and D-002 (canonical bridge
-  identity). No live pairing or credential-persistence work until both resolve.
-- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-013+).
+- **No open decision blocker:** D-001/D-002/D-011/D-012 are accepted. Batch 3 remains bounded to
+  foundations; UI, persistence wiring, and physical pairing require a later decision/batch.
+- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-014+).
 
 ---
 
@@ -632,19 +660,153 @@ retained as historical run records. The result record below is the source of tru
   `(bridgeId, lightId|sceneId, value)` callbacks; the lightweight `when`-router (not Navigation-Compose);
   `appVersion` passed as a literal (BuildConfig disabled); single `Pixel_10` AVD ⇒ connected tests run
   serially.
-- **Active blockers:** **D-001** (safe pairing TLS bootstrap) and **D-002** (canonical stable bridge
-  identity). Until both resolve: no live pairing, no credential-persistence wiring; `core/credentials`
-  is hardening-only.
-- **Next action:** human + Codex explicitly accept the verified TLS/identity/legacy contract in
-  D-001/D-002/D-012. The actual CA bundle is locally available outside Git and its verification metadata
-  is recorded. Only after acceptance may a Batch 3 manifest and launch prompt be drafted.
+- **Pairing decisions accepted:** D-001/D-002/D-011/D-012 are complete. Batch 3 is authorized only for
+  protocol, TLS/identity, and HTTPS transport foundations; no UI, credential write, or physical pairing.
+- **Next action:** the human may tell Claude to execute the READY Batch 3 launch prompt at
+  `docs/coordination/prompts/parallel-batch-3-launch.md`. Integration-to-main remains separately gated.
 - **For Codex — verifying what's done:** check out `main` @ `7ed6468` (or compare against
   `integration/parallel-batch-2` @ `9411d81`); the per-batch result records are §7/§8; the full decision
-  trail is §6 (D-001–D-012). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
+  trail is §6 (D-001–D-013). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
   with the `Pixel_10` AVD booted, `connectedDebugAndroidTest` (expect unit 84/0, connected 34/0).
-- **For Codex — proposing adjustments / corrections / a Batch 3:** append a new Decision Log entry
-  (**D-013+**) describing the change; flag any AGENTS.md contract you want to revise. For a code batch,
-  draft a manifest per §5 from the current `main`, map every lane to a §1 registry entry, keep
-  pairing/persistence behind D-001/D-002, and route any §2 hotspot edit (nav shell, theme, build,
+- **For Codex — proposing adjustments / corrections:** append a new Decision Log entry
+  (**D-014+**) describing the change; flag any AGENTS.md contract you want to revise. For a later code batch,
+  draft a manifest per §5 from the current `main`, map every lane to a §1 registry entry, honor the
+  accepted D-001/D-002 boundaries, and route any §2 hotspot edit (nav shell, theme, build,
   manifest, res) through a single serialized lane. Then a launch prompt under
   `docs/coordination/prompts/` makes it executable.
+
+---
+
+## 10. Batch 3 — READY (pairing foundations; not launched)
+
+**Batch:** `parallel-batch-3`
+
+**Pinned base:** `origin/main` @ `7ed64687b600e9456d32510fa86e709c841fefd5`
+
+**Integration branch:** `integration/parallel-batch-3`
+
+**Decision:** D-013 ACCEPTED
+
+**Launch prompt:** `docs/coordination/prompts/parallel-batch-3-launch.md`
+
+### Goal and boundary
+
+Implement a fully tested, non-UI Android foundation for Hue link-button pairing: structured JSON
+contracts, private-CA chain and bridge-identity verification, and an HTTPS transport. The batch ends at a
+callable/tested transport API. It does **not** modify Setup, app navigation, discovery, credentials, or
+persist any token. It performs no live bridge request.
+
+### Dependency graph
+
+```text
+W0 (serialized hotspot bootstrap)
+  A android3-pairing-bootstrap
+        ↓
+W1 (parallel from merged W0 integration head)
+  B android3-pairing-protocol    C android3-pairing-tls
+        └──────────┬─────────┘
+                   ↓
+W2 (serialized from merged W1 integration head)
+  D android3-pairing-transport
+```
+
+### W0 — Lane A: dependency and CA bootstrap (serialized)
+
+- **Branch:** `lane/android3-pairing-bootstrap`
+- **Owns only:**
+  - `android/gradle/libs.versions.toml`
+  - `android/app/build.gradle.kts`
+  - `android/app/src/main/res/raw/hue_root_bridge.pem`
+  - `android/app/src/main/res/raw/hue_root_ca_01.pem`
+- **Deliverable:**
+  - Add OkHttp `5.4.0` production dependency.
+  - Add `kotlinx-serialization-json` `1.11.0` without the serialization compiler plugin; later code uses
+    the structured `JsonElement` API.
+  - Add test-only MockWebServer3 and OkHttp TLS `5.4.0` dependencies.
+  - Copy the exact local CA files from `/Users/brianbean/Desktop/chromaglow-hue-ca/` and verify before
+    commit: `hue_root_bridge.pem` SHA-256
+    `9eb5d8ee06004a6128659eee9727490387f582112fd6fa8657a3b75e2aef7e44`; `hue_root_ca_01.pem`
+    SHA-256 `dfb5bd1e3a46b980f4c1494d96d2670216b4080d7ca1e33c3d4464abb1b363c5`.
+- **Forbidden:** all Kotlin source/tests, manifest, other resources.
+- **Validation:** `./gradlew dependencies assembleDebug` and `git diff --check`.
+
+Merge W0 into integration before creating W1 branches. Record the resulting integration SHA; W1 branches
+fork from that merged SHA, not directly from `main`.
+
+### W1 — Lane B: pairing protocol (parallel)
+
+- **Branch:** `lane/android3-pairing-protocol`
+- **Owns only:**
+  - `android/app/src/main/java/com/chromaglow/app/core/hue/pairing/protocol/**`
+  - `android/app/src/test/java/com/chromaglow/app/core/hue/pairing/protocol/**`
+- **Deliverable:** pure Kotlin structured request/response/config contracts using
+  `kotlinx.serialization.json.JsonElement`:
+  - Create-user request contains only `devicetype = "chromaglow#android"`; never emits
+    `generateclientkey`.
+  - Parse Hue's JSON-array success (`success.username`, non-blank) without retaining/logging any optional
+    `clientkey`.
+  - Model error 101 as retryable link-button-not-pressed, error 7 as invalid request, and unknown errors
+    explicitly; malformed/mixed inputs and any input over 64 KiB fail closed.
+  - Parse `/api/0/config.bridgeid` as normalized uppercase exactly 16 hex characters; parse optional
+    `replacesbridgeid` without treating it as the active identity.
+- **Forbidden:** network APIs, Android context/resources, TLS, UI, credentials, build files.
+- **Validation:** focused JVM tests, then `./gradlew testDebugUnitTest`.
+
+### W1 — Lane C: TLS and bridge identity (parallel)
+
+- **Branch:** `lane/android3-pairing-tls`
+- **Owns only:**
+  - `android/app/src/main/java/com/chromaglow/app/core/hue/pairing/tls/**`
+  - `android/app/src/test/java/com/chromaglow/app/core/hue/pairing/tls/**`
+  - `android/app/src/androidTest/java/com/chromaglow/app/core/hue/pairing/tls/**`
+- **Deliverable:**
+  - Build a trust manager from an injected set of CA certificates only; production resource loading must
+    include both accepted Hue roots and no system/user CA fallback.
+  - Validate certificate chains and validity normally, then extract exactly one leaf subject CN with a
+    structured X.500 parser. Require 16 hex, normalize uppercase, and optionally require equality with an
+    expected discovery hint case-insensitively.
+  - Provide a narrowly scoped OkHttp identity verifier for SAN-less Hue leaves. It must never return true
+    without validating the peer leaf identity contract; chain trust remains enforced by the configured
+    trust manager.
+  - Tests cover valid trusted leaf, lowercase CN, expected-ID match/mismatch, wrong CA, self-signed leaf,
+    expired leaf, malformed/multiple/missing CN, and production raw-resource fingerprints.
+- **Forbidden:** protocol JSON, network requests, UI, discovery, credentials, build files, certificate
+  generation in production code.
+- **Validation:** focused JVM tests, `./gradlew testDebugUnitTest`, compile android tests; connected tests
+  run only by the batch owner on the shared AVD.
+
+### W2 — Lane D: HTTPS pairing transport (serialized integration)
+
+- **Branch:** `lane/android3-pairing-transport`
+- **Owns only:**
+  - `android/app/src/main/java/com/chromaglow/app/core/hue/pairing/transport/**`
+  - `android/app/src/test/java/com/chromaglow/app/core/hue/pairing/transport/**`
+- **Depends on:** merged Lane B protocol and Lane C TLS APIs.
+- **Deliverable:** a small `HuePairingClient` boundary plus OkHttp implementation that:
+  - accepts an existing `BridgeEndpoint` as routing input and an optional expected `bridgeid` hint;
+  - permits HTTPS only, disables redirects and automatic retry of create-user POST, uses bounded response
+    bodies (64 KiB maximum) and a 10-second call timeout; build URLs with OkHttp `HttpUrl`, never string
+    concatenation;
+  - performs `GET /api/0/config`, obtains authenticated identity from the CA-validated leaf CN, and
+    requires config `bridgeid` plus any supplied hint to match case-insensitively;
+  - performs `POST /api` with the Lane B request and returns typed success/retryable/failure outcomes;
+  - never logs response bodies, usernames, bridge IDs, local addresses, or certificate/device data;
+  - never saves credentials and exposes no `clientkey` surface.
+  - uses MockWebServer3 + test-only certificates for successful flow, case normalization, type 101 retry,
+    type 7, malformed/oversized response, redirect refusal, wrong identity, wrong CA, and timeout tests.
+- **Forbidden:** `feature/setup/**`, `app/**`, `core/credentials/**`, `core/hue/discovery/**`, manifest,
+  Gradle/catalog, resources, live bridge requests.
+- **Validation:** `./gradlew testDebugUnitTest lintDebug assembleDebug`.
+
+### Batch owner gate and promotion
+
+1. Boundary-audit every lane and verify W1 source/test globs are disjoint.
+2. Run connected tests serially on the single `Pixel_10` AVD after W2; existing 34 connected tests plus
+   the CA-resource test must all pass.
+3. Run the full integrated gate:
+   `testDebugUnitTest lintDebug assembleDebug connectedDebugAndroidTest`.
+4. Scan for `trustAll`, always-true hostname verification, emitted `generateclientkey`, `CLIENT_KEY`,
+   token/username logging, and edits outside ownership.
+5. Push `integration/parallel-batch-3`; do not merge to `main` without explicit human go-ahead.
+6. Batch 3 may promote as a tested foundation despite no runtime UI wiring because it adds no UI. A later
+   batch must separately scope Setup state, persistence, and physical-device pairing validation.

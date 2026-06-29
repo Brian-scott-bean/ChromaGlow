@@ -1,17 +1,19 @@
-# Android Pairing TLS / Stable-Identity Decision Blocker (ANDROID-006A)
+# Android Pairing TLS / Stable-Identity Decision (ANDROID-006A)
 
 ## Status
 
-- **Task:** ANDROID-006A — Record TLS / stable-identity blockers before link-button pairing code
-- **Type:** Documentation-only blocker record (read-only investigation reviewed and approved)
+- **Task:** ANDROID-006A — Resolve TLS / stable-identity contracts before link-button pairing code
+- **Type:** Accepted security decision record; historical blocker investigation preserved below
+- **Accepted:** 2026-06-29 under D-001/D-002/D-011/D-012
 - **Branch:** `android/link-button-pairing`
 - **Starting SHA:** `0571c6d0e67b6e11e314bf7b1e567b55bb60cf8c`
 
 ```text
-BLOCKED — SAFE TLS BOOTSTRAP AND CANONICAL BRIDGE IDENTITY MUST BE DECIDED BEFORE LIVE PAIRING CODE
+ACCEPTED — BATCH 3 PAIRING FOUNDATIONS AUTHORIZED; UI/PERSISTENCE/PHYSICAL PAIRING NOT AUTHORIZED
 ```
 
-- **No pairing runtime code is added in this slice. No network probe was performed.**
+- Decision/probe work added no pairing runtime code. The READY Batch 3 foundation scope is in the
+  parallel pipeline §10.
 
 ## Decision
 
@@ -502,3 +504,21 @@ bundle the supplied Hue CA roots; require a valid chain to an approved root; ide
 bridge leaves by a case-insensitive CN == normalized `bridgeid` check; fail closed; support CA-signed
 bridges only for MVP; omit `generateclientkey`; and keep `CLIENT_KEY` persistence out. No implementation
 or Batch 3 manifest begins until the human and Codex explicitly accept this contract.
+
+---
+
+## Final acceptance — 2026-06-29 [Human + Codex]
+
+The human explicitly accepted D-001/D-002/D-012 as documented at `7c485a1`, and Codex accepted the
+bounded implementation contract:
+
+- bundle both verified Hue CA roots and trust no system/user fallback for pairing;
+- require normal chain/validity checks plus case-insensitive SAN-less leaf CN == canonical `bridgeid`;
+- normalize canonical identity to uppercase 16-hex and require config identity consistency;
+- support CA-signed bridges only for MVP and fail closed on legacy self-signed leaves;
+- omit `generateclientkey` and expose/persist no `CLIENT_KEY`;
+- implement only protocol, TLS/identity, and HTTPS transport foundations in Batch 3.
+
+Setup UI, credential persistence, and physical pairing validation remain a later separately accepted
+batch. Batch 3 manifest and launch prompt: pipeline §10 and
+`docs/coordination/prompts/parallel-batch-3-launch.md`.
