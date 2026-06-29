@@ -94,10 +94,14 @@ sealed interface HuePairingResult {
     /**
      * The bridge accepted pairing over a CA-validated, identity-checked channel.
      *
+     * @property bridgeId the canonical authenticated identity of the paired bridge: the UPPERCASE
+     *   16-hex `bridgeid` extracted from the CA-validated leaf Common Name and confirmed to agree
+     *   with `/api/0/config` (and any caller hint) across both the GET and POST legs. A caller can
+     *   key durable credential/metadata storage on this without re-fetching or fabricating identity.
      * @property username the bridge application key. It is never logged or persisted by this
      *   client; any `clientkey` the bridge may have returned was dropped by the protocol layer.
      */
-    data class Success(val username: String) : HuePairingResult
+    data class Success(val bridgeId: String, val username: String) : HuePairingResult
 
     /**
      * Hue error type `101`: the link button has not been pressed yet. This is the ONLY retryable
