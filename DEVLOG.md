@@ -42,6 +42,42 @@
 
 ---
 
+## 2026-06-28 - [Claude] Android pairing read-only bridge probe (D-001/D-002 evidence)
+
+### Branch
+- `docs/parallel-agent-pipeline`. Docs-only; no source/Gradle/manifest/deps; no pairing, tokens, state
+  change, or reboot. Device IPs / MACs / bridge IDs kept out of git (scratchpad only).
+
+### Did
+- With explicit human approval (read-only LAN discovery + `openssl s_client` + unauthenticated
+  `/api/0/config` only), probed **two** real `BSB002` bridges (apiversion 1.77.0) to close the deferred
+  D-001/D-002 evidence. Appended a redacted "Empirical probe addendum" to
+  `docs/android/android-pairing-tls-identity-decision.md` and probe turns under D-001/D-002/D-011.
+
+### Working
+- Confirmed on real hardware: current bridges are **CA-signed by the Signify `root-bridge` CA** (not
+  self-signed); **leaf CN == bridgeid (case-insensitive)**; **leaf has NO SAN** (so Android's default
+  SAN-only verifier fails → a custom CN==bridgeid check + bundled Signify root CA is required); **TLS 1.2**;
+  leaf valid to 2038; only the leaf is served. `bridgeid` is 16-hex, MAC-derived (EUI-64 `FFFE`),
+  UPPERCASE in `/api/0/config`, agreeing across cert CN / config / mDNS TXT / IPv6 link-local → stable
+  across DHCP by construction. `/api/0/config` is unauthenticated (200), non-secret subset only.
+
+### Left
+- **D-001/D-002 stay DEFERRED; D-011 stays DISCUSSING.** Remaining before acceptance: (1) byte-verify the
+  official Signify root-CA `.pem` (issuer DN `CN=root-bridge` now known; page login-gated); (2) legacy
+  self-signed support stance; (3) explicit human/Codex acceptance. Reboot/factory-reset stability not
+  exercised (reboot out of scope; inferred stable from MAC-derivation). Batch 3 only after acceptance.
+
+### Validation
+- Read-only probe; no credentials, no state change. `git diff --check` clean; committed files scanned to
+  ensure no IP/MAC/bridge-id leaked.
+
+### Gotchas
+- Cert CN case is NOT consistent across bridges (one upper, one lower) while `/api/0/config.bridgeid` is
+  uppercase → the identity comparison MUST be case-insensitive (normalize both to uppercase).
+- The bridge serves only its leaf in the TLS handshake (no chain) → the Signify root CA must be bundled
+  out-of-band; cannot be scraped from the handshake.
+
 ## 2026-06-28 - [Codex] Review Android pairing decision proposal
 
 ### Branch

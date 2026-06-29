@@ -188,8 +188,16 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   certificate identity with a `bridgeid` learned only through the connection under verification is not an
   independent trust bootstrap. Public official Hue material confirms HTTPS and movement to Signify-signed
   certificates, but not the official root or leaf SAN/CN identity profile; those remain blocking inputs.
-- Resolution: open — DEFERRED. Codex review complete; proposal awaits the listed closing evidence and
-  explicit human/Codex acceptance before any pairing lane writes code.
+- 2026-06-28 [Claude]: PROBE EVIDENCE (human-approved, read-only; two real BSB002 bridges, apiversion
+  1.77.0; see the decision doc "Empirical probe addendum"). Confirms: current bridges are **CA-signed by
+  the Signify `root-bridge` CA** (issuer `C=NL, O=Philips Hue, CN=root-bridge`); **leaf CN == bridgeid**,
+  case-INSENSITIVE (one cert upper, one lower); **NO SubjectAltName** — so Android's default SAN-only
+  hostname verifier cannot validate it and a custom `CN==expected bridgeid` check plus a bundled Signify
+  root CA is required; **TLS 1.2** negotiated; leaf valid to 2038; only the leaf is served. Remaining gap:
+  byte-verify the official Signify root-CA `.pem` (login-gated; issuer DN now known) and decide the
+  legacy-self-signed support stance. No credentials used; no bridge state changed.
+- Resolution: open — DEFERRED. Codex review complete and the probe closed most TLS mechanics; still awaits
+  official `.pem` byte-verification + explicit human/Codex acceptance before any pairing lane writes code.
 
 ### D-002 — Canonical stable bridge identity for credential aliasing
 - Status: DEFERRED (blocker)
@@ -210,8 +218,16 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   contract must establish its official schema/stability and an authenticated mapping from the selected
   endpoint to that identity. `/api/0/config` read through the same not-yet-authenticated channel cannot
   by itself provide the expected identity for TLS verification.
-- Resolution: open — DEFERRED. Pairs with D-001; Codex review complete, but closing evidence and explicit
-  acceptance are still required before credential persistence.
+- 2026-06-28 [Claude]: PROBE EVIDENCE (same read-only probe) confirms the identity contract: `bridgeid` is
+  16-hex (UPPERCASE in `/api/0/config`; lowercase in mDNS TXT and on one cert CN), MAC-derived
+  (EUI-48→EUI-64, `FFFE` inserted) → **stable across DHCP by construction**; the same value agrees across
+  the cert CN, `/api/0/config.bridgeid`, the mDNS TXT, and the IPv6 link-local id. `/api/0/config` is
+  unauthenticated (HTTP 200) and returns only the non-secret subset (incl. `bridgeid`, `replacesbridgeid`).
+  → normalize to UPPERCASE and compare case-insensitively; the 16-hex value already satisfies
+  `BridgeCredentialAlias`'s charset, so no alias change. Untested: reboot/factory-reset stability (reboot
+  out of approved scope; inferred stable from the MAC derivation).
+- Resolution: open — DEFERRED. Pairs with D-001; probe confirmed the bridgeid contract, but explicit
+  acceptance (and the D-001 `.pem` verification) are still required before credential persistence.
 
 ### D-003 — Batch 1 scope = Android-only, ~5 lanes
 - Status: ACCEPTED
@@ -434,9 +450,16 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   too: the publicly accessible official page verifies username-based control but not the
   Entertainment-only client-key contract. Direct primary-source links and the detailed review are now
   recorded in `docs/android/android-pairing-tls-identity-decision.md`.
-- Resolution: proposal delivered and Codex-reviewed 2026-06-28; pending closing evidence and explicit
-  human/Codex acceptance. D-001 and D-002 stay DEFERRED, this stays DISCUSSING, and no pairing or
-  credential-persistence code is authorized meanwhile.
+- 2026-06-28 [Claude]: Closed most deferred evidence via a human-approved read-only probe (mDNS +
+  `openssl s_client` + unauthenticated `/api/0/config` on two real bridges; device IPs/MACs/bridge IDs
+  redacted, addendum in the decision doc). Net: the proposed TLS-trust (chain to Signify `root-bridge` CA +
+  case-insensitive CN==bridgeid identity check, custom verifier because the leaf has no SAN) and the
+  `bridgeid` identity contract are now empirically supported. Remaining before acceptance: byte-verify the
+  official Signify root-CA `.pem`, decide legacy-self-signed support, and obtain explicit human/Codex
+  acceptance. Statuses unchanged.
+- Resolution: proposal delivered, Codex-reviewed, and probe-validated 2026-06-28; pending official `.pem`
+  verification + explicit human/Codex acceptance. D-001 and D-002 stay DEFERRED, this stays DISCUSSING, and
+  no pairing or credential-persistence code is authorized meanwhile.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above

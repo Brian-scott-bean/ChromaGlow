@@ -317,3 +317,54 @@ DEFERRED and D-011 remains DISCUSSING.
 - No Batch 3 manifest should be drafted until the login-gated official Hue material is captured and/or
   the human approves a read-only real-bridge certificate/config probe. Any probe must redact tokens and
   local addresses from committed evidence.
+
+---
+
+## Empirical probe addendum — 2026-06-28 [Claude]
+
+Human-approved, **read-only** probe: LAN mDNS discovery + `openssl s_client` certificate inspection +
+unauthenticated `GET /api/0/config` only. No pairing, no token request/store, no bridge state change, no
+reboot. Run against **two** bridges on the local network. Device IPs, MAC addresses, and full bridge IDs
+were captured only to the session scratchpad and are intentionally **redacted** from this committed record.
+
+**Bridges probed:** 2 × `modelid=BSB002` (Hue Bridge v2), `apiversion 1.77.0`.
+
+### Confirmed (closes most of the prior DEFERRED TLS/identity mechanics)
+- **HTTPS on port 443; negotiated TLS 1.2** (ECDHE-ECDSA-AES128-GCM-SHA256) on both → local TLS floor ≥ 1.2.
+- **Certificate is CA-signed, not self-signed** on current firmware: leaf `subject = C=NL, O=Philips Hue,
+  CN=<bridgeid>`; **issuer = `C=NL, O=Philips Hue, CN=root-bridge`** (the Signify private "root-bridge" CA)
+  on both. → the proposed "chain to the Signify root CA" direction is correct for current bridges.
+- **CN == bridgeid, confirmed case-INSENSITIVELY.** Both leaves carry the 16-hex bridgeid as the Subject
+  CN; one bridge's CN was uppercase, the other's lowercase, while `/api/0/config.bridgeid` was uppercase on
+  both. → the identity check MUST normalize and compare **case-insensitively** (uppercase both sides).
+- **No SubjectAltName on the leaf** ("No extensions in certificate") on both → **decisive for Android:** the
+  platform default hostname verifier (RFC 6125 — SAN only, ignores CN) cannot validate this cert. A
+  **custom identity check (leaf CN == expected bridgeid) is REQUIRED**, alongside bundling the Signify root
+  CA as a trust anchor; Network Security Config default hostname matching / `<pin-set>` is unsuitable.
+- **Leaf is long-lived** (`notAfter 2038-01-19` on both; one issued 2017, one 2025) → no near-term leaf
+  rotation handling needed. Signature **ECDSA-with-SHA256**, EC P-256.
+- The handshake presents **only the leaf** (no intermediate/root served) → the Signify root CA must be
+  **bundled out-of-band**; the issuer DN to match is `C=NL, O=Philips Hue, CN=root-bridge`.
+- **`bridgeid` is the canonical identity and is MAC-derived** (EUI-48→EUI-64, `FFFE` inserted after the
+  vendor OUI). Verified by agreement across four independent sources on the same device — cert CN,
+  `/api/0/config.bridgeid`, mDNS TXT `bridgeid`, and the IPv6 link-local interface identifier (all reduce to
+  the same MAC). → **stable across DHCP/IP changes by construction** (independent of the DHCP lease).
+- **`GET /api/0/config` is unauthenticated (HTTP 200)** and returns only a non-secret subset (`name`,
+  `datastoreversion`, `swversion`, `apiversion`, `mac`, `bridgeid`, `factorynew`, `replacesbridgeid`,
+  `modelid`, `starterkitid` — no `whitelist`/secrets). `bridgeid` is **16-hex UPPERCASE** here;
+  `replacesbridgeid` is present (supports the D-002 replacement rule).
+- **mDNS** advertises `_hue._tcp` with TXT `bridgeid` (lowercase) + `modelid`, hostname `<mac>.local`,
+  instance `Hue Bridge - <last 6 of bridgeid>` → a discovery hint only, to be verified against the trusted
+  channel, never trusted directly.
+
+### Still open (keeps D-001/D-002 DEFERRED, pending sign-off)
+- **Official Signify root-CA `.pem` not byte-verified.** The issuer DN is now known from real certs
+  (`CN=root-bridge`), but the bridge does not serve the root and the authoritative `.pem` page is
+  login-gated. Obtain the official `.pem` (Hue developer account) and byte-compare before bundling; do not
+  ship the community transcription unverified.
+- **Legacy self-signed bridges.** Current units (apiversion 1.77.0) are CA-signed, but the migration
+  firmware version and the support stance for un-updated bridges remain a product decision.
+- **Reboot/factory-reset stability** was not exercised (reboot is out of approved scope). DHCP-change
+  stability is established by MAC-derivation; reboot stability follows from the same derivation but was not
+  directly tested.
+- Evidence only — D-001/D-002 acceptance remains a Codex/human decision; no pairing code is authorized.
