@@ -196,8 +196,17 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   root CA is required; **TLS 1.2** negotiated; leaf valid to 2038; only the leaf is served. Remaining gap:
   byte-verify the official Signify root-CA `.pem` (login-gated; issuer DN now known) and decide the
   legacy-self-signed support stance. No credentials used; no bridge state changed.
-- Resolution: open — DEFERRED. Codex review complete and the probe closed most TLS mechanics; still awaits
-  official `.pem` byte-verification + explicit human/Codex acceptance before any pairing lane writes code.
+- 2026-06-28 [Claude]: Evidence-closure session (`android-pairing-evidence-close.md`). Could NOT
+  byte-verify the official Signify `root-bridge` CA: the "Using HTTPS" page is login-gated (fetched
+  2026-06-28 — login form only), no authenticated developer session is available, and per the prompt I did
+  not request/automate portal credentials; community transcriptions are disallowed as the source of truth.
+  So the official `.pem` is now the **only remaining hard gate**. Recorded the verification procedure + the
+  final proposed trust contract (chain to the bundled official Signify root CA + case-insensitive
+  CN==`bridgeid` via a custom verifier since the leaf has no SAN; fail closed; no TOFU/trust-all) in the
+  decision doc "Official evidence closure". D-001 stays DEFERRED.
+- Resolution: open — DEFERRED. Codex review complete and the probe closed most TLS mechanics; the only
+  remaining gate is byte-verifying the official `.pem` (needs a human Hue-developer session) + explicit
+  human/Codex acceptance before any pairing lane writes code.
 
 ### D-002 — Canonical stable bridge identity for credential aliasing
 - Status: DEFERRED (blocker)
@@ -226,6 +235,11 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   → normalize to UPPERCASE and compare case-insensitively; the 16-hex value already satisfies
   `BridgeCredentialAlias`'s charset, so no alias change. Untested: reboot/factory-reset stability (reboot
   out of approved scope; inferred stable from the MAC derivation).
+- 2026-06-28 [Claude]: Closure session — the `bridgeid` identity contract is documented as final in the
+  decision doc: normalized UPPERCASE 16-hex, compared case-insensitively, no `BridgeCredentialAlias`
+  change; mDNS/host/port are hints only; trust is anchored by the app-bundled official root CA (out-of-band),
+  not by unauthenticated device responses (non-circular). D-002 stays DEFERRED, coupled to the same gated
+  `.pem` verification + acceptance.
 - Resolution: open — DEFERRED. Pairs with D-001; probe confirmed the bridgeid contract, but explicit
   acceptance (and the D-001 `.pem` verification) are still required before credential persistence.
 
@@ -457,6 +471,9 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   `bridgeid` identity contract are now empirically supported. Remaining before acceptance: byte-verify the
   official Signify root-CA `.pem`, decide legacy-self-signed support, and obtain explicit human/Codex
   acceptance. Statuses unchanged.
+- 2026-06-28 [Claude]: Evidence closure executed (see D-012 + the decision doc "Official evidence
+  closure"). All of D-011's prerequisite work is done except the gated official-CA byte-verification (no
+  Hue-developer session available). Stays DISCUSSING.
 - Resolution: proposal delivered, Codex-reviewed, and probe-validated 2026-06-28; pending official `.pem`
   verification + explicit human/Codex acceptance. D-001 and D-002 stay DEFERRED, this stays DISCUSSING, and
   no pairing or credential-persistence code is authorized meanwhile.
@@ -471,8 +488,20 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   bridges only, with firmware-update guidance for legacy self-signed bridges; no TOFU or permissive
   fallback. The prompt also requires a non-circular manual-endpoint identity rule and stops before any
   Batch 3 manifest or code.
-- Resolution: pending Claude's official evidence packet and explicit Codex/human acceptance. If portal
-  access is unavailable or any certificate/profile check fails, D-001/D-002 remain DEFERRED.
+- 2026-06-28 [Claude]: Delivered the official-evidence closure packet (decision doc "Official evidence
+  closure"; turns under D-001/D-002/D-011). Per preflight, no authenticated Hue developer session was
+  available and credentials were not requested, so the official root-CA `.pem` byte-verification — the one
+  remaining gate — could NOT be completed; community transcriptions were not used as truth. Decided on
+  PUBLIC official evidence: omit `generateclientkey` for the non-Entertainment MVP, no `CLIENT_KEY`
+  persistence. Proposed legacy policy: support CA-signed bridges only, fail closed with firmware-update
+  guidance, no TOFU/permissive fallback. Per the prompt this is **NOT marked READY FOR ACCEPTANCE**;
+  D-001/D-002 stay DEFERRED, D-011/D-012 DISCUSSING. ONE exact next action: a human with a Hue developer
+  session downloads the official `.pem` from `develop/application-design-guidance/using-https/` and provides
+  it (file, or SHA-256 + subject/issuer/serial/validity/key fields) for the recorded verification
+  procedure; then Codex + human accept and a Batch 3 manifest may be drafted.
+- Resolution: pending Claude's official evidence packet and explicit Codex/human acceptance. Packet
+  delivered 2026-06-28 but portal access was unavailable, so the official certificate check did not run and
+  D-001/D-002 remain DEFERRED; the exact next action is recorded above and in the decision doc.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above

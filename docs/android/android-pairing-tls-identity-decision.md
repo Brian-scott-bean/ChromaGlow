@@ -368,3 +368,84 @@ were captured only to the session scratchpad and are intentionally **redacted** 
   stability is established by MAC-derivation; reboot stability follows from the same derivation but was not
   directly tested.
 - Evidence only — D-001/D-002 acceptance remains a Codex/human decision; no pairing code is authorized.
+
+---
+
+## Official evidence closure — 2026-06-28 [Claude]
+
+**Status: NOT YET READY FOR ACCEPTANCE — one gated item remains.** Executed
+`docs/coordination/prompts/android-pairing-evidence-close.md` (docs/evidence only; no source, probe,
+pairing, token, or Batch-3 work). Preflight passed: `origin/main` @ `7ed6468`; docs base `a92fa6c` in
+history; working tree clean; committed probe evidence still redacted.
+
+### Official-source access result
+- **No authenticated Hue developer-portal session is available**, and per the prompt I did not request,
+  echo, store, or automate any portal credentials.
+- The authoritative **"Using HTTPS"** page — which carries the downloadable Signify `root-bridge` CA
+  `.pem` and the CN/trust guidance — is **login-gated**: fetched 2026-06-28 it returns only a login form
+  (no public certificate, no public HTTPS guidance).
+  URL: `https://developers.meethue.com/develop/application-design-guidance/using-https/`.
+- The Configuration API and pairing/Entertainment reference pages are gated the same way.
+- Community mirrors of the CA exist, but the prompt **forbids using a community transcription as the
+  source of truth**, so they are NOT used to close D-001.
+
+→ The **official root-CA byte-verification could not be completed in this session.** D-001 (and the
+coupled D-002 acceptance) stay **DEFERRED**.
+
+### Root-CA verification procedure (to run once the human supplies the official file)
+When a human with a Hue developer session downloads the official CA `.pem` from the Using HTTPS page (or
+provides it via an authenticated channel) to a temp path **outside the repo**, I will record only
+non-secret metadata — official source URL, file SHA-256, certificate SHA-256 fingerprint, subject, issuer,
+serial, validity, public-key algorithm, CA basic-constraint — then confirm **subject == the probed leaf
+issuer `C=NL, O=Philips Hue, CN=root-bridge`** and that the documented profile supports chain validation
+plus a case-insensitive leaf-CN == canonical `bridgeid` identity check for a SAN-less leaf, and finally
+delete the temp file. Any failed check keeps D-001 DEFERRED with the exact mismatch recorded.
+
+### Evidence already closed (public official docs + the approved read-only probe — no portal needed)
+- Local API over HTTPS:443; first contact = the physical link-button create-user flow → opaque username;
+  normal light/room/scene control authenticates by username alone (Get Started — public, official).
+- Real-bridge probe (two BSB002, apiversion 1.77.0): current bridges are CA-signed by the Signify
+  `root-bridge` CA; leaf CN == bridgeid (case-insensitive); leaf has **no SAN**; TLS 1.2; `bridgeid` is
+  16-hex, MAC-derived (DHCP-stable), uppercase in `/api/0/config`, which is an unauthenticated non-secret
+  subset (see the redacted "Empirical probe addendum" above).
+
+### Final proposed contracts (DRAFT — pending the gated `.pem` + explicit acceptance)
+- **D-001 trust:** validate the leaf chains to the **bundled official Signify `root-bridge` CA** AND that
+  the leaf identity (CN) equals the expected canonical `bridgeid`, compared **case-insensitively**; because
+  the leaf carries no SAN, use a **custom verifier** (the platform SAN-only default cannot validate it) —
+  never trust-all, never blanket-true, never silent fallback, never leaf-on-first-use pinning; fail closed
+  on any chain or identity failure.
+- **Legacy-bridge MVP policy (proposed):** support **only CA-signed bridges** that validate to the bundled
+  Signify root. A legacy self-signed bridge **fails closed** with "update your bridge firmware" guidance;
+  no TOFU / trust-all / silent fallback. Broader legacy support is a later, separately-reviewed feature.
+- **D-002 identity:** canonical id = normalized **UPPERCASE 16-hex `bridgeid`**; compare the cert CN and
+  the `/api/0/config` identity case-insensitively; the value already satisfies `BridgeCredentialAlias`'s
+  charset (no alias change). mDNS / host / port are discovery hints, never durable identity.
+- **Non-circular manual-endpoint identity:** the trust anchor is the **app-bundled official Signify root
+  CA — an out-of-band input, not from the device**. For a manually-entered IP (or an mDNS hint) the app
+  connects, requires the leaf to **chain to the bundled root CA**, and only then treats the CA-validated
+  leaf **CN** as the authenticated `bridgeid`; the `/api/0/config` `bridgeid` is then confirmed to match
+  the CA-validated CN (a consistency check, not the trust source). Identity is anchored by the bundled CA,
+  never derived solely from unauthenticated device responses — which is precisely why the official `.pem`
+  is the gating item.
+- **`generateclientkey` (decided on public official evidence):** for the non-Entertainment MVP, **omit
+  `generateclientkey` (send false / do not set it)** so no `clientkey` is returned, and keep **no
+  `CLIENT_KEY` persistence**. Normal control uses the username alone (Get Started, public official).
+  Revisit only when Entertainment streaming is scoped.
+
+### Recovery behavior
+- Cert / identity / chain failure → fail closed, "couldn't verify this bridge," offer re-scan / re-pair.
+- Factory reset / replacement → `bridgeid` persists on the same hardware and changes on new hardware
+  (`replacesbridgeid` aids migration); a changed/unknown id is a new pairing + the user can delete the
+  stale alias.
+- Long-lived leaf (to 2038) chaining to the root means leaf rotation needs no special handling.
+
+### Remaining uncertainty + the ONE exact next action
+- **Only remaining hard gate:** byte-verify the **official** Signify `root-bridge` CA `.pem` — impossible
+  without a Hue developer session / a human-provided file. Secondary: an official compatibility statement
+  on the self-signed→CA migration firmware (informs how strict the "CA-signed only" gate may be).
+- **NEXT ACTION (human):** log in to developers.meethue.com, open
+  `develop/application-design-guidance/using-https/`, download the official root-CA `.pem`, and provide it
+  (the file, or its SHA-256 + subject/issuer/serial/validity/key fields) so the verification procedure
+  above completes. Then Codex + human accept, moving D-001/D-002 to ACCEPTED and authorizing a Batch 3
+  manifest.

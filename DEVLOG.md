@@ -42,6 +42,46 @@
 
 ---
 
+## 2026-06-28 - [Claude] Android pairing official-evidence closure (gated; blockers stay DEFERRED)
+
+### Branch
+- `docs/parallel-agent-pipeline`. Docs/evidence only — no source, tests, Gradle, manifest, deps, probe,
+  pairing, tokens, or Batch-3 work.
+
+### Did
+- Executed `docs/coordination/prompts/android-pairing-evidence-close.md`. Preflight passed (`origin/main`
+  @ `7ed6468`; docs base `a92fa6c` in history; tree clean; committed probe evidence still redacted).
+- Attempted the official root-CA byte-verification. The authoritative Hue "Using HTTPS" page (which holds
+  the downloadable Signify `root-bridge` CA `.pem`) is **login-gated** — fetched it and got only a login
+  form. No authenticated Hue developer session is available; per the prompt I did not request/automate
+  portal credentials, and community transcriptions are disallowed as the source of truth.
+- Appended an "Official evidence closure" section to `docs/android/android-pairing-tls-identity-decision.md`
+  (gated-access result, the exact root-CA verification procedure to run once the file is supplied, the
+  evidence already closed, the final proposed TLS/identity contracts, the CA-signed-only legacy policy, the
+  non-circular manual-endpoint identity rule, the `generateclientkey`=omit decision, recovery behavior, and
+  the one remaining gate). Appended Claude turns under D-001/D-002/D-011/D-012.
+
+### Working
+- Everything closable without the portal is closed (public official Get Started + the prior approved
+  probe). The proposal is coherent and primary-source-grounded.
+
+### Left
+- **NOT marked READY FOR ACCEPTANCE.** D-001/D-002 stay DEFERRED; D-011/D-012 DISCUSSING. **One exact next
+  action:** a human with a Hue developer session downloads the official root-CA `.pem` from
+  `develop/application-design-guidance/using-https/` and provides it (file, or its SHA-256 +
+  subject/issuer/serial/validity/key fields). Then I complete the recorded verification (confirm
+  subject == probed leaf issuer `CN=root-bridge`), Codex + human accept, and a Batch 3 manifest may be
+  drafted. No code authorized until then.
+
+### Validation
+- Docs-only; `git diff --check` clean; AGENTS.md unchanged (no stated fact disproven). No credentials
+  requested, stored, or committed.
+
+### Gotchas
+- The official `.pem` is only behind the Hue developer login; there is no public official download, and the
+  bridge does not serve its root in the TLS handshake — so the CA must come from the authenticated portal
+  (or a human-provided file), not from the device or a community mirror.
+
 ## 2026-06-28 - [Codex] Prepare final Android pairing evidence-closure prompt
 
 ### Branch
