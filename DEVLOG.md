@@ -42,6 +42,50 @@
 
 ---
 
+## 2026-06-28 - [Claude] Android pairing decision packet (D-001/D-002 proposal)
+
+### Branch
+- `docs/parallel-agent-pipeline`. Docs-only; no Android/iOS source, Gradle, manifest, deps, or network
+  changes; no bridge probe; no Batch 3 branches.
+
+### Did
+- Executed `docs/coordination/prompts/android-pairing-decisions-prepare.md` (planning/research only) against
+  `origin/main` @ `7ed6468`. Preflight: SHA pinned, D-011 + prompt present, and re-verified from source that
+  `BridgeEndpoint` is name/host/port only (`endpointKey` = host:port, routing-only) and
+  `BridgeCredentialAlias` requires a stable `bridgeId` matching `^[A-Za-z0-9_-]+$`.
+- Ran a primary-source research workflow (4 researchers — Hue TLS, bridge identity, pairing/`clientkey`,
+  Android TLS — + 1 adversarial evidence reviewer). The reviewer confirmed a safe proposal is possible but
+  downgraded the Hue-TLS specifics because the official "Using HTTPS"/Configuration-API pages are
+  login-gated and unreadable here.
+- Wrote the coupled D-001/D-002 proposal + C (`generateclientkey`) recommendation into
+  `docs/android/android-pairing-tls-identity-decision.md` → "Resolution proposal" (evidence table with
+  fact/community/inference labels, threat model, proposed contracts, alternatives rejected, recovery,
+  validation matrix, unresolved-evidence + how-to-close). Appended Claude turns under D-001 and D-002 and a
+  review turn under D-011; prior turns left intact.
+
+### Working
+- Proposal direction is primary-source-grounded: first contact via the physical link-button flow; trust by
+  Signify-CA chain + cert-identity == `bridgeid`, never trust-all/blanket-true; canonical identity = the
+  bridge-reported `bridgeid` (16-hex already fits the alias charset — no alias change); `clientkey` is
+  Entertainment-only, so omit `generateclientkey` for the MVP.
+
+### Left
+- **D-001/D-002 remain DEFERRED; D-011 remains DISCUSSING** — proposal awaits Codex/human review. To close:
+  (1) read the login-gated official pages with a Hue developer account + byte-verify the root-CA `.pem`;
+  (2) human-approved real-bridge probe (`openssl s_client` for chain/CN/**SAN**/validity; `/api/0/config`
+  for `bridgeid` format; reboot/DHCP change for `bridgeid` stability). A Batch 3 implementation
+  manifest/launch comes only after both blockers are explicitly accepted.
+
+### Validation
+- Docs-only; `git diff --check` clean. No code, no tests, no probe.
+
+### Gotchas
+- The decisive Android wrinkle: default Android hostname verification follows RFC 6125 (matches SAN,
+  ignores CN), but Hue's identity is reportedly in the cert CN (== `bridgeid`). Whether the leaf carries a
+  usable SAN decides Network-Security-Config-CA-pinning vs a custom verifier — unconfirmed, so DEFERRED.
+- `bridgeid` durability across DHCP/reboot/factory-reset is the core D-002 premise but is currently
+  inference (MAC-derived EUI-64), not confirmed from official docs.
+
 ## 2026-06-28 - [Codex] Prepare Android pairing decision-resolution packet
 
 ### Branch

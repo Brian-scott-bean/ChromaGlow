@@ -172,13 +172,37 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
 - 2026-06-24 [Claude]: Recorded from `docs/android/android-pairing-tls-identity-decision.md`. Live
   pairing must not ship until a safe TLS bootstrap for Hue self-signed bridge HTTPS is decided. No
   trust-all TLS, no permissive hostname verifier, no blind cert acceptance.
-- Resolution: open — needs human/Codex decision before any pairing lane writes pairing code.
+- 2026-06-28 [Claude]: Evidence-backed PROPOSAL prepared (per the D-011 prompt; full packet in
+  `docs/android/android-pairing-tls-identity-decision.md` → "Resolution proposal"). Primary-source-verified
+  pillars: bridge serves the local API over HTTPS:443; first-contact app trust is the physical link-button
+  flow (`POST /api {devicetype}` → opaque username). Proposed direction: validate BOTH that the leaf chains
+  to the **Signify private root CA** AND that the cert **identity == expected `bridgeid`**, with NO
+  trust-all manager / blanket-true verifier and fail-closed on mismatch. NOT YET RESOLVED (kept DEFERRED):
+  the authoritative "Using HTTPS" page + root-CA `.pem` are login-gated and were not readable this session,
+  so the Signify-CA-vs-self-signed status, the `.pem` contents, **leaf SAN presence** (decisive on Android,
+  which ignores CN per RFC 6125), leaf validity/rotation, the self-signed→CA migration firmware, and the
+  local min-TLS floor are all unverified. Closing needs a Hue developer-account read of the official pages
+  plus a human-approved `openssl s_client` probe of a real bridge. No pairing code authorized.
+- Resolution: open — DEFERRED. Proposal awaits Codex/human review + the listed evidence before any pairing
+  lane writes code.
 
 ### D-002 — Canonical stable bridge identity for credential aliasing
 - Status: DEFERRED (blocker)
 - 2026-06-24 [Claude]: Credential storage needs a canonical stable bridge identity; no fabricated
   bridge IDs. Blocks credential-persistence work in the `android-credentials` lane.
-- Resolution: open — needs decision; pairs with D-001.
+- 2026-06-28 [Claude]: PROPOSAL (packet in the decision doc "Resolution proposal"). Proposed canonical
+  identity = the bridge-reported **`bridgeid`**, read over the trust-established HTTPS channel from
+  `GET /api/0/config` (and cross-checked against the cert identity once D-001 settles); mDNS `bridgeid` /
+  discovery `id` / host:port are discovery HINTS only, never stored as identity. Both mDNS and manual
+  endpoints derive the same `bridgeid` the same way; `BridgeEndpoint` stays host/port routing-only. The
+  16-hex `bridgeid` already satisfies `BridgeCredentialAlias`'s `^[A-Za-z0-9_-]+$` (normalize uppercase) —
+  **no alias-contract change needed**. Map endpoint→`bridgeid` before `saveApiToken`; mismatch/replacement
+  → re-pair, never silent overwrite. NOT YET RESOLVED (kept DEFERRED): official `bridgeid` charset/case, the
+  unauthenticated `/api/config` schema, the CN==bridgeid binding, and — most importantly — `bridgeid`
+  **stability across reboot/DHCP/factory-reset** are community/inference, not confirmed from official docs;
+  closing needs the login-gated Configuration-API/Using-HTTPS pages + a real-bridge probe.
+- Resolution: open — DEFERRED. Pairs with D-001; proposal awaits review + evidence before credential
+  persistence.
 
 ### D-003 — Batch 1 scope = Android-only, ~5 lanes
 - Status: ACCEPTED
@@ -384,8 +408,20 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   `docs/coordination/prompts/android-pairing-decisions-prepare.md`. It requires primary-source evidence,
   explicit first-contact/ongoing TLS and identity/recovery contracts, and a validation matrix; it
   forbids runtime edits, live probes without human approval, and Batch 3 launch preparation.
-- Resolution: pending Claude's evidence-backed proposal plus Codex/human review. D-001 and D-002 stay
-  DEFERRED, and no pairing or credential-persistence code is authorized meanwhile.
+- 2026-06-28 [Claude]: Executed the planning-only prompt. Preflight verified (`origin/main` @ `7ed6468`;
+  D-011 + prompt present; re-confirmed from source that `BridgeEndpoint` is name/host/port only with
+  `endpointKey` = host:port routing-only, and `BridgeCredentialAlias` requires a stable `bridgeId` matching
+  `^[A-Za-z0-9_-]+$`). Ran a primary-source research pass (4 researchers + 1 adversarial reviewer); the
+  reviewer downgraded the Hue-TLS specifics because the authoritative pages are login-gated. Produced a
+  coupled D-001/D-002 proposal + the C (`generateclientkey`) recommendation in the decision doc
+  "Resolution proposal"; appended turns under D-001/D-002. Per the prompt, D-001/D-002 stay **DEFERRED** and
+  this stays **DISCUSSING** — a safe direction is grounded, but the decisive TLS/identity mechanics (CA vs
+  self-signed, the official `.pem`, leaf SAN, `bridgeid` stability/schema) need a Hue developer-account
+  read + a human-approved real-bridge probe. No source/probe/Batch-3 work was done. Recommendation for C
+  (omit `generateclientkey` for the non-Entertainment MVP) is well-grounded and can be accepted earlier.
+- Resolution: pending Claude's evidence-backed proposal plus Codex/human review. Proposal delivered
+  2026-06-28; D-001 and D-002 stay DEFERRED, this stays DISCUSSING, and no pairing or credential-persistence
+  code is authorized until the listed evidence is obtained and the proposal is accepted.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
