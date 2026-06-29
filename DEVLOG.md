@@ -13,10 +13,10 @@
 - iOS production anchor: native Swift/SwiftUI app in `HueHome/`.
 - iOS build scheme: `HueHome 1` (not `HueHome`).
 - Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `7ed6468`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
-- Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 foundations are
-  integrated at `142ca71`, but accepted D-014 blocks promotion until GET-to-POST identity continuity is
-  corrected and revalidated. Setup UI, credential persistence, and physical pairing remain later scope.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`. Batch 3 pairing foundations are integrated on `integration/parallel-batch-3` @ `142ca71` but **NOT eligible for `main`**: run the READY D-014 correction prompt, then rerun the full gate. The pre-correction gate was unit 173/0 and connected 37/0. (Pre-Batch-3 `main` baseline was unit 84/0, connected 34/0.)
+- Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 foundations —
+  including the accepted D-014 GET→POST identity-continuity correction — are integrated at `c385616` and
+  fully revalidated. Setup UI, credential persistence, and physical pairing remain later scope.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`. Batch 3 pairing foundations + the D-014 correction are integrated on `integration/parallel-batch-3` @ `c385616` (pushed; **NOT merged to `main`**, human go-ahead pending after Codex review). Full gate green: unit 174/0, lint, assemble, connected 37/0 on `Pixel_10`. (Pre-Batch-3 `main` baseline was unit 84/0, connected 34/0.)
 
 ### Handoff Entry Template
 
@@ -41,6 +41,47 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-06-29 - [Claude] Correct Batch 3 D-014 identity continuity (integrated, not on main)
+
+### Branch
+- `integration/parallel-batch-3` (corrected, pushed) + this `docs/parallel-agent-pipeline` handoff.
+
+### Did
+- Executed the accepted D-014 correction prompt as batch owner from the exact pushed integration head
+  `142ca71`. Single serialized two-file lane `lane/android3-pairing-identity-continuity-correction` @
+  `352a42e` (edited only `transport/OkHttpHuePairingClient.kt` + its test).
+- Fixed the GET→POST identity-continuity defect: `pair()` now builds a SEPARATE create-user client whose
+  `HueLeafHostnameVerifier` is pinned to the GET-authenticated `bridgeid` even when the caller hint was
+  null (forcing a fresh, pinned TLS connection for the POST), and re-checks the POST response handshake
+  leaf CN == authenticated id before parsing/returning any outcome. A different CA-valid Hue leaf on a
+  re-established connection is now rejected at the TLS handshake — create-user can never reach a different
+  bridge. Public `HuePairingClient` API unchanged.
+- Added a real dual-cert HTTPS regression test (null hint; leaf A on GET, distinct leaf B on POST via a
+  per-connection switching `SSLSocketFactory`) asserting fail-closed + `requestCount == 1`.
+- Merged `--no-ff` → `integration/parallel-batch-3` @ `c385616` (pushed).
+
+### Working
+- The accepted D-001/D-002 fail-closed identity contract now holds across BOTH pairing legs.
+
+### Left
+- NOT merged to `main` — awaits Codex review of `c385616` + explicit human go-ahead. No Setup UI,
+  discovery, credential write, persistence, or live bridge traffic added.
+
+### Validation
+- Full gate on `c385616`: `testDebugUnitTest` 174/0 (transport 16/0, +1 regression), `lintDebug`,
+  `assembleDebug`, `connectedDebugAndroidTest` 37/0 on `Pixel_10`; `git diff --check` clean.
+- Boundary: correction commit = exactly the 2 transport files; full diff vs `main` = 29 paths, all
+  in-glob; prohibited-pattern scan clean (no trust-all, blanket-true verifier, `generateclientkey`,
+  `clientkey`/persistence, secret logging).
+
+### Gotchas
+- The fix relies on `HueLeafHostnameVerifier` not overriding `equals`: the GET-leg and POST-leg verifier
+  instances differ, so OkHttp treats them as distinct `Address`es and always re-handshakes for the POST —
+  combined with the explicit post-leg CN re-check, the property holds even if connection-pool semantics
+  change. `142ca71` is superseded by `c385616`.
 
 ---
 
