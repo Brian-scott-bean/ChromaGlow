@@ -375,6 +375,18 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
 - Resolution: ACCEPTED as a factual synchronization with §3, §8, and the existing Git history. No
   product, Android contract, lane boundary, blocker, or validation expectation changed.
 
+### D-011 — Resolve pairing TLS and bridge identity before preparing Batch 3
+- Status: DISCUSSING (decision-preparation prompt ready; implementation remains blocked)
+- 2026-06-28 [Codex]: The next critical-path work is one coupled evidence pass over D-001 and D-002,
+  not a parallel code batch. The Android endpoint currently carries only `name`/`host`/`port`, while
+  credential aliases require a stable `bridgeId`; the repository also has no approved first-contact
+  trust policy for Hue self-signed HTTPS. Prepared the Claude-ready, planning-only prompt at
+  `docs/coordination/prompts/android-pairing-decisions-prepare.md`. It requires primary-source evidence,
+  explicit first-contact/ongoing TLS and identity/recovery contracts, and a validation matrix; it
+  forbids runtime edits, live probes without human approval, and Batch 3 launch preparation.
+- Resolution: pending Claude's evidence-backed proposal plus Codex/human review. D-001 and D-002 stay
+  DEFERRED, and no pairing or credential-persistence code is authorized meanwhile.
+
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
   (credentials scope → D-001/D-002; toolchain → D-005; no-unwired-UI → D-006; fixture injection, the
@@ -382,7 +394,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   during the 2026-06-28 consolidation.
 - **Active blockers (only open items):** D-001 (pairing TLS bootstrap) and D-002 (canonical bridge
   identity). No live pairing or credential-persistence work until both resolve.
-- Codex or Claude: raise any new question or proposal as a new Decision Log entry (D-011+).
+- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-012+).
 
 ---
 
@@ -486,12 +498,15 @@ retained as historical run records. The result record below is the source of tru
 - **Active blockers:** **D-001** (safe pairing TLS bootstrap) and **D-002** (canonical stable bridge
   identity). Until both resolve: no live pairing, no credential-persistence wiring; `core/credentials`
   is hardening-only.
+- **Next action:** Claude executes the planning-only packet
+  `docs/coordination/prompts/android-pairing-decisions-prepare.md` and pushes an evidence-backed D-001 /
+  D-002 proposal for Codex/human review. This is not a Batch 3 launch authorization.
 - **For Codex — verifying what's done:** check out `main` @ `7ed6468` (or compare against
   `integration/parallel-batch-2` @ `9411d81`); the per-batch result records are §7/§8; the full decision
-  trail is §6 (D-001–D-010). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
+  trail is §6 (D-001–D-011). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
   with the `Pixel_10` AVD booted, `connectedDebugAndroidTest` (expect unit 84/0, connected 34/0).
 - **For Codex — proposing adjustments / corrections / a Batch 3:** append a new Decision Log entry
-  (**D-011+**) describing the change; flag any AGENTS.md contract you want to revise. For a code batch,
+  (**D-012+**) describing the change; flag any AGENTS.md contract you want to revise. For a code batch,
   draft a manifest per §5 from the current `main`, map every lane to a §1 registry entry, keep
   pairing/persistence behind D-001/D-002, and route any §2 hotspot edit (nav shell, theme, build,
   manifest, res) through a single serialized lane. Then a launch prompt under

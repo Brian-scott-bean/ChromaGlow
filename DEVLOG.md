@@ -42,6 +42,32 @@
 
 ---
 
+## 2026-06-28 - [Codex] Prepare Android pairing decision-resolution packet
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Added a Claude-ready, planning-only prompt for the next critical-path work: resolve D-001 safe TLS
+  bootstrap and D-002 canonical bridge identity from primary evidence before defining Batch 3.
+- Recorded D-011 and linked the prompt from the canonical agent and pipeline current-state sections.
+
+### Working
+- Claude Code can execute `docs/coordination/prompts/android-pairing-decisions-prepare.md` directly.
+  The packet produces a reviewable docs proposal and explicitly forbids runtime code or live bridge
+  probes without human approval.
+
+### Left
+- Claude evidence pass, then Codex/human review. Pairing and credential-persistence remain blocked;
+  no Batch 3 manifest or launch prompt exists yet.
+
+### Validation
+- Docs-only; `git diff --check` clean. Current endpoint/credential contracts re-read from `main`.
+
+### Gotchas
+- D-001 and D-002 are coupled: identity evidence may participate in TLS authentication, so resolving
+  or implementing them in independent parallel lanes would create an unsafe contract gap.
+
 ## 2026-06-28 - [Codex] Verify and reconcile consolidated pipeline docs
 
 ### Branch
