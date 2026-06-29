@@ -253,10 +253,11 @@ Log) and the `DEVLOG.md` handoffs.
   as a literal (BuildConfig is disabled — do not enable it). Single `Pixel_10` AVD ⇒ run
   `connectedDebugAndroidTest` serially.
 
-**Pipeline status:** Batches 1 & 2 complete; no batch in flight. The next approved action is the
-planning-only D-011 packet at `docs/coordination/prompts/android-pairing-decisions-prepare.md`; it must
-resolve D-001/D-002 before any pairing-focused Batch 3 manifest or launch prompt. Raise additional
-proposals as D-012+ in the pipeline doc (see its §9).
+**Pipeline status:** Batches 1 & 2 complete; no batch in flight. The D-011 proposal/probe is complete;
+the next approved action is the docs-only D-012 packet at
+`docs/coordination/prompts/android-pairing-evidence-close.md`. It must verify the official Signify CA and
+final pairing contracts before any pairing-focused Batch 3 manifest or launch prompt. Raise additional
+proposals as D-013+ in the pipeline doc (see its §9).
 
 
 ## Validation Commands

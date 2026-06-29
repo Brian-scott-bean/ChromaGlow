@@ -14,7 +14,7 @@
 - iOS build scheme: `HueHome 1` (not `HueHome`).
 - Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `7ed6468`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
 - Android live pairing + credential-persistence are BLOCKED until D-001 (safe TLS bootstrap) and D-002 (canonical bridge identity) resolve; `core/credentials` is hardening-only.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`; no batch in flight. Validation on `main`: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on the `Pixel_10` AVD.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`; no batch in flight. Next action: docs-only D-012 official pairing evidence closure; no Batch 3 until D-001/D-002 acceptance. Validation on `main`: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on the `Pixel_10` AVD.
 
 ### Handoff Entry Template
 
@@ -41,6 +41,32 @@
 ```
 
 ---
+
+## 2026-06-28 - [Codex] Prepare final Android pairing evidence-closure prompt
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Added `docs/coordination/prompts/android-pairing-evidence-close.md`, recorded D-012, and updated the
+  canonical current-state pointers. Marked the completed D-011 preparation prompt historical.
+
+### Working
+- Claude can now run one bounded docs-only packet to verify the official `root-bridge` CA and Hue
+  contracts through an existing authenticated portal session, then return an acceptance proposal.
+- The packet proposes CA-signed-only MVP support with fail-closed firmware-update guidance for legacy
+  self-signed bridges; it forbids TOFU, permissive fallback, source edits, and Batch 3 preparation.
+
+### Left
+- Claude evidence closure, then explicit Codex/human acceptance. D-001/D-002 remain DEFERRED and D-011 /
+  D-012 remain DISCUSSING; no pairing code is authorized.
+
+### Validation
+- Docs-only; `git diff --check` clean. No bridge probe, credentials, source, or runtime changes.
+
+### Gotchas
+- Portal credentials/session data and the temporary CA file must stay outside Git. If authenticated
+  access is unavailable, Claude must stop with the exact missing access rather than use a community CA.
 
 ## 2026-06-28 - [Claude] Android pairing read-only bridge probe (D-001/D-002 evidence)
 

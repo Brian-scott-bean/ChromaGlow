@@ -461,6 +461,19 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   verification + explicit human/Codex acceptance. D-001 and D-002 stay DEFERRED, this stays DISCUSSING, and
   no pairing or credential-persistence code is authorized meanwhile.
 
+### D-012 — Close official pairing evidence and choose the legacy-bridge MVP policy
+- Status: DISCUSSING (evidence-closure prompt ready; implementation remains blocked)
+- 2026-06-28 [Codex]: Prepared the final docs-only closure packet at
+  `docs/coordination/prompts/android-pairing-evidence-close.md`. Claude must use an existing
+  human-authenticated Hue developer session to byte-verify the official `root-bridge` CA and capture the
+  official HTTPS/config/`generateclientkey` contracts without storing portal credentials or copying
+  protected documentation. The proposed MVP compatibility stance is fail-closed support for CA-signed
+  bridges only, with firmware-update guidance for legacy self-signed bridges; no TOFU or permissive
+  fallback. The prompt also requires a non-circular manual-endpoint identity rule and stops before any
+  Batch 3 manifest or code.
+- Resolution: pending Claude's official evidence packet and explicit Codex/human acceptance. If portal
+  access is unavailable or any certificate/profile check fails, D-001/D-002 remain DEFERRED.
+
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
   (credentials scope → D-001/D-002; toolchain → D-005; no-unwired-UI → D-006; fixture injection, the
@@ -468,7 +481,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   during the 2026-06-28 consolidation.
 - **Active blockers (only open items):** D-001 (pairing TLS bootstrap) and D-002 (canonical bridge
   identity). No live pairing or credential-persistence work until both resolve.
-- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-012+).
+- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-013+).
 
 ---
 
@@ -572,15 +585,16 @@ retained as historical run records. The result record below is the source of tru
 - **Active blockers:** **D-001** (safe pairing TLS bootstrap) and **D-002** (canonical stable bridge
   identity). Until both resolve: no live pairing, no credential-persistence wiring; `core/credentials`
   is hardening-only.
-- **Next action:** Claude executes the planning-only packet
-  `docs/coordination/prompts/android-pairing-decisions-prepare.md` and pushes an evidence-backed D-001 /
-  D-002 proposal for Codex/human review. This is not a Batch 3 launch authorization.
+- **Next action:** Claude executes the docs-only packet
+  `docs/coordination/prompts/android-pairing-evidence-close.md` using an existing authenticated Hue
+  developer session. It verifies the official CA/contract evidence and proposes the legacy policy for
+  explicit Codex/human acceptance. This is not a Batch 3 launch authorization.
 - **For Codex — verifying what's done:** check out `main` @ `7ed6468` (or compare against
   `integration/parallel-batch-2` @ `9411d81`); the per-batch result records are §7/§8; the full decision
-  trail is §6 (D-001–D-011). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
+  trail is §6 (D-001–D-012). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
   with the `Pixel_10` AVD booted, `connectedDebugAndroidTest` (expect unit 84/0, connected 34/0).
 - **For Codex — proposing adjustments / corrections / a Batch 3:** append a new Decision Log entry
-  (**D-012+**) describing the change; flag any AGENTS.md contract you want to revise. For a code batch,
+  (**D-013+**) describing the change; flag any AGENTS.md contract you want to revise. For a code batch,
   draft a manifest per §5 from the current `main`, map every lane to a §1 registry entry, keep
   pairing/persistence behind D-001/D-002, and route any §2 hotspot edit (nav shell, theme, build,
   manifest, res) through a single serialized lane. Then a launch prompt under
