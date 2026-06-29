@@ -12,8 +12,12 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.InetAddress
+import java.net.Socket
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManager
 
 /**
@@ -266,7 +270,99 @@ class OkHttpHuePairingClientTest {
         assertTrue("timed out too slowly: ${elapsedMillis}ms", elapsedMillis < 10_000)
     }
 
+    // --- Identity-continuity correction (D-014) ------------------------------------------------
+
+    @Test
+    fun distinctLeafIdentitiesAcrossLegs_nullHint_failsClosed_andNeverPosts() {
+        // Two CA-valid, SAN-less leaves signed by the SAME trusted test CA, distinct 16-hex CNs.
+        // The GET leg presents leaf A (idA); a later re-handshake (forced by the POST leg pinning
+        // its verifier to the authenticated id) presents leaf B (idB). With a NULL hint the GET
+        // authenticates idA, but the POST must NOT be delivered to idB: the POST verifier is pinned
+        // to idA, so leaf B is rejected at the TLS layer and the create-user request never lands.
+        val idA = bridgeId
+        val idB = otherBridgeId
+        val leafA = HeldCertificate.Builder()
+            .commonName(idA)
+            .signedBy(rootCa)
+            .ecdsa256()
+            .build()
+        val leafB = HeldCertificate.Builder()
+            .commonName(idB)
+            .signedBy(rootCa)
+            .ecdsa256()
+            .build()
+        val serverA = HandshakeCertificates.Builder().heldCertificate(leafA).build()
+        val serverB = HandshakeCertificates.Builder().heldCertificate(leafB).build()
+
+        val server = MockWebServer()
+        // First TLS connection (the GET) serves leaf A; every later connection (the POST's forced
+        // re-handshake) serves leaf B.
+        server.useHttps(
+            SwitchingSslSocketFactory(
+                first = serverA.sslSocketFactory(),
+                rest = serverB.sslSocketFactory(),
+            ),
+        )
+        server.start()
+        servers += server
+
+        // GET authenticates idA; the POST success response must never be consumed.
+        server.enqueue(json(body = configBody(idA)))
+        server.enqueue(json(body = successBody("must-never-be-returned")))
+
+        val trustManager = HueRootTrustManager.fromCertificateAuthorities(listOf(rootCa.certificate))
+        val sslContext = SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<TrustManager>(trustManager), null)
+        }
+        val client = OkHttpHuePairingClient(sslContext.socketFactory, trustManager)
+        val endpoint = BridgeEndpoint(name = "Test Bridge", host = server.hostName, port = server.port)
+
+        val result = client.pair(endpoint, expectedBridgeId = null)
+
+        // Fail closed: the differing POST leaf was rejected at the handshake → not Success.
+        assertTrue("expected fail-closed Failure, was $result", result is HuePairingResult.Failure)
+        // The create-user POST never reached the server: only the GET (idA) was served.
+        assertEquals(1, server.requestCount)
+    }
+
     // --- Test fixtures ------------------------------------------------------------------------
+
+    /**
+     * An [SSLSocketFactory] that delegates per TLS connection: the FIRST accepted connection uses
+     * [first], every later connection uses [rest]. This lets a single [MockWebServer] present a
+     * different CA-valid leaf on a re-established connection, exercising the across-legs identity
+     * transition that the D-014 correction must fail closed on.
+     */
+    private class SwitchingSslSocketFactory(
+        private val first: SSLSocketFactory,
+        private val rest: SSLSocketFactory,
+    ) : SSLSocketFactory() {
+
+        private val connectionCount = AtomicInteger(0)
+
+        private fun delegate(): SSLSocketFactory =
+            if (connectionCount.getAndIncrement() == 0) first else rest
+
+        override fun getDefaultCipherSuites(): Array<String> = first.defaultCipherSuites
+
+        override fun getSupportedCipherSuites(): Array<String> = first.supportedCipherSuites
+
+        // MockWebServer wraps each accepted raw socket via this overload, once per TLS connection.
+        override fun createSocket(s: Socket?, host: String?, port: Int, autoClose: Boolean): Socket =
+            delegate().createSocket(s, host, port, autoClose)
+
+        override fun createSocket(host: String?, port: Int): Socket =
+            throw UnsupportedOperationException()
+
+        override fun createSocket(host: String?, port: Int, localHost: InetAddress?, localPort: Int): Socket =
+            throw UnsupportedOperationException()
+
+        override fun createSocket(host: InetAddress?, port: Int): Socket =
+            throw UnsupportedOperationException()
+
+        override fun createSocket(address: InetAddress?, port: Int, localAddress: InetAddress?, localPort: Int): Socket =
+            throw UnsupportedOperationException()
+    }
 
     private class Fixture(
         val server: MockWebServer,
