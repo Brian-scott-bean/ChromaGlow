@@ -18,7 +18,7 @@
 - Latest local Android validation observed by Codex: Android Studio's bundled JDK plus `~/Library/Android/sdk` passed unit tests, lint, assembly, and all 17 connected tests on the `Pixel_10` AVD.
 - Parallel multi-agent pipeline defined: lane registry, collision hotspots, execution-readiness gate, and the shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`.
 - Android parallel Batch 1 is COMPLETE and **merged to `main` @ `a3fe54f`** (via integration `0d7c218`): two lanes (demo domain models incl. `LightDisplayModel`/`SceneDisplayModel`; dashboard on/off + brightness controls) plus the D-007 corrections (scene `bridgeId` routing; `lightCount` == `lightsByRoom[room.id].size`). Pre-merge gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 20/0 on `Pixel_10`. D-007 is RESOLVED. Demo-model/fixture contracts are recorded in `AGENTS.md` → "Android Current State".
-- Android parallel Batch 2 is EXECUTED, integrated, and **D-009-corrected** on `integration/parallel-batch-2` @ `9411d81` (pushed): Wave 1 = `roomdetail`/`scenes`/`settings` feature packages, Wave 2 = `nav-shell` integration, plus the D-009 state-ownership fix (demo room/light/scene state hoisted into `ChromaGlowApp` so mutations survive navigation). Gate green: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on `Pixel_10` (incl. a persistence E2E). **Not merged to `main`** — eligible (D-009 resolved); awaits human go-ahead.
+- Android parallel Batch 2 is **merged to `main` @ `7ed6468`** (2026-06-28): Wave 1 = `roomdetail`/`scenes`/`settings` feature packages, Wave 2 = `nav-shell` integration, plus the D-009 state-ownership fix (demo room/light/scene state hoisted into `ChromaGlowApp` so mutations survive navigation). `--no-ff` from `integration/parallel-batch-2` @ `9411d81`; gate green before merge (`testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on `Pixel_10`, incl. a persistence E2E), independently verified by Codex.
 
 ### Handoff Entry Template
 
@@ -45,6 +45,39 @@
 ```
 
 ---
+
+## 2026-06-28 - [Claude] Merge parallel Batch 2 to main
+
+### Branch
+- `main` @ `7ed6468` (merged `--no-ff` from `integration/parallel-batch-2` @ `9411d81`; pushed).
+
+### Did
+- On the human collaborator's go-ahead, fetched the latest docs branch (`3b63d52`, Codex's "verify
+  corrected Batch 2") and merged the D-009-corrected Batch 2 integration into `main`. `main` was an
+  ancestor of the integration branch, so the merge was clean (no conflicts). Pushed `origin/main`
+  `a3fe54f..7ed6468`. Confirmed the room-detail/scenes/settings sources are present on `main`.
+- Recorded the landing: pipeline §8 + §1 registry context, AGENTS.md one-line state + Android Current
+  State, and the DEVLOG snapshot now read "merged to `main` @ `7ed6468`".
+
+### Working
+- Batch 2 (room-detail / scenes / settings feature screens, nav integration, and the D-009
+  persist-across-navigation fix) is on `main`. Pre-merge gate was green (unit 84/0, connected 34/0 on
+  `Pixel_10`) and independently verified by Codex; not re-run at merge time (clean fast-forwardable merge
+  of already-validated, twice-verified commits).
+
+### Left
+- Both Android pilot batches are on `main`. Next: Batch 3 scoping when desired (the pipeline can fan out
+  further feature packages + a serialized nav wave, same as Batch 2). Pairing/persistence remain blocked
+  by D-001/D-002.
+
+### Validation
+- Pre-merge: `origin/integration/parallel-batch-2` confirmed `9411d81`; `main` `a3fe54f`; ancestor check
+  clean. Post-merge: Batch 2 sources verified present on `main` @ `7ed6468`.
+
+### Gotchas
+- The SSH identity can push `main` directly (the documented "agent gh account not a collaborator" limit
+  applies only to the `gh` bot, not the local SSH key); both Batch 1 and Batch 2 final merges were pushed
+  this way after explicit user go-ahead.
 
 ## 2026-06-28 - [Codex] Verify corrected Batch 2 for final merge
 

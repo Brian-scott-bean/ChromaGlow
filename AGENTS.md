@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a scaffold, theme, demo fixtures, credential boundary, mDNS chooser, manual-IP entry, and pairing is blocked until safe TLS bootstrap plus canonical bridge identity are decided. Parallel Batch 1 is merged to `main` @ `a3fe54f`; Batch 2 is integrated and **D-009-corrected** on `integration/parallel-batch-2` @ `9411d81` (demo mutations now survive navigation; gate green, unit 84/0, connected 34/0) — eligible for `main`, awaiting the human collaborator's go-ahead.
+ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a scaffold, theme, demo fixtures, credential boundary, mDNS chooser, manual-IP entry, and pairing is blocked until safe TLS bootstrap plus canonical bridge identity are decided. Parallel Batch 1 is merged to `main` @ `a3fe54f`; Batch 2 (room-detail / scenes / settings + nav integration, with the D-009 state-ownership correction so demo mutations survive navigation) is **merged to `main` @ `7ed6468`** (gate green: unit 84/0, connected 34/0).
 
 ## Current Branch/Repo Facts
 

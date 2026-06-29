@@ -658,8 +658,9 @@ Wave 2 (one serialized lane — owns the §2 nav hotspots, wires + exercises eve
   scheduling decisions.
 
 ### Batch 2 execution result — 2026-06-28 [Claude, batch owner]
-- **State:** Executed, integrated, and D-009-corrected. Pushed to `origin/integration/parallel-batch-2`
-  @ `9411d81`. **Not merged to `main`** — awaits the human collaborator's go-ahead (D-009 resolved).
+- **State:** Executed, integrated, D-009-corrected, and **merged to `main` @ `7ed6468`** (2026-06-28,
+  `--no-ff` from `integration/parallel-batch-2` @ `9411d81` after the human collaborator's go-ahead).
+  Batch 2 is complete; lanes/integration branches retained.
 - **Base:** `main` @ `a3fe54f` (re-verified unchanged at launch; D-008 ACCEPTED before launch).
 - **Wave 1** (parallel, compile/unit/lint-checked in isolation; connected run serially by the owner):
   - Lane R `lane/android2-roomdetail` @ `a3cd34a` — `RoomDetailScreen` (per-light Switch/Slider,
