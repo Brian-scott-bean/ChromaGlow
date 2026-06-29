@@ -1,0 +1,102 @@
+package com.chromaglow.app.core.bridge
+
+import android.content.Context
+import androidx.datastore.core.CorruptionException
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import kotlinx.coroutines.flow.first
+import java.io.File
+import java.io.IOException
+
+/**
+ * [BridgeRegistry] backed by a Preferences DataStore.
+ *
+ * The records are stored as a single JSON-array string ([PairedBridgeCodec]) under one preference
+ * key. In production the DataStore file lives in the app's `noBackupFilesDir`, so non-secret bridge
+ * routing metadata is excluded from cloud/auto backup (mirroring the credential store) and never
+ * surfaces in a backup transport. No token is ever read or written here — secrets stay in the
+ * Keystore-backed credential store.
+ *
+ * Construct production instances with [create]; tests inject a DataStore over a temp file via
+ * [forDataStore].
+ */
+class DataStoreBridgeRegistry internal constructor(
+    private val dataStore: DataStore<Preferences>,
+) : BridgeRegistry {
+
+    override suspend fun bridges(): BridgeRegistryResult<List<PairedBridgeRecord>> {
+        val preferences = try {
+            dataStore.data.first()
+        } catch (cause: CorruptionException) {
+            return BridgeRegistryResult.Corrupt
+        } catch (cause: IOException) {
+            return BridgeRegistryResult.Failure(cause)
+        }
+        val raw = preferences[RECORDS_KEY] ?: return BridgeRegistryResult.Success(emptyList())
+        return try {
+            BridgeRegistryResult.Success(PairedBridgeCodec.decode(raw))
+        } catch (cause: MalformedMetadataException) {
+            BridgeRegistryResult.Corrupt
+        }
+    }
+
+    override suspend fun upsert(record: PairedBridgeRecord): BridgeRegistryResult<Unit> =
+        mutate { current ->
+            // Replace any existing record with the same canonical id; otherwise append.
+            current.filterNot { it.bridgeId == record.bridgeId } + record
+        }
+
+    override suspend fun remove(bridgeId: String): BridgeRegistryResult<Unit> =
+        mutate { current -> current.filterNot { it.bridgeId == bridgeId } }
+
+    /**
+     * Authoritatively rewrites the stored list. A previously corrupt blob is treated as empty (and
+     * thus discarded) so writes — re-pairing after damage, or forgetting to clear corruption —
+     * always make progress. IO errors are surfaced as [BridgeRegistryResult.Failure].
+     */
+    private suspend fun mutate(
+        transform: (List<PairedBridgeRecord>) -> List<PairedBridgeRecord>,
+    ): BridgeRegistryResult<Unit> =
+        try {
+            dataStore.edit { preferences ->
+                val current = preferences[RECORDS_KEY]?.let { raw ->
+                    runCatching { PairedBridgeCodec.decode(raw) }.getOrDefault(emptyList())
+                } ?: emptyList()
+                val next = transform(current)
+                if (next.isEmpty()) {
+                    preferences.remove(RECORDS_KEY)
+                } else {
+                    preferences[RECORDS_KEY] = PairedBridgeCodec.encode(next)
+                }
+            }
+            BridgeRegistryResult.Success(Unit)
+        } catch (cause: IOException) {
+            BridgeRegistryResult.Failure(cause)
+        }
+
+    companion object {
+        /** Preferences DataStore file name (the `.preferences_pb` extension is required). */
+        internal const val FILE_NAME = "bridge_registry.preferences_pb"
+
+        private val RECORDS_KEY = stringPreferencesKey("paired_bridges")
+
+        /**
+         * Production factory. Places the DataStore file under [Context.getNoBackupFilesDir] so the
+         * non-secret routing metadata is excluded from device backup.
+         */
+        fun create(context: Context): DataStoreBridgeRegistry {
+            val appContext = context.applicationContext
+            val dataStore = PreferenceDataStoreFactory.create(
+                produceFile = { File(appContext.noBackupFilesDir, FILE_NAME) },
+            )
+            return DataStoreBridgeRegistry(dataStore)
+        }
+
+        /** Test/injection seam: wrap an already-built DataStore (e.g. over a temp file). */
+        fun forDataStore(dataStore: DataStore<Preferences>): DataStoreBridgeRegistry =
+            DataStoreBridgeRegistry(dataStore)
+    }
+}
