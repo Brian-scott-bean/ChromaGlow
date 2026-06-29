@@ -54,7 +54,9 @@ class OkHttpHuePairingClientTest {
 
         val result = f.client.pair(f.endpoint)
 
-        assertEquals(HuePairingResult.Success("abcdEFGH1234567890"), result)
+        // Success now carries the canonical authenticated bridge id (UPPERCASE leaf CN) alongside
+        // the application key, so a caller can key durable storage on it without re-fetching.
+        assertEquals(HuePairingResult.Success(bridgeId = bridgeId, username = "abcdEFGH1234567890"), result)
         assertEquals(2, f.server.requestCount)
 
         val configRequest = f.server.takeRequest()
@@ -78,7 +80,9 @@ class OkHttpHuePairingClientTest {
 
         val result = f.client.pair(f.endpoint, expectedBridgeId = "001788FffE112233")
 
-        assertEquals(HuePairingResult.Success("key-Normalized"), result)
+        // The returned bridge id is the UPPERCASE-normalized canonical identity even though the
+        // leaf CN was served lowercase — callers always get a consistent storage key.
+        assertEquals(HuePairingResult.Success(bridgeId = "001788FFFE112233", username = "key-Normalized"), result)
         assertEquals(2, f.server.requestCount)
     }
 
@@ -90,7 +94,7 @@ class OkHttpHuePairingClientTest {
 
         val result = f.client.pair(f.endpoint, expectedBridgeId = bridgeId)
 
-        assertEquals(HuePairingResult.Success("paired"), result)
+        assertEquals(HuePairingResult.Success(bridgeId = bridgeId, username = "paired"), result)
     }
 
     // --- Create-user outcome mapping ----------------------------------------------------------

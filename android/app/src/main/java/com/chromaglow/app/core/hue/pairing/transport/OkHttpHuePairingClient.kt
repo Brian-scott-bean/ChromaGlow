@@ -135,7 +135,10 @@ class OkHttpHuePairingClient(
             return HuePairingResult.Failure(PairingFailureReason.IdentityMismatch)
         }
 
-        return mapCreateUserOutcome(PairingResponseParser.parseCreateUser(created.body))
+        // The authenticated identity is identical across both legs (verified above), so it is the
+        // canonical bridge id reported on success. Carrying it out of the transport lets callers key
+        // durable credential/metadata storage without re-fetching or fabricating identity.
+        return mapCreateUserOutcome(authenticatedId, PairingResponseParser.parseCreateUser(created.body))
     }
 
     /**
@@ -188,9 +191,13 @@ class OkHttpHuePairingClient(
         }
     }
 
-    private fun mapCreateUserOutcome(outcome: CreateUserOutcome): HuePairingResult =
+    private fun mapCreateUserOutcome(
+        authenticatedBridgeId: String,
+        outcome: CreateUserOutcome,
+    ): HuePairingResult =
         when (outcome) {
-            is CreateUserOutcome.Success -> HuePairingResult.Success(outcome.username)
+            is CreateUserOutcome.Success ->
+                HuePairingResult.Success(bridgeId = authenticatedBridgeId, username = outcome.username)
             CreateUserOutcome.LinkButtonNotPressed -> HuePairingResult.LinkButtonNotPressed
             CreateUserOutcome.InvalidRequest ->
                 HuePairingResult.Failure(PairingFailureReason.InvalidRequest)
