@@ -131,7 +131,7 @@ requests through the Decision Log.
 3. **Handoff** — return the standard structured handoff
    (`Branch / Did / Working / Left / Validation / Gotchas`) to the batch owner. The owner serially
    appends `DEVLOG.md`; concurrent lane agents never edit that shared file.
-4. **Merge** — merge the lane branch onto `integration/parallel-batch-1`; the batch owner sets the lane
+4. **Merge** — merge the lane branch onto `integration/parallel-batch-N`; the batch owner sets the lane
    `merged` and records the handoff.
 
 ---
@@ -362,6 +362,19 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-1-corrections.md`.
 
 Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
 
+### D-010 — Reconcile consolidated coordination summaries with the landed Batch 2 state
+- Status: ACCEPTED (documentation-only correction)
+- 2026-06-28 [Codex]: Verified the consolidated docs against `origin/main` @ `7ed6468` and
+  `origin/docs/parallel-agent-pipeline` @ `23c202c`. The feature inventory, durable Android contracts,
+  D-001/D-002 blockers, lane registry, and Batch 1/2 result records match the landed tree. Corrected
+  three residual summary inconsistencies without changing history or code: `AGENTS.md` now matches
+  the established explicit-human-go-ahead/SSH merge model and batch-owner-only shared-file ownership;
+  the generic lifecycle now names `integration/parallel-batch-N`; and the two Batch 2 prompt status
+  headers now record the corrected integration and final `main` landing. Prompt bodies and all prior
+  Decision Log turns remain unchanged.
+- Resolution: ACCEPTED as a factual synchronization with §3, §8, and the existing Git history. No
+  product, Android contract, lane boundary, blocker, or validation expectation changed.
+
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
   (credentials scope → D-001/D-002; toolchain → D-005; no-unwired-UI → D-006; fixture injection, the
@@ -369,7 +382,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   during the 2026-06-28 consolidation.
 - **Active blockers (only open items):** D-001 (pairing TLS bootstrap) and D-002 (canonical bridge
   identity). No live pairing or credential-persistence work until both resolve.
-- Codex: raise any new question or proposal as a new Decision Log entry (D-010+).
+- Codex or Claude: raise any new question or proposal as a new Decision Log entry (D-011+).
 
 ---
 
@@ -475,10 +488,10 @@ retained as historical run records. The result record below is the source of tru
   is hardening-only.
 - **For Codex — verifying what's done:** check out `main` @ `7ed6468` (or compare against
   `integration/parallel-batch-2` @ `9411d81`); the per-batch result records are §7/§8; the full decision
-  trail is §6 (D-001–D-009). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
+  trail is §6 (D-001–D-010). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
   with the `Pixel_10` AVD booted, `connectedDebugAndroidTest` (expect unit 84/0, connected 34/0).
 - **For Codex — proposing adjustments / corrections / a Batch 3:** append a new Decision Log entry
-  (**D-010+**) describing the change; flag any AGENTS.md contract you want to revise. For a code batch,
+  (**D-011+**) describing the change; flag any AGENTS.md contract you want to revise. For a code batch,
   draft a manifest per §5 from the current `main`, map every lane to a §1 registry entry, keep
   pairing/persistence behind D-001/D-002, and route any §2 hotspot edit (nav shell, theme, build,
   manifest, res) through a single serialized lane. Then a launch prompt under

@@ -2,7 +2,7 @@
 
 ## Status
 
-- **State:** Executed 2026-06-28 — integrated on `integration/parallel-batch-2` @ `4c74beb` (pushed); gate green (unit 84/0, connected 33/0). Not merged to `main` (awaits human go-ahead). See pipeline §8 "Batch 2 execution result".
+- **State:** Completed 2026-06-28 — initial integration `4c74beb`, D-009-corrected integration `9411d81`, then merged to `main` @ `7ed6468` after human go-ahead; final gate green (unit 84/0, connected 34/0). See pipeline §8 "Batch 2 execution result".
 - **Batch:** `parallel-batch-2`
 - **Manifest:** `docs/coordination/parallel-agent-pipeline.md` §8 (two-wave feature + nav integration)
 - **Pinned base:** `main` @ `a3fe54f978c3a5a78d7f35605b1c3ff37c23edca` (corrected Batch 1 landed on `main`)

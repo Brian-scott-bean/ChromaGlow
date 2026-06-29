@@ -42,6 +42,31 @@
 
 ---
 
+## 2026-06-28 - [Codex] Verify and reconcile consolidated pipeline docs
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Verified the consolidated agent context against `origin/main` @ `7ed6468` and the Batch 1/2 Git
+  history. Recorded D-010 and corrected the remaining summary-only inconsistencies: the canonical
+  merge/shared-file ownership rules, the generic `integration/parallel-batch-N` lifecycle target, and
+  the Batch 2 launch/correction prompt headers that still said the batch had not landed.
+
+### Working
+- Agent-facing current-state summaries now agree that Batch 2's corrected integration `9411d81` is on
+  `main` @ `7ed6468`; lane agents return handoffs while the batch owner serially owns shared docs.
+
+### Left
+- No batch is in flight. D-001 and D-002 remain the only active blockers.
+
+### Validation
+- Docs-only review; `git diff --check` clean. No source or historical Decision Log turn changed.
+
+### Gotchas
+- Historical prompt bodies retain their pinned execution bases by design; only their status headers
+  were updated to show the final landing.
+
 ## 2026-06-28 - [Claude] Consolidate coordination docs (prune historical batch detail)
 
 ### Branch

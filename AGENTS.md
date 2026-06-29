@@ -254,7 +254,7 @@ Log) and the `DEVLOG.md` handoffs.
   `connectedDebugAndroidTest` serially.
 
 **Pipeline status:** Batches 1 & 2 complete; no batch in flight. To propose a Batch 3 or any correction,
-append a Decision Log entry (D-010+) in the pipeline doc (see its §9).
+append a Decision Log entry (D-011+) in the pipeline doc (see its §9).
 
 
 ## Validation Commands
@@ -500,10 +500,13 @@ Core rules:
 - iOS is mostly **not** parallel-safe because most features funnel through the gate files; run iOS
   lanes one or two at a time. Android's modular layout parallelizes cleanly.
 - Lane branches: `lane/<batch>-<slice>`. Integration branch: `integration/parallel-batch-N` (off
-  `main`). Disjoint lanes merge onto the integration branch; a human collaborator does the final merge
-  to `main` (the agent `gh` account is not a collaborator).
+  `main`). Disjoint lanes merge onto the integration branch; the batch owner may perform the final
+  merge to `main` only after the human collaborator's explicit go-ahead. The local SSH push identity
+  can push `main`; any `gh` bot-account limitation applies only to that account.
 - Lane lifecycle: claim (mark in registry) → work (edit only the lane's globs, run narrowest
-  validation) → handoff (append `DEVLOG.md` entry) → merge (onto integration branch).
+  validation) → handoff (return structured text to the batch owner) → merge (onto integration
+  branch). The batch owner serially updates `DEVLOG.md` and the registry; lane agents do not edit
+  those shared files while a batch is running.
 
 ### Shared Decision Log (Claude ⇄ Codex back-and-forth)
 
