@@ -15,8 +15,8 @@
 - Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `f3380a7`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary; **tested non-UI Hue pairing foundations under `core/hue/pairing/**` + bundled CA roots (Batch 3)**. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
 - Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 foundations —
   including the accepted D-014 GET→POST identity-continuity correction — are **merged to `main` @
-  `f3380a7`**. Setup UI, credential persistence, and physical pairing remain later scope.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Batches 1 (`a3fe54f`), 2 (`7ed6468`), and **3 (`f3380a7`)** are merged to `main`. Batch 3 (pairing foundations + D-014 correction) landed `--no-ff` from `integration/parallel-batch-3` @ `c385616` on explicit human go-ahead; final gate green: unit 174/0, lint, assemble, connected 37/0 on `Pixel_10`. (Pre-Batch-3 `main` baseline was unit 84/0, connected 34/0.)
+  `f3380a7`**. Batch 4 live pairing onboarding is READY under D-015/§11.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Batches 1 (`a3fe54f`), 2 (`7ed6468`), and **3 (`f3380a7`)** are merged to `main`. Batch 4 has a READY Claude launch prompt and may run through automated validation, then pauses for the human-assisted physical bridge gate.
 
 ### Handoff Entry Template
 
@@ -41,6 +41,38 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-06-29 - [Codex] Prepare Batch 4 Claude handoff for live pairing
+
+### Branch
+- `docs/parallel-agent-pipeline` (planning from `origin/main` @ `f3380a7`).
+
+### Did
+- Reviewed the landed Setup, discovery, credential, app-shell, and Batch 3 pairing APIs.
+- Identified two required integration contracts: successful pairing must return authenticated `bridgeId`
+  with `username`, and service-advertised discovery ports must map to accepted HTTPS pairing port 443.
+- Accepted D-015, wrote `docs/android/android-live-pairing-workflow-contract.md`, drafted the disjoint §11
+  five-lane manifest, and created the READY Claude prompt
+  `docs/coordination/prompts/parallel-batch-4-launch.md`.
+
+### Working
+- Claude can execute dependency bootstrap, parallel result/registry contracts, transactional workflow,
+  and Setup UI without further product input.
+
+### Left
+- After Claude's automated gate, the human selects a bridge, tests pre-button type 101, presses the link
+  button, verifies pairing and relaunch restoration, then tests local Forget Bridge and unpaired relaunch.
+- Batch 4 does not load Hue resources or enter a real dashboard; that is Batch 5.
+
+### Validation
+- Docs-only: `git diff --check`. Dependency planning used current resolved Lifecycle 2.9.4 plus stable
+  Google Maven DataStore 1.2.1; no Android source was edited.
+
+### Gotchas
+- Local Forget Bridge does not revoke the bridge-side application key. The physical tester must know that
+  one test key may remain on the selected bridge until remote revocation is implemented.
 
 ---
 

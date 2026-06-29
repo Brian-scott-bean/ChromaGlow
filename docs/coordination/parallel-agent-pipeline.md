@@ -10,9 +10,9 @@
 - **Consolidated:** 2026-06-24 · **re-consolidated 2026-06-28** (pruned historical Batch 1/2 manifests
   and resolved questions after both batches landed on `main`).
 - **Current state:** Android pilot Batches 1 & 2 landed at `main` @ `7ed6468`; **Batch 3 (pairing
-  foundations + the D-014 identity-continuity correction) is now MERGED to `main` @ `f3380a7`** (`--no-ff`
-  from `integration/parallel-batch-3` @ `c385616` on explicit human go-ahead; Codex review passed; full
-  gate green). No batch is in flight. See §6, §9, §10.
+  foundations + D-014) is merged to `main` @ `f3380a7`**. Batch 4 live-pairing onboarding is READY under
+  D-015/§11; implementation may run through the automated gate, then must stop for the human-assisted
+  physical bridge checkpoint. See §6, §9–§11.
 - **Canonical rules live in:** `AGENTS.md` → "Parallel Agent Pipeline" section + "Android Current State"
   (the durable feature inventory + code contracts). This doc is the operational registry + decision log.
 
@@ -52,6 +52,11 @@ for a future batch).
 | `android-pairing-tls` | `…/core/hue/pairing/tls/**` + exact matching JVM/instrumented tests | Yes after W0 | merged → `main` (Batch 3 W1; `f3380a7`) | Claude sub-agent C |
 | `android-pairing-transport` | `…/core/hue/pairing/transport/**` + exact matching JVM tests | No (serialized W2 integration of W1 contracts) | merged → `main` (Batch 3 W2; `f3380a7`) | Claude sub-agent D |
 | `android-pairing-identity-continuity-correction` | exact `OkHttpHuePairingClient.kt` + `OkHttpHuePairingClientTest.kt` | No (serialized correction) | merged → `main` (D-014; `f3380a7`) | Claude |
+| `android4-pairing-bootstrap` | exact Gradle catalog + app build files | No (serialized dependency hotspot) | READY (Batch 4 W0) | Claude batch owner |
+| `android4-pairing-result` | exact pairing result/client + transport JVM test | Yes after W0 | READY (Batch 4 W1) | Claude sub-agent A |
+| `android4-bridge-registry` | `…/core/bridge/**` + exact matching JVM/instrumented tests | Yes after W0 | READY (Batch 4 W1) | Claude sub-agent B |
+| `android4-pairing-workflow` | `…/core/hue/pairing/workflow/**` + exact matching JVM tests | No (serialized after W1) | READY (Batch 4 W2) | Claude sub-agent C |
+| `android4-setup-live-pairing` | `…/feature/setup/**` + exact matching setup androidTests | No (serialized final UI integration) | READY (Batch 4 W3) | Claude sub-agent D |
 
 > `ui/theme/**` is no longer a parallel lane — it was bundled into the old `android-models-theme` lane
 > but is consumed app-wide, so it is now a §2 collision hotspot (single-owner per batch).
@@ -604,14 +609,34 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   not change product scope. CORRECTED and integrated 2026-06-29 @ `c385616` (`142ca71` superseded);
   Codex promotion review passed; **merged to `main` @ `f3380a7`** on explicit human go-ahead 2026-06-29.
 
+### D-015 — Batch 4 wires live pairing to durable local registration before real Hue control
+- Status: ACCEPTED (manifest + launch prompt READY; physical gate requires human participation)
+- 2026-06-29 [Human]: Move on to Batch 4 if ready and identify where human help is useful.
+- 2026-06-29 [Codex]: ACCEPTED the bounded §11 slice from `main` @ `f3380a7`. Batch 4 fixes the integration
+  contract so pairing success returns authenticated `bridgeId` with `username`; normalizes selected mDNS/
+  manual routes to the accepted HTTPS port 443; stores the token only through the existing Keystore store;
+  stores list-ready non-secret bridge metadata through Preferences DataStore under `noBackupFilesDir`;
+  compensates partial persistence; restores only record + readable token; and wires Setup states for
+  selected/pairing/type-101/paired/recovery/local-forget. The UI exposes one active bridge in this slice,
+  while the metadata API remains list-ready. It deliberately remains on Setup after pairing: no fake
+  transition to DemoFixtures and no REST/dashboard/SSE work.
+- 2026-06-29 [Codex]: "Forget Bridge" is local-only for Batch 4. It deletes local metadata and the local
+  Keystore token but does not claim to revoke the application key on the bridge; remote revocation waits
+  for an authenticated REST slice. Promotion requires one human-assisted physical flow: pre-button 101,
+  link-button success, force-stop/relaunch restoration, local forget, and unpaired relaunch. The human
+  chooses the bridge and presses the physical button; no raw device values or credentials enter Git.
+- Resolution: ACCEPTED by Codex under the user's instruction to proceed. Execute
+  `docs/coordination/prompts/parallel-batch-4-launch.md`; stop at the physical checkpoint for the human,
+  and do not merge Batch 4 to `main` without physical evidence, Codex review, and explicit human go-ahead.
+
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
   (credentials scope → D-001/D-002; toolchain → D-005; no-unwired-UI → D-006; fixture injection, the
   `when`-router, `Exit Demo Mode` semantics, and serial single-AVD connected tests → D-008/D-009). Pruned
   during the 2026-06-28 consolidation.
-- **No open blocker:** Batch 3 (incl. D-014) is **merged to `main` @ `f3380a7`**. Batch 3 remained bounded
-  to foundations; UI, persistence wiring, and physical pairing require a later decision/batch.
-- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-015+).
+- **No planning blocker:** Batch 4 is READY under D-015. Its implementation can run unattended through
+  the automated integrated gate, then must stop for the human-assisted physical bridge checkpoint.
+- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-016+).
 
 ---
 
@@ -728,14 +753,14 @@ retained as historical run records. The result record below is the source of tru
   See §10 "Batch 3 D-014 correction result".
 - **Merged to `main` (2026-06-29 [Claude], on explicit human go-ahead):** `integration/parallel-batch-3` @
   `c385616` merged `--no-ff` → `main` @ `f3380a7` (pushed `7ed6468..f3380a7`; merged tree byte-identical to
-  `c385616`). Batch 3 is complete. **Next action:** scope a follow-up batch for Setup UI + credential
-  persistence + physical-device pairing on the merged `core/hue/pairing/**` APIs.
-- **For Codex — verifying what's done:** review `integration/parallel-batch-3` against `main` @ `7ed6468`;
-  the per-batch result records are §7/§8/§10 and the full decision trail is §6 (D-001–D-014). Before the
-  correction, expect unit 173/0 and connected 37/0; after D-014, require the added regression test plus the
-  entire green gate.
+  `c385616`). Batch 3 is complete.
+- **Batch 4 READY (2026-06-29 [Codex]):** D-015 and §11 define live Setup pairing, authenticated-ID handoff,
+  no-backup non-secret metadata, Keystore transaction/repair behavior, restart restoration, and local
+  forget. Launch prompt: `docs/coordination/prompts/parallel-batch-4-launch.md`.
+- **Next action:** Claude may execute Batch 4 from exact `main` @ `f3380a7` through its automated gate,
+  then stop for the human to select a bridge and press its link button during the redacted physical test.
 - **For Codex — proposing adjustments / corrections:** append a new Decision Log entry
-  (**D-015+**) describing the change; flag any AGENTS.md contract you want to revise. For a later code batch,
+  (**D-016+**) describing the change; flag any AGENTS.md contract you want to revise. For a later code batch,
   draft a manifest per §5 from the current `main`, map every lane to a §1 registry entry, honor the
   accepted D-001/D-002 boundaries, and route any §2 hotspot edit (nav shell, theme, build,
   manifest, res) through a single serialized lane. Then a launch prompt under
@@ -1012,3 +1037,144 @@ fork from that merged SHA, not directly from `main`.
 - **Independent validation:** focused transport suite 16/0; full `testDebugUnitTest` 174/0; `lintDebug` and
   `assembleDebug` green; 29-path boundary and `git diff --check` clean. Codex did not rerun the emulator;
   Claude's corrected-integration connected result is 37/0 on `Pixel_10`.
+
+---
+
+## 11. Batch 4 — READY (live pairing onboarding + durable local registration)
+
+**Batch:** `parallel-batch-4`
+
+**Pinned base:** `origin/main` @ `f3380a71896fb57b311352b81e9d7ee7958918c1`
+
+**Integration branch:** `integration/parallel-batch-4`
+
+**Decision:** D-015 ACCEPTED
+
+**Contract:** `docs/android/android-live-pairing-workflow-contract.md`
+
+**Launch prompt:** `docs/coordination/prompts/parallel-batch-4-launch.md`
+
+### Goal and boundary
+
+Wire the landed secure pairing transport into the existing Setup experience, persist the application token
+under its authenticated bridge ID, persist non-secret routing metadata, restore a valid paired state after
+relaunch, and support local forget. Batch 4 exposes one active bridge in UI but makes metadata list-ready.
+It ends at "Bridge connected" on Setup; it does not load Hue resources or enter the demo dashboard.
+
+### Dependency graph
+
+```text
+W0 (serialized build hotspot)
+  A android4-pairing-bootstrap
+        ↓
+W1 (parallel from merged W0)
+  B android4-pairing-result    C android4-bridge-registry
+        └──────────┬──────────┘
+                   ↓
+W2 (serialized transaction)
+  D android4-pairing-workflow
+                   ↓
+W3 (serialized UI integration)
+  E android4-setup-live-pairing
+                   ↓
+H0 human-assisted physical bridge gate
+```
+
+### W0 — Lane A: dependency bootstrap (serialized)
+
+- **Branch:** `lane/android4-pairing-bootstrap`
+- **Owns only:**
+  - `android/gradle/libs.versions.toml`
+  - `android/app/build.gradle.kts`
+- **Deliverable:** pin stable `androidx.datastore:datastore-preferences` `1.2.1`; align direct Lifecycle
+  artifacts to the already-resolved `2.9.4` and add ViewModel Compose/KTX; add test-only
+  `kotlinx-coroutines-test` `1.9.0`. No serialization compiler plugin or DI framework.
+- **Forbidden:** Kotlin/XML/resources/manifest and every other build file.
+- **Validation:** dependency resolution, `assembleDebug`, `git diff --check`.
+
+Merge W0 before W1; both W1 branches fork from the recorded post-W0 integration SHA.
+
+### W1 — Lane B: authenticated success result (parallel)
+
+- **Branch:** `lane/android4-pairing-result`
+- **Owns only:**
+  - `android/app/src/main/java/com/chromaglow/app/core/hue/pairing/transport/HuePairingResult.kt`
+  - `android/app/src/main/java/com/chromaglow/app/core/hue/pairing/transport/OkHttpHuePairingClient.kt`
+  - `android/app/src/test/java/com/chromaglow/app/core/hue/pairing/transport/OkHttpHuePairingClientTest.kt`
+- **Deliverable:** `HuePairingResult.Success` returns canonical authenticated uppercase `bridgeId` plus
+  `username`; `OkHttpHuePairingClient` supplies the ID already authenticated across GET/POST. Update every
+  exact assertion while preserving D-014 and all security behavior.
+- **Forbidden:** protocol/TLS, UI, discovery, credentials, metadata, workflow, Gradle/resources.
+- **Validation:** focused transport suite, then `testDebugUnitTest lintDebug assembleDebug`.
+
+### W1 — Lane C: non-secret bridge registry (parallel)
+
+- **Branch:** `lane/android4-bridge-registry`
+- **Owns only:**
+  - `android/app/src/main/java/com/chromaglow/app/core/bridge/**`
+  - `android/app/src/test/java/com/chromaglow/app/core/bridge/**`
+  - `android/app/src/androidTest/java/com/chromaglow/app/core/bridge/**`
+- **Deliverable:** guarded `PairedBridgeRecord`; list-ready suspend registry API; Preferences DataStore
+  implementation whose file is produced under `noBackupFilesDir`; structured JSON/Preferences encoding
+  without the serialization compiler plugin; explicit corruption/failure outcomes; upsert/remove/read
+  tests including recreation from disk. The store never accepts or persists a token.
+- **Forbidden:** credentials, pairing, discovery, UI/app shell, build/resources/manifest.
+- **Validation:** focused JVM tests, compile androidTests; connected tests only in the batch-owner gate.
+
+### W2 — Lane D: transactional pairing workflow (serialized)
+
+- **Branch:** `lane/android4-pairing-workflow`
+- **Owns only:**
+  - `android/app/src/main/java/com/chromaglow/app/core/hue/pairing/workflow/**`
+  - `android/app/src/test/java/com/chromaglow/app/core/hue/pairing/workflow/**`
+- **Depends on:** merged W1 result + registry APIs and existing credential/pairing interfaces.
+- **Deliverable:** injectable suspend workflow that:
+  - derives a pairing endpoint from selected name/host with fixed HTTPS port 443;
+  - runs blocking pairing/Keystore work on an injected IO dispatcher;
+  - maps success to token-save then metadata-upsert and compensates metadata failure by deleting token;
+  - returns no token/username to presentation;
+  - restores Paired only for record + readable token, otherwise an explicit repair state;
+  - implements idempotent/retryable local forget without claiming remote revocation;
+  - maps type 101 and terminal failures to typed, UI-safe outcomes with no raw exception text.
+- **Forbidden:** edits to existing credentials/pairing/discovery APIs, UI/app shell, Gradle/resources.
+- **Validation:** focused deterministic JVM tests, then `testDebugUnitTest lintDebug assembleDebug`.
+
+### W3 — Lane E: Setup live-pairing UI (serialized)
+
+- **Branch:** `lane/android4-setup-live-pairing`
+- **Owns only:**
+  - `android/app/src/main/java/com/chromaglow/app/feature/setup/**`
+  - `android/app/src/androidTest/java/com/chromaglow/app/feature/setup/**`
+- **Depends on:** merged W2 workflow.
+- **Deliverable:** refactor the existing Setup entry into a ViewModel-backed, injectable route while keeping
+  `SetupPlaceholderScreen` source-compatible for `ChromaGlowApp`. Preserve Scan/manual/Scan Again/demo.
+  Replace the inert card with Selected, Pairing, Link-button-required, Paired, and Recovery/Error states;
+  disable duplicate attempts; restore at startup; expose clearly local-only Forget Bridge. Static Compose
+  tests use fakes and never contact a bridge. Existing manual-entry test semantics are updated, not dropped.
+- **Forbidden:** app/nav/dashboard/settings, core packages, Gradle/resources/manifest, real network in tests.
+- **Validation:** focused setup connected tests, then compile/lint/assemble. Shared AVD runs serially.
+
+### Automated batch-owner gate
+
+1. Audit each lane and the full diff against the exact globs above.
+2. Run `testDebugUnitTest lintDebug assembleDebug` and serial `connectedDebugAndroidTest` on `Pixel_10`.
+3. Run `git diff --check` and scan for trust-all/blanket-true verification, automatic POST retry,
+   `generateclientkey`/`CLIENT_KEY`, token/username logs, token storage outside Keystore, token in UI state,
+   raw exceptions in UI, and unrelated edits.
+4. Independent read-only review must verify the authenticated-ID handoff, port-443 derivation, transaction
+   compensation, startup reconciliation, local-forget semantics, threading, and test quality.
+
+### H0 — Human-assisted physical bridge gate
+
+- Stop and ask the human which CA-signed bridge is available and to acknowledge that local Forget Bridge
+  does not yet revoke the bridge-side application key.
+- Required on one bridge: Pair before button → retry UX; press physical button + Pair → connected;
+  force-stop/relaunch → restored; Forget Bridge + relaunch → unpaired.
+- Optional: repeat on the second bridge to exercise both observed CN casing variants.
+- Record redacted pass/fail evidence only. No username/token, full bridge ID, IP, or raw logs in Git.
+
+### Promotion
+
+Batch 4 is not eligible for `main` until automated gates and H0 pass, Codex reviews the integrated branch,
+and the human gives explicit merge approval. The batch owner pushes lane/integration refs and docs but does
+not merge `main`.
