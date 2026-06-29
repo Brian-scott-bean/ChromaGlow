@@ -15,8 +15,8 @@
 - Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `7ed6468`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
 - Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 foundations —
   including the accepted D-014 GET→POST identity-continuity correction — are integrated at `c385616` and
-  fully revalidated. Setup UI, credential persistence, and physical pairing remain later scope.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`. Batch 3 pairing foundations + the D-014 correction are integrated on `integration/parallel-batch-3` @ `c385616` (pushed; **NOT merged to `main`**, human go-ahead pending after Codex review). Full gate green: unit 174/0, lint, assemble, connected 37/0 on `Pixel_10`. (Pre-Batch-3 `main` baseline was unit 84/0, connected 34/0.)
+  Codex-reviewed. Setup UI, credential persistence, and physical pairing remain later scope.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`. Batch 3 pairing foundations + D-014 are integrated and Codex-reviewed on `integration/parallel-batch-3` @ `c385616` (pushed; **NOT merged to `main`**, awaiting explicit human go-ahead). Full gate green: unit 174/0, lint, assemble, connected 37/0 on `Pixel_10`. (Pre-Batch-3 `main` baseline was unit 84/0, connected 34/0.)
 
 ### Handoff Entry Template
 
@@ -41,6 +41,37 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-06-29 - [Codex] Accept corrected Batch 3 for human-approved promotion
+
+### Branch
+- `docs/parallel-agent-pipeline` (reviewing `integration/parallel-batch-3` @ `c385616`).
+
+### Did
+- Reviewed correction lane `352a42e`, the merged production code, dual-cert regression test, full branch
+  boundary, and Claude's corrected-integration handoff.
+- Confirmed from pinned OkHttp 5.4.0 bytecode that `hostnameVerifier` participates in `Address` equality,
+  so the distinct POST verifier forces a new connection in the shipped dependency.
+- Accepted D-014 and marked Batch 3 eligible for `main` after explicit human go-ahead.
+
+### Working
+- No remaining code findings. A CA-valid identity change between config GET and create-user POST is
+  rejected during the POST TLS handshake, and the response leaf is checked again before parsing.
+
+### Left
+- Human merge approval only. Setup UI, credential persistence, and physical pairing remain a later batch.
+- Keep the cross-identity transport regression mandatory when upgrading OkHttp.
+
+### Validation
+- Focused transport JVM suite 16/0; full `testDebugUnitTest` 174/0; `lintDebug` and `assembleDebug` green;
+  29 changed paths all in scope; `git diff --check` clean. Connected 37/0 was batch-owner validated on
+  `Pixel_10`; Codex did not restart the emulator.
+
+### Gotchas
+- The pre-send guarantee uses pinned OkHttp 5.4.0 address equality plus the regression test; the explicit
+  response-leaf check is defense in depth but occurs after the POST has been sent.
 
 ---
 

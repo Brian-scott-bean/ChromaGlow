@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a complete demo flow plus discovery/manual entry and a secure credential boundary. Batch 3 pairing foundations — including the accepted D-014 GET→POST identity-continuity correction — are integrated on `integration/parallel-batch-3` @ `c385616`; full gate green (unit 174/0, connected 37/0), pushed, NOT yet merged to `main` (awaiting human go-ahead after Codex review). Batches 1 and 2 are merged to `main` @ `7ed6468`.
+ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a complete demo flow plus discovery/manual entry and a secure credential boundary. Batch 3 pairing foundations — including the accepted D-014 GET→POST identity-continuity correction — are integrated and Codex-reviewed on `integration/parallel-batch-3` @ `c385616`; full gate green (unit 174/0, connected 37/0), pushed, and eligible for `main` after explicit human go-ahead. Batches 1 and 2 are merged to `main` @ `7ed6468`.
 
 ## Current Branch/Repo Facts
 
@@ -265,8 +265,8 @@ verification, HTTPS transport) is **EXECUTED and integrated** on `integration/pa
 `c385616`, **including the D-014 GET→POST identity-continuity correction** (the create-user POST leg now
 pins its TLS verifier to the GET-authenticated `bridgeid` and re-checks the POST handshake leaf, so a
 CA-valid identity change between legs fails closed; a real dual-cert regression test proves it). Full gate
-green: unit 174/0 (transport 16/0), lint, assemble, connected 37/0 on `Pixel_10`; pushed; **NOT merged to
-`main`** (awaiting human go-ahead after Codex review). Batch 3 adds no Setup UI, app/nav, discovery,
+green: unit 174/0 (transport 16/0), lint, assemble, connected 37/0 on `Pixel_10`; Codex promotion review
+passed; pushed; **NOT merged to `main`** (awaiting explicit human go-ahead). Batch 3 adds no Setup UI, app/nav, discovery,
 credential write, token persistence, or live bridge traffic. Public APIs for the follow-up UI/persistence
 batch: `core/hue/pairing/protocol` (request/response/config parsers), `core/hue/pairing/tls`
 (`HueRootCertificates`/`HueRootTrustManager`/`HueLeafHostnameVerifier`/`HueBridgeCommonName`), and
@@ -470,9 +470,8 @@ iOS:
 
 Android:
 
-- Codex-review the integrated Batch 3 (incl. the D-014 identity-continuity correction) on
-  `integration/parallel-batch-3` @ `c385616` and decide the merge-to-`main` go-ahead; the full gate is
-  green (unit 174/0, connected 37/0) and `main` is untouched.
+- Batch 3 including D-014 is Codex-reviewed and eligible for `main` from
+  `integration/parallel-batch-3` @ `c385616`; merge only after explicit human go-ahead.
 - After Batch 3 merges, scope Setup UI + credential persistence + physical pairing separately.
 - Run Gradle validation only when JDK/Android toolchain is available.
 - Continue MVP slices without copying iOS monolith patterns.

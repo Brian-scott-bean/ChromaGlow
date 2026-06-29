@@ -2,7 +2,7 @@
 
 ## Status
 
-- **State:** READY — required by accepted D-014 before Batch 3 may merge to `main`.
+- **State:** COMPLETED — correction integrated at `c385616` and accepted by Codex promotion review.
 - **Batch:** `parallel-batch-3` correction (single serialized lane)
 - **Starting point:** `origin/integration/parallel-batch-3` @
   `142ca71452c78f9edec70e3c4b8007f7997e8f13`

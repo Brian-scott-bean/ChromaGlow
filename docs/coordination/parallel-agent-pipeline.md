@@ -11,8 +11,8 @@
   and resolved questions after both batches landed on `main`).
 - **Current state:** Android pilot Batches 1 & 2 are **complete and merged to `main` @ `7ed6468`**.
   Batch 3 pairing foundations are integrated on `integration/parallel-batch-3` @ `c385616` (the accepted
-  D-014 identity-continuity correction applied on top of `142ca71`). Full gate green; **NOT merged to
-  `main`** — awaiting explicit human go-ahead after Codex review. See §6, §9, §10.
+  D-014 identity-continuity correction applied on top of `142ca71`). Codex promotion review passed and
+  the full gate is green; **NOT merged to `main`** — awaiting explicit human go-ahead. See §6, §9, §10.
 - **Canonical rules live in:** `AGENTS.md` → "Parallel Agent Pipeline" section + "Android Current State"
   (the durable feature inventory + code contracts). This doc is the operational registry + decision log.
 
@@ -567,7 +567,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   integration-to-`main` review and explicit human go-ahead.
 
 ### D-014 — Preserve authenticated bridge identity across GET config and POST create-user
-- Status: ACCEPTED (correction EXECUTED + integrated 2026-06-29 @ `c385616`; not merged to `main`)
+- Status: ACCEPTED (correction EXECUTED, integrated, and Codex-reviewed @ `c385616`; not on `main`)
 - 2026-06-29 [Codex]: Promotion review of `integration/parallel-batch-3` @ `142ca71` found an identity
   continuity defect in `OkHttpHuePairingClient`. The client builds one verifier from the caller's optional
   `expectedBridgeId`. With a null hint, the config GET may correctly authenticate bridge A, but the POST
@@ -593,17 +593,24 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   `assembleDebug`, `connectedDebugAndroidTest` 37/0 on `Pixel_10`; `git diff --check` clean; correction
   boundary = exactly the two transport files; 29 total changed paths vs `main`; prohibited-pattern scan
   clean. Public `HuePairingClient` API unchanged. Details in §10 "Batch 3 D-014 correction result".
+- 2026-06-29 [Codex]: ACCEPTED after promotion review of `c385616`. The correction commit is exactly the
+  two authorized transport files. The POST client pins `HueLeafHostnameVerifier(authenticatedId)`, and
+  the response leaf is independently re-checked before parsing. The dual-cert test proves a distinct
+  CA-valid POST leaf is rejected before HTTP delivery (`requestCount == 1`). Independent reruns passed:
+  focused transport 16/0, full JVM 174/0, lint, assemble, and diff check. Inspection of the pinned OkHttp
+  5.4.0 `Address.equalsNonHost` bytecode confirms `hostnameVerifier` participates in address equality, so
+  the distinct verifier forces a new POST connection in the shipped dependency. No code findings remain.
 - Resolution: ACCEPTED as a defect correction required to satisfy already accepted D-001/D-002; it does
   not change product scope. CORRECTED and integrated 2026-06-29 @ `c385616` (`142ca71` superseded);
-  integration-to-`main` merge remains gated on explicit human go-ahead after Codex review.
+  Codex promotion review passed; integration-to-`main` merge remains gated only on explicit human go-ahead.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
   (credentials scope → D-001/D-002; toolchain → D-005; no-unwired-UI → D-006; fixture injection, the
   `when`-router, `Exit Demo Mode` semantics, and serial single-AVD connected tests → D-008/D-009). Pruned
   during the 2026-06-28 consolidation.
-- **No open blocker:** D-014 is corrected and integrated (`c385616`); Batch 3 awaits only Codex review +
-  human merge approval. Batch 3 remains bounded to foundations; UI, persistence wiring, and physical
+- **No open blocker:** D-014 is corrected, integrated, and Codex-reviewed (`c385616`); Batch 3 awaits only
+  explicit human merge approval. Batch 3 remains bounded to foundations; UI, persistence wiring, and physical
   pairing require a later decision/batch.
 - Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-015+).
 
@@ -720,8 +727,8 @@ retained as historical run records. The result record below is the source of tru
   **@ `c385616`** (pushed). Full gate green on `c385616`: unit **174/0** (transport 16/0), lint, assemble,
   connected **37/0** on `Pixel_10`; `git diff --check` clean; 29 changed paths vs `main`, all in-glob.
   See §10 "Batch 3 D-014 correction result".
-- **Next action:** Codex review of `c385616` + the human's explicit go-ahead to merge
-  `integration/parallel-batch-3` to `main`. Setup/persistence/physical pairing remain a later batch.
+- **Next action:** the human's explicit go-ahead to merge `integration/parallel-batch-3` @ `c385616` to
+  `main`. Setup/persistence/physical pairing remain a later batch.
 - **For Codex — verifying what's done:** review `integration/parallel-batch-3` against `main` @ `7ed6468`;
   the per-batch result records are §7/§8/§10 and the full decision trail is §6 (D-001–D-014). Before the
   correction, expect unit 173/0 and connected 37/0; after D-014, require the added regression test plus the
@@ -735,7 +742,7 @@ retained as historical run records. The result record below is the source of tru
 
 ---
 
-## 10. Batch 3 — CORRECTION REQUIRED (integrated; not eligible for `main`)
+## 10. Batch 3 — CORRECTED + REVIEWED (eligible for human-approved merge)
 
 **Batch:** `parallel-batch-3`
 
@@ -988,3 +995,17 @@ fork from that merged SHA, not directly from `main`.
 - **Deviations:** none. **No new decision required** (executes accepted D-014).
 - **Remote refs (pushed):** `lane/android3-pairing-identity-continuity-correction` `352a42e`;
   `integration/parallel-batch-3` updated `142ca71` → **`c385616`**.
+
+### Codex final promotion review — 2026-06-29
+
+- **Verdict:** PASS. No remaining code findings; `c385616` is eligible for `main` after explicit human
+  go-ahead.
+- **Implementation:** the POST leg uses a separate verifier pinned to the GET-authenticated bridge ID and
+  independently validates the POST handshake leaf before parsing any outcome. The public API is unchanged.
+- **Regression quality:** the dual-cert HTTPS test fails if the GET connection is reused and passes only
+  when the POST performs a new handshake whose different CA-valid leaf is rejected before HTTP delivery.
+- **Dependency check:** pinned OkHttp 5.4.0 bytecode confirms `hostnameVerifier` is part of
+  `Address.equalsNonHost`; the new test is required whenever OkHttp or connection-pool behavior changes.
+- **Independent validation:** focused transport suite 16/0; full `testDebugUnitTest` 174/0; `lintDebug` and
+  `assembleDebug` green; 29-path boundary and `git diff --check` clean. Codex did not rerun the emulator;
+  Claude's corrected-integration connected result is 37/0 on `Pixel_10`.
