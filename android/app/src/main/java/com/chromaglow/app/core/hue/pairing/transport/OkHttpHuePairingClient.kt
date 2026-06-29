@@ -56,9 +56,11 @@ class OkHttpHuePairingClient(
 ) : HuePairingClient {
 
     /**
-     * Production-configured base client. The per-call [HueLeafHostnameVerifier] (which pins the
-     * expected `bridgeid`) is layered on top via [OkHttpClient.newBuilder] in [pair], so a single
-     * connection pool and configuration are shared across calls.
+     * Production-configured base client. A per-leg [HueLeafHostnameVerifier] is layered on top via
+     * [OkHttpClient.newBuilder] in [pair] (the GET leg pins any caller hint; the POST leg pins the
+     * id authenticated by the GET leg). Because the two legs carry different verifier instances,
+     * OkHttp opens a separate connection for each, while this base client's pool and configuration
+     * are shared across calls.
      */
     private val baseClient: OkHttpClient = OkHttpClient.Builder()
         .followRedirects(false)
@@ -69,14 +71,15 @@ class OkHttpHuePairingClient(
         .build()
 
     override fun pair(endpoint: BridgeEndpoint, expectedBridgeId: String?): HuePairingResult {
-        // Per-call verifier pins the expected identity at the TLS layer (defense in depth with the
-        // explicit application-level identity check below).
-        val client = baseClient.newBuilder()
+        // GET leg: the verifier pins any caller-supplied hint at the TLS layer (defense in depth
+        // with the explicit application-level identity checks below). When the hint is null it
+        // accepts any CA-valid Hue leaf, so the authenticated identity is fixed below from the leaf.
+        val configClient = baseClient.newBuilder()
             .hostnameVerifier(HueLeafHostnameVerifier(expectedBridgeId))
             .build()
 
         // Step 1: probe identity via GET /api/0/config and capture the CA-validated leaf.
-        val probe = when (val step = fetchConfig(client, endpoint)) {
+        val probe = when (val step = fetchConfig(configClient, endpoint)) {
             is Step.Ok -> step.value
             is Step.Failed -> return step.failure
         }
@@ -104,12 +107,35 @@ class OkHttpHuePairingClient(
             return HuePairingResult.Failure(PairingFailureReason.IdentityMismatch)
         }
 
-        // Step 2: only now request an application key via POST /api.
-        val createBody = when (val step = createUser(client, endpoint)) {
+        // Step 2: pin the create-user leg's verifier to the AUTHENTICATED id, independent of the
+        // original hint (which may have been null). Because this verifier instance differs from the
+        // GET leg's, OkHttp treats it as a distinct Address and opens a fresh TLS connection for the
+        // POST; a different CA-valid leaf on that re-established connection is rejected at the
+        // handshake, so the create-user request can never reach a bridge other than the one just
+        // authenticated.
+        val createUserClient = baseClient.newBuilder()
+            .hostnameVerifier(HueLeafHostnameVerifier(authenticatedId))
+            .build()
+
+        val created = when (val step = createUser(createUserClient, endpoint)) {
             is Step.Ok -> step.value
             is Step.Failed -> return step.failure
         }
-        return mapCreateUserOutcome(PairingResponseParser.parseCreateUser(createBody))
+
+        // Defense in depth: do not rely on the verifier/connection pool alone. Re-extract the POST
+        // leg's CA-validated leaf identity and require it to equal the authenticated id (case-
+        // insensitively) BEFORE parsing or returning ANY create-user outcome. A missing leaf or an
+        // unverifiable/mismatched CN fails closed without exposing the response.
+        val createUserId = when (val cn = HueBridgeCommonName.extract(created.leaf)) {
+            is BridgeCommonNameResult.Valid -> cn.bridgeId
+            is BridgeCommonNameResult.Failure ->
+                return HuePairingResult.Failure(PairingFailureReason.UnverifiableLeafIdentity)
+        }
+        if (!createUserId.equals(authenticatedId, ignoreCase = true)) {
+            return HuePairingResult.Failure(PairingFailureReason.IdentityMismatch)
+        }
+
+        return mapCreateUserOutcome(PairingResponseParser.parseCreateUser(created.body))
     }
 
     /**
@@ -137,10 +163,12 @@ class OkHttpHuePairingClient(
     }
 
     /**
-     * Performs `POST /api` with the Lane B request body. Yields the bounded response body, or a
-     * typed failure (transport error, non-2xx, or oversized body).
+     * Performs `POST /api` with the Lane B request body. Yields the bounded response body paired
+     * with the CA-validated leaf certificate (mirroring [fetchConfig], so the caller can re-confirm
+     * identity continuity before trusting the outcome), or a typed failure (transport error,
+     * non-2xx, oversized body, or a missing/non-X.509 leaf).
      */
-    private fun createUser(client: OkHttpClient, endpoint: BridgeEndpoint): Step<String> {
+    private fun createUser(client: OkHttpClient, endpoint: BridgeEndpoint): Step<CreateUserResponse> {
         val url = httpsUrl(endpoint).addPathSegment("api").build()
         val body = PairingRequest.createUserBody().toRequestBody(JSON_MEDIA_TYPE)
         val request = Request.Builder().url(url).post(body).build()
@@ -151,7 +179,9 @@ class OkHttpHuePairingClient(
                 }
                 val responseBody = readBoundedBody(response)
                     ?: return failed(PairingFailureReason.ResponseTooLarge(PairingStage.CREATE_USER))
-                Step.Ok(responseBody)
+                val leaf = response.handshake?.peerCertificates?.firstOrNull() as? X509Certificate
+                    ?: return failed(PairingFailureReason.UnverifiableLeafIdentity)
+                Step.Ok(CreateUserResponse(body = responseBody, leaf = leaf))
             }
         } catch (_: IOException) {
             failed(PairingFailureReason.TransportError)
@@ -196,6 +226,9 @@ class OkHttpHuePairingClient(
 
     /** GET /api/0/config result: the bounded body plus the CA-validated leaf certificate. */
     private data class ConfigProbe(val body: String, val leaf: X509Certificate)
+
+    /** POST /api result: the bounded body plus the CA-validated leaf certificate of that leg. */
+    private data class CreateUserResponse(val body: String, val leaf: X509Certificate)
 
     /** Internal short-circuit carrier so request helpers stay non-throwing and reentrant. */
     private sealed interface Step<out T> {
