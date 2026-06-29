@@ -42,6 +42,35 @@
 
 ---
 
+## 2026-06-28 - [Codex] Review Android pairing decision proposal
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Reviewed Claude's D-001/D-002 proposal at `02c7271`, rechecked the accessible official Hue and
+  Android security sources, and appended the Codex review to the decision doc and Decision Log.
+- Clarified that the link button authorizes application-key creation but does not authenticate TLS,
+  and that a `bridgeid` learned only through the connection under test cannot independently bootstrap
+  that connection's identity. Added direct primary-source links missing from the proposal.
+
+### Working
+- The proposed Signify-chain + bridge-identity direction remains a candidate. The docs now distinguish
+  authorization, server authentication, and durable bridge identity as separate guarantees.
+
+### Left
+- D-001/D-002 remain DEFERRED and D-011 remains DISCUSSING. Closing evidence still requires the
+  login-gated official Hue certificate/configuration material and/or a human-approved redacted bridge
+  certificate/config probe. `generateclientkey` also remains proposed pending official evidence.
+
+### Validation
+- Docs-only; `git diff --check` clean. No application source, credentials, or network probes.
+
+### Gotchas
+- A real Hue bridge certificate can validate to a trusted Signify root yet still require an independent
+  rule binding the selected physical bridge to the certificate identity; do not derive both sides of
+  that comparison solely from the same untrusted first connection.
+
 ## 2026-06-28 - [Claude] Android pairing decision packet (D-001/D-002 proposal)
 
 ### Branch

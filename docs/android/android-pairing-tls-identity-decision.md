@@ -278,3 +278,42 @@ reasoned, not directly documented.
 
 Only after (1)–(3) can D-001/D-002 move from DEFERRED to ACCEPTED and a Batch 3 implementation
 manifest/launch prompt be drafted.
+
+---
+
+## Codex review — 2026-06-28
+
+**Verdict: directionally reasonable; deferral is correct. NOT code-approved.** D-001 and D-002 remain
+DEFERRED and D-011 remains DISCUSSING.
+
+### Required contract corrections
+
+1. The physical link button proves user presence and authorizes application-key creation; it does not
+   authenticate the TLS server. Treat it as a separate authorization guarantee, not "first-contact
+   transport trust."
+2. `bridgeid` is a plausible canonical identity candidate, but an expected `bridgeid` learned only from
+   `/api/0/config` over the connection being authenticated cannot independently bootstrap that same
+   connection. Acceptance requires an authenticated independent binding (for example, the official
+   Signify chain/certificate profile) and a precise rule for the expected identity used by verification.
+3. The proposal's evidence table names sources but does not include the direct links required by the
+   preparation prompt. The public primary sources independently rechecked by Codex are:
+   - [Hue Get Started](https://developers.meethue.com/develop/get-started-2/)
+   - [New Hue API](https://developers.meethue.com/new-hue-api/)
+   - [Android Network Security Configuration](https://developer.android.com/privacy-and-security/security-config)
+   - [Android 9 certificate hostname verification](https://developer.android.com/about/versions/pie/android-9.0-changes-all#certificate-hostname-verification)
+   - [Android unsafe HostnameVerifier guidance](https://developer.android.com/privacy-and-security/risks/unsafe-hostname)
+4. Keep the `generateclientkey` recommendation proposed, not accepted, until the official Hue API
+   contract is available. The public Get Started page verifies username-based control but does not
+   document the `generateclientkey`/Entertainment-only claim.
+
+### Evidence assessment
+
+- Public official Hue evidence confirms local HTTPS, link-button application authorization, and that
+  Hue moved bridges toward Signify-signed certificates. It does not publish the root certificate or
+  define the leaf SAN/CN identity profile needed for an Android verifier.
+- Official Android evidence supports custom CA anchors and confirms that modern Android hostname
+  verification requires a matching SAN rather than CN fallback. This makes the actual Hue leaf profile
+  a blocking input, not an implementation detail.
+- No Batch 3 manifest should be drafted until the login-gated official Hue material is captured and/or
+  the human approves a read-only real-bridge certificate/config probe. Any probe must redact tokens and
+  local addresses from committed evidence.

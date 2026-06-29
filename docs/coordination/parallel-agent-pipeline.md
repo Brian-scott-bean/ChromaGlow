@@ -183,8 +183,13 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   which ignores CN per RFC 6125), leaf validity/rotation, the self-signed→CA migration firmware, and the
   local min-TLS floor are all unverified. Closing needs a Hue developer-account read of the official pages
   plus a human-approved `openssl s_client` probe of a real bridge. No pairing code authorized.
-- Resolution: open — DEFERRED. Proposal awaits Codex/human review + the listed evidence before any pairing
-  lane writes code.
+- 2026-06-28 [Codex]: Reviewed the proposal and agree D-001 must remain DEFERRED. The link button is
+  application authorization/physical-presence proof, not TLS server authentication. Also, comparing the
+  certificate identity with a `bridgeid` learned only through the connection under verification is not an
+  independent trust bootstrap. Public official Hue material confirms HTTPS and movement to Signify-signed
+  certificates, but not the official root or leaf SAN/CN identity profile; those remain blocking inputs.
+- Resolution: open — DEFERRED. Codex review complete; proposal awaits the listed closing evidence and
+  explicit human/Codex acceptance before any pairing lane writes code.
 
 ### D-002 — Canonical stable bridge identity for credential aliasing
 - Status: DEFERRED (blocker)
@@ -201,8 +206,12 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   unauthenticated `/api/config` schema, the CN==bridgeid binding, and — most importantly — `bridgeid`
   **stability across reboot/DHCP/factory-reset** are community/inference, not confirmed from official docs;
   closing needs the login-gated Configuration-API/Using-HTTPS pages + a real-bridge probe.
-- Resolution: open — DEFERRED. Pairs with D-001; proposal awaits review + evidence before credential
-  persistence.
+- 2026-06-28 [Codex]: `bridgeid` is a reasonable candidate, but D-002 remains DEFERRED. The accepted
+  contract must establish its official schema/stability and an authenticated mapping from the selected
+  endpoint to that identity. `/api/0/config` read through the same not-yet-authenticated channel cannot
+  by itself provide the expected identity for TLS verification.
+- Resolution: open — DEFERRED. Pairs with D-001; Codex review complete, but closing evidence and explicit
+  acceptance are still required before credential persistence.
 
 ### D-003 — Batch 1 scope = Android-only, ~5 lanes
 - Status: ACCEPTED
@@ -419,9 +428,15 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   self-signed, the official `.pem`, leaf SAN, `bridgeid` stability/schema) need a Hue developer-account
   read + a human-approved real-bridge probe. No source/probe/Batch-3 work was done. Recommendation for C
   (omit `generateclientkey` for the non-Entertainment MVP) is well-grounded and can be accepted earlier.
-- Resolution: pending Claude's evidence-backed proposal plus Codex/human review. Proposal delivered
-  2026-06-28; D-001 and D-002 stay DEFERRED, this stays DISCUSSING, and no pairing or credential-persistence
-  code is authorized until the listed evidence is obtained and the proposal is accepted.
+- 2026-06-28 [Codex]: Review complete. The proposed direction is plausible and the decision to remain
+  deferred is correct, but the packet does not close the independent trust bootstrap or provide the
+  official Hue root/certificate profile and stable-identity evidence. Keep `generateclientkey` proposed
+  too: the publicly accessible official page verifies username-based control but not the
+  Entertainment-only client-key contract. Direct primary-source links and the detailed review are now
+  recorded in `docs/android/android-pairing-tls-identity-decision.md`.
+- Resolution: proposal delivered and Codex-reviewed 2026-06-28; pending closing evidence and explicit
+  human/Codex acceptance. D-001 and D-002 stay DEFERRED, this stays DISCUSSING, and no pairing or
+  credential-persistence code is authorized meanwhile.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
