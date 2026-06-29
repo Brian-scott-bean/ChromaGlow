@@ -439,7 +439,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   product, Android contract, lane boundary, blocker, or validation expectation changed.
 
 ### D-011 — Resolve pairing TLS and bridge identity before preparing Batch 3
-- Status: DISCUSSING (decision-preparation prompt ready; implementation remains blocked)
+- Status: DISCUSSING (proposal/probe complete; official CA file pending; implementation blocked)
 - 2026-06-28 [Codex]: The next critical-path work is one coupled evidence pass over D-001 and D-002,
   not a parallel code batch. The Android endpoint currently carries only `name`/`host`/`port`, while
   credential aliases require a stable `bridgeId`; the repository also has no approved first-contact
@@ -479,7 +479,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   no pairing or credential-persistence code is authorized meanwhile.
 
 ### D-012 — Close official pairing evidence and choose the legacy-bridge MVP policy
-- Status: DISCUSSING (evidence-closure prompt ready; implementation remains blocked)
+- Status: DISCUSSING (packet executed; blocked on human-supplied official `.pem`)
 - 2026-06-28 [Codex]: Prepared the final docs-only closure packet at
   `docs/coordination/prompts/android-pairing-evidence-close.md`. Claude must use an existing
   human-authenticated Hue developer session to byte-verify the official `root-bridge` CA and capture the
@@ -499,9 +499,14 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   session downloads the official `.pem` from `develop/application-design-guidance/using-https/` and provides
   it (file, or SHA-256 + subject/issuer/serial/validity/key fields) for the recorded verification
   procedure; then Codex + human accept and a Batch 3 manifest may be drafted.
-- Resolution: pending Claude's official evidence packet and explicit Codex/human acceptance. Packet
-  delivered 2026-06-28 but portal access was unavailable, so the official certificate check did not run and
-  D-001/D-002 remain DEFERRED; the exact next action is recorded above and in the decision doc.
+- 2026-06-28 [Codex]: Closure review complete. The CA-signed-only/fail-closed legacy policy is the right
+  MVP default, and omitting `generateclientkey` is acceptable because the public official create-user
+  example works without it. One correction: certificate metadata or a reported hash is insufficient;
+  the actual official `.pem` bytes are required for independent verification and eventual bundling. No
+  further Claude prompt should run until the human downloads that file through an authenticated portal
+  session and makes it available locally outside Git.
+- Resolution: packet delivered and Codex-reviewed 2026-06-28; blocked solely on the actual official
+  `.pem` file plus final human/Codex acceptance. D-001/D-002 remain DEFERRED; no Batch 3 work authorized.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
@@ -614,10 +619,10 @@ retained as historical run records. The result record below is the source of tru
 - **Active blockers:** **D-001** (safe pairing TLS bootstrap) and **D-002** (canonical stable bridge
   identity). Until both resolve: no live pairing, no credential-persistence wiring; `core/credentials`
   is hardening-only.
-- **Next action:** Claude executes the docs-only packet
-  `docs/coordination/prompts/android-pairing-evidence-close.md` using an existing authenticated Hue
-  developer session. It verifies the official CA/contract evidence and proposes the legacy policy for
-  explicit Codex/human acceptance. This is not a Batch 3 launch authorization.
+- **Next action (human, not agent):** log in to the Hue developer portal, download the official
+  `root-bridge` CA `.pem`, and make the actual file available locally outside Git. Then Claude may run
+  only the recorded certificate-verification procedure and return the metadata for explicit Codex/human
+  acceptance. No Batch 3 manifest or launch prompt exists yet.
 - **For Codex — verifying what's done:** check out `main` @ `7ed6468` (or compare against
   `integration/parallel-batch-2` @ `9411d81`); the per-batch result records are §7/§8; the full decision
   trail is §6 (D-001–D-012). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,

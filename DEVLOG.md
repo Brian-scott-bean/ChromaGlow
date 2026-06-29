@@ -14,7 +14,7 @@
 - iOS build scheme: `HueHome 1` (not `HueHome`).
 - Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `7ed6468`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
 - Android live pairing + credential-persistence are BLOCKED until D-001 (safe TLS bootstrap) and D-002 (canonical bridge identity) resolve; `core/credentials` is hardening-only.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`; no batch in flight. Next action: docs-only D-012 official pairing evidence closure; no Batch 3 until D-001/D-002 acceptance. Validation on `main`: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on the `Pixel_10` AVD.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`; no batch in flight. D-011/D-012 evidence work is complete; next action is human-supplied official `root-bridge` CA `.pem`, not another agent prompt. No Batch 3 until D-001/D-002 acceptance. Validation on `main`: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on the `Pixel_10` AVD.
 
 ### Handoff Entry Template
 
@@ -41,6 +41,32 @@
 ```
 
 ---
+
+## 2026-06-28 - [Codex] Review gated pairing evidence closure
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Reviewed Claude's gated D-012 result at `46d9cda`, marked the closure prompt completed, and updated
+  canonical next-step pointers. Recorded that the actual official CA file, not metadata alone, is needed.
+
+### Working
+- The CA-signed-only/fail-closed legacy policy is the recommended MVP stance. Omitting
+  `generateclientkey` is acceptable for the non-Entertainment MVP; `CLIENT_KEY` persistence stays out.
+
+### Left
+- Human downloads the official `root-bridge` CA `.pem` through an authenticated Hue developer session
+  and makes the actual file available locally outside Git. Then Claude verifies only that artifact and
+  returns for explicit acceptance. D-001/D-002 remain DEFERRED; no Batch 3 prompt exists.
+
+### Validation
+- Docs-only review; `git diff --check` clean. No portal credentials, certificate bytes, source, or device
+  access.
+
+### Gotchas
+- A hash and certificate summary cannot substitute for the trust-anchor bytes the app must eventually
+  bundle; do not close D-001 without the official file.
 
 ## 2026-06-28 - [Claude] Android pairing official-evidence closure (gated; blockers stay DEFERRED)
 

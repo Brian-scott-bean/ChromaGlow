@@ -449,3 +449,21 @@ delete the temp file. Any failed check keeps D-001 DEFERRED with the exact misma
   (the file, or its SHA-256 + subject/issuer/serial/validity/key fields) so the verification procedure
   above completes. Then Codex + human accept, moving D-001/D-002 to ACCEPTED and authorizing a Batch 3
   manifest.
+
+---
+
+## Codex review of evidence closure — 2026-06-28
+
+The session followed the gate correctly. D-001/D-002 remain DEFERRED and no Batch 3 work is authorized.
+
+- The **actual official `.pem` file is required**. A reported SHA-256 and certificate metadata alone
+  cannot byte-verify the source artifact, independently inspect its CA constraints/public key, or provide
+  the trust anchor that a later implementation must bundle. The human must download the official file
+  through an authenticated Hue developer session and make that file available locally outside Git.
+- The proposed CA-signed-only MVP policy is the correct default: fail closed on legacy self-signed
+  bridges with firmware-update guidance; no TOFU, trust-all, or silent compatibility fallback.
+- Omitting `generateclientkey` is acceptable for the non-Entertainment MVP because the public official
+  create-user example succeeds without that field. This does not approve `CLIENT_KEY` persistence.
+- No further research or implementation prompt is useful until the official `.pem` exists. Once supplied,
+  rerun only the certificate-verification portion, append the resulting metadata, and return for explicit
+  Codex/human acceptance.
