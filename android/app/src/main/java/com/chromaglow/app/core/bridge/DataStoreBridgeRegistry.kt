@@ -84,15 +84,28 @@ class DataStoreBridgeRegistry internal constructor(
         private val RECORDS_KEY = stringPreferencesKey("paired_bridges")
 
         /**
-         * Production factory. Places the DataStore file under [Context.getNoBackupFilesDir] so the
-         * non-secret routing metadata is excluded from device backup.
+         * DataStore mandates a single active instance per file per process; a second instance over
+         * the same file throws. The production registry is therefore a process-wide singleton so
+         * every caller (e.g. the Setup view model and any other consumer) shares one DataStore.
+         */
+        @Volatile
+        private var instance: DataStoreBridgeRegistry? = null
+
+        /**
+         * Production factory. Returns a process-wide singleton whose DataStore file lives under
+         * [Context.getNoBackupFilesDir] so the non-secret routing metadata is excluded from device
+         * backup. Safe to call repeatedly.
          */
         fun create(context: Context): DataStoreBridgeRegistry {
-            val appContext = context.applicationContext
-            val dataStore = PreferenceDataStoreFactory.create(
-                produceFile = { File(appContext.noBackupFilesDir, FILE_NAME) },
-            )
-            return DataStoreBridgeRegistry(dataStore)
+            return instance ?: synchronized(this) {
+                instance ?: run {
+                    val appContext = context.applicationContext
+                    val dataStore = PreferenceDataStoreFactory.create(
+                        produceFile = { File(appContext.noBackupFilesDir, FILE_NAME) },
+                    )
+                    DataStoreBridgeRegistry(dataStore).also { instance = it }
+                }
+            }
         }
 
         /** Test/injection seam: wrap an already-built DataStore (e.g. over a temp file). */

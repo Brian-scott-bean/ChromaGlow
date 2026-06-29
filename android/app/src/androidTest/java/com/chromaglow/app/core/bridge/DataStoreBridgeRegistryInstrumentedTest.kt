@@ -11,8 +11,9 @@ import java.io.File
 
 /**
  * Instrumented test for the production [DataStoreBridgeRegistry.create] path. Proves the metadata
- * file is created under `noBackupFilesDir` and round-trips on a real device. A single registry
- * instance is used because DataStore forbids two active instances over the same file in a process.
+ * file is created under `noBackupFilesDir` and round-trips on a real device. [DataStoreBridgeRegistry.create]
+ * returns a process-wide singleton (DataStore forbids two active instances over one file), which it
+ * may share with other tests that render Setup; this test clears its own records first and last.
  */
 @RunWith(AndroidJUnit4::class)
 class DataStoreBridgeRegistryInstrumentedTest {
@@ -24,10 +25,11 @@ class DataStoreBridgeRegistryInstrumentedTest {
     fun create_persistsUnderNoBackupFilesDir_andRoundTrips() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val expectedFile = File(context.noBackupFilesDir, DataStoreBridgeRegistry.FILE_NAME)
-        // Start from a clean slate (nothing holds the file before the first create()).
-        expectedFile.delete()
 
         val registry = DataStoreBridgeRegistry.create(context)
+        // Start from a known state without deleting the file under the active singleton DataStore.
+        registry.remove(recordA.bridgeId)
+        registry.remove(recordB.bridgeId)
         try {
             assertEquals(BridgeRegistryResult.Success(Unit), registry.upsert(recordA))
             registry.upsert(recordB)
