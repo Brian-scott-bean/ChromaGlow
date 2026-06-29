@@ -253,11 +253,11 @@ Log) and the `DEVLOG.md` handoffs.
   as a literal (BuildConfig is disabled — do not enable it). Single `Pixel_10` AVD ⇒ run
   `connectedDebugAndroidTest` serially.
 
-**Pipeline status:** Batches 1 & 2 complete; no batch in flight. D-011/D-012 research, probe, and closure
-packets are complete but D-001/D-002 remain blocked on the human supplying the actual official Signify
-`root-bridge` CA `.pem` from an authenticated Hue developer session. No agent prompt or pairing-focused
-Batch 3 is authorized until that file is verified and explicitly accepted. Raise additional proposals as
-D-013+ in the pipeline doc (see its §9).
+**Pipeline status:** Batches 1 & 2 complete; no batch in flight. D-011/D-012 evidence is complete: the
+human-supplied two-certificate Hue CA bundle is locally verified outside Git at
+`/Users/brianbean/Desktop/chromaglow-hue-ca/`. D-001/D-002 remain DEFERRED only until explicit human/Codex
+acceptance of the recorded TLS/identity/legacy policy. No pairing-focused Batch 3 is authorized before
+that acceptance. Raise additional proposals as D-013+ in the pipeline doc (see its §9).
 
 
 ## Validation Commands

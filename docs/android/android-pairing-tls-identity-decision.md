@@ -467,3 +467,38 @@ The session followed the gate correctly. D-001/D-002 remain DEFERRED and no Batc
 - No further research or implementation prompt is useful until the official `.pem` exists. Once supplied,
   rerun only the certificate-verification portion, append the resulting metadata, and return for explicit
   Codex/human acceptance.
+
+---
+
+## Official CA bundle supplied and locally verified — 2026-06-29 [Codex]
+
+**Status: READY FOR EXPLICIT ACCEPTANCE; not yet code-authorized.** The human supplied the requested
+two-certificate Hue CA bundle. The exact bytes are stored locally outside Git at
+`/Users/brianbean/Desktop/chromaglow-hue-ca/official-hue-ca-bundle.pem`; split certificates and the full
+verification record are in the same folder. Certificate bytes are intentionally not committed yet.
+
+### Bundle verification
+
+- Bundle certificate count: **2**
+- Bundle file SHA-256: `2ff54626fc51de587cce0f3f0339552f89da781b5d5949fa0c90ec30ddf8acfa`
+- `root-bridge` file SHA-256: `9eb5d8ee06004a6128659eee9727490387f582112fd6fa8657a3b75e2aef7e44`
+- `root-bridge` certificate SHA-256 fingerprint:
+  `F0:BD:8E:65:09:E8:2F:77:4D:63:BC:00:9D:53:88:C9:69:FE:3D:CF:7D:6D:54:1D:63:51:B7:2B:89:8D:8A:CF`
+- `root-bridge` subject/issuer: `C=NL, O=Philips Hue, CN=root-bridge`; self-signature valid;
+  critical `CA:TRUE`; critical Digital Signature / Certificate Sign / CRL Sign; EC P-256;
+  valid 2017-01-01 through 2038-01-19. This subject exactly matches the issuer profile observed on both
+  probed current bridge leaves.
+- `Hue Root CA 01` file SHA-256: `dfb5bd1e3a46b980f4c1494d96d2670216b4080d7ca1e33c3d4464abb1b363c5`
+- `Hue Root CA 01` certificate SHA-256 fingerprint:
+  `D8:B8:94:48:B2:AF:8E:16:76:18:5A:C0:72:19:EE:9D:CB:C8:F0:1C:12:2A:02:6A:2A:4B:7B:5C:FE:03:28:B8`
+- `Hue Root CA 01` subject/issuer: `C=NL, O=Signify Hue, CN=Hue Root CA 01`; self-signature valid;
+  critical `CA:TRUE`; critical Certificate Sign / CRL Sign; EC P-256; valid 2025-02-25 through
+  2050-12-31.
+
+### Acceptance boundary
+
+The certificate-access gate is closed. Final acceptance should approve the already documented contract:
+bundle the supplied Hue CA roots; require a valid chain to an approved root; identify SAN-less current
+bridge leaves by a case-insensitive CN == normalized `bridgeid` check; fail closed; support CA-signed
+bridges only for MVP; omit `generateclientkey`; and keep `CLIENT_KEY` persistence out. No implementation
+or Batch 3 manifest begins until the human and Codex explicitly accept this contract.

@@ -204,9 +204,13 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   final proposed trust contract (chain to the bundled official Signify root CA + case-insensitive
   CN==`bridgeid` via a custom verifier since the leaf has no SAN; fail closed; no TOFU/trust-all) in the
   decision doc "Official evidence closure". D-001 stays DEFERRED.
-- Resolution: open — DEFERRED. Codex review complete and the probe closed most TLS mechanics; the only
-  remaining gate is byte-verifying the official `.pem` (needs a human Hue-developer session) + explicit
-  human/Codex acceptance before any pairing lane writes code.
+- 2026-06-29 [Codex]: The human supplied the actual Hue CA bundle. OpenSSL verified both self-signed CA
+  certificates, constraints, usages, validity, hashes, and fingerprints; `root-bridge` exactly matches
+  the probed current-leaf issuer profile. Bytes remain outside Git at
+  `/Users/brianbean/Desktop/chromaglow-hue-ca/`. D-001 evidence is complete and ready for explicit
+  acceptance; this does not authorize code by itself.
+- Resolution: open — DEFERRED pending explicit human/Codex acceptance only. The certificate-byte gate is
+  complete; no pairing lane writes code until acceptance is recorded.
 
 ### D-002 — Canonical stable bridge identity for credential aliasing
 - Status: DEFERRED (blocker)
@@ -240,8 +244,10 @@ Append dated, tagged turns. Never rewrite another agent's turn. `Status` is the 
   change; mDNS/host/port are hints only; trust is anchored by the app-bundled official root CA (out-of-band),
   not by unauthenticated device responses (non-circular). D-002 stays DEFERRED, coupled to the same gated
   `.pem` verification + acceptance.
-- Resolution: open — DEFERRED. Pairs with D-001; probe confirmed the bridgeid contract, but explicit
-  acceptance (and the D-001 `.pem` verification) are still required before credential persistence.
+- 2026-06-29 [Codex]: The out-of-band CA bundle is now supplied and locally verified, closing D-002's
+  coupled trust-anchor dependency. The normalized `bridgeid` contract is ready for explicit acceptance;
+  no credential persistence is authorized yet.
+- Resolution: open — DEFERRED pending explicit human/Codex acceptance only. Evidence is complete.
 
 ### D-003 — Batch 1 scope = Android-only, ~5 lanes
 - Status: ACCEPTED
@@ -439,7 +445,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   product, Android contract, lane boundary, blocker, or validation expectation changed.
 
 ### D-011 — Resolve pairing TLS and bridge identity before preparing Batch 3
-- Status: DISCUSSING (proposal/probe complete; official CA file pending; implementation blocked)
+- Status: DISCUSSING (evidence complete; explicit acceptance pending; implementation blocked)
 - 2026-06-28 [Codex]: The next critical-path work is one coupled evidence pass over D-001 and D-002,
   not a parallel code batch. The Android endpoint currently carries only `name`/`host`/`port`, while
   credential aliases require a stable `bridgeId`; the repository also has no approved first-contact
@@ -474,12 +480,18 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
 - 2026-06-28 [Claude]: Evidence closure executed (see D-012 + the decision doc "Official evidence
   closure"). All of D-011's prerequisite work is done except the gated official-CA byte-verification (no
   Hue-developer session available). Stays DISCUSSING.
+- 2026-06-29 [Codex]: The human supplied the actual two-certificate Hue CA bundle. Stored outside Git at
+  `/Users/brianbean/Desktop/chromaglow-hue-ca/`; OpenSSL parsed two self-signed EC CA certificates with
+  critical `CA:TRUE` and valid self-signatures. The first subject is exactly the probed leaf issuer
+  `C=NL, O=Philips Hue, CN=root-bridge`; the second is `C=NL, O=Signify Hue, CN=Hue Root CA 01`.
+  Fingerprints and file hashes are recorded in the decision doc. Evidence is complete; explicit
+  human/Codex contract acceptance remains before Batch 3.
 - Resolution: proposal delivered, Codex-reviewed, and probe-validated 2026-06-28; pending official `.pem`
-  verification + explicit human/Codex acceptance. D-001 and D-002 stay DEFERRED, this stays DISCUSSING, and
-  no pairing or credential-persistence code is authorized meanwhile.
+  verification + explicit human/Codex acceptance. The `.pem` verification completed 2026-06-29; only
+  explicit acceptance remains. D-001 and D-002 stay DEFERRED meanwhile.
 
 ### D-012 — Close official pairing evidence and choose the legacy-bridge MVP policy
-- Status: DISCUSSING (packet executed; blocked on human-supplied official `.pem`)
+- Status: DISCUSSING (evidence complete; explicit acceptance pending)
 - 2026-06-28 [Codex]: Prepared the final docs-only closure packet at
   `docs/coordination/prompts/android-pairing-evidence-close.md`. Claude must use an existing
   human-authenticated Hue developer session to byte-verify the official `root-bridge` CA and capture the
@@ -505,8 +517,12 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   the actual official `.pem` bytes are required for independent verification and eventual bundling. No
   further Claude prompt should run until the human downloads that file through an authenticated portal
   session and makes it available locally outside Git.
-- Resolution: packet delivered and Codex-reviewed 2026-06-28; blocked solely on the actual official
-  `.pem` file plus final human/Codex acceptance. D-001/D-002 remain DEFERRED; no Batch 3 work authorized.
+- 2026-06-29 [Codex]: The actual bundle is now available locally outside Git and verified. Bundle
+  SHA-256 `2ff54626fc51de587cce0f3f0339552f89da781b5d5949fa0c90ec30ddf8acfa`; both CA fingerprints and
+  metadata are in the decision doc and local `VERIFICATION.md`. The evidence packet is ready for explicit
+  acceptance; no code authorization is implied.
+- Resolution: evidence complete as of 2026-06-29; pending explicit human/Codex acceptance. D-001/D-002
+  remain DEFERRED and no Batch 3 work is authorized until that acceptance is recorded.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
@@ -619,10 +635,9 @@ retained as historical run records. The result record below is the source of tru
 - **Active blockers:** **D-001** (safe pairing TLS bootstrap) and **D-002** (canonical stable bridge
   identity). Until both resolve: no live pairing, no credential-persistence wiring; `core/credentials`
   is hardening-only.
-- **Next action (human, not agent):** log in to the Hue developer portal, download the official
-  `root-bridge` CA `.pem`, and make the actual file available locally outside Git. Then Claude may run
-  only the recorded certificate-verification procedure and return the metadata for explicit Codex/human
-  acceptance. No Batch 3 manifest or launch prompt exists yet.
+- **Next action:** human + Codex explicitly accept the verified TLS/identity/legacy contract in
+  D-001/D-002/D-012. The actual CA bundle is locally available outside Git and its verification metadata
+  is recorded. Only after acceptance may a Batch 3 manifest and launch prompt be drafted.
 - **For Codex — verifying what's done:** check out `main` @ `7ed6468` (or compare against
   `integration/parallel-batch-2` @ `9411d81`); the per-batch result records are §7/§8; the full decision
   trail is §6 (D-001–D-012). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,

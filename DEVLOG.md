@@ -14,7 +14,7 @@
 - iOS build scheme: `HueHome 1` (not `HueHome`).
 - Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `7ed6468`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
 - Android live pairing + credential-persistence are BLOCKED until D-001 (safe TLS bootstrap) and D-002 (canonical bridge identity) resolve; `core/credentials` is hardening-only.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`; no batch in flight. D-011/D-012 evidence work is complete; next action is human-supplied official `root-bridge` CA `.pem`, not another agent prompt. No Batch 3 until D-001/D-002 acceptance. Validation on `main`: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on the `Pixel_10` AVD.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`; no batch in flight. D-011/D-012 evidence is complete and the supplied Hue CA bundle is locally verified outside Git; next action is explicit human/Codex acceptance. No Batch 3 until D-001/D-002 acceptance. Validation on `main`: `testDebugUnitTest` 84/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 34/0 on the `Pixel_10` AVD.
 
 ### Handoff Entry Template
 
@@ -41,6 +41,33 @@
 ```
 
 ---
+
+## 2026-06-29 - [Codex] Store and verify supplied Hue CA bundle
+
+### Branch
+- `docs/parallel-agent-pipeline`; certificate files remain outside Git.
+
+### Did
+- Created `/Users/brianbean/Desktop/chromaglow-hue-ca/` with the exact supplied two-certificate bundle,
+  individually split CA files, and `VERIFICATION.md`.
+- Verified two certificates, file/fingerprint hashes, validity, EC keys, critical `CA:TRUE` constraints,
+  certificate-signing usage, and self-signatures. Recorded non-secret metadata in the decision log.
+
+### Working
+- `root-bridge` exactly matches the issuer profile observed on the current Hue bridge leaves. The bundle
+  also contains the newer self-signed `Hue Root CA 01` through 2050.
+
+### Left
+- Explicit human/Codex acceptance of the recorded CA-signed-only TLS/identity contract. D-001/D-002 stay
+  DEFERRED and no Batch 3 prompt exists until acceptance.
+
+### Validation
+- OpenSSL parsing and self-signature verification passed for both CA certificates; `git diff --check`
+  clean. Certificate bytes were not added to Git.
+
+### Gotchas
+- The app will eventually need the CA bytes as a runtime trust resource, but committing/bundling them is
+  an implementation action after acceptance, not part of this evidence step.
 
 ## 2026-06-28 - [Codex] Review gated pairing evidence closure
 
