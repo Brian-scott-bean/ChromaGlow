@@ -2,7 +2,7 @@
 
 This is the canonical project handoff for Codex, Claude, Cursor, and other coding agents. Do not duplicate this full context into tool-specific files. Tool-specific entry files, including `CLAUDE.md`, should point here.
 
-Last consolidated: 2026-06-24 · re-consolidated 2026-06-28 after Android parallel Batches 1 & 2 landed on `main` @ `7ed6468` (see "Android Current State").
+Last consolidated: 2026-06-24 · re-consolidated 2026-06-28 after Android parallel Batches 1 & 2 landed on `main` @ `7ed6468`; Batch 3 (pairing foundations + D-014) landed on `main` @ `f3380a7` 2026-06-29 (see "Android Current State").
 
 ## Startup Order
 
@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a complete demo flow plus discovery/manual entry and a secure credential boundary. Batch 3 pairing foundations — including the accepted D-014 GET→POST identity-continuity correction — are integrated and Codex-reviewed on `integration/parallel-batch-3` @ `c385616`; full gate green (unit 174/0, connected 37/0), pushed, and eligible for `main` after explicit human go-ahead. Batches 1 and 2 are merged to `main` @ `7ed6468`.
+ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a complete demo flow plus discovery/manual entry and a secure credential boundary. Batch 3 pairing foundations — including the accepted D-014 GET→POST identity-continuity correction — are **merged to `main` @ `f3380a7`** (`--no-ff` from `integration/parallel-batch-3` @ `c385616` on explicit human go-ahead; full gate green: unit 174/0, connected 37/0). Batches 1 and 2 landed earlier at `main` @ `7ed6468`. Next: a later batch wires Setup UI + credential persistence + physical pairing on the merged `core/hue/pairing/{protocol,tls,transport}` APIs.
 
 ## Current Branch/Repo Facts
 
@@ -204,9 +204,11 @@ Do not modify these without explicit task scope.
 
 ## Android Current State
 
-Android is a working Kotlin/Compose **demo MVP on `main` @ `7ed6468`**; both parallel-pipeline pilot
-batches are merged. Audit/detail: `docs/coordination/parallel-agent-pipeline.md` (§7, §8, §9 + Decision
-Log) and the `DEVLOG.md` handoffs.
+Android is a working Kotlin/Compose **demo MVP on `main` @ `f3380a7`**; both parallel-pipeline pilot
+batches plus Batch 3 (tested, non-UI Hue pairing foundations under `core/hue/pairing/**` + bundled CA
+roots, incl. the D-014 identity-continuity correction) are merged. Audit/detail:
+`docs/coordination/parallel-agent-pipeline.md` (§7, §8, §9, §10 + Decision Log) and the `DEVLOG.md`
+handoffs.
 
 **Shipped on `main`** (`android/`, package `com.chromaglow.app`):
 
@@ -259,16 +261,16 @@ Log) and the `DEVLOG.md` handoffs.
   as a literal (BuildConfig is disabled — do not enable it). Single `Pixel_10` AVD ⇒ run
   `connectedDebugAndroidTest` serially.
 
-**Pipeline status:** Batches 1 & 2 complete (merged to `main`). D-001/D-002/D-011/D-012/D-013/D-014 are
+**Pipeline status:** Batches 1, 2 & 3 complete (merged to `main`). D-001/D-002/D-011/D-012/D-013/D-014 are
 ACCEPTED. Batch 3 (pairing foundations: deps + bundled CA roots, pure protocol contracts, TLS/identity
-verification, HTTPS transport) is **EXECUTED and integrated** on `integration/parallel-batch-3` @
-`c385616`, **including the D-014 GET→POST identity-continuity correction** (the create-user POST leg now
-pins its TLS verifier to the GET-authenticated `bridgeid` and re-checks the POST handshake leaf, so a
-CA-valid identity change between legs fails closed; a real dual-cert regression test proves it). Full gate
-green: unit 174/0 (transport 16/0), lint, assemble, connected 37/0 on `Pixel_10`; Codex promotion review
-passed; pushed; **NOT merged to `main`** (awaiting explicit human go-ahead). Batch 3 adds no Setup UI, app/nav, discovery,
-credential write, token persistence, or live bridge traffic. Public APIs for the follow-up UI/persistence
-batch: `core/hue/pairing/protocol` (request/response/config parsers), `core/hue/pairing/tls`
+verification, HTTPS transport) is **MERGED to `main` @ `f3380a7`** (`--no-ff` from
+`integration/parallel-batch-3` @ `c385616` on explicit human go-ahead), **including the D-014 GET→POST
+identity-continuity correction** (the create-user POST leg pins its TLS verifier to the GET-authenticated
+`bridgeid` and re-checks the POST handshake leaf, so a CA-valid identity change between legs fails closed;
+a real dual-cert regression test proves it). Final gate green: unit 174/0 (transport 16/0), lint, assemble,
+connected 37/0 on `Pixel_10`; Codex promotion review passed. Batch 3 added no Setup UI, app/nav, discovery,
+credential write, token persistence, or live bridge traffic. Public APIs now on `main` for the follow-up
+UI/persistence batch: `core/hue/pairing/protocol` (request/response/config parsers), `core/hue/pairing/tls`
 (`HueRootCertificates`/`HueRootTrustManager`/`HueLeafHostnameVerifier`/`HueBridgeCommonName`), and
 `core/hue/pairing/transport` (`HuePairingClient`/`OkHttpHuePairingClient.fromContext`). Details: pipeline
 doc §10 "Batch 3 execution result" + "Batch 3 D-014 correction result". Raise additional proposals as
@@ -470,9 +472,9 @@ iOS:
 
 Android:
 
-- Batch 3 including D-014 is Codex-reviewed and eligible for `main` from
-  `integration/parallel-batch-3` @ `c385616`; merge only after explicit human go-ahead.
-- After Batch 3 merges, scope Setup UI + credential persistence + physical pairing separately.
+- Batch 3 (incl. the D-014 correction) is **merged to `main` @ `f3380a7`**. Next: scope a follow-up
+  batch wiring Setup UI + credential persistence + physical-device pairing on the merged
+  `core/hue/pairing/{protocol,tls,transport}` APIs (`OkHttpHuePairingClient.fromContext`).
 - Run Gradle validation only when JDK/Android toolchain is available.
 - Continue MVP slices without copying iOS monolith patterns.
 

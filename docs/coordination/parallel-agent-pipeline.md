@@ -9,10 +9,10 @@
 - **Type:** Process / coordination contract.
 - **Consolidated:** 2026-06-24 · **re-consolidated 2026-06-28** (pruned historical Batch 1/2 manifests
   and resolved questions after both batches landed on `main`).
-- **Current state:** Android pilot Batches 1 & 2 are **complete and merged to `main` @ `7ed6468`**.
-  Batch 3 pairing foundations are integrated on `integration/parallel-batch-3` @ `c385616` (the accepted
-  D-014 identity-continuity correction applied on top of `142ca71`). Codex promotion review passed and
-  the full gate is green; **NOT merged to `main`** — awaiting explicit human go-ahead. See §6, §9, §10.
+- **Current state:** Android pilot Batches 1 & 2 landed at `main` @ `7ed6468`; **Batch 3 (pairing
+  foundations + the D-014 identity-continuity correction) is now MERGED to `main` @ `f3380a7`** (`--no-ff`
+  from `integration/parallel-batch-3` @ `c385616` on explicit human go-ahead; Codex review passed; full
+  gate green). No batch is in flight. See §6, §9, §10.
 - **Canonical rules live in:** `AGENTS.md` → "Parallel Agent Pipeline" section + "Android Current State"
   (the durable feature inventory + code contracts). This doc is the operational registry + decision log.
 
@@ -47,11 +47,11 @@ for a future batch).
 | `android-scenes` | `android/app/src/main/java/com/chromaglow/app/feature/scenes/**` (+ its androidTest pkg) | Yes | merged → `main` (Batch 2 W1) | Claude (sub-agent B) |
 | `android-settings` | `android/app/src/main/java/com/chromaglow/app/feature/settings/**` (+ its androidTest pkg) | Yes | merged → `main` (Batch 2 W1) | Claude (sub-agent C) |
 | `android-nav-shell` | the §2 nav hotspots `…/app/ChromaGlowApp.kt` + `…/app/ChromaGlowDestination.kt` (single designated owner per batch), plus its own additive `feature/dashboard/**` entry points and nav E2E androidTest | No (serialized; owns §2 nav hotspots) | merged → `main` (Batch 2 W2) | Claude (sub-agent D) |
-| `android-pairing-bootstrap` | `android/gradle/libs.versions.toml`, `android/app/build.gradle.kts`, `android/app/src/main/res/raw/hue_*.pem` | No (serialized dependency/trust-root bootstrap) | merged → `integration/parallel-batch-3` (Batch 3 W0) | Claude sub-agent A |
-| `android-pairing-protocol` | `…/core/hue/pairing/protocol/**` + exact matching JVM tests | Yes after W0 | merged → `integration/parallel-batch-3` (Batch 3 W1) | Claude sub-agent B |
-| `android-pairing-tls` | `…/core/hue/pairing/tls/**` + exact matching JVM/instrumented tests | Yes after W0 | merged → `integration/parallel-batch-3` (Batch 3 W1) | Claude sub-agent C |
-| `android-pairing-transport` | `…/core/hue/pairing/transport/**` + exact matching JVM tests | No (serialized W2 integration of W1 contracts) | merged → `integration/parallel-batch-3` (Batch 3 W2) | Claude sub-agent D |
-| `android-pairing-identity-continuity-correction` | exact `OkHttpHuePairingClient.kt` + `OkHttpHuePairingClientTest.kt` | No (serialized correction) | merged → `integration/parallel-batch-3` (D-014 @ `c385616`) | Claude |
+| `android-pairing-bootstrap` | `android/gradle/libs.versions.toml`, `android/app/build.gradle.kts`, `android/app/src/main/res/raw/hue_*.pem` | No (serialized dependency/trust-root bootstrap) | merged → `main` (Batch 3 W0; `f3380a7`) | Claude sub-agent A |
+| `android-pairing-protocol` | `…/core/hue/pairing/protocol/**` + exact matching JVM tests | Yes after W0 | merged → `main` (Batch 3 W1; `f3380a7`) | Claude sub-agent B |
+| `android-pairing-tls` | `…/core/hue/pairing/tls/**` + exact matching JVM/instrumented tests | Yes after W0 | merged → `main` (Batch 3 W1; `f3380a7`) | Claude sub-agent C |
+| `android-pairing-transport` | `…/core/hue/pairing/transport/**` + exact matching JVM tests | No (serialized W2 integration of W1 contracts) | merged → `main` (Batch 3 W2; `f3380a7`) | Claude sub-agent D |
+| `android-pairing-identity-continuity-correction` | exact `OkHttpHuePairingClient.kt` + `OkHttpHuePairingClientTest.kt` | No (serialized correction) | merged → `main` (D-014; `f3380a7`) | Claude |
 
 > `ui/theme/**` is no longer a parallel lane — it was bundled into the old `android-models-theme` lane
 > but is consumed app-wide, so it is now a §2 collision hotspot (single-owner per batch).
@@ -563,11 +563,11 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   `generateclientkey`, no `clientkey`/credential persistence, no token/username/secret logging. No new
   decision was required. Full result in §10 "Batch 3 execution result". NOT merged to `main`.
 - Resolution: ACCEPTED by Codex under the human-approved D-001/D-002/D-012 contract; EXECUTED and
-  integrated 2026-06-29 (see §10 "Batch 3 execution result"). D-014 must be corrected before final
-  integration-to-`main` review and explicit human go-ahead.
+  integrated 2026-06-29 (see §10 "Batch 3 execution result"); the D-014-corrected integration `c385616`
+  was **merged to `main` @ `f3380a7`** on explicit human go-ahead 2026-06-29.
 
 ### D-014 — Preserve authenticated bridge identity across GET config and POST create-user
-- Status: ACCEPTED (correction EXECUTED, integrated, and Codex-reviewed @ `c385616`; not on `main`)
+- Status: ACCEPTED (correction EXECUTED + integrated @ `c385616`; merged to `main` @ `f3380a7` 2026-06-29)
 - 2026-06-29 [Codex]: Promotion review of `integration/parallel-batch-3` @ `142ca71` found an identity
   continuity defect in `OkHttpHuePairingClient`. The client builds one verifier from the caller's optional
   `expectedBridgeId`. With a null hint, the config GET may correctly authenticate bridge A, but the POST
@@ -602,16 +602,15 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   the distinct verifier forces a new POST connection in the shipped dependency. No code findings remain.
 - Resolution: ACCEPTED as a defect correction required to satisfy already accepted D-001/D-002; it does
   not change product scope. CORRECTED and integrated 2026-06-29 @ `c385616` (`142ca71` superseded);
-  Codex promotion review passed; integration-to-`main` merge remains gated only on explicit human go-ahead.
+  Codex promotion review passed; **merged to `main` @ `f3380a7`** on explicit human go-ahead 2026-06-29.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
   (credentials scope → D-001/D-002; toolchain → D-005; no-unwired-UI → D-006; fixture injection, the
   `when`-router, `Exit Demo Mode` semantics, and serial single-AVD connected tests → D-008/D-009). Pruned
   during the 2026-06-28 consolidation.
-- **No open blocker:** D-014 is corrected, integrated, and Codex-reviewed (`c385616`); Batch 3 awaits only
-  explicit human merge approval. Batch 3 remains bounded to foundations; UI, persistence wiring, and physical
-  pairing require a later decision/batch.
+- **No open blocker:** Batch 3 (incl. D-014) is **merged to `main` @ `f3380a7`**. Batch 3 remained bounded
+  to foundations; UI, persistence wiring, and physical pairing require a later decision/batch.
 - Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-015+).
 
 ---
@@ -705,8 +704,8 @@ retained as historical run records. The result record below is the source of tru
 - **On `main` @ `7ed6468`** — the Android demo flow is end-to-end: Setup → Dashboard (per-room on/off +
   brightness) → RoomDetail (per-light controls) / Scenes (exclusive activation) / Settings (Exit Demo
   Mode); all demo mutations survive navigation (in-memory, owned by `ChromaGlowApp`). Both pilot batches
-  (8 lanes across two batches + two correction lanes) are merged. Batch 3 + its D-014 correction are
-  integrated on `integration/parallel-batch-3` @ `c385616` (not on `main`).
+  (8 lanes across two batches + two correction lanes) are merged. Batch 3 + its D-014 correction merged
+  to `main` @ `f3380a7` (from `integration/parallel-batch-3` @ `c385616`).
 - **Durable code contracts** (the acceptance baseline for any future change) live in **AGENTS.md →
   "Android Current State"**: model `require(...)` guards; `RoomDisplayModel.lightCount ==
   DemoFixtures.lightsByRoom[id].size`; scenes carry a non-blank `bridgeId` (= `DEMO_BRIDGE_ID`);
@@ -727,8 +726,10 @@ retained as historical run records. The result record below is the source of tru
   **@ `c385616`** (pushed). Full gate green on `c385616`: unit **174/0** (transport 16/0), lint, assemble,
   connected **37/0** on `Pixel_10`; `git diff --check` clean; 29 changed paths vs `main`, all in-glob.
   See §10 "Batch 3 D-014 correction result".
-- **Next action:** the human's explicit go-ahead to merge `integration/parallel-batch-3` @ `c385616` to
-  `main`. Setup/persistence/physical pairing remain a later batch.
+- **Merged to `main` (2026-06-29 [Claude], on explicit human go-ahead):** `integration/parallel-batch-3` @
+  `c385616` merged `--no-ff` → `main` @ `f3380a7` (pushed `7ed6468..f3380a7`; merged tree byte-identical to
+  `c385616`). Batch 3 is complete. **Next action:** scope a follow-up batch for Setup UI + credential
+  persistence + physical-device pairing on the merged `core/hue/pairing/**` APIs.
 - **For Codex — verifying what's done:** review `integration/parallel-batch-3` against `main` @ `7ed6468`;
   the per-batch result records are §7/§8/§10 and the full decision trail is §6 (D-001–D-014). Before the
   correction, expect unit 173/0 and connected 37/0; after D-014, require the added regression test plus the
@@ -742,7 +743,7 @@ retained as historical run records. The result record below is the source of tru
 
 ---
 
-## 10. Batch 3 — CORRECTED + REVIEWED (eligible for human-approved merge)
+## 10. Batch 3 — MERGED TO MAIN (pairing foundations + D-014; `main` @ `f3380a7`)
 
 **Batch:** `parallel-batch-3`
 
@@ -878,8 +879,9 @@ fork from that merged SHA, not directly from `main`.
 
 ### Batch 3 execution result — 2026-06-29 [Claude, batch owner]
 
-- **State:** Executed, integrated on `integration/parallel-batch-3` @ `142ca71`, pushed to origin.
-  **NOT merged to `main`** — final merge awaits explicit human go-ahead.
+- **State:** Executed and integrated on `integration/parallel-batch-3` @ `142ca71`. Subsequently corrected
+  (D-014; see "Batch 3 D-014 correction result" below) and the corrected integration `c385616` **merged to
+  `main` @ `f3380a7`** (2026-06-29, `--no-ff`, explicit human go-ahead).
 - **Base:** pinned `origin/main` @ `7ed64687b600e9456d32510fa86e709c841fefd5` (re-fetched and re-verified
   exact at launch).
 - **Preflight (all passed):** origin/main SHA exact; D-001/D-002/D-011/D-012/D-013 ACCEPTED + prompt READY;
@@ -964,8 +966,9 @@ fork from that merged SHA, not directly from `main`.
 
 ### Batch 3 D-014 correction result — 2026-06-29 [Claude, batch owner]
 
-- **State:** D-014 correction integrated on `integration/parallel-batch-3` @ `c385616` (pushed;
-  `142ca71` superseded). **NOT merged to `main`** — awaits Codex review + explicit human go-ahead.
+- **State:** D-014 correction integrated on `integration/parallel-batch-3` @ `c385616` (`142ca71`
+  superseded), then **merged to `main` @ `f3380a7`** (2026-06-29, `--no-ff`, explicit human go-ahead;
+  Codex promotion review passed).
 - **Lane:** `lane/android3-pairing-identity-continuity-correction` @ `352a42e`, forked from the pinned
   integration head `142ca71`. Single serialized lane; edited **exactly two files**
   (`transport/OkHttpHuePairingClient.kt` + `transport/OkHttpHuePairingClientTest.kt`; 143 insertions,

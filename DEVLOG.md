@@ -12,11 +12,11 @@
 - Git is the shared memory between tools; commit/push handoff updates when another agent needs them.
 - iOS production anchor: native Swift/SwiftUI app in `HueHome/`.
 - iOS build scheme: `HueHome 1` (not `HueHome`).
-- Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `7ed6468`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
+- Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `f3380a7`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary; **tested non-UI Hue pairing foundations under `core/hue/pairing/**` + bundled CA roots (Batch 3)**. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
 - Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 foundations —
-  including the accepted D-014 GET→POST identity-continuity correction — are integrated at `c385616` and
-  Codex-reviewed. Setup UI, credential persistence, and physical pairing remain later scope.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`. Batch 3 pairing foundations + D-014 are integrated and Codex-reviewed on `integration/parallel-batch-3` @ `c385616` (pushed; **NOT merged to `main`**, awaiting explicit human go-ahead). Full gate green: unit 174/0, lint, assemble, connected 37/0 on `Pixel_10`. (Pre-Batch-3 `main` baseline was unit 84/0, connected 34/0.)
+  including the accepted D-014 GET→POST identity-continuity correction — are **merged to `main` @
+  `f3380a7`**. Setup UI, credential persistence, and physical pairing remain later scope.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Batches 1 (`a3fe54f`), 2 (`7ed6468`), and **3 (`f3380a7`)** are merged to `main`. Batch 3 (pairing foundations + D-014 correction) landed `--no-ff` from `integration/parallel-batch-3` @ `c385616` on explicit human go-ahead; final gate green: unit 174/0, lint, assemble, connected 37/0 on `Pixel_10`. (Pre-Batch-3 `main` baseline was unit 84/0, connected 34/0.)
 
 ### Handoff Entry Template
 
@@ -72,6 +72,38 @@
 ### Gotchas
 - The pre-send guarantee uses pinned OkHttp 5.4.0 address equality plus the regression test; the explicit
   response-leaf check is defense in depth but occurs after the POST has been sent.
+
+---
+
+## 2026-06-29 - [Claude] Merge Batch 3 (pairing foundations + D-014) to main
+
+### Branch
+- `main` (pushed) + this `docs/parallel-agent-pipeline` handoff.
+
+### Did
+- On explicit human go-ahead, merged `integration/parallel-batch-3` @ `c385616` into `main` `--no-ff`.
+  Preflight confirmed `origin/main` was still the pinned `7ed6468` (an ancestor of `c385616`) → a
+  conflict-free merge of 10 commits (Batch 3 W0/W1/W2 + the D-014 correction).
+- New `main` @ `f3380a7`; the merge commit's tree is byte-identical to `c385616` (no content introduced
+  by the merge). Pushed `7ed6468..f3380a7`.
+
+### Working
+- `main` now carries the tested, non-UI Hue pairing foundation: `core/hue/pairing/{protocol,tls,transport}`
+  + bundled CA roots, with the D-014 fail-closed GET→POST identity continuity.
+
+### Left
+- Nothing for Batch 3. Follow-up batch (separately scoped): Setup UI + credential persistence + physical
+  pairing on the merged APIs. Lane/integration branches retained on origin; local `cg-b3-wt` worktrees
+  removed post-merge.
+
+### Validation
+- Sanity build on the merged `main`: `testDebugUnitTest` 174/0, `lintDebug`, `assembleDebug` green;
+  `git diff --check` clean. The full gate (incl. `connectedDebugAndroidTest` 37/0 on `Pixel_10`) was green
+  on the identical tree at `c385616`; the connected run was not repeated on the byte-identical merge tree.
+
+### Gotchas
+- The `--no-ff` merge preserves the Batch 3 boundary in history (consistent with Batches 1 & 2). `main`
+  advanced `7ed6468` → `f3380a7`; update any doc/snapshot that still pins the old SHA.
 
 ---
 
