@@ -2,7 +2,8 @@
 
 ## Status
 
-- **State:** READY — execution-approved by D-013; not yet launched.
+- **State:** COMPLETED — executed and integrated at `142ca71`; superseded for promotion by the D-014
+  identity-continuity correction prompt.
 - **Batch:** `parallel-batch-3` (pairing foundations only)
 - **Manifest:** `docs/coordination/parallel-agent-pipeline.md` §10
 - **Pinned base:** `origin/main` @ `7ed64687b600e9456d32510fa86e709c841fefd5`

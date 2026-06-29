@@ -10,8 +10,9 @@
 - **Consolidated:** 2026-06-24 · **re-consolidated 2026-06-28** (pruned historical Batch 1/2 manifests
   and resolved questions after both batches landed on `main`).
 - **Current state:** Android pilot Batches 1 & 2 are **complete and merged to `main` @ `7ed6468`**.
-  D-001/D-002/D-011/D-012/D-013 are accepted. Batch 3 pairing foundations are **EXECUTED and integrated**
-  on `integration/parallel-batch-3` @ `142ca71` (gate green; pushed; NOT merged to `main`) — see §6, §9, §10.
+  Batch 3 pairing foundations are integrated on `integration/parallel-batch-3` @ `142ca71`, but Codex
+  promotion review found the accepted D-014 identity-continuity correction. Batch 3 is **NOT eligible for
+  `main`** until that correction and the full gate are green — see §6, §9, §10.
 - **Canonical rules live in:** `AGENTS.md` → "Parallel Agent Pipeline" section + "Android Current State"
   (the durable feature inventory + code contracts). This doc is the operational registry + decision log.
 
@@ -50,6 +51,7 @@ for a future batch).
 | `android-pairing-protocol` | `…/core/hue/pairing/protocol/**` + exact matching JVM tests | Yes after W0 | merged → `integration/parallel-batch-3` (Batch 3 W1) | Claude sub-agent B |
 | `android-pairing-tls` | `…/core/hue/pairing/tls/**` + exact matching JVM/instrumented tests | Yes after W0 | merged → `integration/parallel-batch-3` (Batch 3 W1) | Claude sub-agent C |
 | `android-pairing-transport` | `…/core/hue/pairing/transport/**` + exact matching JVM tests | No (serialized W2 integration of W1 contracts) | merged → `integration/parallel-batch-3` (Batch 3 W2) | Claude sub-agent D |
+| `android-pairing-identity-continuity-correction` | exact `OkHttpHuePairingClient.kt` + `OkHttpHuePairingClientTest.kt` | No (serialized correction) | READY from `142ca71` (D-014) | Claude |
 
 > `ui/theme/**` is no longer a parallel lane — it was bundled into the old `android-models-theme` lane
 > but is consumed app-wide, so it is now a §2 collision hotspot (single-owner per batch).
@@ -541,7 +543,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
 - Resolution: ACCEPTED 2026-06-29 by human + Codex.
 
 ### D-013 — Batch 3 implements pairing foundations before UI or persistence
-- Status: ACCEPTED (EXECUTED + integrated 2026-06-29; NOT merged to `main` — human go-ahead pending)
+- Status: ACCEPTED (EXECUTED + integrated 2026-06-29; D-014 correction required before promotion)
 - 2026-06-29 [Codex]: Reviewed `origin/main` @ `7ed6468` and prepared the three-wave §10 manifest plus
   `docs/coordination/prompts/parallel-batch-3-launch.md`. W0 serializes dependency and CA-resource
   hotspots; W1 parallelizes pure protocol and TLS/identity foundations; W2 serially integrates a tested
@@ -561,17 +563,36 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   `generateclientkey`, no `clientkey`/credential persistence, no token/username/secret logging. No new
   decision was required. Full result in §10 "Batch 3 execution result". NOT merged to `main`.
 - Resolution: ACCEPTED by Codex under the human-approved D-001/D-002/D-012 contract; EXECUTED and
-  integrated 2026-06-29 (see §10 "Batch 3 execution result"). Final integration-to-`main` merge remains
-  gated on explicit human go-ahead.
+  integrated 2026-06-29 (see §10 "Batch 3 execution result"). D-014 must be corrected before final
+  integration-to-`main` review and explicit human go-ahead.
+
+### D-014 — Preserve authenticated bridge identity across GET config and POST create-user
+- Status: ACCEPTED (promotion-blocking correction READY; not yet executed)
+- 2026-06-29 [Codex]: Promotion review of `integration/parallel-batch-3` @ `142ca71` found an identity
+  continuity defect in `OkHttpHuePairingClient`. The client builds one verifier from the caller's optional
+  `expectedBridgeId`. With a null hint, the config GET may correctly authenticate bridge A, but the POST
+  still uses a verifier that accepts any CA-valid 16-hex Hue leaf CN. If the connection is re-established
+  or routing changes between legs, create-user can be sent to bridge B even though A was the identity
+  checked against `/api/0/config`. The 15 transport tests keep one server certificate across both legs and
+  do not cover this transition. This violates the accepted D-001/D-002 fail-closed identity contract.
+- 2026-06-29 [Codex]: Required correction: after the GET checks agree, pin the POST TLS verifier to the
+  authenticated leaf bridge ID regardless of whether the caller supplied a hint; also verify the POST
+  response handshake leaf against that same ID before accepting any result. Add a real HTTPS regression
+  test that changes between two CA-valid bridge identities across GET and POST and proves fail-closed
+  behavior. The exact two-file serialized lane is executable via
+  `docs/coordination/prompts/parallel-batch-3-identity-continuity-correction.md`.
+- Resolution: ACCEPTED as a defect correction required to satisfy already accepted D-001/D-002; it does
+  not change product scope. `142ca71` must not merge to `main` before the correction is integrated and the
+  full Batch 3 gate is rerun.
 
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
   (credentials scope → D-001/D-002; toolchain → D-005; no-unwired-UI → D-006; fixture injection, the
   `when`-router, `Exit Demo Mode` semantics, and serial single-AVD connected tests → D-008/D-009). Pruned
   during the 2026-06-28 consolidation.
-- **No open decision blocker:** D-001/D-002/D-011/D-012 are accepted. Batch 3 remains bounded to
-  foundations; UI, persistence wiring, and physical pairing require a later decision/batch.
-- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-014+).
+- **Active promotion blocker:** execute accepted D-014 before Batch 3 can merge to `main`. Batch 3 remains
+  bounded to foundations; UI, persistence wiring, and physical pairing require a later decision/batch.
+- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-015+).
 
 ---
 
@@ -664,7 +685,7 @@ retained as historical run records. The result record below is the source of tru
 - **On `main` @ `7ed6468`** — the Android demo flow is end-to-end: Setup → Dashboard (per-room on/off +
   brightness) → RoomDetail (per-light controls) / Scenes (exclusive activation) / Settings (Exit Demo
   Mode); all demo mutations survive navigation (in-memory, owned by `ChromaGlowApp`). Both pilot batches
-  (8 lanes across two batches + two correction lanes) are merged. No batch is in flight.
+  (8 lanes across two batches + two correction lanes) are merged. Batch 3 correction D-014 is READY.
 - **Durable code contracts** (the acceptance baseline for any future change) live in **AGENTS.md →
   "Android Current State"**: model `require(...)` guards; `RoomDisplayModel.lightCount ==
   DemoFixtures.lightsByRoom[id].size`; scenes carry a non-blank `bridgeId` (= `DEMO_BRIDGE_ID`);
@@ -679,15 +700,19 @@ retained as historical run records. The result record below is the source of tru
   `integration/parallel-batch-3` @ `142ca71` (pushed). Gate green: unit 173/0, lint clean, assemble ok,
   connected 37/0 on `Pixel_10` (34 pre-existing + 3 new CA-resource fingerprint tests). No UI, discovery,
   credential write, token persistence, or live bridge request was added. See §10 "Batch 3 execution result".
-- **Next action:** human review of `integration/parallel-batch-3`; the final merge to `main` remains
-  gated on explicit human go-ahead. A later batch separately scopes Setup UI state, credential
-  persistence, and physical-device pairing validation.
-- **For Codex — verifying what's done:** check out `main` @ `7ed6468` (or compare against
-  `integration/parallel-batch-2` @ `9411d81`); the per-batch result records are §7/§8; the full decision
-  trail is §6 (D-001–D-013). Run `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug` and,
-  with the `Pixel_10` AVD booted, `connectedDebugAndroidTest` (expect unit 84/0, connected 34/0).
+- **Codex promotion review (2026-06-29):** D-014 blocks promotion. The null-hint path does not carry the
+  bridge identity authenticated by GET forward into the POST TLS verifier, so a CA-valid identity change
+  between legs can target a different bridge. The existing green tests do not exercise that transition.
+- **Next action:** execute
+  `docs/coordination/prompts/parallel-batch-3-identity-continuity-correction.md` from exact integration
+  head `142ca71`, merge it back to the Batch 3 integration branch, and rerun the full gate. Human merge
+  approval comes only after correction review. Setup/persistence/physical pairing remain a later batch.
+- **For Codex — verifying what's done:** review `integration/parallel-batch-3` against `main` @ `7ed6468`;
+  the per-batch result records are §7/§8/§10 and the full decision trail is §6 (D-001–D-014). Before the
+  correction, expect unit 173/0 and connected 37/0; after D-014, require the added regression test plus the
+  entire green gate.
 - **For Codex — proposing adjustments / corrections:** append a new Decision Log entry
-  (**D-014+**) describing the change; flag any AGENTS.md contract you want to revise. For a later code batch,
+  (**D-015+**) describing the change; flag any AGENTS.md contract you want to revise. For a later code batch,
   draft a manifest per §5 from the current `main`, map every lane to a §1 registry entry, honor the
   accepted D-001/D-002 boundaries, and route any §2 hotspot edit (nav shell, theme, build,
   manifest, res) through a single serialized lane. Then a launch prompt under
@@ -695,7 +720,7 @@ retained as historical run records. The result record below is the source of tru
 
 ---
 
-## 10. Batch 3 — EXECUTED + INTEGRATED (pairing foundations; not merged to `main`)
+## 10. Batch 3 — CORRECTION REQUIRED (integrated; not eligible for `main`)
 
 **Batch:** `parallel-batch-3`
 
@@ -895,3 +920,22 @@ fork from that merged SHA, not directly from `main`.
 - **Remote refs (pushed):** `lane/android3-pairing-bootstrap` `0334d2a`,
   `lane/android3-pairing-protocol` `ea9610c`, `lane/android3-pairing-tls` `0a01b32`,
   `lane/android3-pairing-transport` `c829b92`, `integration/parallel-batch-3` `142ca71`.
+
+### Codex promotion review — 2026-06-29
+
+- **Verdict:** BLOCKED pending accepted D-014. Do not merge `142ca71` to `main`.
+- **Finding:** `pair()` builds one client with `HueLeafHostnameVerifier(expectedBridgeId)` and later calls
+  `createUser(client, endpoint)` with that same client. When `expectedBridgeId == null`, the verifier used
+  for POST remains open to any CA-valid 16-hex Hue leaf CN even after GET authenticated a specific bridge
+  ID. A reconnect or route change can therefore send the create-user request to a different bridge.
+- **Missing test:** all 15 transport tests use one leaf certificate for GET and POST. None forces a
+  second CA-valid identity between the two TLS legs.
+- **Required correction:** pin the POST client to the authenticated GET identity, verify the POST response
+  handshake against it, and add the cross-identity HTTPS regression test. Prompt:
+  `docs/coordination/prompts/parallel-batch-3-identity-continuity-correction.md`.
+- **Independent validation:** Codex reran `testDebugUnitTest --rerun-tasks` on `142ca71` (173/0) and ran
+  `lintDebug assembleDebug` successfully; `git diff --check` is clean. The green gate does not cover the
+  missing invariant.
+- **Audit correction:** the integration diff contains **29** changed files against `origin/main`, not 28:
+  4 W0 hotspot files plus 25 files under the pairing source/test trees. This is a documentation count
+  correction only; all 29 remain within the authorized Batch 3 globs.

@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a complete demo flow plus discovery/manual entry and a secure credential boundary. The D-001/D-002 TLS and canonical-identity contracts are accepted; Batch 3 has implemented and integrated tested pairing foundations (protocol, CA/identity verification, HTTPS transport) on `integration/parallel-batch-3` @ `142ca71` — gate green (unit 173/0, connected 37/0), pushed, NOT yet merged to `main` — without UI wiring or credential persistence. Batches 1 and 2 are merged to `main` @ `7ed6468`.
+ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a complete demo flow plus discovery/manual entry and a secure credential boundary. Batch 3 pairing foundations are integrated on `integration/parallel-batch-3` @ `142ca71`, but Codex promotion review found the D-014 GET-to-POST identity-continuity defect; run the prepared correction before merging Batch 3 to `main`. Batches 1 and 2 are merged to `main` @ `7ed6468`.
 
 ## Current Branch/Repo Facts
 
@@ -259,16 +259,18 @@ Log) and the `DEVLOG.md` handoffs.
   as a literal (BuildConfig is disabled — do not enable it). Single `Pixel_10` AVD ⇒ run
   `connectedDebugAndroidTest` serially.
 
-**Pipeline status:** Batches 1 & 2 complete (merged to `main`). D-001/D-002/D-011/D-012/D-013 are ACCEPTED.
-Batch 3 (pairing foundations: deps + bundled CA roots, pure protocol contracts, TLS/identity verification,
-HTTPS transport) is **EXECUTED and integrated** on `integration/parallel-batch-3` @ `142ca71` — gate green
-(unit 173/0, lint, assemble, connected 37/0 on `Pixel_10`); pushed; **NOT merged to `main`** (awaiting
-human go-ahead). It adds no Setup UI, app/nav, discovery, credential write, token persistence, or live
-bridge traffic. Public APIs now available for the follow-up UI/persistence batch:
+**Pipeline status:** Batches 1 & 2 complete (merged to `main`). D-001/D-002/D-011/D-012/D-013 and the
+D-014 correction requirement are ACCEPTED. Batch 3 (pairing foundations: deps + bundled CA roots, pure
+protocol contracts, TLS/identity verification, HTTPS transport) is **EXECUTED and integrated** on
+`integration/parallel-batch-3` @ `142ca71`, but is **NOT eligible for `main`** until D-014 is corrected and
+the full gate is rerun. The correction must pin the create-user POST to the identity authenticated by the
+config probe and test a CA-valid identity change between GET and POST. Batch 3 adds no Setup UI, app/nav,
+discovery, credential write, token persistence, or live bridge traffic. Public APIs under review are:
 `core/hue/pairing/protocol` (request/response/config parsers), `core/hue/pairing/tls`
 (`HueRootCertificates`/`HueRootTrustManager`/`HueLeafHostnameVerifier`/`HueBridgeCommonName`), and
 `core/hue/pairing/transport` (`HuePairingClient`/`OkHttpHuePairingClient.fromContext`). Details: pipeline
-doc §10 "Batch 3 execution result". Raise additional proposals as D-014+ in the pipeline doc.
+doc §10 "Batch 3 execution result". Execute
+`docs/coordination/prompts/parallel-batch-3-identity-continuity-correction.md` before promotion.
 
 
 ## Validation Commands
@@ -466,9 +468,10 @@ iOS:
 
 Android:
 
-- Review the executed Batch 3 pairing foundation on `integration/parallel-batch-3` @ `142ca71` and decide
-  the merge-to-`main` go-ahead; the follow-up batch wires Setup UI + credential persistence + physical
-  pairing on top of the merged protocol/TLS/transport APIs (no live wiring landed in Batch 3).
+- Execute and review the D-014 identity-continuity correction on top of
+  `integration/parallel-batch-3` @ `142ca71`; do not merge Batch 3 to `main` before that correction and its
+  full validation gate are green.
+- After corrected Batch 3 lands, scope Setup UI + credential persistence + physical pairing separately.
 - Run Gradle validation only when JDK/Android toolchain is available.
 - Continue MVP slices without copying iOS monolith patterns.
 

@@ -13,9 +13,10 @@
 - iOS production anchor: native Swift/SwiftUI app in `HueHome/`.
 - iOS build scheme: `HueHome 1` (not `HueHome`).
 - Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `7ed6468`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
-- Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 (foundations
-  only) is EXECUTED and integrated; Setup UI, credential persistence, and physical pairing remain later scope.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`. Batch 3 pairing foundations are **EXECUTED + integrated** on `integration/parallel-batch-3` @ `142ca71` (pushed; **NOT merged to `main`**, human go-ahead pending) — gate green: `testDebugUnitTest` 173/0, `lintDebug`, `assembleDebug`, `connectedDebugAndroidTest` 37/0 on the `Pixel_10` AVD. (Pre-Batch-3 `main` baseline was unit 84/0, connected 34/0.)
+- Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 foundations are
+  integrated at `142ca71`, but accepted D-014 blocks promotion until GET-to-POST identity continuity is
+  corrected and revalidated. Setup UI, credential persistence, and physical pairing remain later scope.
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Pilot Batches 1 (`a3fe54f`) and 2 (`7ed6468`) are merged to `main`. Batch 3 pairing foundations are integrated on `integration/parallel-batch-3` @ `142ca71` but **NOT eligible for `main`**: run the READY D-014 correction prompt, then rerun the full gate. The pre-correction gate was unit 173/0 and connected 37/0. (Pre-Batch-3 `main` baseline was unit 84/0, connected 34/0.)
 
 ### Handoff Entry Template
 
@@ -40,6 +41,37 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-06-29 - [Codex] Block Batch 3 promotion on pairing identity continuity
+
+### Branch
+- `docs/parallel-agent-pipeline` (reviewing `integration/parallel-batch-3` @ `142ca71`).
+
+### Did
+- Reviewed the complete Batch 3 diff, transport/TLS/protocol implementation, tests, lane graph, and
+  execution report. Verified the CA resources and all 29 changed files remain within authorized globs.
+- Added accepted D-014 and prepared the single-lane READY correction prompt at
+  `docs/coordination/prompts/parallel-batch-3-identity-continuity-correction.md`.
+- Corrected the execution-report audit count: 29 changed files, not 28.
+
+### Working
+- Batch 3 builds and its existing unit suite is green. CA-only trust, SAN-less CN validation, protocol
+  parsing, request bounds, redirect refusal, and no-clientkey/no-persistence boundaries remain intact.
+
+### Left
+- `142ca71` must not merge to `main`. With a null caller hint, the POST client still accepts any CA-valid
+  Hue CN rather than the specific bridge identity authenticated by GET. Claude should run the D-014 prompt,
+  merge the correction to `integration/parallel-batch-3`, and return the corrected SHA for review.
+
+### Validation
+- On the integration worktree: `./gradlew testDebugUnitTest --rerun-tasks` -> BUILD SUCCESSFUL, 173/0;
+  `./gradlew lintDebug assembleDebug` -> BUILD SUCCESSFUL; `git diff --check origin/main...HEAD` clean.
+
+### Gotchas
+- Existing transport tests use one MockWebServer leaf for both requests, so their green result does not
+  prove identity continuity across a TLS reconnect or routing change.
 
 ---
 
