@@ -25,6 +25,10 @@ final class BridgeRecord {
     var firmwareVersion: String?         // last-seen firmware
     var addedAt:         Date
     var lastSeenAt:      Date?
+    // Canonical uppercase 16-hex Hue bridgeid (L-17). nil on records created
+    // before this field existed or when pairing could not establish identity.
+    // The stable dedup key across re-pairings — `host` can change with DHCP.
+    var bridgeIdentifier: String?
 
     init(
         id: String = UUID().uuidString,
@@ -34,7 +38,8 @@ final class BridgeRecord {
         locationLabel: String? = nil,
         accentHex: String? = nil,
         sortOrder: Int = 999,
-        isActive: Bool = true
+        isActive: Bool = true,
+        bridgeIdentifier: String? = nil
     ) {
         self.id            = id
         self.name          = name
@@ -47,6 +52,7 @@ final class BridgeRecord {
         self.deviceCount   = 0
         self.addedAt       = Date()
         self.lastSeenAt    = nil
+        self.bridgeIdentifier = bridgeIdentifier
     }
 }
 

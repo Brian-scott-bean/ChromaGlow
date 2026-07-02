@@ -70,6 +70,15 @@ final class BridgeDiscoveryViewModel {
     // MARK: State
     var phase: DiscoveryPhase = .idle
     var logLines: [String] = []
+    /// L-15: the freshly minted BridgeRecord id whose per-bridge namespaced
+    /// Keychain slots received this pairing's credentials. Set on every
+    /// successful pairing BEFORE `phase` becomes `.paired`, so the setup view
+    /// can create the record atomically with the already-persisted credentials.
+    private(set) var pairedRecordID: String?
+    /// Canonical uppercase 16-hex Hue bridgeid established during identity
+    /// verification (L-17 dedup key). nil when the test seam bypassed
+    /// verification or the legacy pin path could not recover it.
+    private(set) var pairedCanonicalBridgeID: String?
     /// Human-readable label shown in the scanning UI — updates as fallback methods are tried.
     var scanningLabel: String = "Searching your Wi-Fi..."
     /// Host+port-deduplicated bridges available for explicit selection during scanning.
@@ -287,6 +296,8 @@ final class BridgeDiscoveryViewModel {
 
     /// Called after the user has pressed the physical link button on the Bridge.
     func pairWithBridge(_ bridge: BridgeEndpoint) {
+        pairedRecordID = nil
+        pairedCanonicalBridgeID = nil
         phase = .pairing(bridge)
         let scheme = bridge.port == 443 ? "https" : "http"
         appendLog("🤝 Attempting pairing POST to \(scheme)://\(bridge.host):\(bridge.port)/api …")
@@ -406,15 +417,27 @@ final class BridgeDiscoveryViewModel {
                     return
                 }
 
-                // Persist both to Keychain
-                try KeychainManager.shared.saveAPIToken(token)
-                try KeychainManager.shared.saveBridgeIP(bridge.host)
-
-                if !clientKey.isEmpty {
-                    try? KeychainManager.shared.save(value: clientKey, for: "hue_client_key")
+                // L-15: persist straight to per-bridge NAMESPACED Keychain
+                // slots keyed by a freshly minted BridgeRecord id. The legacy
+                // single-bridge slots (hue_api_token/hue_bridge_ip) are never
+                // written here anymore — a second pairing in the same session
+                // used to overwrite them and silently drop the first bridge's
+                // credentials on relaunch.
+                let recordID = UUID().uuidString
+                do {
+                    try KeychainManager.shared.saveCredentials(
+                        ip: bridge.host,
+                        token: token,
+                        clientKey: clientKey.isEmpty ? nil : clientKey,
+                        for: recordID
+                    )
+                } catch {
+                    handleError("Could not save the bridge credentials to the Keychain: \(error.localizedDescription)")
+                    return
                 }
+                pairedRecordID = recordID
 
-                appendLog("💾 Token and Bridge IP saved to Keychain.")
+                appendLog("💾 Credentials saved to per-bridge Keychain slots.")
                 phase = .paired(ip: bridge.host, token: token)
 
             } else {
@@ -456,6 +479,11 @@ final class BridgeDiscoveryViewModel {
             let pinned = await BridgePinAcquirer.acquirePin(host: bridge.host)
             if !pinned {
                 appendLog("❌ Bridge does not present a valid HTTPS identity — cannot pair securely.")
+            } else {
+                // L-17: the acquired pin records the canonical bridgeid for
+                // this host — recover it so the record dedup can use it.
+                pairedCanonicalBridgeID = BridgePinStore.shared.loadPins()
+                    .first { $0.host == bridge.host }?.bridgeID
             }
             return pinned
         }
@@ -491,6 +519,7 @@ final class BridgeDiscoveryViewModel {
             return false
         }
         appendLog("🔒 Bridge TLS identity verified and pinned (\(configBridgeID)).")
+        pairedCanonicalBridgeID = configBridgeID
         return true
     }
 

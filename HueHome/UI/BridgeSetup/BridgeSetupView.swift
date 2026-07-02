@@ -20,6 +20,10 @@ struct BridgeSetupView: View {
     @State private var showManualEntry = false
     @State private var showDebugLog    = false
     @State private var manualIP        = ""
+    /// The record created (or reused) for the CURRENT pairing — finalized the
+    /// moment the phase reaches `.paired` (L-15: record + credentials are
+    /// committed together, not deferred to a button tap the user may skip).
+    @State private var pairedRecord: BridgeRecord?
     @Environment(\.modelContext) private var modelContext
 
     // Pulse animation for bridge icon
@@ -70,6 +74,18 @@ struct BridgeSetupView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showManualEntry) { manualIPSheet }
         .onAppear { pulsing = true }
+        .onChange(of: vm.phase) { _, newPhase in
+            switch newPhase {
+            case .paired(let ip, _):
+                finalizePairedRecord(host: ip)
+            case .idle, .scanning:
+                // Re-scanning (e.g. "Pair another bridge") starts a fresh
+                // pairing — the previous record is already persisted.
+                pairedRecord = nil
+            default:
+                break
+            }
+        }
     }
 
     // MARK: - Accent per phase
@@ -607,21 +623,46 @@ struct BridgeSetupView: View {
     }
     #endif
 
+    // MARK: - Paired Record (L-15/L-17)
+
+    /// Commit the BridgeRecord as soon as pairing succeeds. Credentials are
+    /// already in the per-bridge Keychain slots (written by the view model
+    /// before `.paired`); this pairs them with exactly one record — deduped
+    /// by canonical bridgeid — and SURFACES failures instead of discarding
+    /// them (the old `_ = migrateLegacyCredentials(...)` pattern).
+    private func finalizePairedRecord(host: String) {
+        guard pairedRecord == nil else { return }
+        guard let mintedID = vm.pairedRecordID else {
+            // Test seams may bypass the credential write; nothing to register.
+            return
+        }
+        let name = isAddingAdditional
+            ? "Bridge \(mintedID.prefix(4).uppercased())"
+            : "My Bridge"
+        do {
+            let registration = try BridgePairingRegistrar.register(
+                mintedID: mintedID,
+                host: host,
+                canonicalBridgeID: vm.pairedCanonicalBridgeID,
+                preferredName: name,
+                sortOrder: isAddingAdditional ? 999 : 0,
+                modelContext: modelContext
+            )
+            pairedRecord = registration.record
+        } catch {
+            vm.phase = .error("Pairing succeeded but the bridge could not be saved — please try pairing again.\n(\(error.localizedDescription))")
+        }
+    }
+
     // MARK: - Paired Action
 
     private func handlePairedAction(ip: String, token: String) {
+        // Record + credentials were committed when the phase hit .paired —
+        // this button only routes onward.
         if isAddingAdditional {
-            let bridgeID = UUID().uuidString
-            let record = BridgeRecord(
-                id: bridgeID,
-                name: "Bridge \(bridgeID.prefix(4).uppercased())",
-                host: ip,
-                sortOrder: 999
-            )
-            modelContext.insert(record)
-            try? modelContext.save()
-            _ = KeychainManager.shared.migrateLegacyCredentials(to: bridgeID)
-            onBridgeAdded?(record)
+            if let record = pairedRecord {
+                onBridgeAdded?(record)
+            }
         } else {
             onPaired?()
         }

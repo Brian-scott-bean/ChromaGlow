@@ -17,9 +17,10 @@ final class SecretLogScrubTests: XCTestCase {
     private static let fakeToken     = "FAKETESTTOKEN-abcdef0123456789-FAKETESTTOKEN"
     private static let fakeClientKey = "00112233445566778899AABBCCDDEEFF"
 
-    // The pairing flow persists credentials to the real (legacy) Keychain
-    // slots. Snapshot and restore them so this test can never clobber an
-    // actual pairing on the machine/device running the suite.
+    // The pairing flow now persists to per-bridge NAMESPACED Keychain slots
+    // (L-15) — those are deleted per-test via the minted record id. The legacy
+    // single-bridge slots are still snapshotted/restored defensively so this
+    // test can never clobber an actual pairing on the machine running it.
     private var savedToken:     String?
     private var savedIP:        String?
     private var savedClientKey: String?
@@ -114,6 +115,10 @@ final class SecretLogScrubTests: XCTestCase {
             return XCTFail("pairing did not complete; phase=\(vm.phase)")
         }
         XCTAssertEqual(ip, "192.0.2.10")
+        // L-15: the success path mints per-bridge namespaced slots — remove them.
+        if let mintedID = vm.pairedRecordID {
+            KeychainManager.shared.deleteCredentials(for: mintedID)
+        }
 
         let joined = vm.logLines.joined(separator: "\n")
         XCTAssertFalse(joined.contains(Self.fakeToken),
