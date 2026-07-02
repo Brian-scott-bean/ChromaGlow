@@ -3,7 +3,9 @@
 //
 // Fetches entertainment_configuration resources from the Hue Bridge V2 API.
 // Phase 1: read-only — lists existing configs created via the Hue app.
-// Phase 2: will add create/edit/delete support for in-app config management.
+// Phase 2 (round-2 checkpoint Item 4): rename + delete for the in-app
+// Entertainment Areas management screen. Create lives in
+// EntertainmentConfigBuilderView.
 
 import Foundation
 import os
@@ -30,6 +32,27 @@ struct EntertainmentConfigManager: Sendable {
         }
 
         return items.compactMap { parseConfig($0) }
+    }
+
+    /// Rename an entertainment configuration on the bridge.
+    func rename(configID: String, to name: String, client: HueAPIClient) async throws {
+        let (ip, token) = try client.credentials()
+        _ = try await client.put(
+            path: "/clip/v2/resource/entertainment_configuration/\(configID)",
+            body: ["metadata": ["name": name]],
+            ip: ip, token: token
+        )
+        log.info("Renamed entertainment config \(configID, privacy: .public)")
+    }
+
+    /// Delete an entertainment configuration from the bridge.
+    func delete(configID: String, client: HueAPIClient) async throws {
+        let (ip, token) = try client.credentials()
+        _ = try await client.delete(
+            path: "/clip/v2/resource/entertainment_configuration/\(configID)",
+            ip: ip, token: token
+        )
+        log.info("Deleted entertainment config \(configID, privacy: .public)")
     }
 
     // MARK: - Parsing

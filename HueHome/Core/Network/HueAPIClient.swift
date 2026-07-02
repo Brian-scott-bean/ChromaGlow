@@ -638,6 +638,11 @@ class HueAPIClient: @unchecked Sendable {
         return try await execute(request)
     }
 
+    func delete(path: String, ip: String, token: String) async throws -> Data {
+        let request = try buildRequest(method: "DELETE", path: path, ip: ip, token: token)
+        return try await execute(request)
+    }
+
     private func buildRequest(method: String, path: String, ip: String, token: String) throws -> URLRequest {
         let urlStr = "https://\(ip)\(path)"
         guard let url = URL(string: urlStr) else { throw HueAPIError.badURL(urlStr) }

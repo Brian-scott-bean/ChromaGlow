@@ -97,7 +97,13 @@
   **"New Entertainment Area"** row in the More tab's CONTROL group presenting
   `EntertainmentConfigBuilderView` (builder POSTs to the bridge, so no callback wiring
   needed; Studio/Sync enumerate configs from the bridge). The M-18 bridge picker shows
-  when `allBridgeIDs.count > 1` — true once Item 1 restores both clients.
+  when `allBridgeIDs.count > 1` — true once Item 1 restores both clients. Round-3
+  follow-up from Brian ("no way to view or edit what's been created"): the More row now
+  opens a new **`EntertainmentAreasView`** management screen — lists every area on every
+  bridge (grouped by bridge name, light/channel counts), rename + delete via the ⋯ menu
+  (new `EntertainmentConfigManager.rename/delete` + generic `HueAPIClient.delete(path:)`),
+  pull-to-refresh, and a + toolbar button presenting the builder. Editing light
+  membership stays delete-and-recreate for now.
 - **Item 5 — round-1 fixes re-verified.** Forget-all remains total under the new pairing
   flow (it wipes per-record namespaced creds — exactly where pairing now writes — plus
   legacy slots, pins, shared surface, SwiftData cache, in-memory teardown); stale-bridge

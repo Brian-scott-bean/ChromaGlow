@@ -116,6 +116,7 @@
 		C0DEC0DE010E000000000001 /* EntertainmentRobustnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010E000000000000 /* EntertainmentRobustnessTests.swift */; };
 		C0DEC0DE010F000000000001 /* DiscoveryFallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010F000000000000 /* DiscoveryFallbackTests.swift */; };
 		C0DEC0DE0110000000000001 /* BridgePairingRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0110000000000000 /* BridgePairingRegistrar.swift */; };
+		C0DEC0DE0113000000000001 /* EntertainmentAreasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0113000000000000 /* EntertainmentAreasView.swift */; };
 		C0DEC0DE0111000000000001 /* PairingPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0111000000000000 /* PairingPersistenceTests.swift */; };
 		C0DEC0DE0112000000000001 /* WidgetTimelineRobustnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0112000000000000 /* WidgetTimelineRobustnessTests.swift */; };
 		C1F360D81291713EACE0C1FD /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27B5C4A4767211516073798 /* SettingsView.swift */; };
@@ -322,6 +323,7 @@
 		C0DEC0DE010E000000000000 /* EntertainmentRobustnessTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentRobustnessTests.swift; path = ./HueHomeTests/EntertainmentRobustnessTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE010F000000000000 /* DiscoveryFallbackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DiscoveryFallbackTests.swift; path = ./HueHomeTests/DiscoveryFallbackTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0110000000000000 /* BridgePairingRegistrar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgePairingRegistrar.swift; path = HueHome/Core/Keychain/BridgePairingRegistrar.swift; sourceTree = "<group>"; };
+		C0DEC0DE0113000000000000 /* EntertainmentAreasView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentAreasView.swift; path = HueHome/UI/Sync/EntertainmentAreasView.swift; sourceTree = "<group>"; };
 		C0DEC0DE0111000000000000 /* PairingPersistenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PairingPersistenceTests.swift; path = ./HueHomeTests/PairingPersistenceTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0112000000000000 /* WidgetTimelineRobustnessTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WidgetTimelineRobustnessTests.swift; path = ./HueHomeTests/WidgetTimelineRobustnessTests.swift; sourceTree = "<group>"; };
 		C27B5C4A4767211516073798 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = HueHome/UI/Settings/SettingsView.swift; sourceTree = "<group>"; };
@@ -482,6 +484,7 @@
 				C0DEC0DE010A000000000000 /* BridgeCommandGate.swift */,
 				C0DEC0DE010C000000000000 /* FailableDecodable.swift */,
 				C0DEC0DE0110000000000000 /* BridgePairingRegistrar.swift */,
+				C0DEC0DE0113000000000000 /* EntertainmentAreasView.swift */,
 			);
 			name = Network;
 			sourceTree = "<group>";
@@ -1172,6 +1175,7 @@
 				C0DEC0DE0106000000000001 /* SharedKeychainStore.swift in Sources */,
 				C0DEC0DE010A000000000001 /* BridgeCommandGate.swift in Sources */,
 				C0DEC0DE0110000000000001 /* BridgePairingRegistrar.swift in Sources */,
+				C0DEC0DE0113000000000001 /* EntertainmentAreasView.swift in Sources */,
 				C0DEC0DE010C000000000001 /* FailableDecodable.swift in Sources */,
 				0C3BAD9137A6A8F673D0ED0C /* CreateSceneView.swift in Sources */,
 				951658093BEEBEC42FBEB22C /* HarmonyEngine.swift in Sources */,
