@@ -48,6 +48,46 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 hardening — Group 2: primaryAPIClient wrong-bridge sweep (M-07/H-05/M-18) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (local only — not pushed).
+
+### Did
+- **Swept every `primaryAPIClient` call site to per-bridge resolution** (the audit's wrong-bridge
+  class: `clients.values.first` is nondeterministic):
+  - **M-07** `stopCompositionMode`: teardown now resolves the client from the manifest's own
+    bridge via new `hueClient(forBridgeIP:)`; if the manifest's bridge is no longer registered the
+    manifest is dropped with a log (bridge-side `CG_` leftovers age out via purge).
+  - **H-05** `EffectsViewModel`: removed the cached `api` property entirely; `activate()` resolves
+    `hueClient(for: room.bridgeID)` per activation AFTER the target room is known; all four
+    strategy branches now hit the room's bridge.
+  - **M-18** `EntertainmentConfigBuilderView`: `loadLights()`/`createConfig()` use a
+    `selectedBridgeID` threaded through the sheet; auto-selected for single-bridge homes, a
+    Bridge picker section appears when several bridges are registered (light selection resets on
+    switch). New `bridgeName(for:)` orchestrator helper for the picker.
+  - **Same class, also fixed:** DashboardView `stopEffect`/`stopAllEffects`/`applyPreset`/
+    `turnAllOff` and the All-Day scenes tick (`tickAllDayScenes`) — each grouped_light PUT now
+    routes to its room's own bridge.
+- **Guard 5** added to `Scripts/hardening_guards.sh`: any `primaryAPIClient` reference outside its
+  declaration (or a comment) fails the guard — the wrong-bridge class cannot silently re-enter.
+
+### Working
+- Build SUCCEEDED (generic/platform=iOS); HueHomeTests green incl. new
+  `MultiBridgeRoutingTests` (hueClient(forBridgeIP:) resolution; M-07 teardown deletes land only
+  on the manifest's bridge + manifest removed; H-05 effect PUT lands only on the selected room's
+  bridge). Guards pass.
+
+### Left
+- Groups 3–7. M-16/M-17 (Effects turn-off timer, dead "All Rooms") are NOT in the P1 launch-prompt
+  scope — deferred, noted for the handoff.
+
+### Gotchas
+- `primaryAPIClient` property still exists (legacy single-bridge fallback semantics) but has zero
+  call sites; Guard 5 forces a conscious guard edit before any new use.
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 hardening — Group 1: Keychain access group (M-02/L-30, D-018) — LOCAL, in progress
 
 ### Branch

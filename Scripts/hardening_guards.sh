@@ -18,6 +18,9 @@
 #   4. M-02/L-30 — the bridge token never re-enters UserDefaults: no `set(`
 #              write against a known plaintext-token key (App Group or watch),
 #              and no `.token` value written into any UserDefaults suite.
+#   5. M-07/H-05/M-18 — no room-targeted write path may use primaryAPIClient
+#              (= clients.values.first, nondeterministic wrong-bridge class).
+#              Resolve per-bridge via hueClient(for:)/hueClient(forBridgeIP:).
 
 set -u
 cd "$(dirname "$0")/.."
@@ -128,6 +131,23 @@ fi
 tokenval_hits=$(grep -rnE '(ud|defaults|userDefaults|watchGroup|group)[?]?\.set\((first|creds|fallback)[?]?\.token' "${SWIFT_DIRS[@]}" --include='*.swift' 2>/dev/null || true)
 if [[ -n "$tokenval_hits" ]]; then
     fail "M-02/L-30" $'a .token value is written into a UserDefaults suite:\n'"$tokenval_hits"
+fi
+
+# ──────────────────────────────────────────────────────────────
+# Guard 5 (M-07/H-05/M-18): primaryAPIClient must never re-enter a write path.
+#
+# P1 swept every call site to per-bridge resolution (hueClient(for:) /
+# hueClient(forBridgeIP:)). The ONLY allowed appearances are its own
+# declaration inside UnifiedOrchestrator and comments. Any new code reference
+# is treated as a wrong-bridge regression — if a legitimate non-room use ever
+# appears, it must be justified by editing this guard.
+# ──────────────────────────────────────────────────────────────
+
+primary_hits=$(grep -rn "primaryAPIClient" "${SWIFT_DIRS[@]}" --include='*.swift' 2>/dev/null \
+    | grep -vE '^\S+:[0-9]+:\s*//' \
+    | grep -v "var primaryAPIClient: HueAPIClient? {" || true)
+if [[ -n "$primary_hits" ]]; then
+    fail "M-07/H-05/M-18" $'primaryAPIClient used outside its declaration (wrong-bridge class):\n'"$primary_hits"
 fi
 
 # ──────────────────────────────────────────────────────────────

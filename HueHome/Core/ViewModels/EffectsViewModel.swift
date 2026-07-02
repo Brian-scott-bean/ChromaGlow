@@ -53,7 +53,6 @@ final class EffectsViewModel: ObservableObject {
     @Published var statusMessage:     String?          = nil
     // MARK: Dependencies
 
-    private var api:              HueAPIClient?        = nil
     private var isDemoMode:       Bool                 = false
     private weak var orchestrator: UnifiedOrchestrator? = nil
     private let engine            = EffectEngine()
@@ -79,16 +78,16 @@ final class EffectsViewModel: ObservableObject {
 
     @MainActor
     func configure(orchestrator: UnifiedOrchestrator) {
-        // Always refresh transient dependencies (API client may change if a bridge is added/removed).
+        // Always refresh transient dependencies.
+        // H-05: no cached primaryAPIClient — activate() resolves the client
+        // from the target room's bridge at each activation.
         self.orchestrator = orchestrator
         isDemoMode = orchestrator.isDemoMode
-        api = orchestrator.primaryAPIClient
         if selectedRoom == nil {
             selectedRoom = orchestrator.allRooms.first
         }
-        let apiStatus = api != nil ? "set" : "nil"
         let roomName  = selectedRoom?.name ?? "none"
-        log.info("[EffectsVM] configure — api=\(apiStatus) room=\(roomName) demo=\(self.isDemoMode)")
+        log.info("[EffectsVM] configure — room=\(roomName) demo=\(self.isDemoMode)")
 
         // Guard: only register Combine sinks once. Calling configure() on every
         // onAppear (tab switch) would otherwise stack duplicate sinks, causing
@@ -246,11 +245,6 @@ final class EffectsViewModel: ObservableObject {
             return
         }
 
-        guard let api else {
-            showStatus("⚠ No bridge connection — open Settings to re-pair")
-            return
-        }
-
         // Resolve the target room: explicit override > current selection.
         // GUARD: require an explicit room — never fall through to "all rooms" silently.
         // If the room picker hasn't been set yet, prompt the user instead of broadcasting.
@@ -261,6 +255,14 @@ final class EffectsViewModel: ObservableObject {
         }
         guard let groupedLightID = room.groupedLightID else {
             showStatus("⚠ Room '\(room.name)' has no grouped light — try a different room")
+            return
+        }
+        // H-05: resolve the client from the TARGET room's bridge for this
+        // activation. A cached primaryAPIClient (= clients.values.first) sent
+        // every effect on a non-primary bridge to the wrong bridge — 404s were
+        // swallowed while the UI showed success.
+        guard let api = orchestrator?.hueClient(for: room.bridgeID) else {
+            showStatus("⚠ No bridge connection for '\(room.name)' — open Settings to re-pair")
             return
         }
 

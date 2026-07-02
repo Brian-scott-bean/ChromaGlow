@@ -192,16 +192,20 @@ final class UnifiedOrchestrator {
         let output = AllDayCurve.output(at: now, lat: anchor.lat, lon: anchor.lon, timeZone: tz)
 
         // Apply to every room grouped_light with a smooth transition.
-        let groupedIDs = allRooms.compactMap(\.groupedLightID)
+        // M-18 class: route each PUT to the room's OWN bridge, not the first.
+        let targets = allRooms.compactMap { room -> (glID: String, bridgeID: String?)? in
+            guard let glID = room.groupedLightID else { return nil }
+            return (glID, room.bridgeID)
+        }
 
-        for glID in groupedIDs {
+        for target in targets {
             await allDayRestSender.enqueue { [weak self] in
                 guard let self else { return }
                 guard self.allDayGeneration == generation else { return }
-                guard let api = self.primaryAPIClient else { return }
+                guard let api = self.hueClient(for: target.bridgeID) else { return }
                 // grouped_light supports on/dimming/ct/color; we do CT + brightness here.
                 try? await api.setGroupedLightEffect(
-                    id: glID,
+                    id: target.glID,
                     on: true,
                     brightness: output.brightnessPercent,
                     xy: nil,
@@ -2020,12 +2024,18 @@ final class UnifiedOrchestrator {
         compositionGenerations[roomID] = (compositionGenerations[roomID] ?? 0) + 1
 
         // ─── Stop bridge-stored animation if active ───
-        // Search all manifests for this room and clean up
+        // M-07: tear down against the manifest's OWN bridge, never the
+        // nondeterministic first client — a second bridge's animation would
+        // otherwise loop forever while its manifest is dropped locally.
         for manifest in bridgeAnimationStore.allManifests() where manifest.roomID == roomID {
-            // Create v1 client from the manifest's bridge IP + primary API token
-            if let api = primaryAPIClient,
+            if let api = hueClient(forBridgeIP: manifest.bridgeIP),
                let v1Client = try? api.makeV1Client() {
                 await bridgeAnimationEngine.stop(manifest: manifest, v1Client: v1Client)
+            } else {
+                // The manifest's bridge is no longer registered — no client can
+                // ever clean it up, so drop the manifest instead of leaking it.
+                // (Bridge-side CG_ leftovers age out via the purge path.)
+                print("[Handoff] ⚠ No registered client for bridge \(manifest.bridgeIP) — dropping manifest without bridge cleanup")
             }
             bridgeAnimationStore.remove(presetID: manifest.presetID, roomID: roomID)
         }
@@ -2817,6 +2827,18 @@ final class UnifiedOrchestrator {
     func hueClient(for bridgeID: String?) -> HueAPIClient? {
         guard let id = bridgeID else { return nil }
         return clients[id]
+    }
+
+    /// Resolves a client by bridge LAN IP — for artifacts that recorded only
+    /// the host (e.g. BridgeAnimationManifest.bridgeIP, M-07). Routing only;
+    /// identity is still enforced by the pinned TLS evaluator on connect.
+    func hueClient(forBridgeIP ip: String) -> HueAPIClient? {
+        clients.values.first { (try? $0.credentials())?.ip == ip }
+    }
+
+    /// Display name for a registered bridge (used by pickers).
+    func bridgeName(for bridgeID: String) -> String? {
+        clients[bridgeID]?.bridgeName
     }
 
     /// Returns the first available working API client.

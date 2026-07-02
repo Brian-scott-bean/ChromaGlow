@@ -30,6 +30,10 @@ struct EntertainmentConfigBuilderView: View {
     @State private var isLoading = false
     @State private var isSaving  = false
     @State private var errorMessage: String?
+    /// M-18: the bridge this area is built on. Auto-selected for single-bridge
+    /// homes; a picker appears when several bridges are registered so the
+    /// config is enumerated from — and POSTed to — the intended bridge.
+    @State private var selectedBridgeID: String?
 
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
     private let maxLights = 10
@@ -65,7 +69,12 @@ struct EntertainmentConfigBuilderView: View {
             }
             .preferredColorScheme(.dark)
         }
-        .task { await loadLights() }
+        .task {
+            if selectedBridgeID == nil {
+                selectedBridgeID = orchestrator.allBridgeIDs.sorted().first
+            }
+            await loadLights()
+        }
     }
 
     private var canCreate: Bool {
@@ -82,10 +91,18 @@ struct EntertainmentConfigBuilderView: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
 
+                // ── Bridge (multi-bridge homes only) ────────
+                if orchestrator.allBridgeIDs.count > 1 {
+                    bridgePickerSection
+                        .padding(.horizontal, 20)
+                        .padding(.top, 16)
+                        .padding(.bottom, 20)
+                }
+
                 // ── Name ────────────────────────────────────
                 nameSection
                     .padding(.horizontal, 20)
-                    .padding(.top, 16)
+                    .padding(.top, orchestrator.allBridgeIDs.count > 1 ? 0 : 16)
                     .padding(.bottom, 20)
 
                 // ── Light Picker ────────────────────────────
@@ -108,6 +125,52 @@ struct EntertainmentConfigBuilderView: View {
                 }
 
                 Color.clear.frame(height: 40)
+            }
+        }
+    }
+
+    // MARK: - Bridge Picker (M-18)
+
+    private var bridgePickerSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionLabel("Bridge")
+            Menu {
+                ForEach(orchestrator.allBridgeIDs.sorted(), id: \.self) { bridgeID in
+                    Button {
+                        guard bridgeID != selectedBridgeID else { return }
+                        selectedBridgeID = bridgeID
+                        selectedLightIDs = []
+                        availableLights  = []
+                        errorMessage     = nil
+                        Task { await loadLights() }
+                    } label: {
+                        if bridgeID == selectedBridgeID {
+                            Label(orchestrator.bridgeName(for: bridgeID) ?? "Bridge", systemImage: "checkmark")
+                        } else {
+                            Text(orchestrator.bridgeName(for: bridgeID) ?? "Bridge")
+                        }
+                    }
+                }
+            } label: {
+                HStack {
+                    Text(selectedBridgeID.flatMap { orchestrator.bridgeName(for: $0) } ?? "Select a bridge")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.white.opacity(0.06))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                )
             }
         }
     }
@@ -309,7 +372,8 @@ struct EntertainmentConfigBuilderView: View {
         isLoading = true
         defer { isLoading = false }
 
-        guard let client = orchestrator.primaryAPIClient else { return }
+        // M-18: enumerate lights from the selected bridge, not the first one.
+        guard let client = orchestrator.hueClient(for: selectedBridgeID) else { return }
         do {
             let (ip, token) = try client.credentials()
 
@@ -372,7 +436,9 @@ struct EntertainmentConfigBuilderView: View {
         isSaving = true
         errorMessage = nil
 
-        guard let client = orchestrator.primaryAPIClient else {
+        // M-18: POST the new entertainment_configuration to the SAME bridge
+        // the lights were enumerated from.
+        guard let client = orchestrator.hueClient(for: selectedBridgeID) else {
             errorMessage = "No bridge connection"
             isSaving = false
             return

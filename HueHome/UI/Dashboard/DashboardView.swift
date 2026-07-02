@@ -346,11 +346,18 @@ struct DashboardView: View {
         }
     }
 
+    /// H-05/M-18 class: resolve the client from the effect's ROOM, never the
+    /// nondeterministic first bridge.
+    private func apiForRoom(id roomID: String) -> HueAPIClient? {
+        let bridgeID = orchestrator.allRooms.first(where: { $0.id == roomID })?.bridgeID
+        return orchestrator.hueClient(for: bridgeID)
+    }
+
     private func stopEffect(_ entry: ActiveEffectEntry?) {
         guard let entry else { return }
         HapticManager.shared.medium()
         Task {
-            guard let api = orchestrator.primaryAPIClient else { return }
+            guard let api = apiForRoom(id: entry.id) else { return }
             // Stop the native bridge effect for this room only
             if let glID = entry.groupedLightID {
                 try? await api.setGroupedLight(id: glID, on: true)
@@ -364,13 +371,15 @@ struct DashboardView: View {
     private func stopAllEffects() {
         HapticManager.shared.medium()
         Task {
-            guard let api = orchestrator.primaryAPIClient else { return }
             let entries = orchestrator.activeEffectEntries
+            let targets = entries.compactMap { entry -> (api: HueAPIClient, glID: String)? in
+                guard let glID = entry.groupedLightID,
+                      let api  = apiForRoom(id: entry.id) else { return nil }
+                return (api, glID)
+            }
             await withTaskGroup(of: Void.self) { group in
-                for entry in entries {
-                    if let glID = entry.groupedLightID {
-                        group.addTask { try? await api.setGroupedLight(id: glID, on: true) }
-                    }
+                for target in targets {
+                    group.addTask { try? await target.api.setGroupedLight(id: target.glID, on: true) }
                 }
             }
             await MainActor.run {
@@ -517,16 +526,21 @@ struct DashboardView: View {
         withAnimation { activePreset = preset.id }
 
         Task {
-            guard let api = orchestrator.primaryAPIClient else {
+            // M-18 class: route each room's PUT to its own bridge.
+            let targets = orchestrator.allRooms.compactMap { room -> (api: HueAPIClient, glID: String)? in
+                guard let glID = room.groupedLightID,
+                      let api  = orchestrator.hueClient(for: room.bridgeID) else { return nil }
+                return (api, glID)
+            }
+            guard !targets.isEmpty else {
                 presetToast = "⚠ No bridge connection"
                 return
             }
-            let rooms = orchestrator.allRooms.compactMap(\.groupedLightID)
             await withTaskGroup(of: Void.self) { group in
-                for id in rooms {
+                for target in targets {
                     group.addTask {
-                        try? await api.setGroupedLightEffect(
-                            id: id, on: true,
+                        try? await target.api.setGroupedLightEffect(
+                            id: target.glID, on: true,
                             brightness: preset.brightness,
                             xy: nil, mirek: preset.mirek,
                             duration: 800
@@ -778,11 +792,16 @@ struct DashboardView: View {
         HapticManager.shared.heavy()
         allOffWorking = true
         Task {
-            guard let api = orchestrator.primaryAPIClient else { allOffWorking = false; return }
-            let rooms = orchestrator.allRooms.compactMap(\.groupedLightID)
+            // M-18 class: route each room's PUT to its own bridge.
+            let targets = orchestrator.allRooms.compactMap { room -> (api: HueAPIClient, glID: String)? in
+                guard let glID = room.groupedLightID,
+                      let api  = orchestrator.hueClient(for: room.bridgeID) else { return nil }
+                return (api, glID)
+            }
+            guard !targets.isEmpty else { allOffWorking = false; return }
             await withTaskGroup(of: Void.self) { group in
-                for id in rooms {
-                    group.addTask { try? await api.setGroupedLight(id: id, on: false) }
+                for target in targets {
+                    group.addTask { try? await target.api.setGroupedLight(id: target.glID, on: false) }
                 }
             }
             await MainActor.run {
