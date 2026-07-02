@@ -14,6 +14,7 @@ struct MoreView: View {
     @State private var showSettings      = false
     @State private var showAutomations   = false
     @State private var showDevices       = false
+    @State private var showEntertainmentBuilder = false
 
     // ── Accent colors (from design token system) ────────────
     private let purple = Color(hex: "#8C59FF")  // no token yet
@@ -45,6 +46,16 @@ struct MoreView: View {
         .navigationDestination(isPresented: $showDevices)     { DevicesView() }
         .sheet(isPresented: $showSettings) {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
+        }
+        // Round-2 Item 4: the ONLY other builder entry point (Studio's prompt)
+        // is conditional on a spatial motion pattern + no existing area, and
+        // the old Sync tab was removed in v0.15.0 — this row is the app's
+        // always-reachable way to create an entertainment area. The builder
+        // POSTs to the bridge, so no onCreated wiring is needed here; Studio
+        // and Sync enumerate configs from the bridge when they load.
+        .sheet(isPresented: $showEntertainmentBuilder) {
+            EntertainmentConfigBuilderView()
+                .environment(orchestrator)
         }
     }
 
@@ -87,6 +98,12 @@ struct MoreView: View {
                     title: "Devices & Firmware",
                     subtitle: "\(orchestrator.totalLightCount) lights and sensors") {
                 showDevices = true
+            }
+            moreDivider
+            moreRow(icon: "dot.radiowaves.left.and.right", iconColor: HuePalette.amber,
+                    title: "New Entertainment Area",
+                    subtitle: "Low-latency light zone for Studio motion") {
+                showEntertainmentBuilder = true
             }
             moreDivider
             moreRow(icon: "switch.2", iconColor: blue,

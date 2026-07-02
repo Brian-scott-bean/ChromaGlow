@@ -87,11 +87,17 @@
   (4) the genuinely-unpaired branch trades `.never` for a 60-min backstop (the round-1
   blob-change reload stays the fast path). The round-1 `write(bridges:)` blob-compare was
   re-verified deterministic (String-only payload, sortedKeys) — it was NOT the thrash source.
-- **Item 4 — entertainment-area builder undiscoverable.** The only Sync-tab trigger was
-  a low-contrast inline text link at the very bottom of the controls card. Replaced with
-  a full-width "New Entertainment Area" row (StudioView's prompt idiom) always visible
-  under the config chips; the sheet now injects the orchestrator explicitly (M-18 bridge
-  picker shows when `allBridgeIDs.count > 1` — true once Item 1 restores both clients).
+- **Item 4 — entertainment-area builder undiscoverable.** Two-part finding. (a) The
+  "Sync tab" trigger everyone pointed at lives in `SyncModeView` — which is ORPHANED:
+  the v0.15.0 nav rework (Home/Scenes/Studio/More) removed the Sync tab and no code
+  references `SyncModeView` anymore. Its trigger was also a low-contrast inline text
+  link; upgraded to a prominent row anyway in case the view returns. (b) The only
+  REACHABLE entry point was Studio's conditional prompt (spatial motion pattern + no
+  existing area for the room) — effectively invisible. Real fix: a permanent
+  **"New Entertainment Area"** row in the More tab's CONTROL group presenting
+  `EntertainmentConfigBuilderView` (builder POSTs to the bridge, so no callback wiring
+  needed; Studio/Sync enumerate configs from the bridge). The M-18 bridge picker shows
+  when `allBridgeIDs.count > 1` — true once Item 1 restores both clients.
 - **Item 5 — round-1 fixes re-verified.** Forget-all remains total under the new pairing
   flow (it wipes per-record namespaced creds — exactly where pairing now writes — plus
   legacy slots, pins, shared surface, SwiftData cache, in-memory teardown); stale-bridge
