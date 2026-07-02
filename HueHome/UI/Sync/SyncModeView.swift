@@ -35,10 +35,13 @@ struct SyncModeView: View {
         .onAppear  { if engine == nil { engine = SyncModeEngine(orchestrator: orchestrator) } }
         .onDisappear { engine?.stop() }
         .sheet(isPresented: $showCreateArea) {
+            // Inject the orchestrator explicitly (StudioView's presentation
+            // does the same) — the builder needs it for the M-18 bridge picker.
             EntertainmentConfigBuilderView { newConfig in
                 engine?.selectedEntertainmentConfig = newConfig
                 Task { await engine?.loadEntertainmentConfigs() }
             }
+            .environment(orchestrator)
         }
     }
 
@@ -533,21 +536,42 @@ struct SyncModeView: View {
                     .lineLimit(2)
             }
 
-            // Create Area button
+            // Create Area — a full-width row (StudioView's prompt idiom), not
+            // the old low-contrast inline text link nobody could find
+            // (round-2 Item 4). Always visible under the config chips.
             Button {
                 showCreateArea = true
                 HapticManager.shared.light()
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 12, weight: .medium))
-                    Text(engine.availableEntertainmentConfigs.isEmpty ? "Create Entertainment Area" : "New Area")
-                        .font(.system(size: 12, weight: .medium))
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(amber.opacity(0.15))
+                            .frame(width: 34, height: 34)
+                        Image(systemName: "plus.viewfinder")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(amber)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("New Entertainment Area")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text("Low-latency light zone for Sync and Studio")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.35))
                 }
-                .foregroundStyle(amber.opacity(0.7))
-                .padding(.top, 4)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 12).fill(amber.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(amber.opacity(0.15), lineWidth: 1))
             }
             .buttonStyle(.plain)
+            .padding(.top, 6)
         }
     }
 
