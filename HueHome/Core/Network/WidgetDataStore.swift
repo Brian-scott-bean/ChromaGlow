@@ -237,6 +237,10 @@ enum WidgetAPIClient {
                    delegateQueue: nil)
     }()
 
+    /// Test seam: replaces the pinned session so unit tests can stub or hang
+    /// the transport (URLProtocol stubs cannot present a pinned server trust).
+    static var sessionOverride: URLSession?
+
     // ──────────────────────────────────────────────
     // MARK: - Response Models
     // ──────────────────────────────────────────────
@@ -261,8 +265,25 @@ enum WidgetAPIClient {
         guard let url = URL(string: "https://\(ip)/clip/v2/resource/grouped_light") else { return [] }
         var req = URLRequest(url: url, timeoutInterval: 8)
         req.setValue(token, forHTTPHeaderField: "hue-application-key")
-        let (data, _) = try await session.data(for: req)
+        let (data, _) = try await (sessionOverride ?? session).data(for: req)
         return try JSONDecoder().decode(V2Response<GLData>.self, from: data).data
+    }
+
+    /// Round-2 Item 3: fetch with a HARD wall-clock budget. WidgetKit throttles
+    /// (and eventually renders as the blurred placeholder) extensions whose
+    /// timeline generation is repeatedly slow — an unreachable bridge must cost
+    /// at most `budget` seconds, never the transport's full timeout. Returns
+    /// nil on timeout or any transport error; callers fall back to the cache.
+    static func fetchGroupedLightsBounded(
+        ip: String, token: String, budget: TimeInterval
+    ) async -> [GLData]? {
+        let fetch = Task { try await fetchGroupedLights(ip: ip, token: token) }
+        let reaper = Task {
+            try? await Task.sleep(nanoseconds: UInt64(budget * 1_000_000_000))
+            fetch.cancel()
+        }
+        defer { reaper.cancel() }
+        return try? await fetch.value
     }
 
     // The former per-target trust-all TrustDelegate (audit M-01) was replaced

@@ -62,24 +62,48 @@ struct HueWidgetProvider: AppIntentTimelineProvider {
     }
 
     // ── Timeline (called on schedule + after WidgetCenter.reloadAll) ──
+    // Round-2 Item 3 (blurry/redacted widget): this must ALWAYS return fast
+    // and must NEVER return a `.never` policy — a slow/crashing/frozen
+    // timeline is exactly what WidgetKit renders as the blurred placeholder.
     func timeline(for configuration: SelectRoomIntent,
                   in context: Context) async -> Timeline<HueWidgetEntry> {
         let store = WidgetDataStore.shared
-        let nextRefresh = Calendar.current.date(byAdding: .minute, value: 15, to: .now)!
+        let nextRefresh = Calendar.current.date(byAdding: .minute, value: 15, to: .now)
+            ?? .now.addingTimeInterval(15 * 60)
         let selectedID  = configuration.room?.id
 
-        guard store.isPaired,
-              let creds = store.primaryCredentials() else {
+        guard store.isPaired else {
+            // Genuinely unpaired. `.never` used to freeze this entry forever;
+            // the blob-change reload usually revives it, but keep a slow timed
+            // backstop so a missed/throttled reload cannot strand the widget.
             let entry = HueWidgetEntry(date: .now, rooms: [], isPaired: false,
                                        selectedRoomID: selectedID)
-            return Timeline(entries: [entry], policy: .never)
+            return Timeline(entries: [entry],
+                            policy: .after(.now.addingTimeInterval(60 * 60)))
         }
 
-        // Try to refresh room states with a single grouped_light call
+        guard let creds = store.primaryCredentials() else {
+            // Paired per the routing metadata, but the shared-Keychain
+            // credentials are unreadable right now (device before first
+            // unlock, transient Keychain hiccup). This is NOT "unpaired" —
+            // serve the cached snapshot and retry soon.
+            let entry = HueWidgetEntry(date: .now, rooms: store.rooms, isPaired: true,
+                                       isStale: true, selectedRoomID: selectedID,
+                                       showPresets: configuration.showPresets)
+            return Timeline(entries: [entry],
+                            policy: .after(.now.addingTimeInterval(15 * 60)))
+        }
+
+        // Try to refresh room states with a single grouped_light call —
+        // bounded to a short budget so an unreachable bridge (phone off the
+        // home Wi-Fi) cannot stall every timeline build into throttling.
         var snapshots = store.rooms
 
-        if let freshGL = try? await WidgetAPIClient.fetchGroupedLights(ip: creds.ip, token: creds.token) {
-            let glMap = Dictionary(uniqueKeysWithValues: freshGL.map { ($0.id, $0) })
+        if let freshGL = await WidgetAPIClient.fetchGroupedLightsBounded(
+            ip: creds.ip, token: creds.token, budget: 4
+        ) {
+            // Never trap on duplicate ids — a crash here leaves the redacted snapshot.
+            let glMap = Dictionary(freshGL.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             snapshots = snapshots.map { room in
                 var r = room
                 if let gl = room.groupedLightId.flatMap({ glMap[$0] }) {
