@@ -99,6 +99,26 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(orchestrator.hueClient(forBridgeIP: "192.0.2.99"))
     }
 
+    func testRebuildPrunesRoomsOfForgottenBridges() {
+        // Simulate the forget-all → re-pair flow: the SwiftData preload seeds
+        // rooms under the OLD (deleted) bridge id, then clients exist only
+        // under the NEW ids. The merge must drop the stale snapshot — it used
+        // to surface dead room cards whose controls silently no-oped.
+        let staleRoom = HueLocalRoom(roomID: "room-x", bridgeID: "stale-old-bridge")
+        staleRoom.cachedName = "Stale Room"
+        staleRoom.cachedGroupedLightID = "gl-x"
+        staleRoom.lastIsOn = true
+        staleRoom.lastBrightness = 50
+        orchestrator.preloadCached(from: [staleRoom])
+        XCTAssertEqual(orchestrator.allRooms.count, 1)
+
+        // Any rebuild with live clients prunes the dead bridge id.
+        orchestrator.removeBridge(id: "unrelated-id")
+
+        XCTAssertTrue(orchestrator.allRooms.isEmpty,
+            "rooms keyed by a forgotten bridge id must not survive a rebuild")
+    }
+
     func testHueClientForNilBridgeID() {
         // Multi-bridge: nil is unresolvable — guessing would reintroduce the
         // wrong-bridge class.

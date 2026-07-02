@@ -615,24 +615,28 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // M-13: only the identity is a hard requirement — every other field
+        // falls back to a default so no schema drift (past or future) can
+        // ever drop a user's preset from the library again.
         id = try container.decode(UUID.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
-        icon = try container.decode(String.self, forKey: .icon)
-        accentColorHex = try container.decode(String.self, forKey: .accentColorHex)
-        isBuiltIn = try container.decode(Bool.self, forKey: .isBuiltIn)
-        category = try container.decode(PresetCategory.self, forKey: .category)
-        seasonMonths = try container.decodeIfPresent([Int].self, forKey: .seasonMonths)
-        palette = try container.decode(PaletteConfig.self, forKey: .palette)
-        motion = try container.decode(MotionConfig.self, forKey: .motion)
-        envelope = try container.decode(EnvelopeConfig.self, forKey: .envelope)
-        reaction = try container.decode(ReactionConfig.self, forKey: .reaction)
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
-        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        name = (try? container.decode(String.self, forKey: .name)) ?? "Composition"
+        icon = (try? container.decode(String.self, forKey: .icon)) ?? "sparkles"
+        accentColorHex = (try? container.decode(String.self, forKey: .accentColorHex)) ?? "#FFB84D"
+        isBuiltIn = (try? container.decode(Bool.self, forKey: .isBuiltIn)) ?? false
+        category = (try? container.decode(PresetCategory.self, forKey: .category)) ?? .myCreations
+        seasonMonths = try? container.decode([Int].self, forKey: .seasonMonths)
+        palette = (try? container.decode(PaletteConfig.self, forKey: .palette)) ?? PaletteConfig()
+        motion = (try? container.decode(MotionConfig.self, forKey: .motion)) ?? MotionConfig()
+        envelope = (try? container.decode(EnvelopeConfig.self, forKey: .envelope)) ?? EnvelopeConfig()
+        reaction = (try? container.decode(ReactionConfig.self, forKey: .reaction)) ?? ReactionConfig()
+        createdAt = (try? container.decode(Date.self, forKey: .createdAt)) ?? Date()
+        updatedAt = (try? container.decode(Date.self, forKey: .updatedAt)) ?? Date()
 
-        // Migration-safe decode: older JSON files won't have these fields.
-        aiPrompt = try container.decodeIfPresent(String.self, forKey: .aiPrompt)
-        providerModel = try container.decodeIfPresent(String.self, forKey: .providerModel)
-        preferredTransport = try container.decodeIfPresent(CompositionPreferredTransport.self, forKey: .preferredTransport)
+        // Migration-safe decode: older JSON files won't have these fields,
+        // and an unknown enum raw value must not drop the preset either.
+        aiPrompt = try? container.decode(String.self, forKey: .aiPrompt)
+        providerModel = try? container.decode(String.self, forKey: .providerModel)
+        preferredTransport = try? container.decode(CompositionPreferredTransport.self, forKey: .preferredTransport)
     }
 
     func encode(to encoder: Encoder) throws {

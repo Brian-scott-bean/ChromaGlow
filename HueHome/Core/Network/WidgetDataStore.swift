@@ -12,6 +12,7 @@
 // to fetch a fresh grouped_light state in a single network call.
 
 import Foundation
+import WidgetKit
 
 // MARK: - Shared Room Model
 
@@ -95,6 +96,7 @@ final class WidgetDataStore: @unchecked Sendable {
             SharedKeychainStore.delete(account: SharedKeychainStore.bridgeCredentialsAccount)
             ud?.removeObject(forKey: Key.routing)
             ud?.removeObject(forKey: Key.bridgeIP)
+            WidgetCenter.shared.reloadAllTimelines()
         } else {
             // Deterministic encoding (sortedKeys) so an unchanged map skips
             // the Keychain delete/add cycle — publish runs on every loadAll
@@ -105,6 +107,11 @@ final class WidgetDataStore: @unchecked Sendable {
             if let blob = try? encoder.encode(bridges),
                SharedKeychainStore.load(account: SharedKeychainStore.bridgeCredentialsAccount) != blob {
                 SharedKeychainStore.save(blob, account: SharedKeychainStore.bridgeCredentialsAccount)
+                // Credential state changed (pair/re-pair): kick the widget out
+                // of any frozen `.never`-policy unpaired timeline — nothing
+                // else reloads it, so a widget that rendered while unpaired
+                // stayed blank forever even after a successful re-pair.
+                WidgetCenter.shared.reloadAllTimelines()
             }
             let routing = bridges.mapValues { WidgetBridgeRouting(bridgeID: $0.bridgeID, ip: $0.ip) }
             if let data = try? encoder.encode(routing) {

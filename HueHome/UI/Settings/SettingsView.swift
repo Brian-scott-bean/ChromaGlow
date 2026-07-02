@@ -80,15 +80,29 @@ struct SettingsView: View {
                 // 2c. Wipe the shared widget/Siri surface: room snapshot,
                 // routing metadata, and the shared-Keychain credential blob
                 // (M-02/D-018), then signal the watch to do the same (L-30 —
-                // an explicit empty bridges map is the unpaired signal).
+                // the explicit wc_unpaired flag is the unpaired signal).
                 WidgetDataStore.shared.clearAll()
                 WatchSessionManager.shared.push(rooms: [], zones: [], bridges: [:], unpaired: true)
                 WidgetCenter.shared.reloadAllTimelines()
+                // 2d. Purge the SwiftData room/scene cache — stale rows carry
+                // the DELETED bridge ids, and a later re-pair would preload
+                // them as dashboard rooms whose controls silently no-op.
+                for cached in (try? modelContext.fetch(FetchDescriptor<HueLocalRoom>())) ?? [] {
+                    modelContext.delete(cached)
+                }
+                for cached in (try? modelContext.fetch(FetchDescriptor<HueLocalScene>())) ?? [] {
+                    modelContext.delete(cached)
+                }
                 // 3. Save SwiftData changes
                 try? modelContext.save()
-                // 4. Stop SSE connections
-                orchestrator.stopSSE()
-                onForget()
+                // 4. Full in-memory teardown (clients/sessions/snapshots) and
+                // leave to the splash from EVERY presentation path — clearing
+                // only the Keychain left the app fully usable until relaunch.
+                Task {
+                    await orchestrator.forgetAllBridges()
+                    NotificationCenter.default.post(name: .hueBridgeUnpaired, object: nil)
+                    onForget()
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {

@@ -151,6 +151,17 @@ final class NonDestructivePersistenceTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fileURL), original)
     }
 
+    func testPresetWithOnlyAnIDDecodesWithDefaults() throws {
+        // Only the identity is a hard requirement — any schema drift, past or
+        // future, must never drop a user's preset again.
+        let minimal = Data(#"{"id": "11111111-2222-3333-4444-555555555555"}"#.utf8)
+        let preset = try JSONDecoder().decode(CompositionPreset.self, from: minimal)
+        XCTAssertEqual(preset.name, "Composition")
+        XCTAssertEqual(preset.category, .myCreations)
+        XCTAssertFalse(preset.isBuiltIn)
+        XCTAssertEqual(preset.motion.pattern, .cascade)
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - Round-trip: current schema encodes/decodes losslessly
     // ──────────────────────────────────────────────

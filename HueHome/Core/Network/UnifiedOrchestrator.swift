@@ -517,6 +517,17 @@ final class UnifiedOrchestrator {
         for bridge in bridges where !bridge.isActive {
             connectionStatus[bridge.id] = .disabled
         }
+
+        // Drop state keyed by bridge ids that no longer exist (forgotten /
+        // re-paired records) and refresh the merged views — rebuild prunes
+        // roomsByBridge/zonesByBridge via pruneStaleBridgeSnapshots().
+        let liveBridgeIDs = Set(clients.keys)
+        for staleID in connectionStatus.keys
+        where !liveBridgeIDs.contains(staleID) && !bridges.contains(where: { $0.id == staleID }) {
+            connectionStatus.removeValue(forKey: staleID)
+        }
+        rebuildAllRooms()
+        rebuildAllZones()
     }
 
     /// Register a newly paired bridge without restarting everything.
@@ -1352,6 +1363,22 @@ final class UnifiedOrchestrator {
     // MARK: - Helpers
     // ──────────────────────────────────────────────
 
+    /// Drop room/zone snapshots keyed by bridge ids with no live client —
+    /// stale entries from a forgotten/re-paired bridge (or the SwiftData
+    /// preload window) would otherwise merge as duplicate room ids whose
+    /// controls silently no-op, with dictionary order picking the winner.
+    /// Demo mode keeps its synthetic keys (no clients exist there).
+    private func pruneStaleBridgeSnapshots() {
+        guard !isDemoMode, !clients.isEmpty else { return }
+        let liveBridgeIDs = Set(clients.keys)
+        for staleID in roomsByBridge.keys where !liveBridgeIDs.contains(staleID) {
+            roomsByBridge.removeValue(forKey: staleID)
+        }
+        for staleID in zonesByBridge.keys where !liveBridgeIDs.contains(staleID) {
+            zonesByBridge.removeValue(forKey: staleID)
+        }
+    }
+
     private func rebuildAllRooms() {
         // Buffer during navigation push to avoid layout churn mid-animation.
         guard !isNavigating else {
@@ -1359,6 +1386,7 @@ final class UnifiedOrchestrator {
             return
         }
 
+        pruneStaleBridgeSnapshots()
         allRooms = DashboardDisplayModelBuilder.makeRooms(from: roomsByBridge)
         scheduleWidgetWrite()
     }
@@ -1369,6 +1397,7 @@ final class UnifiedOrchestrator {
             return
         }
 
+        pruneStaleBridgeSnapshots()
         allZones = DashboardDisplayModelBuilder.makeZones(from: zonesByBridge)
         scheduleWidgetWrite()
     }
@@ -1915,8 +1944,17 @@ final class UnifiedOrchestrator {
 
                 print("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
                 // M-04: the engine maps v2 UUIDs → v1 numeric ids via id_v1
-                // identity, so it needs the v2 light objects.
-                let v2Lights = (try? await api.fetchLights()) ?? []
+                // identity, so it needs the v2 light objects. One retry — a
+                // transient fetch failure here would silently demote the
+                // "close the app, lights keep going" path to app-driven.
+                var v2Lights = (try? await api.fetchLights()) ?? []
+                if v2Lights.isEmpty {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    v2Lights = (try? await api.fetchLights()) ?? []
+                }
+                if v2Lights.isEmpty {
+                    print("[Composer] ⚠ Could not fetch lights for id_v1 mapping — running app-driven (stops when the app closes)")
+                }
                 let manifest = try await bridgeAnimationEngine.upload(
                     preset: preset,
                     room: room,
@@ -2473,6 +2511,29 @@ final class UnifiedOrchestrator {
 
         print("[Composer] 🗺️ Resolved \(result.count) light positions from entertainment config")
         return result
+    }
+
+    /// Full local teardown for "Forget All Bridges". Clearing only the
+    /// Keychain left the in-memory clients (with tokens) fully functional
+    /// until the app was relaunched — the UI kept controlling lights after
+    /// a forget-all. Also clears the room/zone snapshots so a later re-pair
+    /// cannot resurrect stale bridge ids through the SwiftData preload.
+    func forgetAllBridges() async {
+        await stopStudioMode()
+        stopSSE()
+        compositionSchedulerTask?.cancel()
+        compositionSchedulerTask = nil
+        compositionRuntimes.removeAll()
+        widgetWriteTask?.cancel()
+        clients.removeAll()
+        commandGates.removeAll()
+        roomsByBridge.removeAll()
+        zonesByBridge.removeAll()
+        connectionStatus.removeAll()
+        allRooms = []
+        allZones = []
+        globalScenes = []
+        log.info("Forget-all: cleared clients, snapshots, and sessions")
     }
 
     func stopStudioMode() async {

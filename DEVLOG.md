@@ -48,6 +48,54 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 — fixes from the human on-device checkpoint — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (local only — not pushed).
+
+### Did (root causes found from Brian's on-device test results)
+- **Forget-all wasn't total (checkpoint #3):** it cleared the Keychain but left the in-memory
+  clients (tokens in RAM) fully working until relaunch, and the More-tab presentation path never
+  navigated away. New `orchestrator.forgetAllBridges()` (stops Studio/Composer sessions + SSE,
+  clears clients/gates/snapshots), SettingsView purges the SwiftData room/scene cache and posts
+  `.hueBridgeUnpaired` itself so every presentation path exits to the splash immediately.
+- **Bridge-1 rooms dead after forget→re-pair (checkpoint #4/#5) — root cause:** re-pairing mints
+  NEW BridgeRecord UUIDs, but `roomsByBridge` kept entries under the OLD ids (seeded by the
+  SwiftData preload / previous session). The merge produced each room twice — one live, one dead —
+  and dictionary order picked the stale copy for bridge 1 and the fresh one for bridge 2. Zones
+  weren't cached, so bridge-1's zone kept working — exactly the observed asymmetry (All Off also
+  worked because it iterates the live snapshot underneath). Fix: `pruneStaleBridgeSnapshots()` at
+  the rebuild chokepoint (drops any bridge id with no live client; demo mode exempt) + the
+  forget-all cache purge above.
+- **Large widget never came back after forget-all:** the unpaired timeline uses `policy: .never`
+  and nothing ever reloaded it after a re-pair. `WidgetDataStore.write(bridges:)` now calls
+  `WidgetCenter.reloadAllTimelines()` whenever the credential blob actually changes (and on the
+  empty/unpair write).
+- **Bridge-stored demotion (checkpoint #6):** the pre-upload `fetchLights` (id_v1 mapping) gets
+  one retry + an explicit "running app-driven (stops when the app closes)" log on failure.
+  NOTE: only `bridgeOptimized`-tier presets (static motion + steady envelope) ever upload to the
+  bridge — dynamic compositions are app-driven BY DESIGN and stop when iOS suspends the app
+  (lock/close); native effects (Candle) persist because the BRIDGE runs them. Checkpoint #7
+  (stops when locked) is the same iOS-suspension behavior for DTLS — expected; M-10's reconnect
+  covers transient errors while foregrounded, not process suspension.
+- **Lost compositions (checkpoint #8):** the old (pre-P1) build's destructive reseed is the exact
+  M-13 bug — compositions written by an older schema were overwritten with built-ins by a previous
+  launch BEFORE this branch; P1 prevents recurrence but cannot resurrect data the old code already
+  overwrote (no `.bak` existed then). Defensively, `CompositionPreset` now hard-requires ONLY `id`
+  — every other top-level field decodes with a default, so no schema drift can drop a preset again.
+
+### Working
+- Build SUCCEEDED; full HueHomeTests green incl. new tests (stale-bridge snapshot pruning,
+  id-only preset decode). Guards pass.
+
+### Left
+- Human retest of: forget-all (immediate unpair + exit), bridge-1 rooms after re-pair, the
+  large-widget revival, and the entertainment-builder bridge picker (code path looks correct —
+  `allBridgeIDs.count > 1` gates it; likely a casualty of the same stale-client state, retest
+  after these fixes and screenshot if still missing).
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 hardening — multi-agent code review + fixes — LOCAL
 
 ### Branch
