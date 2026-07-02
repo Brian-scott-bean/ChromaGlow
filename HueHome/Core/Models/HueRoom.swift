@@ -10,6 +10,20 @@ import Foundation
 struct HueV2Response<T: Decodable>: Decodable {
     let errors: [HueV2Error]
     let data: [T]
+
+    private enum CodingKeys: String, CodingKey {
+        case errors, data
+    }
+
+    /// L-27: elements decode leniently — one malformed resource in `data` is
+    /// skipped instead of failing the whole fetch (a single out-of-spec light
+    /// used to blank every room on the dashboard).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        errors = (try? container.decodeIfPresent([HueV2Error].self, forKey: .errors)) ?? []
+        let wrapped = try container.decode([FailableDecodable<T>].self, forKey: .data)
+        data = wrapped.compactMap(\.value)
+    }
 }
 
 struct HueV2Error: Decodable {

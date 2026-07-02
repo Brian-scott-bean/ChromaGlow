@@ -93,13 +93,45 @@ final class CompositionStore {
             persist()
             return
         }
+        // M-13: this read path must NEVER destroy user data.
+        //  - Elements decode leniently: one malformed preset is dropped, the
+        //    rest survive (the whole-array decode used to throw and reseed).
+        //  - On ANY decode problem the original file is backed up first and
+        //    the source is never overwritten from this path — the next
+        //    user-initiated save() is the first legitimate writer.
         do {
             let data = try Data(contentsOf: fileURL)
-            presets = try JSONDecoder().decode([CompositionPreset].self, from: data)
+            let wrapped = try JSONDecoder().decode([FailableDecodable<CompositionPreset>].self, from: data)
+            let good = wrapped.compactMap(\.value)
+            if good.count < wrapped.count {
+                print("[CompositionStore] ⚠ \(wrapped.count - good.count) preset(s) failed to decode — keeping \(good.count), backing up the original file")
+                backUpCompositionsFile()
+            }
+            presets = good.isEmpty ? Self.builtInPresets : good
         } catch {
-            print("[CompositionStore] Failed to load: \(error). Seeding defaults.")
+            // The file is not a decodable array at all. Preserve the bytes in
+            // a timestamped .bak, run in-memory on defaults, and DO NOT
+            // persist() — overwriting the source on a read failure is how the
+            // whole library used to vanish.
+            print("[CompositionStore] Failed to load: \(error). Backing up file and running on defaults (source NOT overwritten).")
+            backUpCompositionsFile()
             presets = Self.builtInPresets
-            persist()
+        }
+    }
+
+    /// Copies compositions.json to a timestamped sibling before any recovery
+    /// path can lose data (M-13).
+    private func backUpCompositionsFile() {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let backupURL = fileURL.deletingLastPathComponent()
+            .appendingPathComponent("compositions-\(formatter.string(from: Date())).bak")
+        do {
+            try FileManager.default.copyItem(at: fileURL, to: backupURL)
+            print("[CompositionStore] Backed up compositions.json → \(backupURL.lastPathComponent)")
+        } catch {
+            print("[CompositionStore] ⚠ Backup failed: \(error)")
         }
     }
 

@@ -15,6 +15,21 @@ struct CodableColor: Codable, Equatable {
     var x: Double  // CIE 1931 x (0.0–0.8)
     var y: Double  // CIE 1931 y (0.0–0.9)
 
+    init(x: Double, y: Double) {
+        self.x = x
+        self.y = y
+    }
+
+    private enum CodingKeys: String, CodingKey { case x, y }
+
+    /// Migration-safe decode (M-13): a missing/invalid coordinate falls back
+    /// to the D65 white point instead of failing the whole preset library.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        x = (try? c.decode(Double.self, forKey: .x)) ?? 0.3127
+        y = (try? c.decode(Double.self, forKey: .y)) ?? 0.3290
+    }
+
     /// D65 white point — used as default / fallback.
     static let white = CodableColor(x: 0.3127, y: 0.3290)
 
@@ -59,6 +74,48 @@ struct PaletteConfig: Codable, Equatable {
     var temperature: Int = 366      // 153-500 mirek (only used in .temperature mode)
     var randomize: Bool = false
     var harmonyRule: String? = nil   // HarmonyRule.rawValue — nil = .none; persisted for re-edit
+
+    init(
+        mode: Mode = .gradient,
+        color1: CodableColor = CodableColor(x: 0.5500, y: 0.3900),
+        color2: CodableColor = CodableColor(x: 0.6400, y: 0.3300),
+        color3: CodableColor? = nil,
+        hueShift: Double = 0,
+        saturation: Double = 100,
+        temperature: Int = 366,
+        randomize: Bool = false,
+        harmonyRule: String? = nil
+    ) {
+        self.mode = mode
+        self.color1 = color1
+        self.color2 = color2
+        self.color3 = color3
+        self.hueShift = hueShift
+        self.saturation = saturation
+        self.temperature = temperature
+        self.randomize = randomize
+        self.harmonyRule = harmonyRule
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, color1, color2, color3, hueShift, saturation, temperature, randomize, harmonyRule
+    }
+
+    /// Migration-safe decode (M-13): every missing or invalid field falls
+    /// back to its default so a preset saved by an older build never fails
+    /// the whole-library decode when a new field is added.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mode        = (try? c.decode(Mode.self,          forKey: .mode))        ?? .gradient
+        color1      = (try? c.decode(CodableColor.self,  forKey: .color1))      ?? CodableColor(x: 0.5500, y: 0.3900)
+        color2      = (try? c.decode(CodableColor.self,  forKey: .color2))      ?? CodableColor(x: 0.6400, y: 0.3300)
+        color3      = try? c.decode(CodableColor.self,   forKey: .color3)
+        hueShift    = (try? c.decode(Double.self,        forKey: .hueShift))    ?? 0
+        saturation  = (try? c.decode(Double.self,        forKey: .saturation))  ?? 100
+        temperature = (try? c.decode(Int.self,           forKey: .temperature)) ?? 366
+        randomize   = (try? c.decode(Bool.self,          forKey: .randomize))   ?? false
+        harmonyRule = try? c.decode(String.self,         forKey: .harmonyRule)
+    }
 
     /// Resolve the output CIE xy color for a given phase position (0.0–1.0).
     /// Phase comes from the Motion layer — it says "where in the palette is this light?"
@@ -120,6 +177,42 @@ struct MotionConfig: Codable, Equatable {
     var offset: Double = 50         // 0-100 (phase stagger between lights)
     var mirror: Bool = false
     var motionAngle: Double = -1    // -1 = auto-detect via PCA; 0-360° = user-set direction
+
+    init(
+        pattern: Pattern = .cascade,
+        speed: Double = 40,
+        forward: Bool = true,
+        spread: Double = 70,
+        offset: Double = 50,
+        mirror: Bool = false,
+        motionAngle: Double = -1
+    ) {
+        self.pattern = pattern
+        self.speed = speed
+        self.forward = forward
+        self.spread = spread
+        self.offset = offset
+        self.mirror = mirror
+        self.motionAngle = motionAngle
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pattern, speed, forward, spread, offset, mirror, motionAngle
+    }
+
+    /// Migration-safe decode (M-13) — `motionAngle` was a late addition and
+    /// its missing key is exactly the schema-drift that used to reseed the
+    /// whole library.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pattern     = (try? c.decode(Pattern.self, forKey: .pattern))     ?? .cascade
+        speed       = (try? c.decode(Double.self,  forKey: .speed))       ?? 40
+        forward     = (try? c.decode(Bool.self,    forKey: .forward))     ?? true
+        spread      = (try? c.decode(Double.self,  forKey: .spread))      ?? 70
+        offset      = (try? c.decode(Double.self,  forKey: .offset))      ?? 50
+        mirror      = (try? c.decode(Bool.self,    forKey: .mirror))      ?? false
+        motionAngle = (try? c.decode(Double.self,  forKey: .motionAngle)) ?? -1
+    }
 
     /// Compute the phase position (0.0–1.0) for a specific light at a given time.
     /// This phase is fed into PaletteConfig.color(at:) to determine what color the light should be.
@@ -227,6 +320,44 @@ struct EnvelopeConfig: Codable, Equatable {
     var minBrightness: Double = 10  // 0-50 (floor)
     var maxBrightness: Double = 100 // 50-100 (ceiling)
 
+    init(
+        shape: Shape = .breathe,
+        bpm: Double = 60,
+        depth: Double = 50,
+        attack: Double = 50,
+        decay: Double = 50,
+        dutyCycle: Double = 50,
+        minBrightness: Double = 10,
+        maxBrightness: Double = 100
+    ) {
+        self.shape = shape
+        self.bpm = bpm
+        self.depth = depth
+        self.attack = attack
+        self.decay = decay
+        self.dutyCycle = dutyCycle
+        self.minBrightness = minBrightness
+        self.maxBrightness = maxBrightness
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case shape, bpm, depth, attack, decay, dutyCycle, minBrightness, maxBrightness
+    }
+
+    /// Migration-safe decode (M-13): missing/invalid fields fall back to
+    /// their defaults instead of failing the library decode.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        shape         = (try? c.decode(Shape.self,  forKey: .shape))         ?? .breathe
+        bpm           = (try? c.decode(Double.self, forKey: .bpm))           ?? 60
+        depth         = (try? c.decode(Double.self, forKey: .depth))         ?? 50
+        attack        = (try? c.decode(Double.self, forKey: .attack))        ?? 50
+        decay         = (try? c.decode(Double.self, forKey: .decay))         ?? 50
+        dutyCycle     = (try? c.decode(Double.self, forKey: .dutyCycle))     ?? 50
+        minBrightness = (try? c.decode(Double.self, forKey: .minBrightness)) ?? 10
+        maxBrightness = (try? c.decode(Double.self, forKey: .maxBrightness)) ?? 100
+    }
+
     /// Compute brightness (0.0–1.0) at the given time.
     func value(at time: Double) -> Double {
         let minB = minBrightness / 100.0
@@ -317,6 +448,38 @@ struct ReactionConfig: Codable, Equatable {
     var smoothing: Double = 30      // 0-100 (response lag)
     var intensity: Double = 70      // 0-100 (override strength)
     var threshold: Double = 10      // 0-100 (noise gate)
+
+    init(
+        source: Source = .none,
+        sensitivity: Double = 70,
+        targets: [Target] = [.brightness],
+        smoothing: Double = 30,
+        intensity: Double = 70,
+        threshold: Double = 10
+    ) {
+        self.source = source
+        self.sensitivity = sensitivity
+        self.targets = targets
+        self.smoothing = smoothing
+        self.intensity = intensity
+        self.threshold = threshold
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case source, sensitivity, targets, smoothing, intensity, threshold
+    }
+
+    /// Migration-safe decode (M-13): missing/invalid fields fall back to
+    /// their defaults instead of failing the library decode.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        source      = (try? c.decode(Source.self,   forKey: .source))      ?? .none
+        sensitivity = (try? c.decode(Double.self,   forKey: .sensitivity)) ?? 70
+        targets     = (try? c.decode([Target].self, forKey: .targets))     ?? [.brightness]
+        smoothing   = (try? c.decode(Double.self,   forKey: .smoothing))   ?? 30
+        intensity   = (try? c.decode(Double.self,   forKey: .intensity))   ?? 70
+        threshold   = (try? c.decode(Double.self,   forKey: .threshold))   ?? 10
+    }
 
     /// Whether this reaction config requires microphone access.
     var requiresMic: Bool {

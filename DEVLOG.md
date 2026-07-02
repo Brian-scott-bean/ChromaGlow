@@ -48,6 +48,35 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 hardening — Group 5: non-destructive persistence (M-13/L-27) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (local only — not pushed).
+
+### Did
+- **M-13 `CompositionStore.load()`:** decodes elements leniently via a new
+  `FailableDecodable<T>` wrapper (one malformed preset is dropped, the rest survive); on ANY
+  decode problem it writes a timestamped `compositions-<ts>.bak` FIRST and **never calls
+  `persist()` from the read path** — the destructive reseed-and-overwrite is gone. Total
+  decode failure runs on built-ins in memory with the source file untouched.
+- **M-13 sub-config Codable:** `PaletteConfig` / `MotionConfig` / `EnvelopeConfig` /
+  `ReactionConfig` / `CodableColor` got explicit migration-safe `init(from:)` — every field
+  `(try? decode) ?? default` (covers missing keys AND unknown enum raw values) — plus explicit
+  memberwise inits (a custom decoder suppresses the synthesized ones the built-in preset
+  catalog uses). Encoding stays synthesized; round-trip tested.
+- **L-27 `HueV2Response`:** `data` decodes through `FailableDecodable` (a single out-of-spec
+  resource no longer blanks the whole rooms/lights/scenes fetch); a missing `errors` key is
+  tolerated.
+
+### Working
+- Build SUCCEEDED (generic/platform=iOS); HueHomeTests green incl. new
+  `NonDestructivePersistenceTests` (malformed element preserves rest + .bak + source
+  byte-identical; garbage file backs up without persisting defaults; old-schema JSON missing
+  `motionAngle`/`randomize`/`harmonyRule` loads with defaults and does NOT reseed; sub-config
+  round-trips; HueV2Response skips a malformed light and tolerates missing errors). Guards pass.
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 hardening — Group 4: paced bulk + effect writes (M-08/M-14/M-15) — LOCAL
 
 ### Branch
