@@ -151,7 +151,7 @@ final class RoomDetailViewModel {
         } catch {
             let msg = error.localizedDescription
             appendLog("❌ Load failed: \(msg)")
-            log.error("RoomDetail: \(msg, privacy: .public)")
+            log.error("RoomDetail: \(msg)")
             errorMessage = msg
         }
 
@@ -226,7 +226,7 @@ final class RoomDetailViewModel {
                 // (avoids the flash where light turns on at old brightness first)
                 try await api?.setLightState(id: item.id, on: true, brightness: clamped)
                 appendLog("✅ '\(item.name)' brightness set to \(Int(clamped))%.")
-                log.info("RoomDetail: '\(item.name, privacy: .public)' brightness \(Int(clamped), privacy: .public)%.")
+                log.info("RoomDetail: '\(item.name)' brightness \(Int(clamped))%.")
             } catch {
                 appendLog("❌ Brightness failed for '\(item.name)': \(error.localizedDescription)")
                 mutateLight(id: item.id) { $0.brightness = previous; $0.isOn = item.isOn }
@@ -629,7 +629,7 @@ final class RoomDetailViewModel {
                 .sorted { $0.name < $1.name }
         } catch {
             appendLog("⚠️ Scenes load failed: \(error.localizedDescription)")
-            log.warning("RoomDetail: scenes — \(error.localizedDescription, privacy: .public)")
+            log.warning("RoomDetail: scenes — \(error.localizedDescription)")
             // Non-fatal: scenes are optional; lights still show
         }
     }
@@ -652,7 +652,7 @@ final class RoomDetailViewModel {
             do {
                 try await api?.activateScene(id: item.id)
                 appendLog("✅ Scene '\(item.name)' activated.")
-                log.info("RoomDetail: scene '\(item.name, privacy: .public)' activated.")
+                log.info("RoomDetail: scene '\(item.name)' activated.")
 
                 // Wait for bridge to settle, then refresh light colors
                 try? await Task.sleep(nanoseconds: 500_000_000)
@@ -748,12 +748,12 @@ final class RoomDetailViewModel {
         do {
             try await api?.createScene(request)
             appendLog("✅ Scene '\(trimmed)' saved to Bridge.")
-            log.info("RoomDetail: scene '\(trimmed, privacy: .public)' created.")
+            log.info("RoomDetail: scene '\(trimmed)' created.")
             await loadScenes()   // reload strip so new chip appears immediately
             return true
         } catch {
             appendLog("❌ Scene creation failed: \(error.localizedDescription)")
-            log.error("RoomDetail: createScene — \(error.localizedDescription, privacy: .public)")
+            log.error("RoomDetail: createScene — \(error.localizedDescription)")
             return false
         }
     }

@@ -1,17 +1,19 @@
-# Android Pairing TLS / Stable-Identity Decision Blocker (ANDROID-006A)
+# Android Pairing TLS / Stable-Identity Decision (ANDROID-006A)
 
 ## Status
 
-- **Task:** ANDROID-006A — Record TLS / stable-identity blockers before link-button pairing code
-- **Type:** Documentation-only blocker record (read-only investigation reviewed and approved)
+- **Task:** ANDROID-006A — Resolve TLS / stable-identity contracts before link-button pairing code
+- **Type:** Accepted security decision record; historical blocker investigation preserved below
+- **Accepted:** 2026-06-29 under D-001/D-002/D-011/D-012
 - **Branch:** `android/link-button-pairing`
 - **Starting SHA:** `0571c6d0e67b6e11e314bf7b1e567b55bb60cf8c`
 
 ```text
-BLOCKED — SAFE TLS BOOTSTRAP AND CANONICAL BRIDGE IDENTITY MUST BE DECIDED BEFORE LIVE PAIRING CODE
+ACCEPTED — BATCH 3 PAIRING FOUNDATIONS AUTHORIZED; UI/PERSISTENCE/PHYSICAL PAIRING NOT AUTHORIZED
 ```
 
-- **No pairing runtime code is added in this slice. No network probe was performed.**
+- Decision/probe work added no pairing runtime code. The READY Batch 3 foundation scope is in the
+  parallel pipeline §10.
 
 ## Decision
 
@@ -167,3 +169,356 @@ This slice does **not**:
 - change Kotlin, Swift, tests, manifest, Gradle, or dependencies,
 - issue any network request or endpoint probe,
 - stage, commit, push, merge, or open a PR.
+
+---
+
+## Resolution proposal — 2026-06-28 [Claude]
+
+**Status: PROPOSAL — awaiting Codex/human review. NOT code-approved.** D-001 and D-002 remain
+**DEFERRED**; D-011 remains **DISCUSSING**. Prepared per
+`docs/coordination/prompts/android-pairing-decisions-prepare.md` against `origin/main` @ `7ed6468`. No
+source, dependency, or network changes were made; no bridge was probed. Research was primary-source-first
+and then adversarially reviewed; several Hue-specific claims were **downgraded** because the authoritative
+"Using HTTPS" and Configuration-API pages are behind a Hue developer-account login and could not be read
+in this session.
+
+### Evidence table
+
+Legend — **fact**: read from a public official Signify/Hue or platform primary source · **community**:
+consistent across community sources but the official page was login-gated/unreadable here · **inference**:
+reasoned, not directly documented.
+
+| # | Claim | Type | Source |
+| --- | --- | --- | --- |
+| 1 | Bridge serves the local Hue API over HTTPS on port 443 (`https://<ip>/api`, `/debug/clip.html`). | fact | developers.meethue.com Get Started |
+| 2 | Local HTTPS endpoint added in bridge firmware 1.24; legacy HTTP being phased out. | fact | developers.meethue.com News |
+| 3 | First-contact app trust = physical **link-button** push: `POST /api {"devicetype":"<app>#<device>"}` errors until the button is pressed, then returns an opaque **username** (application key). | fact | developers.meethue.com Get Started |
+| 4 | Normal light/room/scene/group control authenticates by the **username alone**. | fact | developers.meethue.com Get Started |
+| 5 | `generateclientkey:true` also returns a **clientkey** = PSK for **Entertainment** DTLS streaming only (UDP 2100). | community (cipher: RFC 5487) | Q42.HueApi / iotech.blog; RFC 5487 |
+| 6 | Discovery = mDNS (`_hue._tcp`) + `https://discovery.meethue.com`; legacy UPnP deprecated (disabled Q2 2022). | fact | developers.meethue.com New Hue API / Get Started |
+| 7 | Canonical identity field is **`bridgeid`** (config `bridgeid`; discovery `id`). | fact (field exists) / community (schema) | New Hue API; deCONZ wiki |
+| 8 | `bridgeid` is 16 hex, uppercase in `/api/config`, contains `FFFE` mid-way (EUI-48→EUI-64 from MAC; OUI `00:17:88` = Philips). | community + inference | deCONZ wiki; IEEE OUI |
+| 9 | Bridge cert **CN = bridgeid**; clients should verify CN == expected bridgeid (identity is the bridgeid, not the IP). | community (official page login-gated) | iotech.blog / callionica, attributed to Using HTTPS |
+| 10 | Newer bridges present a cert signed by a **Signify private root CA** (`CN=root-bridge`), published as a bundleable `.pem`; older bridges self-signed. | community (page login-gated; `.pem` not publicly fetchable) | callionica mirror; ebaauw issue (Signify hearsay) |
+| 11 | Hue bridges also carry **Matter** device certs from Signify's CA (Matter path, not the local CLIP TLS). | fact | Google Cloud / Signify blog |
+| 12 | mDNS TXT, `/api/config` JSON, and host:port are all **unauthenticated** on the LAN → untrusted hints, not identity/trust. | inference (security) | grounded in New Hue API |
+| 13 | Android default hostname verification follows **RFC 6125** (matches **SAN**, ignores CN); Network Security Config can pin a private CA trust anchor, but `<pin-set>` is keyed by domain (awkward for IP literals); the alternative is a custom `X509TrustManager`/`HostnameVerifier` — never blanket-true. | platform fact | developer.android.com Network Security Config; RFC 6125 |
+
+### Threat model (first contact on an untrusted LAN)
+- A LAN adversary can spoof mDNS, answer at a host:port, or MITM permissive TLS. So host:port and mDNS
+  attributes prove nothing; the API token must only be sent to a server whose TLS identity is verified.
+- Two independent guarantees are required: **server authentication** (TLS: is this the real bridge?) and
+  **proof of physical presence** (the link button: does the user control it?). The username is durable
+  only because it is bound to a verified bridge identity.
+
+### Proposed contracts (DRAFT — direction agreed, mechanics deferred)
+
+**D-001 — first-contact + ongoing TLS trust.**
+- Never a trust-all `X509TrustManager`, never a blanket-true `HostnameVerifier`, never silent continuation
+  past a trust failure (the iOS anti-precedent stands).
+- Establish trust by validating BOTH (a) the leaf chains to the **Signify private root CA** (bundled from
+  the official `.pem`) and (b) the certificate **identity equals the expected `bridgeid`**.
+- App-layer first contact is the **link-button** flow; the token is requested only over the
+  identity-verified TLS channel. Re-validate chain + identity every connection; on mismatch fail closed
+  and surface a re-pair path.
+- **DEFERRED mechanics (block code):** self-signed vs CA-signed on *current* firmware + the migration
+  version; whether the official `.pem` matches the community transcription; **whether the leaf carries a
+  usable SAN** (decisive — SAN ⇒ Network-Security-Config CA trust anchor can work; CN-only ⇒ a custom
+  verifier comparing the leaf identity to `bridgeid` is required because Android ignores CN); leaf
+  validity/rotation cadence; the local minimum TLS version; the legacy-self-signed-bridge support policy.
+
+**D-002 — canonical bridge identity.**
+- Canonical identity = the bridge-reported **`bridgeid`**, read over the trust-established HTTPS channel
+  from `GET /api/0/config`, and (once D-001's binding is settled) cross-checked against the cert identity.
+- mDNS `bridgeid` / discovery `id` / host:port are **discovery hints only** — locate the endpoint, never
+  stored as identity. `BridgeEndpoint` stays host/port routing-only.
+- Both mDNS-selected and manually-entered endpoints derive the SAME identity the same way (`/api/0/config`).
+- Normalize `bridgeid` (uppercase); it must satisfy the existing `BridgeCredentialAlias` charset
+  `^[A-Za-z0-9_-]+$` (16-hex qualifies) — **no alias-contract change needed**.
+- Map endpoint→`bridgeid` BEFORE `saveApiToken`; duplicate → reuse; mismatch/replacement → never overwrite
+  silently, prompt re-pair.
+- **DEFERRED (block code):** official `bridgeid` charset/length/case; **stability across
+  reboot/DHCP/factory-reset** (the core "durable identity" premise — currently inference); the official
+  unauthenticated `/api/config` schema; the CN==bridgeid binding that couples D-001 and D-002.
+
+**C — `generateclientkey` (recommendation).**
+- For the non-Entertainment MVP, **omit `generateclientkey` (or send `false`)** so no `clientkey` is
+  returned, and **do not persist `CLIENT_KEY`** (consistent with the landed API-token-only boundary).
+  Normal control needs only the username. Revisit only when Entertainment streaming is scoped.
+
+### Alternatives rejected
+- Trust-all TrustManager / blanket-true HostnameVerifier (the iOS precedent) — no server authentication.
+- host:port or mDNS service name as durable identity — DHCP-mobile and unauthenticated.
+- Fabricated/random UUID bridge id (the iOS storage precedent) — not bridge-authoritative.
+- Pure pin-on-first-use with no identity check — a first-contact MITM would be pinned; pinning is
+  acceptable only *after* CA-chain + `bridgeid` identity are verified.
+- Bundling the community-transcribed root CA as-is — not until byte-verified against the official `.pem`.
+
+### Recovery behavior
+- Cert/identity mismatch on a known bridge → fail closed, "couldn't verify this bridge," offer
+  re-scan/re-pair; never auto-accept.
+- Factory reset/replacement → `bridgeid` may persist (same hardware) or change (new hardware); a
+  changed/unknown `bridgeid` is a new pairing (new alias); let the user delete the stale credential.
+- CA/cert rotation → absorbed by chaining to the long-lived root CA rather than pinning a leaf, once the
+  CA is verified.
+
+### Validation matrix (for the future implementation slice — not run here)
+| Layer | What | Notes |
+| --- | --- | --- |
+| JVM unit | request/response builder+parser; `bridgeid` normalization + alias-charset; error 101/7 mapping | pure, no network |
+| Instrumented | credential-store round-trip keyed by canonical `bridgeid`; trust/verifier logic with fixture certs (valid CA-chain + matching id pass; wrong-CA / wrong-id / self-signed / expired fail closed) | emulator |
+| Physical bridge (human-approved) | `openssl s_client -connect <ip>:443` for chain/CN/**SAN**/validity/issuer; `GET /api/0/config` for `bridgeid` format; reboot + DHCP change for `bridgeid` stability; full link-button pair | needs a real bridge + explicit approval; never print/persist the token |
+
+### Unresolved evidence (keeps D-001/D-002 DEFERRED) and how to close it
+1. Read the login-gated official pages with a Hue developer account — **Using HTTPS** (CA / CN / SAN / the
+   `.pem`), **Configuration API "Get configuration"** (`/api/0/config` schema), **Bridge Discovery** (mDNS
+   TXT schema), **Core Concepts** — and byte-verify the official root-CA `.pem`.
+2. Empirically probe a real bridge (human-approved; never print/persist the token): `openssl s_client` for
+   chain / CN / **SAN** / validity / issuer; `/api/0/config` for `bridgeid` format; reboot + DHCP-lease
+   change to confirm **`bridgeid` stability**.
+3. Confirm the self-signed→CA-signed migration firmware and the legacy-bridge support stance.
+
+Only after (1)–(3) can D-001/D-002 move from DEFERRED to ACCEPTED and a Batch 3 implementation
+manifest/launch prompt be drafted.
+
+---
+
+## Codex review — 2026-06-28
+
+**Verdict: directionally reasonable; deferral is correct. NOT code-approved.** D-001 and D-002 remain
+DEFERRED and D-011 remains DISCUSSING.
+
+### Required contract corrections
+
+1. The physical link button proves user presence and authorizes application-key creation; it does not
+   authenticate the TLS server. Treat it as a separate authorization guarantee, not "first-contact
+   transport trust."
+2. `bridgeid` is a plausible canonical identity candidate, but an expected `bridgeid` learned only from
+   `/api/0/config` over the connection being authenticated cannot independently bootstrap that same
+   connection. Acceptance requires an authenticated independent binding (for example, the official
+   Signify chain/certificate profile) and a precise rule for the expected identity used by verification.
+3. The proposal's evidence table names sources but does not include the direct links required by the
+   preparation prompt. The public primary sources independently rechecked by Codex are:
+   - [Hue Get Started](https://developers.meethue.com/develop/get-started-2/)
+   - [New Hue API](https://developers.meethue.com/new-hue-api/)
+   - [Android Network Security Configuration](https://developer.android.com/privacy-and-security/security-config)
+   - [Android 9 certificate hostname verification](https://developer.android.com/about/versions/pie/android-9.0-changes-all#certificate-hostname-verification)
+   - [Android unsafe HostnameVerifier guidance](https://developer.android.com/privacy-and-security/risks/unsafe-hostname)
+4. Keep the `generateclientkey` recommendation proposed, not accepted, until the official Hue API
+   contract is available. The public Get Started page verifies username-based control but does not
+   document the `generateclientkey`/Entertainment-only claim.
+
+### Evidence assessment
+
+- Public official Hue evidence confirms local HTTPS, link-button application authorization, and that
+  Hue moved bridges toward Signify-signed certificates. It does not publish the root certificate or
+  define the leaf SAN/CN identity profile needed for an Android verifier.
+- Official Android evidence supports custom CA anchors and confirms that modern Android hostname
+  verification requires a matching SAN rather than CN fallback. This makes the actual Hue leaf profile
+  a blocking input, not an implementation detail.
+- No Batch 3 manifest should be drafted until the login-gated official Hue material is captured and/or
+  the human approves a read-only real-bridge certificate/config probe. Any probe must redact tokens and
+  local addresses from committed evidence.
+
+---
+
+## Empirical probe addendum — 2026-06-28 [Claude]
+
+Human-approved, **read-only** probe: LAN mDNS discovery + `openssl s_client` certificate inspection +
+unauthenticated `GET /api/0/config` only. No pairing, no token request/store, no bridge state change, no
+reboot. Run against **two** bridges on the local network. Device IPs, MAC addresses, and full bridge IDs
+were captured only to the session scratchpad and are intentionally **redacted** from this committed record.
+
+**Bridges probed:** 2 × `modelid=BSB002` (Hue Bridge v2), `apiversion 1.77.0`.
+
+### Confirmed (closes most of the prior DEFERRED TLS/identity mechanics)
+- **HTTPS on port 443; negotiated TLS 1.2** (ECDHE-ECDSA-AES128-GCM-SHA256) on both → local TLS floor ≥ 1.2.
+- **Certificate is CA-signed, not self-signed** on current firmware: leaf `subject = C=NL, O=Philips Hue,
+  CN=<bridgeid>`; **issuer = `C=NL, O=Philips Hue, CN=root-bridge`** (the Signify private "root-bridge" CA)
+  on both. → the proposed "chain to the Signify root CA" direction is correct for current bridges.
+- **CN == bridgeid, confirmed case-INSENSITIVELY.** Both leaves carry the 16-hex bridgeid as the Subject
+  CN; one bridge's CN was uppercase, the other's lowercase, while `/api/0/config.bridgeid` was uppercase on
+  both. → the identity check MUST normalize and compare **case-insensitively** (uppercase both sides).
+- **No SubjectAltName on the leaf** ("No extensions in certificate") on both → **decisive for Android:** the
+  platform default hostname verifier (RFC 6125 — SAN only, ignores CN) cannot validate this cert. A
+  **custom identity check (leaf CN == expected bridgeid) is REQUIRED**, alongside bundling the Signify root
+  CA as a trust anchor; Network Security Config default hostname matching / `<pin-set>` is unsuitable.
+- **Leaf is long-lived** (`notAfter 2038-01-19` on both; one issued 2017, one 2025) → no near-term leaf
+  rotation handling needed. Signature **ECDSA-with-SHA256**, EC P-256.
+- The handshake presents **only the leaf** (no intermediate/root served) → the Signify root CA must be
+  **bundled out-of-band**; the issuer DN to match is `C=NL, O=Philips Hue, CN=root-bridge`.
+- **`bridgeid` is the canonical identity and is MAC-derived** (EUI-48→EUI-64, `FFFE` inserted after the
+  vendor OUI). Verified by agreement across four independent sources on the same device — cert CN,
+  `/api/0/config.bridgeid`, mDNS TXT `bridgeid`, and the IPv6 link-local interface identifier (all reduce to
+  the same MAC). → **stable across DHCP/IP changes by construction** (independent of the DHCP lease).
+- **`GET /api/0/config` is unauthenticated (HTTP 200)** and returns only a non-secret subset (`name`,
+  `datastoreversion`, `swversion`, `apiversion`, `mac`, `bridgeid`, `factorynew`, `replacesbridgeid`,
+  `modelid`, `starterkitid` — no `whitelist`/secrets). `bridgeid` is **16-hex UPPERCASE** here;
+  `replacesbridgeid` is present (supports the D-002 replacement rule).
+- **mDNS** advertises `_hue._tcp` with TXT `bridgeid` (lowercase) + `modelid`, hostname `<mac>.local`,
+  instance `Hue Bridge - <last 6 of bridgeid>` → a discovery hint only, to be verified against the trusted
+  channel, never trusted directly.
+
+### Still open (keeps D-001/D-002 DEFERRED, pending sign-off)
+- **Official Signify root-CA `.pem` not byte-verified.** The issuer DN is now known from real certs
+  (`CN=root-bridge`), but the bridge does not serve the root and the authoritative `.pem` page is
+  login-gated. Obtain the official `.pem` (Hue developer account) and byte-compare before bundling; do not
+  ship the community transcription unverified.
+- **Legacy self-signed bridges.** Current units (apiversion 1.77.0) are CA-signed, but the migration
+  firmware version and the support stance for un-updated bridges remain a product decision.
+- **Reboot/factory-reset stability** was not exercised (reboot is out of approved scope). DHCP-change
+  stability is established by MAC-derivation; reboot stability follows from the same derivation but was not
+  directly tested.
+- Evidence only — D-001/D-002 acceptance remains a Codex/human decision; no pairing code is authorized.
+
+---
+
+## Official evidence closure — 2026-06-28 [Claude]
+
+**Status: NOT YET READY FOR ACCEPTANCE — one gated item remains.** Executed
+`docs/coordination/prompts/android-pairing-evidence-close.md` (docs/evidence only; no source, probe,
+pairing, token, or Batch-3 work). Preflight passed: `origin/main` @ `7ed6468`; docs base `a92fa6c` in
+history; working tree clean; committed probe evidence still redacted.
+
+### Official-source access result
+- **No authenticated Hue developer-portal session is available**, and per the prompt I did not request,
+  echo, store, or automate any portal credentials.
+- The authoritative **"Using HTTPS"** page — which carries the downloadable Signify `root-bridge` CA
+  `.pem` and the CN/trust guidance — is **login-gated**: fetched 2026-06-28 it returns only a login form
+  (no public certificate, no public HTTPS guidance).
+  URL: `https://developers.meethue.com/develop/application-design-guidance/using-https/`.
+- The Configuration API and pairing/Entertainment reference pages are gated the same way.
+- Community mirrors of the CA exist, but the prompt **forbids using a community transcription as the
+  source of truth**, so they are NOT used to close D-001.
+
+→ The **official root-CA byte-verification could not be completed in this session.** D-001 (and the
+coupled D-002 acceptance) stay **DEFERRED**.
+
+### Root-CA verification procedure (to run once the human supplies the official file)
+When a human with a Hue developer session downloads the official CA `.pem` from the Using HTTPS page (or
+provides it via an authenticated channel) to a temp path **outside the repo**, I will record only
+non-secret metadata — official source URL, file SHA-256, certificate SHA-256 fingerprint, subject, issuer,
+serial, validity, public-key algorithm, CA basic-constraint — then confirm **subject == the probed leaf
+issuer `C=NL, O=Philips Hue, CN=root-bridge`** and that the documented profile supports chain validation
+plus a case-insensitive leaf-CN == canonical `bridgeid` identity check for a SAN-less leaf, and finally
+delete the temp file. Any failed check keeps D-001 DEFERRED with the exact mismatch recorded.
+
+### Evidence already closed (public official docs + the approved read-only probe — no portal needed)
+- Local API over HTTPS:443; first contact = the physical link-button create-user flow → opaque username;
+  normal light/room/scene control authenticates by username alone (Get Started — public, official).
+- Real-bridge probe (two BSB002, apiversion 1.77.0): current bridges are CA-signed by the Signify
+  `root-bridge` CA; leaf CN == bridgeid (case-insensitive); leaf has **no SAN**; TLS 1.2; `bridgeid` is
+  16-hex, MAC-derived (DHCP-stable), uppercase in `/api/0/config`, which is an unauthenticated non-secret
+  subset (see the redacted "Empirical probe addendum" above).
+
+### Final proposed contracts (DRAFT — pending the gated `.pem` + explicit acceptance)
+- **D-001 trust:** validate the leaf chains to the **bundled official Signify `root-bridge` CA** AND that
+  the leaf identity (CN) equals the expected canonical `bridgeid`, compared **case-insensitively**; because
+  the leaf carries no SAN, use a **custom verifier** (the platform SAN-only default cannot validate it) —
+  never trust-all, never blanket-true, never silent fallback, never leaf-on-first-use pinning; fail closed
+  on any chain or identity failure.
+- **Legacy-bridge MVP policy (proposed):** support **only CA-signed bridges** that validate to the bundled
+  Signify root. A legacy self-signed bridge **fails closed** with "update your bridge firmware" guidance;
+  no TOFU / trust-all / silent fallback. Broader legacy support is a later, separately-reviewed feature.
+- **D-002 identity:** canonical id = normalized **UPPERCASE 16-hex `bridgeid`**; compare the cert CN and
+  the `/api/0/config` identity case-insensitively; the value already satisfies `BridgeCredentialAlias`'s
+  charset (no alias change). mDNS / host / port are discovery hints, never durable identity.
+- **Non-circular manual-endpoint identity:** the trust anchor is the **app-bundled official Signify root
+  CA — an out-of-band input, not from the device**. For a manually-entered IP (or an mDNS hint) the app
+  connects, requires the leaf to **chain to the bundled root CA**, and only then treats the CA-validated
+  leaf **CN** as the authenticated `bridgeid`; the `/api/0/config` `bridgeid` is then confirmed to match
+  the CA-validated CN (a consistency check, not the trust source). Identity is anchored by the bundled CA,
+  never derived solely from unauthenticated device responses — which is precisely why the official `.pem`
+  is the gating item.
+- **`generateclientkey` (decided on public official evidence):** for the non-Entertainment MVP, **omit
+  `generateclientkey` (send false / do not set it)** so no `clientkey` is returned, and keep **no
+  `CLIENT_KEY` persistence**. Normal control uses the username alone (Get Started, public official).
+  Revisit only when Entertainment streaming is scoped.
+
+### Recovery behavior
+- Cert / identity / chain failure → fail closed, "couldn't verify this bridge," offer re-scan / re-pair.
+- Factory reset / replacement → `bridgeid` persists on the same hardware and changes on new hardware
+  (`replacesbridgeid` aids migration); a changed/unknown id is a new pairing + the user can delete the
+  stale alias.
+- Long-lived leaf (to 2038) chaining to the root means leaf rotation needs no special handling.
+
+### Remaining uncertainty + the ONE exact next action
+- **Only remaining hard gate:** byte-verify the **official** Signify `root-bridge` CA `.pem` — impossible
+  without a Hue developer session / a human-provided file. Secondary: an official compatibility statement
+  on the self-signed→CA migration firmware (informs how strict the "CA-signed only" gate may be).
+- **NEXT ACTION (human):** log in to developers.meethue.com, open
+  `develop/application-design-guidance/using-https/`, download the official root-CA `.pem`, and provide it
+  (the file, or its SHA-256 + subject/issuer/serial/validity/key fields) so the verification procedure
+  above completes. Then Codex + human accept, moving D-001/D-002 to ACCEPTED and authorizing a Batch 3
+  manifest.
+
+---
+
+## Codex review of evidence closure — 2026-06-28
+
+The session followed the gate correctly. D-001/D-002 remain DEFERRED and no Batch 3 work is authorized.
+
+- The **actual official `.pem` file is required**. A reported SHA-256 and certificate metadata alone
+  cannot byte-verify the source artifact, independently inspect its CA constraints/public key, or provide
+  the trust anchor that a later implementation must bundle. The human must download the official file
+  through an authenticated Hue developer session and make that file available locally outside Git.
+- The proposed CA-signed-only MVP policy is the correct default: fail closed on legacy self-signed
+  bridges with firmware-update guidance; no TOFU, trust-all, or silent compatibility fallback.
+- Omitting `generateclientkey` is acceptable for the non-Entertainment MVP because the public official
+  create-user example succeeds without that field. This does not approve `CLIENT_KEY` persistence.
+- No further research or implementation prompt is useful until the official `.pem` exists. Once supplied,
+  rerun only the certificate-verification portion, append the resulting metadata, and return for explicit
+  Codex/human acceptance.
+
+---
+
+## Official CA bundle supplied and locally verified — 2026-06-29 [Codex]
+
+**Status: READY FOR EXPLICIT ACCEPTANCE; not yet code-authorized.** The human supplied the requested
+two-certificate Hue CA bundle. The exact bytes are stored locally outside Git at
+`/Users/brianbean/Desktop/chromaglow-hue-ca/official-hue-ca-bundle.pem`; split certificates and the full
+verification record are in the same folder. Certificate bytes are intentionally not committed yet.
+
+### Bundle verification
+
+- Bundle certificate count: **2**
+- Bundle file SHA-256: `2ff54626fc51de587cce0f3f0339552f89da781b5d5949fa0c90ec30ddf8acfa`
+- `root-bridge` file SHA-256: `9eb5d8ee06004a6128659eee9727490387f582112fd6fa8657a3b75e2aef7e44`
+- `root-bridge` certificate SHA-256 fingerprint:
+  `F0:BD:8E:65:09:E8:2F:77:4D:63:BC:00:9D:53:88:C9:69:FE:3D:CF:7D:6D:54:1D:63:51:B7:2B:89:8D:8A:CF`
+- `root-bridge` subject/issuer: `C=NL, O=Philips Hue, CN=root-bridge`; self-signature valid;
+  critical `CA:TRUE`; critical Digital Signature / Certificate Sign / CRL Sign; EC P-256;
+  valid 2017-01-01 through 2038-01-19. This subject exactly matches the issuer profile observed on both
+  probed current bridge leaves.
+- `Hue Root CA 01` file SHA-256: `dfb5bd1e3a46b980f4c1494d96d2670216b4080d7ca1e33c3d4464abb1b363c5`
+- `Hue Root CA 01` certificate SHA-256 fingerprint:
+  `D8:B8:94:48:B2:AF:8E:16:76:18:5A:C0:72:19:EE:9D:CB:C8:F0:1C:12:2A:02:6A:2A:4B:7B:5C:FE:03:28:B8`
+- `Hue Root CA 01` subject/issuer: `C=NL, O=Signify Hue, CN=Hue Root CA 01`; self-signature valid;
+  critical `CA:TRUE`; critical Certificate Sign / CRL Sign; EC P-256; valid 2025-02-25 through
+  2050-12-31.
+
+### Acceptance boundary
+
+The certificate-access gate is closed. Final acceptance should approve the already documented contract:
+bundle the supplied Hue CA roots; require a valid chain to an approved root; identify SAN-less current
+bridge leaves by a case-insensitive CN == normalized `bridgeid` check; fail closed; support CA-signed
+bridges only for MVP; omit `generateclientkey`; and keep `CLIENT_KEY` persistence out. No implementation
+or Batch 3 manifest begins until the human and Codex explicitly accept this contract.
+
+---
+
+## Final acceptance — 2026-06-29 [Human + Codex]
+
+The human explicitly accepted D-001/D-002/D-012 as documented at `7c485a1`, and Codex accepted the
+bounded implementation contract:
+
+- bundle both verified Hue CA roots and trust no system/user fallback for pairing;
+- require normal chain/validity checks plus case-insensitive SAN-less leaf CN == canonical `bridgeid`;
+- normalize canonical identity to uppercase 16-hex and require config identity consistency;
+- support CA-signed bridges only for MVP and fail closed on legacy self-signed leaves;
+- omit `generateclientkey` and expose/persist no `CLIENT_KEY`;
+- implement only protocol, TLS/identity, and HTTPS transport foundations in Batch 3.
+
+Setup UI, credential persistence, and physical pairing validation remain a later separately accepted
+batch. Batch 3 manifest and launch prompt: pipeline §10 and
+`docs/coordination/prompts/parallel-batch-3-launch.md`.

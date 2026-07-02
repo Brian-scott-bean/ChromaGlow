@@ -104,12 +104,12 @@ final class BridgeDiscoveryService: ObservableObject {
         case .waiting(let error):
             let msg = "⏳ NWBrowser → waiting: \(error.localizedDescription)"
             appendLog(msg)
-            log.warning("mDNS: Browser waiting — \(error.localizedDescription, privacy: .public).")
+            log.warning("mDNS: Browser waiting — \(error.localizedDescription).")
 
         case .failed(let error):
             let msg = "❌ NWBrowser → failed: \(error.localizedDescription)"
             appendLog(msg)
-            log.error("mDNS: Browser failed — \(error.localizedDescription, privacy: .public).")
+            log.error("mDNS: Browser failed — \(error.localizedDescription).")
             isScanning = false
 
         case .cancelled:
@@ -132,20 +132,20 @@ final class BridgeDiscoveryService: ObservableObject {
             switch change {
             case .added(let result):
                 appendLog("📡 Found endpoint: \(endpointDescription(result.endpoint))")
-                log.info("mDNS: Endpoint added — \(self.endpointDescription(result.endpoint), privacy: .public).")
+                log.info("mDNS: Endpoint added — \(self.endpointDescription(result.endpoint)).")
                 resolveEndpoint(result.endpoint)
 
             case .removed(let result):
                 let desc = endpointDescription(result.endpoint)
                 appendLog("💨 Endpoint removed: \(desc)")
-                log.info("mDNS: Endpoint removed — \(desc, privacy: .public).")
+                log.info("mDNS: Endpoint removed — \(desc).")
                 // Remove from list if it was already resolved
                 discoveredBridges.removeAll { $0.name == serviceName(from: result.endpoint) }
 
             case .changed(let old, let new, _):
                 let desc = endpointDescription(new.endpoint)
                 appendLog("♻️  Endpoint changed: \(endpointDescription(old.endpoint)) → \(desc)")
-                log.info("mDNS: Endpoint changed — \(desc, privacy: .public).")
+                log.info("mDNS: Endpoint changed — \(desc).")
 
             case .identical:
                 break  // No-op; re-broadcast with same data
@@ -169,7 +169,7 @@ final class BridgeDiscoveryService: ObservableObject {
         }
 
         appendLog("🔎 Resolving '\(name)'…")
-        log.info("mDNS: Resolving service '\(name, privacy: .public)' via NWConnection.")
+        log.info("mDNS: Resolving service '\(name)' via NWConnection.")
 
         let params = NWParameters.tcp
         // Force IPv4: link-local IPv6 addresses (fe80::…%en0) contain a zone ID that is
@@ -198,7 +198,7 @@ final class BridgeDiscoveryService: ObservableObject {
                           let remoteEndpoint = path.remoteEndpoint,
                           case .hostPort(let host, let port) = remoteEndpoint else {
                         self.appendLog("⚠️  '\(name)' reached ready but remoteEndpoint was nil — skipping.")
-                        self.log.warning("mDNS: remoteEndpoint nil at ready for '\(name, privacy: .public)'.")
+                        self.log.warning("mDNS: remoteEndpoint nil at ready for '\(name)'.")
                         return
                     }
 
@@ -211,7 +211,7 @@ final class BridgeDiscoveryService: ObservableObject {
                     self.discoveredBridges.append(bridge)
                     let msg = "🌉 Bridge resolved! Name: '\(name)' | IP: \(hostString) | Port: \(portValue)"
                     self.appendLog(msg)
-                    self.log.info("mDNS: \(msg, privacy: .public).")
+                    self.log.info("mDNS: \(msg).")
 
                     // Persist the Bridge IP immediately for later API use.
                     do {
@@ -219,12 +219,12 @@ final class BridgeDiscoveryService: ObservableObject {
                         self.appendLog("💾 Bridge IP '\(hostString)' saved to Keychain.")
                     } catch {
                         self.appendLog("⚠️  Keychain save failed: \(error.localizedDescription)")
-                        self.log.error("mDNS: Keychain save error — \(error.localizedDescription, privacy: .public).")
+                        self.log.error("mDNS: Keychain save error — \(error.localizedDescription).")
                     }
 
                 case .failed(let error):
                     self.appendLog("❌ Resolution failed for '\(name)': \(error.localizedDescription)")
-                    self.log.error("mDNS: Resolution failed for '\(name, privacy: .public)' — \(error.localizedDescription, privacy: .public).")
+                    self.log.error("mDNS: Resolution failed for '\(name)' — \(error.localizedDescription).")
                     connection.cancel()
 
                 case .waiting(let error):
@@ -278,7 +278,9 @@ final class BridgeDiscoveryService: ObservableObject {
         let timestamp = DateFormatter.logTime.string(from: Date())
         let line = "[\(timestamp)] \(message)"
         logLines.append(line)
+#if DEBUG
         print(line)  // Also surface in Xcode console for hardware debugging
+#endif
     }
 }
 

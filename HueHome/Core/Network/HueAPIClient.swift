@@ -57,12 +57,11 @@ class HueAPIClient: @unchecked Sendable {
     // MARK: Logger
     private let log = Logger(subsystem: "com.lightshade.app", category: "API")
 
-    // MARK: URLSession (cert-trust for Hue self-signed)
-    // certDelegate retained explicitly — URLSession holds a strong ref internally
-    // but this makes ownership unambiguous and survives lazy initialization.
-    private let certDelegate = HueCertTrustDelegate()
+    // MARK: URLSession (pinned bridge trust — H-01/D-016)
+    // BridgePinnedTrustDelegate evaluates the chain and requires the pinned
+    // bridge identity on every challenge; it never trust-alls.
     private lazy var session: URLSession = {
-        URLSession(configuration: .default, delegate: self.certDelegate, delegateQueue: nil)
+        URLSession(configuration: .default, delegate: BridgePinnedTrustDelegate.shared, delegateQueue: nil)
     }()
 
     // ──────────────────────────────────────────────
@@ -153,7 +152,7 @@ class HueAPIClient: @unchecked Sendable {
         req.httpBody = encoded
         // Log outgoing body for debugging — remove noisy on-disk logging once stable.
         if let bodyStr = String(data: encoded, encoding: .utf8) {
-            log.debug("POST /scene body: \(bodyStr, privacy: .public)")
+            log.debug("POST /scene body: \(bodyStr)")
         }
         let data = try await execute(req)
         logRaw(data, label: "POST /scene '\(request.metadata.name)'")
@@ -167,7 +166,7 @@ class HueAPIClient: @unchecked Sendable {
         let encoded = try JSONEncoder().encode(request)
         req.httpBody = encoded
         if let bodyStr = String(data: encoded, encoding: .utf8) {
-            log.debug("POST /scene body: \(bodyStr, privacy: .public)")
+            log.debug("POST /scene body: \(bodyStr)")
         }
         let data = try await execute(req)
         logRaw(data, label: "POST /scene '\(request.metadata.name)'")
@@ -646,18 +645,20 @@ class HueAPIClient: @unchecked Sendable {
         req.httpMethod = method
         req.setValue(token, forHTTPHeaderField: "hue-application-key")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        log.info("API: \(method) \(urlStr, privacy: .public)")
+        // L-09: the full URL embeds the bridge LAN IP — log only the resource path.
+        log.info("API: \(method, privacy: .public) \(path, privacy: .public)")
         return req
     }
 
     private func execute(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { return data }
-        log.info("API: HTTP \(http.statusCode, privacy: .public) ← \(request.url?.path ?? "", privacy: .public)")
+        let resourcePath = request.url?.path ?? ""
+        log.info("API: HTTP \(http.statusCode, privacy: .public) ← \(resourcePath)")
         guard (200...299).contains(http.statusCode) else {
             // Log the bridge's error body BEFORE throwing — it contains the exact reason.
             if let errorBody = String(data: data, encoding: .utf8) {
-                log.error("API: Bridge error body: \(errorBody, privacy: .public)")
+                log.error("API: Bridge error body: \(errorBody)")
             }
             throw HueAPIError.httpError(http.statusCode)
         }
@@ -674,7 +675,7 @@ class HueAPIClient: @unchecked Sendable {
         do {
             return try Self.sharedDecoder.decode(type, from: data)
         } catch {
-            log.error("API: Decode error — \(error.localizedDescription, privacy: .public)")
+            log.error("API: Decode error — \(error.localizedDescription)")
             throw HueAPIError.decodingFailed(error.localizedDescription)
         }
     }
@@ -686,61 +687,12 @@ class HueAPIClient: @unchecked Sendable {
     private func logRaw(_ data: Data, label: String) {
 #if DEBUG
         guard let raw = String(data: data, encoding: .utf8) else { return }
-        log.debug("API [\(label, privacy: .public)] raw: \(raw, privacy: .public)")
-        #if DEBUG
+        log.debug("API [\(label)] raw: \(raw)")
         print("[HueAPIClient] \(label) — \(raw)")
-        #endif
 #endif
     }
 }
 
-// MARK: - Cert Trust Delegate
-
-/// Accepts the Hue Bridge self-signed certificate for both session-level and
-/// task-level auth challenges.
-///
-/// Why both levels?
-/// - `URLSessionDelegate` handles server-level challenges (TLS handshake at session open time)
-/// - `URLSessionTaskDelegate` handles task-level challenges — on iOS 15+, `URLSession.data(for:)`
-///   and `URLSession.bytes(for:)` route HTTPS certificate challenges HERE, not to the session delegate.
-///   Without this, all API calls and SSE streams fail with -1202 on self-signed Hue Bridge certs.
-final class HueCertTrustDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
-
-    // MARK: - Shared logic
-
-    private func acceptBridgeCert(
-        _ challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-        // Evaluate with error suppressed — we intentionally trust the Bridge's self-signed cert.
-        var cfError: CFError?
-        _ = SecTrustEvaluateWithError(serverTrust, &cfError)
-        completionHandler(.useCredential, URLCredential(trust: serverTrust))
-    }
-
-    // MARK: - URLSessionDelegate (session-level, TLS handshake)
-
-    func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        acceptBridgeCert(challenge, completionHandler: completionHandler)
-    }
-
-    // MARK: - URLSessionTaskDelegate (task-level, iOS 15+ data/bytes tasks)
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        acceptBridgeCert(challenge, completionHandler: completionHandler)
-    }
-}
+// The former trust-all HueCertTrustDelegate (evaluated the cert, discarded
+// the result, and accepted unconditionally — audit H-01/H-06) was replaced by
+// BridgePinnedTrustDelegate in Core/Network/Trust/ (D-016).

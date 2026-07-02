@@ -326,7 +326,7 @@ final class UnifiedOrchestrator {
         config.timeoutIntervalForResource = .infinity
         return URLSession(
             configuration: config,
-            delegate: HueCertTrustDelegate(),
+            delegate: BridgePinnedTrustDelegate.shared,
             delegateQueue: nil
         )
     }()
@@ -494,13 +494,18 @@ final class UnifiedOrchestrator {
         log.info("Added bridge \(record.id) (\(record.name)) to orchestrator")
     }
 
-    /// Remove a bridge — cancels SSE, clears rooms, wipes credentials.
+    /// Remove a bridge — cancels SSE, clears rooms, wipes credentials + TLS pin.
     func removeBridge(id: String) {
         sseTasks[id]?.cancel()
         sseTasks.removeValue(forKey: id)
         clients.removeValue(forKey: id)
         roomsByBridge.removeValue(forKey: id)
         connectionStatus.removeValue(forKey: id)
+        // D-016: drop the TLS pin with the credentials (also unblocks a future
+        // re-pair if the bridge's certificate legitimately changed).
+        if let creds = try? keychain.loadCredentials(for: id) {
+            BridgePinStore.shared.removePins(forHost: creds.ip)
+        }
         keychain.deleteCredentials(for: id)
         publishWidgetBridgeCredentials()
         rebuildAllRooms()
@@ -620,6 +625,13 @@ final class UnifiedOrchestrator {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+
+        // D-016 upgrade migration: bridges paired before TLS pinning have no
+        // stored pin and the pinned data plane fails closed without one. This
+        // is a no-op once every configured host is pinned.
+        await BridgePinAcquirer.ensurePins(
+            hosts: clients.values.compactMap { try? $0.credentials().ip }
+        )
 
         // Entertainment cleanup + bridge fetches run in parallel so cold launch
         // does not wait for sequential stuck-session teardown before any room data loads.
@@ -1133,7 +1145,8 @@ final class UnifiedOrchestrator {
         while !Task.isCancelled {
             do {
                 connectionStatus[bridgeID] = .connecting
-                log.info("SSE: Connecting to \(urlStr, privacy: .public)")
+                // L-09: the stream URL embeds the bridge LAN IP — log only the bridge id.
+                log.info("SSE: Connecting [\(bridgeID, privacy: .public)]")
 
                 let (bytes, _) = try await sseSession.bytes(for: request)
                 connectionStatus[bridgeID] = .connected
@@ -1172,7 +1185,7 @@ final class UnifiedOrchestrator {
             } catch {
                 guard !Task.isCancelled else { return }
                 connectionStatus[bridgeID] = .error(error.localizedDescription)
-                log.error("SSE error [\(bridgeID)]: \(error.localizedDescription, privacy: .public)")
+                log.error("SSE error [\(bridgeID)]: \(error.localizedDescription)")
             }
 
             log.info("SSE: Reconnecting \(bridgeID) in \(retryDelay / 1_000_000_000)s")

@@ -67,7 +67,7 @@ final class AutomationScheduler: @unchecked Sendable {
                 if let err { self?.log.error("Schedule failed (\(id)): \(err.localizedDescription)") }
             }
         }
-        log.info("Scheduled '\(automation.name, privacy: .public)' × \(automation.weekdays.count) day(s)")
+        log.info("Scheduled '\(automation.name)' × \(automation.weekdays.count) day(s)")
     }
 
     /// Schedules notifications for every enabled automation in the list.

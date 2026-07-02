@@ -189,7 +189,7 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
               let zonesData = try? JSONEncoder().encode(zones),
               let bridgesData = try? JSONEncoder().encode(bridges) else { return }
         let fallback = bridges.values.first
-        let context: [String: Any] = [
+        var context: [String: Any] = [
             "wc_rooms_v1" : roomsData,
             "wc_zones_v1" : zonesData,
             "wc_bridges_v1": bridgesData,
@@ -197,6 +197,11 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
             "wc_bridge_ip": fallback?.ip ?? "",
             "wc_token"    : fallback?.token ?? ""
         ]
+        // Bridge TLS pins ride along with credentials (D-016) so the watch's
+        // pinned trust delegate can validate its direct bridge connections.
+        if let pinsData = BridgePinStore.shared.encodedPins() {
+            context[BridgePinStore.storageKey] = pinsData
+        }
         try? WCSession.default.updateApplicationContext(context)
     }
 

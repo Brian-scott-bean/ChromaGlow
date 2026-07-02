@@ -52,10 +52,9 @@ class HueV1Client: @unchecked Sendable {
     /// Expose bridge IP for manifest storage.
     var bridgeIP: String { ip }
 
-    // Reuse the same cert-trust delegate as HueAPIClient
-    private let certDelegate = HueCertTrustDelegate()
+    // Shared pinned bridge trust (H-01/D-016) — same delegate as HueAPIClient.
     private lazy var session: URLSession = {
-        URLSession(configuration: .default, delegate: self.certDelegate, delegateQueue: nil)
+        URLSession(configuration: .default, delegate: BridgePinnedTrustDelegate.shared, delegateQueue: nil)
     }()
 
     init(ip: String, token: String) {
@@ -68,6 +67,35 @@ class HueV1Client: @unchecked Sendable {
     // ──────────────────────────────────────────────
 
     private var baseURL: String { "https://\(ip)/api/\(token)" }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Log Redaction (audit H-03)
+    // ──────────────────────────────────────────────
+    // The v1 API carries the application key in the URL path (/api/{token}/…),
+    // so nothing derived from baseURL/request.url may reach a log sink.
+
+    /// Strips the `/api/{token}` prefix from a v1 URL path, leaving only the
+    /// token-free resource path (e.g. "/api/SECRET/schedules/3" → "/schedules/3").
+    static func redactedPath(fromV1URLPath path: String) -> String {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard components.first == "api" else { return path }
+        return "/" + components.dropFirst(2).joined(separator: "/")
+    }
+
+    /// Removes this client's token (and any /api/{…} segment) from free-form
+    /// text such as bridge error bodies before it can be logged.
+    func sanitizedForLog(_ text: String) -> String {
+        var result = text
+        if !token.isEmpty {
+            result = result.replacingOccurrences(of: token, with: "<redacted>")
+        }
+        result = result.replacingOccurrences(
+            of: #"/api/[^/\s"\\]+"#,
+            with: "/api/<redacted>",
+            options: .regularExpression
+        )
+        return result
+    }
 
     // ──────────────────────────────────────────────
     // MARK: - CLIP Sensors
@@ -436,7 +464,7 @@ class HueV1Client: @unchecked Sendable {
         }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = "GET"
-        log.info("V1 GET \(urlStr, privacy: .public)")
+        log.info("V1 GET \(path)")
         return try await execute(req)
     }
 
@@ -449,7 +477,7 @@ class HueV1Client: @unchecked Sendable {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        log.info("V1 POST \(urlStr, privacy: .public)")
+        log.info("V1 POST \(path)")
         return try await execute(req)
     }
 
@@ -462,7 +490,7 @@ class HueV1Client: @unchecked Sendable {
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        log.info("V1 PUT \(urlStr, privacy: .public)")
+        log.info("V1 PUT \(path)")
         return try await execute(req)
     }
 
@@ -473,17 +501,20 @@ class HueV1Client: @unchecked Sendable {
         }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = "DELETE"
-        log.info("V1 DELETE \(urlStr, privacy: .public)")
+        log.info("V1 DELETE \(path)")
         return try await execute(req)
     }
 
     private func execute(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { return data }
-        log.info("V1 HTTP \(http.statusCode, privacy: .public) ← \(request.url?.path ?? "", privacy: .public)")
+        // request.url embeds the token — log only the redacted resource path.
+        let resourcePath = Self.redactedPath(fromV1URLPath: request.url?.path ?? "")
+        log.info("V1 HTTP \(http.statusCode, privacy: .public) ← \(resourcePath)")
         guard (200...299).contains(http.statusCode) else {
             if let errorBody = String(data: data, encoding: .utf8) {
-                log.error("V1 Error: \(errorBody, privacy: .public)")
+                // v1 error bodies can echo /api/{token} addresses — sanitize first.
+                log.error("V1 Error [\(resourcePath)]: \(self.sanitizedForLog(errorBody))")
             }
             throw HueAPIError.httpError(http.statusCode)
         }

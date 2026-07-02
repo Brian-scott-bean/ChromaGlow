@@ -56,28 +56,10 @@ private struct NUPnPResult: Decodable {
     let port: Int?
 }
 
-// MARK: - Self-Signed Certificate Trust Delegate
-//
-// Newer Hue Bridges (Square v2, v3) serve HTTPS on port 443 with a Signify-issued
-// self-signed certificate. URLSession rejects it by default. This delegate
-// accepts it unconditionally on the local network.
-// ⚠️ ONLY used for local-network LAN connections — never for public Internet URLs.
-
-private final class BridgeCertTrustDelegate: NSObject, URLSessionDelegate {
-    func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-        // Trust the bridge's self-signed cert on local network
-        completionHandler(.useCredential, URLCredential(trust: serverTrust))
-    }
-}
+// The former trust-all BridgeCertTrustDelegate (audit H-02) was replaced by
+// BridgePairingTrustDelegate in Core/Network/Trust/ (D-016): it validates the
+// chain + 16-hex bridgeid CN, captures the leaf for pinning, and enforces
+// same-leaf continuity across the pairing session.
 
 // MARK: - BridgeDiscoveryViewModel
 
@@ -95,6 +77,12 @@ final class BridgeDiscoveryViewModel {
 
     // MARK: Services
     let discovery = BridgeDiscoveryService()
+    /// Test seam: when set, the pairing POST uses this session instead of the
+    /// internally constructed one, so tests can stub responses via URLProtocol.
+    @ObservationIgnored var pairingSessionOverride: URLSession?
+    /// Test seam: replaces the post-pairing identity verification + pinning
+    /// (URLProtocol stubs cannot present a real server trust to capture).
+    @ObservationIgnored var pinAcquisitionOverride: ((BridgeEndpoint) async -> Bool)?
     private var cancellables = Set<AnyCancellable>()
     private var scanTimeoutTask: Task<Void, Never>?
     private var mdnsRetryDone = false   // guards the silent mDNS warm-cache retry
@@ -306,16 +294,27 @@ final class BridgeDiscoveryViewModel {
         appendLog("📤 POST \(url.absoluteString)")
         appendLog("   Body: \(String(data: request.httpBody!, encoding: .utf8) ?? "")")
 
-        // For HTTPS, use a custom session that trusts the Bridge self-signed cert.
-        // For HTTP, URLSession.shared is fine.
+        // For HTTPS, use a TOFU-capture session that validates the bridge leaf
+        // (chain evaluation + 16-hex bridgeid CN) and records it for pinning
+        // (H-02/D-016). For legacy HTTP pairing the POST goes over .shared and
+        // the pin is acquired over HTTPS in verifyBridgeIdentityAndPin.
         let session: URLSession
-        if bridge.port == 443 {
-            let delegate = BridgeCertTrustDelegate()
+        var trustDelegate: BridgePairingTrustDelegate?
+        var ownsSession = false
+        if let override = pairingSessionOverride {
+            session = override
+        } else if bridge.port == 443 {
+            let delegate = BridgePairingTrustDelegate()
+            trustDelegate = delegate
             session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-            appendLog("🔐 HTTPS mode — using Bridge certificate trust delegate.")
+            ownsSession = true
+            appendLog("🔐 HTTPS mode — pinned bridge trust (TOFU capture) enabled.")
         } else {
             session = .shared
         }
+        // L-18: sessions created per pairing attempt must be invalidated or
+        // each retry permanently leaks a session + delegate.
+        defer { if ownsSession { session.finishTasksAndInvalidate() } }
 
         do {
             let (data, response) = try await session.data(for: request)
@@ -326,11 +325,10 @@ final class BridgeDiscoveryViewModel {
                 log.info("Pairing: HTTP \(http.statusCode, privacy: .public).")
             }
 
-            // Log raw JSON for debugging
-            if let raw = String(data: data, encoding: .utf8) {
-                appendLog("   Raw response: \(raw)")
-                log.info("Pairing: Raw response: \(raw, privacy: .public).")
-            }
+            // H-04: never log the raw pairing response — on success it contains
+            // the application key AND the entertainment client key verbatim.
+            appendLog("📥 Response received (\(data.count) bytes).")
+            log.info("Pairing: response received (\(data.count, privacy: .public) bytes).")
 
             // Decode array response
             let responses = try JSONDecoder().decode([PairingResponse].self, from: data)
@@ -349,7 +347,7 @@ final class BridgeDiscoveryViewModel {
                 default:  desc = "Bridge error \(err.type): \(err.description)"
                 }
                 appendLog("⚠️  \(desc)")
-                log.warning("Pairing: Bridge error \(err.type): \(err.description, privacy: .public).")
+                log.warning("Pairing: Bridge error \(err.type): \(err.description).")
                 // Return to bridgeFound so user can retry
                 phase = .bridgeFound(bridge)
                 return
@@ -360,11 +358,24 @@ final class BridgeDiscoveryViewModel {
                 let token = success.username
                 let clientKey = success.clientkey ?? ""
 
-                appendLog("✅ Paired! Application Key: \(token)")
+                // H-04: log only non-secret metadata — never the key material.
+                appendLog("✅ Paired! Application key received (\(token.count) chars).")
                 if !clientKey.isEmpty {
-                    appendLog("🔑 Client Key (Entertainment): \(clientKey)")
+                    appendLog("🔑 Entertainment client key received (\(clientKey.count) chars).")
                 }
                 log.info("Pairing: Success. Token length: \(token.count).")
+
+                // H-02/D-016: bind this pairing to the bridge's cryptographic
+                // identity BEFORE persisting anything. On failure, nothing is
+                // stored and the pairing is aborted.
+                guard await verifyBridgeIdentityAndPin(
+                    bridge: bridge,
+                    session: session,
+                    capture: trustDelegate?.capture
+                ) else {
+                    handleError("Could not verify this bridge's secure identity. Make sure you are on the same network as the bridge, then try pairing again.")
+                    return
+                }
 
                 // Persist both to Keychain
                 try KeychainManager.shared.saveAPIToken(token)
@@ -383,13 +394,75 @@ final class BridgeDiscoveryViewModel {
 
         } catch let decodeError as DecodingError {
             appendLog("❌ JSON decode error: \(decodeError)")
-            log.error("Pairing: Decode error — \(String(describing: decodeError), privacy: .public).")
+            log.error("Pairing: Decode error — \(String(describing: decodeError)).")
             handleError("Response decode failed. Check console for details.")
         } catch {
             appendLog("❌ Network error: \(error.localizedDescription)")
-            log.error("Pairing: Network error — \(error.localizedDescription, privacy: .public).")
+            log.error("Pairing: Network error — \(error.localizedDescription).")
             handleError(error.localizedDescription)
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Bridge Identity Verification (D-016)
+    // ──────────────────────────────────────────────
+
+    /// Fetches `/api/0/config`, requires `bridgeid` == the captured leaf CN,
+    /// then pins the leaf. For HTTPS pairing the config GET rides the SAME
+    /// session, so BridgePairingTrustDelegate enforces same-leaf continuity
+    /// across both legs (mirrors Android D-014). For legacy HTTP pairing
+    /// (no TLS handshake, no capture) a fresh TOFU session acquires the pin —
+    /// the data plane is HTTPS-only, so a bridge without a valid HTTPS
+    /// identity cannot be used and pairing fails closed.
+    private func verifyBridgeIdentityAndPin(
+        bridge: BridgeEndpoint,
+        session: URLSession,
+        capture: PairingLeafCapture?
+    ) async -> Bool {
+        if let override = pinAcquisitionOverride {
+            return await override(bridge)
+        }
+        guard let capture else {
+            appendLog("🔒 Acquiring HTTPS identity pin for legacy-paired bridge…")
+            let pinned = await BridgePinAcquirer.acquirePin(host: bridge.host)
+            if !pinned {
+                appendLog("❌ Bridge does not present a valid HTTPS identity — cannot pair securely.")
+            }
+            return pinned
+        }
+        guard let url = URL(string: "https://\(bridge.host)/api/0/config") else { return false }
+        // A transient hiccup here would otherwise discard a just-issued
+        // application key and force another link-button press — retry the
+        // cheap unauthenticated config GET a couple of times first.
+        var configBridgeID: String?
+        for attempt in 1...3 {
+            do {
+                let (data, _) = try await session.data(from: url)
+                guard let parsed = BridgeTrust.bridgeID(fromConfigResponse: data) else {
+                    appendLog("❌ Bridge config did not return a valid bridgeid.")
+                    return false
+                }
+                configBridgeID = parsed
+                break
+            } catch {
+                appendLog("⚠️ Bridge config fetch attempt \(attempt)/3 failed: \(error.localizedDescription)")
+                if attempt < 3 { try? await Task.sleep(nanoseconds: 700_000_000) }
+            }
+        }
+        guard let configBridgeID else {
+            appendLog("❌ Could not verify bridge identity — config fetch failed.")
+            return false
+        }
+        // Interactive pairing: the user just pressed the physical link button,
+        // so a self-signed legacy bridge may be pinned here (unattended: false).
+        guard BridgePinAcquirer.validateAndPersist(
+            capture: capture, configBridgeID: configBridgeID, host: bridge.host, unattended: false
+        ) else {
+            appendLog("❌ Bridge identity check failed — certificate does not match this bridge's known identity. If you replaced or factory-reset the bridge, remove it in Settings first, then pair again.")
+            return false
+        }
+        appendLog("🔒 Bridge TLS identity verified and pinned (\(configBridgeID)).")
+        return true
     }
 
     // ──────────────────────────────────────────────
@@ -398,7 +471,7 @@ final class BridgeDiscoveryViewModel {
 
     private func handleError(_ message: String) {
         appendLog("💥 \(message)")
-        log.error("ViewModel: \(message, privacy: .public).")
+        log.error("ViewModel: \(message).")
         phase = .error(message)
     }
 

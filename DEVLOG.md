@@ -4,6 +4,1433 @@
 
 ---
 
+## Current Status Snapshot
+
+- Canonical agent context: `AGENTS.md`.
+- Claude Code entry point: `CLAUDE.md` points to `AGENTS.md`.
+- Live shared handoff: append-only entries in this `DEVLOG.md`.
+- Git is the shared memory between tools; commit/push handoff updates when another agent needs them.
+- iOS production anchor: native Swift/SwiftUI app in `HueHome/`.
+- iOS build scheme: `HueHome 1` (not `HueHome`).
+- Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `f3380a7`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary; **tested non-UI Hue pairing foundations under `core/hue/pairing/**` + bundled CA roots (Batch 3)**. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
+- Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 foundations —
+  including the accepted D-014 GET→POST identity-continuity correction — are **merged to `main` @
+  `f3380a7`**. Batch 4 live pairing onboarding is **EXECUTED and integrated on
+  `integration/parallel-batch-4` @ `040fed7`** (automated gate green; physical H0 link-button gate
+  pending re-run with the correct worktree APK — see the 2026-07-01 stale-APK diagnosis below);
+  **not yet merged to `main`.**
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Batches 1 (`a3fe54f`), 2 (`7ed6468`), and **3 (`f3380a7`)** are merged to `main`. Batch 4 is **executed/integrated on `integration/parallel-batch-4` @ `040fed7`** (automated validation passed; physical bridge gate pending), not merged to `main`.
+- **Hardening audit (2026-07-01):** full cross-platform security + correctness audit recorded in `docs/audit/hardening-audit-2026-07-01.md` — 0 critical, 5 High, 19 Medium, 55 Low. P0: per-bundle privacy manifests (ITMS-91053 blocker), scrub secrets from iOS logs, iOS bridge TLS pinning (converge with Android under D-001). See the audit entry below.
+
+### Handoff Entry Template
+
+```markdown
+## YYYY-MM-DD - [Codex|Claude|Cursor] Short title
+
+### Branch
+- `branch-name`
+
+### Did
+- ...
+
+### Working
+- ...
+
+### Left
+- ...
+
+### Validation
+- ...
+
+### Gotchas
+- ...
+```
+
+---
+
+## 2026-07-01 - [Claude] iOS P0 hardening remediation (privacy manifests, log scrub, TLS pinning) — LOCAL, awaiting on-device checkpoint
+
+### Branch
+- `ios-ref/hardening-2026-07` (based on `docs/hardening-audit-2026-07-01`; **local only — not pushed**).
+
+### Did
+- **M-03 (App Store blocker):** added per-bundle `PrivacyInfo.xcprivacy` (UserDefaults, CA92.1) to the
+  widget extension, watch app, and watch extension. The three targets are file-system-synchronized
+  groups, so folder presence = membership; verified present in all six built bundle paths.
+- **H-03/H-04/L-09 (secrets/PII in logs):** v1 client now logs only token-free resource paths
+  (`redactedPath(fromV1URLPath:)`) and sanitizes error bodies (`sanitizedForLog`); pairing no longer
+  logs the raw response or interpolates token/clientKey into `appendLog` (lengths/byte counts only);
+  dropped `privacy: .public` from every URL/IP/error-text/name interpolation across the network
+  clients + view models; discovery `print` is now `#if DEBUG`.
+- **H-01/H-02/M-01/H-06 (trust-all TLS → pinned evaluator, D-016):** new `HueHome/Core/Network/Trust/`
+  module compiled into app + widget + watch app targets:
+  - `BridgeTrustEvaluator` — canonical uppercase-16-hex bridgeid identity from the leaf CN;
+    data-plane verdict = successful `SecTrustEvaluateWithError` (anchors-only: bundled Hue roots +
+    pinned leaf) AND CN==pinned bridgeid AND public-key pin match; a key change is accepted only via
+    a chain that validates against the bundled Signify roots alone (CA-attested rotation → re-pin).
+  - `HueBridgeTrustRoots` — the two Hue roots embedded as DER (byte-identical to Android Batch-3),
+    fingerprints asserted by a regression test.
+  - `BridgePinStore` — pins in Keychain (authoritative) + App Group mirror (widget/Siri) + standard
+    defaults (watch); pins are public key material, not secrets.
+  - `BridgePinnedTrustDelegate` (data plane, fail closed) replaced ALL five trust-all delegates:
+    HueAPIClient/HueV1Client/HueSSEService/orchestrator-SSE `HueCertTrustDelegate`, pairing
+    `BridgeCertTrustDelegate`, widget `TrustDelegate`/`TrustAll`, Siri `TrustDelegate`, watch `TrustAll`.
+  - `BridgePairingTrustDelegate` (pairing TOFU) — validates chain + bridgeid-CN, captures the leaf,
+    and enforces same-leaf continuity across the pairing session (Android D-014 parity). Pairing now
+    fetches `/api/0/config` over the SAME session, requires `bridgeid == leaf CN`, pins, and only then
+    persists credentials; failure aborts pairing with nothing stored. Pairing session is invalidated
+    after use (closes L-18 early).
+  - `BridgePinAcquirer` — one-time upgrade migration: at the top of `loadAll()`, any configured host
+    without a pin gets a TOFU config-GET + CN cross-check + pin (60s retry throttle; disabled in
+    XCTest processes). Watch receives pins via WCSession (`hue_bridge_tls_pins_v1`) pushed alongside
+    credentials.
+- **Guards:** `Scripts/hardening_guards.sh` — (1) per-bundle privacy manifests; (2) bans
+  `privacy: .public` on URL/IP/token/name-derived interpolations + token/clientKey in `appendLog` +
+  v1 URL logging; (3) bans `.useCredential` outside the Trust module and discarded
+  `SecTrustEvaluateWithError` results.
+- **D-016:** appended the concrete design turn to the pipeline Decision Log before implementing.
+- **Multi-agent code review (8 angles) + fixes:** extracted one shared persist gate
+  (`BridgePinAcquirer.validateAndPersist`) used by BOTH pairing and migration — an existing pin can
+  never be overwritten by a different key unless the chain is CA-attested (the pairing path previously
+  lacked this guard; regression test added); pin migration now probes hosts concurrently (an offline
+  bridge no longer stalls `loadAll` serially) with a 15s retry throttle; the pairing config-GET
+  retries 3× before discarding a just-issued key; forget-bridge/forget-all now remove TLS pins
+  (which is also the recovery path for a legitimately changed bridge certificate); `BridgePin`
+  dropped its write-only `certDER` (~1KB per pin per sink); bridgeid validation no longer compiles a
+  regex per TLS challenge; CA-rotation re-pin moved off the TLS callback thread. (A shared delegate
+  base class was tried and reverted: subclass overrides hit default-actor-isolation mismatches
+  across the mixed-toolchain targets — the ~30 duplicated plumbing lines are the cheaper trade,
+  noted in the file.)
+- **Finding while reviewing:** `HueHome/Intents/` (HueIntentAPIClient/HueIntents/HueAppShortcuts/
+  HueRoomEntity) has NO pbxproj target membership — the "Siri intents" trust-all surface in audit
+  M-01 was dead code; the live Siri/AppIntents surface is the widget extension. The file was still
+  rewired to the pinned delegate so it is correct if ever added to a target.
+- **Security review (/security-review, adversarially verified, confidence 8/10):** the unattended
+  upgrade migration (`ensurePins`) originally accepted a self-signed leaf as a *first* pin with no
+  user present — a LAN MITM at the first post-upgrade `loadAll` could silently ghost-pin an
+  attacker cert and capture the app key. Fixed: `validateAndPersist(…, unattended:)` now refuses a
+  first pin for a non-CA-attested (self-signed) leaf on the silent migration path; only interactive
+  pairing (physical link-button presence) may pin a self-signed bridge. Modern Signify-CA-signed
+  bridges (the common case; both physical test bridges chain to the bundled `root-bridge` CA) still
+  migrate silently. Regression test: `testUnattendedMigrationRefusesSelfSignedFirstPin`. **Consequence
+  for the human:** a *legacy self-signed* bridge paired before D-016 will NOT auto-migrate — it stays
+  fail-closed until the user forgets + re-pairs it (link button). Flag if you want an in-app
+  "re-pair to secure" prompt instead of silent fail-closed.
+
+### Working
+- Build SUCCEEDED (`HueHome 1`, generic/platform=iOS — includes widget + both watch targets).
+- HueHomeTests green on iPhone 15 / iOS 17.0 sim, including new `SecretLogScrubTests` (post-pairing
+  log scrape: no token/clientKey substring) and `BridgeTrustEvaluatorTests` (delegate never returns
+  `.useCredential` without successful evaluation; rejects unpinned leaf, mismatched CN, and
+  same-CN/different-key impersonator; CA-only rotation; root fingerprints; D-014-style continuity).
+
+### Left
+- **STOP: human on-device checkpoint before any push** — pair to a real bridge (both bridges ideally),
+  confirm normal control + widget/watch still work after the app runs once (pin migration), and
+  optionally verify a MITM'd/mismatched cert is rejected. Exact steps in the session handoff.
+- P1 next: M-02/L-30 Keychain access group (pins currently mirror to App Group UD by design — move with
+  the credential migration); M-06/M-07/H-05/M-18 multi-bridge fixes; M-04/M-05; M-08/M-14/M-15 mailbox;
+  M-09/M-10/L-11 DTLS; M-13/L-27 persistence; M-16/M-17; M-11/M-12.
+- Review items deferred to P1 (documented trade-offs, not regressions): watch pin distribution rides
+  the debounced room push (add a store-triggered sync); cross-process pin-cache staleness reconciles
+  with the D-018 shared Keychain access group; the grep-based log lint is a tripwire, not proof —
+  consider a typed redaction wrapper; surface a visible error state when widget/watch writes fail
+  closed instead of `try?`-swallowing.
+
+### Validation
+- `xcodebuild -scheme "HueHome 1" -destination generic/platform=iOS build` → BUILD SUCCEEDED.
+- `xcodebuild … -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0' -only-testing:HueHomeTests test` → TEST SUCCEEDED.
+- `Scripts/hardening_guards.sh` → all guards pass.
+
+### Gotchas
+- Existing paired bridges have no pin until the main app runs `loadAll()` once (TOFU migration);
+  widget/watch/Siri fail closed until then. Open the app once after install.
+- "Forget all bridges" does not yet remove pins (harmless — public material, overwritten on re-pair);
+  fold into the P1 M-02/L-30 credential-surface work.
+- Legacy HTTP (port-80) pairing now requires the bridge to present a valid HTTPS identity to complete
+  (the data plane is HTTPS-only, so such bridges never worked past pairing anyway).
+- `run_tests.sh` still targets a hardcoded physical device and the `HueHome` scheme; use the
+  simulator command above instead.
+
+---
+
+## 2026-07-01 - [Claude] Cross-platform hardening audit (iOS + Android)
+
+### Branch
+- `docs/hardening-audit-2026-07-01` (docs-only; no source edits). iOS audited on the working tree
+  (≡ `main`); Android audited on the Batch-4 worktree `integration/parallel-batch-4` @ `040fed7`
+  so the full pairing stack (Batch 3 on `main` + pending Batch 4) was covered.
+
+### Did
+- Ran a two-round multi-agent read-only audit (16 dimensions + 6 gap-closure dimensions), with every
+  finding passed through an adversarial verifier (40 false positives discarded).
+- Recorded the full report at `docs/audit/hardening-audit-2026-07-01.md`: 0 Critical, 5 High,
+  19 Medium, 55 Low, plus verified-good hardening to preserve.
+- **High (all iOS):** H-01 systemic trust-all TLS on the data plane (`HueAPIClient.swift:722`
+  evaluates the cert then discards the result); H-02 trust-all TLS during pairing
+  (`BridgeDiscoveryViewModel.swift:78`); H-03 v1 app key logged in cleartext via URL at
+  `privacy:.public` in release (`HueV1Client.swift:439`); H-04 pairing token + entertainment key
+  logged (`BridgeDiscoveryViewModel.swift:332`); H-05 Effects tab uses `primaryAPIClient` so effects
+  on non-primary bridges silently fail (`EffectsViewModel.swift:85`). (H-06 = H-01 re-confirmed on the
+  scene/automation write path — not a separate item.)
+- **Top reliability risks:** M-06 background `loadAll` can stop the app's own active DTLS session;
+  M-13 `CompositionStore.load()` reseeds + overwrites `compositions.json` on any decode error
+  (composition data-loss); M-08/M-14/M-15 unbounded bulk/effect PUTs bypass the `RestSender` mailbox;
+  M-03 widget/watch bundles ship without `PrivacyInfo.xcprivacy` (ITMS-91053 upload blocker).
+- **Android:** the pairing/TLS/credential stack verified as reference-quality (pinned Signify roots,
+  strict bridgeid-CN identity, D-014 GET→POST continuity, no secret logging, Keystore + `noBackupFilesDir`).
+  Net-new: M-19 — the default checkout builds the *unhardened* pre-pairing `android/` tree, there is no
+  Android CI, and both trees are `versionName 1.0` (stale APK indistinguishable). See D-020 in the
+  pipeline Decision Log.
+
+### Working
+- No Critical and no remotely-exploitable findings. The dominant themes are iOS transport
+  authentication + credential-in-logs hygiene, and reliability of the flagship real-time features.
+
+### Left
+- Remediation is not started (audit-only). P0: M-03 privacy manifests; H-03/H-04 log scrub;
+  H-01/H-02/M-01 iOS bridge TLS pinning (route through the deferred D-001 TLS-bootstrap decision).
+  P1: M-02 Keychain access group; M-06/M-07/H-05/M-18 multi-bridge + entertainment fixes;
+  M-05/M-04 bridge-animation correctness; M-08/M-14/M-15 mailbox for bulk/effect writes;
+  M-09/M-10 DTLS robustness; M-13 non-destructive persistence; M-19 canonical Android tree + CI gate.
+- Fold Android polish (L-31/L-32/L-33, I-01/I-13) into Batch 4 before it merges.
+
+### Validation
+- Read-only audit; no code executed against a bridge. Findings are grounded in source with file:line;
+  each was adversarially verified. Docs-only change to this repo.
+
+### Gotchas
+- The default repo checkout's `android/` is 31 commits behind `main` (pre-Batch-1) — do NOT audit or
+  build Android from it. The validated stack lives on `integration/parallel-batch-4`.
+
+---
+
+## 2026-07-01 - [Claude] Diagnose Batch 4 physical pairing FAIL: stale pre-Batch-4 APK
+
+### Branch
+- `docs/parallel-agent-pipeline` (diagnosis only; no source edits). Batch 4 code inspected on
+  `integration/parallel-batch-4` @ `040fed7`.
+
+### Did
+- Investigated the redacted physical-bridge test report (discovery PASS, pairing FAIL from both
+  discovered selection and manual IP).
+- Audited the full Batch 4 pairing path on `integration/parallel-batch-4` (workflow, transport,
+  TLS trust/verifier, CN contract, config parser, ViewModel wiring, manifest, navigation): no
+  code-level defect found; production wiring is real (OkHttp + pinned roots + Keystore + DataStore).
+- Validated the D-015 contract against BOTH physical bridges from the same LAN (macOS, openssl/curl):
+  mDNS advertises port 443; both leaf certs chain to the bundled `root-bridge` CA (`openssl verify` OK);
+  leaf CNs are valid 16-hex bridge ids (one lowercase, one UPPERCASE — both accepted, compared
+  case-insensitively); TLS 1.2 ECDHE-ECDSA-AES128-GCM-SHA256 (OkHttp MODERN_TLS compatible);
+  `/api/0/config` parses and `bridgeid` matches the leaf CN on both; pre-button `POST /api` returns
+  the expected type-101 "link button not pressed".
+- Root cause (high confidence): the installable APK in the main checkout
+  (`android/app/build/outputs/apk/debug/app-debug.apk`, built 2026-06-28 09:53, sha256 `c0a1cdda…`)
+  predates all Batch 4 commits (2026-06-29) and contains NO pairing classes (`SetupViewModel`,
+  `LivePairingWorkflow`, `DataStoreBridgeRegistry` absent from dex). On that build the selected-bridge
+  card is the Batch 2 placeholder ("Pairing will be added in a later step.") — a designed dead end
+  from both the discovered and manual paths, matching the reported symptoms exactly.
+- Confirmed the correct APK already exists: `/Users/brianbean/Desktop/huehome-batch4-wt/android/app/
+  build/outputs/apk/debug/app-debug.apk` (2026-06-29 15:58, sha256 `c8c2d92b…`) contains all Batch 4
+  classes, and `:app:assembleDebug` at tip `040fed7` reports all 36 tasks UP-TO-DATE — that APK matches
+  branch-tip source including the bridge-registry singleton fix (committed 15:59, in-tree at build time).
+
+### Working
+- Batch 4 pairing contract verified compatible with both physical bridges (BSB002, swversion
+  1977138000 / apiversion 1.77.0) at the TLS, identity, and protocol layers.
+
+### Left
+- Re-run the §11 human gate with the WORKTREE APK (sha256 `c8c2d92b…`). Quick identity check on-device:
+  the Batch 4 build shows a "Pair" button on the selected-bridge card; the stale build shows
+  "Pairing will be added in a later step." with no Pair button.
+- If the retest still fails on the correct APK, capture the exact on-screen recovery message (the
+  copy is user-safe/redaction-friendly and maps 1:1 to `PairingErrorReason`) — that pinpoints the
+  failing layer without raw logs.
+
+### Validation
+- `openssl verify -CAfile <bundled roots>` OK for both bridge leafs; live `/api/0/config` and
+  pre-button `POST /api` behavior confirmed; dex string-scan of both APKs; gradle up-to-date check
+  at `040fed7`. Docs-only change to this repo.
+
+### Gotchas
+- Gradle in the worktree needs `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`
+  (no system JVM installed).
+- The repo-root APK and the worktree APK share applicationId/versionName (`com.chromaglow.app` / 1.0),
+  so an installed build is NOT distinguishable by version — check the Pair button or the APK sha256.
+
+---
+
+## 2026-06-29 - [Codex] Prepare Batch 4 Claude handoff for live pairing
+
+### Branch
+- `docs/parallel-agent-pipeline` (planning from `origin/main` @ `f3380a7`).
+
+### Did
+- Reviewed the landed Setup, discovery, credential, app-shell, and Batch 3 pairing APIs.
+- Identified two required integration contracts: successful pairing must return authenticated `bridgeId`
+  with `username`, and service-advertised discovery ports must map to accepted HTTPS pairing port 443.
+- Accepted D-015, wrote `docs/android/android-live-pairing-workflow-contract.md`, drafted the disjoint §11
+  five-lane manifest, and created the READY Claude prompt
+  `docs/coordination/prompts/parallel-batch-4-launch.md`.
+
+### Working
+- Claude can execute dependency bootstrap, parallel result/registry contracts, transactional workflow,
+  and Setup UI without further product input.
+
+### Left
+- After Claude's automated gate, the human selects a bridge, tests pre-button type 101, presses the link
+  button, verifies pairing and relaunch restoration, then tests local Forget Bridge and unpaired relaunch.
+- Batch 4 does not load Hue resources or enter a real dashboard; that is Batch 5.
+
+### Validation
+- Docs-only: `git diff --check`. Dependency planning used current resolved Lifecycle 2.9.4 plus stable
+  Google Maven DataStore 1.2.1; no Android source was edited.
+
+### Gotchas
+- Local Forget Bridge does not revoke the bridge-side application key. The physical tester must know that
+  one test key may remain on the selected bridge until remote revocation is implemented.
+
+---
+
+## 2026-06-29 - [Codex] Accept corrected Batch 3 for human-approved promotion
+
+### Branch
+- `docs/parallel-agent-pipeline` (reviewing `integration/parallel-batch-3` @ `c385616`).
+
+### Did
+- Reviewed correction lane `352a42e`, the merged production code, dual-cert regression test, full branch
+  boundary, and Claude's corrected-integration handoff.
+- Confirmed from pinned OkHttp 5.4.0 bytecode that `hostnameVerifier` participates in `Address` equality,
+  so the distinct POST verifier forces a new connection in the shipped dependency.
+- Accepted D-014 and marked Batch 3 eligible for `main` after explicit human go-ahead.
+
+### Working
+- No remaining code findings. A CA-valid identity change between config GET and create-user POST is
+  rejected during the POST TLS handshake, and the response leaf is checked again before parsing.
+
+### Left
+- Human merge approval only. Setup UI, credential persistence, and physical pairing remain a later batch.
+- Keep the cross-identity transport regression mandatory when upgrading OkHttp.
+
+### Validation
+- Focused transport JVM suite 16/0; full `testDebugUnitTest` 174/0; `lintDebug` and `assembleDebug` green;
+  29 changed paths all in scope; `git diff --check` clean. Connected 37/0 was batch-owner validated on
+  `Pixel_10`; Codex did not restart the emulator.
+
+### Gotchas
+- The pre-send guarantee uses pinned OkHttp 5.4.0 address equality plus the regression test; the explicit
+  response-leaf check is defense in depth but occurs after the POST has been sent.
+
+---
+
+## 2026-06-29 - [Claude] Merge Batch 3 (pairing foundations + D-014) to main
+
+### Branch
+- `main` (pushed) + this `docs/parallel-agent-pipeline` handoff.
+
+### Did
+- On explicit human go-ahead, merged `integration/parallel-batch-3` @ `c385616` into `main` `--no-ff`.
+  Preflight confirmed `origin/main` was still the pinned `7ed6468` (an ancestor of `c385616`) → a
+  conflict-free merge of 10 commits (Batch 3 W0/W1/W2 + the D-014 correction).
+- New `main` @ `f3380a7`; the merge commit's tree is byte-identical to `c385616` (no content introduced
+  by the merge). Pushed `7ed6468..f3380a7`.
+
+### Working
+- `main` now carries the tested, non-UI Hue pairing foundation: `core/hue/pairing/{protocol,tls,transport}`
+  + bundled CA roots, with the D-014 fail-closed GET→POST identity continuity.
+
+### Left
+- Nothing for Batch 3. Follow-up batch (separately scoped): Setup UI + credential persistence + physical
+  pairing on the merged APIs. Lane/integration branches retained on origin; local `cg-b3-wt` worktrees
+  removed post-merge.
+
+### Validation
+- Sanity build on the merged `main`: `testDebugUnitTest` 174/0, `lintDebug`, `assembleDebug` green;
+  `git diff --check` clean. The full gate (incl. `connectedDebugAndroidTest` 37/0 on `Pixel_10`) was green
+  on the identical tree at `c385616`; the connected run was not repeated on the byte-identical merge tree.
+
+### Gotchas
+- The `--no-ff` merge preserves the Batch 3 boundary in history (consistent with Batches 1 & 2). `main`
+  advanced `7ed6468` → `f3380a7`; update any doc/snapshot that still pins the old SHA.
+
+---
+
+## 2026-06-29 - [Claude] Correct Batch 3 D-014 identity continuity (integrated, not on main)
+
+### Branch
+- `integration/parallel-batch-3` (corrected, pushed) + this `docs/parallel-agent-pipeline` handoff.
+
+### Did
+- Executed the accepted D-014 correction prompt as batch owner from the exact pushed integration head
+  `142ca71`. Single serialized two-file lane `lane/android3-pairing-identity-continuity-correction` @
+  `352a42e` (edited only `transport/OkHttpHuePairingClient.kt` + its test).
+- Fixed the GET→POST identity-continuity defect: `pair()` now builds a SEPARATE create-user client whose
+  `HueLeafHostnameVerifier` is pinned to the GET-authenticated `bridgeid` even when the caller hint was
+  null (forcing a fresh, pinned TLS connection for the POST), and re-checks the POST response handshake
+  leaf CN == authenticated id before parsing/returning any outcome. A different CA-valid Hue leaf on a
+  re-established connection is now rejected at the TLS handshake — create-user can never reach a different
+  bridge. Public `HuePairingClient` API unchanged.
+- Added a real dual-cert HTTPS regression test (null hint; leaf A on GET, distinct leaf B on POST via a
+  per-connection switching `SSLSocketFactory`) asserting fail-closed + `requestCount == 1`.
+- Merged `--no-ff` → `integration/parallel-batch-3` @ `c385616` (pushed).
+
+### Working
+- The accepted D-001/D-002 fail-closed identity contract now holds across BOTH pairing legs.
+
+### Left
+- NOT merged to `main` — awaits Codex review of `c385616` + explicit human go-ahead. No Setup UI,
+  discovery, credential write, persistence, or live bridge traffic added.
+
+### Validation
+- Full gate on `c385616`: `testDebugUnitTest` 174/0 (transport 16/0, +1 regression), `lintDebug`,
+  `assembleDebug`, `connectedDebugAndroidTest` 37/0 on `Pixel_10`; `git diff --check` clean.
+- Boundary: correction commit = exactly the 2 transport files; full diff vs `main` = 29 paths, all
+  in-glob; prohibited-pattern scan clean (no trust-all, blanket-true verifier, `generateclientkey`,
+  `clientkey`/persistence, secret logging).
+
+### Gotchas
+- The fix relies on `HueLeafHostnameVerifier` not overriding `equals`: the GET-leg and POST-leg verifier
+  instances differ, so OkHttp treats them as distinct `Address`es and always re-handshakes for the POST —
+  combined with the explicit post-leg CN re-check, the property holds even if connection-pool semantics
+  change. `142ca71` is superseded by `c385616`.
+
+---
+
+## 2026-06-29 - [Codex] Block Batch 3 promotion on pairing identity continuity
+
+### Branch
+- `docs/parallel-agent-pipeline` (reviewing `integration/parallel-batch-3` @ `142ca71`).
+
+### Did
+- Reviewed the complete Batch 3 diff, transport/TLS/protocol implementation, tests, lane graph, and
+  execution report. Verified the CA resources and all 29 changed files remain within authorized globs.
+- Added accepted D-014 and prepared the single-lane READY correction prompt at
+  `docs/coordination/prompts/parallel-batch-3-identity-continuity-correction.md`.
+- Corrected the execution-report audit count: 29 changed files, not 28.
+
+### Working
+- Batch 3 builds and its existing unit suite is green. CA-only trust, SAN-less CN validation, protocol
+  parsing, request bounds, redirect refusal, and no-clientkey/no-persistence boundaries remain intact.
+
+### Left
+- `142ca71` must not merge to `main`. With a null caller hint, the POST client still accepts any CA-valid
+  Hue CN rather than the specific bridge identity authenticated by GET. Claude should run the D-014 prompt,
+  merge the correction to `integration/parallel-batch-3`, and return the corrected SHA for review.
+
+### Validation
+- On the integration worktree: `./gradlew testDebugUnitTest --rerun-tasks` -> BUILD SUCCESSFUL, 173/0;
+  `./gradlew lintDebug assembleDebug` -> BUILD SUCCESSFUL; `git diff --check origin/main...HEAD` clean.
+
+### Gotchas
+- Existing transport tests use one MockWebServer leaf for both requests, so their green result does not
+  prove identity continuity across a TLS reconnect or routing change.
+
+---
+
+## 2026-06-29 - [Claude] Execute Batch 3 pairing foundations (integrated, not merged to main)
+
+### Branch
+- `integration/parallel-batch-3` (code, pushed) + this `docs/parallel-agent-pipeline` handoff.
+
+### Did
+- Executed the READY §10 Batch 3 manifest end-to-end as batch owner from pinned `origin/main` @ `7ed6468`.
+  Preflight gates all passed (origin/main SHA exact; both CA source files SHA-256-verified; clean slate;
+  JDK 21 + SDK + `Pixel_10` AVD).
+- **W0** `lane/android3-pairing-bootstrap` @ `0334d2a`: pinned OkHttp `5.4.0`, `kotlinx-serialization-json`
+  `1.11.0` (no compiler plugin), test-only `mockwebserver3` + `okhttp-tls` `5.4.0`; bundled both accepted
+  Hue CA roots to `res/raw/` (SHA-256 re-verified). → integration post-W0 `2c0178c2`.
+- **W1** parallel from `2c0178c2`: `lane/android3-pairing-protocol` @ `ea9610c` (pure JSON
+  request/response/config contracts via kotlinx `JsonElement`; +39 tests) and `lane/android3-pairing-tls`
+  @ `0a01b32` (pinned-CA trust manager, RFC 2253 leaf-CN identity, SAN-less `HostnameVerifier`; +35 unit
+  + 1 instrumented fingerprint test). Merged both `--no-ff` → integration post-W1 `ea212db7`.
+- **W2** from `ea212db7`: `lane/android3-pairing-transport` @ `c829b92` (`HuePairingClient` +
+  `OkHttpHuePairingClient`: HTTPS-only, no redirects, no POST retry, 64 KiB-bounded bodies, 10 s timeout,
+  `HttpUrl`; config→identity check before POST; typed outcomes; MockWebServer3 + test-cert tests, +15).
+  Merged `--no-ff` → integration final `142ca71`.
+
+### Working
+- Public, tested, non-UI pairing foundation under `core/hue/pairing/{protocol,tls,transport}` consumable
+  by a later Setup/persistence batch via `OkHttpHuePairingClient.fromContext(context)`.
+
+### Left
+- NOT merged to `main` — awaiting explicit human go-ahead. No Setup UI, app/nav, discovery, credential
+  write, token persistence, or live bridge traffic was added (deliberately out of Batch 3 scope).
+
+### Validation
+- Integrated gate on `142ca71`: `./gradlew testDebugUnitTest lintDebug assembleDebug` → BUILD SUCCESSFUL,
+  unit **173/0**; `connectedDebugAndroidTest` on the single `Pixel_10` (serial) → **37/0** (34 pre-existing
+  + 3 new `HueRootCertificatesTest` methods that verify the bundled roots' subjects + SHA-256 fingerprints
+  on-device); `git diff --check` clean.
+- Boundary audit: all 28 changed files within Batch 3 globs; zero edits outside (no Setup/app/discovery/
+  credentials/manifest/theme). Prohibited-pattern scan clean (no trust-all, no blanket-true verifier, no
+  emitted `generateclientkey`, no `clientkey`/credential persistence, no secret logging). No deviations;
+  no new decision required.
+
+### Gotchas
+- `javax.naming`/`LdapName` is absent on Android — the TLS lane uses a self-contained RFC 2253 DN
+  tokenizer for structured CN extraction (not `split(",")`).
+- OkHttp 5.4.0 exposes `Response.body`/`code`/`handshake` + `Handshake.peerCertificates` as `val`
+  properties (the `fun` forms are deprecated). MockWebServer3 5.4.0 is builder-based, `useHttps(ssf)` takes
+  one arg, `MockWebServer` is `Closeable` (`close()`, no `shutdown()`), `RecordedRequest` uses
+  `.method`/`.target`/`.url`/`.body` (no `.path`).
+- Lane worktrees live under `/Users/brianbean/Desktop/cg-b3-wt/` (kept for the human's review; remove with
+  `git worktree remove` after merge/abandon). The `Pixel_10` AVD was booted headless for the connected run.
+
+---
+
+## 2026-06-29 - [Codex] Accept pairing contract and prepare Batch 3 foundations
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Recorded the human's explicit D-001/D-002/D-012 acceptance and marked D-001/D-002/D-011/D-012
+  ACCEPTED. Added the accepted pairing security contract to `AGENTS.md`.
+- Reviewed current `origin/main` @ `7ed6468` and prepared the READY three-wave Batch 3 manifest plus
+  `docs/coordination/prompts/parallel-batch-3-launch.md` under D-013.
+
+### Working
+- Batch 3 serializes dependency/CA bootstrap, parallelizes protocol and TLS/identity foundations, then
+  serially integrates an HTTPS transport. It uses the two locally verified CA files and structured JSON.
+
+### Left
+- Batch 3 is ready but not launched. Claude may execute the launch prompt; final integration-to-main
+  merge still requires explicit human go-ahead. Setup UI/persistence/physical pairing are not in Batch 3.
+
+### Validation
+- Docs-only; manifest reviewed against `origin/main` @ `7ed6468`; dependency versions verified against
+  official release repositories; `git diff --check` clean. No Android source or certificate bytes changed.
+
+### Gotchas
+- The docs branch does not contain Batch 2 source, so all Batch 3 source/path review used Git objects from
+  `origin/main`, not the docs-branch working tree.
+
+## 2026-06-29 - [Codex] Store and verify supplied Hue CA bundle
+
+### Branch
+- `docs/parallel-agent-pipeline`; certificate files remain outside Git.
+
+### Did
+- Created `/Users/brianbean/Desktop/chromaglow-hue-ca/` with the exact supplied two-certificate bundle,
+  individually split CA files, and `VERIFICATION.md`.
+- Verified two certificates, file/fingerprint hashes, validity, EC keys, critical `CA:TRUE` constraints,
+  certificate-signing usage, and self-signatures. Recorded non-secret metadata in the decision log.
+
+### Working
+- `root-bridge` exactly matches the issuer profile observed on the current Hue bridge leaves. The bundle
+  also contains the newer self-signed `Hue Root CA 01` through 2050.
+
+### Left
+- Explicit human/Codex acceptance of the recorded CA-signed-only TLS/identity contract. D-001/D-002 stay
+  DEFERRED and no Batch 3 prompt exists until acceptance.
+
+### Validation
+- OpenSSL parsing and self-signature verification passed for both CA certificates; `git diff --check`
+  clean. Certificate bytes were not added to Git.
+
+### Gotchas
+- The app will eventually need the CA bytes as a runtime trust resource, but committing/bundling them is
+  an implementation action after acceptance, not part of this evidence step.
+
+## 2026-06-28 - [Codex] Review gated pairing evidence closure
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Reviewed Claude's gated D-012 result at `46d9cda`, marked the closure prompt completed, and updated
+  canonical next-step pointers. Recorded that the actual official CA file, not metadata alone, is needed.
+
+### Working
+- The CA-signed-only/fail-closed legacy policy is the recommended MVP stance. Omitting
+  `generateclientkey` is acceptable for the non-Entertainment MVP; `CLIENT_KEY` persistence stays out.
+
+### Left
+- Human downloads the official `root-bridge` CA `.pem` through an authenticated Hue developer session
+  and makes the actual file available locally outside Git. Then Claude verifies only that artifact and
+  returns for explicit acceptance. D-001/D-002 remain DEFERRED; no Batch 3 prompt exists.
+
+### Validation
+- Docs-only review; `git diff --check` clean. No portal credentials, certificate bytes, source, or device
+  access.
+
+### Gotchas
+- A hash and certificate summary cannot substitute for the trust-anchor bytes the app must eventually
+  bundle; do not close D-001 without the official file.
+
+## 2026-06-28 - [Claude] Android pairing official-evidence closure (gated; blockers stay DEFERRED)
+
+### Branch
+- `docs/parallel-agent-pipeline`. Docs/evidence only — no source, tests, Gradle, manifest, deps, probe,
+  pairing, tokens, or Batch-3 work.
+
+### Did
+- Executed `docs/coordination/prompts/android-pairing-evidence-close.md`. Preflight passed (`origin/main`
+  @ `7ed6468`; docs base `a92fa6c` in history; tree clean; committed probe evidence still redacted).
+- Attempted the official root-CA byte-verification. The authoritative Hue "Using HTTPS" page (which holds
+  the downloadable Signify `root-bridge` CA `.pem`) is **login-gated** — fetched it and got only a login
+  form. No authenticated Hue developer session is available; per the prompt I did not request/automate
+  portal credentials, and community transcriptions are disallowed as the source of truth.
+- Appended an "Official evidence closure" section to `docs/android/android-pairing-tls-identity-decision.md`
+  (gated-access result, the exact root-CA verification procedure to run once the file is supplied, the
+  evidence already closed, the final proposed TLS/identity contracts, the CA-signed-only legacy policy, the
+  non-circular manual-endpoint identity rule, the `generateclientkey`=omit decision, recovery behavior, and
+  the one remaining gate). Appended Claude turns under D-001/D-002/D-011/D-012.
+
+### Working
+- Everything closable without the portal is closed (public official Get Started + the prior approved
+  probe). The proposal is coherent and primary-source-grounded.
+
+### Left
+- **NOT marked READY FOR ACCEPTANCE.** D-001/D-002 stay DEFERRED; D-011/D-012 DISCUSSING. **One exact next
+  action:** a human with a Hue developer session downloads the official root-CA `.pem` from
+  `develop/application-design-guidance/using-https/` and provides it (file, or its SHA-256 +
+  subject/issuer/serial/validity/key fields). Then I complete the recorded verification (confirm
+  subject == probed leaf issuer `CN=root-bridge`), Codex + human accept, and a Batch 3 manifest may be
+  drafted. No code authorized until then.
+
+### Validation
+- Docs-only; `git diff --check` clean; AGENTS.md unchanged (no stated fact disproven). No credentials
+  requested, stored, or committed.
+
+### Gotchas
+- The official `.pem` is only behind the Hue developer login; there is no public official download, and the
+  bridge does not serve its root in the TLS handshake — so the CA must come from the authenticated portal
+  (or a human-provided file), not from the device or a community mirror.
+
+## 2026-06-28 - [Codex] Prepare final Android pairing evidence-closure prompt
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Added `docs/coordination/prompts/android-pairing-evidence-close.md`, recorded D-012, and updated the
+  canonical current-state pointers. Marked the completed D-011 preparation prompt historical.
+
+### Working
+- Claude can now run one bounded docs-only packet to verify the official `root-bridge` CA and Hue
+  contracts through an existing authenticated portal session, then return an acceptance proposal.
+- The packet proposes CA-signed-only MVP support with fail-closed firmware-update guidance for legacy
+  self-signed bridges; it forbids TOFU, permissive fallback, source edits, and Batch 3 preparation.
+
+### Left
+- Claude evidence closure, then explicit Codex/human acceptance. D-001/D-002 remain DEFERRED and D-011 /
+  D-012 remain DISCUSSING; no pairing code is authorized.
+
+### Validation
+- Docs-only; `git diff --check` clean. No bridge probe, credentials, source, or runtime changes.
+
+### Gotchas
+- Portal credentials/session data and the temporary CA file must stay outside Git. If authenticated
+  access is unavailable, Claude must stop with the exact missing access rather than use a community CA.
+
+## 2026-06-28 - [Claude] Android pairing read-only bridge probe (D-001/D-002 evidence)
+
+### Branch
+- `docs/parallel-agent-pipeline`. Docs-only; no source/Gradle/manifest/deps; no pairing, tokens, state
+  change, or reboot. Device IPs / MACs / bridge IDs kept out of git (scratchpad only).
+
+### Did
+- With explicit human approval (read-only LAN discovery + `openssl s_client` + unauthenticated
+  `/api/0/config` only), probed **two** real `BSB002` bridges (apiversion 1.77.0) to close the deferred
+  D-001/D-002 evidence. Appended a redacted "Empirical probe addendum" to
+  `docs/android/android-pairing-tls-identity-decision.md` and probe turns under D-001/D-002/D-011.
+
+### Working
+- Confirmed on real hardware: current bridges are **CA-signed by the Signify `root-bridge` CA** (not
+  self-signed); **leaf CN == bridgeid (case-insensitive)**; **leaf has NO SAN** (so Android's default
+  SAN-only verifier fails → a custom CN==bridgeid check + bundled Signify root CA is required); **TLS 1.2**;
+  leaf valid to 2038; only the leaf is served. `bridgeid` is 16-hex, MAC-derived (EUI-64 `FFFE`),
+  UPPERCASE in `/api/0/config`, agreeing across cert CN / config / mDNS TXT / IPv6 link-local → stable
+  across DHCP by construction. `/api/0/config` is unauthenticated (200), non-secret subset only.
+
+### Left
+- **D-001/D-002 stay DEFERRED; D-011 stays DISCUSSING.** Remaining before acceptance: (1) byte-verify the
+  official Signify root-CA `.pem` (issuer DN `CN=root-bridge` now known; page login-gated); (2) legacy
+  self-signed support stance; (3) explicit human/Codex acceptance. Reboot/factory-reset stability not
+  exercised (reboot out of scope; inferred stable from MAC-derivation). Batch 3 only after acceptance.
+
+### Validation
+- Read-only probe; no credentials, no state change. `git diff --check` clean; committed files scanned to
+  ensure no IP/MAC/bridge-id leaked.
+
+### Gotchas
+- Cert CN case is NOT consistent across bridges (one upper, one lower) while `/api/0/config.bridgeid` is
+  uppercase → the identity comparison MUST be case-insensitive (normalize both to uppercase).
+- The bridge serves only its leaf in the TLS handshake (no chain) → the Signify root CA must be bundled
+  out-of-band; cannot be scraped from the handshake.
+
+## 2026-06-28 - [Codex] Review Android pairing decision proposal
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Reviewed Claude's D-001/D-002 proposal at `02c7271`, rechecked the accessible official Hue and
+  Android security sources, and appended the Codex review to the decision doc and Decision Log.
+- Clarified that the link button authorizes application-key creation but does not authenticate TLS,
+  and that a `bridgeid` learned only through the connection under test cannot independently bootstrap
+  that connection's identity. Added direct primary-source links missing from the proposal.
+
+### Working
+- The proposed Signify-chain + bridge-identity direction remains a candidate. The docs now distinguish
+  authorization, server authentication, and durable bridge identity as separate guarantees.
+
+### Left
+- D-001/D-002 remain DEFERRED and D-011 remains DISCUSSING. Closing evidence still requires the
+  login-gated official Hue certificate/configuration material and/or a human-approved redacted bridge
+  certificate/config probe. `generateclientkey` also remains proposed pending official evidence.
+
+### Validation
+- Docs-only; `git diff --check` clean. No application source, credentials, or network probes.
+
+### Gotchas
+- A real Hue bridge certificate can validate to a trusted Signify root yet still require an independent
+  rule binding the selected physical bridge to the certificate identity; do not derive both sides of
+  that comparison solely from the same untrusted first connection.
+
+## 2026-06-28 - [Claude] Android pairing decision packet (D-001/D-002 proposal)
+
+### Branch
+- `docs/parallel-agent-pipeline`. Docs-only; no Android/iOS source, Gradle, manifest, deps, or network
+  changes; no bridge probe; no Batch 3 branches.
+
+### Did
+- Executed `docs/coordination/prompts/android-pairing-decisions-prepare.md` (planning/research only) against
+  `origin/main` @ `7ed6468`. Preflight: SHA pinned, D-011 + prompt present, and re-verified from source that
+  `BridgeEndpoint` is name/host/port only (`endpointKey` = host:port, routing-only) and
+  `BridgeCredentialAlias` requires a stable `bridgeId` matching `^[A-Za-z0-9_-]+$`.
+- Ran a primary-source research workflow (4 researchers — Hue TLS, bridge identity, pairing/`clientkey`,
+  Android TLS — + 1 adversarial evidence reviewer). The reviewer confirmed a safe proposal is possible but
+  downgraded the Hue-TLS specifics because the official "Using HTTPS"/Configuration-API pages are
+  login-gated and unreadable here.
+- Wrote the coupled D-001/D-002 proposal + C (`generateclientkey`) recommendation into
+  `docs/android/android-pairing-tls-identity-decision.md` → "Resolution proposal" (evidence table with
+  fact/community/inference labels, threat model, proposed contracts, alternatives rejected, recovery,
+  validation matrix, unresolved-evidence + how-to-close). Appended Claude turns under D-001 and D-002 and a
+  review turn under D-011; prior turns left intact.
+
+### Working
+- Proposal direction is primary-source-grounded: first contact via the physical link-button flow; trust by
+  Signify-CA chain + cert-identity == `bridgeid`, never trust-all/blanket-true; canonical identity = the
+  bridge-reported `bridgeid` (16-hex already fits the alias charset — no alias change); `clientkey` is
+  Entertainment-only, so omit `generateclientkey` for the MVP.
+
+### Left
+- **D-001/D-002 remain DEFERRED; D-011 remains DISCUSSING** — proposal awaits Codex/human review. To close:
+  (1) read the login-gated official pages with a Hue developer account + byte-verify the root-CA `.pem`;
+  (2) human-approved real-bridge probe (`openssl s_client` for chain/CN/**SAN**/validity; `/api/0/config`
+  for `bridgeid` format; reboot/DHCP change for `bridgeid` stability). A Batch 3 implementation
+  manifest/launch comes only after both blockers are explicitly accepted.
+
+### Validation
+- Docs-only; `git diff --check` clean. No code, no tests, no probe.
+
+### Gotchas
+- The decisive Android wrinkle: default Android hostname verification follows RFC 6125 (matches SAN,
+  ignores CN), but Hue's identity is reportedly in the cert CN (== `bridgeid`). Whether the leaf carries a
+  usable SAN decides Network-Security-Config-CA-pinning vs a custom verifier — unconfirmed, so DEFERRED.
+- `bridgeid` durability across DHCP/reboot/factory-reset is the core D-002 premise but is currently
+  inference (MAC-derived EUI-64), not confirmed from official docs.
+
+## 2026-06-28 - [Codex] Prepare Android pairing decision-resolution packet
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Added a Claude-ready, planning-only prompt for the next critical-path work: resolve D-001 safe TLS
+  bootstrap and D-002 canonical bridge identity from primary evidence before defining Batch 3.
+- Recorded D-011 and linked the prompt from the canonical agent and pipeline current-state sections.
+
+### Working
+- Claude Code can execute `docs/coordination/prompts/android-pairing-decisions-prepare.md` directly.
+  The packet produces a reviewable docs proposal and explicitly forbids runtime code or live bridge
+  probes without human approval.
+
+### Left
+- Claude evidence pass, then Codex/human review. Pairing and credential-persistence remain blocked;
+  no Batch 3 manifest or launch prompt exists yet.
+
+### Validation
+- Docs-only; `git diff --check` clean. Current endpoint/credential contracts re-read from `main`.
+
+### Gotchas
+- D-001 and D-002 are coupled: identity evidence may participate in TLS authentication, so resolving
+  or implementing them in independent parallel lanes would create an unsafe contract gap.
+
+## 2026-06-28 - [Codex] Verify and reconcile consolidated pipeline docs
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Verified the consolidated agent context against `origin/main` @ `7ed6468` and the Batch 1/2 Git
+  history. Recorded D-010 and corrected the remaining summary-only inconsistencies: the canonical
+  merge/shared-file ownership rules, the generic `integration/parallel-batch-N` lifecycle target, and
+  the Batch 2 launch/correction prompt headers that still said the batch had not landed.
+
+### Working
+- Agent-facing current-state summaries now agree that Batch 2's corrected integration `9411d81` is on
+  `main` @ `7ed6468`; lane agents return handoffs while the batch owner serially owns shared docs.
+
+### Left
+- No batch is in flight. D-001 and D-002 remain the only active blockers.
+
+### Validation
+- Docs-only review; `git diff --check` clean. No source or historical Decision Log turn changed.
+
+### Gotchas
+- Historical prompt bodies retain their pinned execution bases by design; only their status headers
+  were updated to show the final landing.
+
+## 2026-06-28 - [Claude] Consolidate coordination docs (prune historical batch detail)
+
+### Branch
+- `docs/parallel-agent-pipeline`.
+
+### Did
+- Re-consolidated the agent-facing docs so Codex reads the full current scope with no stale content,
+  now that Batches 1 & 2 are on `main` @ `7ed6468`:
+  - `AGENTS.md` → "Android Current State" rewritten as the single authoritative inventory of what's
+    shipped on `main` (Setup/Dashboard/RoomDetail/Scenes/Settings + app-owned demo state) plus the full
+    durable code-contract list (model guards, lightCount invariant, scene `bridgeId`, fixture surface,
+    state ownership + bridge-aware callbacks, `when`-router, `appVersion` literal, single-AVD serial).
+  - `docs/coordination/parallel-agent-pipeline.md`: removed the obsolete §4 "Original Pilot Draft";
+    pruned the resolved Open Questions (Q1–Q9); condensed the executed §7/§8 manifests to compact
+    COMPLETE records (keeping the execution-result evidence); refreshed §1 registry statuses to
+    `merged → main`; generalized §3 to `batch-N`; added a current-state line to the Status header and a
+    new §9 "Current Pipeline State & Next Steps" with explicit hooks for Codex to verify and to propose
+    D-010+ adjustments / a Batch 3. Decision Log turns (D-001–D-009) were preserved verbatim.
+  - `DEVLOG.md` snapshot consolidated; dropped the superseded pre-pilot "17 connected tests" baseline.
+
+### Working
+- Docs reflect the current `main` (both batches merged); historical/planning scaffolding pruned; the
+  Decision Log audit trail and per-batch result records are intact.
+
+### Left
+- No code change. Next substantive work is Codex review / a Batch 3 proposal as a new Decision Log entry
+  (see pipeline §9). D-001/D-002 remain the active blockers.
+
+### Validation
+- Docs-only; `git diff --check` clean. No Android source touched.
+
+### Gotchas
+- The pipeline Decision Log is append-only ("never rewrite another agent's turn"); consolidation pruned
+  only the operational scaffolding (manifests/draft/resolved questions), never the dated decision turns.
+
+## 2026-06-28 - [Claude] Merge parallel Batch 2 to main
+
+### Branch
+- `main` @ `7ed6468` (merged `--no-ff` from `integration/parallel-batch-2` @ `9411d81`; pushed).
+
+### Did
+- On the human collaborator's go-ahead, fetched the latest docs branch (`3b63d52`, Codex's "verify
+  corrected Batch 2") and merged the D-009-corrected Batch 2 integration into `main`. `main` was an
+  ancestor of the integration branch, so the merge was clean (no conflicts). Pushed `origin/main`
+  `a3fe54f..7ed6468`. Confirmed the room-detail/scenes/settings sources are present on `main`.
+- Recorded the landing: pipeline §8 + §1 registry context, AGENTS.md one-line state + Android Current
+  State, and the DEVLOG snapshot now read "merged to `main` @ `7ed6468`".
+
+### Working
+- Batch 2 (room-detail / scenes / settings feature screens, nav integration, and the D-009
+  persist-across-navigation fix) is on `main`. Pre-merge gate was green (unit 84/0, connected 34/0 on
+  `Pixel_10`) and independently verified by Codex; not re-run at merge time (clean fast-forwardable merge
+  of already-validated, twice-verified commits).
+
+### Left
+- Both Android pilot batches are on `main`. Next: Batch 3 scoping when desired (the pipeline can fan out
+  further feature packages + a serialized nav wave, same as Batch 2). Pairing/persistence remain blocked
+  by D-001/D-002.
+
+### Validation
+- Pre-merge: `origin/integration/parallel-batch-2` confirmed `9411d81`; `main` `a3fe54f`; ancestor check
+  clean. Post-merge: Batch 2 sources verified present on `main` @ `7ed6468`.
+
+### Gotchas
+- The SSH identity can push `main` directly (the documented "agent gh account not a collaborator" limit
+  applies only to the `gh` bot, not the local SSH key); both Batch 1 and Batch 2 final merges were pushed
+  this way after explicit user go-ahead.
+
+## 2026-06-28 - [Codex] Verify corrected Batch 2 for final merge
+
+### Branch
+- Docs review: `docs/parallel-agent-pipeline`
+- Reviewed integration: `integration/parallel-batch-2` @ `9411d81`
+
+### Did
+- Reviewed the D-009 correction and confirmed app-owned room/light/scene state survives destination disposal and reopening.
+- Confirmed the correction changed only the three allowed files and the persistence E2E covers room, light, and scene continuity.
+- Added final Codex verification evidence to D-009 and §8.
+
+### Working
+- Batch 2 is merge-ready; `main` remains unchanged pending explicit authorization.
+
+### Left
+- Merge `integration/parallel-batch-2` @ `9411d81` to `main` when authorized.
+
+### Validation
+- `testDebugUnitTest` passed 84/84; `lintDebug` and `assembleDebug` passed.
+- `connectedDebugAndroidTest` passed 34/34 on headless `Pixel_10`.
+- `git diff --check 4c74beb..9411d81` passed.
+
+### Gotchas
+- Demo callback matching currently relies on globally unique resource IDs; include `bridgeId` in lookup predicates before introducing multi-bridge demo fixtures.
+
+## 2026-06-28 - [Claude] Resolve D-009 — hoist Batch 2 demo state across navigation
+
+### Branch
+- Correction lane: `lane/android2-state-ownership-correction` @ `16810a1` (off `integration/parallel-batch-2` @ `4c74beb`).
+- Corrected integration: `integration/parallel-batch-2` @ `9411d81` (pushed).
+- Not merged to `main` — eligible (D-009 resolved); awaits the human collaborator's go-ahead.
+
+### Did
+- Ran `parallel-batch-2-corrections.md` after preflight (origin integration still `4c74beb`; D-009 +
+  prompt on the docs branch). One serialized correction lane resolved D-009 (demo mutations were lost on
+  navigation because the `when`-router disposes inactive destinations and screen-local `remember{}` state
+  reseeded from immutable `DemoFixtures`):
+  - Hoisted demo room/light/scene state into `ChromaGlowApp` as `mutableStateListOf`, seeded from
+    `DemoFixtures` only on entering demo mode and cleared on every return-to-Setup (Dashboard back +
+    Settings `onExitDemo`).
+  - Consumed the existing bridge-aware callbacks: added `onRoomToggle`/`onRoomBrightnessChange` to
+    `DashboardPlaceholderScreen` (removed its screen-local reseed; preserved public params + Switch/Slider/
+    status text), and wired `RoomDetailScreen`'s `(bridgeId, lightId, value)` and `ScenesScreen`'s
+    `(bridgeId, sceneId)` exclusive-activation callbacks into the app-owned state.
+  - Extended `NavIntegrationE2ETest` to prove persistence: change a light → back → reopen room → assert it
+    survived; activate a scene → back → reopen Scenes → assert still active + previous inactive; plus a
+    dashboard-toggle-survives-reopen test. `DemoModeSession`/`DemoFixtures` and all Wave 1 internals
+    unchanged; in-memory only.
+- An independent adversarial verifier confirmed all D-009 acceptance checks. Verified only the 3 allowed
+  files changed, merged `--no-ff` into `integration/parallel-batch-2`, re-ran the full gate, pushed.
+
+### Working
+- Corrected gate all green: `testDebugUnitTest` **84/0** · `lintDebug` clean · `assembleDebug` ok ·
+  `connectedDebugAndroidTest` **34/0** on the headless `Pixel_10`.
+
+### Left
+- Human collaborator: final merge of `integration/parallel-batch-2` @ `9411d81` → `main` (promotion gate
+  met; D-009 resolved). Lane/integration branches retained; worktrees cleaned up.
+
+### Validation
+- Preflight: `origin/integration/parallel-batch-2` confirmed `4c74beb`; D-009 present.
+- Lane self-validated the full gate on-device; batch owner re-ran `testDebugUnitTest lintDebug
+  assembleDebug connectedDebugAndroidTest` on the merged result. `git diff --check` clean.
+
+### Gotchas
+- `ChromaGlowApp` is the single owner of in-memory demo state; feature screens keep their own internal
+  `remember{}` for in-screen feedback but re-seed from app-owned state on reopen (the `when`-router
+  disposes them), so the app shell drives persistence.
+- Bridge-aware callbacks pass `bridgeId` but matching is by `roomId`/`lightId`/`sceneId` (demo ids are
+  unique); a future multi-bridge fixture would need bridge-scoped matching.
+
+## 2026-06-28 - [Codex] Batch 2 post-execution review
+
+### Branch
+- Docs review: `docs/parallel-agent-pipeline`
+- Reviewed integration: `integration/parallel-batch-2` @ `4c74beb`
+
+### Did
+- Verified all four lane boundaries and inspected the integrated Android source/tests.
+- Independently reran unit tests, lint, assembly, and all 33 connected tests successfully.
+- Added D-009: screen-local demo mutations reset when navigation removes Dashboard, RoomDetail, or Scenes from composition because the app shell ignores their state callbacks.
+- Added a focused serialized correction prompt requiring app-owned in-memory state and reopen-after-navigation E2E assertions.
+
+### Working
+- Batch 2 remains pushed and otherwise green; no correction has been merged yet.
+
+### Left
+- Run `docs/coordination/prompts/parallel-batch-2-corrections.md`.
+- Review corrected integration evidence before merging Batch 2 to `main`.
+
+### Validation
+- Detached review of `4c74beb`: `testDebugUnitTest lintDebug assembleDebug` passed.
+- `connectedDebugAndroidTest` passed 33/33 on headless `Pixel_10`.
+- `git diff --check a3fe54f..4c74beb` passed.
+
+### Gotchas
+- The existing E2E exercises mutations only while each destination remains composed; green tests do not currently prove session-state continuity across navigation.
+
+## 2026-06-28 - [Claude] Execute parallel Batch 2 — two-wave feature + nav integration
+
+### Branch
+- Integration: `integration/parallel-batch-2` @ `4c74beb` (forked from `main` @ `a3fe54f`; pushed).
+- Wave 1 lanes: `lane/android2-roomdetail` @ `a3cd34a`, `lane/android2-scenes` @ `fbf8a71`,
+  `lane/android2-settings` @ `174ddaa`. Wave 2: `lane/android2-nav-integration` @ `1a419d2`.
+- Not merged to `main` — promotion gate satisfied; awaits the human collaborator's go-ahead.
+
+### Did
+- Executed `parallel-batch-2-launch.md` exactly as written after confirming the preflight gates
+  (origin/main still `a3fe54f`; D-008 ACCEPTED; clean slate).
+- Wave 1 (3 concurrent sub-agents, disjoint feature packages, no nav edits): `RoomDetailScreen`
+  (per-light Switch/Slider, bridge-aware `(bridgeId, lightId, …)` callbacks, slider clamped 1..100),
+  `ScenesScreen`/`SceneRow` (exclusive activation, `(bridgeId, sceneId)` callback), `SettingsScreen`
+  (`onExitDemo`, `appVersion` literal — no BuildConfig). Each compile/unit/lint-checked in isolation.
+- Merged Wave 1 into `integration/parallel-batch-2` and ran the serialized connected gate on the shared
+  `Pixel_10`. It caught a real on-device failure isolated to Lane S (active-indicator assertion against
+  a merged `Surface` semantics node); re-dispatched the scenes lane, which fixed it in-lane with
+  `useUnmergedTree = true` (source untouched) and re-validated connected green.
+- Wave 2 (serialized): extended `ChromaGlowDestination` + the `when`-router to reach all three screens
+  with demo data; added additive dashboard entry points (a discrete tappable room-name affordance and
+  Scenes/Settings buttons) that left `DemoRoomRow`'s Switch/Slider/status-line text intact; wrote
+  `NavIntegrationE2ETest` exercising behavior (toggle a light, change brightness, exclusive scene
+  activation, exit demo → Setup). Merged into integration.
+
+### Working
+- Final integrated gate all green: `testDebugUnitTest` **84/0** · `lintDebug` clean · `assembleDebug`
+  ok · `connectedDebugAndroidTest` **33/0** on the headless `Pixel_10` (incl. the Batch 1
+  `ChromaGlowAppTest`/`DemoRoomControlsTest`, kept green by additive-only dashboard changes).
+
+### Left
+- Human collaborator: final merge of `integration/parallel-batch-2` → `main` (promotion gate met —
+  Lane N E2E green, no unwired UI). Lane/integration branches retained; worktrees cleaned up.
+
+### Validation
+- Per-lane (Wave 1): `testDebugUnitTest lintDebug assembleDebugAndroidTest` (compile/unit/lint, no
+  emulator). Connected validation run serially by the batch owner on the integrated result.
+- Wave 2 + integrated: full gate `testDebugUnitTest lintDebug assembleDebug connectedDebugAndroidTest`.
+- Boundary audit: every lane changed only its allowed globs; Wave 1 disjoint; only Wave 2 touched the
+  §2 nav hotspots.
+
+### Gotchas
+- `Surface(onClick = …)` sets `MergeDescendants = true`, so a child's `testTag` is only an independently
+  "displayed" node in the UNMERGED semantics tree — connected Compose tests on such children must use
+  `onNodeWithTag(tag, useUnmergedTree = true)`.
+- Per the single-AVD rule, Wave 1 lanes only compile-checked their androidTest; the batch owner ran all
+  connected validation serially on `emulator-5554`. The workflow-agent emulator is reaped at run end, so
+  the owner re-boots `Pixel_10` for each owner-run gate.
+
+## 2026-06-28 - [Codex] Approve Batch 2 manifest and launch prompt
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Adversarially reviewed the Batch 2 two-wave manifest against `main` @ `a3fe54f` and accepted D-008.
+- Required bridge-aware room-light and scene-activation callbacks so future multi-bridge callers can route correctly.
+- Resolved Q6–Q9: parameter-injected feature models, existing `when(destination)` router, explicit Exit Demo Mode semantics, and serialized connected tests on the shared AVD.
+- Tightened the Wave 2 E2E to exercise light controls, exclusive scene activation, Settings back, and Exit Demo Mode rather than navigation alone.
+- Marked §8 and `parallel-batch-2-launch.md` execution-ready and synchronized canonical status files.
+
+### Working
+- Claude can execute Batch 2 from the ready launch prompt while `origin/main` remains pinned at `a3fe54f`.
+
+### Left
+- Run `docs/coordination/prompts/parallel-batch-2-launch.md`.
+- Stop and re-pin if `origin/main` advances before launch.
+
+### Validation
+- Docs-only review; `git diff --check` passed before publication.
+- No Android runtime tests were needed because no Android source changed.
+
+### Gotchas
+- Wave 1 code may run concurrently, but the batch owner must serialize connected tests on the single `Pixel_10` AVD.
+
+## 2026-06-28 - [Claude] Merge Batch 1 to main + draft Batch 2 manifest
+
+### Branch
+- `main` @ `a3fe54f` (corrected Batch 1 merged `--no-ff`; pushed).
+- `docs/parallel-agent-pipeline` (this handoff + §8 Batch 2 manifest + D-008 + Batch 2 launch prompt).
+
+### Did
+- Merged corrected Batch 1 (`integration/parallel-batch-1` @ `0d7c218`) into `main` `--no-ff` and pushed
+  → `main` @ `a3fe54f`. (The SSH identity has write access; only the `gh` bot account does not.)
+- Ran the prepare prompt `parallel-batch-2-prepare.md` against the actual landed tree and drafted the
+  **Batch 2 manifest** in pipeline §8: base `main` @ `a3fe54f`; two waves — Wave 1 parallel feature
+  packages `lane/android2-roomdetail` / `-scenes` / `-settings` (each Compose-UI-tested against the Batch 1
+  contracts, no nav edits), Wave 2 serialized `lane/android2-nav-integration` owning the §2 nav hotspots +
+  dashboard entry points, wiring + exercising every Wave 1 screen via a connected E2E.
+- Ran an internal 3-lens adversarial review (disjointness/hotspots, real-tree testability, prepare-prompt
+  compliance) and folded the fixes into §8: added §1 registry rows (`android-roomdetail|scenes|settings|
+  nav-shell`) + reconciled `android-dashboard`; pinned `appVersion` off `BuildConfig` (disabled on main);
+  gave Lane N the dashboard androidTest + an additive-only nav/dashboard constraint; fixed the
+  stateless-screen state pattern, slider 1..100 floor, nullable `lightsByRoom[id]` get, and exclusive
+  scene activation. Added Decision Log **D-008** requesting Codex review and Open Questions **Q6–Q9**.
+- Created `docs/coordination/prompts/parallel-batch-2-launch.md` (DRAFT, gated on D-008).
+- Pruned stale status across AGENTS.md, the DEVLOG snapshot, and the batch-1/batch-2 prompt headers
+  (Batch 1 now "merged to main"; Batch 2 "DRAFT pending Codex").
+
+### Working
+- Batch 1 is on `main`. Batch 2 manifest + launch prompt are DRAFT and internally review-clean; awaiting
+  Codex's D-008 adversarial review before any launch.
+
+### Left
+- Codex: review §8 + D-008 + Q6–Q9. Once D-008 is ACCEPTED, flip `parallel-batch-2-launch.md` to `Ready`
+  and execute the two-wave batch.
+- Per §8 promotion gate, `integration/parallel-batch-2` may merge to `main` only after Lane N's connected
+  E2E is green (no unwired UI).
+
+### Validation
+- Batch 1 merge: fast-forwarded local `main` to `origin/main`, merged `--no-ff`, pushed `origin/main`
+  (`defe869..a3fe54f`); Batch 1 files confirmed present on `main`.
+- Batch 2 prep is docs-only (no Android source changed); manifest reviewed by 3 independent agents against
+  the landed `main` tree. `git diff --check` clean before commit.
+
+### Gotchas
+- `BuildConfig` is disabled on `main` (`app/build.gradle.kts` has no `buildConfig = true`); a Settings
+  screen must take `appVersion` as a passed-in string — enabling BuildConfig would be an out-of-scope
+  §2 hotspot edit.
+- Wave 2's dashboard entry points must be additive (discrete `onOpenRoom` affordance; explicit
+  Scenes/Settings buttons) to keep `ChromaGlowAppTest` + `DemoRoomControlsTest` green.
+
+## 2026-06-28 - [Claude] Resolve D-007 — Batch 1 contract corrections
+
+### Branch
+- Correction lane: `lane/android1-contract-corrections` @ `eaa0f49` (off integration `2a156b5`).
+- Corrected integration: `integration/parallel-batch-1` @ `0d7c218` (pushed to origin).
+- Not merged to `main` — awaits the human collaborator's final merge.
+
+### Did
+- Resolved D-007 (Codex's Batch 1 adversarial review) with one serialized correction lane owning only
+  `SceneDisplayModel.kt`, `DemoFixtures.kt`, and their two test files:
+  - Added a non-blank `bridgeId` to `SceneDisplayModel` (`require(bridgeId.isNotBlank())` + a
+    blank/whitespace rejection test) and set every demo scene's `bridgeId = DEMO_BRIDGE_ID`, asserted
+    by a new invariant test — gives scenes explicit cross-bridge routing identity.
+  - Added the missing deterministic demo lights so each room's `lightCount` exactly equals
+    `lightsByRoom[room.id].size` (Bedroom 4, Kitchen 8, Living 5, Office 2) — by ADDING lights, not
+    lowering the established dashboard counts; `rooms` / `DEMO_BRIDGE_ID` left byte-identical.
+  - Added `rooms_lightCountMatchesLightsByRoomSize`, a fixture-consistency test that fails on any
+    room/count mismatch (including a room with no backing fixtures).
+- Ran two independent adversarial verifiers (contract+rigor and build+boundary lenses) before merge —
+  both passed every check. Verified only the four allowed files changed, then merged `--no-ff` into
+  `integration/parallel-batch-1` and pushed it. Marked D-007 RESOLVED and updated §7.
+
+### Working
+- Re-validated integrated gate all green: `testDebugUnitTest` **84/0** failures · `lintDebug` clean ·
+  `assembleDebug` ok · `connectedDebugAndroidTest` **20/0** on the headless `Pixel_10`.
+
+### Left
+- Batch 2 is now unblocked — run `docs/coordination/prompts/parallel-batch-2-prepare.md` (planning
+  only). No Batch 2 manifest/launch prompt exists yet.
+- Human collaborator still performs the final merge of `integration/parallel-batch-1` → `main`.
+
+### Validation
+- Preflight: `origin/integration/parallel-batch-1` confirmed `2a156b5` before correction; D-007 commit
+  `3be8e48` present on the docs branch; toolchain exported.
+- Correction lane: `./gradlew testDebugUnitTest lintDebug assembleDebug` green (84/0).
+- Integrated (post-merge @ `0d7c218`): `testDebugUnitTest lintDebug assembleDebug
+  connectedDebugAndroidTest` all green; `git diff --check` clean.
+
+### Gotchas
+- A whole-file grep of `roomId = "demo-room-*"` shows +1 per room beyond the light count — those are
+  the four scene `roomId` references, not extra lights. Per-light-id counts are exactly 4/8/5/2.
+- `SceneDisplayModel.bridgeId` is required (non-blank); all in-repo callers are the demo fixtures +
+  test (model is otherwise unconsumed), so adding the field broke nothing outside the lane.
+
+## 2026-06-28 - [Codex] Add Batch 1 contract-corrections prompt
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Added `docs/coordination/prompts/parallel-batch-1-corrections.md` to resolve D-007 in one serialized ownership lane.
+- Required explicit scene `bridgeId`, exact room/light fixture-count consistency, focused tests, full integrated Android validation, and corrected integration evidence.
+- Updated the prompt sequence and gated Batch 2 preparation on D-007 resolution.
+
+### Working
+- Claude has a ready-to-run correction prompt based on `integration/parallel-batch-1` @ `2a156b5`.
+
+### Left
+- Run the correction prompt and review Claude's D-007 response.
+- Run Batch 2 preparation only after the corrected integration gate is green.
+
+### Validation
+- Docs-only; `git diff --check` passed before publication.
+
+### Gotchas
+- Both corrections touch the same model/fixture ownership area, so they must remain one lane rather than parallel sub-lanes.
+
+## 2026-06-28 - [Codex] Batch 1 adversarial review
+
+### Branch
+- Docs review: `docs/parallel-agent-pipeline`
+- Reviewed integration: `integration/parallel-batch-1` @ `2a156b5`
+
+### Did
+- Confirmed Batch 1 lane branches are disjoint and the integration handoff records a fully green gate.
+- Added D-007 for two pre-Batch-2 contract gaps: room `lightCount` values disagree with per-room demo fixtures, and `SceneDisplayModel` lacks explicit bridge routing required for cross-bridge activation.
+- Confirmed no Batch 2 manifest or launch prompt exists yet; only the planning prompt is present.
+
+### Working
+- Batch 1 integration remains available on origin for correction and revalidation.
+
+### Left
+- Resolve D-007 on the Batch 1 integration branch and rerun the full Android gate.
+- Then run `parallel-batch-2-prepare.md`, review its draft manifest, and create the Batch 2 launch prompt.
+
+### Validation
+- `git diff --check` passed for the docs review before publication.
+- Runtime tests were not rerun; Claude's integrated handoff records 81 unit tests and 20 connected tests passing.
+
+### Gotchas
+- Do not merge Batch 1 to `main` merely because tests are green; the fixture and routing contracts become user-visible dependencies in Batch 2.
+
+## 2026-06-28 - [Claude] Execute parallel Batch 1 two-lane Android pilot
+
+### Branch
+- Integration: `integration/parallel-batch-1` @ `2a156b5` (forked from `origin/main` @ `defe8691`).
+- Lanes: `lane/android1-domain-models` @ `be51edd`, `lane/android1-dashboard-controls` @ `c25b9ac`.
+- Not merged to `main` — awaits the human collaborator's final merge.
+
+### Did
+- Ran the first real parallel-pipeline batch end to end as batch owner. Re-fetched and re-verified the
+  pinned base `defe8691…`, confirmed the local Android toolchain (JDK 21 / SDK / `Pixel_10` AVD),
+  created `integration/parallel-batch-1` and two isolated lane worktrees off the base.
+- Launched both lanes concurrently (Claude Workflow, one sub-agent per lane, disjoint globs):
+  - L1 `android-models`: added `LightDisplayModel` + `SceneDisplayModel` and additive
+    `DemoFixtures.lights` / `lightsByRoom` / `scenes` with JVM unit tests; kept `rooms` /
+    `DEMO_BRIDGE_ID` byte-identical.
+  - L2 `android-dashboard`: added an on/off `Switch` + brightness `Slider` to `DemoRoomRow` (in-memory
+    session state, no persistence) with a Compose UI test; preserved the status-line text and the
+    `DashboardPlaceholderScreen` public signature so the nav-shell caller still compiles.
+- Independently verified each branch changed only its permitted globs (lanes disjoint, zero §2-hotspot
+  edits), then merged both into the integration branch with `--no-ff` (no conflicts).
+- Marked both registry lanes `merged` and recorded the result in pipeline-doc §7.
+
+### Working
+- Integrated gate all green: `testDebugUnitTest` 81/0 failures · `lintDebug` clean · `assembleDebug` ok ·
+  `connectedDebugAndroidTest` 20/0 failures on the headless `Pixel_10`.
+
+### Left
+- Human collaborator performs the final merge of `integration/parallel-batch-1` → `main` (agent `gh`
+  account is not a repo collaborator). Lane/integration branches and worktrees are retained for review.
+- L1 fixtures (`lights` / `lightsByRoom` / `scenes`) are intentionally unconsumed this batch — Batch 2
+  (room-detail / scenes) is their first consumer; see `parallel-batch-2-prepare.md`.
+
+### Validation
+- Pre-launch: base SHA re-pinned and unchanged; toolchain present; baseline already validated (D-005).
+- Per lane: L1 `./gradlew testDebugUnitTest` green; L2 `./gradlew connectedDebugAndroidTest` green.
+- Integrated: `testDebugUnitTest lintDebug assembleDebug` + `connectedDebugAndroidTest` all green with
+  the manifest toolchain exports.
+
+### Gotchas
+- The workflow sub-agents' background emulator is reaped when the run ends; the batch owner re-boots
+  `Pixel_10` for the integrated connected gate.
+- `LightDisplayModel.brightness` and the L2 `Slider` stay in `1..100` even when a light/room is off
+  (stored level), matching `RoomDisplayModel`'s `require(...)`; a 0 would crash `room.copy(...)`.
+- Two concurrent Gradle builds in separate worktrees share `~/.gradle` cleanly (no corruption); only
+  Lane 2 needs the emulator, so there was no device contention.
+
+## 2026-06-28 - [Codex] Add Batch 2 preparation prompt
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Added `docs/coordination/prompts/parallel-batch-2-prepare.md` as the second orchestration prompt.
+- Made it planning-only and gated on a completed, fully validated Batch 1 integration result.
+- Directed Batch 2 planning toward parallel feature packages followed by one serialized navigation-integration wave.
+
+### Working
+- The prompt is ready to run after Batch 1 completes; it drafts Batch 2 for review without modifying Android source.
+
+### Left
+- Run the Batch 1 launch prompt first.
+- After Batch 1 integration, run the preparation prompt and review its manifest before creating a Batch 2 launch prompt.
+
+### Validation
+- Docs-only; `git diff --check` passed before publication.
+
+### Gotchas
+- Batch 2 cannot be pinned safely until the actual Batch 1 integration SHA and landed model APIs exist.
+
+## 2026-06-28 - [Codex] Add canonical Batch 1 launch prompt
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Added `docs/coordination/prompts/parallel-batch-1-launch.md` as the single ready-to-run Claude orchestration prompt.
+- Linked the prompt from the Batch 1 manifest.
+
+### Working
+- Stable policy remains in `AGENTS.md`; batch-specific prompts can be revised or retired independently.
+
+### Left
+- Feed the prompt file to Claude Code when ready to launch Batch 1.
+
+### Validation
+- Docs-only; `git diff --check` passed before publication.
+
+### Gotchas
+- If `origin/main` advances, re-pin both the manifest and prompt before execution.
+
+## 2026-06-28 - [Codex] Resolve local Android toolchain gate
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Found Android Studio's bundled JDK at `/Applications/Android Studio.app/Contents/jbr/Contents/Home`, the SDK at `~/Library/Android/sdk`, and the existing `Pixel_10` AVD.
+- Updated D-005 from a blocker to a locally resolved validation prerequisite with explicit environment exports.
+- Marked the narrowed two-lane Batch 1 manifest execution-ready and recorded baseline validation evidence.
+- Made coordination files batch-owner-only during execution; lane agents return handoff text instead of concurrently editing `DEVLOG.md` or the manifest.
+
+### Working
+- Batch 1 can launch as two disjoint Claude lanes: domain models/fixtures and dashboard controls.
+- Android CI remains recommended defense in depth but does not block the local pilot.
+
+### Left
+- Create the integration branch and two lane worktrees from the manifest's pinned `origin/main` SHA.
+- Require each lane's listed validation to pass before integration.
+
+### Validation
+- `./gradlew testDebugUnitTest lintDebug assembleDebug` passed with the explicit JDK/SDK environment.
+- `./gradlew connectedDebugAndroidTest` passed all 17 tests on the headless `Pixel_10` AVD.
+- `git diff --check` passed before publication.
+
+### Gotchas
+- `/usr/bin/java` still reports no runtime; lane shells must use the explicit Android Studio `JAVA_HOME`.
+
+## 2026-06-28 - [Claude] Apply Codex review to pipeline doc
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Conceded D-005: withdrew option (c); `testDebugUnitTest` is an AGP task so pure-Kotlin models in the `app` module still need JDK 17 + Android SDK. Recommended option (b): an Android Gradle CI job to gate the integration branch.
+- Accepted D-006 (set ACCEPTED): narrowed Batch 1 to two lanes — L1 `android-models` (domain models + fixtures) and L2 `android-dashboard` (controls on the wired dashboard). Dropped standalone Settings + generic state composables (unwired dead UI).
+- Fixed §2: added `ChromaGlowDestination.kt` and Kotlin `ui/theme/**` as Android collision hotspots; manifest terminology now matches §2.
+- Reconciled §1 registry: `android-models-theme` → `android-models` (theme removed, now a hotspot); mapped both pilot lanes to registry entries with proposed owners.
+- Rewrote §7 to the narrowed two-lane manifest with named lane owners; answered Q4/Q5.
+
+### Working
+- Doc is internally consistent: manifest lanes ↔ registry entries ↔ §2 hotspots all aligned.
+
+### Left
+- Codex to review this updated doc.
+- Human decision on D-005 (provision local JDK 17 + Android SDK, or stand up Android CI). Nothing executes until then.
+
+### Validation
+- Docs-only; `git diff --check` clean.
+
+### Gotchas
+- L1 is unconsumed this batch — justified only as independently unit-tested foundation Batch 2 needs; two lanes is the minimum to actually rehearse a parallel merge.
+
+## 2026-06-28 - [Codex] Batch 1 manifest review for Claude
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Appended a Codex response to D-005: pure Kotlin in the Android Gradle module still requires a JDK and Android SDK, while Compose instrumentation validation additionally requires an emulator/device runner.
+- Added D-006 proposing a two-lane first pilot: domain models/fixtures plus controls on the already-wired dashboard.
+- Responded to Q4/Q5: hold code lanes until equivalent validation exists and defer unwired Settings/state-component work until it has real callers.
+- Requested Claude review of missing per-lane owners, registry mapping, and inconsistent collision-hotspot terminology.
+
+### Working
+- Claude's four-lane manifest remains a non-approved draft; no worktree should be created from it.
+- D-005 and D-006 are `DISCUSSING` pending Claude/human response.
+
+### Left
+- Claude to weigh in on the narrower pilot and manifest corrections in the shared Decision Log.
+- Provision a local Android toolchain or equivalent CI before approving code-writing lanes.
+
+### Validation
+- Docs-only review; `git diff --check` passed before publication.
+
+### Gotchas
+- A basic Android Gradle CI job does not exercise `connectedDebugAndroidTest`; Compose behavior tests need an emulator/device runner or a deliberately revised test strategy.
+
+## 2026-06-28 - [Claude] Batch 1 manifest draft (for Codex review)
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Investigated current Android tree at `origin/main` @ `defe869`: dashboard is read-only, nav has only Setup/Dashboard, no Light/Scene model, no Settings/room-detail/state components → identified genuine unlanded, non-blocked work.
+- Appended §7 "Batch 1 Manifest — DRAFT" to `docs/coordination/parallel-agent-pipeline.md`: 4 fully-parallel Android lanes (domain-models, dashboard-controls, settings, ui-states) with exact globs, acceptance criteria, forbidden files, and a §5 gate self-check. Zero collision-hotspot edits; nav wiring + room-detail/scenes explicitly deferred to Batch 2.
+- Surfaced new blocker D-005 (no local JDK/Android toolchain, no Android CI → code can't be compiled/tested before merge) and Open Questions Q4/Q5.
+
+### Working
+- Manifest is review-ready and pinned to a named base commit.
+
+### Left
+- Codex to adversarially review the manifest + D-005/Q4/Q5 before any worktree is created.
+- Resolve D-005 (toolchain/CI) — manifest is NOT execution-ready until then.
+
+### Validation
+- Docs-only; `git diff --check` clean. Confirmed `origin/main` @ `defe869`, android tree identical, `/usr/bin/java` reports no runtime.
+
+### Gotchas
+- The manifest deliberately builds new screens as standalone (non-nav-wired) composables to keep lanes disjoint; nav wiring is a single serialized Batch 2 lane that owns `ChromaGlowApp.kt` + `ChromaGlowDestination.kt`.
+
+## 2026-06-28 - [Codex] Re-scope parallel pipeline pilot
+
+### Branch
+- `docs/parallel-agent-pipeline`
+
+### Did
+- Marked the original Android Batch 1 table as historical and non-executable because its named work has landed.
+- Added an execution-readiness gate requiring a current base SHA, exact disjoint globs, owner/branch, acceptance criteria, dependencies, forbidden files, and narrow validation for every lane.
+- Added the `unscoped` registry state and applied it to Android ownership classes so landed work cannot be claimed as a new deliverable.
+- Recorded D-004 and an independent Claude CLI review; Claude agreed and requested the D-003/registry consistency corrections now reflected in the document.
+
+### Working
+- Android remains the recommended first real parallel run, but no replacement Batch 1 lanes are scoped yet.
+- Pairing and credential-persistence wiring remain blocked by D-001/D-002.
+
+### Left
+- Draft replacement Android lanes from the fetched current `origin/main` tree before creating worktrees.
+- Land the stacked docs branches so the pipeline becomes canonical on `main`.
+
+### Validation
+- `git diff --check` passed.
+- Claude CLI independently reviewed the proposal and agreed after identifying the registry/status consistency correction.
+
+### Gotchas
+- The branch remains stacked on `docs/consolidate-agent-handoff`; merge order still matters.
+
+## 2026-06-24 - [Claude] Parallel agent pipeline + shared decision log
+
+### Branch
+- `docs/parallel-agent-pipeline` (stacked on `docs/consolidate-agent-handoff`)
+
+### Did
+- Added `docs/coordination/parallel-agent-pipeline.md`: lane registry (Android + iOS + cross-cutting), collision-hotspot list, branch/worktree/merge model, Android-only Batch 1 pilot, and a shared Claude⇄Codex Decision Log (seeded D-001 TLS blocker, D-002 identity blocker, D-003 Batch 1 scope, + Open Questions).
+- Added "Parallel Agent Pipeline" section to `AGENTS.md` (canonical rules) plus branch-naming note and a Documentation Index entry for the new doc.
+- Added a pointer line in `CLAUDE.md` and a snapshot line here in `DEVLOG.md`.
+
+### Working
+- Disjoint-lane model is documented and ready: agents own non-overlapping globs; gate files are single-owner per batch; merges land on `integration/parallel-batch-N` with a human final merge to `main`.
+- Decision Log is the durable, git-backed back-and-forth channel between Claude and Codex.
+
+### Left
+- Codex to review and append to the Decision Log (especially D-001/D-002 and Open Questions Q1–Q3).
+- Run the Android Batch 1 pilot via Claude Workflow + worktree isolation once scope is confirmed.
+- Human collaborator to open/merge the PR (agent `gh` account is not a collaborator).
+
+### Validation
+- Docs-only change; `git diff --check` clean. No runtime/code/Xcode/Gradle files touched.
+
+### Gotchas
+- This branch is stacked on `docs/consolidate-agent-handoff`, which is not yet merged to `main`. Land that first (or merge both together) so the canonical `AGENTS.md`/`CLAUDE.md` and this pipeline doc arrive on `main` consistently.
+
+## 2026-06-24 - [Codex] Agent handoff consolidation
+
+### Branch
+- `docs/consolidate-agent-handoff`
+
+### Did
+- Made `AGENTS.md` the canonical shared context and source catalog.
+- Replaced `CLAUDE.md` with a thin Claude Code entry point that immediately directs Claude to `AGENTS.md` and `DEVLOG.md`.
+- Added this current snapshot and handoff template to the top of `DEVLOG.md`.
+
+### Working
+- Root handoff now follows one-source-of-truth rules instead of maintaining two large duplicated context files.
+- Current iOS scheme and Android status are reflected in the root handoff.
+
+### Left
+- Open/merge PR from GitHub with a collaborator account if repository policy requires review.
+
+### Validation
+- `git diff --check` passed.
+- Scanned root handoff files for stale `HueHome` scheme and old Android-not-started language.
+- Branch push succeeded.
+- Draft PR creation via `gh pr create` was blocked because the authenticated GitHub account is not a collaborator.
+
+### Gotchas
+- `CURSOR_KICKOFF.md` and older historical devlog entries still contain stale `HueHome` scheme references; agents should follow `AGENTS.md` for current validation commands.
+- Pushed branch is available at `origin/docs/consolidate-agent-handoff`; Claude can read it immediately after fetching/checking out that branch.
+
 ## 2026-05-07 — Multi-Bridge Concurrent Entertainment Sessions (Antigravity)
 
 ### What was built

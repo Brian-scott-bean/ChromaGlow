@@ -17,9 +17,9 @@ import Foundation
 
 private enum BridgeWriter {
 
-    // URLSession that accepts self-signed Hue bridge TLS certificates.
+    // Shared pinned bridge trust (M-01/D-016) — never trust-all.
     static let session: URLSession = {
-        URLSession(configuration: .default, delegate: TrustAll(), delegateQueue: nil)
+        URLSession(configuration: .default, delegate: BridgePinnedTrustDelegate.shared, delegateQueue: nil)
     }()
 
     // PATCH a grouped_light resource.
@@ -34,19 +34,6 @@ private enum BridgeWriter {
         req.setValue(token,               forHTTPHeaderField: "hue-application-key")
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         _ = try? await session.data(for: req)
-    }
-
-    private class TrustAll: NSObject, URLSessionDelegate {
-        func urlSession(_ session: URLSession,
-                        didReceive challenge: URLAuthenticationChallenge,
-                        completionHandler: @escaping (URLSession.AuthChallengeDisposition,
-                                                      URLCredential?) -> Void) {
-            if let trust = challenge.protectionSpace.serverTrust {
-                completionHandler(.useCredential, URLCredential(trust: trust))
-            } else {
-                completionHandler(.performDefaultHandling, nil)
-            }
-        }
     }
 }
 

@@ -115,7 +115,7 @@ final class DevicesViewModel {
             }
         } catch {
             appendLog("❌ Bridge \(bridgeID.prefix(8))… failed: \(error.localizedDescription)")
-            log.error("Devices bridge \(bridgeID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            log.error("Devices bridge \(bridgeID): \(error.localizedDescription)")
             return []
         }
     }

@@ -58,15 +58,14 @@ final class HueSSEService: @unchecked Sendable {
     private static let decoder = JSONDecoder()
 
     // URLSession with no read/resource timeout — required for indefinite SSE streaming.
-    // certDelegate is stored explicitly so it is retained for the lifetime of this service.
-    private let certDelegate = HueCertTrustDelegate()
+    // Pinned bridge trust (H-01/D-016) — shared delegate, never trust-all.
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest  = .infinity
         config.timeoutIntervalForResource = .infinity
         return URLSession(
             configuration: config,
-            delegate: self.certDelegate,  // retained by certDelegate property above
+            delegate: BridgePinnedTrustDelegate.shared,
             delegateQueue: nil
         )
     }()
@@ -94,7 +93,8 @@ final class HueSSEService: @unchecked Sendable {
                 request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
                 do {
-                    self.log.info("SSE: Connecting to \(urlStr, privacy: .public)")
+                    // L-09: the stream URL embeds the bridge LAN IP — do not log it publicly.
+                    self.log.info("SSE: Connecting to bridge event stream.")
                     let (bytes, _) = try await self.session.bytes(for: request)
 
                     for try await line in bytes.lines {
@@ -117,7 +117,7 @@ final class HueSSEService: @unchecked Sendable {
                             }
                         } catch {
                             // Malformed event — log and keep streaming (non-fatal)
-                            self.log.warning("SSE: Parse error — \(error.localizedDescription, privacy: .public)")
+                            self.log.warning("SSE: Parse error — \(error.localizedDescription)")
                         }
                     }
 
@@ -125,7 +125,7 @@ final class HueSSEService: @unchecked Sendable {
                     continuation.finish()
 
                 } catch {
-                    self.log.error("SSE: Error — \(error.localizedDescription, privacy: .public)")
+                    self.log.error("SSE: Error — \(error.localizedDescription)")
                     continuation.finish(throwing: error)
                 }
             }
