@@ -48,6 +48,41 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 — on-device checkpoint ROUND 2 results + session handoff — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` @ `03e2902` (+ this docs commit; local only — NOT pushed).
+
+### Did
+- Recorded Brian's round-2 on-device results and prepared the continuation launch prompt for a
+  fresh agent: **`docs/coordination/prompts/ios-hardening-p1-continuation.md`** (the prior
+  conversation hit its context ceiling). That file is the complete state transfer — new session
+  starts there.
+
+### Round-2 results
+- **Working now:** cross-bridge preset sync (energize/read/relax/sleep apply across BOTH bridges
+  — "good job there"); location flow; forget-all improvements from round 1.
+- **NEW issue (HIGH):** pairing two bridges in one session — the FIRST-paired bridge is forgotten
+  after app relaunch (worked in-session; re-pair fixed). Likely audit **L-15** (pairing persists
+  to legacy single-bridge Keychain slots; per-bridge migration only on the "Add" tap; second
+  pairing clobbers the slots). Continuation Item 1.
+- **NEW regression (HIGH):** the widget now renders BLURRY (WidgetKit redacted/placeholder) —
+  worse than round 1's missing widget. Suspect timeline-provider crash/hang or reload thrash.
+  Continuation Item 3.
+- **UX (MEDIUM):** Brian cannot FIND the "New Entertainment Area" UI at all, so the M-18 bridge
+  picker was never reachable. Continuation Item 4.
+- **Feature request:** onboarding should offer "Pair another bridge" / "Continue to app" after a
+  successful pair. Continuation Item 2.
+- **CLOSED:** lost compositions (#8) — Brian attributes it to an earlier app delete/reinstall
+  (Documents wiped) and only needs forward-saving to work; P1's lenient decode + .bak +
+  no-reseed-overwrite covers that.
+
+### Left
+- Execute continuation Items 1–4, re-verify round-1 fixes, then STOP for round-3 on-device.
+  Push/merge only after Brian's explicit go-ahead.
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 — fixes from the human on-device checkpoint — LOCAL
 
 ### Branch
