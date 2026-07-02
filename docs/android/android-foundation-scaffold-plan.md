@@ -100,12 +100,12 @@ After install, re-run the Phase 4 inventory and update compile SDK / JDK rows fr
 | Android project root | **APPROVED** | `android/` at repo root | Matches approved standalone app layout; isolates Gradle from iOS tree; aligns with MVP contract package diagram | No |
 | Gradle module layout | **APPROVED** | Single module `:app` initially | Smallest greenfield scaffold; feature packages inside `:app` until transport layers warrant extraction | No |
 | App display name | **APPROVED** | `ChromaGlow` | Matches product branding across repo docs | No |
-| Namespace (Kotlin package root) | **PROPOSED — NEEDS BRIAN APPROVAL** | `com.chromaglow.app` | Aligns with `chromaglow` Hue `devicetype` branding; distinct from iOS bundle `com.huehome.pro`; maps cleanly to `src/main/java/com/chromaglow/app/` | **Yes — blocks ANDROID-001B** |
-| Play Store `applicationId` | **PROPOSED — NEEDS BRIAN APPROVAL** | `com.chromaglow.app` | New Android SKU; iOS ships `com.huehome.pro` — Play listing and cross-platform identity may prefer same or different ID | **Yes — blocks ANDROID-001B** |
+| Namespace (Kotlin package root) | **APPROVED** (shipped) | `com.chromaglow.app` | Approved and live in `android/app/build.gradle.kts`; see the reconciliation addendum at the bottom of this file | No |
+| Play Store `applicationId` | **APPROVED** (shipped) | `com.chromaglow.app` | Approved and live in `android/app/build.gradle.kts`; see the reconciliation addendum | No |
 | Package naming rule | **APPROVED** | Feature-oriented packages under namespace: `app`, `core.model`, `core.ui`, `feature.*`, `data.demo` | Mirrors [`android-mvp-contract-freeze.md`](android-mvp-contract-freeze.md) boundaries without premature Gradle modules | No |
-| Minimum Android SDK (`minSdk`) | **PROPOSED — NEEDS BRIAN APPROVAL** | API **26** (Android 8.0) | Reasonable 2026 floor for Compose + local networking; not derived from installed SDK (none present). Alternative: API 24 if broader device support is required | **Yes** |
+| Minimum Android SDK (`minSdk`) | **APPROVED** (shipped) | API **26** (Android 8.0) | Approved and live in `android/app/build.gradle.kts` (`minSdk = 26`); see the reconciliation addendum | No |
 | Compile SDK | **DERIVED FROM INSTALLED TOOLCHAIN** (pending) | Resolve during ANDROID-001B | No SDK platforms on host; use highest stable platform installed via Android Studio | No (auto after install) |
-| Target SDK | **PROPOSED — NEEDS BRIAN APPROVAL** | Match compile SDK at scaffold time unless Play policy requires otherwise | Target SDK affects behavior permissions and store policy; pin with compile SDK after toolchain inventory | **Yes** |
+| Target SDK | **APPROVED** (shipped) | `targetSdk = 36` (`compileSdk = 37`) in `android/app/build.gradle.kts` | Pinned in the shipping build; see the reconciliation addendum | No |
 | JDK baseline | **DERIVED FROM INSTALLED TOOLCHAIN** (pending) | JDK **17** expected for current AGP/Kotlin stacks | No JRE on host today; Studio-bundled JDK is default source of truth | No (verify at 001B) |
 | Gradle wrapper | **APPROVED** | Commit `gradlew`, `gradlew.bat`, `gradle/wrapper/*`, root `gradle.properties` in ANDROID-001B | Reproducible builds without global Gradle; standard Android practice | No |
 | Android Gradle Plugin | **DEFERRED** | Resolve during ANDROID-001B using locally installed Android Studio template and compatibility checks. Do not guess. | No AGP/Kotlin compile on this host | No |
@@ -121,7 +121,7 @@ After install, re-run the Phase 4 inventory and update compile SDK / JDK rows fr
 | SSE client | **APPROVED** | Future isolated module/package `core.hue.sse` (not created in 001B) | Live path on iOS is `UnifiedOrchestrator.runSSE` — Android splits SSE out | No |
 | Testing | **APPROVED** | JUnit 4/5 unit smoke in `src/test`; Compose UI test in `src/androidTest` if emulator available | 001B: minimal placeholder tests only | No |
 | CI | **DEFERRED** | Separate Android CI workflow in a later slice | No `.github` Android workflow in 001B | No |
-| Hue `devicetype` string | **PROPOSED — NEEDS BRIAN APPROVAL** | `chromaglow#android` | iOS uses `chromaglow#ios` per `AppBrand`; distinct Android constant required by contract | **Yes** (product constant; not Gradle) |
+| Hue `devicetype` string | **APPROVED** (shipped) | `chromaglow#android` | Approved; see the reconciliation addendum | No |
 
 ## Proposed Project Layout
 
@@ -196,7 +196,10 @@ See boundary above. Additionally deferred to MVP roadmap slices: design tokens (
 
 ## Proposed Android MVP Iteration Roadmap
 
-**Status: PROPOSED** — not final until scaffold decisions (namespace, `applicationId`, SDK floors, toolchain) are approved and ANDROID-001B lands.
+**Status: SUPERSEDED / historical** — the scaffold decisions (namespace, `applicationId`, SDK floors,
+toolchain) are **approved and shipped** (`android/app/build.gradle.kts`; see the reconciliation addendum
+at the bottom of this file), and ANDROID-001B plus Batches 1–3 have landed on `main`. This roadmap is
+retained as a historical planning record; current state lives in `AGENTS.md` → "Android Current State".
 
 | ID | Slice |
 | --- | --- |

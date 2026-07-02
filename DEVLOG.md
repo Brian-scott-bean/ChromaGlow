@@ -15,8 +15,12 @@
 - Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `f3380a7`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary; **tested non-UI Hue pairing foundations under `core/hue/pairing/**` + bundled CA roots (Batch 3)**. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
 - Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 foundations —
   including the accepted D-014 GET→POST identity-continuity correction — are **merged to `main` @
-  `f3380a7`**. Batch 4 live pairing onboarding is READY under D-015/§11.
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Batches 1 (`a3fe54f`), 2 (`7ed6468`), and **3 (`f3380a7`)** are merged to `main`. Batch 4 has a READY Claude launch prompt and may run through automated validation, then pauses for the human-assisted physical bridge gate.
+  `f3380a7`**. Batch 4 live pairing onboarding is **EXECUTED and integrated on
+  `integration/parallel-batch-4` @ `040fed7`** (automated gate green; physical H0 link-button gate
+  pending re-run with the correct worktree APK — see the 2026-07-01 stale-APK diagnosis below);
+  **not yet merged to `main`.**
+- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Batches 1 (`a3fe54f`), 2 (`7ed6468`), and **3 (`f3380a7`)** are merged to `main`. Batch 4 is **executed/integrated on `integration/parallel-batch-4` @ `040fed7`** (automated validation passed; physical bridge gate pending), not merged to `main`.
+- **Hardening audit (2026-07-01):** full cross-platform security + correctness audit recorded in `docs/audit/hardening-audit-2026-07-01.md` — 0 critical, 5 High, 19 Medium, 55 Low. P0: per-bundle privacy manifests (ITMS-91053 blocker), scrub secrets from iOS logs, iOS bridge TLS pinning (converge with Android under D-001). See the audit entry below.
 
 ### Handoff Entry Template
 
@@ -41,6 +45,57 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-01 - [Claude] Cross-platform hardening audit (iOS + Android)
+
+### Branch
+- `docs/hardening-audit-2026-07-01` (docs-only; no source edits). iOS audited on the working tree
+  (≡ `main`); Android audited on the Batch-4 worktree `integration/parallel-batch-4` @ `040fed7`
+  so the full pairing stack (Batch 3 on `main` + pending Batch 4) was covered.
+
+### Did
+- Ran a two-round multi-agent read-only audit (16 dimensions + 6 gap-closure dimensions), with every
+  finding passed through an adversarial verifier (40 false positives discarded).
+- Recorded the full report at `docs/audit/hardening-audit-2026-07-01.md`: 0 Critical, 5 High,
+  19 Medium, 55 Low, plus verified-good hardening to preserve.
+- **High (all iOS):** H-01 systemic trust-all TLS on the data plane (`HueAPIClient.swift:722`
+  evaluates the cert then discards the result); H-02 trust-all TLS during pairing
+  (`BridgeDiscoveryViewModel.swift:78`); H-03 v1 app key logged in cleartext via URL at
+  `privacy:.public` in release (`HueV1Client.swift:439`); H-04 pairing token + entertainment key
+  logged (`BridgeDiscoveryViewModel.swift:332`); H-05 Effects tab uses `primaryAPIClient` so effects
+  on non-primary bridges silently fail (`EffectsViewModel.swift:85`). (H-06 = H-01 re-confirmed on the
+  scene/automation write path — not a separate item.)
+- **Top reliability risks:** M-06 background `loadAll` can stop the app's own active DTLS session;
+  M-13 `CompositionStore.load()` reseeds + overwrites `compositions.json` on any decode error
+  (composition data-loss); M-08/M-14/M-15 unbounded bulk/effect PUTs bypass the `RestSender` mailbox;
+  M-03 widget/watch bundles ship without `PrivacyInfo.xcprivacy` (ITMS-91053 upload blocker).
+- **Android:** the pairing/TLS/credential stack verified as reference-quality (pinned Signify roots,
+  strict bridgeid-CN identity, D-014 GET→POST continuity, no secret logging, Keystore + `noBackupFilesDir`).
+  Net-new: M-19 — the default checkout builds the *unhardened* pre-pairing `android/` tree, there is no
+  Android CI, and both trees are `versionName 1.0` (stale APK indistinguishable). See D-020 in the
+  pipeline Decision Log.
+
+### Working
+- No Critical and no remotely-exploitable findings. The dominant themes are iOS transport
+  authentication + credential-in-logs hygiene, and reliability of the flagship real-time features.
+
+### Left
+- Remediation is not started (audit-only). P0: M-03 privacy manifests; H-03/H-04 log scrub;
+  H-01/H-02/M-01 iOS bridge TLS pinning (route through the deferred D-001 TLS-bootstrap decision).
+  P1: M-02 Keychain access group; M-06/M-07/H-05/M-18 multi-bridge + entertainment fixes;
+  M-05/M-04 bridge-animation correctness; M-08/M-14/M-15 mailbox for bulk/effect writes;
+  M-09/M-10 DTLS robustness; M-13 non-destructive persistence; M-19 canonical Android tree + CI gate.
+- Fold Android polish (L-31/L-32/L-33, I-01/I-13) into Batch 4 before it merges.
+
+### Validation
+- Read-only audit; no code executed against a bridge. Findings are grounded in source with file:line;
+  each was adversarially verified. Docs-only change to this repo.
+
+### Gotchas
+- The default repo checkout's `android/` is 31 commits behind `main` (pre-Batch-1) — do NOT audit or
+  build Android from it. The validated stack lives on `integration/parallel-batch-4`.
 
 ---
 

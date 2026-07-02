@@ -91,14 +91,17 @@ Current verified identity values:
 - Watch extension bundle ID: `com.huehome.pro.watchkitapp.watch`
 - App Group entitlement: `group.com.huehome.pro`
 - iOS deployment target: iOS 17.0
+- watchOS deployment target: `26.4` (`WATCHOS_DEPLOYMENT_TARGET` in every watch build config — this resolves the earlier "verify watchOS target" follow-up)
 - Marketing version in project: `0.9.0`
 - Build number in project: `1`
-- App display name: `ChromaGlow`
+- App display name (main iOS target): `ChromaGlow`
+- Widget/watch target display names: still `LightShade` / `LightShadeWatch` (`INFOPLIST_KEY_CFBundleDisplayName`) — pending an explicitly assigned rename; do not rename casually.
+- iOS Keychain service identifier (`kSecAttrService`) **and** OSLog subsystem: `com.lightshade.app` — **LIVE, do NOT rename.** `KeychainManager.serviceName` uses this for every credential read/write; renaming it makes every existing user's stored app key + entertainment client key unreadable with no migration. (Audit L-35.)
 - App Store Connect ChromaGlow Apple ID recorded in docs: `6766251782`
-- Android namespace/applicationId currently in repo: `com.chromaglow.app`
+- Android namespace/applicationId (shipping tree): `com.chromaglow.app`
 - Android Hue devicetype recorded in docs: `chromaglow#android`
 
-Some historical docs mention `com.lightshade.app` or `group.com.lightshade.app`. Treat those as historical unless current project files prove otherwise.
+Only `group.com.lightshade.app` (an App Group that no longer exists) is fully historical. Note that `com.lightshade.app` is NOT historical — it is the live iOS Keychain service + OSLog subsystem listed above and must not be renamed.
 
 ## Source Catalog
 
@@ -340,9 +343,18 @@ Use the narrowest relevant command for a docs-only or targeted code change.
 - Never blindly accept all certificates.
 - Treat bridge credentials as local-only secrets.
 
+The 2026-07-01 hardening audit (`docs/audit/hardening-audit-2026-07-01.md`) found the iOS app
+currently **violates** two of these rules and lists the fixes (P0). Treat these as open until closed:
+
+- **Trust-all TLS (rule "Never implement trust-all TLS"):** every iOS bridge surface (main app REST/SSE,
+  widget, Siri intents, watch, and the pairing POST) returns `.useCredential` without acting on the
+  certificate evaluation — H-01/H-02/M-01. Fix: one shared pinned-trust evaluator (Android model).
+- **Secrets in logs (rule "Never log tokens/keys"):** the v1 client logs the app key in the URL at
+  `privacy:.public` in release, and pairing logs the token + entertainment client key — H-03/H-04.
+
 Known iOS security risk:
 
-- Current widget/watch/App Intent surfaces use App Group UserDefaults with raw bridge IP/token for external controls. This is existing behavior, not a pattern to expand or copy to Android.
+- Current widget/watch/App Intent surfaces use App Group UserDefaults with raw bridge IP/token for external controls. This is existing behavior, not a pattern to expand or copy to Android. The audit tracks the migration to a Keychain access group as M-02/L-30.
 
 Known Android security decision:
 
@@ -463,6 +475,25 @@ Start with no-op/local interfaces first:
 
 ## Current High-Priority Follow-Ups
 
+Security hardening audit (2026-07-01) — full report: `docs/audit/hardening-audit-2026-07-01.md`
+(0 Critical, 5 High, 19 Medium, 55 Low). Remediation, in priority order:
+
+- **P0 iOS:** add per-bundle `PrivacyInfo.xcprivacy` to the widget + watch app + watch extension
+  targets (M-03, ITMS-91053 App Store upload blocker); scrub secrets from logs — remove the v1
+  URL/token logging and the raw pairing-response log, drop `privacy: .public` on token/URL/IP/name
+  strings (H-03/H-04/L-09); implement bridge TLS pinning so the app stops trust-all TLS on every
+  surface (H-01/H-02/M-01) — adopt the Android model (pin at pairing + bridgeid-CN after chain
+  validation) and route through the deferred **D-001** TLS-bootstrap decision.
+- **P1 iOS:** move shared credentials to a Keychain access group off App Group/watch UserDefaults
+  (M-02/L-30); guard `deactivateStuckEntertainmentSessions` so it can't kill the app's own active
+  DTLS session (M-06); sweep every room-targeted write off `primaryAPIClient` to `hueClient(for:)`
+  (M-07/H-05/M-18); fix bridge-animation correctness (M-04 positional light IDs, M-05 8-action rule
+  overflow); route bulk/effect writes through the `RestSender` mailbox (M-08/M-14/M-15); DTLS
+  robustness (M-09 double-resume, M-10 no recovery); non-destructive composition persistence (M-13);
+  Effects timer + dead "All Rooms" (M-16/M-17); NUPnP-vs-mDNS + location hang (M-11/M-12).
+- **P1 Android:** designate a canonical Android source tree and add an Android CI gate (M-19,
+  see "Canonical Android source tree" below).
+
 Process/docs:
 
 - Keep `AGENTS.md` canonical and `CLAUDE.md` thin.
@@ -472,18 +503,36 @@ Process/docs:
 iOS:
 
 - Avoid broad refactors in large Swift files.
-- Credential-sharing risk remains for App Group widget/watch paths.
-- Pairing logs should not expose full tokens/client keys.
-- watchOS deployment target should be verified before release work.
+- Credential-sharing risk remains for App Group widget/watch paths (audit M-02 — move to a Keychain
+  access group).
+- Pairing logs must not expose full tokens/client keys (audit H-03/H-04 — currently violated).
+- watchOS deployment target is `26.4` (recorded in the identity list) — resolved.
 - Swift 6 concurrency warning surface should be reduced over time.
 
 Android:
 
-- Execute the READY Batch 4 Claude handoff from `main` @ `f3380a7`; pause after automated validation for
-  the human-assisted link-button/relaunch/local-forget physical bridge gate.
+- Batch 4 is executed/integrated on `integration/parallel-batch-4` @ `040fed7` (automated gate green);
+  re-run the human-assisted link-button/relaunch/local-forget physical bridge gate with the correct
+  worktree APK, then promote to `main`.
 - Do not route a real paired bridge into the demo dashboard; real resource loading/control is Batch 5.
 - Run Gradle validation only when JDK/Android toolchain is available.
 - Continue MVP slices without copying iOS monolith patterns.
+- Build/audit Android only from the canonical tree (see below), never the stale in-repo checkout.
+
+### Canonical Android source tree (audit M-19)
+
+There are two divergent Android trees. The validated pairing/TLS/credential hardening lives **only** on
+`integration/parallel-batch-4` @ `040fed7` (Batch 3 foundations are on `main` @ `f3380a7`). The
+`android/` module in a default checkout of a `docs/*` branch can be many commits behind and may contain
+**none** of the pairing code or its dependencies (okhttp / kotlinx-serialization / datastore). Both trees
+build `applicationId com.chromaglow.app` / `versionName 1.0`, so a stale APK is indistinguishable from a
+hardened one without a sha256/dex inspection (a stale APK already shipped once — see the 2026-07-01
+DEVLOG diagnosis). There is currently **no Android CI** (`.github/workflows/` has only
+`ios-build-provenance.yml`). Required: pick one canonical/shippable Android branch, keep working
+checkouts on it, and add an Android build + hardening-presence CI gate (fail if the
+`core/hue/pairing` / `core/hue/pairing/tls` / `core/bridge` packages or `SetupViewModel` are absent, or
+if the okhttp/serialization/datastore deps are missing) plus per-build `versionName`/`versionCode` bumps.
+Tracked as D-020 in the pipeline Decision Log.
 
 ## Handoff Discipline
 

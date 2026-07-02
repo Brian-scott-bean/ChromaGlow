@@ -610,7 +610,9 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   Codex promotion review passed; **merged to `main` @ `f3380a7`** on explicit human go-ahead 2026-06-29.
 
 ### D-015 — Batch 4 wires live pairing to durable local registration before real Hue control
-- Status: ACCEPTED (manifest + launch prompt READY; physical gate requires human participation)
+- Status: ACCEPTED — **EXECUTED and integrated on `integration/parallel-batch-4` @ `040fed7`**
+  (automated gate green; physical H0 link-button gate pending re-run with the correct worktree APK —
+  see the 2026-07-01 stale-APK DEVLOG diagnosis; **not merged to `main`**).
 - 2026-06-29 [Human]: Move on to Batch 4 if ready and identify where human help is useful.
 - 2026-06-29 [Codex]: ACCEPTED the bounded §11 slice from `main` @ `f3380a7`. Batch 4 fixes the integration
   contract so pairing success returns authenticated `bridgeId` with `username`; normalizes selected mDNS/
@@ -629,14 +631,74 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   `docs/coordination/prompts/parallel-batch-4-launch.md`; stop at the physical checkpoint for the human,
   and do not merge Batch 4 to `main` without physical evidence, Codex review, and explicit human go-ahead.
 
+### D-016 — iOS bridge TLS pinning + bridgeid-CN identity (converge with Android)
+- Status: PROPOSED
+- 2026-07-01 [Claude]: The 2026-07-01 hardening audit (`docs/audit/hardening-audit-2026-07-01.md`,
+  H-01/H-02/M-01/H-06) found iOS uses trust-all TLS on every bridge surface — the REST/SSE delegate
+  evaluates the server cert then discards the result and unconditionally returns `.useCredential`, and
+  the pairing delegate does no validation at all. Proposal: introduce **one shared pinned-trust
+  evaluator** used by the main app, SSE, v1/v2 clients, widget, Siri intents, and watch — pin the
+  bridge cert/SPKI captured at pairing (or require the self-signed leaf CN to equal the canonical
+  uppercase-16-hex `bridgeid` only after chain validation), and `.cancelAuthenticationChallenge` on
+  mismatch. This mirrors the accepted Android identity contract (D-001/D-002) and should be sequenced
+  under the deferred **D-001 TLS-bootstrap** decision so both platforms converge. Ship with a
+  regression test asserting the delegate never returns `.useCredential` without a successful evaluation.
+
+### D-017 — No secrets in logs (iOS) + a CI/lint guard
+- Status: PROPOSED
+- 2026-07-01 [Claude]: Audit H-03/H-04/L-09. The iOS v1 client embeds the app key in the URL path and
+  logs the full URL at `privacy: .public` in release; pairing logs the raw response (application key +
+  entertainment client key). Proposal: log only method/resource/status and lengths; drop
+  `privacy: .public` from anything derived from a URL/IP/token/user-content name; never interpolate a
+  token/clientKey into any log sink in any build. Add a CI/lint rule banning `privacy: .public` on
+  interpolations containing a URL, IP, token, or name, and a post-pairing log-scrape test.
+
+### D-018 — Replace App Group / watch plaintext token with a Keychain access group (iOS)
+- Status: PROPOSED
+- 2026-07-01 [Claude]: Audit M-02/L-30. A plaintext copy of the bridge token lives in
+  `group.com.huehome.pro` UserDefaults and in watch `UserDefaults.standard`, weaker than the Keychain
+  copy and recoverable from an unencrypted backup or filesystem access. Proposal: share credentials via
+  a Keychain access group (`kSecAttrAccessGroup`, `AfterFirstUnlockThisDeviceOnly`); store only
+  non-secret routing metadata outside Keychain; use a watch Keychain; clear the watch token on
+  forget-all. (This is the known-risk pattern AGENTS.md says must not be expanded or copied to Android.)
+
+### D-019 — Per-bundle privacy manifests for the widget + watch targets (iOS)
+- Status: PROPOSED
+- 2026-07-01 [Claude]: Audit M-03. The widget and watch bundles use the required-reason UserDefaults
+  API but ship without their own `PrivacyInfo.xcprivacy` (manifests are per-bundle, not inherited),
+  which trips **ITMS-91053** at App Store upload — a release blocker. Proposal: add a
+  `PrivacyInfo.xcprivacy` (UserDefaults reason CA92.1) to the widget extension, watch app, and watch
+  extension targets and wire each into its Resources phase; add a CI check that every shippable bundle
+  contains a privacy manifest.
+
+### D-020 — Canonical Android source tree + Android CI hardening-presence gate
+- Status: PROPOSED
+- 2026-07-01 [Claude]: Audit M-19. Two divergent Android trees exist; the default checkout on a `docs/*`
+  branch can build the **unhardened** pre-pairing `android/` tree (no `core/hue/pairing`, `core/bridge`,
+  TLS pinning, Keystore/DataStore, or okhttp/serialization/datastore deps). The validated stack lives
+  only on `integration/parallel-batch-4` @ `040fed7`; `main` @ `f3380a7` has Batch-3 foundations but not
+  Batch-4 live pairing. There is no Android CI, and both trees build `versionName 1.0`, so a stale APK is
+  indistinguishable (one already shipped — see the 2026-07-01 DEVLOG diagnosis). Proposal: designate one
+  canonical/shippable Android branch (main, or a `release/*` cut from `integration/parallel-batch-4`
+  after the H0 physical gate), park/delete the stale docs-branch `android/` snapshot, and add an Android
+  CI workflow that builds only the pinned branch and fails if the pairing/TLS/credential packages
+  (`core/hue/pairing`, `core/hue/pairing/tls`, `core/bridge`, `SetupViewModel`) or their deps are absent
+  (a dex string-scan for `HueRootTrustManager` + `SetupViewModel` suffices), plus per-build
+  `versionName`/`versionCode` bumps so a stale APK is distinguishable at install.
+
 ### Open Questions
 - Q1–Q9 (Batch 1 + Batch 2 planning) are all **resolved** and folded into the decisions/contracts above
   (credentials scope → D-001/D-002; toolchain → D-005; no-unwired-UI → D-006; fixture injection, the
   `when`-router, `Exit Demo Mode` semantics, and serial single-AVD connected tests → D-008/D-009). Pruned
   during the 2026-06-28 consolidation.
-- **No planning blocker:** Batch 4 is READY under D-015. Its implementation can run unattended through
-  the automated integrated gate, then must stop for the human-assisted physical bridge checkpoint.
-- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-016+).
+- **No planning blocker:** Batch 4 is **executed/integrated** on `integration/parallel-batch-4` @
+  `040fed7` (automated gate green). Remaining before promotion to `main`: re-run the human-assisted
+  physical bridge checkpoint with the correct worktree APK, Codex review, and explicit human go-ahead.
+- **Hardening-audit follow-ups (D-016–D-020, all PROPOSED):** raised 2026-07-01 from
+  `docs/audit/hardening-audit-2026-07-01.md`. iOS TLS pinning (D-016), no-secrets-in-logs guard (D-017),
+  Keychain access group (D-018), per-bundle privacy manifests (D-019), and the canonical Android tree +
+  CI gate (D-020). Awaiting discussion/acceptance.
+- Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-021+).
 
 ---
 
@@ -1040,15 +1102,22 @@ fork from that merged SHA, not directly from `main`.
 
 ---
 
-## 11. Batch 4 — READY (live pairing onboarding + durable local registration)
+## 11. Batch 4 — EXECUTED / integrated (live pairing onboarding + durable local registration)
 
 **Batch:** `parallel-batch-4`
 
+**Status:** EXECUTED and integrated on `integration/parallel-batch-4` @ `040fed7` — automated gate green;
+**not merged to `main`.** Remaining before promotion: re-run the human-assisted physical bridge
+checkpoint with the correct worktree APK (the first physical run FAILED against a stale pre-Batch-4 APK
+— root-caused 2026-07-01, see DEVLOG; no code defect found), then Codex review + explicit human
+go-ahead. Fold the audit's Android polish items (L-31 redact `toString()`, L-32 strict `intField`,
+L-33 atomic `saveApiToken`, I-01/I-13) in before merge — see `docs/audit/hardening-audit-2026-07-01.md`.
+
 **Pinned base:** `origin/main` @ `f3380a71896fb57b311352b81e9d7ee7958918c1`
 
-**Integration branch:** `integration/parallel-batch-4`
+**Integration branch:** `integration/parallel-batch-4` (tip `040fed7`)
 
-**Decision:** D-015 ACCEPTED
+**Decision:** D-015 ACCEPTED (executed)
 
 **Contract:** `docs/android/android-live-pairing-workflow-contract.md`
 
