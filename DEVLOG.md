@@ -108,6 +108,17 @@ deduped + verified). Fixed everything that survived:
 - Build SUCCEEDED (generic/platform=iOS); full HueHomeTests green incl. new tests (registry
   refcount + register-balance, hueClient(for: nil) both modes, upgrade-window widget fallback
   with real-credential snapshot/restore). Guards pass.
+- **/security-review (focused on the credential-storage + DTLS changes): zero findings met the
+  exploitability bar.** Verified: `.useCredential` still only in the Trust module; no discarded
+  trust evaluation; no token/key/PSK in any new log line; entitlements add exactly
+  `$(AppIdentifierPrefix)com.huehome.pro.shared` on app+widget+watch; the widget upgrade-window
+  fallback is read-only; `wc_unpaired` is settable only by the Apple-paired phone; PSK handling
+  unchanged. Residual notes (hardcoded team-ID constant, unqualified keychain reads during the
+  migration window, non-atomic delete/add upsert) are availability/config-management notes, not
+  vulnerabilities.
+- **/verify caveat:** the end-to-end pass for these changes requires a physical Hue bridge
+  (ideally two) — that is exactly the §6 human checkpoint below; no runtime claim is made beyond
+  build + unit suite + guards.
 
 ---
 
