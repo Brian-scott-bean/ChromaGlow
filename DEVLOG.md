@@ -48,6 +48,39 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 hardening — Group 6: entertainment/DTLS robustness (M-06/M-09/M-10/L-11) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (local only — not pushed).
+
+### Did
+- **M-06:** `HueEntertainmentClient` gained a process-wide **app-owned session registry**
+  (register on successful `startSession`, unregister on `stopSession`/failed open);
+  `deactivateStuckEntertainmentSessions` now SKIPS any active config the app owns — an everyday
+  lock/unlock or room toggle can no longer kill a running Studio/Composer/Sync show. Covers all
+  three session owners because they all stream through `HueEntertainmentClient`.
+- **M-09:** the DTLS handshake continuation is guarded by a new `ContinuationGate`
+  (NSLock resume-exactly-once); the handshake-complete/timeout race on two queues can no longer
+  double-resume (`SWIFT TASK CONTINUATION MISUSE` trap). `nonisolated(unsafe) var resumed` gone.
+- **M-10:** `handleSendError` now cancels + nils the dead connection and drives a **bounded
+  reconnect** (3 attempts, 300ms×n backoff, cancelled by `stopSession`); frames resume
+  automatically once streaming again instead of silently no-oping at 25–50fps forever.
+- **L-11:** a failed DTLS open sends a best-effort compensating `action=stop` (and resets
+  configID + unregisters) so the entertainment configuration is not left activated on the bridge.
+
+### Working
+- Build SUCCEEDED (generic/platform=iOS); HueHomeTests green incl. new
+  `EntertainmentRobustnessTests` (gate resumes exactly once across 16-way races ×50; failed open
+  → REST start,stop pair recorded + not registered; stuck cleanup stops the stale config and
+  skips the app-owned one; registry register/unregister). Guards pass.
+- Fixed a cross-suite flake: `applyAutomationPreset` tests now drain the orchestrator's 500ms
+  debounced widget write in tearDown so it can't land inside KeychainSharingTests' App Group scan.
+
+### Left
+- M-10 live reconnect behavior needs the on-device checkpoint (requires a real DTLS socket).
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 hardening — Group 5: non-destructive persistence (M-13/L-27) — LOCAL
 
 ### Branch

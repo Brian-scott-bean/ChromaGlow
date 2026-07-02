@@ -92,6 +92,15 @@ private func makeBulkSUT(roomCount: Int) -> (orchestrator: UnifiedOrchestrator, 
 @MainActor
 final class GatedBulkWriteTests: XCTestCase {
 
+    /// applyAutomationPreset triggers the orchestrator's debounced (500ms)
+    /// widget snapshot write. Drain it before the suite ends so the delayed
+    /// write cannot land in the middle of another suite's App Group
+    /// assertions (KeychainSharingTests).
+    override func tearDown() async throws {
+        try await Task.sleep(for: .milliseconds(650))
+        try await super.tearDown()
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - BridgeCommandGate semantics
     // ──────────────────────────────────────────────

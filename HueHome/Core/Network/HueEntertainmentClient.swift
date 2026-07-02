@@ -45,6 +45,32 @@ enum EntertainmentStreamState: Sendable {
     case error(String)
 }
 
+// MARK: - ContinuationGate
+
+/// Thread-safe resume-exactly-once gate for checked continuations (M-09).
+/// The DTLS handshake completion and its timeout race on different queues;
+/// both observing `resumed == false` double-resumed the continuation —
+/// a SWIFT TASK CONTINUATION MISUSE hard trap.
+final class ContinuationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resumed = false
+
+    /// Returns true exactly once — the caller that wins may resume.
+    func tryResume() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if resumed { return false }
+        resumed = true
+        return true
+    }
+
+    var isResumed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return resumed
+    }
+}
+
 // MARK: - HueEntertainmentClient
 
 /// Manages a DTLS streaming session to a Hue Bridge.
@@ -67,7 +93,40 @@ actor HueEntertainmentClient {
     // MARK: REST client for start/stop
     private let restClient: HueAPIClient
 
+    // MARK: Reconnect (M-10)
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectAttempts = 0
+    private static let maxReconnectAttempts = 3
+
     private let log = Logger(subsystem: "com.lightshade.app", category: "Entertainment")
+
+    // MARK: - App-owned session registry (M-06)
+    //
+    // Every entertainment configuration this app is actively streaming, so
+    // the orchestrator's stuck-session cleanup can never stop the app's own
+    // Studio/Composer/Sync session mid-show.
+    private static let activeSessionsLock = NSLock()
+    nonisolated(unsafe) private static var activeSessionConfigIDs: Set<String> = []
+
+    static func registerActiveSession(configID: String) {
+        activeSessionsLock.lock()
+        defer { activeSessionsLock.unlock() }
+        activeSessionConfigIDs.insert(configID)
+    }
+
+    static func unregisterActiveSession(configID: String) {
+        activeSessionsLock.lock()
+        defer { activeSessionsLock.unlock() }
+        activeSessionConfigIDs.remove(configID)
+    }
+
+    /// True when THIS app process owns an active streaming session for the
+    /// given entertainment configuration.
+    static func isAppOwnedSession(configID: String) -> Bool {
+        activeSessionsLock.lock()
+        defer { activeSessionsLock.unlock() }
+        return activeSessionConfigIDs.contains(configID)
+    }
 
     // MARK: Init
 
@@ -103,8 +162,19 @@ actor HueEntertainmentClient {
             throw error
         }
 
-        // Step 2: Open DTLS connection
-        try await openDTLSConnection()
+        // Step 2: Open DTLS connection.
+        // L-11: a failed open used to leave the configuration activated on
+        // the bridge with no rollback — send a compensating action=stop.
+        do {
+            try await openDTLSConnection()
+        } catch {
+            await sendBestEffortStop()
+            state = .error("DTLS open failed: \(error.localizedDescription)")
+            throw error
+        }
+
+        Self.registerActiveSession(configID: configID)
+        reconnectAttempts = 0
     }
 
     /// Stop the streaming session.
@@ -113,12 +183,18 @@ actor HueEntertainmentClient {
     func stopSession() async {
         log.info("Stopping entertainment session")
 
+        // Cancel any pending reconnect (M-10)
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnectAttempts = 0
+
         // Close DTLS
         connection?.cancel()
         connection = nil
 
         // Deactivate via REST (best effort)
         if !configID.isEmpty {
+            Self.unregisterActiveSession(configID: configID)
             do {
                 let (ip, token) = try restClient.credentials()
                 let body: [String: Any] = ["action": "stop"]
@@ -133,6 +209,24 @@ actor HueEntertainmentClient {
 
         state = .disconnected
         sequenceNumber = 0
+        configID = ""
+    }
+
+    /// Best-effort `action=stop` + local cleanup after a failed open (L-11).
+    private func sendBestEffortStop() async {
+        guard !configID.isEmpty else { return }
+        Self.unregisterActiveSession(configID: configID)
+        do {
+            let (ip, token) = try restClient.credentials()
+            let body: [String: Any] = ["action": "stop"]
+            _ = try await restClient.put(
+                path: "/clip/v2/resource/entertainment_configuration/\(configID)",
+                body: body, ip: ip, token: token
+            )
+            log.info("Compensating action=stop sent after failed open")
+        } catch {
+            log.warning("Compensating stop failed (bridge inactivity timeout will recover): \(error.localizedDescription)")
+        }
         configID = ""
     }
 
@@ -210,19 +304,23 @@ actor HueEntertainmentClient {
 
         let conn = NWConnection(host: host, port: port, using: params)
 
+        // M-09: the state handler (userInteractive queue) and the timeout
+        // (default global queue) race — the gate makes resume atomic so a
+        // simultaneous handshake-complete + timeout can never double-resume
+        // the continuation (SWIFT TASK CONTINUATION MISUSE trap).
         return try await withCheckedThrowingContinuation { continuation in
-            nonisolated(unsafe) var resumed = false
+            let gate = ContinuationGate()
 
             conn.stateUpdateHandler = { [weak self] newState in
-                guard let self, !resumed else { return }
+                guard let self, !gate.isResumed else { return }
                 switch newState {
                 case .ready:
-                    resumed = true
+                    guard gate.tryResume() else { return }
                     Task { await self.setStreaming(conn) }
                     continuation.resume()
 
                 case .failed(let error):
-                    resumed = true
+                    guard gate.tryResume() else { return }
                     Task { await self.setError("DTLS failed: \(error.localizedDescription)") }
                     continuation.resume(throwing: EntertainmentError.dtlsFailed(error))
 
@@ -233,10 +331,8 @@ actor HueEntertainmentClient {
                     }
 
                 case .cancelled:
-                    if !resumed {
-                        resumed = true
-                        continuation.resume(throwing: EntertainmentError.connectionFailed)
-                    }
+                    guard gate.tryResume() else { return }
+                    continuation.resume(throwing: EntertainmentError.connectionFailed)
 
                 default:
                     break
@@ -247,8 +343,7 @@ actor HueEntertainmentClient {
 
             // Timeout after 10 seconds
             DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
-                guard !resumed else { return }
-                resumed = true
+                guard gate.tryResume() else { return }
                 conn.cancel()
                 continuation.resume(throwing: EntertainmentError.timeout)
             }
@@ -273,7 +368,45 @@ actor HueEntertainmentClient {
 
     private func handleSendError(_ error: NWError) {
         log.error("Send error: \(error.localizedDescription)")
+        // M-10: the old path only flipped state — every later frame silently
+        // no-oped and the lights froze on their last frame for the rest of
+        // the session. Cancel the dead connection and drive a bounded
+        // reconnect; frames resume automatically once streaming again.
         state = .error("Send failed")
+        connection?.cancel()
+        connection = nil
+        scheduleReconnect()
+    }
+
+    // MARK: - Reconnect (M-10)
+
+    private func scheduleReconnect() {
+        guard reconnectTask == nil, !configID.isEmpty else { return }
+        guard reconnectAttempts < Self.maxReconnectAttempts else {
+            log.error("Entertainment reconnect abandoned after \(Self.maxReconnectAttempts) attempts — session stays in .error")
+            return
+        }
+        reconnectAttempts += 1
+        let backoffMs = 300 * reconnectAttempts
+        reconnectTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(backoffMs))
+            guard !Task.isCancelled else { return }
+            await self?.attemptReconnect()
+        }
+    }
+
+    private func attemptReconnect() async {
+        reconnectTask = nil
+        guard case .error = state, !configID.isEmpty else { return }
+        log.info("Entertainment reconnect attempt \(self.reconnectAttempts)/\(Self.maxReconnectAttempts)")
+        do {
+            try await openDTLSConnection()
+            reconnectAttempts = 0
+            log.info("Entertainment session reconnected")
+        } catch {
+            log.warning("Reconnect failed: \(error.localizedDescription)")
+            scheduleReconnect()
+        }
     }
 
     // MARK: - Packet Builder

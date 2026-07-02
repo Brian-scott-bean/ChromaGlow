@@ -3158,6 +3158,16 @@ extension UnifiedOrchestrator {
                           let status = config["status"] as? String,
                           status == "active" else { continue }
 
+                    // M-06: never stop the app's OWN active session — loadAll
+                    // runs on every launch/foreground/state-refresh, and this
+                    // cleanup used to kill a running Studio/Composer/Sync show
+                    // mid-stream (lights froze; the loop kept sending into a
+                    // dead session).
+                    if HueEntertainmentClient.isAppOwnedSession(configID: id) {
+                        log.info("Entertainment session \(id) is app-owned and active — skipping cleanup")
+                        continue
+                    }
+
                     // This session is stuck active — deactivate it
                     log.warning("Found stuck entertainment session \(id) on bridge \(bridgeID) — deactivating")
                     let body: [String: Any] = ["action": "stop"]
