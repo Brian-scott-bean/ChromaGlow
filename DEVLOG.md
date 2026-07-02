@@ -44,6 +44,60 @@
 
 ---
 
+## 2026-07-01 - [Claude] Diagnose Batch 4 physical pairing FAIL: stale pre-Batch-4 APK
+
+### Branch
+- `docs/parallel-agent-pipeline` (diagnosis only; no source edits). Batch 4 code inspected on
+  `integration/parallel-batch-4` @ `040fed7`.
+
+### Did
+- Investigated the redacted physical-bridge test report (discovery PASS, pairing FAIL from both
+  discovered selection and manual IP).
+- Audited the full Batch 4 pairing path on `integration/parallel-batch-4` (workflow, transport,
+  TLS trust/verifier, CN contract, config parser, ViewModel wiring, manifest, navigation): no
+  code-level defect found; production wiring is real (OkHttp + pinned roots + Keystore + DataStore).
+- Validated the D-015 contract against BOTH physical bridges from the same LAN (macOS, openssl/curl):
+  mDNS advertises port 443; both leaf certs chain to the bundled `root-bridge` CA (`openssl verify` OK);
+  leaf CNs are valid 16-hex bridge ids (one lowercase, one UPPERCASE — both accepted, compared
+  case-insensitively); TLS 1.2 ECDHE-ECDSA-AES128-GCM-SHA256 (OkHttp MODERN_TLS compatible);
+  `/api/0/config` parses and `bridgeid` matches the leaf CN on both; pre-button `POST /api` returns
+  the expected type-101 "link button not pressed".
+- Root cause (high confidence): the installable APK in the main checkout
+  (`android/app/build/outputs/apk/debug/app-debug.apk`, built 2026-06-28 09:53, sha256 `c0a1cdda…`)
+  predates all Batch 4 commits (2026-06-29) and contains NO pairing classes (`SetupViewModel`,
+  `LivePairingWorkflow`, `DataStoreBridgeRegistry` absent from dex). On that build the selected-bridge
+  card is the Batch 2 placeholder ("Pairing will be added in a later step.") — a designed dead end
+  from both the discovered and manual paths, matching the reported symptoms exactly.
+- Confirmed the correct APK already exists: `/Users/brianbean/Desktop/huehome-batch4-wt/android/app/
+  build/outputs/apk/debug/app-debug.apk` (2026-06-29 15:58, sha256 `c8c2d92b…`) contains all Batch 4
+  classes, and `:app:assembleDebug` at tip `040fed7` reports all 36 tasks UP-TO-DATE — that APK matches
+  branch-tip source including the bridge-registry singleton fix (committed 15:59, in-tree at build time).
+
+### Working
+- Batch 4 pairing contract verified compatible with both physical bridges (BSB002, swversion
+  1977138000 / apiversion 1.77.0) at the TLS, identity, and protocol layers.
+
+### Left
+- Re-run the §11 human gate with the WORKTREE APK (sha256 `c8c2d92b…`). Quick identity check on-device:
+  the Batch 4 build shows a "Pair" button on the selected-bridge card; the stale build shows
+  "Pairing will be added in a later step." with no Pair button.
+- If the retest still fails on the correct APK, capture the exact on-screen recovery message (the
+  copy is user-safe/redaction-friendly and maps 1:1 to `PairingErrorReason`) — that pinpoints the
+  failing layer without raw logs.
+
+### Validation
+- `openssl verify -CAfile <bundled roots>` OK for both bridge leafs; live `/api/0/config` and
+  pre-button `POST /api` behavior confirmed; dex string-scan of both APKs; gradle up-to-date check
+  at `040fed7`. Docs-only change to this repo.
+
+### Gotchas
+- Gradle in the worktree needs `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`
+  (no system JVM installed).
+- The repo-root APK and the worktree APK share applicationId/versionName (`com.chromaglow.app` / 1.0),
+  so an installed build is NOT distinguishable by version — check the Pair button or the APK sha256.
+
+---
+
 ## 2026-06-29 - [Codex] Prepare Batch 4 Claude handoff for live pairing
 
 ### Branch
