@@ -48,6 +48,75 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 — round-2 checkpoint fixes (Items 1–4) — LOCAL, awaiting round-3
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` — 4 new commits on top of `c560323`
+  (`2059b7f` Item 1 · `05e3a09` Item 2 · `8e25483` Item 3 · `f050379` Item 4).
+  **NOT pushed** — checkpoint discipline; waiting on Brian's round-3 on-device pass.
+
+### Did
+- **Item 1 (HIGH, L-15/L-17) — first-paired bridge lost after pairing two in one session.**
+  Root cause exactly as the audit predicted: the pairing POST saved to the LEGACY
+  single-bridge Keychain slots; per-bridge migration ran only on the "Add to ChromaGlow"
+  tap (result discarded) and NEVER on the first-bridge path, so pairing B overwrote A's
+  slots, `migrateLegacyCredentials(to: B)` moved B's values and deleted the slots — A had
+  no record and no credentials at relaunch. Fix: `BridgeDiscoveryViewModel` mints a
+  BridgeRecord id on pairing success and writes ip/token/clientKey straight to its
+  namespaced slots (legacy slots never written); canonical bridgeid captured from the
+  D-016 identity verification; new **`BridgePairingRegistrar`** commits the record the
+  moment the phase hits `.paired` (atomic with credentials — no more stranded keys on
+  sheet dismissal), dedups by canonical bridgeid with a guarded host fallback (L-17:
+  won't merge a different bridgeid squatting on the same DHCP ip), moves credentials
+  onto a reused record, and THROWS so `BridgeSetupView` surfaces failures. `BridgeRecord`
+  gained an additive-optional `bridgeIdentifier` field (SwiftData lightweight migration).
+  `configure()`'s `bridges.isEmpty` legacy migration is retained for true app upgrades.
+- **Item 2 — "Pair Another Bridge" in onboarding.** The paired screen now offers
+  "Continue to App" + "Pair Another Bridge" (returns to scanning; the just-paired record
+  is already persisted). Only the very first record is named "My Bridge". The
+  add-additional sheet keeps its single "Add to ChromaGlow" action.
+- **Item 3 (HIGH) — widget renders blurry (WidgetKit redacted/placeholder).** Four
+  provider defects each capable of producing that state: (1) the grouped_light refresh
+  awaited the transport's full 8s timeout on every timeline build (off-Wi-Fi = every
+  refresh stalls into WidgetKit's throttle) — new `fetchGroupedLightsBounded` races a
+  hard 4s budget and falls back to the cached snapshot; (2) `Dictionary(uniqueKeysWithValues:)`
+  traps on duplicate grouped-light ids → extension crash → redacted snapshot — now
+  `uniquingKeysWith`; (3) a PAIRED user whose shared-Keychain read transiently failed
+  (before first unlock) was served the UNPAIRED entry with `.never` — frozen on wrong
+  content until an external reload; now cached rooms + stale flag + 15-min retry;
+  (4) the genuinely-unpaired branch trades `.never` for a 60-min backstop (the round-1
+  blob-change reload stays the fast path). The round-1 `write(bridges:)` blob-compare was
+  re-verified deterministic (String-only payload, sortedKeys) — it was NOT the thrash source.
+- **Item 4 — entertainment-area builder undiscoverable.** The only Sync-tab trigger was
+  a low-contrast inline text link at the very bottom of the controls card. Replaced with
+  a full-width "New Entertainment Area" row (StudioView's prompt idiom) always visible
+  under the config chips; the sheet now injects the orchestrator explicitly (M-18 bridge
+  picker shows when `allBridgeIDs.count > 1` — true once Item 1 restores both clients).
+- **Item 5 — round-1 fixes re-verified.** Forget-all remains total under the new pairing
+  flow (it wipes per-record namespaced creds — exactly where pairing now writes — plus
+  legacy slots, pins, shared surface, SwiftData cache, in-memory teardown); stale-bridge
+  pruning and widget-revival code paths untouched.
+
+### Validation
+- Device build green · **full `HueHomeTests` green (200 test cases passed)** ·
+  `./Scripts/hardening_guards.sh` 5/5 after EVERY item.
+- New tests: `PairingPersistenceTests` (6 — two-session pairing survival, legacy slots
+  never written, same-VM pair-another, configure() builds two clients, bridgeid dedup,
+  no-merge-on-host-collision) · `WidgetTimelineRobustnessTests` (2 — hanging transport
+  resolves nil within budget, responding transport decodes).
+
+### Left
+- **STOP.** Brian's round-3 on-device pass, then on "tested locally, go ahead": push over
+  SSH, build+test the merged tree, `--no-ff` merge to `main` (ask merge vs PR; `gh` is a
+  non-collaborator on this machine).
+
+### Gotchas
+- pbxproj synthetic ids used through `C0DEC0DE0112…` — **next free prefix `C0DEC0DE0113…`**.
+- If the widget is STILL blurry in round 3, the remaining suspects need device evidence:
+  Settings → Privacy & Security → Analytics Data, filter "HueHomeWidget" (crash logs).
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 — on-device checkpoint ROUND 2 results + session handoff — LOCAL
 
 ### Branch
