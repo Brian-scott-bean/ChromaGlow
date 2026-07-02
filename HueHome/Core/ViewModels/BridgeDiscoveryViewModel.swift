@@ -95,6 +95,9 @@ final class BridgeDiscoveryViewModel {
 
     // MARK: Services
     let discovery = BridgeDiscoveryService()
+    /// Test seam: when set, the pairing POST uses this session instead of the
+    /// internally constructed one, so tests can stub responses via URLProtocol.
+    @ObservationIgnored var pairingSessionOverride: URLSession?
     private var cancellables = Set<AnyCancellable>()
     private var scanTimeoutTask: Task<Void, Never>?
     private var mdnsRetryDone = false   // guards the silent mDNS warm-cache retry
@@ -309,7 +312,9 @@ final class BridgeDiscoveryViewModel {
         // For HTTPS, use a custom session that trusts the Bridge self-signed cert.
         // For HTTP, URLSession.shared is fine.
         let session: URLSession
-        if bridge.port == 443 {
+        if let override = pairingSessionOverride {
+            session = override
+        } else if bridge.port == 443 {
             let delegate = BridgeCertTrustDelegate()
             session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
             appendLog("🔐 HTTPS mode — using Bridge certificate trust delegate.")
@@ -326,11 +331,10 @@ final class BridgeDiscoveryViewModel {
                 log.info("Pairing: HTTP \(http.statusCode, privacy: .public).")
             }
 
-            // Log raw JSON for debugging
-            if let raw = String(data: data, encoding: .utf8) {
-                appendLog("   Raw response: \(raw)")
-                log.info("Pairing: Raw response: \(raw, privacy: .public).")
-            }
+            // H-04: never log the raw pairing response — on success it contains
+            // the application key AND the entertainment client key verbatim.
+            appendLog("📥 Response received (\(data.count) bytes).")
+            log.info("Pairing: response received (\(data.count, privacy: .public) bytes).")
 
             // Decode array response
             let responses = try JSONDecoder().decode([PairingResponse].self, from: data)
@@ -349,7 +353,7 @@ final class BridgeDiscoveryViewModel {
                 default:  desc = "Bridge error \(err.type): \(err.description)"
                 }
                 appendLog("⚠️  \(desc)")
-                log.warning("Pairing: Bridge error \(err.type): \(err.description, privacy: .public).")
+                log.warning("Pairing: Bridge error \(err.type): \(err.description).")
                 // Return to bridgeFound so user can retry
                 phase = .bridgeFound(bridge)
                 return
@@ -360,9 +364,10 @@ final class BridgeDiscoveryViewModel {
                 let token = success.username
                 let clientKey = success.clientkey ?? ""
 
-                appendLog("✅ Paired! Application Key: \(token)")
+                // H-04: log only non-secret metadata — never the key material.
+                appendLog("✅ Paired! Application key received (\(token.count) chars).")
                 if !clientKey.isEmpty {
-                    appendLog("🔑 Client Key (Entertainment): \(clientKey)")
+                    appendLog("🔑 Entertainment client key received (\(clientKey.count) chars).")
                 }
                 log.info("Pairing: Success. Token length: \(token.count).")
 
@@ -383,11 +388,11 @@ final class BridgeDiscoveryViewModel {
 
         } catch let decodeError as DecodingError {
             appendLog("❌ JSON decode error: \(decodeError)")
-            log.error("Pairing: Decode error — \(String(describing: decodeError), privacy: .public).")
+            log.error("Pairing: Decode error — \(String(describing: decodeError)).")
             handleError("Response decode failed. Check console for details.")
         } catch {
             appendLog("❌ Network error: \(error.localizedDescription)")
-            log.error("Pairing: Network error — \(error.localizedDescription, privacy: .public).")
+            log.error("Pairing: Network error — \(error.localizedDescription).")
             handleError(error.localizedDescription)
         }
     }
@@ -398,7 +403,7 @@ final class BridgeDiscoveryViewModel {
 
     private func handleError(_ message: String) {
         appendLog("💥 \(message)")
-        log.error("ViewModel: \(message, privacy: .public).")
+        log.error("ViewModel: \(message).")
         phase = .error(message)
     }
 

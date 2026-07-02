@@ -1133,7 +1133,8 @@ final class UnifiedOrchestrator {
         while !Task.isCancelled {
             do {
                 connectionStatus[bridgeID] = .connecting
-                log.info("SSE: Connecting to \(urlStr, privacy: .public)")
+                // L-09: the stream URL embeds the bridge LAN IP — log only the bridge id.
+                log.info("SSE: Connecting [\(bridgeID, privacy: .public)]")
 
                 let (bytes, _) = try await sseSession.bytes(for: request)
                 connectionStatus[bridgeID] = .connected
@@ -1172,7 +1173,7 @@ final class UnifiedOrchestrator {
             } catch {
                 guard !Task.isCancelled else { return }
                 connectionStatus[bridgeID] = .error(error.localizedDescription)
-                log.error("SSE error [\(bridgeID)]: \(error.localizedDescription, privacy: .public)")
+                log.error("SSE error [\(bridgeID)]: \(error.localizedDescription)")
             }
 
             log.info("SSE: Reconnecting \(bridgeID) in \(retryDelay / 1_000_000_000)s")

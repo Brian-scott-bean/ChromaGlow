@@ -94,7 +94,8 @@ final class HueSSEService: @unchecked Sendable {
                 request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
                 do {
-                    self.log.info("SSE: Connecting to \(urlStr, privacy: .public)")
+                    // L-09: the stream URL embeds the bridge LAN IP — do not log it publicly.
+                    self.log.info("SSE: Connecting to bridge event stream.")
                     let (bytes, _) = try await self.session.bytes(for: request)
 
                     for try await line in bytes.lines {
@@ -117,7 +118,7 @@ final class HueSSEService: @unchecked Sendable {
                             }
                         } catch {
                             // Malformed event — log and keep streaming (non-fatal)
-                            self.log.warning("SSE: Parse error — \(error.localizedDescription, privacy: .public)")
+                            self.log.warning("SSE: Parse error — \(error.localizedDescription)")
                         }
                     }
 
@@ -125,7 +126,7 @@ final class HueSSEService: @unchecked Sendable {
                     continuation.finish()
 
                 } catch {
-                    self.log.error("SSE: Error — \(error.localizedDescription, privacy: .public)")
+                    self.log.error("SSE: Error — \(error.localizedDescription)")
                     continuation.finish(throwing: error)
                 }
             }

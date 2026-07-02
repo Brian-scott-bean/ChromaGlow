@@ -110,7 +110,7 @@ final class AutomationsViewModel {
             }
         } catch {
             appendLog("❌ Bridge \(bridgeID.prefix(8))… load failed: \(error.localizedDescription)")
-            log.error("Automations bridge \(bridgeID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            log.error("Automations bridge \(bridgeID): \(error.localizedDescription)")
             return []
         }
     }
@@ -140,7 +140,7 @@ final class AutomationsViewModel {
         Task {
             do {
                 try await bridge.api.setAutomation(id: rawID, enabled: newEnabled)
-                log.info("Automations: '\(item.name, privacy: .public)' → \(newEnabled, privacy: .public)")
+                log.info("Automations: '\(item.name)' → \(newEnabled)")
             } catch {
                 appendLog("❌ Toggle failed: \(error.localizedDescription)")
                 // Rollback

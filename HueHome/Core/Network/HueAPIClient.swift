@@ -153,7 +153,7 @@ class HueAPIClient: @unchecked Sendable {
         req.httpBody = encoded
         // Log outgoing body for debugging — remove noisy on-disk logging once stable.
         if let bodyStr = String(data: encoded, encoding: .utf8) {
-            log.debug("POST /scene body: \(bodyStr, privacy: .public)")
+            log.debug("POST /scene body: \(bodyStr)")
         }
         let data = try await execute(req)
         logRaw(data, label: "POST /scene '\(request.metadata.name)'")
@@ -167,7 +167,7 @@ class HueAPIClient: @unchecked Sendable {
         let encoded = try JSONEncoder().encode(request)
         req.httpBody = encoded
         if let bodyStr = String(data: encoded, encoding: .utf8) {
-            log.debug("POST /scene body: \(bodyStr, privacy: .public)")
+            log.debug("POST /scene body: \(bodyStr)")
         }
         let data = try await execute(req)
         logRaw(data, label: "POST /scene '\(request.metadata.name)'")
@@ -646,18 +646,20 @@ class HueAPIClient: @unchecked Sendable {
         req.httpMethod = method
         req.setValue(token, forHTTPHeaderField: "hue-application-key")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        log.info("API: \(method) \(urlStr, privacy: .public)")
+        // L-09: the full URL embeds the bridge LAN IP — log only the resource path.
+        log.info("API: \(method, privacy: .public) \(path, privacy: .public)")
         return req
     }
 
     private func execute(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { return data }
-        log.info("API: HTTP \(http.statusCode, privacy: .public) ← \(request.url?.path ?? "", privacy: .public)")
+        let resourcePath = request.url?.path ?? ""
+        log.info("API: HTTP \(http.statusCode, privacy: .public) ← \(resourcePath)")
         guard (200...299).contains(http.statusCode) else {
             // Log the bridge's error body BEFORE throwing — it contains the exact reason.
             if let errorBody = String(data: data, encoding: .utf8) {
-                log.error("API: Bridge error body: \(errorBody, privacy: .public)")
+                log.error("API: Bridge error body: \(errorBody)")
             }
             throw HueAPIError.httpError(http.statusCode)
         }
@@ -674,7 +676,7 @@ class HueAPIClient: @unchecked Sendable {
         do {
             return try Self.sharedDecoder.decode(type, from: data)
         } catch {
-            log.error("API: Decode error — \(error.localizedDescription, privacy: .public)")
+            log.error("API: Decode error — \(error.localizedDescription)")
             throw HueAPIError.decodingFailed(error.localizedDescription)
         }
     }
@@ -686,7 +688,7 @@ class HueAPIClient: @unchecked Sendable {
     private func logRaw(_ data: Data, label: String) {
 #if DEBUG
         guard let raw = String(data: data, encoding: .utf8) else { return }
-        log.debug("API [\(label, privacy: .public)] raw: \(raw, privacy: .public)")
+        log.debug("API [\(label)] raw: \(raw)")
         #if DEBUG
         print("[HueAPIClient] \(label) — \(raw)")
         #endif
