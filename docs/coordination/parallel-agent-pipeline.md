@@ -643,6 +643,43 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   mismatch. This mirrors the accepted Android identity contract (D-001/D-002) and should be sequenced
   under the deferred **D-001 TLS-bootstrap** decision so both platforms converge. Ship with a
   regression test asserting the delegate never returns `.useCredential` without a successful evaluation.
+- 2026-07-01 [Claude]: Concrete design for the P0 implementation (branch `ios-ref/hardening-2026-07`,
+  local-only until the human's on-device checkpoint — veto window is open until then):
+  1. **Pin at pairing (TOFU), verify identity like Android.** During the user-initiated pairing
+     handshake the delegate captures the presented leaf, requires a syntactically valid
+     exactly-one-CN 16-hex bridgeid, and requires `SecTrustEvaluateWithError` to succeed against
+     anchors = the two bundled Hue roots (`root-bridge`
+     `F0:BD:8E:65:09:E8:2F:77:4D:63:BC:00:9D:53:88:C9:69:FE:3D:CF:7D:6D:54:1D:63:51:B7:2B:89:8D:8A:CF`
+     and `Hue Root CA 01`
+     `D8:B8:94:48:B2:AF:8E:16:76:18:5A:C0:72:19:EE:9D:CB:C8:F0:1C:12:2A:02:6A:2A:4B:7B:5C:FE:03:28:B8`
+     — byte-identical to the Android Batch-3 PEMs) **or**, for legacy self-signed bridges only, against
+     the leaf itself (validity-period + signature check). After the create-user POST succeeds, the app
+     fetches `/api/0/config` over the **same pinned leaf** (identity continuity, mirroring D-014),
+     normalizes `bridgeid` to uppercase 16-hex, and requires leaf CN == bridgeid. Only then are the
+     pin **and** the credentials persisted; any mismatch aborts pairing with nothing stored.
+  2. **Pin material.** SHA-256 of the leaf public key (`SecCertificateCopyKey` →
+     `SecKeyCopyExternalRepresentation`) as primary, plus the full-cert SHA-256 for diagnostics;
+     keyed by canonical bridgeid, stored in Keychain alongside the bridge credentials.
+  3. **Every subsequent connection (one shared evaluator for app REST v1+v2, SSE, widget, Siri
+     intents, watch, pairing).** Accept iff `SecTrustEvaluateWithError` succeeds (anchors = bundled
+     Hue roots + pinned leaves, anchors-only, SSL policy without hostname — identity is carried by
+     the CN/pin check exactly like Android's `HueLeafHostnameVerifier`) **and** the leaf CN equals a
+     pinned bridgeid **and** (the public-key pin matches **or** the chain validates to the bundled
+     Signify roots for that same bridgeid — the CA path allows a legitimate firmware cert rotation to
+     re-pin, which is precisely Android's accepted CA+CN contract). Otherwise
+     `.cancelAuthenticationChallenge`. `.useCredential` is structurally impossible without a
+     successful evaluation.
+  4. **Upgrade migration (the one TOFU deviation — flagged for human review).** Existing users have
+     paired bridges with no stored pin. On startup, each unpinned bridge gets a one-time pin
+     acquisition: TOFU handshake + `/api/0/config` cross-check + CN==bridgeid, then pin persists.
+     Until a pin exists the data plane fails closed. Without this, every existing user would be
+     forced to re-pair after the update.
+  5. **Distribution.** Keychain is authoritative (main app). Pins (public, non-secret data) are
+     mirrored to App Group UserDefaults for the widget/Siri processes and pushed to the watch via
+     WCSession (`wc_pins_v1`); D-018 later moves that mirror into the shared Keychain access group.
+  6. **Alternative considered:** bridgeid-CN-only after CA validation (strict Android parity, no
+     pin). Rejected for iOS because legacy self-signed bridges (no CA chain) are still in the
+     installed base; the leaf pin covers them, and the CA+CN path is kept as the rotation fallback.
 
 ### D-017 — No secrets in logs (iOS) + a CI/lint guard
 - Status: PROPOSED
