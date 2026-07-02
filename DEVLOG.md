@@ -48,6 +48,112 @@
 
 ---
 
+## 2026-07-01 - [Claude] iOS P0 hardening remediation (privacy manifests, log scrub, TLS pinning) — LOCAL, awaiting on-device checkpoint
+
+### Branch
+- `ios-ref/hardening-2026-07` (based on `docs/hardening-audit-2026-07-01`; **local only — not pushed**).
+
+### Did
+- **M-03 (App Store blocker):** added per-bundle `PrivacyInfo.xcprivacy` (UserDefaults, CA92.1) to the
+  widget extension, watch app, and watch extension. The three targets are file-system-synchronized
+  groups, so folder presence = membership; verified present in all six built bundle paths.
+- **H-03/H-04/L-09 (secrets/PII in logs):** v1 client now logs only token-free resource paths
+  (`redactedPath(fromV1URLPath:)`) and sanitizes error bodies (`sanitizedForLog`); pairing no longer
+  logs the raw response or interpolates token/clientKey into `appendLog` (lengths/byte counts only);
+  dropped `privacy: .public` from every URL/IP/error-text/name interpolation across the network
+  clients + view models; discovery `print` is now `#if DEBUG`.
+- **H-01/H-02/M-01/H-06 (trust-all TLS → pinned evaluator, D-016):** new `HueHome/Core/Network/Trust/`
+  module compiled into app + widget + watch app targets:
+  - `BridgeTrustEvaluator` — canonical uppercase-16-hex bridgeid identity from the leaf CN;
+    data-plane verdict = successful `SecTrustEvaluateWithError` (anchors-only: bundled Hue roots +
+    pinned leaf) AND CN==pinned bridgeid AND public-key pin match; a key change is accepted only via
+    a chain that validates against the bundled Signify roots alone (CA-attested rotation → re-pin).
+  - `HueBridgeTrustRoots` — the two Hue roots embedded as DER (byte-identical to Android Batch-3),
+    fingerprints asserted by a regression test.
+  - `BridgePinStore` — pins in Keychain (authoritative) + App Group mirror (widget/Siri) + standard
+    defaults (watch); pins are public key material, not secrets.
+  - `BridgePinnedTrustDelegate` (data plane, fail closed) replaced ALL five trust-all delegates:
+    HueAPIClient/HueV1Client/HueSSEService/orchestrator-SSE `HueCertTrustDelegate`, pairing
+    `BridgeCertTrustDelegate`, widget `TrustDelegate`/`TrustAll`, Siri `TrustDelegate`, watch `TrustAll`.
+  - `BridgePairingTrustDelegate` (pairing TOFU) — validates chain + bridgeid-CN, captures the leaf,
+    and enforces same-leaf continuity across the pairing session (Android D-014 parity). Pairing now
+    fetches `/api/0/config` over the SAME session, requires `bridgeid == leaf CN`, pins, and only then
+    persists credentials; failure aborts pairing with nothing stored. Pairing session is invalidated
+    after use (closes L-18 early).
+  - `BridgePinAcquirer` — one-time upgrade migration: at the top of `loadAll()`, any configured host
+    without a pin gets a TOFU config-GET + CN cross-check + pin (60s retry throttle; disabled in
+    XCTest processes). Watch receives pins via WCSession (`hue_bridge_tls_pins_v1`) pushed alongside
+    credentials.
+- **Guards:** `Scripts/hardening_guards.sh` — (1) per-bundle privacy manifests; (2) bans
+  `privacy: .public` on URL/IP/token/name-derived interpolations + token/clientKey in `appendLog` +
+  v1 URL logging; (3) bans `.useCredential` outside the Trust module and discarded
+  `SecTrustEvaluateWithError` results.
+- **D-016:** appended the concrete design turn to the pipeline Decision Log before implementing.
+- **Multi-agent code review (8 angles) + fixes:** extracted one shared persist gate
+  (`BridgePinAcquirer.validateAndPersist`) used by BOTH pairing and migration — an existing pin can
+  never be overwritten by a different key unless the chain is CA-attested (the pairing path previously
+  lacked this guard; regression test added); pin migration now probes hosts concurrently (an offline
+  bridge no longer stalls `loadAll` serially) with a 15s retry throttle; the pairing config-GET
+  retries 3× before discarding a just-issued key; forget-bridge/forget-all now remove TLS pins
+  (which is also the recovery path for a legitimately changed bridge certificate); `BridgePin`
+  dropped its write-only `certDER` (~1KB per pin per sink); bridgeid validation no longer compiles a
+  regex per TLS challenge; CA-rotation re-pin moved off the TLS callback thread. (A shared delegate
+  base class was tried and reverted: subclass overrides hit default-actor-isolation mismatches
+  across the mixed-toolchain targets — the ~30 duplicated plumbing lines are the cheaper trade,
+  noted in the file.)
+- **Finding while reviewing:** `HueHome/Intents/` (HueIntentAPIClient/HueIntents/HueAppShortcuts/
+  HueRoomEntity) has NO pbxproj target membership — the "Siri intents" trust-all surface in audit
+  M-01 was dead code; the live Siri/AppIntents surface is the widget extension. The file was still
+  rewired to the pinned delegate so it is correct if ever added to a target.
+- **Security review (/security-review, adversarially verified, confidence 8/10):** the unattended
+  upgrade migration (`ensurePins`) originally accepted a self-signed leaf as a *first* pin with no
+  user present — a LAN MITM at the first post-upgrade `loadAll` could silently ghost-pin an
+  attacker cert and capture the app key. Fixed: `validateAndPersist(…, unattended:)` now refuses a
+  first pin for a non-CA-attested (self-signed) leaf on the silent migration path; only interactive
+  pairing (physical link-button presence) may pin a self-signed bridge. Modern Signify-CA-signed
+  bridges (the common case; both physical test bridges chain to the bundled `root-bridge` CA) still
+  migrate silently. Regression test: `testUnattendedMigrationRefusesSelfSignedFirstPin`. **Consequence
+  for the human:** a *legacy self-signed* bridge paired before D-016 will NOT auto-migrate — it stays
+  fail-closed until the user forgets + re-pairs it (link button). Flag if you want an in-app
+  "re-pair to secure" prompt instead of silent fail-closed.
+
+### Working
+- Build SUCCEEDED (`HueHome 1`, generic/platform=iOS — includes widget + both watch targets).
+- HueHomeTests green on iPhone 15 / iOS 17.0 sim, including new `SecretLogScrubTests` (post-pairing
+  log scrape: no token/clientKey substring) and `BridgeTrustEvaluatorTests` (delegate never returns
+  `.useCredential` without successful evaluation; rejects unpinned leaf, mismatched CN, and
+  same-CN/different-key impersonator; CA-only rotation; root fingerprints; D-014-style continuity).
+
+### Left
+- **STOP: human on-device checkpoint before any push** — pair to a real bridge (both bridges ideally),
+  confirm normal control + widget/watch still work after the app runs once (pin migration), and
+  optionally verify a MITM'd/mismatched cert is rejected. Exact steps in the session handoff.
+- P1 next: M-02/L-30 Keychain access group (pins currently mirror to App Group UD by design — move with
+  the credential migration); M-06/M-07/H-05/M-18 multi-bridge fixes; M-04/M-05; M-08/M-14/M-15 mailbox;
+  M-09/M-10/L-11 DTLS; M-13/L-27 persistence; M-16/M-17; M-11/M-12.
+- Review items deferred to P1 (documented trade-offs, not regressions): watch pin distribution rides
+  the debounced room push (add a store-triggered sync); cross-process pin-cache staleness reconciles
+  with the D-018 shared Keychain access group; the grep-based log lint is a tripwire, not proof —
+  consider a typed redaction wrapper; surface a visible error state when widget/watch writes fail
+  closed instead of `try?`-swallowing.
+
+### Validation
+- `xcodebuild -scheme "HueHome 1" -destination generic/platform=iOS build` → BUILD SUCCEEDED.
+- `xcodebuild … -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0' -only-testing:HueHomeTests test` → TEST SUCCEEDED.
+- `Scripts/hardening_guards.sh` → all guards pass.
+
+### Gotchas
+- Existing paired bridges have no pin until the main app runs `loadAll()` once (TOFU migration);
+  widget/watch/Siri fail closed until then. Open the app once after install.
+- "Forget all bridges" does not yet remove pins (harmless — public material, overwritten on re-pair);
+  fold into the P1 M-02/L-30 credential-surface work.
+- Legacy HTTP (port-80) pairing now requires the bridge to present a valid HTTPS identity to complete
+  (the data plane is HTTPS-only, so such bridges never worked past pairing anyway).
+- `run_tests.sh` still targets a hardcoded physical device and the `HueHome` scheme; use the
+  simulator command above instead.
+
+---
+
 ## 2026-07-01 - [Claude] Cross-platform hardening audit (iOS + Android)
 
 ### Branch
