@@ -6,6 +6,7 @@
 // Developer console is hidden behind a DEBUG-only toggle.
 
 import SwiftUI
+import SwiftData
 
 // MARK: - BridgeSetupView
 
@@ -431,11 +432,22 @@ struct BridgeSetupView: View {
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(Capsule().fill(.green.opacity(0.10)))
 
-            primaryButton(
-                isAddingAdditional ? "Add to ChromaGlow" : "Go to Dashboard",
-                icon: isAddingAdditional ? "plus.circle.fill" : "lightbulb.fill"
-            ) {
-                handlePairedAction(ip: ip, token: token)
+            VStack(spacing: 12) {
+                primaryButton(
+                    isAddingAdditional ? "Add to ChromaGlow" : "Continue to App",
+                    icon: isAddingAdditional ? "plus.circle.fill" : "lightbulb.fill"
+                ) {
+                    handlePairedAction(ip: ip, token: token)
+                }
+                // Round-2 Item 2: multi-bridge homes can pair everything in one
+                // onboarding pass. The just-paired record is already persisted
+                // (committed at .paired), so returning to scanning loses nothing.
+                if !isAddingAdditional {
+                    secondaryButton("Pair Another Bridge", icon: "plus.circle") {
+                        vm.resetToIdle()
+                        vm.startScan()
+                    }
+                }
             }
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -636,16 +648,18 @@ struct BridgeSetupView: View {
             // Test seams may bypass the credential write; nothing to register.
             return
         }
-        let name = isAddingAdditional
-            ? "Bridge \(mintedID.prefix(4).uppercased())"
-            : "My Bridge"
+        // "My Bridge" only for the very first record — a second onboarding
+        // pairing ("Pair Another Bridge") gets a distinct name like the
+        // add-additional flow.
+        let isFirstRecord = ((try? modelContext.fetchCount(FetchDescriptor<BridgeRecord>())) ?? 0) == 0
+        let name = isFirstRecord ? "My Bridge" : "Bridge \(mintedID.prefix(4).uppercased())"
         do {
             let registration = try BridgePairingRegistrar.register(
                 mintedID: mintedID,
                 host: host,
                 canonicalBridgeID: vm.pairedCanonicalBridgeID,
                 preferredName: name,
-                sortOrder: isAddingAdditional ? 999 : 0,
+                sortOrder: isFirstRecord ? 0 : 999,
                 modelContext: modelContext
             )
             pairedRecord = registration.record

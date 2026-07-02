@@ -136,6 +136,39 @@ final class PairingPersistenceTests: XCTestCase {
                      "pairing must not write the legacy hue_bridge_ip slot (L-15)")
     }
 
+    /// Round-2 Item 2 ("Pair Another Bridge"): a second pairing driven through
+    /// the SAME view model — reset back to scanning, then pair again — must
+    /// mint a separate record id and keep both credential sets readable.
+    func testPairAnotherBridgeOnSameViewModelKeepsBothCredentialSets() async throws {
+        let vm = BridgeDiscoveryViewModel()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        vm.pairingSessionOverride = URLSession(configuration: config)
+        vm.pinAcquisitionOverride = { _ in true }
+
+        func pairOnce(host: String, token: String) async throws -> String {
+            StubURLProtocol.stubs["/api"] = (Data("[{\"success\":{\"username\":\"\(token)\",\"clientkey\":\"\"}}]".utf8), 200)
+            vm.pairWithBridge(BridgeEndpoint(name: "TestBridge", host: host, port: 443))
+            for _ in 0..<100 {
+                if case .paired = vm.phase { break }
+                if case .error = vm.phase { break }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            guard case .paired = vm.phase else { throw XCTSkip("pairing did not complete; phase=\(vm.phase)") }
+            let minted = try XCTUnwrap(vm.pairedRecordID)
+            mintedIDs.append(minted)
+            return minted
+        }
+
+        let idA = try await pairOnce(host: Self.hostA, token: Self.tokenA)
+        vm.resetToIdle()   // "Pair Another Bridge" path
+        let idB = try await pairOnce(host: Self.hostB, token: Self.tokenB)
+
+        XCTAssertNotEqual(idA, idB, "each pairing must mint its own record id")
+        XCTAssertEqual(try KeychainManager.shared.loadCredentials(for: idA).token, Self.tokenA)
+        XCTAssertEqual(try KeychainManager.shared.loadCredentials(for: idB).token, Self.tokenB)
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - L-15: configure() builds a client per paired bridge
     // ──────────────────────────────────────────────
