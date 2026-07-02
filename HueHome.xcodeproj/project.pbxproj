@@ -103,12 +103,14 @@
 		C0DEC0DE0104000000000002 /* BridgePinnedTrustDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */; };
 		C0DEC0DE0104000000000003 /* BridgePinnedTrustDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */; };
 		C0DEC0DE0106000000000001 /* SharedKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */; };
+		C0DEC0DE010A000000000001 /* BridgeCommandGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010A000000000000 /* BridgeCommandGate.swift */; };
 		C0DEC0DE0106000000000002 /* SharedKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */; };
 		C0DEC0DE0106000000000003 /* SharedKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */; };
 		C0DEC0DE0105000000000001 /* BridgeTrustEvaluatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0105000000000000 /* BridgeTrustEvaluatorTests.swift */; };
 		C0DEC0DE0107000000000001 /* KeychainSharingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0107000000000000 /* KeychainSharingTests.swift */; };
 		C0DEC0DE0108000000000001 /* MultiBridgeRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0108000000000000 /* MultiBridgeRoutingTests.swift */; };
 		C0DEC0DE0109000000000001 /* BridgeAnimationCorrectnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0109000000000000 /* BridgeAnimationCorrectnessTests.swift */; };
+		C0DEC0DE010B000000000001 /* GatedBulkWriteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */; };
 		C1F360D81291713EACE0C1FD /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27B5C4A4767211516073798 /* SettingsView.swift */; };
 		C47CF29F24AA56854A38162C /* CreateGlobalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92662E9280D48307551834BA /* CreateGlobalSceneView.swift */; };
 		C5E607457B720B34157DA5DA /* HueHome/UI/Effects/EffectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52EF9DA4A31627EE969ED03D /* HueHome/UI/Effects/EffectsView.swift */; };
@@ -302,10 +304,12 @@
 		C0DEC0DE0103000000000000 /* HueBridgeTrustRoots.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueBridgeTrustRoots.swift; path = HueHome/Core/Network/Trust/HueBridgeTrustRoots.swift; sourceTree = "<group>"; };
 		C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgePinnedTrustDelegate.swift; path = HueHome/Core/Network/Trust/BridgePinnedTrustDelegate.swift; sourceTree = "<group>"; };
 		C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedKeychainStore.swift; path = HueHome/Core/Keychain/SharedKeychainStore.swift; sourceTree = "<group>"; };
+		C0DEC0DE010A000000000000 /* BridgeCommandGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeCommandGate.swift; path = HueHome/Core/Network/BridgeCommandGate.swift; sourceTree = "<group>"; };
 		C0DEC0DE0105000000000000 /* BridgeTrustEvaluatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeTrustEvaluatorTests.swift; path = ./HueHomeTests/BridgeTrustEvaluatorTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0107000000000000 /* KeychainSharingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeychainSharingTests.swift; path = ./HueHomeTests/KeychainSharingTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0108000000000000 /* MultiBridgeRoutingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MultiBridgeRoutingTests.swift; path = ./HueHomeTests/MultiBridgeRoutingTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0109000000000000 /* BridgeAnimationCorrectnessTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationCorrectnessTests.swift; path = ./HueHomeTests/BridgeAnimationCorrectnessTests.swift; sourceTree = "<group>"; };
+		C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GatedBulkWriteTests.swift; path = ./HueHomeTests/GatedBulkWriteTests.swift; sourceTree = "<group>"; };
 		C27B5C4A4767211516073798 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = HueHome/UI/Settings/SettingsView.swift; sourceTree = "<group>"; };
 		C4FF8FA2BF756D1FE5830903 /* HueHome/UI/Dashboard/EditRoomSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Dashboard/EditRoomSheet.swift; sourceTree = "<group>"; };
 		C9122685BB2530B50697D4D2 /* SceneChip.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneChip.swift; path = HueHome/UI/RoomDetail/SceneChip.swift; sourceTree = "<group>"; };
@@ -461,6 +465,7 @@
 				C0DEC0DE0103000000000000 /* HueBridgeTrustRoots.swift */,
 				C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */,
 				C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */,
+				C0DEC0DE010A000000000000 /* BridgeCommandGate.swift */,
 			);
 			name = Network;
 			sourceTree = "<group>";
@@ -773,6 +778,7 @@
 				C0DEC0DE0107000000000000 /* KeychainSharingTests.swift */,
 				C0DEC0DE0108000000000000 /* MultiBridgeRoutingTests.swift */,
 				C0DEC0DE0109000000000000 /* BridgeAnimationCorrectnessTests.swift */,
+				C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1143,6 +1149,7 @@
 				C0DEC0DE0103000000000001 /* HueBridgeTrustRoots.swift in Sources */,
 				C0DEC0DE0104000000000001 /* BridgePinnedTrustDelegate.swift in Sources */,
 				C0DEC0DE0106000000000001 /* SharedKeychainStore.swift in Sources */,
+				C0DEC0DE010A000000000001 /* BridgeCommandGate.swift in Sources */,
 				0C3BAD9137A6A8F673D0ED0C /* CreateSceneView.swift in Sources */,
 				951658093BEEBEC42FBEB22C /* HarmonyEngine.swift in Sources */,
 				599068F08EA1513BEAFC8F83 /* ColorPadView.swift in Sources */,
@@ -1227,6 +1234,7 @@
 				C0DEC0DE0107000000000001 /* KeychainSharingTests.swift in Sources */,
 				C0DEC0DE0108000000000001 /* MultiBridgeRoutingTests.swift in Sources */,
 				C0DEC0DE0109000000000001 /* BridgeAnimationCorrectnessTests.swift in Sources */,
+				C0DEC0DE010B000000000001 /* GatedBulkWriteTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

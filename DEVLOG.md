@@ -48,6 +48,44 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 hardening — Group 4: paced bulk + effect writes (M-08/M-14/M-15) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (local only — not pushed).
+
+### Did
+- **New `BridgeCommandGate` actor** (per-bridge, ~10 cmd/sec spacing, one retry with 400ms
+  backoff, returns the final error instead of swallowing it). Orchestrator keeps one gate per
+  bridge (`commandGate(for:)`). This is deliberately NOT the latest-wins `RestSender` — bulk
+  operations must deliver EVERY command; the mailbox stays untouched on the Sync/Studio paths.
+- **M-08:** `turnAllOff` / `applyAutomationPreset` / `applyAutomationEffect` route every
+  grouped_light PUT through the bridge's gate, collect per-room failures, and surface them via
+  the new `lastBulkFailure` (`BulkWriteFailure`) — DashboardView shows a "⚠ … failed for …"
+  toast. No more silent partial application.
+- **M-14:** `EffectLoops.setAll` collapses a same-color frame (strobe on/off, party sync,
+  thunderstorm flash/calm — all setAll calls are same-color by construction) into a **single
+  grouped_light PUT** through the gate when the room's groupedLightID is available; per-light
+  fallback is gate-paced. `setAll`/`setOne` return success; loops sleep an extra 500ms after a
+  failed frame instead of hammering a throttled bridge. Party's non-sync per-light branch is
+  gate-paced.
+- **M-15:** the Effects one-shot per-light color fan-out and the gradual native-effect clear
+  fan-out are gate-paced; one-shot counts failures and shows "⚠ applied — N light(s) failed"
+  instead of unconditional success.
+
+### Working
+- Build SUCCEEDED (generic/platform=iOS); HueHomeTests green incl. new `GatedBulkWriteTests`
+  (gate retry/pacing semantics; All-Off attempts every room, retries the failed one, surfaces
+  it; automation preset ditto; 10-light same-color frame = exactly one grouped PUT, zero
+  per-light PUTs). Guards pass.
+
+### Gotchas
+- Strobe above ~300 BPM now degrades gracefully (frames delayed by pacing) instead of flooding
+  the bridge and desyncing — the bridge cap (~10 cmd/sec) is physics, not a tunable.
+- The §4 verified-good per-light batching (RoomDetail bulk path) and the RestSender mailbox
+  paths were not modified.
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 hardening — Group 3: bridge-stored animation correctness (M-04/M-05) — LOCAL
 
 ### Branch

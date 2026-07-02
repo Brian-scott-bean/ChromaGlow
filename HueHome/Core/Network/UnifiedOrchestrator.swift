@@ -35,6 +35,15 @@ enum BridgeConnectionStatus {
 /// Represents one room that currently has a Hue effect applied.
 /// Stored in UnifiedOrchestrator.activeEffectEntries so both
 /// DashboardView (menu) and EffectsViewModel (card sync) share the same state.
+/// Surfaced when a bulk write (All Off, automation preset/effect) could not
+/// reach every room even after the gate's retry (M-08) — the UI shows it so
+/// partial application is never silent.
+struct BulkWriteFailure: Equatable {
+    let operation: String
+    let roomNames: [String]
+    let at: Date
+}
+
 struct ActiveEffectEntry: Identifiable, Equatable {
     let id: String           // RoomDisplayItem.id (used as the stable key)
     let roomName: String
@@ -267,6 +276,24 @@ final class UnifiedOrchestrator {
     /// @ObservationIgnored: views read allRooms, never clients directly.
     @ObservationIgnored
     private var clients: [String: BridgeAPIClient] = [:]
+
+    /// Per-bridge pacing gates for bulk/effect writes (M-08/M-14/M-15).
+    /// keyed by BridgeRecord.id ("legacy" for the single-bridge fallback).
+    @ObservationIgnored
+    private var commandGates: [String: BridgeCommandGate] = [:]
+
+    /// Latest bulk-write failure — DashboardView surfaces it as a toast so a
+    /// partially applied All Off/automation is never silent (M-08).
+    private(set) var lastBulkFailure: BulkWriteFailure?
+
+    /// The pacing gate for a bridge — one per bridge, created lazily.
+    func commandGate(for bridgeID: String?) -> BridgeCommandGate {
+        let key = bridgeID ?? "legacy"
+        if let gate = commandGates[key] { return gate }
+        let gate = BridgeCommandGate()
+        commandGates[key] = gate
+        return gate
+    }
 
     /// Rooms per bridge — used for merge.  keyed by BridgeRecord.id
     private var roomsByBridge: [String: [RoomDisplayItem]] = [:]
@@ -938,25 +965,47 @@ final class UnifiedOrchestrator {
         }
         rebuildAllRooms()
 
-        await withTaskGroup(of: Void.self) { group in
+        // M-08: pace per-bridge (~10 cmd/sec) and surface failures — an
+        // unpaced N-room burst hit the bridge throttle and silently dropped
+        // rooms, leaving them in their old state with no feedback.
+        var failedRooms: [String] = []
+        await withTaskGroup(of: String?.self) { group in
             for (bridgeID, roomItems) in roomsByBridge {
                 guard let client = clients[bridgeID] else { continue }
+                let gate = commandGate(for: bridgeID)
                 for room in roomItems {
                     guard let glID = room.groupedLightID else { continue }
+                    let roomName = room.name
                     group.addTask {
-                        try? await client.setGroupedLightEffect(
-                            id:         glID,
-                            on:         true,
-                            brightness: preset.brightness,
-                            xy:         nil,
-                            mirek:      preset.mirek,
-                            duration:   400
-                        )
+                        let error = await gate.send {
+                            try await client.setGroupedLightEffect(
+                                id:         glID,
+                                on:         true,
+                                brightness: preset.brightness,
+                                xy:         nil,
+                                mirek:      preset.mirek,
+                                duration:   400
+                            )
+                        }
+                        return error == nil ? nil : roomName
                     }
                 }
             }
+            for await failedRoom in group {
+                if let failedRoom { failedRooms.append(failedRoom) }
+            }
         }
-        log.info("Automation preset '\(preset.id)' applied to \(self.allRooms.count) rooms")
+        reportBulkResult(operation: "Automation preset", failedRooms: failedRooms)
+        log.info("Automation preset '\(preset.id)' applied to \(self.allRooms.count) rooms (\(failedRooms.count) failed)")
+    }
+
+    /// Surface a partial bulk-write failure to the UI (M-08).
+    private func reportBulkResult(operation: String, failedRooms: [String]) {
+        guard !failedRooms.isEmpty else { return }
+        log.warning("\(operation): \(failedRooms.count) room(s) failed after retry")
+        lastBulkFailure = BulkWriteFailure(operation: operation,
+                                           roomNames: failedRooms.sorted(),
+                                           at: Date())
     }
 
     // ──────────────────────────────────────────────
@@ -972,41 +1021,52 @@ final class UnifiedOrchestrator {
         }
         log.info("Automation executing effect '\(effect.name)' on all rooms")
 
-        await withTaskGroup(of: Void.self) { group in
+        // M-08: pace per-bridge and surface failures (see applyAutomationPreset).
+        var failedRooms: [String] = []
+        await withTaskGroup(of: String?.self) { group in
             for (bridgeID, roomItems) in roomsByBridge {
                 guard let client = clients[bridgeID] else { continue }
+                let gate = commandGate(for: bridgeID)
                 for room in roomItems {
                     guard let glID = room.groupedLightID else { continue }
                     let capturedClient   = client
                     let capturedGLID     = glID
                     let capturedStrategy = effect.strategy
+                    let roomName         = room.name
                     group.addTask {
-                        switch capturedStrategy {
-                        case .bridgeNative(let effectName):
-                            // Use grouped_light directly — more reliable than fetching per-light IDs.
-                            // fetchLightIDsForGroup can return empty on some bridge versions,
-                            // causing the old code to silently fall back to a brightness-only PUT.
-                            try? await capturedClient.setGroupedLightNativeEffect(
-                                id: capturedGLID, effect: effectName
-                            )
-                        case .oneShot, .gradual:
-                            try? await capturedClient.setGroupedLightEffect(
-                                id: capturedGLID, on: true, brightness: 70,
-                                xy: nil, mirek: 300, duration: 400
-                            )
-                        case .appDriven:
-                            // App-driven effects need a foreground Task loop — not possible
-                            // from a notification. Apply a static warm fallback instead.
-                            try? await capturedClient.setGroupedLightEffect(
-                                id: capturedGLID, on: true, brightness: 70,
-                                xy: nil, mirek: nil, duration: 400
-                            )
+                        let error = await gate.send {
+                            switch capturedStrategy {
+                            case .bridgeNative(let effectName):
+                                // Use grouped_light directly — more reliable than fetching per-light IDs.
+                                // fetchLightIDsForGroup can return empty on some bridge versions,
+                                // causing the old code to silently fall back to a brightness-only PUT.
+                                try await capturedClient.setGroupedLightNativeEffect(
+                                    id: capturedGLID, effect: effectName
+                                )
+                            case .oneShot, .gradual:
+                                try await capturedClient.setGroupedLightEffect(
+                                    id: capturedGLID, on: true, brightness: 70,
+                                    xy: nil, mirek: 300, duration: 400
+                                )
+                            case .appDriven:
+                                // App-driven effects need a foreground Task loop — not possible
+                                // from a notification. Apply a static warm fallback instead.
+                                try await capturedClient.setGroupedLightEffect(
+                                    id: capturedGLID, on: true, brightness: 70,
+                                    xy: nil, mirek: nil, duration: 400
+                                )
+                            }
                         }
+                        return error == nil ? nil : roomName
                     }
                 }
             }
+            for await failedRoom in group {
+                if let failedRoom { failedRooms.append(failedRoom) }
+            }
         }
-        log.info("Automation effect '\(effect.name)' applied to \(self.allRooms.count) rooms")
+        reportBulkResult(operation: "Automation effect", failedRooms: failedRooms)
+        log.info("Automation effect '\(effect.name)' applied to \(self.allRooms.count) rooms (\(failedRooms.count) failed)")
     }
 
     // ──────────────────────────────────────────────
@@ -1027,19 +1087,30 @@ final class UnifiedOrchestrator {
             roomsByBridge[bridgeID] = rooms
         }
         log.info("All Off: optimistic update applied, firing API calls…")
-        // Fire API calls concurrently across all bridges
-        await withTaskGroup(of: Void.self) { group in
+        // M-08: paced per-bridge with failure surfacing — All Off must reach
+        // EVERY room; a silently dropped PUT left lights on with the card off.
+        var failedRooms: [String] = []
+        await withTaskGroup(of: String?.self) { group in
             for (bridgeID, roomItems) in roomsByBridge {
                 guard let client = clients[bridgeID] else { continue }
+                let gate = commandGate(for: bridgeID)
                 for room in roomItems {
                     guard let glID = room.groupedLightID else { continue }
+                    let roomName = room.name
                     group.addTask {
-                        try? await client.setGroupedLight(id: glID, on: false)
+                        let error = await gate.send {
+                            try await client.setGroupedLight(id: glID, on: false)
+                        }
+                        return error == nil ? nil : roomName
                     }
                 }
             }
+            for await failedRoom in group {
+                if let failedRoom { failedRooms.append(failedRoom) }
+            }
         }
-        log.info("All Off fired across \(self.clients.count) bridge(s)")
+        reportBulkResult(operation: "All Off", failedRooms: failedRooms)
+        log.info("All Off fired across \(self.clients.count) bridge(s) (\(failedRooms.count) room(s) failed)")
     }
 
     // ──────────────────────────────────────────────

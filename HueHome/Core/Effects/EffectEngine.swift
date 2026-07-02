@@ -49,7 +49,16 @@ actor EffectEngine {
 
 /// Static helpers that build the async loop body for app-driven effects.
 /// Each loop checks `Task.isCancelled` and returns when cancelled.
+///
+/// M-14: every frame goes through the per-bridge `BridgeCommandGate`
+/// (~10 cmd/sec) and same-color frames collapse to ONE grouped_light PUT
+/// when a `groupedLightID` is available — a 10-light strobe used to fire
+/// ~40 unpaced per-light PUTs/sec with every 429 swallowed by `try?`.
+/// A failed frame triggers an extra backoff sleep instead of hammering on.
 enum EffectLoops {
+
+    /// Extra sleep after a frame that failed even with the gate's retry.
+    static let failureBackoffNs: UInt64 = 500_000_000
 
     // ─────────────────────────────────────────────
     // MARK: Strobe
@@ -57,12 +66,14 @@ enum EffectLoops {
 
     /// Alternates all lights between `onColor` and `offBrightness` at `bpm` beats/min.
     static func strobe(
-        lights:        [LightDisplayItem],
-        api:           HueAPIClient,
-        bpm:           Double,    // 30...480
-        dutyCycle:     Double,    // 0.10...0.90
-        onXY:          (Double, Double),
-        offBrightness: Double
+        lights:         [LightDisplayItem],
+        api:            HueAPIClient,
+        groupedLightID: String?,
+        gate:           BridgeCommandGate,
+        bpm:            Double,    // 30...480
+        dutyCycle:      Double,    // 0.10...0.90
+        onXY:           (Double, Double),
+        offBrightness:  Double
     ) -> @Sendable () async throws -> Void {
         return {
             let periodNs   = UInt64(60_000_000_000 / bpm)
@@ -71,18 +82,20 @@ enum EffectLoops {
 
             while !Task.isCancelled {
                 // ON phase
-                await EffectLoops.setAll(lights: lights, api: api,
-                                         on: true, brightness: 100,
-                                         xy: onXY, duration: 0)
-                try await Task.sleep(nanoseconds: onNs)
+                var ok = await EffectLoops.setAll(lights: lights, api: api,
+                                                  groupedLightID: groupedLightID, gate: gate,
+                                                  on: true, brightness: 100,
+                                                  xy: onXY, duration: 0)
+                try await Task.sleep(nanoseconds: ok ? onNs : onNs + EffectLoops.failureBackoffNs)
                 guard !Task.isCancelled else { return }
 
                 // OFF phase
-                await EffectLoops.setAll(lights: lights, api: api,
-                                         on: offBrightness <= 0,
-                                         brightness: offBrightness,
-                                         xy: onXY, duration: 0)
-                try await Task.sleep(nanoseconds: offNs)
+                ok = await EffectLoops.setAll(lights: lights, api: api,
+                                              groupedLightID: groupedLightID, gate: gate,
+                                              on: offBrightness <= 0,
+                                              brightness: offBrightness,
+                                              xy: onXY, duration: 0)
+                try await Task.sleep(nanoseconds: ok ? offNs : offNs + EffectLoops.failureBackoffNs)
             }
         }
     }
@@ -92,42 +105,50 @@ enum EffectLoops {
     // ─────────────────────────────────────────────
 
     static func party(
-        lights:   [LightDisplayItem],
-        api:      HueAPIClient,
-        speed:    Double,           // 1...10
-        palette:  [(Double, Double)],  // array of CIE xy pairs
-        sync:     Bool,
-        flash:    Bool
+        lights:         [LightDisplayItem],
+        api:            HueAPIClient,
+        groupedLightID: String?,
+        gate:           BridgeCommandGate,
+        speed:          Double,           // 1...10
+        palette:        [(Double, Double)],  // array of CIE xy pairs
+        sync:           Bool,
+        flash:          Bool
     ) -> @Sendable () async throws -> Void {
         return {
             let intervalNs = UInt64((1.1 - speed / 10.0) * 1_500_000_000)
 
             while !Task.isCancelled {
+                var frameOK = true
                 if sync {
                     let xy = palette.randomElement() ?? (0.3, 0.3)
-                    await EffectLoops.setAll(lights: lights, api: api,
-                                             on: true, brightness: 90,
-                                             xy: xy, duration: 200)
+                    frameOK = await EffectLoops.setAll(lights: lights, api: api,
+                                                       groupedLightID: groupedLightID, gate: gate,
+                                                       on: true, brightness: 90,
+                                                       xy: xy, duration: 200)
                 } else {
+                    // Per-light colors differ — cannot collapse; the gate
+                    // paces each PUT so this no longer bursts unthrottled.
                     for light in lights {
                         guard !Task.isCancelled else { return }
                         let xy = palette.randomElement() ?? (0.3, 0.3)
-                        await EffectLoops.setOne(light: light, api: api,
-                                                  on: true, brightness: 80,
-                                                  xy: xy, duration: 300)
+                        let ok = await EffectLoops.setOne(light: light, api: api, gate: gate,
+                                                          on: true, brightness: 80,
+                                                          xy: xy, duration: 300)
+                        frameOK = frameOK && ok
                     }
                 }
 
                 // Occasional white flash
                 if flash && Int.random(in: 0..<8) == 0 {
-                    await EffectLoops.setAll(lights: lights, api: api,
-                                             on: true, brightness: 100,
-                                             xy: (0.32, 0.33), duration: 0)
+                    _ = await EffectLoops.setAll(lights: lights, api: api,
+                                                 groupedLightID: groupedLightID, gate: gate,
+                                                 on: true, brightness: 100,
+                                                 xy: (0.32, 0.33), duration: 0)
                     try await Task.sleep(nanoseconds: 80_000_000)
                     guard !Task.isCancelled else { return }
                 }
 
-                try await Task.sleep(nanoseconds: intervalNs)
+                try await Task.sleep(nanoseconds: frameOK ? intervalNs : intervalNs + EffectLoops.failureBackoffNs)
             }
         }
     }
@@ -139,6 +160,8 @@ enum EffectLoops {
     static func thunderstorm(
         lights:           [LightDisplayItem],
         api:              HueAPIClient,
+        groupedLightID:   String?,
+        gate:             BridgeCommandGate,
         frequencyIndex:   Int,   // 0=Rare 1=Occasional 2=Frequent
         baseXY:           (Double, Double),
         flashXY:          (Double, Double),
@@ -146,9 +169,10 @@ enum EffectLoops {
     ) -> @Sendable () async throws -> Void {
         return {
             // Base calm state
-            await EffectLoops.setAll(lights: lights, api: api,
-                                     on: true, brightness: baseBrightness,
-                                     xy: baseXY, duration: 2000)
+            _ = await EffectLoops.setAll(lights: lights, api: api,
+                                         groupedLightID: groupedLightID, gate: gate,
+                                         on: true, brightness: baseBrightness,
+                                         xy: baseXY, duration: 2000)
 
             let avgWaitMs: UInt64 = [12_000, 6_000, 2_500][frequencyIndex]
 
@@ -162,15 +186,18 @@ enum EffectLoops {
                 let flashes = Int.random(in: 1...3)
                 for _ in 0..<flashes {
                     guard !Task.isCancelled else { return }
-                    await EffectLoops.setAll(lights: lights, api: api,
-                                             on: true, brightness: 100,
-                                             xy: flashXY, duration: 0)
+                    let flashOK = await EffectLoops.setAll(lights: lights, api: api,
+                                                           groupedLightID: groupedLightID, gate: gate,
+                                                           on: true, brightness: 100,
+                                                           xy: flashXY, duration: 0)
                     try await Task.sleep(nanoseconds: UInt64.random(in: 40_000_000...120_000_000))
                     guard !Task.isCancelled else { return }
-                    await EffectLoops.setAll(lights: lights, api: api,
-                                             on: true, brightness: baseBrightness,
-                                             xy: baseXY, duration: 0)
-                    try await Task.sleep(nanoseconds: UInt64.random(in: 60_000_000...200_000_000))
+                    let calmOK = await EffectLoops.setAll(lights: lights, api: api,
+                                                          groupedLightID: groupedLightID, gate: gate,
+                                                          on: true, brightness: baseBrightness,
+                                                          xy: baseXY, duration: 0)
+                    let restNs = UInt64.random(in: 60_000_000...200_000_000)
+                    try await Task.sleep(nanoseconds: (flashOK && calmOK) ? restNs : restNs + EffectLoops.failureBackoffNs)
                 }
             }
         }
@@ -180,32 +207,55 @@ enum EffectLoops {
     // MARK: Helpers
     // ─────────────────────────────────────────────
 
+    /// Applies ONE state to every light. Because the state is identical for
+    /// all lights, this collapses to a single grouped_light PUT when the
+    /// room's groupedLightID is available (M-14) — one paced command instead
+    /// of N. Falls back to gate-paced per-light PUTs otherwise.
+    /// Returns false when any command still failed after the gate's retry.
     static func setAll(
         lights: [LightDisplayItem], api: HueAPIClient,
+        groupedLightID: String?, gate: BridgeCommandGate,
         on: Bool, brightness: Double, xy: (Double, Double), duration: Int
-    ) async {
-        await withTaskGroup(of: Void.self) { group in
-            for light in lights {
-                group.addTask {
-                    await EffectLoops.setOne(light: light, api: api,
-                                             on: on, brightness: brightness,
-                                             xy: xy, duration: duration)
-                }
+    ) async -> Bool {
+        if let groupedLightID {
+            let error = await gate.send {
+                try await api.setGroupedLightEffect(
+                    id:         groupedLightID,
+                    on:         on,
+                    brightness: brightness,
+                    xy:         xy,
+                    mirek:      nil,
+                    duration:   duration
+                )
             }
+            return error == nil
         }
+        var allOK = true
+        for light in lights {
+            let ok = await setOne(light: light, api: api, gate: gate,
+                                  on: on, brightness: brightness,
+                                  xy: xy, duration: duration)
+            allOK = allOK && ok
+        }
+        return allOK
     }
 
+    /// One gate-paced per-light PUT. Returns false on persistent failure —
+    /// callers back off instead of `try?`-hiding rate-limit errors.
     static func setOne(
-        light: LightDisplayItem, api: HueAPIClient,
+        light: LightDisplayItem, api: HueAPIClient, gate: BridgeCommandGate,
         on: Bool, brightness: Double, xy: (Double, Double), duration: Int
-    ) async {
-        try? await api.setLightEffect(
-            id:         light.id,    // LightDisplayItem.id == CLIP v2 light resource UUID
-            on:         on,
-            brightness: brightness,
-            xy:         xy,
-            mirek:      nil,
-            duration:   duration
-        )
+    ) async -> Bool {
+        let error = await gate.send {
+            try await api.setLightEffect(
+                id:         light.id,    // LightDisplayItem.id == CLIP v2 light resource UUID
+                on:         on,
+                brightness: brightness,
+                xy:         xy,
+                mirek:      nil,
+                duration:   duration
+            )
+        }
+        return error == nil
     }
 }

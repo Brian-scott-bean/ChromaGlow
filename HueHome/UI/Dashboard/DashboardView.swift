@@ -166,6 +166,14 @@ struct DashboardView: View {
                 }
             }
         }
+        // M-08: partial bulk-write failures (All Off / automations) surface as
+        // a toast instead of silently leaving rooms in their old state.
+        .onChange(of: orchestrator.lastBulkFailure) { _, failure in
+            guard let failure else { return }
+            let rooms = failure.roomNames.prefix(3).joined(separator: ", ")
+            let suffix = failure.roomNames.count > 3 ? " +\(failure.roomNames.count - 3) more" : ""
+            presetToast = "⚠ \(failure.operation) failed for \(rooms)\(suffix)"
+        }
         .preferredColorScheme(.dark)
     }
 

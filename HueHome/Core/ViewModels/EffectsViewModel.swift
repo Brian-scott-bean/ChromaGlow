@@ -297,19 +297,27 @@ final class EffectsViewModel: ObservableObject {
                 duration: fade
             )
 
-            // Step 2: if a color is selected, set xy on each light individually
+            // Step 2: if a color is selected, set xy on each light individually.
+            // M-15: gate-paced (~10 cmd/sec) with failures counted — an
+            // unthrottled 20-light burst tripped the bridge limiter and
+            // `try?` reported success while half the lights disagreed.
+            var colorFailures = 0
             if let xy {
+                let gate = orchestrator?.commandGate(for: room.bridgeID) ?? BridgeCommandGate()
                 let lightIDs = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []
-                await withTaskGroup(of: Void.self) { group in
-                    for id in lightIDs {
-                        group.addTask {
-                            try? await api.setLightColor(id: id, x: xy.0, y: xy.1)
-                        }
+                for id in lightIDs {
+                    let error = await gate.send {
+                        try await api.setLightColor(id: id, x: xy.0, y: xy.1)
                     }
+                    if error != nil { colorFailures += 1 }
                 }
             }
 
-            showStatus("'\(effect.name)' applied ✓")
+            if colorFailures > 0 {
+                showStatus("⚠ '\(effect.name)' applied — \(colorFailures) light(s) failed")
+            } else {
+                showStatus("'\(effect.name)' applied ✓")
+            }
             setNowPlaying(effect)
 
 
@@ -349,12 +357,14 @@ final class EffectsViewModel: ObservableObject {
             runningEffectName = nil
             statusMessage     = "Preparing '\(effect.name)'…"
 
-            // Step 1: clear any running native bridge effect per-light so the ramp can take over
+            // Step 1: clear any running native bridge effect per-light so the ramp can take over.
+            // M-15: gate-paced instead of an unthrottled concurrent burst.
             let lightIDs = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []
             if !lightIDs.isEmpty {
-                await withTaskGroup(of: Void.self) { group in
-                    for id in lightIDs {
-                        group.addTask { try? await api.setLightNativeEffect(id: id, effect: "no_effect") }
+                let gate = orchestrator?.commandGate(for: room.bridgeID) ?? BridgeCommandGate()
+                for id in lightIDs {
+                    await gate.send {
+                        try await api.setLightNativeEffect(id: id, effect: "no_effect")
                     }
                 }
             }
@@ -424,16 +434,25 @@ final class EffectsViewModel: ObservableObject {
             statusMessage     = "'\(effect.name)' running — keep app open"
             setNowPlaying(effect)
 
+            // M-14: loops run through the room bridge's pacing gate and
+            // collapse same-color frames to one grouped_light PUT.
+            let loopGate = orchestrator?.commandGate(for: room.bridgeID) ?? BridgeCommandGate()
             let loop: @Sendable () async throws -> Void
             switch effect.id {
             case "strobe":
-                loop = EffectLoops.strobe(lights: lights, api: api, bpm: bpm,
-                                          dutyCycle: dutyCycle, onXY: onXY, offBrightness: offDim)
+                loop = EffectLoops.strobe(lights: lights, api: api,
+                                          groupedLightID: groupedLightID, gate: loopGate,
+                                          bpm: bpm, dutyCycle: dutyCycle,
+                                          onXY: onXY, offBrightness: offDim)
             case "party":
-                loop = EffectLoops.party(lights: lights, api: api, speed: speed,
-                                         palette: palette, sync: sync, flash: flash)
+                loop = EffectLoops.party(lights: lights, api: api,
+                                         groupedLightID: groupedLightID, gate: loopGate,
+                                         speed: speed, palette: palette,
+                                         sync: sync, flash: flash)
             case "thunderstorm":
-                loop = EffectLoops.thunderstorm(lights: lights, api: api, frequencyIndex: freqIdx,
+                loop = EffectLoops.thunderstorm(lights: lights, api: api,
+                                                groupedLightID: groupedLightID, gate: loopGate,
+                                                frequencyIndex: freqIdx,
                                                 baseXY: baseXY, flashXY: flashXY, baseBrightness: baseB)
             default:
                 statusMessage = "Unknown effect: \(effect.id)"
