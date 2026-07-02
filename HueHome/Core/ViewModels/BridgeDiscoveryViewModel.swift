@@ -431,25 +431,38 @@ final class BridgeDiscoveryViewModel {
             return pinned
         }
         guard let url = URL(string: "https://\(bridge.host)/api/0/config") else { return false }
-        do {
-            let (data, _) = try await session.data(from: url)
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let rawID = object["bridgeid"] as? String,
-                  let configBridgeID = BridgeTrust.canonicalBridgeID(from: rawID) else {
-                appendLog("❌ Bridge config did not return a valid bridgeid.")
-                return false
+        // A transient hiccup here would otherwise discard a just-issued
+        // application key and force another link-button press — retry the
+        // cheap unauthenticated config GET a couple of times first.
+        var configBridgeID: String?
+        for attempt in 1...3 {
+            do {
+                let (data, _) = try await session.data(from: url)
+                guard let parsed = BridgeTrust.bridgeID(fromConfigResponse: data) else {
+                    appendLog("❌ Bridge config did not return a valid bridgeid.")
+                    return false
+                }
+                configBridgeID = parsed
+                break
+            } catch {
+                appendLog("⚠️ Bridge config fetch attempt \(attempt)/3 failed: \(error.localizedDescription)")
+                if attempt < 3 { try? await Task.sleep(nanoseconds: 700_000_000) }
             }
-            guard capture.bridgeID == configBridgeID else {
-                appendLog("❌ Bridge identity mismatch — certificate CN does not match the bridgeid reported by /api/0/config.")
-                return false
-            }
-            BridgePinStore.shared.save(pin: capture.pin(host: bridge.host))
-            appendLog("🔒 Bridge TLS identity verified and pinned (\(configBridgeID)).")
-            return true
-        } catch {
-            appendLog("❌ Could not verify bridge identity: \(error.localizedDescription)")
+        }
+        guard let configBridgeID else {
+            appendLog("❌ Could not verify bridge identity — config fetch failed.")
             return false
         }
+        // Interactive pairing: the user just pressed the physical link button,
+        // so a self-signed legacy bridge may be pinned here (unattended: false).
+        guard BridgePinAcquirer.validateAndPersist(
+            capture: capture, configBridgeID: configBridgeID, host: bridge.host, unattended: false
+        ) else {
+            appendLog("❌ Bridge identity check failed — certificate does not match this bridge's known identity. If you replaced or factory-reset the bridge, remove it in Settings first, then pair again.")
+            return false
+        }
+        appendLog("🔒 Bridge TLS identity verified and pinned (\(configBridgeID)).")
+        return true
     }
 
     // ──────────────────────────────────────────────

@@ -23,6 +23,21 @@ import CryptoKit
 
 final class BridgeTrustEvaluatorTests: XCTestCase {
 
+    // Snapshot/restore the real pin store around tests that touch it, so a
+    // device-run suite can never clobber live pins.
+    private var savedPins: [BridgePin] = []
+
+    override func setUp() {
+        super.setUp()
+        savedPins = BridgePinStore.shared.loadPins()
+    }
+
+    override func tearDown() {
+        BridgePinStore.shared.removeAll()
+        for pin in savedPins { BridgePinStore.shared.save(pin: pin) }
+        super.tearDown()
+    }
+
     // MARK: - Fixtures (DER, base64)
 
     /// Self-signed, CN=001788fffe23a688 (lowercase — exercises normalization), key A.
@@ -64,7 +79,6 @@ final class BridgeTrustEvaluatorTests: XCTestCase {
             bridgeID: bridgeID,
             publicKeySHA256: BridgeTrust.publicKeySHA256(of: cert)!,
             certSHA256: BridgeTrust.certSHA256(of: cert),
-            certDER: SecCertificateCopyData(cert) as Data,
             host: "192.0.2.10",
             pinnedAt: Date()
         )
@@ -167,6 +181,55 @@ final class BridgeTrustEvaluatorTests: XCTestCase {
         let (disposition, credential) = delegate.disposition(for: makeTrust([leaf]))
         XCTAssertEqual(disposition, .useCredential)
         XCTAssertNotNil(credential)
+    }
+
+    // MARK: - Persist gate (shared by pairing + migration)
+
+    func testValidateAndPersistRefusesUnattestedKeyChangeForPinnedBridge() {
+        BridgePinStore.shared.removeAll()
+
+        // Interactive pairing (user pressed the link button): self-signed TOFU pin persists.
+        let realCapture = BridgeTrust.pairingCapture(trust: makeTrust([certificate(Self.leafValidB64)]))!
+        XCTAssertTrue(BridgePinAcquirer.validateAndPersist(
+            capture: realCapture, configBridgeID: Self.bridgeID, host: "192.0.2.10", unattended: false))
+        XCTAssertEqual(BridgePinStore.shared.pin(forBridgeID: Self.bridgeID)?.publicKeySHA256,
+                       realCapture.publicKeySHA256)
+
+        // Same-CN impersonator (self-signed, different key) must NOT be able
+        // to overwrite the pin through the pairing/migration persist path.
+        let attackerCapture = BridgeTrust.pairingCapture(trust: makeTrust([certificate(Self.leafImpersonatorB64)]))!
+        XCTAssertFalse(attackerCapture.caValidated)
+        XCTAssertFalse(BridgePinAcquirer.validateAndPersist(
+            capture: attackerCapture, configBridgeID: Self.bridgeID, host: "192.0.2.10", unattended: false))
+        XCTAssertEqual(BridgePinStore.shared.pin(forBridgeID: Self.bridgeID)?.publicKeySHA256,
+                       realCapture.publicKeySHA256, "pin must be unchanged after the refused overwrite")
+
+        // A config bridgeid that doesn't match the leaf CN is refused too.
+        XCTAssertFalse(BridgePinAcquirer.validateAndPersist(
+            capture: realCapture, configBridgeID: "AAAAAAAAAAAAAAAA", host: "192.0.2.10", unattended: false))
+    }
+
+    func testUnattendedMigrationRefusesSelfSignedFirstPin() {
+        BridgePinStore.shared.removeAll()
+
+        // Unattended migration (no user present, no prior pin): a self-signed
+        // leaf must NOT be silently pinned — this is the first-launch MITM window.
+        let selfSigned = BridgeTrust.pairingCapture(trust: makeTrust([certificate(Self.leafValidB64)]))!
+        XCTAssertFalse(selfSigned.caValidated)
+        XCTAssertFalse(BridgePinAcquirer.validateAndPersist(
+            capture: selfSigned, configBridgeID: Self.bridgeID, host: "192.0.2.10", unattended: true),
+            "silent TOFU of a self-signed cert must be refused")
+        XCTAssertNil(BridgePinStore.shared.pin(forBridgeID: Self.bridgeID))
+
+        // A CA-attested leaf (real modern bridge) IS allowed to migrate silently.
+        let caLeaf = certificate(Self.leafCASignedB64)
+        let testCA = certificate(Self.testCAB64)
+        let caCapture = BridgeTrust.pairingCapture(trust: makeTrust([caLeaf, testCA]), roots: [testCA])!
+        XCTAssertTrue(caCapture.caValidated)
+        XCTAssertTrue(BridgePinAcquirer.validateAndPersist(
+            capture: caCapture, configBridgeID: Self.bridgeID, host: "192.0.2.10", unattended: true))
+        XCTAssertEqual(BridgePinStore.shared.pin(forBridgeID: Self.bridgeID)?.publicKeySHA256,
+                       caCapture.publicKeySHA256)
     }
 
     // MARK: - Pairing capture (TOFU) + continuity

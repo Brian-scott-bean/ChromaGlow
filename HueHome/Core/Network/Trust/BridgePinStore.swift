@@ -79,6 +79,16 @@ final class BridgePinStore: @unchecked Sendable {
         persist(pins)
     }
 
+    /// Remove every pin recorded for a host (used when a bridge is forgotten —
+    /// the caller only knows the record's host, not the canonical bridgeid).
+    func removePins(forHost host: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        var pins = cache ?? Self.decode(readData()) ?? []
+        pins.removeAll { $0.host == host }
+        persist(pins)
+    }
+
     func removeAll() {
         lock.lock()
         defer { lock.unlock() }

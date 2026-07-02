@@ -494,13 +494,18 @@ final class UnifiedOrchestrator {
         log.info("Added bridge \(record.id) (\(record.name)) to orchestrator")
     }
 
-    /// Remove a bridge — cancels SSE, clears rooms, wipes credentials.
+    /// Remove a bridge — cancels SSE, clears rooms, wipes credentials + TLS pin.
     func removeBridge(id: String) {
         sseTasks[id]?.cancel()
         sseTasks.removeValue(forKey: id)
         clients.removeValue(forKey: id)
         roomsByBridge.removeValue(forKey: id)
         connectionStatus.removeValue(forKey: id)
+        // D-016: drop the TLS pin with the credentials (also unblocks a future
+        // re-pair if the bridge's certificate legitimately changed).
+        if let creds = try? keychain.loadCredentials(for: id) {
+            BridgePinStore.shared.removePins(forHost: creds.ip)
+        }
         keychain.deleteCredentials(for: id)
         publishWidgetBridgeCredentials()
         rebuildAllRooms()

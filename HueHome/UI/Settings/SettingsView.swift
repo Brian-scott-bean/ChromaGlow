@@ -73,6 +73,9 @@ struct SettingsView: View {
                 try? KeychainManager.shared.deleteAPIToken()
                 try? KeychainManager.shared.deleteBridgeIP()
                 try? KeychainManager.shared.delete(for: "hue_client_key")
+                // 2b. Wipe TLS identity pins (D-016) — also unblocks re-pairing
+                // a bridge whose certificate legitimately changed.
+                BridgePinStore.shared.removeAll()
                 // 3. Save SwiftData changes
                 try? modelContext.save()
                 // 4. Stop SSE connections

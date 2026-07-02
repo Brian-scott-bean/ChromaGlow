@@ -10,6 +10,12 @@
 // user-initiated pairing window and the one-time upgrade pin migration; it
 // additionally enforces leaf continuity within its session (Android D-014).
 //
+// NOTE: the two delegates deliberately do NOT share a base class. The widget
+// and watch targets were created with default-MainActor isolation while the
+// app target was not, so cross-target subclass overrides of a shared delegate
+// hit actor-isolation mismatches. The ~30 duplicated plumbing lines are the
+// cheaper trade.
+//
 // Scripts/hardening_guards.sh Guard 3 bans `.useCredential` outside this
 // folder, so a trust-all delegate cannot silently return.
 
@@ -42,7 +48,11 @@ final class BridgePinnedTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
             return (.useCredential, URLCredential(trust: serverTrust))
         case .acceptedCAValidatedRotation(let bridgeID, let newPin):
             // CA-attested cert rotation: re-pin so the next check is exact.
-            BridgePinStore.shared.save(pin: newPin)
+            // Persisted off the TLS callback thread — the handshake should not
+            // wait on Keychain/UserDefaults I/O.
+            Task.detached(priority: .utility) {
+                BridgePinStore.shared.save(pin: newPin)
+            }
             log.info("BridgeTrust: CA-validated cert rotation re-pinned for \(bridgeID)")
             return (.useCredential, URLCredential(trust: serverTrust))
         case .rejected(let reason):
@@ -150,44 +160,95 @@ final class BridgePairingTrustDelegate: NSObject, URLSessionDelegate, URLSession
     }
 }
 
-// MARK: - Upgrade pin migration (bridges paired before D-016)
+// MARK: - Pin acquisition (pairing persist gate + upgrade migration)
 
 enum BridgePinAcquirer {
 
     private static let log = Logger(subsystem: "com.lightshade.app", category: "BridgeTrust")
 
     /// Failed acquisitions are not retried for this long, so the periodic
-    /// loadAll refresh doesn't hammer an offline bridge.
-    private static let retryInterval: TimeInterval = 60
+    /// loadAll refresh doesn't hammer an offline bridge, while a pull-to-
+    /// refresh after a transient failure still recovers quickly.
+    private static let retryInterval: TimeInterval = 15
     private static let attemptLock = NSLock()
     nonisolated(unsafe) private static var lastAttemptByHost: [String: Date] = [:]
+
+    /// The single persist gate shared by pairing and migration:
+    /// - the config-reported bridgeid must equal the captured leaf CN;
+    /// - an existing pin is NEVER overwritten by a different key unless the
+    ///   presented chain is CA-attested (bundled Signify roots); and
+    /// - in the `unattended` context (the upgrade migration, which runs with no
+    ///   user present), a *first* pin is accepted ONLY for a CA-attested leaf.
+    ///
+    /// The last rule closes a silent first-launch MITM: without it, an on-path
+    /// LAN attacker present at the first post-upgrade `loadAll` could answer the
+    /// unauthenticated `/api/0/config` probe with a self-signed cert + matching
+    /// bridgeid and get a ghost pin persisted, then capture the app key. A
+    /// self-signed bridge (`caValidated == false`) can still be pinned, but only
+    /// through interactive pairing (`unattended: false`), which is gated by the
+    /// physical link-button press — presence the silent path cannot assume.
+    static func validateAndPersist(
+        capture: PairingLeafCapture,
+        configBridgeID: String,
+        host: String,
+        unattended: Bool
+    ) -> Bool {
+        guard capture.bridgeID == configBridgeID else {
+            log.error("BridgeTrust: identity mismatch — leaf CN != /api/0/config bridgeid")
+            return false
+        }
+        let existing = BridgePinStore.shared.pin(forBridgeID: capture.bridgeID)
+        if let existing,
+           existing.publicKeySHA256 != capture.publicKeySHA256,
+           !capture.caValidated {
+            // A different key claiming an already-pinned bridgeid, without a
+            // CA-validated chain, is exactly the MITM this feature exists to
+            // stop. Recovery for a legitimately changed certificate: forget
+            // the bridge (which drops its pin), then pair again.
+            log.error("BridgeTrust: refused to overwrite pin — key changed without CA validation")
+            return false
+        }
+        if existing == nil, unattended, !capture.caValidated {
+            // No prior pin + no CA attestation + no user present → do not TOFU.
+            // The bridge stays fail-closed until the user re-pairs by pressing
+            // the physical link button.
+            log.error("BridgeTrust: refused silent first pin for a self-signed bridge — re-pair required")
+            return false
+        }
+        BridgePinStore.shared.save(pin: capture.pin(host: host))
+        log.info("BridgeTrust: pinned bridge identity")
+        return true
+    }
 
     /// One-time TOFU pin acquisition for every host that has no stored pin.
     /// No-op once every host is pinned. Runs before the first data-plane
     /// fetch so existing users are migrated instead of failing closed.
+    /// Hosts are probed CONCURRENTLY so one offline bridge cannot stall the
+    /// others (or the fetches behind this call) beyond a single timeout.
     static func ensurePins(hosts: [String]) async {
         // Unit-test processes must never perform live pin acquisition.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
-        for host in Set(hosts) where !BridgePinStore.shared.hasPin(forHost: host) {
-            let now = Date()
-            let shouldAttempt: Bool = {
-                attemptLock.lock()
-                defer { attemptLock.unlock() }
-                if let last = lastAttemptByHost[host], now.timeIntervalSince(last) < retryInterval {
-                    return false
-                }
-                lastAttemptByHost[host] = now
-                return true
-            }()
-            guard shouldAttempt else { continue }
-            await acquirePin(host: host)
+        let now = Date()
+        let pending = Set(hosts).filter { host in
+            guard !BridgePinStore.shared.hasPin(forHost: host) else { return false }
+            attemptLock.lock()
+            defer { attemptLock.unlock() }
+            if let last = lastAttemptByHost[host], now.timeIntervalSince(last) < retryInterval {
+                return false
+            }
+            lastAttemptByHost[host] = now
+            return true
+        }
+        guard !pending.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for host in pending {
+                group.addTask { await acquirePin(host: host) }
+            }
         }
     }
 
     /// Fetch /api/0/config (unauthenticated) over a TOFU-capture session,
-    /// require config.bridgeid == leaf CN, then pin. A key that differs from
-    /// an existing pin for the same bridgeid is accepted only when the leaf
-    /// chain is CA-validated (rotation) — otherwise this fails closed.
+    /// then run the shared validateAndPersist gate.
     @discardableResult
     static func acquirePin(host: String) async -> Bool {
         let delegate = BridgePairingTrustDelegate()
@@ -200,26 +261,14 @@ enum BridgePinAcquirer {
         guard let url = URL(string: "https://\(host)/api/0/config") else { return false }
         do {
             let (data, _) = try await session.data(from: url)
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let rawID = object["bridgeid"] as? String,
-                  let configBridgeID = BridgeTrust.canonicalBridgeID(from: rawID),
-                  let capture = delegate.capture,
-                  capture.bridgeID == configBridgeID else {
-                log.error("BridgeTrust: pin migration failed — config/CN identity mismatch or malformed config")
+            guard let configBridgeID = BridgeTrust.bridgeID(fromConfigResponse: data),
+                  let capture = delegate.capture else {
+                log.error("BridgeTrust: pin migration failed — no capture or malformed config")
                 return false
             }
-            if let existing = BridgePinStore.shared.pin(forBridgeID: capture.bridgeID),
-               existing.publicKeySHA256 != capture.publicKeySHA256,
-               !capture.caValidated {
-                // A different key claiming an already-pinned bridgeid, without a
-                // CA-validated chain, is exactly the MITM this feature exists
-                // to stop. Never let the migration path overwrite a pin.
-                log.error("BridgeTrust: pin migration refused — key mismatch for pinned bridgeid without CA validation")
-                return false
-            }
-            BridgePinStore.shared.save(pin: capture.pin(host: host))
-            log.info("BridgeTrust: pinned bridge identity for \(capture.bridgeID)")
-            return true
+            return validateAndPersist(
+                capture: capture, configBridgeID: configBridgeID, host: host, unattended: true
+            )
         } catch {
             log.error("BridgeTrust: pin migration fetch failed — \(error.localizedDescription)")
             return false

@@ -688,9 +688,7 @@ class HueAPIClient: @unchecked Sendable {
 #if DEBUG
         guard let raw = String(data: data, encoding: .utf8) else { return }
         log.debug("API [\(label)] raw: \(raw)")
-        #if DEBUG
         print("[HueAPIClient] \(label) — \(raw)")
-        #endif
 #endif
     }
 }

@@ -31,11 +31,11 @@ struct BridgePin: Codable, Equatable {
     /// Canonical uppercase 16-hex Hue bridgeid (leaf CN, config-verified).
     let bridgeID: String
     /// Base64 SHA-256 over SecKeyCopyExternalRepresentation of the leaf key.
+    /// This is the pin — the trust decision anchors chain evaluation on the
+    /// LIVE presented leaf and then requires this key hash to match.
     let publicKeySHA256: String
-    /// Base64 SHA-256 over the full leaf DER (diagnostics / continuity checks).
+    /// Base64 SHA-256 over the full leaf DER (diagnostics only).
     let certSHA256: String
-    /// Full leaf DER — needed as a trust anchor for self-signed bridges.
-    let certDER: Data
     /// Last-known LAN host. Routing metadata only — never identity.
     var host: String
     let pinnedAt: Date
@@ -48,7 +48,6 @@ struct PairingLeafCapture: Equatable {
     let bridgeID: String        // canonical uppercase 16-hex from the leaf CN
     let publicKeySHA256: String
     let certSHA256: String
-    let certDER: Data
     /// True when the chain validated against the bundled Hue roots alone
     /// (CA-signed bridge). False for legacy self-signed leaves.
     let caValidated: Bool
@@ -58,7 +57,6 @@ struct PairingLeafCapture: Equatable {
             bridgeID: bridgeID,
             publicKeySHA256: publicKeySHA256,
             certSHA256: certSHA256,
-            certDER: certDER,
             host: host,
             pinnedAt: Date()
         )
@@ -101,10 +99,25 @@ enum BridgeTrust {
         return cn as String?
     }
 
-    /// Strict Android-parity contract: exactly 16 hex chars, normalized uppercase.
+    /// Strict Android-parity contract: exactly 16 ASCII hex chars, normalized
+    /// uppercase. Plain byte check — this runs on every TLS challenge, so no
+    /// per-call regex compile (and no Unicode "hex digit" lookalikes).
     static func canonicalBridgeID(from raw: String) -> String? {
-        guard raw.range(of: "^[0-9A-Fa-f]{16}$", options: .regularExpression) != nil else { return nil }
+        let bytes = raw.utf8
+        guard bytes.count == 16, bytes.allSatisfy({ byte in
+            (0x30...0x39).contains(byte)        // 0-9
+                || (0x41...0x46).contains(byte) // A-F
+                || (0x61...0x66).contains(byte) // a-f
+        }) else { return nil }
         return raw.uppercased()
+    }
+
+    /// Parse the canonical bridgeid out of an unauthenticated
+    /// GET /api/0/config response body. Shared by pairing + migration.
+    static func bridgeID(fromConfigResponse data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rawID = object["bridgeid"] as? String else { return nil }
+        return canonicalBridgeID(from: rawID)
     }
 
     static func publicKeySHA256(of certificate: SecCertificate) -> String? {
@@ -160,8 +173,8 @@ enum BridgeTrust {
 
         if presentedKeyHash == pin.publicKeySHA256 {
             // Pinned key. The chain evaluation must still succeed — validity
-            // period, signature integrity, SSL policy — anchored to the
-            // presented leaf (self-signed bridges) plus the bundled roots.
+            // period, signature integrity, Basic X.509 policy — anchored to
+            // the presented leaf (self-signed bridges) plus the bundled roots.
             guard evaluateChain(trust, anchors: roots + [leaf]) else {
                 return .rejected(.chainEvaluationFailed)
             }
@@ -178,7 +191,6 @@ enum BridgeTrust {
             bridgeID: bridgeID,
             publicKeySHA256: presentedKeyHash,
             certSHA256: certSHA256(of: leaf),
-            certDER: SecCertificateCopyData(leaf) as Data,
             host: pin.host,
             pinnedAt: Date()
         )
@@ -208,7 +220,6 @@ enum BridgeTrust {
             bridgeID: bridgeID,
             publicKeySHA256: keyHash,
             certSHA256: certSHA256(of: leaf),
-            certDER: SecCertificateCopyData(leaf) as Data,
             caValidated: caValidated
         )
     }
