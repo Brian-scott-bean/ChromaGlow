@@ -114,6 +114,7 @@
 		C0DEC0DE010B000000000001 /* GatedBulkWriteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */; };
 		C0DEC0DE010D000000000001 /* NonDestructivePersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010D000000000000 /* NonDestructivePersistenceTests.swift */; };
 		C0DEC0DE010E000000000001 /* EntertainmentRobustnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010E000000000000 /* EntertainmentRobustnessTests.swift */; };
+		C0DEC0DE010F000000000001 /* DiscoveryFallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010F000000000000 /* DiscoveryFallbackTests.swift */; };
 		C1F360D81291713EACE0C1FD /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27B5C4A4767211516073798 /* SettingsView.swift */; };
 		C47CF29F24AA56854A38162C /* CreateGlobalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92662E9280D48307551834BA /* CreateGlobalSceneView.swift */; };
 		C5E607457B720B34157DA5DA /* HueHome/UI/Effects/EffectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52EF9DA4A31627EE969ED03D /* HueHome/UI/Effects/EffectsView.swift */; };
@@ -316,6 +317,7 @@
 		C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GatedBulkWriteTests.swift; path = ./HueHomeTests/GatedBulkWriteTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE010D000000000000 /* NonDestructivePersistenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NonDestructivePersistenceTests.swift; path = ./HueHomeTests/NonDestructivePersistenceTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE010E000000000000 /* EntertainmentRobustnessTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentRobustnessTests.swift; path = ./HueHomeTests/EntertainmentRobustnessTests.swift; sourceTree = "<group>"; };
+		C0DEC0DE010F000000000000 /* DiscoveryFallbackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DiscoveryFallbackTests.swift; path = ./HueHomeTests/DiscoveryFallbackTests.swift; sourceTree = "<group>"; };
 		C27B5C4A4767211516073798 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = HueHome/UI/Settings/SettingsView.swift; sourceTree = "<group>"; };
 		C4FF8FA2BF756D1FE5830903 /* HueHome/UI/Dashboard/EditRoomSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Dashboard/EditRoomSheet.swift; sourceTree = "<group>"; };
 		C9122685BB2530B50697D4D2 /* SceneChip.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneChip.swift; path = HueHome/UI/RoomDetail/SceneChip.swift; sourceTree = "<group>"; };
@@ -788,6 +790,7 @@
 				C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */,
 				C0DEC0DE010D000000000000 /* NonDestructivePersistenceTests.swift */,
 				C0DEC0DE010E000000000000 /* EntertainmentRobustnessTests.swift */,
+				C0DEC0DE010F000000000000 /* DiscoveryFallbackTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1247,6 +1250,7 @@
 				C0DEC0DE010B000000000001 /* GatedBulkWriteTests.swift in Sources */,
 				C0DEC0DE010D000000000001 /* NonDestructivePersistenceTests.swift in Sources */,
 				C0DEC0DE010E000000000001 /* EntertainmentRobustnessTests.swift in Sources */,
+				C0DEC0DE010F000000000001 /* DiscoveryFallbackTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

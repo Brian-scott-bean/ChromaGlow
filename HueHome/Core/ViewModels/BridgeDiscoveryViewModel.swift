@@ -153,6 +153,14 @@ final class BridgeDiscoveryViewModel {
         scanTimeoutTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(12))
             guard let self, case .scanning = self.phase else { return }
+            // M-11: the design stays .scanning while mDNS results accumulate
+            // in the chooser — the cloud fallback must never run once local
+            // bridges exist (an empty NUPnP reply bounced the user to an
+            // error screen; a non-empty one force-selected and hid choices).
+            guard self.discoveredBridgeChoices.isEmpty else {
+                self.appendLog("⏱ mDNS already found \(self.discoveredBridgeChoices.count) bridge(s) — cloud fallback skipped.")
+                return
+            }
             self.appendLog("⏱ mDNS timeout — falling back to Philips cloud discovery (layer 2).")
             await MainActor.run { self.scanningLabel = "Trying cloud discovery..." }
             await self.discoverViaNUPnP()
@@ -185,7 +193,15 @@ final class BridgeDiscoveryViewModel {
 
     /// Calls Philips' internet-based discovery endpoint as a fallback when
     /// mDNS is blocked by the router (AP isolation, IGMP filtering, etc.).
-    private func discoverViaNUPnP() async {
+    /// Internal (not private) so the M-11 guard is unit-testable.
+    func discoverViaNUPnP() async {
+        // M-11: never let the cloud fallback override or wipe local results —
+        // guarded on entry AND after the network call (mDNS can resolve while
+        // the cloud GET is in flight).
+        guard discoveredBridgeChoices.isEmpty else {
+            appendLog("☁️  Cloud fallback skipped — \(discoveredBridgeChoices.count) local bridge(s) already found.")
+            return
+        }
         guard let url = URL(string: "https://discovery.meethue.com/api/nupnp") else { return }
         appendLog("☁️  GET https://discovery.meethue.com/api/nupnp")
 
@@ -197,6 +213,11 @@ final class BridgeDiscoveryViewModel {
             }
 
             let results = try JSONDecoder().decode([NUPnPResult].self, from: data)
+
+            guard discoveredBridgeChoices.isEmpty, case .scanning = phase else {
+                appendLog("☁️  Local bridge(s) appeared during the cloud lookup — keeping the local chooser.")
+                return
+            }
 
             guard let first = results.first else {
                 discovery.stopScan()
@@ -212,6 +233,14 @@ final class BridgeDiscoveryViewModel {
 
         } catch {
             appendLog("❌ NUPnP error: \(error.localizedDescription)")
+
+            // M-11: bridges resolved while the cloud GET was failing — the
+            // silent mDNS retry below restarts the browser, which would WIPE
+            // the chooser. Keep the local results instead.
+            guard discoveredBridgeChoices.isEmpty else {
+                appendLog("☁️  Keeping \(discoveredBridgeChoices.count) locally discovered bridge(s) — select one below.")
+                return
+            }
 
             guard !mdnsRetryDone else {
                 // Already retried once — give up

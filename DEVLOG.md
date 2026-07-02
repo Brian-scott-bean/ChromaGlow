@@ -48,6 +48,36 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 hardening — Group 7: pairing/UX correctness (M-11/M-12) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (local only — not pushed).
+
+### Did
+- **M-11:** the NUPnP cloud fallback is now guarded on `discoveredBridgeChoices.isEmpty` at
+  three points — the 12s timeout task, `discoverViaNUPnP()` entry, after the cloud GET returns,
+  and before the silent mDNS retry (which restarts the browser and would wipe the chooser). An
+  empty cloud reply can no longer bounce the user to an error screen while local bridges are on
+  screen, and a non-empty one can no longer force-select and hide the bridge the user wanted.
+  `discoverViaNUPnP` made internal for the offline guard test.
+- **M-12:** `OneShotLocation.request()` now retains the `CLLocationManager` + delegate in a
+  static `activeRequest` for the request lifetime (delegate is weak; both were function locals
+  that an optimized build could free at the first suspension point → continuation never resumed,
+  "Set location" spun forever) and bounds the request with a **15s timeout**; the delegate
+  resumes exactly once via the Group-6 `ContinuationGate` (timeout races callbacks).
+
+### Working
+- Build SUCCEEDED (generic/platform=iOS); HueHomeTests green incl. new `DiscoveryFallbackTests`
+  (chooser survives the fallback window; phase stays .scanning). Guards pass.
+
+### Left
+- M-12 needs on-device confirmation (CLLocationManager can't be driven in unit tests):
+  Settings → All Day → "Set" must complete or fail within ~15s, never spin forever.
+- The "fallback still runs with an empty chooser" direction hits the real
+  discovery.meethue.com endpoint (no URLSession seam) — covered on-device, not unit-tested.
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 hardening — Group 6: entertainment/DTLS robustness (M-06/M-09/M-10/L-11) — LOCAL
 
 ### Branch

@@ -744,24 +744,46 @@ private enum OneShotLocation {
         case servicesDisabled
         case denied
         case failed
+        case timedOut
 
         var errorDescription: String? {
             switch self {
             case .servicesDisabled: return "Location Services are disabled."
             case .denied: return "Location permission was denied."
             case .failed: return "Could not fetch your location."
+            case .timedOut: return "Location request timed out — try again."
             }
         }
     }
 
+    /// M-12: strong references for the lifetime of the in-flight request.
+    /// CLLocationManager.delegate is weak and both objects used to be
+    /// function locals — in an optimized build ARC could release them at the
+    /// first suspension point, so no callback ever fired and the continuation
+    /// never resumed ("Set location" spun forever).
+    @MainActor private static var activeRequest: (manager: CLLocationManager, delegate: Delegate)?
+
     @MainActor
-    static func request() async throws -> CLLocation {
+    static func request(timeoutSeconds: Double = 15) async throws -> CLLocation {
         guard CLLocationManager.locationServicesEnabled() else { throw LocationError.servicesDisabled }
 
         let mgr = CLLocationManager()
         let delegate = Delegate()
         mgr.delegate = delegate
         mgr.desiredAccuracy = kCLLocationAccuracyThreeKilometers
+
+        activeRequest = (mgr, delegate)
+        defer { activeRequest = nil }
+
+        // M-12: bounded — the UI must never hang on a callback that never
+        // arrives. The delegate's gate makes timeout vs. callback resolution
+        // race-safe (resume exactly once).
+        let timeoutTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(timeoutSeconds))
+            guard !Task.isCancelled else { return }
+            delegate.finish(.failure(LocationError.timedOut))
+        }
+        defer { timeoutTask.cancel() }
 
         return try await withCheckedThrowingContinuation { cont in
             delegate.continuation = cont
@@ -772,46 +794,51 @@ private enum OneShotLocation {
             case .authorizedAlways, .authorizedWhenInUse:
                 mgr.requestLocation()
             case .restricted, .denied:
-                cont.resume(throwing: LocationError.denied)
+                delegate.finish(.failure(LocationError.denied))
             @unknown default:
-                cont.resume(throwing: LocationError.failed)
+                delegate.finish(.failure(LocationError.failed))
             }
         }
     }
 
     final class Delegate: NSObject, CLLocationManagerDelegate {
         var continuation: CheckedContinuation<CLLocation, Error>?
+        private let gate = ContinuationGate()
+
+        /// Resume the continuation exactly once (M-12: timeout races callbacks).
+        func finish(_ result: Result<CLLocation, Error>) {
+            guard gate.tryResume(), let cont = continuation else { return }
+            continuation = nil
+            switch result {
+            case .success(let location): cont.resume(returning: location)
+            case .failure(let error):    cont.resume(throwing: error)
+            }
+        }
 
         func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-            guard let cont = continuation else { return }
+            guard continuation != nil else { return }
             switch manager.authorizationStatus {
             case .authorizedAlways, .authorizedWhenInUse:
                 manager.requestLocation()
             case .restricted, .denied:
-                continuation = nil
-                cont.resume(throwing: LocationError.denied)
+                finish(.failure(LocationError.denied))
             case .notDetermined:
                 break
             @unknown default:
-                continuation = nil
-                cont.resume(throwing: LocationError.failed)
+                finish(.failure(LocationError.failed))
             }
         }
 
         func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-            guard let cont = continuation else { return }
-            continuation = nil
-            if let loc = locations.first {
-                cont.resume(returning: loc)
+            if let location = locations.first {
+                finish(.success(location))
             } else {
-                cont.resume(throwing: LocationError.failed)
+                finish(.failure(LocationError.failed))
             }
         }
 
         func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-            guard let cont = continuation else { return }
-            continuation = nil
-            cont.resume(throwing: error)
+            finish(.failure(error))
         }
     }
 }
