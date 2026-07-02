@@ -48,6 +48,68 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 hardening — Group 1: Keychain access group (M-02/L-30, D-018) — LOCAL, in progress
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (based on `main` @ `d023b1f`; **local only — not pushed**).
+
+### Did
+- **Group 1 (M-02/L-30, implements D-018):** moved every shared bridge secret out of
+  UserDefaults into a **Keychain access group** (`$(AppIdentifierPrefix)com.huehome.pro.shared`,
+  entitlement added to app + widget extension + watch app; service stays the LIVE
+  `com.lightshade.app`).
+  - New `HueHome/Core/Keychain/SharedKeychainStore.swift` (app+widget+watch targets):
+    AfterFirstUnlockThisDeviceOnly, non-synchronizable, explicit access group on writes,
+    group-unqualified reads for migration tolerance.
+  - `WidgetDataStore`: credentials map now lives at Keychain account
+    `hue_shared_bridge_credentials_v1`; App Group carries only non-secret routing metadata
+    (`hue_widget_routing_v1` bridgeID+ip, `hue_widget_bridge_ip`); legacy plaintext keys
+    (`hue_widget_token`, `hue_widget_bridges_v1`) scrubbed on every publish; widget timeline
+    resolves creds via `primaryCredentials()` (deterministic sorted-first bridge).
+  - **Watch:** token/credential map now in the watch Keychain; phone stopped sending the raw
+    legacy `wc_token` WCSession key (token travels only inside `wc_bridges_v1`); watch App Group
+    mirror carries display data only; complication (`LightShadeWatchExtension`) lost its dead
+    token/credentials accessors (display-only — it never networked).
+  - **Forget-all (L-30):** Settings forget-all now wipes the shared Keychain blob + App Group
+    surface + pins and pushes an explicit EMPTY `wc_bridges_v1` map; the watch treats a
+    well-formed empty map as the unpaired signal and wipes Keychain/defaults/App Group mirrors.
+  - **Migration (critical):** `KeychainManager.migrateToSharedAccessGroupIfNeeded()` re-homes all
+    `com.lightshade.app` items copy-first/delete-after and upgrades accessibility
+    WhenUnlocked→AfterFirstUnlock (deliberate D-018 change so lock-screen widget/Siri/watch work;
+    still ThisDeviceOnly + non-sync). Watch migrates UD creds→Keychain at store init. P0 TLS-pin
+    mirrors (D-016) folded into the same group; pin UD mirrors are fallback-read + scrubbed.
+  - Guard 4 added to `Scripts/hardening_guards.sh`: no UserDefaults write of a plaintext-token
+    key or `.token` value anywhere in the iOS tree.
+
+### Working
+- Build SUCCEEDED (scheme `HueHome 1`, generic/platform=iOS — app + widget + both watch targets).
+- HueHomeTests green on iPhone 15 / iOS 17.0, incl. new `KeychainSharingTests` (accessibility +
+  non-sync class, migration value-safety, token-never-in-App-Group scan, no clientKey in
+  `WidgetBridgeCredentials`, forget-all clears surface + `credentials(for:)` nil, pin mirrors
+  scrubbed). `Scripts/hardening_guards.sh` all guards pass.
+
+### Left
+- P1 Groups 2–7 (wrong-bridge sweep, animation correctness, mailbox routing, persistence,
+  DTLS robustness, pairing/UX) — in progress on this branch.
+- STOP at the §6 local-first checkpoint before any push (on-device: upgrade keeps credentials;
+  widget+watch still control; forget-all leaves no secret at rest).
+
+### Validation
+- `xcodebuild … generic/platform=iOS build` → BUILD SUCCEEDED; `… -only-testing:HueHomeTests test`
+  → TEST SUCCEEDED; `./Scripts/hardening_guards.sh` → pass.
+
+### Gotchas
+- Widget/watch cannot read credentials until the main app has run once post-upgrade (migration is
+  app-side) — same fail-closed window as the P0 pin migration; open the app once after install.
+- `LightShadeWatchExtension` (watch complication) target has **no entitlements file wired**
+  (`CODE_SIGN_ENTITLEMENTS` unset) yet reads App Group UserDefaults — pre-existing, display-only;
+  flagged for a later decision, not touched in P1.
+- The two orphaned entitlements files (`LightShadeWatch/LightShadeWatch.entitlements`,
+  `LightShadeWatchApp Watch App/LightShadeWatchApp.entitlements`) are not referenced by any target
+  and were intentionally left unmodified.
+
+---
+
 ## 2026-07-01 - [Claude] iOS P0 hardening remediation (privacy manifests, log scrub, TLS pinning) — LOCAL, awaiting on-device checkpoint
 
 ### Branch

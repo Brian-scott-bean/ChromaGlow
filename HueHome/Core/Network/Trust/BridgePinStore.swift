@@ -1,18 +1,18 @@
 // BridgePinStore.swift
-// ChromaGlow — Bridge TLS trust (audit H-01/H-02/M-01, Decision D-016)
+// ChromaGlow — Bridge TLS trust (audit H-01/H-02/M-01, Decisions D-016/D-018)
 //
 // Persistence for BridgePins across the three processes that talk to a bridge:
 //
-//  - Main app:    Keychain (authoritative, integrity-protected) + App Group
-//                 UserDefaults mirror so extension processes can read.
-//  - Widget/Siri: read the App Group mirror (their own Keychain namespace is
-//                 empty until D-018 introduces a shared access group).
-//  - watchOS:     standard UserDefaults, populated from the phone via
-//                 WCSession applicationContext ("wc_pins_v1").
+//  - Main app + Widget/Siri: shared Keychain access group (D-018) — the same
+//    group that carries the bridge credentials, so extensions read pins
+//    without any UserDefaults mirror.
+//  - watchOS: watch-local Keychain (same code path), populated from the phone
+//    via WCSession applicationContext ("hue_bridge_tls_pins_v1").
 //
-// Pins are public key material — NOT secrets — so the UserDefaults mirrors do
-// not violate the credentials-stay-in-Keychain rule. The Keychain copy is
-// still written first and read first for tamper resistance in the main app.
+// The pre-D-018 App Group / standard-UserDefaults mirrors are read as
+// migration fallbacks only (pins written by a P0 build) and are scrubbed on
+// the next persist. Pins are public key material — not secrets — but the
+// Keychain copy is integrity-protected and now reachable from every process.
 
 import Foundation
 import Security
@@ -115,6 +115,8 @@ final class BridgePinStore: @unchecked Sendable {
 
     private func readData() -> Data? {
         if let data = keychainRead() { return data }
+        // Migration fallbacks: mirrors written by the P0 build before the
+        // shared access group existed. Scrubbed on the next persist.
         if let data = UserDefaults(suiteName: Self.appGroupSuite)?.data(forKey: Self.storageKey) {
             return data
         }
@@ -125,8 +127,10 @@ final class BridgePinStore: @unchecked Sendable {
         cache = pins
         guard let data = try? JSONEncoder().encode(pins) else { return }
         keychainWrite(data)
-        UserDefaults(suiteName: Self.appGroupSuite)?.set(data, forKey: Self.storageKey)
-        UserDefaults.standard.set(data, forKey: Self.storageKey)
+        // D-018: pins live in the shared Keychain group; remove the plaintext
+        // mirrors a P0 build may have left behind.
+        UserDefaults(suiteName: Self.appGroupSuite)?.removeObject(forKey: Self.storageKey)
+        UserDefaults.standard.removeObject(forKey: Self.storageKey)
     }
 
     private static func decode(_ data: Data?) -> [BridgePin]? {
@@ -159,12 +163,15 @@ final class BridgePinStore: @unchecked Sendable {
         ]
         SecItemDelete(deleteQuery as CFDictionary)
         let addQuery: [CFString: Any] = [
-            kSecClass:          kSecClassGenericPassword,
-            kSecAttrService:    Self.keychainService,
-            kSecAttrAccount:    Self.storageKey,
-            kSecValueData:      data,
+            kSecClass:              kSecClassGenericPassword,
+            kSecAttrService:        Self.keychainService,
+            kSecAttrAccount:        Self.storageKey,
+            // D-018: shared access group so widget/Siri read pins directly.
+            kSecAttrAccessGroup:    SharedKeychainStore.accessGroup,
+            kSecValueData:          data,
             // Pins must be readable during background SSE/widget refreshes.
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecAttrAccessible:     kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecAttrSynchronizable: false,
         ]
         SecItemAdd(addQuery as CFDictionary, nil)
     }

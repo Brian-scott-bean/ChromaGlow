@@ -69,8 +69,7 @@ struct HueWidgetProvider: AppIntentTimelineProvider {
         let selectedID  = configuration.room?.id
 
         guard store.isPaired,
-              let ip    = store.bridgeIP,
-              let token = store.token else {
+              let creds = store.primaryCredentials() else {
             let entry = HueWidgetEntry(date: .now, rooms: [], isPaired: false,
                                        selectedRoomID: selectedID)
             return Timeline(entries: [entry], policy: .never)
@@ -79,7 +78,7 @@ struct HueWidgetProvider: AppIntentTimelineProvider {
         // Try to refresh room states with a single grouped_light call
         var snapshots = store.rooms
 
-        if let freshGL = try? await WidgetAPIClient.fetchGroupedLights(ip: ip, token: token) {
+        if let freshGL = try? await WidgetAPIClient.fetchGroupedLights(ip: creds.ip, token: creds.token) {
             let glMap = Dictionary(uniqueKeysWithValues: freshGL.map { ($0.id, $0) })
             snapshots = snapshots.map { room in
                 var r = room

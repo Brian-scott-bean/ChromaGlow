@@ -102,7 +102,11 @@
 		C0DEC0DE0104000000000001 /* BridgePinnedTrustDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */; };
 		C0DEC0DE0104000000000002 /* BridgePinnedTrustDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */; };
 		C0DEC0DE0104000000000003 /* BridgePinnedTrustDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */; };
+		C0DEC0DE0106000000000001 /* SharedKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */; };
+		C0DEC0DE0106000000000002 /* SharedKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */; };
+		C0DEC0DE0106000000000003 /* SharedKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */; };
 		C0DEC0DE0105000000000001 /* BridgeTrustEvaluatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0105000000000000 /* BridgeTrustEvaluatorTests.swift */; };
+		C0DEC0DE0107000000000001 /* KeychainSharingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0107000000000000 /* KeychainSharingTests.swift */; };
 		C1F360D81291713EACE0C1FD /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27B5C4A4767211516073798 /* SettingsView.swift */; };
 		C47CF29F24AA56854A38162C /* CreateGlobalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92662E9280D48307551834BA /* CreateGlobalSceneView.swift */; };
 		C5E607457B720B34157DA5DA /* HueHome/UI/Effects/EffectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52EF9DA4A31627EE969ED03D /* HueHome/UI/Effects/EffectsView.swift */; };
@@ -295,7 +299,9 @@
 		C0DEC0DE0102000000000000 /* BridgePinStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgePinStore.swift; path = HueHome/Core/Network/Trust/BridgePinStore.swift; sourceTree = "<group>"; };
 		C0DEC0DE0103000000000000 /* HueBridgeTrustRoots.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueBridgeTrustRoots.swift; path = HueHome/Core/Network/Trust/HueBridgeTrustRoots.swift; sourceTree = "<group>"; };
 		C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgePinnedTrustDelegate.swift; path = HueHome/Core/Network/Trust/BridgePinnedTrustDelegate.swift; sourceTree = "<group>"; };
+		C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedKeychainStore.swift; path = HueHome/Core/Keychain/SharedKeychainStore.swift; sourceTree = "<group>"; };
 		C0DEC0DE0105000000000000 /* BridgeTrustEvaluatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeTrustEvaluatorTests.swift; path = ./HueHomeTests/BridgeTrustEvaluatorTests.swift; sourceTree = "<group>"; };
+		C0DEC0DE0107000000000000 /* KeychainSharingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeychainSharingTests.swift; path = ./HueHomeTests/KeychainSharingTests.swift; sourceTree = "<group>"; };
 		C27B5C4A4767211516073798 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = HueHome/UI/Settings/SettingsView.swift; sourceTree = "<group>"; };
 		C4FF8FA2BF756D1FE5830903 /* HueHome/UI/Dashboard/EditRoomSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Dashboard/EditRoomSheet.swift; sourceTree = "<group>"; };
 		C9122685BB2530B50697D4D2 /* SceneChip.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneChip.swift; path = HueHome/UI/RoomDetail/SceneChip.swift; sourceTree = "<group>"; };
@@ -450,6 +456,7 @@
 				C0DEC0DE0102000000000000 /* BridgePinStore.swift */,
 				C0DEC0DE0103000000000000 /* HueBridgeTrustRoots.swift */,
 				C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */,
+				C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */,
 			);
 			name = Network;
 			sourceTree = "<group>";
@@ -759,6 +766,7 @@
 				C0DEC0DE00BF000000000004 /* OrchestratorSSETests.swift */,
 				C0DEC0DE00D0000000000004 /* SecretLogScrubTests.swift */,
 				C0DEC0DE0105000000000000 /* BridgeTrustEvaluatorTests.swift */,
+				C0DEC0DE0107000000000000 /* KeychainSharingTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1128,6 +1136,7 @@
 				C0DEC0DE0102000000000001 /* BridgePinStore.swift in Sources */,
 				C0DEC0DE0103000000000001 /* HueBridgeTrustRoots.swift in Sources */,
 				C0DEC0DE0104000000000001 /* BridgePinnedTrustDelegate.swift in Sources */,
+				C0DEC0DE0106000000000001 /* SharedKeychainStore.swift in Sources */,
 				0C3BAD9137A6A8F673D0ED0C /* CreateSceneView.swift in Sources */,
 				951658093BEEBEC42FBEB22C /* HarmonyEngine.swift in Sources */,
 				599068F08EA1513BEAFC8F83 /* ColorPadView.swift in Sources */,
@@ -1209,6 +1218,7 @@
 				C0DEC0DE00BF000000000003 /* OrchestratorSSETests.swift in Sources */,
 				C0DEC0DE00D0000000000003 /* SecretLogScrubTests.swift in Sources */,
 				C0DEC0DE0105000000000001 /* BridgeTrustEvaluatorTests.swift in Sources */,
+				C0DEC0DE0107000000000001 /* KeychainSharingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1221,6 +1231,7 @@
 				C0DEC0DE0102000000000002 /* BridgePinStore.swift in Sources */,
 				C0DEC0DE0103000000000002 /* HueBridgeTrustRoots.swift in Sources */,
 				C0DEC0DE0104000000000002 /* BridgePinnedTrustDelegate.swift in Sources */,
+				C0DEC0DE0106000000000002 /* SharedKeychainStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1239,6 +1250,7 @@
 				C0DEC0DE0102000000000003 /* BridgePinStore.swift in Sources */,
 				C0DEC0DE0103000000000003 /* HueBridgeTrustRoots.swift in Sources */,
 				C0DEC0DE0104000000000003 /* BridgePinnedTrustDelegate.swift in Sources */,
+				C0DEC0DE0106000000000003 /* SharedKeychainStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

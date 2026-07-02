@@ -17,12 +17,6 @@ struct WatchRoomSnapshot: Codable, Identifiable {
     let bridgeID:       String? = nil
 }
 
-struct WatchBridgeCredentials: Codable {
-    let bridgeID: String
-    let ip: String
-    let token: String
-}
-
 final class WatchWidgetStore {
     static let shared = WatchWidgetStore()
     private init() {}
@@ -37,27 +31,14 @@ final class WatchWidgetStore {
         return decoded
     }
 
+    // The complication is display-only: it never talks to the bridge, so it
+    // holds no credentials (M-02/D-018 removed the App Group token mirror).
     var isPaired:   Bool {
-        !bridges.isEmpty || !(ud?.string(forKey: "hue_widget_bridge_ip")?.isEmpty ?? true)
+        !rooms.isEmpty || !(ud?.string(forKey: "hue_widget_bridge_ip")?.isEmpty ?? true)
     }
     var bridgeIP:   String? { ud?.string(forKey: "hue_widget_bridge_ip") }
-    var token:      String? { ud?.string(forKey: "hue_widget_token") }
     var lastUpdated: Date?  { ud?.object(forKey: "hue_widget_updated_at") as? Date }
-    var bridges: [String: WatchBridgeCredentials] {
-        guard let data = ud?.data(forKey: "hue_widget_bridges_v1"),
-              let decoded = try? JSONDecoder().decode([String: WatchBridgeCredentials].self, from: data)
-        else { return [:] }
-        return decoded
-    }
 
     var onCount: Int { rooms.filter(\.isOn).count }
     var total:   Int { rooms.count }
-
-    func credentials(for bridgeID: String?) -> WatchBridgeCredentials? {
-        if let bridgeID, let creds = bridges[bridgeID] { return creds }
-        if let ip = bridgeIP, let token = token {
-            return WatchBridgeCredentials(bridgeID: bridgeID ?? "legacy-default", ip: ip, token: token)
-        }
-        return nil
-    }
 }

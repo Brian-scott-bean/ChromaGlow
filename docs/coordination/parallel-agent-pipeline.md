@@ -691,13 +691,46 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   interpolations containing a URL, IP, token, or name, and a post-pairing log-scrape test.
 
 ### D-018 — Replace App Group / watch plaintext token with a Keychain access group (iOS)
-- Status: PROPOSED
+- Status: IMPLEMENTED (P1 Group 1, local branch `ios-ref/hardening-p1-2026-07`; on-device gate pending)
 - 2026-07-01 [Claude]: Audit M-02/L-30. A plaintext copy of the bridge token lives in
   `group.com.huehome.pro` UserDefaults and in watch `UserDefaults.standard`, weaker than the Keychain
   copy and recoverable from an unencrypted backup or filesystem access. Proposal: share credentials via
   a Keychain access group (`kSecAttrAccessGroup`, `AfterFirstUnlockThisDeviceOnly`); store only
   non-secret routing metadata outside Keychain; use a watch Keychain; clear the watch token on
   forget-all. (This is the known-risk pattern AGENTS.md says must not be expanded or copied to Android.)
+- 2026-07-02 [Claude]: Implemented as proposed. Concrete shape:
+  1. **Shared access group** `$(AppIdentifierPrefix)com.huehome.pro.shared` added via a
+     `keychain-access-groups` entitlement on the app, widget-extension, and watch-app targets
+     (team `2H9J347H3T`; runtime constant in `SharedKeychainStore.accessGroup`). Service stays the
+     LIVE `com.lightshade.app` — not renamed.
+  2. **New `HueHome/Core/Keychain/SharedKeychainStore.swift`** (compiled into app + widget + watch
+     app): raw-Data keychain store, `AfterFirstUnlockThisDeviceOnly` + non-synchronizable, explicit
+     access group on writes, group-unqualified reads (tolerates unmigrated items).
+  3. **Main app** publishes the multi-bridge credential map to Keychain account
+     `hue_shared_bridge_credentials_v1`; the App Group now carries only non-secret routing metadata
+     (`hue_widget_routing_v1`: bridgeID+ip) and the legacy plaintext keys (`hue_widget_token`,
+     `hue_widget_bridges_v1`) are scrubbed on every publish. Widget/Siri (`WidgetDataStore`) read
+     credentials from Keychain only.
+  4. **Watch** stores the WCSession-delivered credential map in the watch Keychain (same store; the
+     group is watch-local). The phone no longer sends the raw legacy `wc_token` key; the token
+     travels only inside `wc_bridges_v1`. Watch UserDefaults + watch App Group hold no secrets; the
+     complication (`LightShadeWatchExtension`) lost its dead token accessors — it is display-only.
+  5. **Forget-all** (L-30): phone wipes the shared blob + App Group + pins, then pushes an explicit
+     EMPTY `wc_bridges_v1` map — the watch treats a well-formed empty map as the unpaired signal and
+     wipes its Keychain, defaults, and App Group mirrors.
+  6. **Migration** (no user loses credentials): `KeychainManager.migrateToSharedAccessGroupIfNeeded()`
+     runs at first Keychain touch, re-homes every `com.lightshade.app` item (copy-to-shared-first,
+     delete-old-after) and upgrades accessibility WhenUnlocked→AfterFirstUnlock; the watch migrates
+     UserDefaults creds→Keychain at store init; the P0 TLS-pin mirror (D-016) folded into the same
+     group — pin UserDefaults mirrors are read as fallback and scrubbed on next persist.
+  7. **Accessibility change note:** per-audit-§4 the old baseline was `WhenUnlockedThisDeviceOnly`;
+     D-018 deliberately moves shared items to `AfterFirstUnlockThisDeviceOnly` (still ThisDeviceOnly,
+     non-sync) so lock-screen widget/Siri/watch controls work. Regression tests assert the new class.
+  - Tests: `HueHomeTests/KeychainSharingTests.swift` (accessibility/non-sync, migration value-safety,
+    no token in App Group, no clientKey in `WidgetBridgeCredentials`, forget-all clears surface, pin
+    mirrors scrubbed). Guard 4 added to `Scripts/hardening_guards.sh` (no UserDefaults token writes).
+  - Pending: human on-device gate — existing pairing survives upgrade, widget+watch still control,
+    forget-all leaves no secret at rest (§6 checkpoint in the P1 launch prompt).
 
 ### D-019 — Per-bundle privacy manifests for the widget + watch targets (iOS)
 - Status: PROPOSED

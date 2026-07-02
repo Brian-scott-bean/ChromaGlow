@@ -37,7 +37,13 @@ final class KeychainManager: @unchecked Sendable {
 
     // MARK: Singleton
     static let shared = KeychainManager()
-    private init() {}
+    private init() {
+        // D-018 (audit M-02/L-30): items written before P1 live in the app's
+        // private access group with WhenUnlocked accessibility. Move them into
+        // the shared access group once so widget/watch/Siri can read them and
+        // no existing user loses credentials.
+        migrateToSharedAccessGroupIfNeeded()
+    }
 
     // MARK: Logger
     private let log = Logger(subsystem: "com.lightshade.app", category: "Keychain")
@@ -178,8 +184,13 @@ final class KeychainManager: @unchecked Sendable {
             kSecClass:                  kSecClassGenericPassword,
             kSecAttrService:            Keys.serviceName,
             kSecAttrAccount:            key,
+            kSecAttrAccessGroup:        SharedKeychainStore.accessGroup,
             kSecValueData:              data,
-            kSecAttrAccessible:         kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            // AfterFirstUnlock (D-018): widget/Siri/watch surfaces read these
+            // items while the device is locked. ThisDeviceOnly + non-sync
+            // keeps them out of iCloud Keychain and encrypted restores.
+            kSecAttrAccessible:         kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecAttrSynchronizable:     false
         ]
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
@@ -231,5 +242,86 @@ final class KeychainManager: @unchecked Sendable {
             throw KeychainError.deleteFailed(status)
         }
         log.debug("✅ Keychain delete succeeded for key '\(key)'.")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Shared Access Group Migration (D-018)
+    // ──────────────────────────────────────────────
+
+    /// Re-home every item under the live service into the shared access group
+    /// with AfterFirstUnlockThisDeviceOnly accessibility. Changing either
+    /// attribute changes the effective item, so pre-P1 items must be copied
+    /// and the originals removed — otherwise widget/watch cannot see them and
+    /// a scoped read would report the user as unpaired.
+    ///
+    /// Idempotent and best-effort: on a fresh install or after a completed
+    /// migration the initial scan returns nothing to do. An item is only
+    /// deleted after its shared-group copy was written successfully, so a
+    /// failed write can never lose credentials.
+    func migrateToSharedAccessGroupIfNeeded() {
+        let scanQuery: [CFString: Any] = [
+            kSecClass:            kSecClassGenericPassword,
+            kSecAttrService:      Keys.serviceName,
+            kSecReturnAttributes: true,
+            kSecReturnData:       true,
+            kSecMatchLimit:       kSecMatchLimitAll
+        ]
+        var found: AnyObject?
+        let scanStatus = SecItemCopyMatching(scanQuery as CFDictionary, &found)
+        guard scanStatus == errSecSuccess, let items = found as? [[CFString: Any]] else {
+            if scanStatus != errSecItemNotFound {
+                log.warning("Keychain migration scan failed — OSStatus: \(scanStatus)")
+            }
+            return
+        }
+
+        let wantedAccessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
+        var migrated = 0
+        for item in items {
+            guard let account = item[kSecAttrAccount] as? String,
+                  let data    = item[kSecValueData]  as? Data else { continue }
+            let group      = item[kSecAttrAccessGroup] as? String
+            let accessible = item[kSecAttrAccessible]  as? String
+            if group == SharedKeychainStore.accessGroup && accessible == wantedAccessible {
+                continue
+            }
+
+            // Write the shared-group copy first (replacing any stale copy
+            // already there), then remove the old item from its own group.
+            let deleteShared: [CFString: Any] = [
+                kSecClass:           kSecClassGenericPassword,
+                kSecAttrService:     Keys.serviceName,
+                kSecAttrAccount:     account,
+                kSecAttrAccessGroup: SharedKeychainStore.accessGroup
+            ]
+            SecItemDelete(deleteShared as CFDictionary)
+            let add: [CFString: Any] = [
+                kSecClass:              kSecClassGenericPassword,
+                kSecAttrService:        Keys.serviceName,
+                kSecAttrAccount:        account,
+                kSecAttrAccessGroup:    SharedKeychainStore.accessGroup,
+                kSecValueData:          data,
+                kSecAttrAccessible:     kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                kSecAttrSynchronizable: false
+            ]
+            let addStatus = SecItemAdd(add as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                log.error("Keychain migration: could not re-home an item — OSStatus: \(addStatus)")
+                continue
+            }
+            if let group, group != SharedKeychainStore.accessGroup {
+                let deleteOld: [CFString: Any] = [
+                    kSecClass:           kSecClassGenericPassword,
+                    kSecAttrService:     Keys.serviceName,
+                    kSecAttrAccount:     account,
+                    kSecAttrAccessGroup: group
+                ]
+                SecItemDelete(deleteOld as CFDictionary)
+            }
+            migrated += 1
+        }
+        if migrated > 0 {
+            log.info("✅ Keychain migration: moved \(migrated) item(s) into the shared access group.")
+        }
     }
 }

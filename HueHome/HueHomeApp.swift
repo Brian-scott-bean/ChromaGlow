@@ -189,13 +189,15 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
               let zonesData = try? JSONEncoder().encode(zones),
               let bridgesData = try? JSONEncoder().encode(bridges) else { return }
         let fallback = bridges.values.first
+        // The token travels only inside wc_bridges_v1 (persisted to the watch
+        // Keychain, D-018); the raw wc_token legacy key is gone so no watch
+        // build can land it in UserDefaults again. An EMPTY bridges map is the
+        // explicit unpaired/forget-all signal to the watch.
         var context: [String: Any] = [
             "wc_rooms_v1" : roomsData,
             "wc_zones_v1" : zonesData,
             "wc_bridges_v1": bridgesData,
-            // Legacy fallback keys for older watch payload readers.
-            "wc_bridge_ip": fallback?.ip ?? "",
-            "wc_token"    : fallback?.token ?? ""
+            "wc_bridge_ip": fallback?.ip ?? ""
         ]
         // Bridge TLS pins ride along with credentials (D-016) so the watch's
         // pinned trust delegate can validate its direct bridge connections.

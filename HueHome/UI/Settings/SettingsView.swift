@@ -8,6 +8,7 @@
 import SwiftUI
 import SwiftData
 import CoreLocation
+import WidgetKit
 
 // MARK: - SettingsView
 
@@ -76,6 +77,13 @@ struct SettingsView: View {
                 // 2b. Wipe TLS identity pins (D-016) — also unblocks re-pairing
                 // a bridge whose certificate legitimately changed.
                 BridgePinStore.shared.removeAll()
+                // 2c. Wipe the shared widget/Siri surface: room snapshot,
+                // routing metadata, and the shared-Keychain credential blob
+                // (M-02/D-018), then signal the watch to do the same (L-30 —
+                // an explicit empty bridges map is the unpaired signal).
+                WidgetDataStore.shared.clearAll()
+                WatchSessionManager.shared.push(rooms: [], zones: [], bridges: [:])
+                WidgetCenter.shared.reloadAllTimelines()
                 // 3. Save SwiftData changes
                 try? modelContext.save()
                 // 4. Stop SSE connections

@@ -52,6 +52,13 @@ struct WidgetBridgeCredentials: Codable {
     let token: String
 }
 
+/// Non-secret routing metadata kept in the App Group (M-02/D-018): everything
+/// a widget/complication needs for display without touching the Keychain.
+struct WidgetBridgeRouting: Codable {
+    let bridgeID: String
+    let ip: String
+}
+
 // MARK: - WidgetDataStore
 
 final class WidgetDataStore: @unchecked Sendable {
@@ -63,10 +70,12 @@ final class WidgetDataStore: @unchecked Sendable {
 
     private enum Key {
         static let rooms     = "hue_widget_rooms_v1"
-        static let bridges   = "hue_widget_bridges_v1"
+        static let routing   = "hue_widget_routing_v1"
         static let bridgeIP  = "hue_widget_bridge_ip"
-        static let token     = "hue_widget_token"
         static let updatedAt = "hue_widget_updated_at"
+        // Legacy plaintext-secret keys (pre-D-018) — scrubbed, never written.
+        static let legacyBridges = "hue_widget_bridges_v1"
+        static let legacyToken   = "hue_widget_token"
     }
 
     // ──────────────────────────────────────────────
@@ -79,22 +88,43 @@ final class WidgetDataStore: @unchecked Sendable {
         ud?.set(Date(), forKey: Key.updatedAt)
     }
 
-    func write(ip: String, token: String) {
-        ud?.set(ip,    forKey: Key.bridgeIP)
-        ud?.set(token, forKey: Key.token)
+    func write(bridges: [String: WidgetBridgeCredentials]) {
+        // Secrets go to the shared Keychain only (M-02/D-018). The App Group
+        // carries non-secret routing metadata for display.
+        if bridges.isEmpty {
+            SharedKeychainStore.delete(account: SharedKeychainStore.bridgeCredentialsAccount)
+            ud?.removeObject(forKey: Key.routing)
+            ud?.removeObject(forKey: Key.bridgeIP)
+        } else {
+            if let blob = try? JSONEncoder().encode(bridges) {
+                SharedKeychainStore.save(blob, account: SharedKeychainStore.bridgeCredentialsAccount)
+            }
+            let routing = bridges.mapValues { WidgetBridgeRouting(bridgeID: $0.bridgeID, ip: $0.ip) }
+            if let data = try? JSONEncoder().encode(routing) {
+                ud?.set(data, forKey: Key.routing)
+            }
+            if let first = bridges.values.first {
+                ud?.set(first.ip, forKey: Key.bridgeIP)
+            }
+        }
+        scrubLegacyPlaintextSecrets()
     }
 
-    func write(bridges: [String: WidgetBridgeCredentials]) {
-        guard let data = try? JSONEncoder().encode(bridges) else { return }
-        ud?.set(data, forKey: Key.bridges)
-        if let first = bridges.values.first {
-            // Legacy fallback keys used by older widget/watch code paths.
-            ud?.set(first.ip,    forKey: Key.bridgeIP)
-            ud?.set(first.token, forKey: Key.token)
-        } else {
-            ud?.removeObject(forKey: Key.bridgeIP)
-            ud?.removeObject(forKey: Key.token)
-        }
+    /// Remove the pre-D-018 plaintext token copies from the App Group.
+    func scrubLegacyPlaintextSecrets() {
+        ud?.removeObject(forKey: Key.legacyBridges)
+        ud?.removeObject(forKey: Key.legacyToken)
+    }
+
+    /// Forget-all: wipe every shared artifact — snapshot, routing metadata,
+    /// and the Keychain credential blob.
+    func clearAll() {
+        ud?.removeObject(forKey: Key.rooms)
+        ud?.removeObject(forKey: Key.routing)
+        ud?.removeObject(forKey: Key.bridgeIP)
+        ud?.removeObject(forKey: Key.updatedAt)
+        scrubLegacyPlaintextSecrets()
+        SharedKeychainStore.delete(account: SharedKeychainStore.bridgeCredentialsAccount)
     }
 
     // ──────────────────────────────────────────────
@@ -108,24 +138,44 @@ final class WidgetDataStore: @unchecked Sendable {
         return r
     }
 
+    /// Credential map from the shared Keychain access group (D-018).
     var bridges: [String: WidgetBridgeCredentials] {
-        guard let data = ud?.data(forKey: Key.bridges),
+        guard let data = SharedKeychainStore.load(account: SharedKeychainStore.bridgeCredentialsAccount),
               let decoded = try? JSONDecoder().decode([String: WidgetBridgeCredentials].self, from: data)
         else { return [:] }
         return decoded
     }
 
+    /// Non-secret routing metadata (display/pairing state — no Keychain hit).
+    var routing: [String: WidgetBridgeRouting] {
+        guard let data = ud?.data(forKey: Key.routing),
+              let decoded = try? JSONDecoder().decode([String: WidgetBridgeRouting].self, from: data)
+        else { return [:] }
+        return decoded
+    }
+
     var bridgeIP:    String? { ud?.string(forKey: Key.bridgeIP) }
-    var token:       String? { ud?.string(forKey: Key.token) }
     var lastUpdated: Date?   { ud?.object(forKey: Key.updatedAt) as? Date }
-    var isPaired:    Bool    { !bridges.isEmpty || !(bridgeIP?.isEmpty ?? true) }
+    var isPaired:    Bool    { !routing.isEmpty || !(bridgeIP?.isEmpty ?? true) }
 
     func credentials(for bridgeID: String?) -> WidgetBridgeCredentials? {
-        if let bridgeID, let creds = bridges[bridgeID] { return creds }
-        if let ip = bridgeIP, let token = token {
+        let map = bridges
+        if let bridgeID, let creds = map[bridgeID] { return creds }
+        // Legacy single-bridge fallback: the migrated legacy Keychain slots
+        // (the app's KeychainManager moved them into the shared group).
+        if let ip = SharedKeychainStore.loadString(account: "hue_bridge_ip"),
+           let token = SharedKeychainStore.loadString(account: "hue_api_token") {
             return WidgetBridgeCredentials(bridgeID: bridgeID ?? "legacy-default", ip: ip, token: token)
         }
         return nil
+    }
+
+    /// First available credentials — deterministic (sorted by bridge id) so
+    /// the widget's single-fetch refresh always targets the same bridge.
+    func primaryCredentials() -> WidgetBridgeCredentials? {
+        let map = bridges
+        if let firstKey = map.keys.sorted().first, let creds = map[firstKey] { return creds }
+        return credentials(for: nil)
     }
 
     // ──────────────────────────────────────────────

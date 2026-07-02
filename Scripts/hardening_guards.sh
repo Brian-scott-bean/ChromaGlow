@@ -15,6 +15,9 @@
 #   3. H-01/H-02/M-01 — no trust-all TLS: `.useCredential` may exist only in
 #              the pinned-trust module, and a discarded SecTrustEvaluate
 #              result is banned everywhere.
+#   4. M-02/L-30 — the bridge token never re-enters UserDefaults: no `set(`
+#              write against a known plaintext-token key (App Group or watch),
+#              and no `.token` value written into any UserDefaults suite.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -107,6 +110,24 @@ fi
 discard_hits=$(grep -rn "_ = SecTrustEvaluateWithError" "${SWIFT_DIRS[@]}" --include='*.swift' 2>/dev/null || true)
 if [[ -n "$discard_hits" ]]; then
     fail "H-01" $'SecTrustEvaluateWithError result discarded:\n'"$discard_hits"
+fi
+
+# ──────────────────────────────────────────────────────────────
+# Guard 4 (M-02/L-30): plaintext bridge tokens must never return to
+# UserDefaults. Deleting/reading the legacy keys is fine (migration/scrub);
+# a `set(` write against them — or of any `.token` value — is a regression.
+# ──────────────────────────────────────────────────────────────
+
+TOKEN_KEYS='"hue_widget_token"|"wc_token"|"hue_widget_bridges_v1"|"wc_bridges_v1"'
+
+tokenkey_hits=$(grep -rnE "\.set\(.*forKey: ($TOKEN_KEYS)" "${SWIFT_DIRS[@]}" --include='*.swift' 2>/dev/null || true)
+if [[ -n "$tokenkey_hits" ]]; then
+    fail "M-02/L-30" $'UserDefaults write against a plaintext-token key:\n'"$tokenkey_hits"
+fi
+
+tokenval_hits=$(grep -rnE '(ud|defaults|userDefaults|watchGroup|group)[?]?\.set\((first|creds|fallback)[?]?\.token' "${SWIFT_DIRS[@]}" --include='*.swift' 2>/dev/null || true)
+if [[ -n "$tokenval_hits" ]]; then
+    fail "M-02/L-30" $'a .token value is written into a UserDefaults suite:\n'"$tokenval_hits"
 fi
 
 # ──────────────────────────────────────────────────────────────

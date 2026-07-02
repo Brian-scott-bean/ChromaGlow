@@ -98,21 +98,24 @@ final class WatchStore: NSObject, ObservableObject {
     @Published var isLoading: Bool        = false
     @Published var errorMsg:  String?     = nil
 
-    // Watch-local cache keys (UserDefaults.standard on the WATCH device)
+    // Watch-local cache keys. Rooms/zones/ip are non-secret and stay in
+    // UserDefaults.standard; the token and credential map live in the watch
+    // Keychain (M-02/L-30, D-018) under the same key names as accounts.
     private enum CacheKey {
         static let rooms    = "wc_rooms_v1"
-        static let bridges  = "wc_bridges_v1"
+        static let bridges  = "wc_bridges_v1"   // Keychain account (was a UserDefaults key pre-D-018)
         static let bridgeIP = "wc_bridge_ip"
-        static let token    = "wc_token"
+        static let token    = "wc_token"        // Keychain account (was a UserDefaults key pre-D-018)
     }
 
-    // App Group shared with complication extension (watch-side container)
+    // App Group shared with complication extension (watch-side container).
+    // Carries only non-secret display data (rooms, timestamps, bridge ip).
     private var watchGroup: UserDefaults? { UserDefaults(suiteName: "group.com.huehome.pro") }
 
     private var bridgeIP: String? { UserDefaults.standard.string(forKey: CacheKey.bridgeIP) }
-    private var token:    String? { UserDefaults.standard.string(forKey: CacheKey.token) }
+    private var token:    String? { SharedKeychainStore.loadString(account: CacheKey.token) }
     private var bridges: [String: WatchBridgeCredentials] {
-        guard let data = UserDefaults.standard.data(forKey: CacheKey.bridges),
+        guard let data = SharedKeychainStore.load(account: CacheKey.bridges),
               let decoded = try? JSONDecoder().decode([String: WatchBridgeCredentials].self, from: data)
         else { return [:] }
         return decoded
@@ -120,8 +123,27 @@ final class WatchStore: NSObject, ObservableObject {
 
     private override init() {
         super.init()
+        Self.migrateLegacyPlaintextCredentials()
         loadFromLocalCache()
         activateWCSession()
+    }
+
+    /// One-time D-018 upgrade: move the pre-P1 plaintext token/credential map
+    /// out of UserDefaults into the watch Keychain and scrub every plaintext
+    /// copy (standard defaults + App Group mirror).
+    private static func migrateLegacyPlaintextCredentials() {
+        let ud = UserDefaults.standard
+        if let bridgesData = ud.data(forKey: CacheKey.bridges) {
+            SharedKeychainStore.save(bridgesData, account: CacheKey.bridges)
+            ud.removeObject(forKey: CacheKey.bridges)
+        }
+        if let legacyToken = ud.string(forKey: CacheKey.token), !legacyToken.isEmpty {
+            SharedKeychainStore.save(legacyToken, account: CacheKey.token)
+        }
+        ud.removeObject(forKey: CacheKey.token)
+        let group = UserDefaults(suiteName: "group.com.huehome.pro")
+        group?.removeObject(forKey: "hue_widget_token")
+        group?.removeObject(forKey: "hue_widget_bridges_v1")
     }
 
     // MARK: - WatchConnectivity
@@ -149,12 +171,10 @@ final class WatchStore: NSObject, ObservableObject {
     private func saveToLocalCache() {
         guard let data = try? JSONEncoder().encode(rooms) else { return }
         UserDefaults.standard.set(data, forKey: CacheKey.rooms)
-        // Mirror into App Group so watch complications can read it
+        // Mirror into App Group so watch complications can read it.
+        // Display data only — credentials never enter the App Group (D-018).
         watchGroup?.set(data,       forKey: "hue_widget_rooms_v1")
         watchGroup?.set(Date(),     forKey: "hue_widget_updated_at")
-        if let bridgesData = UserDefaults.standard.data(forKey: CacheKey.bridges) {
-            watchGroup?.set(bridgesData, forKey: "hue_widget_bridges_v1")
-        }
         WidgetCenter.shared.reloadAllTimelines()
     }
 
@@ -275,9 +295,24 @@ extension WatchStore: WCSessionDelegate {
               let decoded   = try? JSONDecoder().decode([WatchRoom].self, from: roomsData)
         else { return }
 
-        let ip    = applicationContext["wc_bridge_ip"] as? String ?? ""
-        let token = applicationContext["wc_token"]     as? String ?? ""
+        let ip = applicationContext["wc_bridge_ip"] as? String ?? ""
         let bridgesData = applicationContext["wc_bridges_v1"] as? Data
+        let bridgeMap: [String: WatchBridgeCredentials]? = bridgesData.flatMap {
+            try? JSONDecoder().decode([String: WatchBridgeCredentials].self, from: $0)
+        }
+
+        // Forget-all (L-30): an explicit, well-formed EMPTY credential map is
+        // the phone's unpaired signal — wipe every secret and mirror at rest.
+        if let bridgeMap, bridgeMap.isEmpty {
+            Self.clearAllStoredData()
+            Task { @MainActor [weak self] in
+                self?.rooms    = []
+                self?.zones    = []
+                self?.isPaired = false
+                WidgetCenter.shared.reloadAllTimelines()
+            }
+            return
+        }
 
         // Decode zones (optional — older payloads may not include them)
         let decodedZones: [WatchRoom]
@@ -288,16 +323,16 @@ extension WatchStore: WCSessionDelegate {
             decodedZones = []
         }
 
-        // UserDefaults is thread-safe — write directly from any thread
+        // UserDefaults is thread-safe — write directly from any thread.
+        // Credentials go to the watch Keychain, never UserDefaults (D-018).
         UserDefaults.standard.set(roomsData, forKey: "wc_rooms_v1")
         if let zonesData = applicationContext["wc_zones_v1"] as? Data {
             UserDefaults.standard.set(zonesData, forKey: "wc_zones_v1")
         }
-        if let bridgesData {
-            UserDefaults.standard.set(bridgesData, forKey: CacheKey.bridges)
+        if let bridgesData, bridgeMap != nil {
+            SharedKeychainStore.save(bridgesData, account: CacheKey.bridges)
         }
-        if !ip.isEmpty    { UserDefaults.standard.set(ip,    forKey: "wc_bridge_ip") }
-        if !token.isEmpty { UserDefaults.standard.set(token, forKey: "wc_token") }
+        if !ip.isEmpty { UserDefaults.standard.set(ip, forKey: "wc_bridge_ip") }
 
         // TLS pins pushed alongside credentials (D-016) — required before any
         // watch → bridge HTTPS call can pass the pinned trust evaluation.
@@ -306,14 +341,11 @@ extension WatchStore: WCSessionDelegate {
         }
 
         // Mirror into watch-side App Group so complications refresh immediately
+        // (display data only — no credentials).
         let watchGroup = UserDefaults(suiteName: "group.com.huehome.pro")
         watchGroup?.set(roomsData, forKey: "hue_widget_rooms_v1")
         watchGroup?.set(Date(),    forKey: "hue_widget_updated_at")
-        if let bridgesData {
-            watchGroup?.set(bridgesData, forKey: "hue_widget_bridges_v1")
-        }
-        if !ip.isEmpty    { watchGroup?.set(ip,    forKey: "hue_widget_bridge_ip") }
-        if !token.isEmpty { watchGroup?.set(token, forKey: "hue_widget_token") }
+        if !ip.isEmpty { watchGroup?.set(ip, forKey: "hue_widget_bridge_ip") }
 
         // Update published properties on MainActor + reload complications
         Task { @MainActor [weak self] in
@@ -321,6 +353,24 @@ extension WatchStore: WCSessionDelegate {
             self?.zones    = decodedZones
             self?.isPaired = !(decoded.isEmpty && decodedZones.isEmpty) || !ip.isEmpty || bridgesData != nil
             WidgetCenter.shared.reloadAllTimelines()
+        }
+    }
+
+    /// Wipe credentials (watch Keychain), caches, and App Group mirrors.
+    nonisolated private static func clearAllStoredData() {
+        SharedKeychainStore.delete(account: CacheKey.bridges)
+        SharedKeychainStore.delete(account: CacheKey.token)
+        let ud = UserDefaults.standard
+        ud.removeObject(forKey: CacheKey.rooms)
+        ud.removeObject(forKey: "wc_zones_v1")
+        ud.removeObject(forKey: CacheKey.bridgeIP)
+        ud.removeObject(forKey: CacheKey.token)
+        ud.removeObject(forKey: CacheKey.bridges)
+        BridgePinStore.shared.removeAll()
+        let group = UserDefaults(suiteName: "group.com.huehome.pro")
+        for key in ["hue_widget_rooms_v1", "hue_widget_updated_at",
+                    "hue_widget_bridge_ip", "hue_widget_token", "hue_widget_bridges_v1"] {
+            group?.removeObject(forKey: key)
         }
     }
 
