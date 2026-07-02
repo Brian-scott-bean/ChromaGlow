@@ -96,11 +96,18 @@ final class WidgetDataStore: @unchecked Sendable {
             ud?.removeObject(forKey: Key.routing)
             ud?.removeObject(forKey: Key.bridgeIP)
         } else {
-            if let blob = try? JSONEncoder().encode(bridges) {
+            // Deterministic encoding (sortedKeys) so an unchanged map skips
+            // the Keychain delete/add cycle — publish runs on every loadAll
+            // and the non-atomic upsert briefly exposes a no-credential
+            // window to concurrently rendering widget timelines.
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            if let blob = try? encoder.encode(bridges),
+               SharedKeychainStore.load(account: SharedKeychainStore.bridgeCredentialsAccount) != blob {
                 SharedKeychainStore.save(blob, account: SharedKeychainStore.bridgeCredentialsAccount)
             }
             let routing = bridges.mapValues { WidgetBridgeRouting(bridgeID: $0.bridgeID, ip: $0.ip) }
-            if let data = try? JSONEncoder().encode(routing) {
+            if let data = try? encoder.encode(routing) {
                 ud?.set(data, forKey: Key.routing)
             }
             if let first = bridges.values.first {
@@ -165,6 +172,21 @@ final class WidgetDataStore: @unchecked Sendable {
         // (the app's KeychainManager moved them into the shared group).
         if let ip = SharedKeychainStore.loadString(account: "hue_bridge_ip"),
            let token = SharedKeychainStore.loadString(account: "hue_api_token") {
+            return WidgetBridgeCredentials(bridgeID: bridgeID ?? "legacy-default", ip: ip, token: token)
+        }
+        // Upgrade-window fallback (READ-ONLY): the app was updated but has not
+        // launched yet, so the shared-Keychain blob does not exist while the
+        // pre-D-018 plaintext copies are still in the App Group. Without this
+        // the widget/Siri surfaces of a paired user go dead until the app is
+        // opened. The app's first launch writes the blob and scrubs these
+        // keys, after which this path is unreachable.
+        if let data = ud?.data(forKey: Key.legacyBridges),
+           let legacyMap = try? JSONDecoder().decode([String: WidgetBridgeCredentials].self, from: data) {
+            if let bridgeID, let creds = legacyMap[bridgeID] { return creds }
+            if bridgeID == nil, let firstKey = legacyMap.keys.sorted().first { return legacyMap[firstKey] }
+        }
+        if let ip = ud?.string(forKey: Key.bridgeIP),
+           let token = ud?.string(forKey: Key.legacyToken) {
             return WidgetBridgeCredentials(bridgeID: bridgeID ?? "legacy-default", ip: ip, token: token)
         }
         return nil

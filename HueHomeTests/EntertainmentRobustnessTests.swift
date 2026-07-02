@@ -138,4 +138,34 @@ final class EntertainmentRobustnessTests: XCTestCase {
         HueEntertainmentClient.unregisterActiveSession(configID: "cfg-x")
         XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-x"))
     }
+
+    func testSessionRegistryIsRefCounted() {
+        // Two client instances can stream the same configuration (Sync +
+        // Studio) — one stopping must not expose the other to the cleanup.
+        HueEntertainmentClient.registerActiveSession(configID: "cfg-rc")
+        HueEntertainmentClient.registerActiveSession(configID: "cfg-rc")
+        HueEntertainmentClient.unregisterActiveSession(configID: "cfg-rc")
+        XCTAssertTrue(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-rc"),
+            "one remaining owner must keep the session protected")
+        HueEntertainmentClient.unregisterActiveSession(configID: "cfg-rc")
+        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-rc"))
+        // Extra unregister must not underflow into protecting ghosts.
+        HueEntertainmentClient.unregisterActiveSession(configID: "cfg-rc")
+        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-rc"))
+    }
+
+    func testStartSessionRegistersBeforeRESTActivate() async {
+        // The cleanup race (loadAll during the DTLS handshake) is closed by
+        // registering BEFORE action=start. The failed-open path must still
+        // end unregistered.
+        let spy = EntertainmentSpyClient(bridgeID: "bridge-1", bridgeName: "Test",
+                                         ip: "192.0.2.1", token: "t")
+        let client = HueEntertainmentClient(bridgeIP: "192.0.2.1",
+                                            username: "user",
+                                            clientKeyHex: "ZZ-not-hex",
+                                            restClient: spy)
+        _ = try? await client.startSession(configID: "cfg-race")
+        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-race"),
+            "a failed startSession must leave the registry balanced")
+    }
 }

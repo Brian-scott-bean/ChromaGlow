@@ -99,6 +99,16 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(orchestrator.hueClient(forBridgeIP: "192.0.2.99"))
     }
 
+    func testHueClientForNilBridgeID() {
+        // Multi-bridge: nil is unresolvable — guessing would reintroduce the
+        // wrong-bridge class.
+        XCTAssertNil(orchestrator.hueClient(for: nil))
+        // Single-bridge: legacy rooms (bridgeID nil, cached pre-multi-bridge)
+        // can only belong to the sole registered bridge.
+        orchestrator.injectForTesting(clients: ["bridge-a": bridgeA])
+        XCTAssertTrue(orchestrator.hueClient(for: nil) === bridgeA)
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - M-07: composition teardown targets the manifest's bridge
     // ──────────────────────────────────────────────

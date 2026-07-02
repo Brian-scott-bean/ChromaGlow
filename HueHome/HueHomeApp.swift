@@ -180,7 +180,8 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
     func push(
         rooms: [WidgetRoomSnapshot],
         zones: [WidgetRoomSnapshot],
-        bridges: [String: WidgetBridgeCredentials]
+        bridges: [String: WidgetBridgeCredentials],
+        unpaired: Bool = false
     ) {
         guard WCSession.default.activationState == .activated,
               WCSession.default.isPaired,
@@ -191,13 +192,15 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
         let fallback = bridges.values.first
         // The token travels only inside wc_bridges_v1 (persisted to the watch
         // Keychain, D-018); the raw wc_token legacy key is gone so no watch
-        // build can land it in UserDefaults again. An EMPTY bridges map is the
-        // explicit unpaired/forget-all signal to the watch.
+        // build can land it in UserDefaults again. Forget-all is signalled by
+        // the EXPLICIT wc_unpaired flag — never inferred from an empty map,
+        // which is indistinguishable from a transient Keychain read failure.
         var context: [String: Any] = [
             "wc_rooms_v1" : roomsData,
             "wc_zones_v1" : zonesData,
             "wc_bridges_v1": bridgesData,
-            "wc_bridge_ip": fallback?.ip ?? ""
+            "wc_bridge_ip": fallback?.ip ?? "",
+            "wc_unpaired" : unpaired
         ]
         // Bridge TLS pins ride along with credentials (D-016) so the watch's
         // pinned trust delegate can validate its direct bridge connections.

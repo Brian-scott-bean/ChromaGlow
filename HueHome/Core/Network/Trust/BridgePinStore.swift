@@ -15,7 +15,6 @@
 // Keychain copy is integrity-protected and now reachable from every process.
 
 import Foundation
-import Security
 
 final class BridgePinStore: @unchecked Sendable {
 
@@ -25,9 +24,7 @@ final class BridgePinStore: @unchecked Sendable {
     /// WCSession applicationContext key on the watch side).
     static let storageKey = "hue_bridge_tls_pins_v1"
 
-    /// LIVE Keychain service identifier — do NOT rename (AGENTS.md identity list).
-    private static let keychainService = "com.lightshade.app"
-    private static let appGroupSuite   = "group.com.huehome.pro"
+    private static let appGroupSuite = "group.com.huehome.pro"
 
     private let lock = NSLock()
     private var cache: [BridgePin]?
@@ -126,9 +123,12 @@ final class BridgePinStore: @unchecked Sendable {
     private func persist(_ pins: [BridgePin]) {
         cache = pins
         guard let data = try? JSONEncoder().encode(pins) else { return }
-        keychainWrite(data)
-        // D-018: pins live in the shared Keychain group; remove the plaintext
-        // mirrors a P0 build may have left behind.
+        // D-018: pins live in the shared Keychain group. The P0-era
+        // UserDefaults mirrors are removed only AFTER a verified Keychain
+        // write — scrubbing them while the write failed would leave the pins
+        // existing nowhere durable and every bridge connection failing TLS at
+        // the next launch.
+        guard keychainWrite(data) else { return }
         UserDefaults(suiteName: Self.appGroupSuite)?.removeObject(forKey: Self.storageKey)
         UserDefaults.standard.removeObject(forKey: Self.storageKey)
     }
@@ -139,40 +139,15 @@ final class BridgePinStore: @unchecked Sendable {
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Keychain (self-contained; extensions fall through harmlessly)
+    // MARK: - Keychain (via SharedKeychainStore — ONE copy of the D-018
+    // attribute contract; extensions fall through harmlessly)
     // ──────────────────────────────────────────────
 
     private func keychainRead() -> Data? {
-        let query: [CFString: Any] = [
-            kSecClass:       kSecClassGenericPassword,
-            kSecAttrService: Self.keychainService,
-            kSecAttrAccount: Self.storageKey,
-            kSecReturnData:  true,
-            kSecMatchLimit:  kSecMatchLimitOne,
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+        SharedKeychainStore.load(account: Self.storageKey)
     }
 
-    private func keychainWrite(_ data: Data) {
-        let deleteQuery: [CFString: Any] = [
-            kSecClass:       kSecClassGenericPassword,
-            kSecAttrService: Self.keychainService,
-            kSecAttrAccount: Self.storageKey,
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-        let addQuery: [CFString: Any] = [
-            kSecClass:              kSecClassGenericPassword,
-            kSecAttrService:        Self.keychainService,
-            kSecAttrAccount:        Self.storageKey,
-            // D-018: shared access group so widget/Siri read pins directly.
-            kSecAttrAccessGroup:    SharedKeychainStore.accessGroup,
-            kSecValueData:          data,
-            // Pins must be readable during background SSE/widget refreshes.
-            kSecAttrAccessible:     kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            kSecAttrSynchronizable: false,
-        ]
-        SecItemAdd(addQuery as CFDictionary, nil)
+    private func keychainWrite(_ data: Data) -> Bool {
+        SharedKeychainStore.save(data, account: Self.storageKey)
     }
 }

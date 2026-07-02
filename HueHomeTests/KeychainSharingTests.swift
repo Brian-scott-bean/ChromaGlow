@@ -175,6 +175,47 @@ final class KeychainSharingTests: XCTestCase {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Upgrade window: legacy App Group fallback (read-only)
+    // ──────────────────────────────────────────────
+
+    func testUpgradeWindowFallsBackToLegacyAppGroupCredentials() throws {
+        // Snapshot the REAL legacy single-bridge slots so this test can never
+        // destroy an actual pairing on the machine running the suite.
+        let savedLegacyIP    = SharedKeychainStore.load(account: "hue_bridge_ip")
+        let savedLegacyToken = SharedKeychainStore.load(account: "hue_api_token")
+        defer {
+            if let savedLegacyIP { SharedKeychainStore.save(savedLegacyIP, account: "hue_bridge_ip") }
+            if let savedLegacyToken { SharedKeychainStore.save(savedLegacyToken, account: "hue_api_token") }
+        }
+
+        // Simulate "app updated but not launched yet": no shared-Keychain
+        // blob, pre-D-018 plaintext copies still in the App Group.
+        SharedKeychainStore.delete(account: SharedKeychainStore.bridgeCredentialsAccount)
+        SharedKeychainStore.delete(account: "hue_bridge_ip")
+        SharedKeychainStore.delete(account: "hue_api_token")
+        let ud = try XCTUnwrap(UserDefaults(suiteName: Self.appGroupSuite))
+        let legacy = ["legacy-b": WidgetBridgeCredentials(bridgeID: "legacy-b",
+                                                          ip: "192.0.2.7",
+                                                          token: Self.sentinelToken)]
+        ud.set(try JSONEncoder().encode(legacy), forKey: "hue_widget_bridges_v1")
+        ud.set("192.0.2.7", forKey: "hue_widget_bridge_ip")
+
+        let store = WidgetDataStore.shared
+        XCTAssertEqual(store.credentials(for: "legacy-b")?.token, Self.sentinelToken,
+            "the widget must keep working between app update and first app launch")
+        XCTAssertEqual(store.primaryCredentials()?.ip, "192.0.2.7")
+
+        // The app's first publish scrubs the plaintext copies — the fallback
+        // must then be dead and the Keychain copy authoritative.
+        store.write(bridges: ["new-b": WidgetBridgeCredentials(bridgeID: "new-b",
+                                                               ip: "192.0.2.8",
+                                                               token: "NEW-TOKEN")])
+        XCTAssertNil(ud.object(forKey: "hue_widget_bridges_v1"))
+        XCTAssertNil(store.credentials(for: "legacy-b"))
+        XCTAssertEqual(store.credentials(for: "new-b")?.token, "NEW-TOKEN")
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Entertainment client key stays out of shared shapes (audit §6)
     // ──────────────────────────────────────────────
 

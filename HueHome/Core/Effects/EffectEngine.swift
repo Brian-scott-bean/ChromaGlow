@@ -218,7 +218,8 @@ enum EffectLoops {
         on: Bool, brightness: Double, xy: (Double, Double), duration: Int
     ) async -> Bool {
         if let groupedLightID {
-            let error = await gate.send {
+            // retry: false — the next frame supersedes a failed one.
+            let error = await gate.send(retry: false) {
                 try await api.setGroupedLightEffect(
                     id:         groupedLightID,
                     on:         on,
@@ -246,7 +247,8 @@ enum EffectLoops {
         light: LightDisplayItem, api: HueAPIClient, gate: BridgeCommandGate,
         on: Bool, brightness: Double, xy: (Double, Double), duration: Int
     ) async -> Bool {
-        let error = await gate.send {
+        // retry: false — the next frame supersedes a failed one.
+        let error = await gate.send(retry: false) {
             try await api.setLightEffect(
                 id:         light.id,    // LightDisplayItem.id == CLIP v2 light resource UUID
                 on:         on,

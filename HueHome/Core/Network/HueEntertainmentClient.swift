@@ -102,22 +102,30 @@ actor HueEntertainmentClient {
 
     // MARK: - App-owned session registry (M-06)
     //
-    // Every entertainment configuration this app is actively streaming, so
-    // the orchestrator's stuck-session cleanup can never stop the app's own
-    // Studio/Composer/Sync session mid-show.
+    // Every entertainment configuration this app is actively using, so the
+    // orchestrator's stuck-session cleanup can never stop the app's own
+    // Studio/Composer/Sync session mid-show. Reference-counted: two client
+    // instances can target the same configuration (Sync engine + Studio), and
+    // one instance stopping must not expose the other's live session to the
+    // cleanup pass.
     private static let activeSessionsLock = NSLock()
-    nonisolated(unsafe) private static var activeSessionConfigIDs: Set<String> = []
+    nonisolated(unsafe) private static var activeSessionRefCounts: [String: Int] = [:]
 
     static func registerActiveSession(configID: String) {
         activeSessionsLock.lock()
         defer { activeSessionsLock.unlock() }
-        activeSessionConfigIDs.insert(configID)
+        activeSessionRefCounts[configID, default: 0] += 1
     }
 
     static func unregisterActiveSession(configID: String) {
         activeSessionsLock.lock()
         defer { activeSessionsLock.unlock() }
-        activeSessionConfigIDs.remove(configID)
+        guard let count = activeSessionRefCounts[configID] else { return }
+        if count <= 1 {
+            activeSessionRefCounts.removeValue(forKey: configID)
+        } else {
+            activeSessionRefCounts[configID] = count - 1
+        }
     }
 
     /// True when THIS app process owns an active streaming session for the
@@ -125,7 +133,7 @@ actor HueEntertainmentClient {
     static func isAppOwnedSession(configID: String) -> Bool {
         activeSessionsLock.lock()
         defer { activeSessionsLock.unlock() }
-        return activeSessionConfigIDs.contains(configID)
+        return activeSessionRefCounts[configID] != nil
     }
 
     // MARK: Init
@@ -147,6 +155,12 @@ actor HueEntertainmentClient {
         state = .connecting
         log.info("Starting entertainment session for config \(configID)")
 
+        // Register BEFORE the REST activate: the bridge reports the config
+        // "active" the moment action=start lands, and a concurrent loadAll
+        // cleanup pass must already see it as app-owned — otherwise it can
+        // stop our own session during the (up to 10s) DTLS handshake window.
+        Self.registerActiveSession(configID: configID)
+
         // Step 1: Activate the entertainment config via REST
         do {
             let (ip, token) = try restClient.credentials()
@@ -157,6 +171,8 @@ actor HueEntertainmentClient {
             )
             log.info("Entertainment config activated via REST")
         } catch {
+            Self.unregisterActiveSession(configID: configID)
+            self.configID = ""
             state = .error("Failed to activate: \(error.localizedDescription)")
             log.error("REST activate failed: \(error.localizedDescription)")
             throw error
@@ -173,7 +189,6 @@ actor HueEntertainmentClient {
             throw error
         }
 
-        Self.registerActiveSession(configID: configID)
         reconnectAttempts = 0
     }
 
@@ -192,27 +207,16 @@ actor HueEntertainmentClient {
         connection?.cancel()
         connection = nil
 
-        // Deactivate via REST (best effort)
-        if !configID.isEmpty {
-            Self.unregisterActiveSession(configID: configID)
-            do {
-                let (ip, token) = try restClient.credentials()
-                let body: [String: Any] = ["action": "stop"]
-                _ = try await restClient.put(
-                    path: "/clip/v2/resource/entertainment_configuration/\(configID)",
-                    body: body, ip: ip, token: token
-                )
-            } catch {
-                log.warning("REST deactivate failed (non-fatal): \(error.localizedDescription)")
-            }
-        }
+        await sendBestEffortStop()
 
         state = .disconnected
         sequenceNumber = 0
-        configID = ""
     }
 
-    /// Best-effort `action=stop` + local cleanup after a failed open (L-11).
+    /// Shared session teardown: unregister from the app-owned registry,
+    /// best-effort `action=stop` on the bridge, reset configID. Used by
+    /// stopSession, the failed-open rollback (L-11), and reconnect
+    /// abandonment (M-10) so the teardown protocol cannot drift.
     private func sendBestEffortStop() async {
         guard !configID.isEmpty else { return }
         Self.unregisterActiveSession(configID: configID)
@@ -223,9 +227,9 @@ actor HueEntertainmentClient {
                 path: "/clip/v2/resource/entertainment_configuration/\(configID)",
                 body: body, ip: ip, token: token
             )
-            log.info("Compensating action=stop sent after failed open")
+            log.info("Entertainment action=stop sent")
         } catch {
-            log.warning("Compensating stop failed (bridge inactivity timeout will recover): \(error.localizedDescription)")
+            log.warning("action=stop failed (bridge inactivity timeout will recover): \(error.localizedDescription)")
         }
         configID = ""
     }
@@ -383,7 +387,12 @@ actor HueEntertainmentClient {
     private func scheduleReconnect() {
         guard reconnectTask == nil, !configID.isEmpty else { return }
         guard reconnectAttempts < Self.maxReconnectAttempts else {
-            log.error("Entertainment reconnect abandoned after \(Self.maxReconnectAttempts) attempts — session stays in .error")
+            // Abandon: the session is dead. Tear it down fully — unregister
+            // from the app-owned registry and best-effort stop the config —
+            // otherwise the stuck-session cleanup would skip this dead-but-
+            // "owned" config forever and the bridge would stay locked.
+            log.error("Entertainment reconnect abandoned after \(Self.maxReconnectAttempts) attempts — tearing session down")
+            Task { [weak self] in await self?.sendBestEffortStop() }
             return
         }
         reconnectAttempts += 1

@@ -23,16 +23,25 @@ actor BridgeCommandGate {
     private var lastSend: ContinuousClock.Instant?
 
     /// Runs `op` after enforcing the per-bridge spacing. On error, retries
-    /// once after a backoff. Returns nil on success, the final error on
-    /// persistent failure — callers surface it instead of `try?`-dropping it.
+    /// once after a backoff (unless `retry` is false — effect loops pass
+    /// false because the NEXT frame supersedes a failed one; retrying a
+    /// stale frame is wasted budget). Returns nil on success, the final
+    /// error on failure — callers surface it instead of `try?`-dropping it.
+    /// A cancelled task returns CancellationError without sending: the
+    /// caller's loop is being torn down and one more command would flash
+    /// the lights after the user pressed stop.
     @discardableResult
-    func send(_ op: @escaping @Sendable () async throws -> Void) async -> Error? {
+    func send(retry: Bool = true,
+              _ op: @escaping @Sendable () async throws -> Void) async -> Error? {
         await pace()
+        guard !Task.isCancelled else { return CancellationError() }
         do {
             try await op()
             return nil
         } catch {
+            guard retry, !Task.isCancelled else { return error }
             try? await Task.sleep(for: Self.retryBackoff)
+            guard !Task.isCancelled else { return error }
             await pace()
             do {
                 try await op()
@@ -45,9 +54,11 @@ actor BridgeCommandGate {
 
     /// Sleeps until at least `minInterval` has passed since the previous
     /// command START on this bridge. Actor reentrancy makes concurrent
-    /// callers queue up in ~minInterval steps.
+    /// callers queue up in ~minInterval steps. Exits early on cancellation
+    /// (Task.sleep throws immediately on a cancelled task — looping on it
+    /// would busy-spin the actor).
     private func pace() async {
-        while let last = lastSend {
+        while let last = lastSend, !Task.isCancelled {
             let elapsed = last.duration(to: .now)
             if elapsed >= Self.minInterval { break }
             try? await Task.sleep(for: Self.minInterval - elapsed)

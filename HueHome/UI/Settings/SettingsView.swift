@@ -82,7 +82,7 @@ struct SettingsView: View {
                 // (M-02/D-018), then signal the watch to do the same (L-30 —
                 // an explicit empty bridges map is the unpaired signal).
                 WidgetDataStore.shared.clearAll()
-                WatchSessionManager.shared.push(rooms: [], zones: [], bridges: [:])
+                WatchSessionManager.shared.push(rooms: [], zones: [], bridges: [:], unpaired: true)
                 WidgetCenter.shared.reloadAllTimelines()
                 // 3. Save SwiftData changes
                 try? modelContext.save()

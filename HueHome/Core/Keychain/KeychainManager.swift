@@ -259,11 +259,12 @@ final class KeychainManager: @unchecked Sendable {
     /// deleted after its shared-group copy was written successfully, so a
     /// failed write can never lose credentials.
     func migrateToSharedAccessGroupIfNeeded() {
+        // Fast path: attributes-only scan (no kSecReturnData) so the
+        // every-launch steady state never decrypts item payloads.
         let scanQuery: [CFString: Any] = [
             kSecClass:            kSecClassGenericPassword,
             kSecAttrService:      Keys.serviceName,
             kSecReturnAttributes: true,
-            kSecReturnData:       true,
             kSecMatchLimit:       kSecMatchLimitAll
         ]
         var found: AnyObject?
@@ -276,18 +277,50 @@ final class KeychainManager: @unchecked Sendable {
         }
 
         let wantedAccessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
+        let sharedAccounts = Set(items.compactMap { item -> String? in
+            guard item[kSecAttrAccessGroup] as? String == SharedKeychainStore.accessGroup else { return nil }
+            return item[kSecAttrAccount] as? String
+        })
+
         var migrated = 0
         for item in items {
-            guard let account = item[kSecAttrAccount] as? String,
-                  let data    = item[kSecValueData]  as? Data else { continue }
+            guard let account = item[kSecAttrAccount] as? String else { continue }
             let group      = item[kSecAttrAccessGroup] as? String
             let accessible = item[kSecAttrAccessible]  as? String
             if group == SharedKeychainStore.accessGroup && accessible == wantedAccessible {
                 continue
             }
 
-            // Write the shared-group copy first (replacing any stale copy
-            // already there), then remove the old item from its own group.
+            if let group, group != SharedKeychainStore.accessGroup, sharedAccounts.contains(account) {
+                // A shared-group copy already exists — it is the authoritative
+                // (newer) one; a stale legacy duplicate left behind by a
+                // partially failed earlier run must never overwrite it. Just
+                // remove the leftover.
+                let deleteOld: [CFString: Any] = [
+                    kSecClass:           kSecClassGenericPassword,
+                    kSecAttrService:     Keys.serviceName,
+                    kSecAttrAccount:     account,
+                    kSecAttrAccessGroup: group
+                ]
+                SecItemDelete(deleteOld as CFDictionary)
+                continue
+            }
+
+            // Fetch this item's payload (scoped to its own group), write the
+            // shared-group copy first, then remove the old item — a failed
+            // write can never lose credentials.
+            var fetch: [CFString: Any] = [
+                kSecClass:       kSecClassGenericPassword,
+                kSecAttrService: Keys.serviceName,
+                kSecAttrAccount: account,
+                kSecReturnData:  true,
+                kSecMatchLimit:  kSecMatchLimitOne
+            ]
+            if let group { fetch[kSecAttrAccessGroup] = group }
+            var payload: AnyObject?
+            guard SecItemCopyMatching(fetch as CFDictionary, &payload) == errSecSuccess,
+                  let data = payload as? Data else { continue }
+
             let deleteShared: [CFString: Any] = [
                 kSecClass:           kSecClassGenericPassword,
                 kSecAttrService:     Keys.serviceName,

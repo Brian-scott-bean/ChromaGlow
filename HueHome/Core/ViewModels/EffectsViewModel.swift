@@ -261,10 +261,13 @@ final class EffectsViewModel: ObservableObject {
         // activation. A cached primaryAPIClient (= clients.values.first) sent
         // every effect on a non-primary bridge to the wrong bridge — 404s were
         // swallowed while the UI showed success.
-        guard let api = orchestrator?.hueClient(for: room.bridgeID) else {
+        guard let orchestrator, let api = orchestrator.hueClient(for: room.bridgeID) else {
             showStatus("⚠ No bridge connection for '\(room.name)' — open Settings to re-pair")
             return
         }
+        // One pacing gate per activation — always the room bridge's shared
+        // gate so this view model and the orchestrator honor one budget.
+        let gate = orchestrator.commandGate(for: room.bridgeID)
 
         // Mark as activating so syncWithOrchestrator() doesn't clear the card
         // during the stop → apply cycle (stop() removes the entry, apply re-adds it).
@@ -303,7 +306,6 @@ final class EffectsViewModel: ObservableObject {
             // `try?` reported success while half the lights disagreed.
             var colorFailures = 0
             if let xy {
-                let gate = orchestrator?.commandGate(for: room.bridgeID) ?? BridgeCommandGate()
                 let lightIDs = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []
                 for id in lightIDs {
                     let error = await gate.send {
@@ -361,7 +363,6 @@ final class EffectsViewModel: ObservableObject {
             // M-15: gate-paced instead of an unthrottled concurrent burst.
             let lightIDs = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []
             if !lightIDs.isEmpty {
-                let gate = orchestrator?.commandGate(for: room.bridgeID) ?? BridgeCommandGate()
                 for id in lightIDs {
                     await gate.send {
                         try await api.setLightNativeEffect(id: id, effect: "no_effect")
@@ -436,22 +437,21 @@ final class EffectsViewModel: ObservableObject {
 
             // M-14: loops run through the room bridge's pacing gate and
             // collapse same-color frames to one grouped_light PUT.
-            let loopGate = orchestrator?.commandGate(for: room.bridgeID) ?? BridgeCommandGate()
             let loop: @Sendable () async throws -> Void
             switch effect.id {
             case "strobe":
                 loop = EffectLoops.strobe(lights: lights, api: api,
-                                          groupedLightID: groupedLightID, gate: loopGate,
+                                          groupedLightID: groupedLightID, gate: gate,
                                           bpm: bpm, dutyCycle: dutyCycle,
                                           onXY: onXY, offBrightness: offDim)
             case "party":
                 loop = EffectLoops.party(lights: lights, api: api,
-                                         groupedLightID: groupedLightID, gate: loopGate,
+                                         groupedLightID: groupedLightID, gate: gate,
                                          speed: speed, palette: palette,
                                          sync: sync, flash: flash)
             case "thunderstorm":
                 loop = EffectLoops.thunderstorm(lights: lights, api: api,
-                                                groupedLightID: groupedLightID, gate: loopGate,
+                                                groupedLightID: groupedLightID, gate: gate,
                                                 frequencyIndex: freqIdx,
                                                 baseXY: baseXY, flashXY: flashXY, baseBrightness: baseB)
             default:

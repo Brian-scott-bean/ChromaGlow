@@ -131,16 +131,24 @@ final class WatchStore: NSObject, ObservableObject {
     /// One-time D-018 upgrade: move the pre-P1 plaintext token/credential map
     /// out of UserDefaults into the watch Keychain and scrub every plaintext
     /// copy (standard defaults + App Group mirror).
+    ///
+    /// Copy-first/delete-only-on-success (D-018 convention): the watch can be
+    /// launched in the background before first unlock, where adding an
+    /// AfterFirstUnlock item fails — deleting the source then would destroy
+    /// the only credential copy. A failed save retries on the next init.
     private static func migrateLegacyPlaintextCredentials() {
         let ud = UserDefaults.standard
-        if let bridgesData = ud.data(forKey: CacheKey.bridges) {
-            SharedKeychainStore.save(bridgesData, account: CacheKey.bridges)
+        if let bridgesData = ud.data(forKey: CacheKey.bridges),
+           SharedKeychainStore.save(bridgesData, account: CacheKey.bridges) {
             ud.removeObject(forKey: CacheKey.bridges)
         }
         if let legacyToken = ud.string(forKey: CacheKey.token), !legacyToken.isEmpty {
-            SharedKeychainStore.save(legacyToken, account: CacheKey.token)
+            if SharedKeychainStore.save(legacyToken, account: CacheKey.token) {
+                ud.removeObject(forKey: CacheKey.token)
+            }
+        } else {
+            ud.removeObject(forKey: CacheKey.token)
         }
-        ud.removeObject(forKey: CacheKey.token)
         let group = UserDefaults(suiteName: "group.com.huehome.pro")
         group?.removeObject(forKey: "hue_widget_token")
         group?.removeObject(forKey: "hue_widget_bridges_v1")
@@ -301,9 +309,12 @@ extension WatchStore: WCSessionDelegate {
             try? JSONDecoder().decode([String: WatchBridgeCredentials].self, from: $0)
         }
 
-        // Forget-all (L-30): an explicit, well-formed EMPTY credential map is
-        // the phone's unpaired signal — wipe every secret and mirror at rest.
-        if let bridgeMap, bridgeMap.isEmpty {
+        // Forget-all (L-30): ONLY the explicit wc_unpaired flag wipes the
+        // watch. An empty credential map is never treated as a signal — the
+        // phone can legitimately push one during a transient Keychain read
+        // failure or in legacy single-bridge mode, and wiping on it would
+        // destroy the watch's only credentials + TLS pins.
+        if applicationContext["wc_unpaired"] as? Bool == true {
             Self.clearAllStoredData()
             Task { @MainActor [weak self] in
                 self?.rooms    = []
@@ -329,7 +340,8 @@ extension WatchStore: WCSessionDelegate {
         if let zonesData = applicationContext["wc_zones_v1"] as? Data {
             UserDefaults.standard.set(zonesData, forKey: "wc_zones_v1")
         }
-        if let bridgesData, bridgeMap != nil {
+        // Never clobber stored credentials with an empty/undecodable map.
+        if let bridgesData, let bridgeMap, !bridgeMap.isEmpty {
             SharedKeychainStore.save(bridgesData, account: CacheKey.bridges)
         }
         if !ip.isEmpty { UserDefaults.standard.set(ip, forKey: "wc_bridge_ip") }

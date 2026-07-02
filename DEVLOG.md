@@ -48,6 +48,69 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 hardening — multi-agent code review + fixes — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (local only — not pushed).
+
+### Did
+Ran an 8-angle multi-agent review over the whole P1 diff (line-by-line, removed-behavior,
+cross-file tracer, reuse, simplification, efficiency, altitude, conventions — 33 candidates,
+deduped + verified). Fixed everything that survived:
+
+- **Watch-wipe protocol flaw (severe, mine):** an empty `wc_bridges_v1` map was the watch's
+  forget-all signal, but "empty" is indistinguishable from a transient Keychain read failure or
+  legacy single-bridge mode — a routine refresh could wipe the watch's credentials AND TLS pins.
+  Forget-all is now an **explicit `wc_unpaired` flag**; an empty map never clobbers stored watch
+  credentials; the phone additionally refuses to publish an all-bridges-failed credential map
+  (`setupClients`/`publishWidgetBridgeCredentials` keep the previous snapshot and log).
+- **Widget upgrade gap:** app updated but not yet launched → shared-Keychain blob absent → the
+  widget of a paired user froze on "unpaired" (`policy: .never`). Added a READ-ONLY upgrade-window
+  fallback to the pre-D-018 App Group copies; the app's first launch writes the blob and scrubs
+  them, killing the fallback path.
+- **Watch migration:** now copy-first/delete-only-on-success (a background pre-first-unlock launch
+  could destroy the only credential copy).
+- **Session registry (M-06 follow-ups):** register **before** the REST `action=start` (a
+  concurrent loadAll cleanup could kill our own session during the ≤10s DTLS handshake);
+  registry is now **refcounted** (two clients on one config — Sync + Studio — no longer expose
+  each other); reconnect **abandonment tears the session down** (unregister + best-effort stop)
+  instead of leaving a dead-but-protected config the cleanup skips forever.
+- **`hueClient(for: nil)`:** legacy pre-multi-bridge rooms (nil bridgeID from the SwiftData cache
+  window) resolve to the sole registered client in single-bridge homes — the P1 sweep had made
+  All-Off/All-Day/Effects silently skip them where `primaryAPIClient` used to work.
+- **BridgeCommandGate:** cancellation-aware (a cancelled effect-loop task used to busy-spin the
+  pacing loop and still fire one frame after Stop); effect loops now use `retry: false` (the next
+  frame supersedes a failed one — retrying stale frames wasted 400ms of budget).
+- **Keychain migration:** attributes-only fast scan (steady state no longer decrypts every item
+  every launch); a stale private-group duplicate can no longer overwrite a newer shared-group
+  item (shared copy wins; leftover is deleted).
+- **Dashboard bulk paths (flagged by 3 angles):** All Off + preset chips now delegate to the
+  orchestrator's paced, failure-surfacing paths (ids/values match AutomationPreset exactly);
+  stop-effect paths are gate-paced. The duplicate unthrottled `withTaskGroup` bursts are gone.
+- **Reuse:** one `gatedBulkWrite` scaffold for the three orchestrator bulk paths;
+  `BridgePinStore` keychain I/O delegates to `SharedKeychainStore` (ONE copy of the D-018
+  attribute contract) and scrubs its UserDefaults mirrors only after a **verified** write;
+  EffectsViewModel resolves its gate once (dead `?? BridgeCommandGate()` fallback removed);
+  entertainment teardown shares one `sendBestEffortStop`.
+- **WidgetDataStore.write(bridges:):** deterministic (sortedKeys) encode + skip when unchanged —
+  removes the non-atomic Keychain delete/add window from every foreground.
+
+### Accepted trade-offs (documented, NOT fixed — P2 candidates)
+- Transient `fetchLights` failure before a bridge-stored upload demotes to app-driven rendering
+  silently (graceful degrade, console-logged); also a 4th light-inventory fetch per activation.
+- Undecodable presets are dropped to a timestamped `.bak` with no restore UI.
+- Strobe above ~300 BPM degrades gracefully under the 10 cmd/sec gate (bridge physics); the
+  grouped_light collapse is audit-prescribed — on-device checkpoint validates real-world behavior.
+- `CompositionStore` maps an empty decoded library to built-ins (unreachable via UI: deleting a
+  built-in restores it by name).
+
+### Working
+- Build SUCCEEDED (generic/platform=iOS); full HueHomeTests green incl. new tests (registry
+  refcount + register-balance, hueClient(for: nil) both modes, upgrade-window widget fallback
+  with real-credential snapshot/restore). Guards pass.
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 hardening — Group 7: pairing/UX correctness (M-11/M-12) — LOCAL
 
 ### Branch
