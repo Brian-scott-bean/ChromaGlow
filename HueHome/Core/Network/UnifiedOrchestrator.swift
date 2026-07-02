@@ -1857,10 +1857,14 @@ final class UnifiedOrchestrator {
                 await bridgeAnimationEngine.purgeAllChromaGlowResources(v1Client: v1Client)
 
                 print("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
+                // M-04: the engine maps v2 UUIDs → v1 numeric ids via id_v1
+                // identity, so it needs the v2 light objects.
+                let v2Lights = (try? await api.fetchLights()) ?? []
                 let manifest = try await bridgeAnimationEngine.upload(
                     preset: preset,
                     room: room,
                     lightIDs: compositionLightIDs,
+                    v2Lights: v2Lights,
                     gamut: compositionGamut,
                     v1Client: v1Client
                 )

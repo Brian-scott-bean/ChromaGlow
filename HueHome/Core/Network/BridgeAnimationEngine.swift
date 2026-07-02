@@ -89,6 +89,7 @@ actor BridgeAnimationEngine {
         preset: CompositionPreset,
         room: RoomDisplayItem,
         lightIDs: [String],
+        v2Lights: [HueLight],
         gamut: HueColorUtils.Gamut,
         v1Client: HueV1Client
     ) async throws -> BridgeAnimationManifest {
@@ -135,10 +136,11 @@ actor BridgeAnimationEngine {
 
         // ─── 3. Resolve v1 light IDs ───
         // v2 API uses UUID light IDs; v1 uses numeric IDs ("1", "2", "3").
-        // We MUST convert before creating v1 scenes.
+        // Mapped by id_v1 IDENTITY (M-04) so v1LightIDs[i] is the same bulb as
+        // lightIDs[i] — per-light palette colors are positional downstream.
         let v1LightIDs: [String]
         do {
-            v1LightIDs = try await v1Client.resolveV1LightIDs(from: lightIDs)
+            v1LightIDs = try v1Client.resolveV1LightIDs(from: lightIDs, v2Lights: v2Lights)
             log.info("[BridgeAnim] Resolved v1 light IDs: \(v1LightIDs)")
         } catch {
             log.error("[BridgeAnim] Failed to resolve v1 light IDs: \(error.localizedDescription)")
@@ -179,22 +181,26 @@ actor BridgeAnimationEngine {
         )
         log.info("[BridgeAnim] Created sensor: \(sensorID)")
 
-        // ─── 6. Create rules (one per step) ───
+        // ─── 6. Create rules (chunked per step, M-05) ───
         // Each rule sets individual light states directly — no scene activation.
         // This avoids the error 608 from scene recall on groups.
         //
-        // CHAIN: schedule sets sensor→0 → rule 0 fires → sets lights + advances to 1
-        //   → rule 1 fires → sets lights + advances to 2 → ... → rule N-1 WAITS
+        // CHAIN: schedule sets sensor→0 → step-0 rules fire → set lights + advance to 1
+        //   → step-1 rules fire → ... → last step's rules WAIT
         //   → schedule fires again → sets sensor→0 → repeat
         //
-        // Max 8 actions per rule. With N lights + 1 sensor bump = N+1 actions.
-        // Safe for up to 7 lights per rule.
+        // The v1 API hard-caps a rule at 8 actions. A step with N lights needs
+        // N light PUTs + 1 sensor advance, so any 8+ light room used to abort
+        // the whole upload. Fix: chunk each step into rules of ≤7 light
+        // actions sharing the SAME trigger condition — the bridge fires every
+        // matching rule on the sensor tick — and put the sensor-advance action
+        // only on the last chunk. Action count is validated before POSTing.
+        let maxLightActionsPerRule = 7   // 8-action limit minus the sensor advance
         var ruleIDs: [String] = []
         let sceneIDs: [String] = []  // No scenes created — using direct light states
 
         for step in 0..<stepCount {
             let nextStep = (step + 1) % stepCount
-            let ruleName = "CG_\(String(preset.name.prefix(10)))_s\(step)"
 
             let conditions: [[String: Any]] = [
                 [
@@ -208,37 +214,51 @@ actor BridgeAnimationEngine {
                 ]
             ]
 
-            // Build actions: one PUT per light + optional sensor advance
-            var actions: [[String: Any]] = []
+            // Build actions: one PUT per light
+            var lightActions: [[String: Any]] = []
             let stepStates = perStepLightStates[step]
             for (lightIndex, v1LightID) in v1LightIDs.enumerated() {
                 guard lightIndex < stepStates.count else { continue }
-                actions.append([
+                lightActions.append([
                     "address": "/lights/\(v1LightID)/state",  // RELATIVE — bridge resolves user internally
                     "method": "PUT",
                     "body": stepStates[lightIndex]
                 ])
             }
 
-            // Advance sensor (except last step — waits for schedule)
-            if step < stepCount - 1 {
-                actions.append(
-                    v1Client.sensorIncrementCommand(sensorID: sensorID, nextStatus: nextStep)
-                )
+            let chunks: [[[String: Any]]] = stride(from: 0, to: max(lightActions.count, 1), by: maxLightActionsPerRule).map {
+                Array(lightActions[$0..<min($0 + maxLightActionsPerRule, lightActions.count)])
             }
 
-            do {
-                let ruleID = try await v1Client.createRule(
-                    name: ruleName,
-                    conditions: conditions,
-                    actions: actions
-                )
-                ruleIDs.append(ruleID)
-                log.info("[BridgeAnim] Created rule \(step): \(ruleID) (\(actions.count) actions) → \(step < stepCount - 1 ? "advance to \(nextStep)" : "WAIT for schedule")")
-            } catch {
-                log.error("[BridgeAnim] ❌ Rule \(step) creation FAILED: \(error.localizedDescription)")
-                log.error("[BridgeAnim] Rule had \(actions.count) actions for \(v1LightIDs.count) lights")
-                throw error
+            for (chunkIndex, chunk) in chunks.enumerated() {
+                var actions = chunk
+                // Advance sensor on the LAST chunk only (except final step — waits for schedule)
+                let isLastChunk = chunkIndex == chunks.count - 1
+                if isLastChunk, step < stepCount - 1 {
+                    actions.append(
+                        v1Client.sensorIncrementCommand(sensorID: sensorID, nextStatus: nextStep)
+                    )
+                }
+                guard actions.count <= 8, !actions.isEmpty else {
+                    throw BridgeAnimationError.uploadFailed(
+                        "rule for step \(step) chunk \(chunkIndex) has \(actions.count) actions (v1 max 8)")
+                }
+
+                let chunkSuffix = chunks.count > 1 ? "c\(chunkIndex)" : ""
+                let ruleName = "CG_\(String(preset.name.prefix(10)))_s\(step)\(chunkSuffix)"
+                do {
+                    let ruleID = try await v1Client.createRule(
+                        name: ruleName,
+                        conditions: conditions,
+                        actions: actions
+                    )
+                    ruleIDs.append(ruleID)
+                    log.info("[BridgeAnim] Created rule \(step).\(chunkIndex): \(ruleID) (\(actions.count) actions) → \(isLastChunk && step < stepCount - 1 ? "advance to \(nextStep)" : "no advance")")
+                } catch {
+                    log.error("[BridgeAnim] ❌ Rule \(step).\(chunkIndex) creation FAILED: \(error.localizedDescription)")
+                    log.error("[BridgeAnim] Rule had \(actions.count) actions for \(v1LightIDs.count) lights")
+                    throw error
+                }
             }
 
             try? await Task.sleep(for: .milliseconds(100))

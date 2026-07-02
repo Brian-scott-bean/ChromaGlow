@@ -41,6 +41,20 @@ struct BridgeResourceCapacity {
     }
 }
 
+// MARK: - Errors
+
+enum HueV1ClientError: LocalizedError {
+    /// A v2 light ID could not be mapped to a v1 numeric ID via `id_v1` (M-04).
+    case unresolvedLightID(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unresolvedLightID(let id):
+            return "HueV1Client: no id_v1 mapping for v2 light \(id) — cannot target v1 API safely."
+        }
+    }
+}
+
 // MARK: - HueV1Client
 
 class HueV1Client: @unchecked Sendable {
@@ -394,48 +408,35 @@ class HueV1Client: @unchecked Sendable {
         return lights
     }
 
-    /// Convert v2 UUID light IDs to v1 numeric IDs.
-    /// v1 lights have a "uniqueid" field that can be matched to v2 UUIDs
-    /// via the v2 `id_v1` field, OR we match by name/uniqueid patterns.
+    /// Convert v2 UUID light IDs to v1 numeric IDs **by identity** (M-04):
+    /// each v2 light object carries `id_v1: "/lights/N"`. Per-light colors are
+    /// positional downstream (channel i drives output[i]), so `output[i]` MUST
+    /// be the v1 id of `v2LightIDs[i]` — positional guessing over the whole
+    /// bridge scrambled animations and lit bulbs outside the room.
     ///
     /// If the input IDs are already numeric (v1 format), returns them as-is.
-    func resolveV1LightIDs(from v2LightIDs: [String]) async throws -> [String] {
+    /// Throws when any target light cannot be resolved via `id_v1` — the
+    /// caller falls back to app-driven rendering rather than animating the
+    /// wrong bulbs.
+    func resolveV1LightIDs(from v2LightIDs: [String], v2Lights: [HueLight]) throws -> [String] {
         // Check if these are already v1 numeric IDs
         if let first = v2LightIDs.first, Int(first) != nil {
             return v2LightIDs  // Already v1 format
         }
 
-        // Fetch all v1 lights to build a mapping
-        let v1Lights = try await fetchLights()
-
-        // Also fetch v2 lights to get the id_v1 mapping
-        // v2 lights have "id_v1": "/lights/N" which maps to v1 numeric ID
-        var v2ToV1: [String: String] = [:]
-
-        // Try to match via the v2 API id_v1 field
-        // Since we can't easily call v2 from here, try matching by uniqueid
-        // v1 lights have "uniqueid": "00:17:88:01:XX:XX:XX:XX-0b"
-        // This is a stable hardware identifier that doesn't change between v1/v2
-
-        // Build reverse lookup: for each v1 light, store its uniqueid
-        var uniqueIDToV1ID: [String: String] = [:]
-        for (v1ID, light) in v1Lights {
-            if let uniqueID = light["uniqueid"] as? String {
-                uniqueIDToV1ID[uniqueID] = v1ID
+        let v2ByID = Dictionary(v2Lights.map { ($0.id, $0) },
+                                uniquingKeysWith: { first, _ in first })
+        var resolved: [String] = []
+        resolved.reserveCapacity(v2LightIDs.count)
+        for v2ID in v2LightIDs {
+            guard let idV1 = v2ByID[v2ID]?.id_v1,
+                  let numeric = idV1.split(separator: "/").last.map(String.init),
+                  Int(numeric) != nil else {
+                throw HueV1ClientError.unresolvedLightID(v2ID)
             }
+            resolved.append(numeric)
         }
-
-        // Since v2 UUIDs are derived from the bridge, we can try a direct approach:
-        // Just return all v1 light IDs that are in the same group
-        // The caller will match them by position (channel 0 = first light, etc.)
-        let allV1IDs = Array(v1Lights.keys).sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
-
-        // If we have the same count, return them
-        if allV1IDs.count >= v2LightIDs.count {
-            return Array(allV1IDs.prefix(v2LightIDs.count))
-        }
-
-        return allV1IDs
+        return resolved
     }
 
     /// Get ALL v1 light IDs for a specific v1 group.

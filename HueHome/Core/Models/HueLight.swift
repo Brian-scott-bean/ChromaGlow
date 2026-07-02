@@ -14,6 +14,29 @@ struct HueLight: Decodable, Identifiable {
     let color: LightColor?              // nil = white-only bulb
     let color_temperature: LightColorTemp?  // nil = no CT support
     let owner: ResourceRef?             // points to the device that owns this light
+    /// Legacy v1 resource path ("/lights/N") — the identity link for the v1
+    /// rules/schedules API (M-04). nil on payloads that omit it.
+    let id_v1: String?
+
+    init(
+        id: String,
+        metadata: LightMetadata,
+        on: OnState,
+        dimming: DimmingState?,
+        color: LightColor?,
+        color_temperature: LightColorTemp?,
+        owner: ResourceRef?,
+        id_v1: String? = nil
+    ) {
+        self.id = id
+        self.metadata = metadata
+        self.on = on
+        self.dimming = dimming
+        self.color = color
+        self.color_temperature = color_temperature
+        self.owner = owner
+        self.id_v1 = id_v1
+    }
 }
 
 struct LightMetadata: Decodable {

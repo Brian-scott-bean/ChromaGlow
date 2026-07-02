@@ -48,6 +48,38 @@
 
 ---
 
+## 2026-07-02 - [Claude] iOS P1 hardening — Group 3: bridge-stored animation correctness (M-04/M-05) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (local only — not pushed).
+
+### Did
+- **M-04:** `resolveV1LightIDs` now maps v2 UUIDs → v1 numeric ids by **`id_v1` identity**
+  (`HueLight` gained the `id_v1` field; the resolver takes the v2 light objects; output[i] is the
+  same bulb as input[i]). Deleted the dead `uniqueIDToV1ID` block and the positional
+  lowest-N-lights-on-the-bridge guessing. Unresolvable lights **fail closed**
+  (`HueV1ClientError.unresolvedLightID`) → caller falls back to app-driven rendering instead of
+  animating the wrong bulbs. `BridgeAnimationEngine.upload` gained a `v2Lights:` parameter; the
+  orchestrator fetches lights at the upload site.
+- **M-05:** step rules are **chunked to ≤7 light actions per rule** (v1 caps rules at 8 actions);
+  chunks share the same sensor-trigger condition so the bridge fires them together; only the last
+  chunk carries the sensor-advance action; action count is validated before POSTing
+  (`uploadFailed` instead of a mid-upload abort). 8+ light rooms now upload instead of aborting
+  to app-driven silently.
+
+### Working
+- Build SUCCEEDED (generic/platform=iOS); HueHomeTests green incl. new
+  `BridgeAnimationCorrectnessTests` (identity mapping with scrambled numeric order; numeric
+  passthrough; fail-closed on unmappable; 9-light upload with every rule ≤8 actions, full
+  per-step coverage, exactly one advance per step). Guards pass.
+
+### Gotchas
+- Chunking multiplies the rule count per animation (stepCount × ceil(N/7)); the
+  `canFitOneAnimation` capacity heuristic (rules ≥ 12) still assumes one rule per step — L-04
+  (P2) also notes its scene requirement is wrong; both deferred to P2.
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 hardening — Group 2: primaryAPIClient wrong-bridge sweep (M-07/H-05/M-18) — LOCAL
 
 ### Branch
