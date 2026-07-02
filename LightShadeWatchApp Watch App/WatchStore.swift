@@ -242,6 +242,15 @@ final class WatchStore: NSObject, ObservableObject {
 
     // MARK: - Network
 
+    // One shared session with the pinned bridge trust delegate (M-01/D-016);
+    // pins arrive from the phone via WCSession ("wc_pins_v1") and are read
+    // from the watch-local BridgePinStore on every challenge.
+    private static let bridgeSession = URLSession(
+        configuration: .default,
+        delegate: BridgePinnedTrustDelegate.shared,
+        delegateQueue: nil
+    )
+
     private func patch(id: String, body: [String: Any], ip: String, token: String) async {
         guard let url = URL(string: "https://\(ip)/clip/v2/resource/grouped_light/\(id)") else { return }
         var req = URLRequest(url: url, timeoutInterval: 8)
@@ -249,19 +258,7 @@ final class WatchStore: NSObject, ObservableObject {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(token,              forHTTPHeaderField: "hue-application-key")
         req.httpBody  = try? JSONSerialization.data(withJSONObject: body)
-        _ = try? await URLSession(configuration: .default,
-                                  delegate: TrustAll(),
-                                  delegateQueue: nil).data(for: req)
-    }
-
-    private final class TrustAll: NSObject, URLSessionDelegate, @unchecked Sendable {
-        func urlSession(_ s: URLSession,
-                        didReceive c: URLAuthenticationChallenge,
-                        completionHandler h: @escaping (URLSession.AuthChallengeDisposition,
-                                                        URLCredential?) -> Void) {
-            if let t = c.protectionSpace.serverTrust { h(.useCredential, URLCredential(trust: t)) }
-            else { h(.performDefaultHandling, nil) }
-        }
+        _ = try? await Self.bridgeSession.data(for: req)
     }
 }
 
@@ -301,6 +298,12 @@ extension WatchStore: WCSessionDelegate {
         }
         if !ip.isEmpty    { UserDefaults.standard.set(ip,    forKey: "wc_bridge_ip") }
         if !token.isEmpty { UserDefaults.standard.set(token, forKey: "wc_token") }
+
+        // TLS pins pushed alongside credentials (D-016) — required before any
+        // watch → bridge HTTPS call can pass the pinned trust evaluation.
+        if let pinsData = applicationContext[BridgePinStore.storageKey] as? Data {
+            BridgePinStore.shared.ingest(externalData: pinsData)
+        }
 
         // Mirror into watch-side App Group so complications refresh immediately
         let watchGroup = UserDefaults(suiteName: "group.com.huehome.pro")

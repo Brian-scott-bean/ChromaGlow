@@ -58,15 +58,14 @@ final class HueSSEService: @unchecked Sendable {
     private static let decoder = JSONDecoder()
 
     // URLSession with no read/resource timeout — required for indefinite SSE streaming.
-    // certDelegate is stored explicitly so it is retained for the lifetime of this service.
-    private let certDelegate = HueCertTrustDelegate()
+    // Pinned bridge trust (H-01/D-016) — shared delegate, never trust-all.
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest  = .infinity
         config.timeoutIntervalForResource = .infinity
         return URLSession(
             configuration: config,
-            delegate: self.certDelegate,  // retained by certDelegate property above
+            delegate: BridgePinnedTrustDelegate.shared,
             delegateQueue: nil
         )
     }()

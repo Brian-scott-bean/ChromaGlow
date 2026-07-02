@@ -57,12 +57,11 @@ class HueAPIClient: @unchecked Sendable {
     // MARK: Logger
     private let log = Logger(subsystem: "com.lightshade.app", category: "API")
 
-    // MARK: URLSession (cert-trust for Hue self-signed)
-    // certDelegate retained explicitly — URLSession holds a strong ref internally
-    // but this makes ownership unambiguous and survives lazy initialization.
-    private let certDelegate = HueCertTrustDelegate()
+    // MARK: URLSession (pinned bridge trust — H-01/D-016)
+    // BridgePinnedTrustDelegate evaluates the chain and requires the pinned
+    // bridge identity on every challenge; it never trust-alls.
     private lazy var session: URLSession = {
-        URLSession(configuration: .default, delegate: self.certDelegate, delegateQueue: nil)
+        URLSession(configuration: .default, delegate: BridgePinnedTrustDelegate.shared, delegateQueue: nil)
     }()
 
     // ──────────────────────────────────────────────
@@ -696,53 +695,6 @@ class HueAPIClient: @unchecked Sendable {
     }
 }
 
-// MARK: - Cert Trust Delegate
-
-/// Accepts the Hue Bridge self-signed certificate for both session-level and
-/// task-level auth challenges.
-///
-/// Why both levels?
-/// - `URLSessionDelegate` handles server-level challenges (TLS handshake at session open time)
-/// - `URLSessionTaskDelegate` handles task-level challenges — on iOS 15+, `URLSession.data(for:)`
-///   and `URLSession.bytes(for:)` route HTTPS certificate challenges HERE, not to the session delegate.
-///   Without this, all API calls and SSE streams fail with -1202 on self-signed Hue Bridge certs.
-final class HueCertTrustDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
-
-    // MARK: - Shared logic
-
-    private func acceptBridgeCert(
-        _ challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-        // Evaluate with error suppressed — we intentionally trust the Bridge's self-signed cert.
-        var cfError: CFError?
-        _ = SecTrustEvaluateWithError(serverTrust, &cfError)
-        completionHandler(.useCredential, URLCredential(trust: serverTrust))
-    }
-
-    // MARK: - URLSessionDelegate (session-level, TLS handshake)
-
-    func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        acceptBridgeCert(challenge, completionHandler: completionHandler)
-    }
-
-    // MARK: - URLSessionTaskDelegate (task-level, iOS 15+ data/bytes tasks)
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        acceptBridgeCert(challenge, completionHandler: completionHandler)
-    }
-}
+// The former trust-all HueCertTrustDelegate (evaluated the cert, discarded
+// the result, and accepted unconditionally — audit H-01/H-06) was replaced by
+// BridgePinnedTrustDelegate in Core/Network/Trust/ (D-016).

@@ -326,7 +326,7 @@ final class UnifiedOrchestrator {
         config.timeoutIntervalForResource = .infinity
         return URLSession(
             configuration: config,
-            delegate: HueCertTrustDelegate(),
+            delegate: BridgePinnedTrustDelegate.shared,
             delegateQueue: nil
         )
     }()
@@ -620,6 +620,13 @@ final class UnifiedOrchestrator {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+
+        // D-016 upgrade migration: bridges paired before TLS pinning have no
+        // stored pin and the pinned data plane fails closed without one. This
+        // is a no-op once every configured host is pinned.
+        await BridgePinAcquirer.ensurePins(
+            hosts: clients.values.compactMap { try? $0.credentials().ip }
+        )
 
         // Entertainment cleanup + bridge fetches run in parallel so cold launch
         // does not wait for sequential stuck-session teardown before any room data loads.

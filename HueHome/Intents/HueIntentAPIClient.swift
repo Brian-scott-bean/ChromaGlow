@@ -10,11 +10,11 @@ import Foundation
 
 enum HueIntentAPIClient {
 
-    // MARK: - Shared Session (trusts Hue's self-signed cert)
+    // MARK: - Shared Session (pinned bridge trust — M-01/D-016)
 
     private static let session: URLSession = {
         URLSession(configuration: .default,
-                   delegate: TrustDelegate(),
+                   delegate: BridgePinnedTrustDelegate.shared,
                    delegateQueue: nil)
     }()
 
@@ -50,23 +50,6 @@ enum HueIntentAPIClient {
         let (_, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
-        }
-    }
-
-    // MARK: - TLS Trust Delegate
-
-    private class TrustDelegate: NSObject, URLSessionDelegate {
-        func urlSession(_ session: URLSession,
-                        didReceive challenge: URLAuthenticationChallenge,
-                        completionHandler: @escaping (URLSession.AuthChallengeDisposition,
-                                                      URLCredential?) -> Void) {
-            guard challenge.protectionSpace.authenticationMethod ==
-                    NSURLAuthenticationMethodServerTrust,
-                  let trust = challenge.protectionSpace.serverTrust else {
-                completionHandler(.performDefaultHandling, nil)
-                return
-            }
-            completionHandler(.useCredential, URLCredential(trust: trust))
         }
     }
 }

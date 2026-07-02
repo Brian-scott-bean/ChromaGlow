@@ -149,13 +149,12 @@ final class WidgetDataStore: @unchecked Sendable {
 
 /// Lightweight, widget-only HTTP client.
 /// Makes a single call to /grouped_light to refresh all room states.
-/// Handles the Hue Bridge self-signed TLS certificate.
+/// Uses the shared pinned bridge trust delegate (M-01/D-016).
 enum WidgetAPIClient {
 
-    // Shared URLSession with cert-trust delegate
     private static let session: URLSession = {
         URLSession(configuration: .default,
-                   delegate: TrustDelegate(),
+                   delegate: BridgePinnedTrustDelegate.shared,
                    delegateQueue: nil)
     }()
 
@@ -187,22 +186,6 @@ enum WidgetAPIClient {
         return try JSONDecoder().decode(V2Response<GLData>.self, from: data).data
     }
 
-    // ──────────────────────────────────────────────
-    // MARK: - TLS Trust (Hue self-signed cert)
-    // ──────────────────────────────────────────────
-
-    private final class TrustDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
-        func urlSession(_ session: URLSession,
-                        didReceive challenge: URLAuthenticationChallenge,
-                        completionHandler: @escaping (URLSession.AuthChallengeDisposition,
-                                                      URLCredential?) -> Void) {
-            guard challenge.protectionSpace.authenticationMethod ==
-                    NSURLAuthenticationMethodServerTrust,
-                  let trust = challenge.protectionSpace.serverTrust else {
-                completionHandler(.performDefaultHandling, nil)
-                return
-            }
-            completionHandler(.useCredential, URLCredential(trust: trust))
-        }
-    }
+    // The former per-target trust-all TrustDelegate (audit M-01) was replaced
+    // by the shared BridgePinnedTrustDelegate (D-016).
 }

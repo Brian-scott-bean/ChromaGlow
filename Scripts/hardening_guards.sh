@@ -12,6 +12,9 @@
 #              IP, token, client key, error text, or user-content name; no
 #              token/clientKey interpolated into pairing appendLog; the v1
 #              client never logs its token-bearing URL strings.
+#   3. H-01/H-02/M-01 — no trust-all TLS: `.useCredential` may exist only in
+#              the pinned-trust module, and a discarded SecTrustEvaluate
+#              result is banned everywhere.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -84,6 +87,26 @@ fi
 v1_hits=$(grep -nE 'log\.(info|debug|error|warning|fault)\(.*\\\((urlStr|baseURL)' HueHome/Core/Network/HueV1Client.swift || true)
 if [[ -n "$v1_hits" ]]; then
     fail "H-03" $'HueV1Client logs a token-bearing URL string:\n'"$v1_hits"
+fi
+
+# ──────────────────────────────────────────────────────────────
+# Guard 3 (H-01/H-02/M-01/H-06): trust-all TLS must never return.
+#
+# The ONLY place allowed to return `.useCredential` for a server-trust
+# challenge is the pinned-trust module, whose delegates gate it behind a
+# successful SecTrustEvaluateWithError + bridgeid-CN + pin match.
+# ──────────────────────────────────────────────────────────────
+
+TRUST_MODULE="HueHome/Core/Network/Trust/"
+
+trustall_hits=$(grep -rn "useCredential" "${SWIFT_DIRS[@]}" --include='*.swift' 2>/dev/null | grep -v "^${TRUST_MODULE}" || true)
+if [[ -n "$trustall_hits" ]]; then
+    fail "H-01/H-02/M-01" $'.useCredential outside the pinned-trust module:\n'"$trustall_hits"
+fi
+
+discard_hits=$(grep -rn "_ = SecTrustEvaluateWithError" "${SWIFT_DIRS[@]}" --include='*.swift' 2>/dev/null || true)
+if [[ -n "$discard_hits" ]]; then
+    fail "H-01" $'SecTrustEvaluateWithError result discarded:\n'"$discard_hits"
 fi
 
 # ──────────────────────────────────────────────────────────────

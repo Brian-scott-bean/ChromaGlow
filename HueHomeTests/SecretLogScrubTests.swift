@@ -94,6 +94,9 @@ final class SecretLogScrubTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
         vm.pairingSessionOverride = URLSession(configuration: config)
+        // URLProtocol stubs cannot present a server trust for TOFU capture —
+        // bypass the D-016 pin acquisition step for this offline test.
+        vm.pinAcquisitionOverride = { _ in true }
 
         let success = "[{\"success\":{\"username\":\"\(Self.fakeToken)\",\"clientkey\":\"\(Self.fakeClientKey)\"}}]"
         StubURLProtocol.stubs["/api"] = (Data(success.utf8), 200)

@@ -52,10 +52,9 @@ class HueV1Client: @unchecked Sendable {
     /// Expose bridge IP for manifest storage.
     var bridgeIP: String { ip }
 
-    // Reuse the same cert-trust delegate as HueAPIClient
-    private let certDelegate = HueCertTrustDelegate()
+    // Shared pinned bridge trust (H-01/D-016) — same delegate as HueAPIClient.
     private lazy var session: URLSession = {
-        URLSession(configuration: .default, delegate: self.certDelegate, delegateQueue: nil)
+        URLSession(configuration: .default, delegate: BridgePinnedTrustDelegate.shared, delegateQueue: nil)
     }()
 
     init(ip: String, token: String) {
