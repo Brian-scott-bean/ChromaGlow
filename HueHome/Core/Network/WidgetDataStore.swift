@@ -25,6 +25,7 @@ struct WidgetRoomSnapshot: Codable, Identifiable {
     let lightCount:     Int
     let groupedLightId: String?  // enables fresh fetch without re-fetching rooms
     let bridgeID:       String?  // bridge routing key for multi-bridge intent writes
+    let bridgeName:     String?  // display name for per-bridge sections (optional)
     /// "room" or "zone" — optional/defaulted so older snapshots (no key) decode as rooms.
     let kind:           String?
 
@@ -40,6 +41,7 @@ struct WidgetRoomSnapshot: Codable, Identifiable {
         lightCount: Int,
         groupedLightId: String?,
         bridgeID: String? = nil,
+        bridgeName: String? = nil,
         kind: String? = "room"
     ) {
         self.id = id
@@ -50,6 +52,7 @@ struct WidgetRoomSnapshot: Codable, Identifiable {
         self.lightCount = lightCount
         self.groupedLightId = groupedLightId
         self.bridgeID = bridgeID
+        self.bridgeName = bridgeName
         self.kind = kind
     }
 }

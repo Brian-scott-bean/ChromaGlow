@@ -48,6 +48,38 @@
 
 ---
 
+## 2026-07-02 - [Claude] Widgets follow-up — Large widget per-bridge sections (build 4) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07`
+
+### Did
+On-device (TestFlight build 3) feedback: **watch complication works**, but the Home-Screen widget
+"only shows one bridge" and felt limited (user mainly uses the **Large** widget).
+- **Root cause:** `allRooms` is sorted **alphabetically across all bridges**
+  (`DashboardDisplayModelBuilder.makeRooms`), and the widget views capped with `prefix(4/6)`. If the
+  first bridge's rooms sort first, the second bridge's rooms fell off the cap → "bridge 2 missing."
+  (Credentials + snapshot already include every bridge — it was purely a display cap.)
+- Added `bridgeName` to `WidgetRoomSnapshot`, populated in `scheduleWidgetWrite()` via the
+  orchestrator's existing `bridgeName(for:)`.
+- Entry gained `bridgeSections` (rooms+zones bucketed per bridge, sorted by bridge name),
+  `isMultiBridge`, and `balancedRooms(max:)` (round-robin across bridges).
+- **Large widget**: when multi-bridge, renders **one section per bridge** (bridge name header +
+  on/total + that bridge's rooms + a zone), so **every bridge is guaranteed a slot**; single-bridge
+  layout shows more rows (up to 7). **Medium widget**: 2×2 grid now uses `balancedRooms` so both
+  bridges appear instead of the alphabetical first four.
+- Build number 3 → 4.
+
+### Validation
+- `HueHome 1` Debug + Release builds green.
+
+### Left
+- Confirm on TestFlight (build 4) that both bridges now show on the Large widget with per-bridge
+  headers. If bridge 2 is *still* absent, the snapshot itself lacks it → app-side load issue for that
+  bridge (not the widget), which would be the next thing to chase.
+
+---
+
 ## 2026-07-02 - [Claude] Widgets — robust multi-bridge Home/Lock/Watch (zones + scenes + brightness) — LOCAL
 
 ### Branch

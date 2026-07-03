@@ -1418,14 +1418,17 @@ final class UnifiedOrchestrator {
                     brightness:     r.brightness,
                     lightCount:     r.lightCount,
                     groupedLightId: r.groupedLightID,
-                    bridgeID:       r.bridgeID
+                    bridgeID:       r.bridgeID,
+                    bridgeName:     r.bridgeID.flatMap { self.bridgeName(for: $0) }
                 )
             }
             let zoneSnaps = self.allZones.map { z in
                 WidgetRoomSnapshot(id: z.id, name: z.name, archetype: z.archetype,
                                    isOn: z.isOn, brightness: z.brightness,
                                    lightCount: z.lightCount, groupedLightId: z.groupedLightID,
-                                   bridgeID: z.bridgeID, kind: "zone")
+                                   bridgeID: z.bridgeID,
+                                   bridgeName: z.bridgeID.flatMap { self.bridgeName(for: $0) },
+                                   kind: "zone")
             }
             let sceneSnaps = self.globalScenes.map { s in
                 WidgetSceneSnapshot(id: s.bridgeSceneID, name: s.name,

@@ -32,6 +32,55 @@ struct HueWidgetEntry: TimelineEntry {
     /// Every controllable group (rooms first, then zones).
     var groups: [WidgetRoomSnapshot] { rooms + zones }
 
+    /// Rooms + zones bucketed per bridge (for multi-bridge sections), sorted by
+    /// bridge name so every bridge is represented and ordering is stable.
+    struct BridgeSection: Identifiable {
+        let id: String
+        let name: String
+        let rooms: [WidgetRoomSnapshot]
+        let zones: [WidgetRoomSnapshot]
+        var onCount: Int { rooms.filter(\.isOn).count }
+        var total:   Int { rooms.count }
+    }
+    var bridgeSections: [BridgeSection] {
+        var order: [String] = []
+        var names: [String: String] = [:]
+        var roomsBy: [String: [WidgetRoomSnapshot]] = [:]
+        var zonesBy: [String: [WidgetRoomSnapshot]] = [:]
+        func note(_ item: WidgetRoomSnapshot) -> String {
+            let bid = item.bridgeID ?? "—"
+            if names[bid] == nil { names[bid] = item.bridgeName ?? "Bridge"; order.append(bid) }
+            return bid
+        }
+        for r in rooms { roomsBy[note(r), default: []].append(r) }
+        for z in zones { zonesBy[note(z), default: []].append(z) }
+        return order
+            .map { BridgeSection(id: $0, name: names[$0] ?? "Bridge",
+                                 rooms: roomsBy[$0] ?? [], zones: zonesBy[$0] ?? []) }
+            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+    }
+    /// True when rooms span more than one bridge.
+    var isMultiBridge: Bool { Set(rooms.compactMap(\.bridgeID)).count > 1 }
+
+    /// Up to `n` rooms picked round-robin across bridges, so a small/medium
+    /// widget still surfaces every bridge instead of just the alphabetical first.
+    func balancedRooms(max n: Int) -> [WidgetRoomSnapshot] {
+        guard isMultiBridge else { return Array(rooms.prefix(n)) }
+        let sections = bridgeSections
+        var result: [WidgetRoomSnapshot] = []
+        var idx = 0
+        while result.count < n {
+            var addedThisRound = false
+            for s in sections where idx < s.rooms.count {
+                result.append(s.rooms[idx]); addedThisRound = true
+                if result.count >= n { break }
+            }
+            if !addedThisRound { break }
+            idx += 1
+        }
+        return result
+    }
+
     /// Summary counts stay room-based so overlapping zones don't double-count.
     var onCount:    Int { rooms.filter(\.isOn).count }
     var totalCount: Int { rooms.count }
@@ -342,8 +391,8 @@ struct MediumWidgetView: View {
                     .foregroundStyle(.white.opacity(0.4))
                 Spacer()
             } else {
-                // Room grid — up to 4 rooms in 2 × 2
-                let displayed = Array(entry.rooms.prefix(4))
+                // Room grid — up to 4 rooms in 2 × 2 (balanced across bridges)
+                let displayed = entry.balancedRooms(max: 4)
                 let chunked   = stride(from: 0, to: displayed.count, by: 2).map {
                     Array(displayed[$0 ..< min($0 + 2, displayed.count)])
                 }
@@ -462,17 +511,46 @@ struct LargeWidgetView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.4))
                 Spacer()
+            } else if entry.isMultiBridge {
+                // ── Per-bridge sections: every bridge is guaranteed a slot ──
+                let sections = entry.bridgeSections
+                let perBridgeRooms = max(2, 7 / max(1, sections.count))
+                VStack(spacing: 4) {
+                    ForEach(sections) { section in
+                        HStack(spacing: 5) {
+                            Image(systemName: "wifi.router")
+                                .font(.system(size: 8, weight: .semibold))
+                            Text(section.name.uppercased())
+                                .font(.system(size: 8, weight: .bold))
+                                .lineLimit(1)
+                            Spacer()
+                            Text("\(section.onCount)/\(section.total)")
+                                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        }
+                        .foregroundStyle(.white.opacity(0.4))
+                        .padding(.top, 1)
+
+                        ForEach(section.rooms.prefix(perBridgeRooms)) { room in
+                            LargeRoomRow(room: room, amber: amber)
+                        }
+                        ForEach(section.zones.prefix(1)) { zone in
+                            LargeRoomRow(room: zone, amber: amber)
+                        }
+                    }
+                }
+
+                Spacer(minLength: 2)
+
+                if entry.showPresets {
+                    WidgetPresetStrip(amber: amber)
+                        .padding(.top, 2)
+                }
             } else {
                 VStack(spacing: 5) {
-                    if entry.zones.isEmpty {
-                        ForEach(entry.rooms.prefix(6)) { room in
-                            LargeRoomRow(room: room, amber: amber)
-                        }
-                    } else {
-                        // Reserve space for a Zones section so zones stay reachable.
-                        ForEach(entry.rooms.prefix(4)) { room in
-                            LargeRoomRow(room: room, amber: amber)
-                        }
+                    ForEach(entry.rooms.prefix(entry.zones.isEmpty ? 7 : 5)) { room in
+                        LargeRoomRow(room: room, amber: amber)
+                    }
+                    if !entry.zones.isEmpty {
                         Text("ZONES")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(.white.opacity(0.35))
