@@ -28,6 +28,8 @@ struct HueWidgetEntry: TimelineEntry {
     var selectedRoomID: String? = nil
     var showPresets:  Bool    = true
     var showScenes:   Bool    = true
+    /// Current page of the paginated Large widget (already clamped by the provider).
+    var largePage:    Int     = 0
 
     /// Every controllable group (rooms first, then zones).
     var groups: [WidgetRoomSnapshot] { rooms + zones }
@@ -81,6 +83,40 @@ struct HueWidgetEntry: TimelineEntry {
         return result
     }
 
+    // ── Pagination (Large widget) ─────────────────────────────
+    // WidgetKit can't scroll, so the Large widget pages through EVERY room and
+    // zone across ALL bridges. Groups are clustered by bridge (sorted by name)
+    // so a page reads as coherent, and a page can still span a bridge boundary.
+    static let largePageSize = 6
+
+    /// All groups in a stable, bridge-clustered order (rooms then zones per
+    /// bridge). Single-bridge setups keep the plain rooms-then-zones order.
+    var orderedGroups: [WidgetRoomSnapshot] {
+        guard isMultiBridge else { return rooms + zones }
+        return bridgeSections.flatMap { $0.rooms + $0.zones }
+    }
+
+    var largePageCount: Int {
+        max(1, (orderedGroups.count + Self.largePageSize - 1) / Self.largePageSize)
+    }
+
+    /// The page index, defensively clamped for display.
+    var clampedLargePage: Int { min(max(0, largePage), largePageCount - 1) }
+
+    /// The slice of groups shown on the current Large page.
+    var largePageGroups: [WidgetRoomSnapshot] {
+        let start = clampedLargePage * Self.largePageSize
+        guard start < orderedGroups.count else { return [] }
+        let end = min(start + Self.largePageSize, orderedGroups.count)
+        return Array(orderedGroups[start ..< end])
+    }
+
+    /// Name + on/total for a bridge (rooms *and* zones) — for inline page headers.
+    func bridgeLabel(_ bridgeID: String?) -> (name: String, on: Int, total: Int) {
+        let all = groups.filter { $0.bridgeID == bridgeID }
+        return (all.first?.bridgeName ?? "Bridge", all.filter(\.isOn).count, all.count)
+    }
+
     /// Summary counts stay room-based so overlapping zones don't double-count.
     var onCount:    Int { rooms.filter(\.isOn).count }
     var totalCount: Int { rooms.count }
@@ -132,7 +168,8 @@ struct HueWidgetProvider: AppIntentTimelineProvider {
                               scenes: store.scenes, isPaired: store.isPaired,
                               selectedRoomID: configuration.room?.id,
                               showPresets: configuration.showPresets,
-                              showScenes: configuration.showScenes)
+                              showScenes: configuration.showScenes,
+                              largePage: store.largePage)
     }
 
     // ── Timeline (called on schedule + after WidgetCenter.reloadAll) ──
@@ -174,7 +211,8 @@ struct HueWidgetProvider: AppIntentTimelineProvider {
                                        scenes: store.scenes, isPaired: true,
                                        isStale: true, selectedRoomID: selectedID,
                                        showPresets: configuration.showPresets,
-                                       showScenes: configuration.showScenes)
+                                       showScenes: configuration.showScenes,
+                                       largePage: Self.clampedPage(store, count: store.groups.count))
             return Timeline(entries: [entry],
                             policy: .after(.now.addingTimeInterval(15 * 60)))
         }
@@ -220,9 +258,19 @@ struct HueWidgetProvider: AppIntentTimelineProvider {
         let entry = HueWidgetEntry(
             date: .now, rooms: rooms, zones: zones, scenes: store.scenes, isPaired: true,
             isStale: rooms.isEmpty && zones.isEmpty, selectedRoomID: selectedID,
-            showPresets: configuration.showPresets, showScenes: configuration.showScenes
+            showPresets: configuration.showPresets, showScenes: configuration.showScenes,
+            largePage: Self.clampedPage(store, count: rooms.count + zones.count)
         )
         return Timeline(entries: [entry], policy: .after(nextRefresh))
+    }
+
+    /// Keep the shared Large-widget page index in range as the device count
+    /// changes (rooms added/removed), and hand the clamped value to the entry.
+    static func clampedPage(_ store: WidgetDataStore, count: Int) -> Int {
+        let pages   = max(1, (count + HueWidgetEntry.largePageSize - 1) / HueWidgetEntry.largePageSize)
+        let clamped = min(max(0, store.largePage), pages - 1)
+        if clamped != store.largePage { store.largePage = clamped }
+        return clamped
     }
 
     // ── Preview data ──
@@ -511,69 +559,44 @@ struct LargeWidgetView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.4))
                 Spacer()
-            } else if entry.isMultiBridge {
-                // ── Per-bridge sections: every bridge is guaranteed a slot ──
-                let sections = entry.bridgeSections
-                let perBridgeRooms = max(2, 7 / max(1, sections.count))
+            } else {
+                // ── Paginated list: every room + zone across every bridge is
+                //    reachable via ◀ / ▶ (WidgetKit can't scroll). Groups are
+                //    bridge-clustered; a slim bridge header marks each boundary.
+                let page  = entry.largePageGroups
+                let multi = entry.isMultiBridge
                 VStack(spacing: 4) {
-                    ForEach(sections) { section in
-                        HStack(spacing: 5) {
-                            Image(systemName: "wifi.router")
-                                .font(.system(size: 8, weight: .semibold))
-                            Text(section.name.uppercased())
-                                .font(.system(size: 8, weight: .bold))
-                                .lineLimit(1)
-                            Spacer()
-                            Text("\(section.onCount)/\(section.total)")
-                                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    ForEach(Array(page.enumerated()), id: \.element.id) { idx, g in
+                        if multi, idx == 0 || page[idx - 1].bridgeID != g.bridgeID {
+                            let label = entry.bridgeLabel(g.bridgeID)
+                            HStack(spacing: 5) {
+                                Image(systemName: "wifi.router")
+                                    .font(.system(size: 8, weight: .semibold))
+                                Text(label.name.uppercased())
+                                    .font(.system(size: 8, weight: .bold))
+                                    .lineLimit(1)
+                                Spacer()
+                                Text("\(label.on)/\(label.total)")
+                                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                            }
+                            .foregroundStyle(.white.opacity(0.4))
+                            .padding(.top, 1)
                         }
-                        .foregroundStyle(.white.opacity(0.4))
-                        .padding(.top, 1)
-
-                        ForEach(section.rooms.prefix(perBridgeRooms)) { room in
-                            LargeRoomRow(room: room, amber: amber)
-                        }
-                        ForEach(section.zones.prefix(1)) { zone in
-                            LargeRoomRow(room: zone, amber: amber)
-                        }
+                        LargeRoomRow(room: g, amber: amber)
                     }
                 }
 
                 Spacer(minLength: 2)
 
+                // Page controls (only when there's more than one page).
+                if entry.largePageCount > 1 {
+                    LargePageBar(entry: entry, amber: amber)
+                        .padding(.top, 1)
+                }
+
+                // Preset "effects" strip.
                 if entry.showPresets {
                     WidgetPresetStrip(amber: amber)
-                        .padding(.top, 2)
-                }
-            } else {
-                VStack(spacing: 5) {
-                    ForEach(entry.rooms.prefix(entry.zones.isEmpty ? 7 : 5)) { room in
-                        LargeRoomRow(room: room, amber: amber)
-                    }
-                    if !entry.zones.isEmpty {
-                        Text("ZONES")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.35))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 1)
-                        ForEach(entry.zones.prefix(2)) { zone in
-                            LargeRoomRow(room: zone, amber: amber)
-                        }
-                    }
-                }
-
-                Spacer()
-
-                if entry.showPresets {
-                    WidgetPresetStrip(amber: amber)
-                        .padding(.top, 4)
-                }
-
-                if let updated = WidgetDataStore.shared.lastUpdated {
-                    Text("Updated \(updated, style: .relative) ago")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.white.opacity(0.25))
-                        .frame(maxWidth: .infinity, alignment: .trailing)
                         .padding(.top, 2)
                 }
             }
@@ -586,17 +609,27 @@ struct LargeRoomRow: View {
     let room: WidgetRoomSnapshot
     let amber: Color
 
+    /// Tapping the icon/name deep-links into that room/zone for editing.
+    private var roomURL: URL {
+        URL(string: "lightshade://\(room.isZone ? "zone" : "room")/\(room.id)")
+            ?? URL(string: "lightshade://dashboard")!
+    }
+
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: widgetArchetypeIcon(room.archetype))
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(room.isOn ? amber : .white.opacity(0.25))
-                .frame(width: 18)
+            Link(destination: roomURL) {
+                HStack(spacing: 6) {
+                    Image(systemName: widgetArchetypeIcon(room.archetype))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(room.isOn ? amber : .white.opacity(0.25))
+                        .frame(width: 18)
 
-            Text(room.name)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(room.isOn ? .white : .white.opacity(0.4))
-                .lineLimit(1)
+                    Text(room.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(room.isOn ? .white : .white.opacity(0.4))
+                        .lineLimit(1)
+                }
+            }
 
             Spacer(minLength: 2)
 
@@ -631,6 +664,49 @@ struct LargeRoomRow: View {
                     .foregroundStyle(room.isOn ? amber : .white.opacity(0.3))
             }
             .buttonStyle(.plain)
+        }
+    }
+}
+
+// MARK: - Large Page Bar (◀ / page x of y / ▶)
+
+struct LargePageBar: View {
+    let entry: HueWidgetEntry
+    let amber: Color
+
+    private var page: Int  { entry.clampedLargePage }
+    private var count: Int { entry.largePageCount }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(intent: WidgetPageIntent(direction: -1, pageSize: HueWidgetEntry.largePageSize)) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(page > 0 ? amber : .white.opacity(0.2))
+                    .frame(width: 30, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .disabled(page == 0)
+
+            Spacer()
+
+            Text("Page \(page + 1) of \(count) · \(entry.groups.count) lights")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.white.opacity(0.45))
+                .lineLimit(1)
+
+            Spacer()
+
+            Button(intent: WidgetPageIntent(direction: 1, pageSize: HueWidgetEntry.largePageSize)) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(page < count - 1 ? amber : .white.opacity(0.2))
+                    .frame(width: 30, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .disabled(page >= count - 1)
         }
     }
 }
@@ -986,16 +1062,20 @@ struct AccessoryCircularView: View {
 
     var body: some View {
         if let room = entry.selectedRoom {
-            // Pinned room — show brightness gauge
-            Gauge(value: room.brightness / 100) {
-                Image(systemName: widgetArchetypeIcon(room.archetype))
-                    .widgetAccentable()
-            } currentValueLabel: {
-                Text("\(Int(room.brightness))%")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+            // Pinned room — TAP TOGGLES it (lock-screen control); the gauge
+            // still shows its brightness. iOS 17+ interactive accessory widget.
+            Button(intent: ToggleRoomIntent(roomID: room.id, currentlyOn: room.isOn)) {
+                Gauge(value: room.isOn ? room.brightness / 100 : 0) {
+                    Image(systemName: room.isOn ? widgetArchetypeIcon(room.archetype) : "power")
+                        .widgetAccentable()
+                } currentValueLabel: {
+                    Text(room.isOn ? "\(Int(room.brightness))" : "off")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                }
+                .gaugeStyle(.accessoryCircularCapacity)
+                .widgetAccentable()
             }
-            .gaugeStyle(.accessoryCircularCapacity)
-            .widgetAccentable()
+            .buttonStyle(.plain)
         } else {
             // All rooms — on/off fraction
             let fraction = entry.totalCount > 0
@@ -1039,9 +1119,26 @@ struct AccessoryRectangularView: View {
                     .widgetAccentable(room.isOn)
                 }
 
-                Text(room.isOn ? "\(Int(room.brightness))% brightness" : "Lights off")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                // Interactive −/+ brightness (iOS 17+) + readout.
+                HStack(spacing: 8) {
+                    Button(intent: AdjustBrightnessIntent(roomID: room.id, delta: -20)) {
+                        Image(systemName: "minus.circle.fill")
+                            .font(.system(size: 15))
+                    }
+                    .buttonStyle(.plain)
+
+                    Text(room.isOn ? "\(Int(room.brightness))%" : "Off")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+
+                    Button(intent: AdjustBrightnessIntent(roomID: room.id, delta: 20)) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 15))
+                    }
+                    .buttonStyle(.plain)
+                    Spacer(minLength: 0)
+                }
+                .widgetAccentable(room.isOn)
 
                 if room.isOn {
                     // Compact brightness bar

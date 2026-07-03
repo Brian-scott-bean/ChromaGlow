@@ -48,6 +48,47 @@
 
 ---
 
+## 2026-07-02 - [Claude] Widgets round-4 — paginated Large widget + interactive Lock Screen (build 5) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07`
+
+### Did
+On-device (TestFlight build 4) feedback: user sees rooms/zones from **both bridges in the app**, but
+**not all appear on the Home-Screen widget**; wants the Large widget to "handle as many devices as
+people have," be fully functional (on/off, edit, effects, brightness), and wants **Lock-Screen
+control** of lights.
+- **Hard platform constraint stated up front:** WidgetKit widgets **cannot scroll** (Home Screen or
+  Lock Screen). Delivered the underlying goal via **pagination** instead — the native iOS pattern.
+- **Verified the data source is complete:** `scheduleWidgetWrite()` publishes **all** `allRooms` +
+  `allZones` across every bridge (no cap/filter). So the snapshot already contained every device; the
+  old `prefix(...)`/per-bridge-section caps were the *only* reason bridge-2 devices were hidden.
+- **Large widget → paginated.** New shared page index (`hue_widget_large_page` in the App Group) +
+  `WidgetPageIntent(direction:pageSize:)`. Entry gained `orderedGroups` (bridge-clustered: rooms then
+  zones per bridge, sorted by bridge name), `largePageSize = 6`, `largePageCount`, `clampedLargePage`,
+  `largePageGroups`, `bridgeLabel(_:)`. Provider clamps the stored page as device count changes
+  (`clampedPage`). New `LargePageBar` (◀ / "Page X of Y · N lights" / ▶, buttons disabled at ends).
+  Rows keep toggle + −/+ brightness; a slim bridge header marks each bridge boundary within a page;
+  preset "effects" strip retained. **Every room + zone across every bridge is now reachable.**
+- **Per-row deep link:** each Large row's icon/name is now a `Link(lightshade://room|zone/{id})` →
+  taps open that specific room/zone in the app ("go into an edit"). Scheme + `onOpenURL` already wired.
+- **Lock Screen is now interactive** (iOS 17+): pinned **circular** tap **toggles** the room (gauge
+  shows brightness / "off"); pinned **rectangular** gained **−/+ brightness** buttons alongside the
+  existing power toggle. Unpinned accessories stay glanceable (tap opens app).
+- Build number 4 → 5.
+
+### Validation
+- `HueHome 1` Debug (simulator) + Release (generic device) builds green.
+- `WidgetTimelineRobustnessTests` pass (store change is additive — new key + accessor only).
+
+### Left
+- Confirm on TestFlight (build 5): Large widget paging reaches **every** device on both bridges; row
+  tap opens the room; Lock-Screen circular toggles a pinned room and rectangular −/+ dims it.
+- Widgets genuinely can't scroll — if the user still wants "one screen, all devices," the only lever
+  left is smaller rows / more per page (legibility tradeoff) or multiple pinned widgets.
+
+---
+
 ## 2026-07-02 - [Claude] Widgets follow-up — Large widget per-bridge sections (build 4) — LOCAL
 
 ### Branch

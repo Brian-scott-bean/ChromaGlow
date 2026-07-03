@@ -209,6 +209,37 @@ struct ApplyPresetIntent: AppIntent {
     }
 }
 
+// MARK: - WidgetPageIntent
+
+/// Pages the Large widget through the full room+zone list (WidgetKit can't
+/// scroll, so ◀ / ▶ buttons step a shared page index instead). The index lives
+/// in the App Group; the provider clamps it and the view slices by it.
+struct WidgetPageIntent: AppIntent {
+    static var title: LocalizedStringResource = "Change Widget Page"
+    static var description = IntentDescription("Page through the light list on the Large widget.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Direction") var direction: Int   // +1 next, −1 previous
+    @Parameter(title: "Page Size") var pageSize: Int
+
+    init() { direction = 0; pageSize = 6 }
+    init(direction: Int, pageSize: Int) {
+        self.direction = direction
+        self.pageSize  = pageSize
+    }
+
+    func perform() async throws -> some IntentResult {
+        let store  = WidgetDataStore.shared
+        let total  = store.groups.count
+        let size   = max(1, pageSize)
+        let pages  = max(1, (total + size - 1) / size)
+        let next   = store.largePage + direction
+        store.largePage = min(max(0, next), pages - 1)
+        WidgetCenter.shared.reloadAllTimelines()
+        return .result()
+    }
+}
+
 // MARK: - AllOffIntent
 
 /// Turns every room and zone off — shown as a global power button.

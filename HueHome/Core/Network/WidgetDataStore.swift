@@ -95,6 +95,7 @@ final class WidgetDataStore: @unchecked Sendable {
         static let routing   = "hue_widget_routing_v1"
         static let bridgeIP  = "hue_widget_bridge_ip"
         static let updatedAt = "hue_widget_updated_at"
+        static let largePage = "hue_widget_large_page"   // current page of the paginated Large widget
         // Legacy plaintext-secret keys (pre-D-018) — scrubbed, never written.
         static let legacyBridges = "hue_widget_bridges_v1"
         static let legacyToken   = "hue_widget_token"
@@ -196,6 +197,7 @@ final class WidgetDataStore: @unchecked Sendable {
         ud?.removeObject(forKey: Key.routing)
         ud?.removeObject(forKey: Key.bridgeIP)
         ud?.removeObject(forKey: Key.updatedAt)
+        ud?.removeObject(forKey: Key.largePage)
         scrubLegacyPlaintextSecrets()
         SharedKeychainStore.delete(account: SharedKeychainStore.bridgeCredentialsAccount)
     }
@@ -252,6 +254,14 @@ final class WidgetDataStore: @unchecked Sendable {
     var bridgeIP:    String? { ud?.string(forKey: Key.bridgeIP) }
     var lastUpdated: Date?   { ud?.object(forKey: Key.updatedAt) as? Date }
     var isPaired:    Bool    { !routing.isEmpty || !(bridgeIP?.isEmpty ?? true) }
+
+    /// Current page of the paginated Large widget. Shared across every Large
+    /// instance (widgets have no per-instance intent identity); a `WidgetPageIntent`
+    /// writes it, the provider clamps it into range and the view slices by it.
+    var largePage: Int {
+        get { ud?.integer(forKey: Key.largePage) ?? 0 }
+        set { ud?.set(newValue, forKey: Key.largePage) }
+    }
 
     func credentials(for bridgeID: String?) -> WidgetBridgeCredentials? {
         let map = bridges
