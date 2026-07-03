@@ -27,8 +27,8 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        // All Off button
-                        if store.rooms.contains(where: \.isOn) {
+                        // All Off button (covers rooms + zones)
+                        if store.allGroups.contains(where: \.isOn) {
                             Button {
                                 Task { await store.allOff() }
                             } label: {
@@ -113,9 +113,15 @@ struct ContentView: View {
             .navigationTitle("CastChroma")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .onAppear { store.loadFromLocalCache() }
+        .onAppear {
+            store.loadFromLocalCache()
+            Task { await store.refreshFromBridges() }
+        }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { store.loadFromLocalCache() }
+            if phase == .active {
+                store.loadFromLocalCache()
+                Task { await store.refreshFromBridges() }
+            }
         }
         // Poll every 5 s while rooms are empty so we pick up iPhone pushes automatically
         .task(id: store.rooms.isEmpty) {

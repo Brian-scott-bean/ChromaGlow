@@ -86,10 +86,8 @@ struct StudioView: View {
     @State private var vm = StudioViewModel()
 
     // ── Room picker ────────────────────────────────────────
-    @State private var showRoomSheet = false
-    @State private var dragAxisLocked: Axis? = nil
-    @State private var dragRoomSteps: Int = 0
-    @State private var slideDirection: Edge = .trailing
+    // The inline two-axis rolodex (RoomRolodexView) is the room/zone selector;
+    // it lives at the top of the Studio content and owns its own state.
 
     // ── Deck paging ───────────────────────────────────────
     @State private var currentDeck: Int = 0  // 0 = Effects, 1 = Live, 2 = Composer
@@ -117,6 +115,7 @@ struct StudioView: View {
     @State private var editingSwatch: SwatchEditItem? = nil
     @State private var mixerDragOffset: CGFloat = 0
     @State private var isMixerCollapsed = false
+    @State private var isMixerExpanded = false
     @State private var showCompositionTransportPrompt = false
     @State private var pendingCompositionCard: StudioCard?
     @State private var pendingCompositionRoom: RoomDisplayItem?
@@ -136,6 +135,7 @@ struct StudioView: View {
             let hasCurrentRoomEffect = vm.currentRoomEffect != nil
             let mixerVisible = hasCurrentRoomEffect && !isMixerCollapsed
             let mixerHeight: CGFloat = mixerVisible ? resolvedMixerHeight(proxy: geo) : 0
+            let isEntertainmentRunning = vm.currentRoomEffect?.card.isEntertainmentScoped ?? false
 
             ZStack {
                 ambientBackground
@@ -152,6 +152,15 @@ struct StudioView: View {
                 }
 
                 VStack(spacing: 0) {
+                    // ── Zone A: Inline two-axis room/zone rolodex ─
+                    if !isEntertainmentRunning {
+                        roomRolodex
+                            .padding(.horizontal, HueSpacing.lg)
+                            .padding(.top, HueSpacing.xs)
+                            .padding(.bottom, HueSpacing.sm)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+
                     // ── Zone B: Living Card Grid ──────────────────
                     cardGrid
                         .frame(maxHeight: .infinity)
@@ -224,11 +233,8 @@ struct StudioView: View {
                 }
             }
             ToolbarItem(placement: .principal) {
-                swipeableRoomTitle
+                studioNavTitle
             }
-        }
-        .sheet(isPresented: $showRoomSheet) {
-            roomPickerSheet
         }
         .preferredColorScheme(.dark)
         .onAppear {
@@ -240,9 +246,13 @@ struct StudioView: View {
         }
         .onChange(of: vm.selectedRoom?.id) { _, _ in
             isMixerCollapsed = false
+            isMixerExpanded = false
         }
         .onChange(of: vm.runningCardID) { _, newValue in
-            if newValue == nil { isMixerCollapsed = false }
+            if newValue == nil {
+                isMixerCollapsed = false
+                isMixerExpanded = false
+            }
         }
         .onChange(of: vm.restoredHarmonyRule) { _, rule in
             if let rule { activeHarmonyRule = rule }
@@ -351,10 +361,17 @@ struct StudioView: View {
     }
 
     /// Caps tray height to available tab content so the mixer can use most of the screen on SE while keeping the deck visible.
+    /// When expanded (dragged up), grows to near-full-screen so the whole composition editor is visible.
     private func resolvedMixerHeight(proxy: GeometryProxy) -> CGFloat {
         let base = computeMixerHeight()
-        let maxTray = max(300, proxy.size.height * 0.88)
-        return min(base, maxTray)
+        let half = min(base, max(300, proxy.size.height * 0.88))
+        guard isMixerExpanded else { return half }
+        // Near-full-screen: leave a small top peek and clear the floating tab bar below.
+        let expanded = proxy.size.height
+            - proxy.safeAreaInsets.top
+            - studioTabBarClearance(bottomInset: proxy.safeAreaInsets.bottom)
+            - 24
+        return max(half, min(expanded, proxy.size.height * 0.92))
     }
 
     private func computeMixerHeight() -> CGFloat {
@@ -407,29 +424,14 @@ struct StudioView: View {
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Zone A: Swipeable Room Title
-    // Swipe L/R = zones, U/D = rooms, tap = sheet
+    // MARK: - Nav title
+    // Compact status label; the room/zone selector is the inline rolodex below.
     // ──────────────────────────────────────────────
 
-    private var swipeableRoomTitle: some View {
-        let displayName = vm.selectedRoom?.name ?? "Select a room"
-        let hasRoom = vm.selectedRoom != nil
-        let peek = sidePeekNames()
-
-        // Check if the running card is entertainment-scoped
-        let isEntRunning: Bool = {
-            guard let effect = vm.currentRoomEffect else { return false }
-            return effect.card.isEntertainmentScoped
-        }()
-
-        return VStack(spacing: 1) {
-            Text("Studio")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.35))
-                .tracking(0.5)
-
+    private var studioNavTitle: some View {
+        let isEntRunning = vm.currentRoomEffect?.card.isEntertainmentScoped ?? false
+        return Group {
             if isEntRunning {
-                // Entertainment mode — show area indicator instead of room picker
                 HStack(spacing: 4) {
                     Image(systemName: "bolt.fill")
                         .font(.system(size: 10, weight: .semibold))
@@ -438,122 +440,21 @@ struct StudioView: View {
                 }
                 .foregroundStyle(vm.currentRoomEffect?.card.accentColor ?? .white)
             } else {
-                ZStack {
-                    HStack {
-                        if let left = peek.left {
-                            Text(left)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.26))
-                                .lineLimit(1)
-                                .frame(width: 52, alignment: .leading)
-                        } else {
-                            Color.clear.frame(width: 52)
-                        }
-                        Spacer()
-                        if let right = peek.right {
-                            Text(right)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.26))
-                                .lineLimit(1)
-                                .frame(width: 52, alignment: .trailing)
-                        } else {
-                            Color.clear.frame(width: 52)
-                        }
-                    }
-
-                    Text(displayName)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(hasRoom ? .white : .white.opacity(0.45))
-                        .lineLimit(1)
-                        .id(displayName)
-                        .transition(.asymmetric(
-                            insertion: .move(edge: slideDirection).combined(with: .opacity),
-                            removal: .move(edge: slideDirection == .trailing ? .leading : .trailing).combined(with: .opacity)
-                        ))
-                }
-                .frame(width: 180)
-                .clipped()
+                Text("Studio")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
             }
         }
-        .contentShape(Rectangle())
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Opens room and zone search. Swipe horizontally for zones and vertically for rooms.")
-        .onTapGesture {
-            guard !isEntRunning else { return }  // Disable picker during entertainment
-            showRoomSheet = true
-            HapticManager.shared.light()
-        }
-        .gesture(
-            DragGesture(minimumDistance: 10)
-                .onChanged { value in
-                    let dx = value.translation.width
-                    let dy = value.translation.height
-
-                    // Lock axis on first significant movement
-                    if dragAxisLocked == nil {
-                        if abs(dx) > 15 || abs(dy) > 15 {
-                            dragAxisLocked = abs(dx) > abs(dy) ? .horizontal : .vertical
-                        }
-                        return
-                    }
-
-                    // Calculate steps (40pt per room change)
-                    let stepSize: CGFloat = 40
-                    let steps: Int
-                    if dragAxisLocked == .horizontal {
-                        steps = -Int(dx / stepSize)  // swipe left = next
-                    } else {
-                        steps = -Int(dy / stepSize)  // swipe up = next
-                    }
-
-                    if steps != dragRoomSteps {
-                        let items = dragAxisLocked == .horizontal
-                            ? orchestrator.allZones
-                            : orchestrator.allRooms
-                        guard !items.isEmpty else { return }
-
-                        let delta = steps - dragRoomSteps
-                        dragRoomSteps = steps
-
-                        // Determine new index
-                        let currentIndex = items.firstIndex(where: { $0.id == vm.selectedRoom?.id }) ?? 0
-                        let newIndex = (currentIndex + delta + items.count * 100) % items.count
-                        let newRoom = items[newIndex]
-
-                        withAnimation(HueAnimation.fast) {
-                            slideDirection = delta > 0 ? .trailing : .leading
-                            vm.selectedRoom = newRoom
-                        }
-                        HapticManager.shared.selection()
-                    }
-                }
-                .onEnded { _ in
-                    dragAxisLocked = nil
-                    dragRoomSteps = 0
-                }
-        )
-        .animation(HueAnimation.fast, value: displayName)
-    }
-
-    private func sidePeekNames() -> (left: String?, right: String?) {
-        let zones = orchestrator.allZones
-        guard !zones.isEmpty else { return (nil, nil) }
-        let currentIndex = zones.firstIndex(where: { $0.id == vm.selectedRoom?.id }) ?? 0
-        let leftIndex = (currentIndex - 1 + zones.count) % zones.count
-        let rightIndex = (currentIndex + 1) % zones.count
-        return (
-            zones[leftIndex].name,
-            zones[rightIndex].name
-        )
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Room Picker Sheet
-    // Searchable half-sheet, grouped by Rooms / Zones
+    // MARK: - Zone A: Inline Room Rolodex
+    // Two-axis wheel: vertical = rooms, horizontal = zones. A search affordance
+    // inside reveals RoomPickerSheetView as a large-library / a11y fallback.
     // ──────────────────────────────────────────────
 
-    private var roomPickerSheet: some View {
-        RoomPickerSheetView(
+    private var roomRolodex: some View {
+        RoomRolodexView(
             rooms: orchestrator.allRooms,
             zones: orchestrator.allZones,
             selectedRoom: vm.selectedRoom,
@@ -562,13 +463,8 @@ struct StudioView: View {
                 withAnimation(HueAnimation.fast) {
                     vm.selectedRoom = room
                 }
-                showRoomSheet = false
-                HapticManager.shared.selection()
             }
         )
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(.ultraThinMaterial)
     }
 
     // ──────────────────────────────────────────────
@@ -984,11 +880,12 @@ struct StudioView: View {
             if let effect {
                 let card = effect.card
 
+                // Full-width, taller grab-bar hit area: tap anywhere on the top bar to close.
                 Capsule()
                     .fill(Color.white.opacity(0.28))
                     .frame(width: 36, height: 4)
-                    .padding(.top, 8)
-                    .padding(.bottom, 6)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 28)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         collapseMixer()
@@ -1220,17 +1117,22 @@ struct StudioView: View {
         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
     }
 
+    /// Bidirectional tray drag: up expands to near-full-screen, down collapses expanded→half,
+    /// then half→dismiss (to the "Live Controls" pill). Only captures drags that begin near the
+    /// tray header so child controls (like the hue/saturation pad) keep their own drag semantics.
     private var mixerDismissDragGesture: some Gesture {
         DragGesture(minimumDistance: 8)
             .onChanged { value in
-                // Only capture drags that begin near the tray header so child controls
-                // (like the hue/saturation pad) keep their own drag semantics.
-                guard value.startLocation.y <= 56 else { return }
-                let downward = max(0, value.translation.height)
-                mixerDragOffset = downward
+                guard value.startLocation.y <= 64 else { return }
+                if value.translation.height >= 0 {
+                    mixerDragOffset = value.translation.height
+                } else {
+                    // Small rubber-band hint on upward drags.
+                    mixerDragOffset = max(value.translation.height, -48)
+                }
             }
             .onEnded { value in
-                guard value.startLocation.y <= 56 else {
+                guard value.startLocation.y <= 64 else {
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
                         mixerDragOffset = 0
                     }
@@ -1238,14 +1140,32 @@ struct StudioView: View {
                 }
                 let dragDistance = value.translation.height
                 let predictedDistance = value.predictedEndTranslation.height
-                let shouldDismiss = dragDistance > 100 || predictedDistance > 160
-                if shouldDismiss {
+                let shouldExpand = dragDistance < -60 || predictedDistance < -120
+                let shouldCollapse = dragDistance > 100 || predictedDistance > 160
+
+                if shouldExpand && !isMixerExpanded {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                        isMixerExpanded = true
+                        mixerDragOffset = 0
+                    }
+                    HapticManager.shared.medium()
+                } else if shouldCollapse && isMixerExpanded {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                        isMixerExpanded = false
+                        mixerDragOffset = 0
+                    }
+                    HapticManager.shared.light()
+                } else if shouldCollapse {
                     hideKeyboard()
                     collapseMixer()
                     HapticManager.shared.medium()
-                }
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                    mixerDragOffset = 0
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                        mixerDragOffset = 0
+                    }
+                } else {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                        mixerDragOffset = 0
+                    }
                 }
             }
     }
@@ -1253,6 +1173,7 @@ struct StudioView: View {
     private func collapseMixer() {
         withAnimation(HueAnimation.fast) {
             isMixerCollapsed = true
+            isMixerExpanded = false
         }
     }
 
@@ -2438,7 +2359,7 @@ struct StudioView: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
 }

@@ -48,6 +48,229 @@
 
 ---
 
+## 2026-07-02 - [Claude] Widgets — robust multi-bridge Home/Lock/Watch (zones + scenes + brightness) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07`
+
+### Did
+Beefed up all three widget surfaces to control **all rooms AND zones across every bridge**, extending
+the already-shipping direct-control model (shared Keychain creds + App-Group snapshots + shared
+`BridgePinnedTrustDelegate`). Robustness-first for a TestFlight-only ("perfect in one go") ship.
+- **Shared stores** (`WidgetDataStore.swift`): added `kind` (room/zone) to `WidgetRoomSnapshot`,
+  new `WidgetSceneSnapshot`, `write(rooms:zones:scenes:)`, `zones`/`scenes`/`groups` accessors,
+  `applyOptimistic`/`markAllGroupsOff`. `scheduleWidgetWrite()` (`UnifiedOrchestrator.swift`) now
+  publishes zones (were computed but only sent to the watch) + scenes (from `globalScenes`);
+  `WatchSessionManager.push` carries `wc_scenes_v1`.
+- **iOS widget** (`HueHomeWidget/`): intents generalized to groups (`ToggleRoomIntent`), new
+  `AdjustBrightnessIntent` (±) and `ActivateSceneIntent` (scene recall); `ApplyPreset`/`AllOff` now
+  cover rooms+zones. Views: Large shows a Zones section + per-row −/+; Focused Medium is fully
+  interactive (toggle + −/+ + scene chips); Focused Small got a toggle + −/+; Medium cells are
+  toggles; Lock-Screen rectangular got one toggle. Config entity is now room-OR-zone (+ `showScenes`).
+  **Timeline refresh fans out one bounded fetch PER bridge concurrently** (was primary-bridge only).
+- **Deep-link**: registered `lightshade` URL scheme (`HueHome/Info.plist`) + `DeepLinkCoordinator`
+  + `onOpenURL` (`HueHomeApp.swift`); `MainTabView` switches to Home on a widget tap; `widgetURL`
+  is now per-group (`lightshade://room|zone/{id}`), previously inert.
+- **Watch app** (`LightShadeWatchApp Watch App/`): presets/All-Off + toggle/brightness now handle
+  zones; scenes decoded/persisted/mirrored; `recallScene`; **bounded multi-bridge GET refresh on
+  foreground** (was drift-until-phone-pushes); RoomDetail shows a Scenes section.
+- **Watch complication** (`LightShadeWatch/`): reads zones; pin-a-zone config; entry resolves
+  pinned zones.
+- **Ships the watch complication (the big blocker):** it was built but embedded nowhere and unsigned.
+  Via the `xcodeproj` Ruby gem: added an **Embed App Extensions** copy phase to the Watch App
+  (embeds `LightShadeWatchExtension.appex` in its PlugIns), added the target dependency, set
+  `CODE_SIGN_ENTITLEMENTS = LightShadeWatch/LightShadeWatch.entitlements` (App Group).
+- **Clean-install ATS**: `NSAllowsLocalNetworking` + `NSLocalNetworkUsageDescription` on the widget
+  Info.plist; `INFOPLIST_KEY_NSLocalNetworkUsageDescription` on the Watch App (the likely on-device
+  LAN-permission gap).
+
+### Working / Validation
+- **BUILD SUCCEEDED** for `HueHome 1` (Debug + Release, iOS sim), `LightShadeWatchApp Watch App`, and
+  `LightShadeWatchExtension` (watchOS sim).
+- **Proved both extensions embed**: `HueHome.app/PlugIns/HueHomeWidgetExtension.appex` AND
+  `HueHome.app/Watch/…/PlugIns/LightShadeWatchExtension.appex`. Complication `-Simulated.xcent`
+  carries `application-groups → group.com.huehome.pro`.
+- Existing `WidgetTimelineRobustnessTests` + `KeychainSharingTests` **all pass** (no store/keychain regressions).
+
+### Left (on-device, TestFlight only)
+- Interactive control on real bridges; the local-network permission prompt on a clean install
+  (grant it before relying on widgets — extensions can't present it); confirm the shipped watch
+  complication appears in the gallery; confirm brightness/scene/deep-link end-to-end.
+
+### Gotchas / decisions
+- `RoomDisplayItem.id` == Hue resource UUID == `GlobalSceneItem.roomID`, so scenes attach to a group
+  by `ownerGroupID == group.id && bridgeID`.
+- Summary on-counts stay **room-based** (zones overlap rooms → avoid double-counting).
+- Deep-link routes to the Home tab reliably; room-detail *push* was intentionally NOT wired (would
+  need NavigationPath plumbing that risks the tab back-navigation feature) — `pendingGroupID` is
+  captured for a future follow-up.
+- Model structs are still duplicated across targets (widget/watch/watch-cx); kept field-parity
+  instead of a 4-target shared-file refactor (blind-ship risk). Future consolidation noted.
+- `xcodeproj` gem used for the `.pbxproj` edits (safe re-serialization vs hand-editing); backup at
+  scratchpad `project.pbxproj.bak`.
+- Out of scope (per plan): Control Center widget, `systemExtraLarge`, Live Activities, wiring the
+  orphaned Siri intents (`HueHome/Intents/*`).
+
+---
+
+## 2026-07-02 - [Claude] Nav — swipe-between-tabs + re-tap-to-back-one-page — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07`
+
+### Did
+- All in `HueHome/UI/Navigation/MainTabView.swift` (iPhone layout only; iPad keeps its split view).
+- **Swipe left/right to change bottom tabs.** Added `tabSwipeGesture` (a low-priority
+  `.gesture(DragGesture)`) on the tab container. Low priority = inner horizontal scrollers and
+  Studio's `.page` deck pager still win their own drags; only "unclaimed" horizontal swipes on the
+  page body change tab. Guards: ignores left-edge starts (`startLocation.x > 24`) so the system
+  interactive back-swipe survives; requires a decisive, predominantly horizontal swipe
+  (`|dx| > |dy|·1.3` and `|dx|>60 || |predictedX|>120`). Swipe left → next tab, right → previous,
+  clamped to `[home…more]` (no wrap). Commit-on-`onEnded` (no live follow) to minimise interference.
+- **Re-tap the active tab icon → back out one page.** The custom tab bar keeps all four tab
+  `NavigationStack`s alive in a ZStack, so there's no system "tap active tab" behaviour. Added a
+  `TabNavRegistry` (`@Observable`, weak `UINavigationController` per `HueTab`) + a tiny invisible
+  `NavControllerResolver: UIViewControllerRepresentable` placed as a `.background` inside each tab's
+  stack root to capture that stack's nav controller. On re-tapping the already-selected tab,
+  `navRegistry.popOne(tab)` pops one page (`popViewController`) if `viewControllers.count > 1`; at
+  root it does nothing. Tapping a *different* tab still just switches (unchanged).
+- **Why UIKit pop, not a bound NavigationPath:** the tabs mix value-based
+  (`NavigationLink(value:)`, Home: Room→Light), boolean (`.navigationDestination(isPresented:)`,
+  More: Automations/Devices/Entertainment Areas), and view-based (`NavigationLink(destination:)`,
+  More: Bridge Manager) navigation, with no path binding anywhere. `popViewController` is the same
+  path the interactive edge-swipe-back already uses, so SwiftUI reconciles its own nav state across
+  all three link types — no rewiring required. (Scenes only uses `.sheet`, so it has no push depth.)
+
+### Working
+- Full app build **succeeded** (`HueHome 1`, Debug, iPhone 17 Pro sim); reinstall + relaunch clean,
+  no crash markers.
+
+### Left
+- On-device confirmation of feel: (1) swipe doesn't fight horizontal chip rows / Studio deck in
+  practice; (2) re-tap-back correctly pops **boolean-based** More destinations without the
+  `isPresented` binding bouncing them back (expected to reconcile like edge-back, but verify).
+  Not automatable here (no idb/XCUITest; blind global clicks leaked into another app, so GUI
+  automation was abandoned).
+
+### Gotchas
+- `tabSwipeGesture` is a **low-priority** `.gesture` on purpose — using `.highPriorityGesture` would
+  steal horizontal chip-row scrolls; `.simultaneousGesture` would double-fire (scroll AND switch).
+- New nav types live at the bottom of `MainTabView.swift` (no new file → no `.pbxproj` surgery).
+- Left-edge swipes never change tabs (reserved for system back); tab-swipe is right-of-edge only.
+
+---
+
+## 2026-07-02 - [Claude] Studio — expandable Mixer Tray (drag-up to full-screen, tap-to-close) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07`
+
+### Did
+- **Problem:** the Studio Mixer Tray (the panel that springs up on **+ Create** or when any effect
+  runs) was locked to a fixed height (~390–420pt for compositions ≈ half-screen). The full
+  Palette/Motion/Envelope/Reaction editor lives in an inner `ScrollView` but the small window felt
+  cramped, and there was no way to drag the panel up. Only tap-the-tiny-capsule collapsed it.
+- Added `@State isMixerExpanded`. `resolvedMixerHeight(proxy:)` now returns a near-full-screen height
+  when expanded (`geo.height − safeTop − tabBarClearance − 24`, clamped to `[half … 0.92·geo.height]`).
+  The inner `GeometryReader`+`ScrollView` auto-enlarges its viewport, so no content changes.
+- Reworked `mixerDismissDragGesture` into a bidirectional state machine (same `startLocation.y ≤ 64`
+  guard so the hue/sat pad + sliders keep their own drags): drag **up** → expand; drag **down** while
+  expanded → collapse to half; drag **down** while half → dismiss to the "Live Controls" pill. Upward
+  drags get a small clamped rubber-band hint via `mixerDragOffset`.
+- Enlarged the grab-bar tap target to a full-width ~28pt strip → tap anywhere on the top bar =
+  `collapseMixer()` (**non-destructive**: hides controls, effect/lights keep running, pill reopens).
+- Reset `isMixerExpanded = false` in `collapseMixer()` and the room-change / running-card-cleared
+  `onChange` handlers so the panel always reopens at half.
+- Bonus: `compositionSaveSheet` was stuck at `.presentationDetents([.medium])` (literally "only comes
+  halfway up") → now `[.medium, .large]`.
+
+### Working
+- Full app build **succeeded** (`HueHome 1`, Debug, iPhone 17 Pro sim); app launches/runs, no crash.
+
+### Left
+- Tactile on-device confirmation of the drag/tap feel (thresholds `-60/-120` expand, `100/160`
+  dismiss; expand animation). Not automatable here without XCUITest — blind global clicks leaked into
+  another foreground app, so UI automation was abandoned to avoid touching the user's real windows.
+
+### Validation
+- `xcodebuild ... -scheme 'HueHome 1' ... build` → **BUILD SUCCEEDED**; install + launch on sim OK.
+
+### Gotchas
+- All changes are in `HueHome/UI/Studio/StudioView.swift`. The tray is a **custom** bottom panel, not
+  a `.sheet` — deliberately extended (not converted) to preserve background interaction, placement
+  above the floating tab bar, transitions, and the `.id()` reset.
+- Tap-vs-drag on the grab bar is disambiguated by the drag gesture's `minimumDistance: 8`.
+
+---
+
+## 2026-07-02 - [Claude] Studio — compact inline two-axis wheel rolodex room picker — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07`
+
+### Update (same session, round 2 after on-device feedback)
+- **Zones wouldn't scroll left/right.** Root cause: two overlapping native `ScrollView`s (full-stage
+  vertical rooms + a horizontal zone band) fought over the pan and the vertical one swallowed the
+  horizontal drag. Rebuilt both wheels as **hand-rendered cylinders driven by ONE axis-locked
+  `DragGesture`** (horizontal → zones, vertical → rooms) with flick momentum (`predictedEndTranslation`)
+  + spring snap + per-detent haptics. Single gesture = zero conflict, both axes reliably work. Curvature
+  is now a `Cylinder` ViewModifier (`rotation3DEffect` + scale + opacity from center distance).
+- **Floating / transparent look.** Dropped the solid card background and the frosted `.ultraThinMaterial`
+  lens; the lens is now just a translucent amber ring + soft glow (`amber.opacity(0.05)` fill) so the
+  centered wheel cell shows through and the whole module floats over the Studio ambient background.
+- Registered file already in `project.pbxproj`; whole-module typecheck still **0 errors**.
+
+### Did
+- Replaced the Studio room picker (previously a text-swap nav-title swiper + a searchable `List`
+  sheet) with a genuine Apple-time-picker-style **two-axis wheel**, sized as a **compact inline
+  module** that sits at the top of the Studio content — NOT a full-screen sheet.
+  New `HueHome/UI/Studio/RoomRolodexView.swift`.
+  - Vertical wheel = **rooms** (spin up/down); horizontal wheel = **zones** (spin left/right); the two
+    cross at a glowing amber "selection lens" that always frames the live pick. ~138pt wheel stage
+    inside a bordered card.
+  - Native iOS 17 scroll APIs so momentum/rubber-banding/snap detents match the system picker:
+    `ScrollView` + `.scrollTargetLayout()` + `.scrollTargetBehavior(.viewAligned)` +
+    `.scrollPosition(id:)`, center-snapped via symmetric `.contentMargins(_:_:for: .scrollContent)`.
+  - Cylinder curvature via `.scrollTransition(.interactive, axis:)` → opacity + scale +
+    `rotation3DEffect` (about X for rooms, Y for zones). Honors Reduce Motion (angle → 0).
+  - "Apparent by design" chrome: header legend ("⇅ ROOMS · ⇄ ZONES", active axis lit amber), faint
+    amber **+ cross rails**, edge-fade vignette masks, per-axis brightening of the active wheel, and a
+    magnifying-glass button that reveals the searchable `RoomPickerSheetView` as a large-library /
+    a11y fallback (reused, untouched). Selecting there also re-syncs the wheels.
+  - Haptic `.selection()` detent tick each time a new item centers; live `onSelect` updates the Studio
+    as you spin. `onChange(of: selectedRoom?.id)` re-syncs the wheels if selection changes elsewhere
+    (guarded by an `isSyncing` flag so it never loops or double-haptics). `#Preview` with mock data.
+- `StudioView`:
+  - Embedded `roomRolodex` at the top of the content `VStack` (Zone A), shown when not
+    entertainment-running; the inline card sits above the card grid with `HueSpacing.lg` insets.
+  - Removed the old nav-title swiper (`swipeableRoomTitle`, `sidePeekNames`, `showRoomSheet`,
+    `dragAxisLocked`/`dragRoomSteps`/`slideDirection`) and the full-screen sheet; the toolbar now
+    shows a compact `studioNavTitle` ("Studio", or the Entertainment-Area badge when streaming).
+- **Registered `RoomRolodexView.swift` in `project.pbxproj`** (PBXBuildFile + PBXFileReference +
+  Studio group + HueHome Sources phase). The earlier "Cannot find 'RoomRolodexView' in scope" build
+  errors were solely the missing target membership — the Swift itself always compiled.
+
+### Working
+- Whole-module `swiftc -typecheck` over all 106 app sources (incl. DEBUG preview) → **0 errors**
+  against `arm64-apple-ios17.0-simulator`. `plutil -lint` on the pbxproj → OK; new IDs unique.
+
+### Left
+- Full command-line `xcodebuild` of the `HueHome 1` scheme is still blocked by a **pre-existing,
+  unrelated** failure: `LightShadeWatchApp Watch App/Assets.xcassets` AppIcon "did not have any
+  applicable content" (reproduces identically on a clean tree with my files removed; the strict
+  iPhoneSimulator 26.x `actool` rejects the single-1024 watch icon). Xcode/device builds appear to
+  get past it. Not touched — flag for a watch owner.
+- Needs on-device look/feel validation: lens sits exactly on the centered detent on SE + Pro Max;
+  compact stage height (138pt) feels right above the card grid.
+
+### Gotchas
+- The room wheel is full-width/full-height inside the module; the zone wheel is a ~42pt band
+  composited on top at center. Vertical drags inside that band scroll zones (not rooms) — expected,
+  and the header legend communicates it. Center-snap depends on `contentMargins` inset =
+  `(stageHeight − rowHeight)/2`.
+
+---
+
 ## 2026-07-02 - [Claude] iOS P1 — round-2 checkpoint fixes (Items 1–4) — LOCAL, awaiting round-3
 
 ### Branch

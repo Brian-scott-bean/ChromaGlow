@@ -31,6 +31,16 @@ final class WatchWidgetStore {
         return decoded
     }
 
+    var zones: [WatchRoomSnapshot] {
+        guard let data = ud?.data(forKey: "hue_widget_zones_v1"),
+              let decoded = try? JSONDecoder().decode([WatchRoomSnapshot].self, from: data)
+        else { return [] }
+        return decoded
+    }
+
+    /// Rooms followed by zones — for the pin-a-group picker and lookups.
+    var groups: [WatchRoomSnapshot] { rooms + zones }
+
     // The complication is display-only: it never talks to the bridge, so it
     // holds no credentials (M-02/D-018 removed the App Group token mirror).
     var isPaired:   Bool {

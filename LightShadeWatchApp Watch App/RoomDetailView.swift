@@ -10,7 +10,11 @@ struct RoomDetailView: View {
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
 
     var currentRoom: WatchRoom {
-        store.rooms.first { $0.id == room.id } ?? room
+        store.allGroups.first { $0.id == room.id } ?? room
+    }
+
+    var roomScenes: [WatchScene] {
+        store.scenes(forGroup: room.id)
     }
 
     var body: some View {
@@ -76,6 +80,38 @@ struct RoomDetailView: View {
                         }
                     }
                     .padding(.horizontal, 4)
+                }
+
+                // ── Scenes (this room/zone) ──
+                if !roomScenes.isEmpty {
+                    VStack(spacing: 6) {
+                        Text("Scenes")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(roomScenes) { scene in
+                            Button {
+                                Task { await store.recallScene(scene) }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "wand.and.stars")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .frame(width: 18)
+                                    Text(scene.name)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .lineLimit(1)
+                                    Spacer()
+                                }
+                                .foregroundStyle(amber)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(RoundedRectangle(cornerRadius: 10).fill(amber.opacity(0.12)))
+                                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(amber.opacity(0.25), lineWidth: 0.5))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
 
                 // ── Preset chips ──

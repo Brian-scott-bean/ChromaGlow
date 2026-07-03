@@ -21,15 +21,15 @@ struct WatchRoomEntity: AppEntity {
 
 struct WatchRoomEntityQuery: EntityQuery {
     func entities(for identifiers: [String]) async throws -> [WatchRoomEntity] {
-        WatchWidgetStore.shared.rooms
+        WatchWidgetStore.shared.groups
             .filter { identifiers.contains($0.id) }
             .map    { WatchRoomEntity(id: $0.id, name: $0.name) }
     }
     func suggestedEntities() async throws -> [WatchRoomEntity] {
-        WatchWidgetStore.shared.rooms.map { WatchRoomEntity(id: $0.id, name: $0.name) }
+        WatchWidgetStore.shared.groups.map { WatchRoomEntity(id: $0.id, name: $0.name) }
     }
     func defaultResult() async -> WatchRoomEntity? {
-        WatchWidgetStore.shared.rooms.first.map { WatchRoomEntity(id: $0.id, name: $0.name) }
+        WatchWidgetStore.shared.groups.first.map { WatchRoomEntity(id: $0.id, name: $0.name) }
     }
 }
 
@@ -48,6 +48,6 @@ struct WatchConfigIntent: WidgetConfigurationIntent {
 
 struct WatchRoomOptionsProvider: DynamicOptionsProvider {
     func results() async throws -> [WatchRoomEntity] {
-        WatchWidgetStore.shared.rooms.map { WatchRoomEntity(id: $0.id, name: $0.name) }
+        WatchWidgetStore.shared.groups.map { WatchRoomEntity(id: $0.id, name: $0.name) }
     }
 }

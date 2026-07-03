@@ -41,13 +41,41 @@ struct HueHomeApp: App {
 
     // MARK: Stage 2A — UnifiedOrchestrator (shared across entire app)
     @State private var orchestrator = UnifiedOrchestrator()
+    @State private var deepLink = DeepLinkCoordinator()
 
     var body: some Scene {
         WindowGroup {
             AppRootView()
                 .environment(orchestrator)
+                .environment(deepLink)
+                .onOpenURL { url in deepLink.handle(url) }
         }
         .modelContainer(modelContainer)
+    }
+}
+
+// MARK: - Deep Link Coordinator
+//
+// Widgets / Lock-Screen taps open `lightshade://room/{id}`, `lightshade://zone/{id}`,
+// or `lightshade://dashboard`. The tab shell (MainTabView) observes this and switches
+// to Home; `pendingGroupID` names the room/zone the user tapped (best-effort focus).
+
+@Observable
+final class DeepLinkCoordinator {
+    /// The room/zone id from the tapped widget (nil for a plain dashboard open).
+    var pendingGroupID: String?
+    /// Bumped on every deep link so observers can react even to a repeated target.
+    var openToken: Int = 0
+
+    func handle(_ url: URL) {
+        guard url.scheme == "lightshade" else { return }
+        switch url.host {
+        case "room", "zone":
+            pendingGroupID = url.pathComponents.first(where: { $0 != "/" })
+        default:
+            pendingGroupID = nil
+        }
+        openToken &+= 1
     }
 }
 
@@ -180,6 +208,7 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
     func push(
         rooms: [WidgetRoomSnapshot],
         zones: [WidgetRoomSnapshot],
+        scenes: [WidgetSceneSnapshot] = [],
         bridges: [String: WidgetBridgeCredentials],
         unpaired: Bool = false
     ) {
@@ -188,6 +217,7 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
               WCSession.default.isWatchAppInstalled else { return }
         guard let roomsData = try? JSONEncoder().encode(rooms),
               let zonesData = try? JSONEncoder().encode(zones),
+              let scenesData = try? JSONEncoder().encode(scenes),
               let bridgesData = try? JSONEncoder().encode(bridges) else { return }
         let fallback = bridges.values.first
         // The token travels only inside wc_bridges_v1 (persisted to the watch
@@ -198,6 +228,7 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
         var context: [String: Any] = [
             "wc_rooms_v1" : roomsData,
             "wc_zones_v1" : zonesData,
+            "wc_scenes_v1": scenesData,
             "wc_bridges_v1": bridgesData,
             "wc_bridge_ip": fallback?.ip ?? "",
             "wc_unpaired" : unpaired

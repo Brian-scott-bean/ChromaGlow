@@ -1425,12 +1425,17 @@ final class UnifiedOrchestrator {
                 WidgetRoomSnapshot(id: z.id, name: z.name, archetype: z.archetype,
                                    isOn: z.isOn, brightness: z.brightness,
                                    lightCount: z.lightCount, groupedLightId: z.groupedLightID,
-                                   bridgeID: z.bridgeID)
+                                   bridgeID: z.bridgeID, kind: "zone")
             }
-            WidgetDataStore.shared.write(rooms: roomSnaps)
+            let sceneSnaps = self.globalScenes.map { s in
+                WidgetSceneSnapshot(id: s.bridgeSceneID, name: s.name,
+                                    ownerGroupID: s.roomID, bridgeID: s.bridgeID)
+            }
+            WidgetDataStore.shared.write(rooms: roomSnaps, zones: zoneSnaps, scenes: sceneSnaps)
             WatchSessionManager.shared.push(
                 rooms: roomSnaps,
                 zones: zoneSnaps,
+                scenes: sceneSnaps,
                 bridges: WidgetDataStore.shared.bridges
             )
         }

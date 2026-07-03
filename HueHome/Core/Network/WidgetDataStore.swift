@@ -25,6 +25,11 @@ struct WidgetRoomSnapshot: Codable, Identifiable {
     let lightCount:     Int
     let groupedLightId: String?  // enables fresh fetch without re-fetching rooms
     let bridgeID:       String?  // bridge routing key for multi-bridge intent writes
+    /// "room" or "zone" — optional/defaulted so older snapshots (no key) decode as rooms.
+    let kind:           String?
+
+    /// Convenience: a zone snapshot (vs a room).
+    var isZone: Bool { kind == "zone" }
 
     init(
         id: String,
@@ -34,7 +39,8 @@ struct WidgetRoomSnapshot: Codable, Identifiable {
         brightness: Double,
         lightCount: Int,
         groupedLightId: String?,
-        bridgeID: String? = nil
+        bridgeID: String? = nil,
+        kind: String? = "room"
     ) {
         self.id = id
         self.name = name
@@ -44,7 +50,17 @@ struct WidgetRoomSnapshot: Codable, Identifiable {
         self.lightCount = lightCount
         self.groupedLightId = groupedLightId
         self.bridgeID = bridgeID
+        self.kind = kind
     }
+}
+
+/// A recallable Hue scene, associated with the room/zone it belongs to.
+/// Widgets/complications recall via `PUT /clip/v2/resource/scene/{id}`.
+struct WidgetSceneSnapshot: Codable, Identifiable {
+    let id:           String  // real Hue scene UUID (used for recall)
+    let name:         String
+    let ownerGroupID: String  // matches WidgetRoomSnapshot.id of the owning room/zone
+    let bridgeID:     String  // routing key for the recall write
 }
 
 struct WidgetBridgeCredentials: Codable {
@@ -71,6 +87,8 @@ final class WidgetDataStore: @unchecked Sendable {
 
     private enum Key {
         static let rooms     = "hue_widget_rooms_v1"
+        static let zones     = "hue_widget_zones_v1"
+        static let scenes    = "hue_widget_scenes_v1"
         static let routing   = "hue_widget_routing_v1"
         static let bridgeIP  = "hue_widget_bridge_ip"
         static let updatedAt = "hue_widget_updated_at"
@@ -86,6 +104,17 @@ final class WidgetDataStore: @unchecked Sendable {
     func write(rooms: [WidgetRoomSnapshot]) {
         guard let data = try? JSONEncoder().encode(rooms) else { return }
         ud?.set(data, forKey: Key.rooms)
+        ud?.set(Date(), forKey: Key.updatedAt)
+    }
+
+    /// Publish rooms, zones, and scenes together (one coherent snapshot).
+    /// Rooms/zones are stored separately so the widget can group them; `groups`
+    /// reads them back merged. Scenes are keyed to their owning room/zone id.
+    func write(rooms: [WidgetRoomSnapshot], zones: [WidgetRoomSnapshot], scenes: [WidgetSceneSnapshot]) {
+        let encoder = JSONEncoder()
+        if let roomsData = try? encoder.encode(rooms) { ud?.set(roomsData, forKey: Key.rooms) }
+        if let zonesData = try? encoder.encode(zones) { ud?.set(zonesData, forKey: Key.zones) }
+        if let scenesData = try? encoder.encode(scenes) { ud?.set(scenesData, forKey: Key.scenes) }
         ud?.set(Date(), forKey: Key.updatedAt)
     }
 
@@ -124,6 +153,31 @@ final class WidgetDataStore: @unchecked Sendable {
         scrubLegacyPlaintextSecrets()
     }
 
+    /// Optimistically patch one group's cached on/brightness and persist just the
+    /// list (rooms or zones) that owns it, so the widget reflects a tap immediately.
+    func applyOptimistic(groupID: String, isOn: Bool? = nil, brightness: Double? = nil) {
+        func patched(_ list: [WidgetRoomSnapshot]) -> [WidgetRoomSnapshot]? {
+            guard let idx = list.firstIndex(where: { $0.id == groupID }) else { return nil }
+            var copy = list
+            if let isOn { copy[idx].isOn = isOn }
+            if let brightness { copy[idx].brightness = brightness }
+            return copy
+        }
+        if let updated = patched(rooms), let data = try? JSONEncoder().encode(updated) {
+            ud?.set(data, forKey: Key.rooms)
+        } else if let updated = patched(zones), let data = try? JSONEncoder().encode(updated) {
+            ud?.set(data, forKey: Key.zones)
+        }
+    }
+
+    /// Optimistically mark every room and zone off (used by All-Off).
+    func markAllGroupsOff() {
+        let offRooms = rooms.map { r -> WidgetRoomSnapshot in var c = r; c.isOn = false; return c }
+        let offZones = zones.map { z -> WidgetRoomSnapshot in var c = z; c.isOn = false; return c }
+        if let d = try? JSONEncoder().encode(offRooms) { ud?.set(d, forKey: Key.rooms) }
+        if let d = try? JSONEncoder().encode(offZones) { ud?.set(d, forKey: Key.zones) }
+    }
+
     /// Remove the pre-D-018 plaintext token copies from the App Group.
     func scrubLegacyPlaintextSecrets() {
         ud?.removeObject(forKey: Key.legacyBridges)
@@ -134,6 +188,8 @@ final class WidgetDataStore: @unchecked Sendable {
     /// and the Keychain credential blob.
     func clearAll() {
         ud?.removeObject(forKey: Key.rooms)
+        ud?.removeObject(forKey: Key.zones)
+        ud?.removeObject(forKey: Key.scenes)
         ud?.removeObject(forKey: Key.routing)
         ud?.removeObject(forKey: Key.bridgeIP)
         ud?.removeObject(forKey: Key.updatedAt)
@@ -150,6 +206,28 @@ final class WidgetDataStore: @unchecked Sendable {
               let r = try? JSONDecoder().decode([WidgetRoomSnapshot].self, from: d)
         else { return [] }
         return r
+    }
+
+    var zones: [WidgetRoomSnapshot] {
+        guard let d = ud?.data(forKey: Key.zones),
+              let z = try? JSONDecoder().decode([WidgetRoomSnapshot].self, from: d)
+        else { return [] }
+        return z
+    }
+
+    /// Rooms followed by zones — the full set of controllable groups.
+    var groups: [WidgetRoomSnapshot] { rooms + zones }
+
+    var scenes: [WidgetSceneSnapshot] {
+        guard let d = ud?.data(forKey: Key.scenes),
+              let s = try? JSONDecoder().decode([WidgetSceneSnapshot].self, from: d)
+        else { return [] }
+        return s
+    }
+
+    /// Scenes belonging to a specific room/zone (matched by owner id + bridge).
+    func scenes(forGroup groupID: String, bridgeID: String?) -> [WidgetSceneSnapshot] {
+        scenes.filter { $0.ownerGroupID == groupID && (bridgeID == nil || $0.bridgeID == bridgeID) }
     }
 
     /// Credential map from the shared Keychain access group (D-018).

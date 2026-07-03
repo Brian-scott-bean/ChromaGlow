@@ -5,6 +5,7 @@
 // iPad: NavigationSplitView (sidebar + detail).
 
 import SwiftUI
+import UIKit
 
 // MARK: - Tab Definition
 
@@ -38,9 +39,13 @@ enum HueTab: Int, CaseIterable {
 struct MainTabView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.horizontalSizeClass) var sizeClass
+    @Environment(DeepLinkCoordinator.self) private var deepLink
     @State private var selectedTab: HueTab = .home
     /// Tabs whose root view has been constructed at least once — avoids building Studio/Scenes/More until first visit (reduces cold-launch work).
     @State private var realizedTabs: Set<HueTab> = [.home]
+    /// Holds a weak reference to each tab's underlying UINavigationController so a
+    /// re-tap on the active tab (or programmatic back) can pop one page.
+    @State private var navRegistry = TabNavRegistry()
 
     var body: some View {
         Group {
@@ -51,6 +56,11 @@ struct MainTabView: View {
             }
         }
         .task { await prewarmDeferredTabs() }
+        // A widget / Lock-Screen tap deep-links here — surface the Home dashboard.
+        .onChange(of: deepLink.openToken) { _, _ in
+            realizedTabs.insert(.home)
+            withAnimation(HueAnimation.toggle) { selectedTab = .home }
+        }
     }
 
     /// Build deferred tab roots shortly after Home paints so the first tap on Studio /
@@ -89,15 +99,39 @@ struct MainTabView: View {
                     .opacity(selectedTab == tab ? 1 : 0)
                     .allowsHitTesting(selectedTab == tab)
             }
-            HueTabBar(selectedTab: $selectedTab, realizedTabs: $realizedTabs)
+            HueTabBar(selectedTab: $selectedTab, realizedTabs: $realizedTabs, navRegistry: navRegistry)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .gesture(tabSwipeGesture)
         .onAppear {
             realizedTabs.insert(selectedTab)
         }
         .onChange(of: selectedTab) { _, newTab in
             realizedTabs.insert(newTab)
         }
+    }
+
+    /// Full-screen horizontal swipe to move between bottom tabs.
+    /// Attached as a low-priority `.gesture` so inner horizontal scrollers and Studio's
+    /// deck pager (which claim their own drags) win; only "unclaimed" horizontal swipes
+    /// on the page body change tabs. Left-edge swipes are ignored so the system
+    /// interactive back-swipe inside a NavigationStack keeps working.
+    private var tabSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                guard value.startLocation.x > 24 else { return }   // preserve edge-back
+                let dx = value.translation.width
+                let dy = value.translation.height
+                let predictedX = value.predictedEndTranslation.width
+                // Require a decisive, predominantly horizontal swipe.
+                guard abs(dx) > abs(dy) * 1.3,
+                      abs(dx) > 60 || abs(predictedX) > 120 else { return }
+                let target = selectedTab.rawValue + (dx < 0 ? 1 : -1)
+                guard let next = HueTab(rawValue: target), next != selectedTab else { return }
+                realizedTabs.insert(next)
+                withAnimation(HueAnimation.toggle) { selectedTab = next }
+                HapticManager.shared.light()
+            }
     }
 
     // MARK: iPad Layout
@@ -144,12 +178,18 @@ struct MainTabView: View {
     private func tabContent(for tab: HueTab) -> some View {
         switch tab {
         case .home:
-            NavigationStack { DashboardView() }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            NavigationStack {
+                DashboardView()
+                    .background(NavControllerResolver { navRegistry.register(.home, $0) })
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         case .scenes:
             Group {
                 if realizedTabs.contains(.scenes) {
-                    NavigationStack { ScenesTabView() }
+                    NavigationStack {
+                        ScenesTabView()
+                            .background(NavControllerResolver { navRegistry.register(.scenes, $0) })
+                    }
                 } else {
                     Color.clear
                 }
@@ -158,7 +198,10 @@ struct MainTabView: View {
         case .studio:
             Group {
                 if realizedTabs.contains(.studio) {
-                    NavigationStack { StudioView() }
+                    NavigationStack {
+                        StudioView()
+                            .background(NavControllerResolver { navRegistry.register(.studio, $0) })
+                    }
                 } else {
                     Color.clear
                 }
@@ -167,7 +210,10 @@ struct MainTabView: View {
         case .more:
             Group {
                 if realizedTabs.contains(.more) {
-                    NavigationStack { MoreView() }
+                    NavigationStack {
+                        MoreView()
+                            .background(NavControllerResolver { navRegistry.register(.more, $0) })
+                    }
                 } else {
                     Color.clear
                 }
@@ -183,6 +229,7 @@ struct HueTabBar: View {
     @Environment(\.colorScheme) var colorScheme
     @Binding var selectedTab: HueTab
     @Binding var realizedTabs: Set<HueTab>
+    let navRegistry: TabNavRegistry
     @Namespace private var animation
 
     var body: some View {
@@ -193,11 +240,18 @@ struct HueTabBar: View {
                     isSelected: selectedTab == tab,
                     namespace: animation
                 ) {
-                    realizedTabs.insert(tab)
-                    withAnimation(HueAnimation.toggle) {
-                        selectedTab = tab
+                    if selectedTab == tab {
+                        // Already on this tab → back out one page in its menu stack.
+                        if navRegistry.popOne(tab) {
+                            HapticManager.shared.light()
+                        }
+                    } else {
+                        realizedTabs.insert(tab)
+                        withAnimation(HueAnimation.toggle) {
+                            selectedTab = tab
+                        }
+                        HapticManager.shared.light()
                     }
-                    HapticManager.shared.light()
                 }
             }
         }
@@ -268,5 +322,72 @@ struct HueTabItem: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Per-Tab Navigation Controller Registry
+//
+// The custom tab bar keeps all four tab NavigationStacks alive in a ZStack, so
+// there is no system "tap active tab to pop" behavior. We capture each tab's
+// underlying UINavigationController and pop one page on re-tap. Popping through
+// the nav controller is the same path the interactive edge-swipe-back uses, so
+// SwiftUI reconciles its own navigation state (value-, boolean-, and view-based
+// destinations alike) — no need to rewire the tabs to a bound NavigationPath.
+
+@Observable
+final class TabNavRegistry {
+    private final class WeakNav { weak var controller: UINavigationController?; init(_ c: UINavigationController?) { controller = c } }
+    @ObservationIgnored private var controllers: [HueTab: WeakNav] = [:]
+
+    func register(_ tab: HueTab, _ controller: UINavigationController?) {
+        guard let controller else { return }
+        controllers[tab] = WeakNav(controller)
+    }
+
+    /// Pops one page from the tab's stack if it is deeper than its root. Returns true if it popped.
+    @discardableResult
+    func popOne(_ tab: HueTab) -> Bool {
+        guard let nc = controllers[tab]?.controller, nc.viewControllers.count > 1 else { return false }
+        nc.popViewController(animated: true)
+        return true
+    }
+}
+
+/// Invisible bridge that resolves the UINavigationController backing the SwiftUI
+/// NavigationStack it is placed inside, and hands it back via `onResolve`.
+struct NavControllerResolver: UIViewControllerRepresentable {
+    let onResolve: (UINavigationController?) -> Void
+
+    func makeUIViewController(context: Context) -> ResolverController {
+        ResolverController(onResolve: onResolve)
+    }
+
+    func updateUIViewController(_ controller: ResolverController, context: Context) {
+        controller.resolve()
+    }
+
+    final class ResolverController: UIViewController {
+        let onResolve: (UINavigationController?) -> Void
+
+        init(onResolve: @escaping (UINavigationController?) -> Void) {
+            self.onResolve = onResolve
+            super.init(nibName: nil, bundle: nil)
+            view.backgroundColor = .clear
+            view.isUserInteractionEnabled = false
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
+            resolve()
+        }
+
+        func resolve() {
+            DispatchQueue.main.async { [weak self] in
+                self?.onResolve(self?.navigationController)
+            }
+        }
     }
 }

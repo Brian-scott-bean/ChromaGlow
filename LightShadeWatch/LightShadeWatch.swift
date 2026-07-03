@@ -19,15 +19,17 @@ import AppIntents
 struct WatchEntry: TimelineEntry {
     let date:           Date
     let rooms:          [WatchRoomSnapshot]
+    var zones:          [WatchRoomSnapshot] = []
     let isPaired:       Bool
     let selectedRoomID: String?
 
+    // Summary counts stay room-based so overlapping zones don't double-count.
     var onCount:  Int { rooms.filter(\.isOn).count }
     var total:    Int { rooms.count }
 
     var selectedRoom: WatchRoomSnapshot? {
         guard let id = selectedRoomID else { return nil }
-        return rooms.first { $0.id == id }
+        return (rooms + zones).first { $0.id == id }
     }
 }
 
@@ -44,6 +46,7 @@ struct WatchProvider: AppIntentTimelineProvider {
         return WatchEntry(
             date:           .now,
             rooms:          context.isPreview ? previewRooms : store.rooms,
+            zones:          context.isPreview ? [] : store.zones,
             isPaired:       context.isPreview ? true : store.isPaired,
             selectedRoomID: config.room?.id
         )
@@ -55,6 +58,7 @@ struct WatchProvider: AppIntentTimelineProvider {
         let entry  = WatchEntry(
             date:           .now,
             rooms:          store.rooms,
+            zones:          store.zones,
             isPaired:       store.isPaired,
             selectedRoomID: config.room?.id
         )

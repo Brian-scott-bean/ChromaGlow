@@ -11,20 +11,25 @@ import WidgetKit
 struct SelectRoomIntent: WidgetConfigurationIntent {
 
     static var title: LocalizedStringResource       = "CastChroma Widget"
-    static var description = IntentDescription("Choose which room to display, and whether to show quick preset buttons.")
+    static var description = IntentDescription("Choose which room or zone to display, and whether to show quick preset and scene buttons.")
 
-    /// The room to focus on. Nil = show all rooms (summary mode).
-    @Parameter(title: "Room", optionsProvider: RoomOptionsProvider())
+    /// The room or zone to focus on. Nil = show all groups (summary mode).
+    @Parameter(title: "Room or Zone", optionsProvider: RoomOptionsProvider())
     var room: RoomAppEntity?
 
     /// When true the medium/large widget shows Energize · Read · Relax · Sleep preset chips.
     @Parameter(title: "Show Preset Shortcuts", default: true)
     var showPresets: Bool
 
-    init() { showPresets = true }
-    init(room: RoomAppEntity?, showPresets: Bool = true) {
+    /// When true the medium/large widget shows the pinned group's scene chips.
+    @Parameter(title: "Show Scene Shortcuts", default: true)
+    var showScenes: Bool
+
+    init() { showPresets = true; showScenes = true }
+    init(room: RoomAppEntity?, showPresets: Bool = true, showScenes: Bool = true) {
         self.room        = room
         self.showPresets = showPresets
+        self.showScenes  = showScenes
     }
 }
 
@@ -32,7 +37,6 @@ struct SelectRoomIntent: WidgetConfigurationIntent {
 
 struct RoomOptionsProvider: DynamicOptionsProvider {
     func results() async throws -> [RoomAppEntity] {
-        WidgetDataStore.shared.rooms
-            .map { RoomAppEntity(id: $0.id, name: $0.name) }
+        WidgetDataStore.shared.groups.map { RoomAppEntity($0) }
     }
 }

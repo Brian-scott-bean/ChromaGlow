@@ -39,6 +39,15 @@ struct WatchBridgeCredentials: Codable {
     let token: String
 }
 
+// MARK: - Scene Model
+
+struct WatchScene: Identifiable, Codable {
+    let id:           String  // real Hue scene UUID (recall target)
+    let name:         String
+    let ownerGroupID: String  // matches WatchRoom.id of the owning room/zone
+    let bridgeID:     String
+}
+
 // MARK: - Preset
 
 enum WatchPreset: String, CaseIterable {
@@ -94,9 +103,18 @@ final class WatchStore: NSObject, ObservableObject {
 
     @Published var rooms:     [WatchRoom] = []
     @Published var zones:     [WatchRoom] = []
+    @Published var scenes:    [WatchScene] = []
     @Published var isPaired:  Bool        = false
     @Published var isLoading: Bool        = false
     @Published var errorMsg:  String?     = nil
+
+    /// Rooms followed by zones — the full set of controllable groups.
+    var allGroups: [WatchRoom] { rooms + zones }
+
+    /// Scenes belonging to a given room/zone.
+    func scenes(forGroup groupID: String) -> [WatchScene] {
+        scenes.filter { $0.ownerGroupID == groupID }
+    }
 
     // Watch-local cache keys. Rooms/zones/ip are non-secret and stay in
     // UserDefaults.standard; the token and credential map live in the watch
@@ -173,16 +191,27 @@ final class WatchStore: NSObject, ObservableObject {
            let decoded = try? JSONDecoder().decode([WatchRoom].self, from: data) {
             zones = decoded
         }
+        if let data    = UserDefaults.standard.data(forKey: "wc_scenes_v1"),
+           let decoded = try? JSONDecoder().decode([WatchScene].self, from: data) {
+            scenes = decoded
+        }
         isPaired = !bridges.isEmpty || !(bridgeIP?.isEmpty ?? true)
     }
 
     private func saveToLocalCache() {
-        guard let data = try? JSONEncoder().encode(rooms) else { return }
-        UserDefaults.standard.set(data, forKey: CacheKey.rooms)
-        // Mirror into App Group so watch complications can read it.
-        // Display data only — credentials never enter the App Group (D-018).
-        watchGroup?.set(data,       forKey: "hue_widget_rooms_v1")
-        watchGroup?.set(Date(),     forKey: "hue_widget_updated_at")
+        let encoder = JSONEncoder()
+        let roomsData  = try? encoder.encode(rooms)
+        let zonesData  = try? encoder.encode(zones)
+        let scenesData = try? encoder.encode(scenes)
+        if let roomsData  { UserDefaults.standard.set(roomsData,  forKey: CacheKey.rooms) }
+        if let zonesData  { UserDefaults.standard.set(zonesData,  forKey: "wc_zones_v1") }
+        if let scenesData { UserDefaults.standard.set(scenesData, forKey: "wc_scenes_v1") }
+        // Mirror into App Group so watch complications can read rooms, zones, and
+        // scenes. Display data only — credentials never enter the App Group (D-018).
+        if let roomsData  { watchGroup?.set(roomsData,  forKey: "hue_widget_rooms_v1") }
+        if let zonesData  { watchGroup?.set(zonesData,  forKey: "hue_widget_zones_v1") }
+        if let scenesData { watchGroup?.set(scenesData, forKey: "hue_widget_scenes_v1") }
+        watchGroup?.set(Date(), forKey: "hue_widget_updated_at")
         WidgetCenter.shared.reloadAllTimelines()
     }
 
@@ -200,9 +229,9 @@ final class WatchStore: NSObject, ObservableObject {
         guard let glID = room.groupedLightId,
               let creds = credentials(for: room.bridgeID) else { return }
         let newState = !room.isOn
-        if let idx = rooms.firstIndex(where: { $0.id == room.id }) {
-            rooms[idx].isOn = newState
-        }
+        // Update whichever list owns this group (room OR zone).
+        if let idx = rooms.firstIndex(where: { $0.id == room.id }) { rooms[idx].isOn = newState }
+        if let idx = zones.firstIndex(where: { $0.id == room.id }) { zones[idx].isOn = newState }
         await patch(id: glID, body: ["on": ["on": newState]], ip: creds.ip, token: creds.token)
         saveToLocalCache()
     }
@@ -213,8 +242,10 @@ final class WatchStore: NSObject, ObservableObject {
         guard let glID = room.groupedLightId,
               let creds = credentials(for: room.bridgeID) else { return }
         if let idx = rooms.firstIndex(where: { $0.id == room.id }) {
-            rooms[idx].brightness = brightness
-            rooms[idx].isOn       = brightness > 0
+            rooms[idx].brightness = brightness; rooms[idx].isOn = brightness > 0
+        }
+        if let idx = zones.firstIndex(where: { $0.id == room.id }) {
+            zones[idx].brightness = brightness; zones[idx].isOn = brightness > 0
         }
         let body: [String: Any] = [
             "on":      ["on": brightness > 0],
@@ -233,14 +264,12 @@ final class WatchStore: NSObject, ObservableObject {
             "color_temperature": ["mirek": preset.mirek],
             "dynamics":          ["duration": 800]
         ]
-        for i in rooms.indices {
-            rooms[i].isOn       = true
-            rooms[i].brightness = preset.brightness
-        }
+        for i in rooms.indices { rooms[i].isOn = true; rooms[i].brightness = preset.brightness }
+        for i in zones.indices { zones[i].isOn = true; zones[i].brightness = preset.brightness }
         await withTaskGroup(of: Void.self) { group in
-            for room in rooms {
-                guard let glID = room.groupedLightId,
-                      let creds = credentials(for: room.bridgeID) else { continue }
+            for item in allGroups {
+                guard let glID = item.groupedLightId,
+                      let creds = credentials(for: item.bridgeID) else { continue }
                 let gid = glID
                 group.addTask {
                     await self.patch(id: gid, body: body, ip: creds.ip, token: creds.token)
@@ -254,11 +283,12 @@ final class WatchStore: NSObject, ObservableObject {
 
     func allOff() async {
         for i in rooms.indices { rooms[i].isOn = false }
+        for i in zones.indices { zones[i].isOn = false }
         let body: [String: Any] = ["on": ["on": false]]
         await withTaskGroup(of: Void.self) { group in
-            for room in rooms {
-                guard let glID = room.groupedLightId,
-                      let creds = credentials(for: room.bridgeID) else { continue }
+            for item in allGroups {
+                guard let glID = item.groupedLightId,
+                      let creds = credentials(for: item.bridgeID) else { continue }
                 let gid = glID
                 group.addTask {
                     await self.patch(id: gid, body: body, ip: creds.ip, token: creds.token)
@@ -266,6 +296,92 @@ final class WatchStore: NSObject, ObservableObject {
             }
         }
         saveToLocalCache()
+    }
+
+    // MARK: - Recall Scene
+
+    func recallScene(_ scene: WatchScene) async {
+        guard let creds = credentials(for: scene.bridgeID) else { return }
+        // Optimistically mark the owning group on.
+        if let idx = rooms.firstIndex(where: { $0.id == scene.ownerGroupID }) { rooms[idx].isOn = true }
+        if let idx = zones.firstIndex(where: { $0.id == scene.ownerGroupID }) { zones[idx].isOn = true }
+        guard let url = URL(string: "https://\(creds.ip)/clip/v2/resource/scene/\(scene.id)") else { return }
+        var req = URLRequest(url: url, timeoutInterval: 8)
+        req.httpMethod = "PUT"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(creds.token,        forHTTPHeaderField: "hue-application-key")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["recall": ["action": "active"]])
+        _ = try? await Self.bridgeSession.data(for: req)
+        saveToLocalCache()
+    }
+
+    // MARK: - Refresh from bridges (bounded, multi-bridge)
+
+    /// Pull fresh grouped_light state from every known bridge (bounded per bridge,
+    /// concurrent) and merge into rooms/zones. Call on watch-app foreground so the
+    /// UI reflects reality instead of drifting between phone pushes.
+    func refreshFromBridges() async {
+        let creds = uniqueBridgeCredentials()
+        guard !creds.isEmpty else { return }
+        var fresh: [String: (on: Bool, brightness: Double)] = [:]
+        await withTaskGroup(of: [String: (Bool, Double)].self) { group in
+            for c in creds {
+                group.addTask { await Self.fetchGroupedLights(ip: c.ip, token: c.token, budget: 4) }
+            }
+            for await partial in group {
+                for (k, v) in partial { fresh[k] = v }
+            }
+        }
+        guard !fresh.isEmpty else { return }
+        func merge(_ list: inout [WatchRoom]) {
+            for i in list.indices {
+                if let glID = list[i].groupedLightId, let gl = fresh[glID] {
+                    list[i].isOn = gl.on
+                    list[i].brightness = gl.brightness > 0 ? gl.brightness : list[i].brightness
+                }
+            }
+        }
+        merge(&rooms); merge(&zones)
+        saveToLocalCache()
+    }
+
+    /// One credential per distinct bridge IP (avoids hitting the same bridge twice).
+    private func uniqueBridgeCredentials() -> [WatchBridgeCredentials] {
+        var seen = Set<String>()
+        var out: [WatchBridgeCredentials] = []
+        for c in bridges.values where !seen.contains(c.ip) { seen.insert(c.ip); out.append(c) }
+        if out.isEmpty, let ip = bridgeIP, let token = token {
+            out.append(WatchBridgeCredentials(bridgeID: "legacy-default", ip: ip, token: token))
+        }
+        return out
+    }
+
+    /// GET all grouped_light states from one bridge, bounded to `budget` seconds.
+    /// Returns [groupedLightId: (on, brightness 1–100)]. Empty on timeout/error.
+    private static func fetchGroupedLights(ip: String, token: String, budget: TimeInterval) async -> [String: (Bool, Double)] {
+        let fetch = Task { () -> [String: (Bool, Double)] in
+            guard let url = URL(string: "https://\(ip)/clip/v2/resource/grouped_light") else { return [:] }
+            var req = URLRequest(url: url, timeoutInterval: budget)
+            req.setValue(token, forHTTPHeaderField: "hue-application-key")
+            let (data, _) = try await bridgeSession.data(for: req)
+            struct Resp: Decodable {
+                struct GL: Decodable {
+                    let id: String
+                    let on: On
+                    let dimming: Dim?
+                    struct On: Decodable { let on: Bool }
+                    struct Dim: Decodable { let brightness: Double }
+                }
+                let data: [GL]
+            }
+            let decoded = try JSONDecoder().decode(Resp.self, from: data)
+            var out: [String: (Bool, Double)] = [:]
+            for gl in decoded.data { out[gl.id] = (gl.on.on, gl.dimming?.brightness ?? 0) }
+            return out
+        }
+        let reaper = Task { try? await Task.sleep(nanoseconds: UInt64(budget * 1_000_000_000)); fetch.cancel() }
+        defer { reaper.cancel() }
+        return (try? await fetch.value) ?? [:]
     }
 
     // MARK: - Network
@@ -334,11 +450,23 @@ extension WatchStore: WCSessionDelegate {
             decodedZones = []
         }
 
+        // Decode scenes (optional)
+        let decodedScenes: [WatchScene]
+        if let scenesData = applicationContext["wc_scenes_v1"] as? Data,
+           let s = try? JSONDecoder().decode([WatchScene].self, from: scenesData) {
+            decodedScenes = s
+        } else {
+            decodedScenes = []
+        }
+
         // UserDefaults is thread-safe — write directly from any thread.
         // Credentials go to the watch Keychain, never UserDefaults (D-018).
         UserDefaults.standard.set(roomsData, forKey: "wc_rooms_v1")
         if let zonesData = applicationContext["wc_zones_v1"] as? Data {
             UserDefaults.standard.set(zonesData, forKey: "wc_zones_v1")
+        }
+        if let scenesData = applicationContext["wc_scenes_v1"] as? Data {
+            UserDefaults.standard.set(scenesData, forKey: "wc_scenes_v1")
         }
         // Never clobber stored credentials with an empty/undecodable map.
         if let bridgesData, let bridgeMap, !bridgeMap.isEmpty {
@@ -356,6 +484,12 @@ extension WatchStore: WCSessionDelegate {
         // (display data only — no credentials).
         let watchGroup = UserDefaults(suiteName: "group.com.huehome.pro")
         watchGroup?.set(roomsData, forKey: "hue_widget_rooms_v1")
+        if let zonesData = applicationContext["wc_zones_v1"] as? Data {
+            watchGroup?.set(zonesData, forKey: "hue_widget_zones_v1")
+        }
+        if let scenesData = applicationContext["wc_scenes_v1"] as? Data {
+            watchGroup?.set(scenesData, forKey: "hue_widget_scenes_v1")
+        }
         watchGroup?.set(Date(),    forKey: "hue_widget_updated_at")
         if !ip.isEmpty { watchGroup?.set(ip, forKey: "hue_widget_bridge_ip") }
 
@@ -363,6 +497,7 @@ extension WatchStore: WCSessionDelegate {
         Task { @MainActor [weak self] in
             self?.rooms    = decoded
             self?.zones    = decodedZones
+            self?.scenes   = decodedScenes
             self?.isPaired = !(decoded.isEmpty && decodedZones.isEmpty) || !ip.isEmpty || bridgesData != nil
             WidgetCenter.shared.reloadAllTimelines()
         }
@@ -375,13 +510,15 @@ extension WatchStore: WCSessionDelegate {
         let ud = UserDefaults.standard
         ud.removeObject(forKey: CacheKey.rooms)
         ud.removeObject(forKey: "wc_zones_v1")
+        ud.removeObject(forKey: "wc_scenes_v1")
         ud.removeObject(forKey: CacheKey.bridgeIP)
         ud.removeObject(forKey: CacheKey.token)
         ud.removeObject(forKey: CacheKey.bridges)
         BridgePinStore.shared.removeAll()
         let group = UserDefaults(suiteName: "group.com.huehome.pro")
-        for key in ["hue_widget_rooms_v1", "hue_widget_updated_at",
-                    "hue_widget_bridge_ip", "hue_widget_token", "hue_widget_bridges_v1"] {
+        for key in ["hue_widget_rooms_v1", "hue_widget_zones_v1", "hue_widget_scenes_v1",
+                    "hue_widget_updated_at", "hue_widget_bridge_ip",
+                    "hue_widget_token", "hue_widget_bridges_v1"] {
             group?.removeObject(forKey: key)
         }
     }
