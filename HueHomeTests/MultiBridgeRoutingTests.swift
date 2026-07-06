@@ -189,4 +189,63 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(bridgeA.groupedEffectIDs.isEmpty,
                       "the other bridge must see zero effect traffic (H-05)")
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - M-17: "All Rooms" fans out per room, per bridge
+    // ──────────────────────────────────────────────
+
+    func testAllRoomsActivateFansOutToEveryRoomsOwnBridge() async throws {
+        // "All Rooms" (selectedRoom == nil) used to dead-end on "Select a room
+        // first" — applyToAllRooms had zero callers (M-17). It must now apply
+        // the effect to every room, each on its own bridge (H-05 routing).
+        let roomOnA = HueLocalRoom(roomID: "room-a", bridgeID: "bridge-a")
+        roomOnA.cachedName = "Living A"
+        roomOnA.cachedGroupedLightID = "gl-room-a"
+        let roomOnB = HueLocalRoom(roomID: "room-b", bridgeID: "bridge-b")
+        roomOnB.cachedName = "Bedroom B"
+        roomOnB.cachedGroupedLightID = "gl-room-b"
+        orchestrator.preloadCached(from: [roomOnA, roomOnB])
+
+        let movie = try XCTUnwrap(
+            EffectLibrary.all.first { $0.id == "movie" },
+            "catalog 'movie' effect (oneShot) expected"
+        )
+
+        let vm = EffectsViewModel()
+        vm.configure(orchestrator: orchestrator)
+        vm.selectedRoom   = nil          // "All Rooms" chip
+        vm.selectedEffect = movie
+
+        await vm.activate()
+
+        XCTAssertEqual(bridgeA.groupedEffectIDs, ["gl-room-a"],
+                       "All Rooms must reach the room on bridge A (M-17)")
+        XCTAssertEqual(bridgeB.groupedEffectIDs, ["gl-room-b"],
+                       "All Rooms must reach the room on bridge B on its own bridge (M-17 + H-05)")
+    }
+
+    func testAllRoomsRefusesAppDrivenEffects() async throws {
+        // EffectEngine is single-slot: an app-driven fan-out would leave only
+        // the last room animating. All Rooms must refuse with guidance.
+        let roomOnA = HueLocalRoom(roomID: "room-a", bridgeID: "bridge-a")
+        roomOnA.cachedName = "Living A"
+        roomOnA.cachedGroupedLightID = "gl-room-a"
+        orchestrator.preloadCached(from: [roomOnA])
+
+        let strobe = try XCTUnwrap(
+            EffectLibrary.all.first { $0.id == "strobe" },
+            "catalog 'strobe' effect (appDriven) expected"
+        )
+
+        let vm = EffectsViewModel()
+        vm.configure(orchestrator: orchestrator)
+        vm.selectedRoom   = nil
+        vm.selectedEffect = strobe
+
+        await vm.activate()
+
+        XCTAssertTrue(bridgeA.groupedEffectIDs.isEmpty,
+                      "app-driven effects must not fan out to All Rooms")
+        XCTAssertFalse(vm.isRunning, "no engine loop may start from an All Rooms tap")
+    }
 }

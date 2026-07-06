@@ -124,6 +124,13 @@ final class EffectsViewModel: ObservableObject {
             .sink { [weak self] newRoom in
                 guard let self else { return }
 
+                // Never clear/restore the selection while activate() is mid-cycle.
+                // Combine delivers this asynchronously, so a chip tap followed by
+                // a quick card tap can land here DURING the activation (M-17
+                // fan-out included) — clearing selectedEffect then aborts the
+                // remaining rooms. Same guard rationale as syncWithOrchestrator().
+                guard !self.isActivating else { return }
+
                 // Stop app-driven engine — single-slot, can't loop for two rooms.
                 if self.isRunning {
                     Task { await self.stop() }
@@ -256,11 +263,20 @@ final class EffectsViewModel: ObservableObject {
         }
 
         // Resolve the target room: explicit override > current selection.
-        // GUARD: require an explicit room — never fall through to "all rooms" silently.
-        // If the room picker hasn't been set yet, prompt the user instead of broadcasting.
         let effectiveRoom = activeRoomOverride ?? selectedRoom
         guard let room = effectiveRoom else {
-            showStatus("⚠ Select a room first")
+            // M-17: nil room with no override = the "All Rooms" chip. Fan out via
+            // applyToAllRooms(), which re-enters activate() once per room through
+            // activeRoomOverride — each iteration resolves its own bridge client
+            // and pacing gate, so multi-bridge homes stay correctly routed (H-05).
+            // App-driven loops are single-slot (EffectEngine): fanning out would
+            // leave only the last room animating while every entry claimed
+            // "running", so refuse those with guidance instead.
+            if effect.requiresForeground {
+                showStatus("⚠ '\(effect.name)' runs in one room at a time — pick a room")
+                return
+            }
+            await applyToAllRooms(effect: effect)
             return
         }
         guard let groupedLightID = room.groupedLightID else {
@@ -285,8 +301,13 @@ final class EffectsViewModel: ObservableObject {
 
         // Mark as activating so syncWithOrchestrator() doesn't clear the card
         // during the stop → apply cycle (stop() removes the entry, apply re-adds it).
+        // Save/restore rather than set/clear: applyToAllRooms() re-enters this
+        // method per room, and a plain `defer { isActivating = false }` would
+        // drop the outer flag after the first room, exposing the rest of the
+        // fan-out to the selection-clearing sinks.
+        let wasActivating = isActivating
         isActivating = true
-        defer { isActivating = false }
+        defer { isActivating = wasActivating }
 
         await stop()
 
