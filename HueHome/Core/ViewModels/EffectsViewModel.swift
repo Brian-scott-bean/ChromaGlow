@@ -58,7 +58,12 @@ final class EffectsViewModel: ObservableObject {
     private let engine            = EffectEngine()
     private let log               = Logger(subsystem: "com.lightshade.app", category: "Effects")
     private var cancellables      = Set<AnyCancellable>()
-    private var reactivationTask: Task<Void, Never>?   = nil
+    /// M-16: pending "Turn Off at End" timers for gradual effects, keyed by room ID.
+    /// Stored so stop()/deselect()/re-apply can cancel them — previously these were
+    /// detached Tasks that could switch a room off up to 90 minutes after the user
+    /// had moved on. Deliberately NOT cancelled on a room-chip switch: the bridge-side
+    /// ramp keeps running after a room switch, so its scheduled turn-off should too.
+    private var turnOffTasks: [String: Task<Void, Never>] = [:]
     /// Prevents Combine sinks from being re-registered on every onAppear (tab switch).
     private var isConfigured      = false
     /// True while activate() is running — prevents syncWithOrchestrator() from
@@ -195,6 +200,9 @@ final class EffectsViewModel: ObservableObject {
         } else if let room = selectedRoom {
             // ── Specific room ──────────────────────────────────────────────
             orchestrator?.removeActiveEffect(roomID: room.id)
+            // M-16: deselecting the room's effect cancels its pending turn-off.
+            turnOffTasks[room.id]?.cancel()
+            turnOffTasks.removeValue(forKey: room.id)
             // Clear controls panel only if no other effect is now selected for this room
             selectedEffect = nil
             paramState     = EffectParamState()
@@ -205,6 +213,8 @@ final class EffectsViewModel: ObservableObject {
             let roomIDsToRemove = entries.filter { $0.effectID == effectID }.map { $0.id }
             for roomID in roomIDsToRemove {
                 orchestrator?.removeActiveEffect(roomID: roomID)
+                turnOffTasks[roomID]?.cancel()
+                turnOffTasks.removeValue(forKey: roomID)
             }
             selectedEffect = nil
             paramState     = EffectParamState()
@@ -268,6 +278,10 @@ final class EffectsViewModel: ObservableObject {
         // One pacing gate per activation — always the room bridge's shared
         // gate so this view model and the orchestrator honor one budget.
         let gate = orchestrator.commandGate(for: room.bridgeID)
+
+        // M-16: any (re-)apply to this room supersedes a pending turn-off timer.
+        turnOffTasks[room.id]?.cancel()
+        turnOffTasks.removeValue(forKey: room.id)
 
         // Mark as activating so syncWithOrchestrator() doesn't clear the card
         // during the stop → apply cycle (stop() removes the entry, apply re-adds it).
@@ -396,9 +410,18 @@ final class EffectsViewModel: ObservableObject {
             if turnOff {
                 let capturedAPI  = api
                 let capturedGLID = groupedLightID
-                Task {
+                let roomID       = room.id
+                turnOffTasks[roomID]?.cancel()
+                turnOffTasks[roomID] = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: UInt64(durationSec) * 1_000_000_000)
+                    // try? swallows CancellationError — without this guard a
+                    // cancelled timer would still fire the off-command.
+                    guard !Task.isCancelled else { return }
                     try? await capturedAPI.setGroupedLight(id: capturedGLID, on: false)
+                    // Re-check before cleanup: if a re-apply replaced this task
+                    // during the PUT, don't evict the successor from the dict.
+                    guard !Task.isCancelled else { return }
+                    self?.turnOffTasks.removeValue(forKey: roomID)
                 }
             }
 
@@ -468,6 +491,16 @@ final class EffectsViewModel: ObservableObject {
     @MainActor
     func stop() async {
         await engine.stop()
+        // M-16: stopping a room also cancels its pending turn-off timer.
+        // Same room resolution as clearNowPlaying(); when both references are
+        // nil this is a genuine clear-all, so every timer goes.
+        if let roomID = activeRoomOverride?.id ?? selectedRoom?.id {
+            turnOffTasks[roomID]?.cancel()
+            turnOffTasks.removeValue(forKey: roomID)
+        } else {
+            turnOffTasks.values.forEach { $0.cancel() }
+            turnOffTasks.removeAll()
+        }
         isRunning         = false
         runningEffectName = nil
         statusMessage     = nil
