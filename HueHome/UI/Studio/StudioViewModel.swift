@@ -1119,20 +1119,27 @@ final class StudioViewModel {
             let card = (effectCards + liveModeCards + composerStudioCards + [starterCompositionCard()]).first(where: { $0.id == cardID })
             let transitionMs = Int(paramValue(for: cardID, paramID: "transition", default: card?.params.first(where: { $0.id == "transition" })?.defaultValue ?? 400))
 
+            // Live param PUTs go through the studio latest-wins mailbox —
+            // a direct api call here (with only the 150 ms debounce) could
+            // stack behind in-flight frames and replay stale slider values.
             switch paramID {
             case "brightness":
-                try? await api.setGroupedLightEffect(
-                    id: groupedLightID, on: nil,
-                    brightness: value, xy: nil, mirek: nil,
-                    duration: transitionMs
-                )
+                await orchestrator.enqueueStudioRestWrite {
+                    try? await api.setGroupedLightEffect(
+                        id: groupedLightID, on: nil,
+                        brightness: value, xy: nil, mirek: nil,
+                        duration: transitionMs
+                    )
+                }
             case "warmth":
                 let mirek = Int(value.rounded())
-                try? await api.setGroupedLightEffect(
-                    id: groupedLightID, on: nil,
-                    brightness: nil, xy: nil, mirek: mirek,
-                    duration: transitionMs
-                )
+                await orchestrator.enqueueStudioRestWrite {
+                    try? await api.setGroupedLightEffect(
+                        id: groupedLightID, on: nil,
+                        brightness: nil, xy: nil, mirek: mirek,
+                        duration: transitionMs
+                    )
+                }
             case "transition":
                 // Stored locally — affects subsequent brightness/warmth/color sends.
                 // No immediate bridge command needed.
@@ -1178,11 +1185,14 @@ final class StudioViewModel {
             let xy = HueColorUtils.xyFrom(hue: Double(h), saturation: Double(s), brightness: Double(b))
             let transitionMs = Int(paramValue(for: cardID, paramID: "transition", default: 500))
 
-            try? await api.setGroupedLightEffect(
-                id: groupedLightID, on: nil,
-                brightness: nil, xy: (xy.x, xy.y), mirek: nil,
-                duration: transitionMs
-            )
+            // Same latest-wins routing as sendParam — see comment there.
+            await orchestrator.enqueueStudioRestWrite {
+                try? await api.setGroupedLightEffect(
+                    id: groupedLightID, on: nil,
+                    brightness: nil, xy: (xy.x, xy.y), mirek: nil,
+                    duration: transitionMs
+                )
+            }
         }
     }
 

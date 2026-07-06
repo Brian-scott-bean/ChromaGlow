@@ -1599,6 +1599,15 @@ final class UnifiedOrchestrator {
 
     /// Latest-wins REST sender for studio mode — prevents bridge command backlog.
     private let studioRestSender = RestSender()
+
+    /// Studio live-param writes (StudioViewModel sendParam/sendColorParam)
+    /// share the studio mailbox: repeated writes to the same endpoint where
+    /// only the newest value matters — a slider scrub can never stack PUTs
+    /// behind stale frames, and the stop/handoff clear()s also drop any
+    /// pending param write before a new owner starts.
+    func enqueueStudioRestWrite(_ work: @escaping @Sendable () async -> Void) async {
+        await studioRestSender.enqueue(work)
+    }
     /// Generation counter for studio/composer engine loops.
     /// Increment on every start/stop; async closures must match to send.
     private var studioGeneration: Int = 0
