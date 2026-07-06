@@ -76,6 +76,10 @@ enum EffectLoops {
         offBrightness:  Double
     ) -> @Sendable () async throws -> Void {
         return {
+            // Defense-in-depth (L-41 class): bpm ≤ 0 divides to ∞ (UInt64 trap)
+            // and dutyCycle > 1 underflows offNs. Clamp to the schema ranges.
+            let bpm        = min(max(bpm, 30), 480)
+            let dutyCycle  = min(max(dutyCycle, 0.10), 0.90)
             let periodNs   = UInt64(60_000_000_000 / bpm)
             let onNs       = UInt64(Double(periodNs) * dutyCycle)
             let offNs      = periodNs - onNs
@@ -115,6 +119,9 @@ enum EffectLoops {
         flash:          Bool
     ) -> @Sendable () async throws -> Void {
         return {
+            // Defense-in-depth (L-41): speed > 11 makes the interval negative —
+            // UInt64.init traps. Clamp to the schema range.
+            let speed      = min(max(speed, 1), 10)
             let intervalNs = UInt64((1.1 - speed / 10.0) * 1_500_000_000)
 
             while !Task.isCancelled {
@@ -174,7 +181,8 @@ enum EffectLoops {
                                          on: true, brightness: baseBrightness,
                                          xy: baseXY, duration: 2000)
 
-            let avgWaitMs: UInt64 = [12_000, 6_000, 2_500][frequencyIndex]
+            // Defense-in-depth (L-41): a drifted preset index would trap here.
+            let avgWaitMs: UInt64 = [12_000, 6_000, 2_500][max(0, min(2, frequencyIndex))]
 
             while !Task.isCancelled {
                 // Random wait before next strike

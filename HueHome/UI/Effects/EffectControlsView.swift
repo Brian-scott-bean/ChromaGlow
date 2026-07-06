@@ -247,7 +247,8 @@ struct SliderRow: View {
 
     private var formattedValue: String {
         if unit == "%" { return "\(Int(value))\(unit)" }
-        if unit == "K" { return "\(Int(1_000_000 / value))K" }   // mirek → Kelvin display
+        // L-54: value == 0 → Int(.infinity) hard-traps during view render.
+        if unit == "K" { return "\(Int(1_000_000 / max(value, 1)))K" }   // mirek → Kelvin display
         if unit == "ms" { return value >= 1000 ? String(format: "%.1fs", value / 1000) : "\(Int(value))ms" }
         if unit == "BPM" { return "\(Int(value)) BPM" }
         if unit == "" { return String(format: "%.1f", value) }

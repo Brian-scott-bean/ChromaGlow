@@ -232,4 +232,64 @@ final class HueDataModelsTests: XCTestCase {
         XCTAssertEqual(settings.themeMode, "dark")
         XCTAssertEqual(settings.dashboardLayout, "list")
     }
+
+    // MARK: - EffectParamState.sanitized (L-41/L-54 preset clamping)
+    //
+    // Saved presets are persisted JSON: values can drift across versions or be
+    // hand-edited, and unclamped restores reached hard-trap sites (segmented
+    // index into a fixed 3-element array, UInt64 of a negative interval, ÷0 in
+    // the Kelvin formatter). sanitized() must clamp everything to the schema.
+
+    private func effect(_ id: String) throws -> HueEffect {
+        try XCTUnwrap(EffectLibrary.all.first { $0.id == id }, "catalog effect '\(id)' expected")
+    }
+
+    func testSanitizedClampsSegmentedIndexIntoOptions() throws {
+        let thunder = try effect("thunderstorm")   // frequency: 3 options
+        var preset = SavedEffectPreset(name: "p", baseEffectID: "thunderstorm")
+        preset.segmented["frequency"] = 7
+        XCTAssertEqual(EffectParamState.sanitized(from: preset, for: thunder)
+            .segmentIndex("frequency"), 2, "over-range segmented index must clamp to last option")
+
+        preset.segmented["frequency"] = -1
+        XCTAssertEqual(EffectParamState.sanitized(from: preset, for: thunder)
+            .segmentIndex("frequency"), 0, "negative segmented index must clamp to 0")
+    }
+
+    func testSanitizedClampsSlidersToSchemaRange() throws {
+        let party = try effect("party")            // speed: 1...10
+        var preset = SavedEffectPreset(name: "p", baseEffectID: "party")
+        preset.sliders["speed"] = 99               // used to trap: UInt64 of a negative interval
+        XCTAssertEqual(EffectParamState.sanitized(from: preset, for: party)
+            .sliderValue("speed"), 10)
+
+        let movie = try effect("movie")            // mirek: 250...500, unit "K"
+        var moviePreset = SavedEffectPreset(name: "m", baseEffectID: "movie")
+        moviePreset.sliders["mirek"] = 0           // used to trap the ÷value Kelvin formatter
+        XCTAssertEqual(EffectParamState.sanitized(from: moviePreset, for: movie)
+            .sliderValue("mirek"), 250, "slider must clamp up to the schema lower bound")
+    }
+
+    func testSanitizedSnapsDurationToNearestOption() throws {
+        let sunrise = try effect("sunrise")
+        guard case .durationPicker(_, _, _, let options, _) =
+            try XCTUnwrap(sunrise.params.first { $0.key == "duration" }) else {
+            return XCTFail("sunrise 'duration' must be a durationPicker")
+        }
+        var preset = SavedEffectPreset(name: "p", baseEffectID: "sunrise")
+        preset.durations["duration"] = 123_456
+        let snapped = EffectParamState.sanitized(from: preset, for: sunrise)
+            .durationValue("duration")
+        XCTAssertTrue(options.contains(snapped),
+                      "bogus duration must snap to a real schema option")
+    }
+
+    func testSanitizedDropsUnknownKeysAndKeepsDefaults() throws {
+        let party = try effect("party")
+        var preset = SavedEffectPreset(name: "p", baseEffectID: "party")
+        preset.sliders["nonexistent"] = 42
+        let state = EffectParamState.sanitized(from: preset, for: party)
+        XCTAssertNil(state.sliders["nonexistent"], "keys absent from the schema must be dropped")
+        XCTAssertEqual(state.sliderValue("speed"), 5, "keys absent from the preset keep schema defaults")
+    }
 }

@@ -37,6 +37,40 @@ struct EffectParamState {
     func paletteValue(_ key: String)                           -> [Color] { palettes[key]  ?? [] }
     func segmentIndex(_ key: String, default d: Int = 0)       -> Int    { segmented[key] ?? d }
     func durationValue(_ key: String, default d: Int = 900)    -> Int    { durations[key] ?? d }
+
+    /// L-41/L-54: builds state from a saved preset with every value clamped to
+    /// the effect's parameter schema. Preset JSON is persisted (and can drift
+    /// across versions or be hand-edited); unclamped values reach trap sites —
+    /// segmented indices into fixed arrays, UInt64 conversions of negative
+    /// intervals, and a ÷value Kelvin formatter. Keys absent from the schema
+    /// are dropped; keys absent from the preset keep their schema defaults.
+    static func sanitized(from preset: SavedEffectPreset, for effect: HueEffect) -> EffectParamState {
+        var state = EffectParamState()
+        state.load(from: effect.params)
+        for param in effect.params {
+            switch param {
+            case .slider(let key, _, _, let range, _, _):
+                if let v = preset.sliders[key] {
+                    state.sliders[key] = min(max(v, range.lowerBound), range.upperBound)
+                }
+            case .toggle(let key, _, _):
+                if let v = preset.toggles[key] { state.toggles[key] = v }
+            case .segmented(let key, _, let options, _):
+                if let idx = preset.segmented[key], !options.isEmpty {
+                    state.segmented[key] = max(0, min(options.count - 1, idx))
+                }
+            case .durationPicker(let key, _, _, let options, _):
+                if let secs = preset.durations[key], !options.isEmpty {
+                    state.durations[key] = options.min { abs($0 - secs) < abs($1 - secs) } ?? secs
+                }
+            case .colorSwatch(let key, _, _):
+                if let hsba = preset.colors[key] { state.colors[key] = Color.fromHSBA(hsba) }
+            case .colorPalette(let key, _, _, _):
+                if let arr = preset.palettes[key] { state.palettes[key] = arr.map { Color.fromHSBA($0) } }
+            }
+        }
+        return state
+    }
 }
 
 // MARK: - EffectsViewModel
@@ -633,19 +667,9 @@ final class EffectsViewModel: ObservableObject {
 
         select(effect)  // initialises paramState from default params
 
-        // Override with the saved snapshot
-        paramState.sliders   = preset.sliders
-        paramState.toggles   = preset.toggles
-        paramState.segmented = preset.segmented
-        paramState.durations = preset.durations
-        paramState.colors    = Dictionary(
-            uniqueKeysWithValues: preset.colors.map { (k, v) in (k, Color.fromHSBA(v)) }
-        )
-        paramState.palettes  = Dictionary(
-            uniqueKeysWithValues: preset.palettes.map { (k, vs) in
-                (k, vs.map { Color.fromHSBA($0) })
-            }
-        )
+        // L-41: apply the saved snapshot clamped to the schema — raw copies let
+        // drifted/tampered persisted values reach index/interval trap sites.
+        paramState = .sanitized(from: preset, for: effect)
 
         // Auto-apply immediately (same behaviour as tapping the effect card)
         if !effect.requiresForeground {
