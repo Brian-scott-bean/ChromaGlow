@@ -63,6 +63,11 @@ final class VisualizerEngine: SyncEngine {
     @ObservationIgnored nonisolated(unsafe) private var _lock = os_unfair_lock()
     @ObservationIgnored nonisolated(unsafe) private var _pending: RawFFTFrame? = nil
 
+    // MARK: Private — cached FFT (L-20)
+    /// Touched only by the single audio-tap thread (see AudioSpectrumProcessor
+    /// threading contract) — same single-writer justification as `_logCounter`.
+    @ObservationIgnored private let fft = AudioSpectrumProcessor()
+
     // MARK: Private — display link
     @ObservationIgnored private var displayLink: CADisplayLink?
     @ObservationIgnored private var linkTarget: DisplayLinkTarget?
@@ -77,79 +82,37 @@ final class VisualizerEngine: SyncEngine {
     // ── SyncEngine protocol ────────────────────────────────────
 
     /// Audio thread: FFT → write to pendingFrame. No Task, no actor hop.
+    /// L-20: FFT setup/window/scratch are cached in `fft` — the previous
+    /// inline pipeline rebuilt all of them on every ~43 Hz callback.
     nonisolated func process(buffer: AVAudioPCMBuffer, sampleRate: Float) -> SyncEngineOutput {
         guard let data = buffer.floatChannelData?[0] else { return .idle }
         let n = Int(buffer.frameLength)
-        guard n >= 64 else { return .idle }
 
-        let fftN  = 1 << Int(log2(Float(n)))
-        let halfN = fftN / 2
-        let log2n = vDSP_Length(log2(Float(fftN)))
-
-        // Hann window
-        var windowed = [Float](repeating: 0, count: fftN)
-        var window   = [Float](repeating: 0, count: fftN)
-        vDSP_hann_window(&window, vDSP_Length(fftN), Int32(vDSP_HANN_NORM))
-        vDSP_vmul(Array(UnsafeBufferPointer(start: data, count: fftN)),
-                  1, window, 1, &windowed, 1, vDSP_Length(fftN))
-
-        // RMS
-        var rms: Float = 0
-        vDSP_rmsqv(windowed, 1, &rms, vDSP_Length(fftN))
-        let overall = min(rms * 10.0, 1.0)
+        guard let spectrum = fft.analyze(data: data, frameCount: n, sampleRate: sampleRate) else { return .idle }
+        let halfN    = spectrum.halfN
+        let hzPerBin = spectrum.hzPerBin
+        let overall  = min(spectrum.rms * 10.0, 1.0)
 
         // DIAGNOSTIC: log ~1/sec (buffer arrives ~43/sec, so every 43 buffers)
         _logCounter += 1
         if _logCounter >= 43 {
             _logCounter = 0
             let log = Logger(subsystem: "com.lightshade.app", category: "SyncViz")
-            log.info("SYNC AUDIO: n=\(n) fftN=\(fftN) rms=\(rms, format: .fixed(precision: 4)) overall=\(overall, format: .fixed(precision: 3))")
+            log.info("SYNC AUDIO: n=\(n) fftN=\(spectrum.fftN) rms=\(spectrum.rms, format: .fixed(precision: 4)) overall=\(overall, format: .fixed(precision: 3))")
         }
 
-        // Split complex (safe pointer handling)
-        var realp = [Float](repeating: 0, count: halfN)
-        var imagp = [Float](repeating: 0, count: halfN)
-        windowed.withUnsafeBufferPointer { wBuf in
-            realp.withUnsafeMutableBufferPointer { rBuf in
-                imagp.withUnsafeMutableBufferPointer { iBuf in
-                    var split = DSPSplitComplex(realp: rBuf.baseAddress!, imagp: iBuf.baseAddress!)
-                    wBuf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: halfN) { cPtr in
-                        vDSP_ctoz(cPtr, 2, &split, 1, vDSP_Length(halfN))
-                    }
-                }
-            }
-        }
-
-        // FFT + magnitudes
-        guard let setup = vDSP_create_fftsetup(log2n, FFTRadix(FFT_RADIX2)) else { return .idle }
-        defer { vDSP_destroy_fftsetup(setup) }
-
-        var mags = [Float](repeating: 0, count: halfN)
-        realp.withUnsafeMutableBufferPointer { rBuf in
-            imagp.withUnsafeMutableBufferPointer { iBuf in
-                var split = DSPSplitComplex(realp: rBuf.baseAddress!, imagp: iBuf.baseAddress!)
-                vDSP_fft_zrip(setup, &split, 1, log2n, FFTDirection(FFT_FORWARD))
-                vDSP_zvabs(&split, 1, &mags, 1, vDSP_Length(halfN))
-            }
-        }
-        var scale: Float = 2.0 / Float(fftN)
-        vDSP_vsmul(mags, 1, &scale, &mags, 1, vDSP_Length(halfN))
-
-        let hzPerBin = sampleRate / Float(fftN)
         let bassEnd = max(1, Int(200 / hzPerBin))
         let midEnd  = max(bassEnd + 1, Int(2000 / hzPerBin))
         let highEnd = min(max(midEnd + 1, Int(16000 / hzPerBin)), halfN)
 
-        // Band averages
-        func avg(_ a: [Float]) -> Float {
-            guard !a.isEmpty else { return 0 }
-            var v: Float = 0; vDSP_meanv(a, 1, &v, vDSP_Length(a.count)); return v
-        }
-        let bass = min(avg(Array(mags[1..<min(bassEnd, halfN)])) * 30.0, 1.0)
-        let mid  = min(avg(Array(mags[min(bassEnd, halfN)..<min(midEnd, halfN)])) * 20.0, 1.0)
-        let high = min(avg(Array(mags[min(midEnd, halfN)..<min(highEnd, halfN)])) * 40.0, 1.0)
+        // Band averages — same bin arithmetic and scaling as before.
+        let bass = min(fft.average(bins: 1..<min(bassEnd, halfN)) * 30.0, 1.0)
+        let mid  = min(fft.average(bins: min(bassEnd, halfN)..<min(midEnd, halfN)) * 20.0, 1.0)
+        let high = min(fft.average(bins: min(midEnd, halfN)..<min(highEnd, halfN)) * 40.0, 1.0)
 
-        // 20 log-spaced bars
+        // 20 log-spaced bars (L-21: peak(bins:) uses an inclusive count, so
+        // each bar's top FFT bin now participates — bar 20 may read slightly
+        // higher than before, which is the corrected behavior).
         let minLog = log10(Float(20)); let maxLog = log10(Float(16000))
         var bars = [Float](repeating: 0, count: 20)
         for i in 0..<20 {
@@ -158,9 +121,7 @@ final class VisualizerEngine: SyncEngine {
             let bLow  = max(0, Int(fLow  / hzPerBin))
             let bHigh = min(halfN - 1, Int(fHigh / hzPerBin))
             guard bLow < bHigh else { continue }
-            var peak: Float = 0
-            vDSP_maxv(Array(mags[bLow...bHigh]), 1, &peak, vDSP_Length(bHigh - bLow))
-            bars[i] = min(peak * 15.0, 1.0)
+            bars[i] = min(fft.peak(bins: bLow...bHigh) * 15.0, 1.0)
         }
 
         // Write to pending (lock-free)

@@ -112,6 +112,7 @@
 		C0DEC0DE0108000000000001 /* MultiBridgeRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0108000000000000 /* MultiBridgeRoutingTests.swift */; };
 		C0DEC0DE0109000000000001 /* BridgeAnimationCorrectnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0109000000000000 /* BridgeAnimationCorrectnessTests.swift */; };
 		C0DEC0DE010A000000000001 /* BridgeCommandGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010A000000000000 /* BridgeCommandGate.swift */; };
+		C0DEC0DE0120000000000001 /* AudioSpectrumProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0120000000000000 /* AudioSpectrumProcessor.swift */; };
 		C0DEC0DE010B000000000001 /* GatedBulkWriteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */; };
 		C0DEC0DE010C000000000001 /* FailableDecodable.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010C000000000000 /* FailableDecodable.swift */; };
 		C0DEC0DE010D000000000001 /* NonDestructivePersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010D000000000000 /* NonDestructivePersistenceTests.swift */; };
@@ -338,6 +339,7 @@
 		C0DEC0DE0108000000000000 /* MultiBridgeRoutingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MultiBridgeRoutingTests.swift; path = ./HueHomeTests/MultiBridgeRoutingTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0109000000000000 /* BridgeAnimationCorrectnessTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationCorrectnessTests.swift; path = ./HueHomeTests/BridgeAnimationCorrectnessTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE010A000000000000 /* BridgeCommandGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeCommandGate.swift; path = HueHome/Core/Network/BridgeCommandGate.swift; sourceTree = "<group>"; };
+		C0DEC0DE0120000000000000 /* AudioSpectrumProcessor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioSpectrumProcessor.swift; path = HueHome/Core/Audio/AudioSpectrumProcessor.swift; sourceTree = "<group>"; };
 		C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GatedBulkWriteTests.swift; path = ./HueHomeTests/GatedBulkWriteTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE010C000000000000 /* FailableDecodable.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FailableDecodable.swift; path = HueHome/Core/Models/FailableDecodable.swift; sourceTree = "<group>"; };
 		C0DEC0DE010D000000000000 /* NonDestructivePersistenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NonDestructivePersistenceTests.swift; path = ./HueHomeTests/NonDestructivePersistenceTests.swift; sourceTree = "<group>"; };
@@ -527,6 +529,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		C0DEC0DE0121000000000000 /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				C0DEC0DE0120000000000000 /* AudioSpectrumProcessor.swift */,
+			);
+			name = Audio;
+			sourceTree = "<group>";
+		};
 		05E0DE7E33BBD7B45A6D8281 /* LightControl */ = {
 			isa = PBXGroup;
 			children = (
@@ -885,6 +895,7 @@
 			isa = PBXGroup;
 			children = (
 				B1LDGRP000000000000000001 /* App */,
+				C0DEC0DE0121000000000000 /* Audio */,
 				DASHBD000000000000000003 /* Dashboard */,
 				C0DEC0DE005B000000000005 /* Composer */,
 				7EDBB1B40FB409D94C0FC48C /* Keychain */,
@@ -1250,6 +1261,7 @@
 				C0DEC0DE0104000000000001 /* BridgePinnedTrustDelegate.swift in Sources */,
 				C0DEC0DE0106000000000001 /* SharedKeychainStore.swift in Sources */,
 				C0DEC0DE010A000000000001 /* BridgeCommandGate.swift in Sources */,
+				C0DEC0DE0120000000000001 /* AudioSpectrumProcessor.swift in Sources */,
 				C0DEC0DE0110000000000001 /* BridgePairingRegistrar.swift in Sources */,
 				C0DEC0DE0113000000000001 /* EntertainmentAreasView.swift in Sources */,
 				C0DEC0DE010C000000000001 /* FailableDecodable.swift in Sources */,

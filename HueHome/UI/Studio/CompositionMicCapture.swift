@@ -22,6 +22,11 @@ private enum ComposerMicLevels {
     nonisolated(unsafe) static var sMid: Float = 0
     nonisolated(unsafe) static var sTreble: Float = 0
 
+    /// L-20: cached FFT pipeline. Single-writer contract holds because the
+    /// composer-mic exclusivity handshake (`composerMicExclusiveBegan`)
+    /// guarantees only one engine's audio tap runs at a time.
+    nonisolated(unsafe) static let fft = AudioSpectrumProcessor()
+
     nonisolated static func reset() {
         os_unfair_lock_lock(&lock)
         sOverall = 0
@@ -32,67 +37,25 @@ private enum ComposerMicLevels {
     }
 
     /// FFT + band splits aligned with VisualizerEngine.process (same scaling).
+    /// L-20: runs on the cached AudioSpectrumProcessor — the previous inline
+    /// pipeline created/destroyed the FFT setup and reallocated every buffer
+    /// on each ~43 Hz callback.
     nonisolated static func analyze(buffer: AVAudioPCMBuffer, sampleRate: Float) {
         guard let data = buffer.floatChannelData?[0] else { return }
         let n = Int(buffer.frameLength)
-        guard n >= 64 else { return }
 
-        let fftN = 1 << Int(log2(Float(n)))
-        let halfN = fftN / 2
-        let log2n = vDSP_Length(log2(Float(fftN)))
+        guard let frame = fft.analyze(data: data, frameCount: n, sampleRate: sampleRate) else { return }
+        let halfN    = frame.halfN
+        let hzPerBin = frame.hzPerBin
+        let overallRaw = min(frame.rms * 10.0, 1.0)
 
-        var windowed = [Float](repeating: 0, count: fftN)
-        var window = [Float](repeating: 0, count: fftN)
-        vDSP_hann_window(&window, vDSP_Length(fftN), Int32(vDSP_HANN_NORM))
-        vDSP_vmul(Array(UnsafeBufferPointer(start: data, count: fftN)),
-                  1, window, 1, &windowed, 1, vDSP_Length(fftN))
-
-        var rms: Float = 0
-        vDSP_rmsqv(windowed, 1, &rms, vDSP_Length(fftN))
-        let overallRaw = min(rms * 10.0, 1.0)
-
-        var realp = [Float](repeating: 0, count: halfN)
-        var imagp = [Float](repeating: 0, count: halfN)
-        windowed.withUnsafeBufferPointer { wBuf in
-            realp.withUnsafeMutableBufferPointer { rBuf in
-                imagp.withUnsafeMutableBufferPointer { iBuf in
-                    var split = DSPSplitComplex(realp: rBuf.baseAddress!, imagp: iBuf.baseAddress!)
-                    wBuf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: halfN) { cPtr in
-                        vDSP_ctoz(cPtr, 2, &split, 1, vDSP_Length(halfN))
-                    }
-                }
-            }
-        }
-
-        guard let setup = vDSP_create_fftsetup(log2n, FFTRadix(FFT_RADIX2)) else { return }
-        defer { vDSP_destroy_fftsetup(setup) }
-
-        var mags = [Float](repeating: 0, count: halfN)
-        realp.withUnsafeMutableBufferPointer { rBuf in
-            imagp.withUnsafeMutableBufferPointer { iBuf in
-                var split = DSPSplitComplex(realp: rBuf.baseAddress!, imagp: iBuf.baseAddress!)
-                vDSP_fft_zrip(setup, &split, 1, log2n, FFTDirection(FFT_FORWARD))
-                vDSP_zvabs(&split, 1, &mags, 1, vDSP_Length(halfN))
-            }
-        }
-        var scale: Float = 2.0 / Float(fftN)
-        vDSP_vsmul(mags, 1, &scale, &mags, 1, vDSP_Length(halfN))
-
-        let hzPerBin = sampleRate / Float(fftN)
         let bassEnd = max(1, Int(200 / hzPerBin))
         let midEnd = max(bassEnd + 1, Int(2000 / hzPerBin))
         let highEnd = min(max(midEnd + 1, Int(16000 / hzPerBin)), halfN)
 
-        func avg(_ a: [Float]) -> Float {
-            guard !a.isEmpty else { return 0 }
-            var v: Float = 0
-            vDSP_meanv(a, 1, &v, vDSP_Length(a.count))
-            return v
-        }
-
-        let bassRaw = min(avg(Array(mags[1..<min(bassEnd, halfN)])) * 30.0, 1.0)
-        let midRaw = min(avg(Array(mags[min(bassEnd, halfN)..<min(midEnd, halfN)])) * 20.0, 1.0)
-        let trebleRaw = min(avg(Array(mags[min(midEnd, halfN)..<min(highEnd, halfN)])) * 40.0, 1.0)
+        let bassRaw = min(fft.average(bins: 1..<min(bassEnd, halfN)) * 30.0, 1.0)
+        let midRaw = min(fft.average(bins: min(bassEnd, halfN)..<min(midEnd, halfN)) * 20.0, 1.0)
+        let trebleRaw = min(fft.average(bins: min(midEnd, halfN)..<min(highEnd, halfN)) * 40.0, 1.0)
 
         let snap: Float = 0.3
         let atk: Float = 0.7
