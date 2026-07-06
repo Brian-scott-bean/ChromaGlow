@@ -117,6 +117,17 @@ final class SyncModeEngine {
     /// generation to the current value — if different, they bail silently.
     private var generation: Int = 0
 
+    /// True from start() until requestAndStart() finishes. Lets stop() reach
+    /// an in-flight start (permission prompt, entertainment handshake) via the
+    /// generation bump — before this, stop()'s early-return guard made those
+    /// windows unstoppable (L-19 class).
+    private var isStarting = false
+
+    /// Set when an audio interruption/backgrounding stopped a running sync;
+    /// the matching end/foreground event auto-restarts. Any explicit stop()
+    /// clears it so a user stop is never overridden by a zombie resume.
+    private var resumeAfterInterruption = false
+
     // MARK: Private — rate limiting
     private var lastSent: Date = .distantPast
     private var restInterval: TimeInterval = 0.150
@@ -144,6 +155,7 @@ final class SyncModeEngine {
     private let log = Logger(subsystem: "com.lightshade.app", category: "SyncMode")
 
     @ObservationIgnored nonisolated(unsafe) private var composerMicExclusiveObserver: NSObjectProtocol?
+    @ObservationIgnored nonisolated(unsafe) private var lifecycleObservers: [NSObjectProtocol] = []
 
     init(orchestrator: UnifiedOrchestrator) {
         self.orchestrator = orchestrator
@@ -158,6 +170,45 @@ final class SyncModeEngine {
                 self.log.info("Sync stopped — Composer claimed microphone")
             }
         }
+
+        // Interruption/background recovery. Previously absent: a phone call,
+        // Siri, or another app claiming the session silently killed sync with
+        // no restart path (the tap stayed installed but no buffers arrived).
+        // Pattern mirrors CompositionMicCapture, which already handled these.
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self,
+                  let info = note.userInfo,
+                  let typeVal = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: typeVal)
+            else { return }
+            switch type {
+            case .began:
+                self.pauseForInterruption(reason: "audio session interrupted")
+            case .ended:
+                self.resumeAfterInterruptionIfNeeded(reason: "interruption ended")
+            @unknown default:
+                break
+            }
+        })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.pauseForInterruption(reason: "app backgrounded")
+        })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.resumeAfterInterruptionIfNeeded(reason: "app foregrounded")
+        })
+
         Task { await loadEntertainmentConfigs() }
     }
 
@@ -165,6 +216,23 @@ final class SyncModeEngine {
         if let composerMicExclusiveObserver {
             NotificationCenter.default.removeObserver(composerMicExclusiveObserver)
         }
+        for observer in lifecycleObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    private func pauseForInterruption(reason: String) {
+        guard isRunning else { return }
+        stop()                          // clears resumeAfterInterruption…
+        resumeAfterInterruption = true  // …so re-arm it after
+        log.info("Sync paused — \(reason)")
+    }
+
+    private func resumeAfterInterruptionIfNeeded(reason: String) {
+        guard resumeAfterInterruption, !isRunning else { return }
+        resumeAfterInterruption = false
+        log.info("Sync resuming — \(reason)")
+        start()                         // full clean restart (permission, transport, tap)
     }
 
     /// The currently active engine instance.
@@ -201,12 +269,17 @@ final class SyncModeEngine {
     // MARK: - Start / Stop
 
     func start() {
-        guard !isRunning else { return }
+        guard !isRunning, !isStarting else { return }
         Task { await requestAndStart() }
     }
 
     func stop() {
-        guard isRunning || !stopFlag else { return }
+        // An explicit stop always cancels a pending interruption auto-resume,
+        // even when sync is already torn down (e.g. user taps Stop while a
+        // phone call has it paused). The interruption handler re-arms the flag
+        // right after calling stop().
+        resumeAfterInterruption = false
+        guard isRunning || !stopFlag || isStarting else { return }
 
         // 1. Bump generation — all in-flight Tasks with old generation are zombies
         generation += 1
@@ -254,18 +327,24 @@ final class SyncModeEngine {
     }
 
     private func requestAndStart() async {
+        isStarting = true
+        defer { isStarting = false }
+        let gen = generation
         switch AVAudioApplication.shared.recordPermission {
         case .granted:
-            await startCapture()
+            await startCapture(generation: gen)
         case .undetermined:
             let ok = await AVAudioApplication.requestRecordPermission()
-            if ok { await startCapture() } else { permissionDenied = true }
+            // L-19: bail if stop() ran while the system prompt was up —
+            // otherwise this in-flight start resurrects a sync the user ended.
+            guard generation == gen else { return }
+            if ok { await startCapture(generation: gen) } else { permissionDenied = true }
         default:
             permissionDenied = true
         }
     }
 
-    private func startCapture() async {
+    private func startCapture(generation gen: Int) async {
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.record, mode: .measurement, options: .duckOthers)
@@ -277,6 +356,18 @@ final class SyncModeEngine {
 
         // Try to start entertainment streaming (only if user explicitly selected one)
         await startEntertainmentIfAvailable()
+
+        // L-19: a stop() during the (up to 10 s) entertainment handshake must
+        // not be resurrected — roll back whatever the handshake just started.
+        guard generation == gen else {
+            if let entClient = entertainmentClient {
+                entertainmentClient = nil
+                transportMode = .rest
+                Task { await entClient.stopSession() }
+            }
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            return
+        }
 
         let eng  = AVAudioEngine()
         let node = eng.inputNode
