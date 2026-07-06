@@ -98,6 +98,11 @@ private enum ComposerMicLevels {
             return sTreble
         case .none, .tapTempo:
             return 0
+        case .beat, .onset:
+            // Beat/onset drives come from BeatClock/AudioFeatures, not a
+            // scalar mic level (mic demand still keeps the engine running
+            // so the clock can follow audio).
+            return 0
         }
     }
 }

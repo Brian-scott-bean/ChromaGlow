@@ -383,9 +383,9 @@ actor BridgeAnimationEngine {
             case .flicker: return 8  // organic noise
             case .swell: return 6    // asymmetric rise/fall
             }
-        case .cascade, .wave, .bounce:
+        case .cascade, .wave, .bounce, .chase, .comet, .pulseCenter, .spiral:
             return Self.maxSteps  // motion patterns need full 8 steps
-        case .scatter:
+        case .scatter, .twinkle:
             return 6  // pseudo-random, more steps for variety
         }
     }

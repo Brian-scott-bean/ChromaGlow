@@ -1892,6 +1892,13 @@ final class UnifiedOrchestrator {
                 paramBox.targetSpatialPositions = restPositions
                 paramBox.spatialLerpProgress = 1.0
             }
+            // Radial + angular geometry for the pulseCenter/spiral patterns
+            // (REST light order; the DTLS branch overrides in channel order).
+            let restGeometry = CompositionEngine.computeRadialAngular(
+                lightPositions: lightPositions, orderedLightIDs: compositionLightIDs
+            )
+            paramBox.radialPositions = restGeometry.radial
+            paramBox.angularPositions = restGeometry.angular
             print("[Composer] 📐 Spatial positions computed: \(paramBox.spatialPositions.count) lights, angle=\(String(format: "%.0f", paramBox.motion.motionAngle))°")
         }
 
@@ -1916,6 +1923,9 @@ final class UnifiedOrchestrator {
                         paramBox.spatialPositions = entPositions
                         paramBox.targetSpatialPositions = entPositions
                     }
+                    let entGeometry = CompositionEngine.computeRadialAngular(channels: entConfig.channels)
+                    paramBox.radialPositions = entGeometry.radial
+                    paramBox.angularPositions = entGeometry.angular
                     compositionEntRoomByBridge[bridgeID] = roomID
                     compositionEntParamBoxes[bridgeID] = paramBox
                     compositionEntTasks[bridgeID]?.cancel()

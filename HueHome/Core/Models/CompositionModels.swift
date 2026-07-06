@@ -168,6 +168,12 @@ struct MotionConfig: Codable, Equatable {
         case wave
         case scatter
         case bounce
+        // Phase-2 additions (decode falls back to .cascade on older builds):
+        case chase                      // stepped hot spot(s) with exponential tail
+        case comet                      // smooth traveling head + tail
+        case pulseCenter = "pulse_center"  // radial ripple out from the room center
+        case spiral                     // angular sweep around the room
+        case twinkle                    // per-light stochastic sparkle
     }
 
     var pattern: Pattern = .cascade
@@ -214,89 +220,167 @@ struct MotionConfig: Codable, Equatable {
         motionAngle = (try? c.decode(Double.self,  forKey: .motionAngle)) ?? -1
     }
 
-    /// Compute the phase position (0.0–1.0) for a specific light at a given time.
-    /// This phase is fed into PaletteConfig.color(at:) to determine what color the light should be.
-    func phase(lightIndex: Int, total: Int, time: Double) -> Double {
-        guard total > 0 else { return 0 }
-
-        // Speed 0-100 → period 20s (slowest) to 0.5s (fastest)
-        let period = 20.0 - (speed / 100.0) * 19.5
-        let normalizedTime = time / max(0.01, period)
-
-        let position: Double = {
-            let p = Double(lightIndex) / Double(max(1, total - 1))
-            return mirror ? abs(p - 0.5) * 2.0 : p
-        }()
-        let direction: Double = forward ? 1.0 : -1.0
-        let stagger = (offset / 100.0)
-
-        switch pattern {
-        case .static:
-            // Each light gets a fixed position in the palette (no animation)
-            return position
-
-        case .cascade:
-            // Sequential sweep across lights
-            let raw = (normalizedTime * direction + position * stagger)
-                .truncatingRemainder(dividingBy: 1.0)
-            return raw < 0 ? raw + 1.0 : raw
-
-        case .wave:
-            // Sinusoidal oscillation
-            let sine = sin(2.0 * .pi * (normalizedTime * direction + position * stagger))
-            return (sine + 1.0) / 2.0  // normalize to 0–1
-
-        case .scatter:
-            // Each light gets pseudo-random timing based on its index
-            let seed = Double(lightIndex * 7919 + 1)  // prime-based seed per light
-            let noise = sin(seed + normalizedTime * direction * 6.283)
-            return (noise + 1.0) / 2.0
-
-        case .bounce:
-            // Ping-pong across light array
-            let raw = (normalizedTime * direction * 2.0 + position * stagger)
-                .truncatingRemainder(dividingBy: 2.0)
-            let absRaw = abs(raw)
-            return absRaw <= 1.0 ? absRaw : 2.0 - absRaw
-        }
+    /// Cycle period in seconds derived from the speed slider
+    /// (0–100 → 20 s slowest … 0.5 s fastest).
+    var periodSeconds: Double {
+        20.0 - (speed / 100.0) * 19.5
     }
 
-    /// Compute phase using a pre-computed spatial position (0.0–1.0).
-    /// Used when entertainment area positions are available for physically-accurate patterns.
-    /// Mirror folds positions toward center for symmetric effects.
-    func phase(spatialPosition: Double, time: Double) -> Double {
-        let period = 20.0 - (speed / 100.0) * 19.5
-        let normalizedTime = time / max(0.01, period)
-        let position = mirror ? abs(spatialPosition - 0.5) * 2.0 : spatialPosition
+    /// One light's motion output for a frame: the palette phase (0–1, fed
+    /// into PaletteConfig.color(at:)) and an intensity weight (0–1) that
+    /// multiplies the envelope brightness.
+    ///
+    /// `spread` finally does what its label always promised — "tight beam vs
+    /// wide wash": at 100 every pattern's weight is 1 (full wash, identical
+    /// to the pre-Phase-2 output, so existing presets keep their look); as it
+    /// drops, brightness concentrates into the pattern's moving band/head.
+    ///
+    /// - Parameters:
+    ///   - position: normalized spatial (or index-derived) position 0–1.
+    ///   - radial: normalized distance from the room centroid (nil → derived
+    ///     from `position` by center-folding). Used by pulseCenter.
+    ///   - angular: normalized angle around the centroid (nil → `position`).
+    ///     Used by spiral.
+    ///   - lightIndex: stable per-light index (hash seed for scatter/twinkle).
+    ///   - time: motion time in seconds (already speed-warped by the caller
+    ///     when the reaction speed target is active).
+    ///   - overridePeriod: beat-locked cycle period (motionBeatsPerCycle ×
+    ///     beat interval); nil → the speed slider's period.
+    func sample(
+        position: Double,
+        radial: Double?,
+        angular: Double?,
+        lightIndex: Int,
+        time: Double,
+        overridePeriod: Double? = nil
+    ) -> (phase: Double, weight: Double) {
+        let period = max(0.05, overridePeriod ?? periodSeconds)
+        let nt = time / period
         let direction: Double = forward ? 1.0 : -1.0
+        let pos = mirror ? abs(position - 0.5) * 2.0 : position
         let stagger = offset / 100.0
+        let wash = min(1.0, max(0.0, spread / 100.0))   // 1 = full wash, 0 = tight beam
+
+        func frac(_ v: Double) -> Double {
+            let f = v.truncatingRemainder(dividingBy: 1.0)
+            return f < 0 ? f + 1 : f
+        }
+        /// Cyclic distance between two 0–1 positions (0…0.5).
+        func cyclicDistance(_ a: Double, _ b: Double) -> Double {
+            let d = abs(a - b).truncatingRemainder(dividingBy: 1.0)
+            return min(d, 1.0 - d)
+        }
+        func smoothstep(_ v: Double) -> Double {
+            let t = min(1, max(0, v))
+            return t * t * (3 - 2 * t)
+        }
+        /// Band intensity: 1 at the front, falling off by distance; blended
+        /// toward 1 by `wash` so spread=100 reproduces the legacy full wash.
+        func bandWeight(distanceFromFront d: Double) -> Double {
+            let raw = smoothstep(1.0 - d / 0.35)
+            return 1.0 - (1.0 - wash) * (1.0 - raw)
+        }
+        /// Deterministic per-light hash → 0–1.
+        func hash01(_ index: Int, _ cell: Int) -> Double {
+            let v = sin(Double(index &* 7919 &+ cell &* 104729) + 0.731) * 43758.5453
+            return v - floor(v)
+        }
 
         switch pattern {
         case .static:
-            return position
+            return (pos, 1.0)
 
         case .cascade:
-            let raw = (normalizedTime * direction + position * stagger)
-                .truncatingRemainder(dividingBy: 1.0)
-            return raw < 0 ? raw + 1.0 : raw
+            let phase = frac(nt * direction + pos * stagger)
+            let front = frac(nt * direction)
+            return (phase, bandWeight(distanceFromFront: cyclicDistance(pos, front)))
 
         case .wave:
-            let sine = sin(2.0 * .pi * (normalizedTime * direction + position * stagger))
-            return (sine + 1.0) / 2.0
+            let sine = sin(2.0 * .pi * (nt * direction + pos * stagger))
+            let phase = (sine + 1.0) / 2.0
+            let crest = frac(nt * direction)
+            return (phase, bandWeight(distanceFromFront: cyclicDistance(pos, crest)))
 
         case .scatter:
-            // Scatter is inherently non-directional — hash the position for pseudo-random seed
-            let seed = spatialPosition * 7919.0 + 1.0
-            let noise = sin(seed + normalizedTime * direction * 6.283)
-            return (noise + 1.0) / 2.0
+            let seed = pos * 7919.0 + Double(lightIndex) + 1.0
+            let noise = sin(seed + nt * direction * 6.283)
+            return ((noise + 1.0) / 2.0, 1.0)
 
         case .bounce:
-            let raw = (normalizedTime * direction * 2.0 + position * stagger)
+            let raw = (nt * direction * 2.0 + pos * stagger)
                 .truncatingRemainder(dividingBy: 2.0)
             let absRaw = abs(raw)
-            return absRaw <= 1.0 ? absRaw : 2.0 - absRaw
+            let phase = absRaw <= 1.0 ? absRaw : 2.0 - absRaw
+            // Head ping-pongs across the space (non-cyclic distance).
+            let f = frac(nt)
+            let head = f <= 0.5 ? f * 2.0 : 2.0 - f * 2.0
+            return (phase, bandWeight(distanceFromFront: abs(pos - head)))
+
+        case .chase:
+            // Discrete stepped head(s) — the theater-chase holiday classic.
+            // `offset` adds extra heads (1–4); `spread` sets the tail length.
+            let heads = 1 + Int((stagger * 3.0).rounded())
+            let steps = 12.0
+            let headPos = floor(frac(nt * direction) * steps) / steps
+            var nearest = 1.0
+            for h in 0..<heads {
+                let hp = frac(headPos + Double(h) / Double(heads))
+                // Directional distance BEHIND the head (tail trails it).
+                let behind = frac((hp - pos) * direction)
+                nearest = min(nearest, behind)
+            }
+            let tail = 0.05 + wash * 0.6
+            let weight = exp(-nearest / tail)
+            return (frac(nearest), weight)
+
+        case .comet:
+            // Smooth traveling head with an exponential tail; the palette
+            // runs down the tail (head = palette start).
+            let head = frac(nt * direction)
+            let behind = frac((head - pos) * direction)
+            let tail = 0.08 + wash * 0.5
+            return (frac(behind), exp(-behind / tail))
+
+        case .pulseCenter:
+            // Ripple expanding from the room center. Radial position from
+            // entertainment coordinates when available; otherwise fold the
+            // linear position around its middle.
+            let r = radial ?? abs(position - 0.5) * 2.0
+            let ring = frac(nt * direction)
+            let phase = frac(nt * direction + r * stagger)
+            return (phase, bandWeight(distanceFromFront: abs(r - ring)))
+
+        case .spiral:
+            // Angular sweep around the centroid, twisted by radius.
+            let a = angular ?? position
+            let r = radial ?? abs(position - 0.5) * 2.0
+            let phase = frac(nt * direction + a + r * stagger * 0.5)
+            let front = frac(nt * direction)
+            return (phase, bandWeight(distanceFromFront: cyclicDistance(a, front)))
+
+        case .twinkle:
+            // Per-light stochastic sparkles on a deterministic hash grid —
+            // classic holiday-string shimmer. `spread` lifts the background
+            // wash between sparkles; `offset` raises sparkle density.
+            let interval = max(0.15, period / 8.0)
+            let jitter = hash01(lightIndex, 777)
+            let cellPos = time / interval + jitter
+            let cell = Int(floor(cellPos))
+            let u = cellPos - floor(cellPos)
+            let density = 0.25 + stagger * 0.45
+            let fires = hash01(lightIndex, cell) < density
+            let sparkle = fires ? sin(.pi * u) : 0.0
+            let floorLevel = wash * 0.45
+            let weight = max(floorLevel, sparkle)
+            let phase = hash01(lightIndex, cell &* 31)
+            return (phase, weight)
         }
     }
+
+    // NOTE (Phase 2): the legacy `phase(lightIndex:total:time:)` and
+    // `phase(spatialPosition:time:)` functions were removed — `sample()` is
+    // the single motion entry point and additionally returns the intensity
+    // weight that makes `spread` functional.
 }
 
 // MARK: - EnvelopeConfig
@@ -433,7 +517,9 @@ struct ReactionConfig: Codable, Equatable {
         case micBass = "mic_bass"
         case micMid = "mic_mid"
         case micTreble = "mic_treble"
-        case tapTempo = "tap_tempo"
+        case tapTempo = "tap_tempo"     // follows the shared BeatClock (legacy name kept for saved presets)
+        case beat                        // BeatClock beat envelope (audio-followed, tapped, or manual)
+        case onset                       // transient hits from the onset detector
     }
 
     enum Target: String, Codable, CaseIterable, Hashable {
@@ -445,9 +531,19 @@ struct ReactionConfig: Codable, Equatable {
     var source: Source = .none
     var sensitivity: Double = 70    // 0-100
     var targets: [Target] = [.brightness]
-    var smoothing: Double = 30      // 0-100 (response lag)
+    var smoothing: Double = 30      // 0-100 (response lag — one-pole τ 0…0.5 s)
     var intensity: Double = 70      // 0-100 (override strength)
-    var threshold: Double = 10      // 0-100 (noise gate)
+    var threshold: Double = 10      // 0-100 (noise gate, mic sources)
+
+    // ── Phase-2 beat fields (all additive; decode falls back safely) ──
+    /// Trigger every N beats for the color target: 0.25/0.5/1/2/4.
+    var quantizeBeats: Double = 1
+    /// Palette-phase advance per quantized trigger (0–1).
+    var colorStepPerTrigger: Double = 0.25
+    /// 0 = off; otherwise one motion cycle is locked to exactly N beats.
+    var motionBeatsPerCycle: Double = 0
+    /// 0–100 → per-beat brightness-punch decay τ 0.08–0.6 s.
+    var punchDecay: Double = 40
 
     init(
         source: Source = .none,
@@ -455,7 +551,11 @@ struct ReactionConfig: Codable, Equatable {
         targets: [Target] = [.brightness],
         smoothing: Double = 30,
         intensity: Double = 70,
-        threshold: Double = 10
+        threshold: Double = 10,
+        quantizeBeats: Double = 1,
+        colorStepPerTrigger: Double = 0.25,
+        motionBeatsPerCycle: Double = 0,
+        punchDecay: Double = 40
     ) {
         self.source = source
         self.sensitivity = sensitivity
@@ -463,10 +563,15 @@ struct ReactionConfig: Codable, Equatable {
         self.smoothing = smoothing
         self.intensity = intensity
         self.threshold = threshold
+        self.quantizeBeats = quantizeBeats
+        self.colorStepPerTrigger = colorStepPerTrigger
+        self.motionBeatsPerCycle = motionBeatsPerCycle
+        self.punchDecay = punchDecay
     }
 
     private enum CodingKeys: String, CodingKey {
         case source, sensitivity, targets, smoothing, intensity, threshold
+        case quantizeBeats, colorStepPerTrigger, motionBeatsPerCycle, punchDecay
     }
 
     /// Migration-safe decode (M-13): missing/invalid fields fall back to
@@ -479,37 +584,40 @@ struct ReactionConfig: Codable, Equatable {
         smoothing   = (try? c.decode(Double.self,   forKey: .smoothing))   ?? 30
         intensity   = (try? c.decode(Double.self,   forKey: .intensity))   ?? 70
         threshold   = (try? c.decode(Double.self,   forKey: .threshold))   ?? 10
+        quantizeBeats       = (try? c.decode(Double.self, forKey: .quantizeBeats))       ?? 1
+        colorStepPerTrigger = (try? c.decode(Double.self, forKey: .colorStepPerTrigger)) ?? 0.25
+        motionBeatsPerCycle = (try? c.decode(Double.self, forKey: .motionBeatsPerCycle)) ?? 0
+        punchDecay          = (try? c.decode(Double.self, forKey: .punchDecay))          ?? 40
     }
 
     /// Whether this reaction config requires microphone access.
+    /// `.beat` counts: the clock's audio-follow is the headline experience
+    /// (a tapped/manual clock still works if permission is denied — the
+    /// beat envelope comes from BeatClock, not the mic level).
     var requiresMic: Bool {
         switch source {
-        case .micAmplitude, .micBass, .micMid, .micTreble: return true
+        case .micAmplitude, .micBass, .micMid, .micTreble, .onset, .beat: return true
         case .none, .tapTempo: return false
         }
     }
 
-    /// Apply the reaction modifier to a base brightness value.
-    /// audioLevel: 0.0–1.0 (normalized amplitude from mic or tap).
-    func apply(baseBrightness: Double, audioLevel: Float, time: Double) -> Double {
-        guard source != .none else { return baseBrightness }
+    /// Per-beat punch decay time constant in seconds.
+    var punchDecayTau: Double {
+        0.08 + min(100, max(0, punchDecay)) / 100.0 * 0.52
+    }
 
-        let level = Double(audioLevel)
+    /// Noise-gate + sensitivity curve for a mic-derived level (0–1).
+    func shapedMicLevel(_ level: Double) -> Double {
         let sens = sensitivity / 100.0
         let thresh = threshold / 100.0
-        let inten = intensity / 100.0
-
-        // Apply threshold (noise gate)
         let gated = max(0, level - thresh) / max(0.01, 1.0 - thresh)
+        return min(1.0, gated * (0.5 + sens * 1.5))
+    }
 
-        // Apply sensitivity
-        let reactive = min(1.0, gated * (0.5 + sens * 1.5))
-
-        // Blend: base * (1 - intensity) + base * reactive * intensity
-        if targets.contains(.brightness) {
-            return baseBrightness * (1.0 - inten + inten * reactive)
-        }
-        return baseBrightness
+    /// Brightness blend for a smoothed reaction drive (0–1).
+    func brightnessScale(drive: Double) -> Double {
+        let inten = intensity / 100.0
+        return 1.0 - inten + inten * min(1.0, max(0.0, drive))
     }
 }
 

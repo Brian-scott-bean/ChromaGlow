@@ -117,6 +117,7 @@
 		C0DEC0DE0123000000000001 /* TempoEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0123000000000000 /* TempoEstimator.swift */; };
 		C0DEC0DE0124000000000001 /* BeatClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0124000000000000 /* BeatClock.swift */; };
 		C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */; };
+		C0DEC0DE0126000000000001 /* CompositionReactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */; };
 		C0DEC0DE010B000000000001 /* GatedBulkWriteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */; };
 		C0DEC0DE010C000000000001 /* FailableDecodable.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010C000000000000 /* FailableDecodable.swift */; };
 		C0DEC0DE010D000000000001 /* NonDestructivePersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010D000000000000 /* NonDestructivePersistenceTests.swift */; };
@@ -348,6 +349,7 @@
 		C0DEC0DE0123000000000000 /* TempoEstimator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TempoEstimator.swift; path = HueHome/Core/Audio/TempoEstimator.swift; sourceTree = "<group>"; };
 		C0DEC0DE0124000000000000 /* BeatClock.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatClock.swift; path = HueHome/Core/Audio/BeatClock.swift; sourceTree = "<group>"; };
 		C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioFeatureCoreTests.swift; path = ./HueHomeTests/AudioFeatureCoreTests.swift; sourceTree = "<group>"; };
+		C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionReactionTests.swift; path = ./HueHomeTests/CompositionReactionTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GatedBulkWriteTests.swift; path = ./HueHomeTests/GatedBulkWriteTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE010C000000000000 /* FailableDecodable.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FailableDecodable.swift; path = HueHome/Core/Models/FailableDecodable.swift; sourceTree = "<group>"; };
 		C0DEC0DE010D000000000000 /* NonDestructivePersistenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NonDestructivePersistenceTests.swift; path = ./HueHomeTests/NonDestructivePersistenceTests.swift; sourceTree = "<group>"; };
@@ -882,6 +884,7 @@
 				RZBLD000000000000000003 /* RoomAndZoneDisplayModelBuilderTests.swift */,
 				C0DEC0DE005B000000000004 /* CompositionRoomPriorityScorerTests.swift */,
 				C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */,
+				C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */,
 				C0DEC0DE006B000000000004 /* CompositionLightResolverTests.swift */,
 				C0DEC0DE007B000000000004 /* ComposerFetchPathParityTests.swift */,
 				C0DEC0DE008C000000000004 /* OrchestratorCacheDemoTests.swift */,
@@ -1355,6 +1358,7 @@
 				RZBLD000000000000000004 /* RoomAndZoneDisplayModelBuilderTests.swift in Sources */,
 				C0DEC0DE005B000000000003 /* CompositionRoomPriorityScorerTests.swift in Sources */,
 				C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */,
+				C0DEC0DE0126000000000001 /* CompositionReactionTests.swift in Sources */,
 				C0DEC0DE006B000000000003 /* CompositionLightResolverTests.swift in Sources */,
 				C0DEC0DE007B000000000003 /* ComposerFetchPathParityTests.swift in Sources */,
 				C0DEC0DE008C000000000003 /* OrchestratorCacheDemoTests.swift in Sources */,

@@ -925,10 +925,13 @@ final class StudioViewModel {
             }
             let tier = preset.capabilityTier
             if tier == .bridgeOptimized {
-                let phase = preset.motion.phase(lightIndex: 0, total: 1, time: 0)
+                let phase = preset.motion.sample(
+                    position: 0, radial: nil, angular: nil, lightIndex: 0, time: 0
+                ).phase
                 let color = preset.palette.color(at: phase)
-                var brightnessNorm = preset.envelope.value(at: 0)
-                brightnessNorm = preset.reaction.apply(baseBrightness: brightnessNorm, audioLevel: 0, time: 0)
+                // tier == .bridgeOptimized guarantees reaction.source == .none,
+                // so there is no reaction term in this one-shot snapshot.
+                let brightnessNorm = preset.envelope.value(at: 0)
                 let brightnessPct = min(100.0, max(1.0, brightnessNorm * 100.0))
 
                 if preset.palette.mode == .temperature {
