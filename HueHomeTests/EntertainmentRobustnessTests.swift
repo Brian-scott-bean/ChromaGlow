@@ -154,6 +154,36 @@ final class EntertainmentRobustnessTests: XCTestCase {
         XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-rc"))
     }
 
+    // ──────────────────────────────────────────────
+    // MARK: - M-10 follow-through: terminal failure drives REST failover
+    // ──────────────────────────────────────────────
+
+    func testTerminalFailureTearsDownFlagsAndResetsOnRestart() async {
+        let spy = EntertainmentSpyClient(bridgeID: "bridge-1", bridgeName: "Test",
+                                         ip: "192.0.2.1", token: "t")
+        let client = HueEntertainmentClient(bridgeIP: "192.0.2.1",
+                                            username: "user",
+                                            clientKeyHex: "ZZ-not-hex",
+                                            restClient: spy)
+        await client.seedSessionForTesting(configID: "cfg-term")
+
+        await client.noteTerminalFailure()
+
+        let failed = await client.isTerminallyFailed
+        XCTAssertTrue(failed,
+            "terminal failure must be observable so owning render loops can fail over to REST")
+        XCTAssertEqual(spy.actions.map(\.action), ["stop"],
+            "abandonment must best-effort stop the configuration on the bridge")
+        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-term"),
+            "a terminally failed session must leave the registry — the stuck-session cleanup would skip an 'owned' dead config forever")
+
+        // The next startSession clears the flag before opening (this one
+        // throws on the invalid key, but the reset precedes the open).
+        _ = try? await client.startSession(configID: "cfg-term-2")
+        let resetFlag = await client.isTerminallyFailed
+        XCTAssertFalse(resetFlag, "startSession must reset the terminal-failure flag")
+    }
+
     func testStartSessionRegistersBeforeRESTActivate() async {
         // The cleanup race (loadAll during the DTLS handshake) is closed by
         // registering BEFORE action=start. The failed-open path must still

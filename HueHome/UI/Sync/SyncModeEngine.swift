@@ -511,7 +511,20 @@ final class SyncModeEngine {
             (id: UInt8(ch.id), x: x, y: y, brightness: brightness)
         }
 
-        Task {
+        let capturedGen = generation
+        Task { [weak self] in
+            guard let self else { return }
+            // Mid-session DTLS failure: once the client's bounded reconnect
+            // (M-10) is exhausted, flip to REST instead of streaming into a
+            // dead socket — the next frame takes the existing REST path.
+            if await entClient.isTerminallyFailed {
+                guard self.generation == capturedGen else { return }
+                self.entertainmentClient = nil
+                self.transportMode = .rest
+                self.entertainmentError = "Streaming connection lost — switched to REST"
+                self.log.warning("Entertainment terminally failed — switching Sync to REST")
+                return
+            }
             await entClient.send(channels: channelData)
         }
     }

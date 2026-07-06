@@ -98,6 +98,11 @@ actor HueEntertainmentClient {
     private var reconnectAttempts = 0
     private static let maxReconnectAttempts = 3
 
+    /// True once the bounded reconnect has been exhausted and the session
+    /// torn down. Owning render loops poll this to fail over to REST instead
+    /// of streaming into a dead socket. Reset by the next startSession.
+    private(set) var isTerminallyFailed = false
+
     private let log = Logger(subsystem: "com.lightshade.app", category: "Entertainment")
 
     // MARK: - App-owned session registry (M-06)
@@ -152,6 +157,7 @@ actor HueEntertainmentClient {
     /// 2. Open DTLS connection to bridge:2100
     func startSession(configID: String) async throws {
         self.configID = configID
+        isTerminallyFailed = false
         state = .connecting
         log.info("Starting entertainment session for config \(configID)")
 
@@ -392,7 +398,7 @@ actor HueEntertainmentClient {
             // otherwise the stuck-session cleanup would skip this dead-but-
             // "owned" config forever and the bridge would stay locked.
             log.error("Entertainment reconnect abandoned after \(Self.maxReconnectAttempts) attempts — tearing session down")
-            Task { [weak self] in await self?.sendBestEffortStop() }
+            Task { [weak self] in await self?.noteTerminalFailure() }
             return
         }
         reconnectAttempts += 1
@@ -402,6 +408,21 @@ actor HueEntertainmentClient {
             guard !Task.isCancelled else { return }
             await self?.attemptReconnect()
         }
+    }
+
+    /// Marks the session terminally failed and tears it down (unregister +
+    /// best-effort action=stop). Internal — not private — so the robustness
+    /// tests can drive the abandonment path without a live DTLS socket.
+    func noteTerminalFailure() async {
+        isTerminallyFailed = true
+        await sendBestEffortStop()
+    }
+
+    /// TEST SEAM: seeds an owned session (configID + registry entry) without
+    /// a DTLS socket so unit tests can exercise the terminal-failure teardown.
+    func seedSessionForTesting(configID: String) {
+        self.configID = configID
+        Self.registerActiveSession(configID: configID)
     }
 
     private func attemptReconnect() async {

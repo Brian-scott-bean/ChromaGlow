@@ -1910,6 +1910,8 @@ final class UnifiedOrchestrator {
                     compositionEntRoomByBridge[bridgeID] = roomID
                     compositionEntParamBoxes[bridgeID] = paramBox
                     compositionEntTasks[bridgeID]?.cancel()
+                    let capturedRoom = room
+                    let capturedTier = tier
                     compositionEntTasks[bridgeID] = Task { [weak self] in
                         guard let self else { return }
                         await self.runCompositionEntertainment(
@@ -1917,6 +1919,15 @@ final class UnifiedOrchestrator {
                             channelIDs: channelIDs,
                             paramBox: paramBox,
                             gamut: compositionGamut
+                        )
+                        // M-10 follow-through: the loop exits early when the
+                        // client's bounded reconnect is exhausted. Fail the
+                        // room over to the REST scheduler so the show keeps
+                        // running instead of freezing on the last frame.
+                        guard !Task.isCancelled, await entClient.isTerminallyFailed else { return }
+                        await self.failCompositionEntertainmentToREST(
+                            bridgeID: bridgeID, roomID: roomID, room: capturedRoom,
+                            paramBox: paramBox, gamut: compositionGamut, tier: capturedTier
                         )
                     }
                     await refreshCompositionMicDemand()
@@ -2089,6 +2100,10 @@ final class UnifiedOrchestrator {
         let startTime = CFAbsoluteTimeGetCurrent()
 
         while !Task.isCancelled {
+            // Mid-session DTLS failure: once the client's bounded reconnect
+            // (M-10) is exhausted, stop rendering into a dead socket — the
+            // owning task's tail then fails this room over to REST.
+            if await entClient.isTerminallyFailed { break }
             await refreshCompositionMicDemand()
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
             let audioLevel = CompositionMicCapture.reactionAudioLevel(for: paramBox.reaction)
@@ -2110,6 +2125,45 @@ final class UnifiedOrchestrator {
 
             try? await Task.sleep(nanoseconds: frameInterval)
         }
+    }
+
+    /// Mid-session DTLS→REST failover: called from the entertainment frame
+    /// task's tail after its loop exits with the client terminally failed
+    /// (bounded M-10 reconnect exhausted). Cleans this bridge's entertainment
+    /// bookkeeping and re-enters startCompositionMode on the REST path with
+    /// the SAME live paramBox, so user edits and mic demand carry over.
+    private func failCompositionEntertainmentToREST(
+        bridgeID: String,
+        roomID: String,
+        room: RoomDisplayItem,
+        paramBox: CompositionParamBox,
+        gamut: HueColorUtils.Gamut,
+        tier: CompositionTier
+    ) async {
+        // Ownership check (generation-equivalent): stopCompositionMode or a
+        // replacement start already cleaned this key — never resurrect.
+        guard compositionEntRoomByBridge[bridgeID] == roomID else { return }
+        print("[Composer] ⚠ Entertainment session lost for room=\(roomID) — failing over to REST")
+        compositionEntParamBoxes.removeValue(forKey: bridgeID)
+        compositionEntTasks.removeValue(forKey: bridgeID)   // this task; loop already ended
+        compositionEntRoomByBridge.removeValue(forKey: bridgeID)
+        entertainmentConfigsByBridge.removeValue(forKey: bridgeID)
+        if let entClient = studioEntClients[bridgeID] {
+            await entClient.stopSession()   // no-op post-teardown (configID cleared)
+            studioEntClients.removeValue(forKey: bridgeID)
+        }
+        // preferEntertainment: false — never reconnect-loop back into DTLS;
+        // preset: nil — skip the bridge-stored branch, land in the REST
+        // scheduler (startCompositionMode bumps the room generation, so all
+        // existing guards hold).
+        await startCompositionMode(
+            room: room,
+            paramBox: paramBox,
+            gamutOverride: gamut,
+            preferEntertainment: false,
+            tier: tier,
+            preset: nil
+        )
     }
 
     /// Composition render loop via REST — group-level color + brightness.
