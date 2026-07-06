@@ -48,6 +48,43 @@
 
 ---
 
+## 2026-07-06 - [Claude] Phase 2: DJ-grade audio core + world-class motion engine (4 commits) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (continues the Phase-1 session below)
+
+### Did
+- `5aa391b` Core/Audio pure trio: AudioFeatureExtractor (AGC bands, spectral-flux onsets, 6 s onset
+  ring), TempoEstimator (windowed autocorr + comb, smallest-strong-lag beats the subharmonic trap,
+  hysteresis, beat phase), BeatClock (tap/manual/audio-follow, ≤30 ms phase nudges, BeatSnapshot
+  mirror for render threads). 20 synthetic-signal tests.
+- `ff97e9c` Motion/reaction engine: MotionConfig.sample() → (phase, weight); **spread + randomize +
+  smoothing + color/speed targets all functional** (were dead knobs); 5 new patterns (chase, comet,
+  pulseCenter, spiral, twinkle) with real radial/angular room geometry; beat-locked cycles
+  (motionBeatsPerCycle), quantized color stepping, per-beat brightness punch. All Codable additions
+  migration-safe. 16 new tests.
+- `1484b3f` AudioAnalysisEngine: single capture owner (demand refcounts, interruption recovery,
+  buffer fan-out, ~2 Hz tempo pass → BeatClock). CompositionMicCapture + the exclusivity handshake
+  DELETED; Sync engines consume a tap; audit L-05 closed. Session stops ducking music (DJ req).
+- Editor: Spread/Randomize/Attack/Decay/DutyCycle controls; beat panel (live BPM, Tap/Auto/Sync-1,
+  punch decay, quantize, beats-per-cycle); mic-denied toast (dead wire closed). Holiday presets
+  now use the new math (chase/twinkle/comet; NYE is beat-locked).
+
+### Working
+- Full suite 241/241 green on iPhone 15 / iOS 17.0 after every commit; builds gated per commit.
+
+### Left
+- On-device: BPM lock on real music, new-pattern spatial character, un-ducked playback (audit doc §4b).
+- Phase 3 (performance surface: crossfader/pads/queue — also resolves the .studioStartMicSync dead
+  wire), Phase 4 (step sequencer, richer palettes) per approved plan.
+
+### Gotchas
+- TempoEstimator MUST use windowed autocorrelation + smallest-strong-lag: fractional beat periods
+  split energy across adjacent integer lags and a plain argmax picks the half-tempo subharmonic.
+- spread=100 must keep motion weight ≡ 1 — that is what preserves every existing preset's look.
+- AudioAnalysisEngine buffer-tap closures are @Sendable and run on the audio thread: no MainActor
+  property reads (use nonisolated(unsafe) snapshots à la tapEngineType).
+
 ## 2026-07-06 - [Claude] Composer/Studio/mic audit + Phase-1 reliability hardening (8 commits) — LOCAL
 
 ### Branch

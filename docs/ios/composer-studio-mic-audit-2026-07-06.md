@@ -66,6 +66,24 @@ Unit tests cannot open a live DTLS socket; these need a physical bridge run:
 
 ---
 
+## 4b. Phase 2 addendum (2026-07-06, same session)
+
+Phase 2 (DJ foundation) landed in four commits after Phase 1:
+
+- `5aa391b` **Audio core:** `AudioFeatureExtractor` (AGC-normalized bands, spectral-flux onsets), `TempoEstimator` (60–180 BPM, subharmonic-safe smallest-strong-lag selection, hysteresis), `BeatClock` (tap/manual/audio-follow with ≤30 ms phase corrections) — 20 unit tests on synthetic click tracks.
+- `ff97e9c` **Motion + reactions:** `MotionConfig.sample()` returns phase + per-light intensity weight → **`spread` is functional** (beam↔wash; spread=100 preserves legacy look). **Five new patterns:** chase, comet, pulseCenter, spiral, twinkle (radial/angular geometry from entertainment positions). **`randomize` is functional.** All three reaction targets implemented: brightness (per-beat punch), color (quantized palette stepping), speed (warped time + `motionBeatsPerCycle` beat lock). **`smoothing` is functional.** New sources `.beat`/`.onset`; all fields additive/migration-safe. 16 new tests.
+- `1484b3f` **Unified capture:** `AudioAnalysisEngine` owns the one AVAudioSession/engine; `CompositionMicCapture` and the `.composerMicExclusiveBegan` handshake are deleted; Sync tab is a buffer-tap consumer; L-05 closed properly. Session no longer ducks music (`.mixWithOthers`) — required for DJ use.
+- (this commit) **Editor + presets:** Spread slider (Motion), Randomize toggle (Palette), Attack/Decay/Duty-Cycle sliders (Envelope, shape-contextual), beat controls (live BPM readout, Tap/Auto/Sync-1, punch decay, quantize + color step, beats-per-cycle lock); `.compositionMicPermissionDenied` surfaced as a Studio status toast (dead wire closed). Holiday presets upgraded to the new math: Christmas→chase, Winter Wonderland→twinkle, Halloween→comet, Diwali→twinkle, NYE→beat-locked multi-head chase (new-install seeds; existing libraries untouched by design).
+
+Remaining dead wire: `.studioStartMicSync` (Studio mic/gaming cards) — owned by Phase 3, where the performance surface replaces those cards' intent.
+
+On-device additions to the §4 checklist:
+- [ ] Play 120–128 BPM music near the phone with a `.beat` composition → BPM readout locks within ~8 s; lights pulse on the beat over DTLS.
+- [ ] Tap Tempo 4× → clock pins; "Auto" unpins and re-follows audio.
+- [ ] Chase/comet/twinkle/pulseCenter/spiral patterns on the entertainment area — verify spatial character matches the room layout.
+- [ ] Spread slider live-morphs cascade from full wash to a tight traveling beam.
+- [ ] Sync tab: music from this phone keeps playing un-ducked while sync runs.
+
 ## 5. Next phases (approved plan)
 
 - **Phase 2:** unified `AudioAnalysisEngine` (single capture owner, kills the exclusivity handshake) + `AudioFeatureExtractor` (AGC, spectral-flux onset) + `TempoEstimator` (BPM) + `BeatClock`; `CompositionEngine.render` gains `AudioFeatures` + `BeatSnapshot`; dead reaction knobs become real; envelope sliders exposed.

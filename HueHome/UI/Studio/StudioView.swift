@@ -164,6 +164,11 @@ struct StudioView: View {
                     // ── Zone B: Living Card Grid ──────────────────
                     cardGrid
                         .frame(maxHeight: .infinity)
+                        .onReceive(NotificationCenter.default.publisher(for: .compositionMicPermissionDenied)) { _ in
+                            // Previously a dead wire: mic denial during a
+                            // reactive composition failed silently.
+                            vm.statusMessage = "⚠ Microphone unavailable — enable access in Settings"
+                        }
 
                     // ── Deck page indicator ───────────────────────
                     deckDots
@@ -1478,6 +1483,12 @@ struct StudioView: View {
                     range: -180...180
                 )
             }
+
+            Toggle("Randomize", isOn: Binding(
+                get: { vm.activeCompositionBox?.palette.randomize ?? false },
+                set: { vm.activeCompositionBox?.palette.randomize = $0 }
+            ))
+            .tint(HuePalette.amber)
         }
     }
 
@@ -1837,7 +1848,9 @@ struct StudioView: View {
 
     /// Direction is relevant for all patterns except scatter.
     private var motionPatternIsSpatial: Bool {
-        vm.activeCompositionBox?.motion.pattern != .scatter
+        let pattern = vm.activeCompositionBox?.motion.pattern ?? .cascade
+        // Scatter and twinkle are non-directional (per-light hashing).
+        return pattern != .scatter && pattern != .twinkle
     }
 
     private var compositionMotionControls: some View {
@@ -1868,6 +1881,15 @@ struct StudioView: View {
                 value: Binding(
                     get: { vm.activeCompositionBox?.motion.speed ?? 40 },
                     set: { vm.activeCompositionBox?.motion.speed = $0 }
+                ),
+                range: 0...100
+            )
+
+            compositionSlider(
+                title: "Spread",
+                value: Binding(
+                    get: { vm.activeCompositionBox?.motion.spread ?? 70 },
+                    set: { vm.activeCompositionBox?.motion.spread = $0 }
                 ),
                 range: 0...100
             )
@@ -2212,6 +2234,37 @@ struct StudioView: View {
                 range: 0...100
             )
 
+            // Shape-specific controls (the engine has always consumed these;
+            // the sliders were simply missing from the editor).
+            if (vm.activeCompositionBox?.envelope.shape ?? .breathe) == .swell {
+                compositionSlider(
+                    title: "Attack",
+                    value: Binding(
+                        get: { vm.activeCompositionBox?.envelope.attack ?? 50 },
+                        set: { vm.activeCompositionBox?.envelope.attack = $0 }
+                    ),
+                    range: 0...100
+                )
+                compositionSlider(
+                    title: "Decay",
+                    value: Binding(
+                        get: { vm.activeCompositionBox?.envelope.decay ?? 50 },
+                        set: { vm.activeCompositionBox?.envelope.decay = $0 }
+                    ),
+                    range: 0...100
+                )
+            }
+            if (vm.activeCompositionBox?.envelope.shape ?? .breathe) == .pulse {
+                compositionSlider(
+                    title: "Duty Cycle",
+                    value: Binding(
+                        get: { vm.activeCompositionBox?.envelope.dutyCycle ?? 50 },
+                        set: { vm.activeCompositionBox?.envelope.dutyCycle = $0 }
+                    ),
+                    range: 10...90
+                )
+            }
+
             compositionSlider(
                 title: "Min Brightness",
                 value: Binding(
@@ -2255,6 +2308,8 @@ struct StudioView: View {
                 }
             }
 
+            reactionBeatControls
+
             compositionSlider(
                 title: "Sensitivity",
                 value: Binding(
@@ -2279,6 +2334,108 @@ struct StudioView: View {
                 ),
                 range: 0...100
             )
+        }
+    }
+
+    /// Beat-clock controls for the beat/onset/tap-tempo reaction sources:
+    /// live BPM readout, tap tempo, downbeat resync, punch decay, quantized
+    /// color stepping, and beat-locked motion cycles.
+    @ViewBuilder
+    private var reactionBeatControls: some View {
+        let source = vm.activeCompositionBox?.reaction.source ?? .none
+        if source == .beat || source == .onset || source == .tapTempo {
+            VStack(alignment: .leading, spacing: HueSpacing.sm) {
+                // ── Live clock row ──
+                HStack(spacing: 10) {
+                    let clock = BeatClock.shared
+                    Image(systemName: "metronome.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(HuePalette.amber)
+                    Text(clock.bpm > 0
+                         ? "\(Int(clock.bpm.rounded())) BPM · \(clock.source.rawValue.capitalized)"
+                         : "Listening for a beat…")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.7))
+                    Spacer()
+                    Button("Tap") {
+                        BeatClock.shared.tap()
+                        HapticManager.shared.light()
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .buttonStyle(.bordered)
+                    .tint(HuePalette.amber)
+                    if clock.isPinned {
+                        Button("Auto") {
+                            BeatClock.shared.unpin()
+                            HapticManager.shared.selection()
+                        }
+                        .font(.system(size: 12, weight: .semibold))
+                        .buttonStyle(.bordered)
+                        .tint(.white.opacity(0.5))
+                    } else if clock.bpm > 0 {
+                        Button("Sync 1") {
+                            BeatClock.shared.resyncDownbeat()
+                            HapticManager.shared.selection()
+                        }
+                        .font(.system(size: 12, weight: .semibold))
+                        .buttonStyle(.bordered)
+                        .tint(.white.opacity(0.5))
+                    }
+                }
+
+                compositionSlider(
+                    title: "Punch Decay",
+                    value: Binding(
+                        get: { vm.activeCompositionBox?.reaction.punchDecay ?? 40 },
+                        set: { vm.activeCompositionBox?.reaction.punchDecay = $0 }
+                    ),
+                    range: 0...100
+                )
+
+                if (vm.activeCompositionBox?.reaction.targets ?? []).contains(.color) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Color step every")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.60))
+                        Picker("Quantize", selection: Binding(
+                            get: { vm.activeCompositionBox?.reaction.quantizeBeats ?? 1 },
+                            set: { vm.activeCompositionBox?.reaction.quantizeBeats = $0 }
+                        )) {
+                            Text("¼ beat").tag(0.25)
+                            Text("½ beat").tag(0.5)
+                            Text("1 beat").tag(1.0)
+                            Text("2 beats").tag(2.0)
+                            Text("4 beats").tag(4.0)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    compositionSlider(
+                        title: "Color Step %",
+                        value: Binding(
+                            get: { (vm.activeCompositionBox?.reaction.colorStepPerTrigger ?? 0.25) * 100 },
+                            set: { vm.activeCompositionBox?.reaction.colorStepPerTrigger = $0 / 100.0 }
+                        ),
+                        range: 0...100
+                    )
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Lock motion cycle to")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.60))
+                    Picker("Beats per cycle", selection: Binding(
+                        get: { vm.activeCompositionBox?.reaction.motionBeatsPerCycle ?? 0 },
+                        set: { vm.activeCompositionBox?.reaction.motionBeatsPerCycle = $0 }
+                    )) {
+                        Text("Off").tag(0.0)
+                        Text("1 beat").tag(1.0)
+                        Text("2 beats").tag(2.0)
+                        Text("4 beats").tag(4.0)
+                        Text("8 beats").tag(8.0)
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
         }
     }
 

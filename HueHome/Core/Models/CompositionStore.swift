@@ -269,7 +269,8 @@ final class CompositionStore {
             palette: PaletteConfig(mode: .gradient,
                 color1: CodableColor(x: 0.6400, y: 0.3300),   // red
                 color2: CodableColor(x: 0.1700, y: 0.7000)),  // green
-            motion: MotionConfig(pattern: .cascade, speed: 20),
+            // Phase 2: theater-chase — the classic red/green holiday string.
+            motion: MotionConfig(pattern: .chase, speed: 25, spread: 55, offset: 65),
             envelope: EnvelopeConfig(shape: .breathe, bpm: 30, depth: 30),
             reaction: ReactionConfig(),
             createdAt: now, updatedAt: now
@@ -283,7 +284,8 @@ final class CompositionStore {
             palette: PaletteConfig(mode: .gradient,
                 color1: CodableColor(x: 0.1800, y: 0.1800),   // ice blue
                 color2: CodableColor.white),
-            motion: MotionConfig(pattern: .wave, speed: 15),
+            // Phase 2: gentle snowfall shimmer over a soft ice wash.
+            motion: MotionConfig(pattern: .twinkle, speed: 15, spread: 80, offset: 45),
             envelope: EnvelopeConfig(shape: .swell, bpm: 24, depth: 15),
             reaction: ReactionConfig(),
             createdAt: now, updatedAt: now
@@ -297,7 +299,8 @@ final class CompositionStore {
             palette: PaletteConfig(mode: .gradient,
                 color1: CodableColor(x: 0.5600, y: 0.4000),   // orange
                 color2: CodableColor(x: 0.3200, y: 0.1500)),  // purple
-            motion: MotionConfig(pattern: .scatter, speed: 35),
+            // Phase 2: a slow comet prowling the room — head glow, long tail.
+            motion: MotionConfig(pattern: .comet, speed: 30, spread: 45),
             envelope: EnvelopeConfig(shape: .flicker, bpm: 60, depth: 70),
             reaction: ReactionConfig(),
             createdAt: now, updatedAt: now
@@ -380,7 +383,8 @@ final class CompositionStore {
             palette: PaletteConfig(mode: .gradient,
                 color1: CodableColor(x: 0.4500, y: 0.4100),   // gold
                 color2: CodableColor(x: 0.5600, y: 0.4000)),  // deep orange
-            motion: MotionConfig(pattern: .scatter, speed: 40),
+            // Phase 2: diya-lamp twinkle — golden sparkles over a warm base.
+            motion: MotionConfig(pattern: .twinkle, speed: 40, spread: 65, offset: 60),
             envelope: EnvelopeConfig(shape: .flicker, bpm: 60, depth: 50),
             reaction: ReactionConfig(),
             createdAt: now, updatedAt: now
@@ -392,9 +396,12 @@ final class CompositionStore {
             accentColorHex: "#FFD60A", isBuiltIn: true,
             category: .holiday, seasonMonths: [12, 1],
             palette: PaletteConfig(mode: .spectrum),
-            motion: MotionConfig(pattern: .cascade, speed: 80),
+            // Phase 2: multi-head spectrum chase, beat-ready — tap Tempo (or
+            // let the clock hear the music) and the party locks to the beat.
+            motion: MotionConfig(pattern: .chase, speed: 80, spread: 40, offset: 100),
             envelope: EnvelopeConfig(shape: .pulse, bpm: 140, depth: 75),
-            reaction: ReactionConfig(),
+            reaction: ReactionConfig(source: .beat, targets: [.brightness, .color],
+                                     motionBeatsPerCycle: 4),
             createdAt: now, updatedAt: now
         )
 
