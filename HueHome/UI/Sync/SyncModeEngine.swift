@@ -105,12 +105,18 @@ final class SyncModeEngine {
     var masterIntensity: Double = 1.0
 
     // MARK: Private — audio
-    private var audioEngine: AVAudioEngine?
-    private let bufferSize: AVAudioFrameCount = 1024
+    // Capture is owned by the shared AudioAnalysisEngine (Phase 2); this
+    // engine registers a raw-buffer tap and holds the .syncMode demand.
+    private static let bufferTapID = "sync-mode"
 
     /// Thread-safe stop flag — readable from the audio thread without actor isolation.
     @ObservationIgnored
     nonisolated(unsafe) private var stopFlag = true
+
+    /// Audio-thread snapshot of the active engine type (L-05: the tap must
+    /// not read the MainActor property; kept in sync by switchEngine()).
+    @ObservationIgnored
+    nonisolated(unsafe) private var tapEngineType: SyncEngineType = .visualizer
 
     // MARK: Private — generation counter (zombie prevention)
     /// Incremented on every stop(). In-flight Tasks compare their captured
@@ -154,22 +160,13 @@ final class SyncModeEngine {
     private weak var orchestrator: UnifiedOrchestrator?
     private let log = Logger(subsystem: "com.lightshade.app", category: "SyncMode")
 
-    @ObservationIgnored nonisolated(unsafe) private var composerMicExclusiveObserver: NSObjectProtocol?
     @ObservationIgnored nonisolated(unsafe) private var lifecycleObservers: [NSObjectProtocol] = []
 
     init(orchestrator: UnifiedOrchestrator) {
         self.orchestrator = orchestrator
-        composerMicExclusiveObserver = NotificationCenter.default.addObserver(
-            forName: .composerMicExclusiveBegan,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            if self.isRunning {
-                self.stop()
-                self.log.info("Sync stopped — Composer claimed microphone")
-            }
-        }
+        // NOTE (Phase 2): the .composerMicExclusiveBegan handshake is gone —
+        // Sync and Composer now share the single AudioAnalysisEngine capture,
+        // so there is no audio-session fight to referee.
 
         // Interruption/background recovery. Previously absent: a phone call,
         // Siri, or another app claiming the session silently killed sync with
@@ -213,12 +210,10 @@ final class SyncModeEngine {
     }
 
     deinit {
-        if let composerMicExclusiveObserver {
-            NotificationCenter.default.removeObserver(composerMicExclusiveObserver)
-        }
         for observer in lifecycleObservers {
             NotificationCenter.default.removeObserver(observer)
         }
+        AudioAnalysisEngine.removeBufferTap(id: Self.bufferTapID)
     }
 
     private func pauseForInterruption(reason: String) {
@@ -292,15 +287,12 @@ final class SyncModeEngine {
         visualizer.stopDisplayLink()
         visualizer.onUpdate = nil
 
-        // 4. Remove tap and stop audio engine
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
+        // 4. Withdraw the audio demand + buffer tap (the shared engine
+        // stops itself when no consumer holds a demand)
+        AudioAnalysisEngine.removeBufferTap(id: Self.bufferTapID)
+        Task { await AudioAnalysisEngine.shared.setDemand(.syncMode, active: false) }
 
-        // 5. Release audio session
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-
-        // 6. Stop entertainment session if active
+        // 5. Stop entertainment session if active
         if let entClient = entertainmentClient {
             Task {
                 await entClient.stopSession()
@@ -345,15 +337,6 @@ final class SyncModeEngine {
     }
 
     private func startCapture(generation gen: Int) async {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
-            try session.setActive(true)
-        } catch {
-            log.error("Audio session error: \(error.localizedDescription)")
-            return
-        }
-
         // Try to start entertainment streaming (only if user explicitly selected one)
         await startEntertainmentIfAvailable()
 
@@ -365,13 +348,8 @@ final class SyncModeEngine {
                 transportMode = .rest
                 Task { await entClient.stopSession() }
             }
-            try? session.setActive(false, options: .notifyOthersOnDeactivation)
             return
         }
-
-        let eng  = AVAudioEngine()
-        let node = eng.inputNode
-        let fmt  = node.outputFormat(forBus: 0)
 
         stopFlag = false
 
@@ -380,26 +358,35 @@ final class SyncModeEngine {
             self?.sendLightUpdate()
         }
 
-        // Audio callback: always process visualizer for bar UI,
-        // plus active engine when different.
-        node.installTap(onBus: 0, bufferSize: bufferSize, format: fmt) { [weak self] buf, _ in
+        // Raw-buffer tap on the shared capture engine: always process the
+        // visualizer for bar UI, plus the active engine when different.
+        // (Runs on the audio thread — same contract as the old private tap.)
+        tapEngineType = activeEngineType
+        AudioAnalysisEngine.addBufferTap(id: Self.bufferTapID) { [weak self] buf, sampleRate in
             guard let self, !self.stopFlag else { return }
-            _ = self.visualizer.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
-            if self.activeEngineType != .visualizer {
-                _ = self.activeEngine.process(buffer: buf, sampleRate: Float(fmt.sampleRate))
+            _ = self.visualizer.process(buffer: buf, sampleRate: sampleRate)
+            switch self.tapEngineType {
+            case .visualizer: break   // already processed above
+            case .gaming:  _ = self.gaming.process(buffer: buf, sampleRate: sampleRate)
+            case .ambient: _ = self.ambient.process(buffer: buf, sampleRate: sampleRate)
             }
         }
 
-        do {
-            try eng.start()
-            audioEngine = eng
-            isRunning   = true
-            // Start display link AFTER audio is flowing
-            visualizer.startDisplayLink()
-            log.info("Sync started — engine: \(self.activeEngineType.rawValue), transport: \(self.transportMode.rawValue)")
-        } catch {
-            log.error("Audio engine start failed: \(error.localizedDescription)")
+        let captureUp = await AudioAnalysisEngine.shared.setDemand(.syncMode, active: true)
+        guard generation == gen, captureUp else {
+            AudioAnalysisEngine.removeBufferTap(id: Self.bufferTapID)
+            stopFlag = true
+            if !captureUp {
+                Task { await AudioAnalysisEngine.shared.setDemand(.syncMode, active: false) }
+                log.error("Shared audio capture failed to start for Sync")
+            }
+            return
         }
+
+        isRunning = true
+        // Start display link AFTER audio is flowing
+        visualizer.startDisplayLink()
+        log.info("Sync started — engine: \(self.activeEngineType.rawValue), transport: \(self.transportMode.rawValue)")
     }
 
     // MARK: - Entertainment Setup
@@ -449,6 +436,7 @@ final class SyncModeEngine {
         guard type != activeEngineType else { return }
         activeEngine.reset()
         activeEngineType = type
+        tapEngineType = type   // audio-thread snapshot (L-05)
         HapticManager.shared.medium()
         log.info("Switched to engine: \(type.rawValue)")
     }

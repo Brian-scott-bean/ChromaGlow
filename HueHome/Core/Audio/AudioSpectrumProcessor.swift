@@ -8,9 +8,9 @@
 // size and reuses them.
 //
 // THREADING CONTRACT: an instance must be owned and driven by exactly one
-// audio-tap thread at a time (VisualizerEngine owns one; ComposerMicLevels
-// owns another — the composer-mic exclusivity handshake guarantees only one
-// tap runs concurrently). No locking on the hot path by design.
+// audio-tap thread at a time (VisualizerEngine owns one; AudioFeatureExtractor
+// owns another — both are fed from the single AudioAnalysisEngine tap).
+// No locking on the hot path by design.
 //
 // `magnitudes` exposes the raw spectrum so a richer feature extractor
 // (onset/beat detection for the DJ-mode work) can consume the same FFT

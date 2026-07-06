@@ -243,8 +243,6 @@ enum CompositionEngine {
     ///   - time: Elapsed seconds since composition started (monotonic).
     ///   - channelIDs: Entertainment API channel IDs for each light.
     ///   - params: Live composition parameters (read each frame for slider responsiveness).
-    ///   - audioLevel: LEGACY mic amplitude (0–1) — used for mic sources only
-    ///     while `features` is `.silent`; removed once all callers pass features.
     ///   - features: Current audio features (AGC bands, onsets) from AudioAnalysisEngine.
     ///   - beat: Shared BeatClock snapshot — beat phase is extrapolated per frame.
     ///   - hostNow: Host time (CACurrentMediaTime timebase) of this frame;
@@ -254,7 +252,6 @@ enum CompositionEngine {
         time: Double,
         channelIDs: [UInt8],
         params: CompositionParamBox,
-        audioLevel: Float = 0,
         features: AudioFeatures = .silent,
         beat: BeatSnapshot = .none,
         hostNow: Double = 0
@@ -278,19 +275,18 @@ enum CompositionEngine {
         params.lastRenderTime = time
 
         // ── Reaction drive (one value per frame, uniform across lights) ──
-        let hasFeatures = features.timestamp > 0
         let drive: Double
         switch reaction.source {
         case .none:
             drive = 0
         case .micAmplitude:
-            drive = reaction.shapedMicLevel(Double(hasFeatures ? features.level : audioLevel))
+            drive = reaction.shapedMicLevel(Double(features.level))
         case .micBass:
-            drive = reaction.shapedMicLevel(Double(hasFeatures ? features.bass : audioLevel))
+            drive = reaction.shapedMicLevel(Double(features.bass))
         case .micMid:
-            drive = reaction.shapedMicLevel(Double(hasFeatures ? features.mid : audioLevel))
+            drive = reaction.shapedMicLevel(Double(features.mid))
         case .micTreble:
-            drive = reaction.shapedMicLevel(Double(hasFeatures ? features.treble : audioLevel))
+            drive = reaction.shapedMicLevel(Double(features.treble))
         case .beat, .tapTempo:
             if beat.bpm > 0, hostNow > 0 {
                 // Per-beat punch: bright at the beat, exponential decay after.

@@ -1818,7 +1818,7 @@ final class UnifiedOrchestrator {
     }
 
     private func refreshCompositionMicDemand() async {
-        await CompositionMicCapture.shared.syncDemand(anyCompositionNeedsMic())
+        await AudioAnalysisEngine.shared.setDemand(.composerReaction, active: anyCompositionNeedsMic())
     }
 
     /// Start a composition render loop for the given room.
@@ -1843,12 +1843,12 @@ final class UnifiedOrchestrator {
         if let gamutOverride {
             compositionGamut = gamutOverride
             if paramBox.reaction.requiresMic {
-                await CompositionMicCapture.shared.syncDemand(true)
+                await AudioAnalysisEngine.shared.setDemand(.composerReaction, active: true)
             }
         } else if paramBox.reaction.requiresMic {
             async let gamutResolved = resolveCompositionGamut(for: room, api: api)
-            async let micHeadStart: Void = CompositionMicCapture.shared.syncDemand(true)
-            await micHeadStart
+            async let micHeadStart: Bool = AudioAnalysisEngine.shared.setDemand(.composerReaction, active: true)
+            _ = await micHeadStart
             compositionGamut = await gamutResolved
         } else {
             compositionGamut = await resolveCompositionGamut(for: room, api: api)
@@ -2013,8 +2013,7 @@ final class UnifiedOrchestrator {
                 if let firstFrame = CompositionEngine.render(
                     time: 0,
                     channelIDs: [0],
-                    params: paramBox,
-                    audioLevel: 0
+                    params: paramBox
                 ).first {
                     let primeXY = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: compositionGamut)
                     let primeBri = max(1.0, firstFrame.brightness * 100.0)
@@ -2069,12 +2068,13 @@ final class UnifiedOrchestrator {
         // Prime immediately so newly started rooms visibly turn on without
         // waiting for the next round-robin scheduler slot.
         await refreshCompositionMicDemand()
-        let primeAudio = CompositionMicCapture.reactionAudioLevel(for: paramBox.reaction)
         if let firstFrame = CompositionEngine.render(
             time: 0,
             channelIDs: [0],
             params: paramBox,
-            audioLevel: primeAudio
+            features: AudioAnalysisEngine.latestFeatures(),
+            beat: BeatClock.snapshot(),
+            hostNow: CACurrentMediaTime()
         ).first {
             let xy = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: compositionGamut)
             let bri = max(1, firstFrame.brightness * 100.0)
@@ -2125,14 +2125,15 @@ final class UnifiedOrchestrator {
             if await entClient.isTerminallyFailed { break }
             await refreshCompositionMicDemand()
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-            let audioLevel = CompositionMicCapture.reactionAudioLevel(for: paramBox.reaction)
 
             // Render all channels in one frame
             let frames = CompositionEngine.render(
                 time: elapsed,
                 channelIDs: channelIDs,
                 params: paramBox,
-                audioLevel: audioLevel
+                features: AudioAnalysisEngine.latestFeatures(),
+                beat: BeatClock.snapshot(),
+                hostNow: CACurrentMediaTime()
             )
 
             // Convert to entertainment send format
@@ -2295,7 +2296,6 @@ final class UnifiedOrchestrator {
 
             // Render the current frame — per-light when IDs are available
             let elapsed = now - runtime.startTime
-            let audioLevel = CompositionMicCapture.reactionAudioLevel(for: runtime.paramBox.reaction)
             let lightCount = runtime.lightIDs.count
             let usePerLight = lightCount > 0
 
@@ -2308,7 +2308,9 @@ final class UnifiedOrchestrator {
                 time: elapsed,
                 channelIDs: channelIDs,
                 params: runtime.paramBox,
-                audioLevel: audioLevel
+                features: AudioAnalysisEngine.latestFeatures(),
+                beat: BeatClock.snapshot(),
+                hostNow: CACurrentMediaTime()
             )
             guard !frames.isEmpty else {
                 try? await Task.sleep(for: tickInterval)

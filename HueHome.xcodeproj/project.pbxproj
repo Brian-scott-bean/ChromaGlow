@@ -116,6 +116,7 @@
 		C0DEC0DE0122000000000001 /* AudioFeatureExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0122000000000000 /* AudioFeatureExtractor.swift */; };
 		C0DEC0DE0123000000000001 /* TempoEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0123000000000000 /* TempoEstimator.swift */; };
 		C0DEC0DE0124000000000001 /* BeatClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0124000000000000 /* BeatClock.swift */; };
+		C0DEC0DE0127000000000001 /* AudioAnalysisEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0127000000000000 /* AudioAnalysisEngine.swift */; };
 		C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */; };
 		C0DEC0DE0126000000000001 /* CompositionReactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */; };
 		C0DEC0DE010B000000000001 /* GatedBulkWriteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */; };
@@ -155,7 +156,6 @@
 		E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */; };
 		E81712B70CBF1AAFBC4065E3 /* EffectControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D79067D6A4E961A8518EF5C /* EffectControlsView.swift */; };
 		EBD402E37AF2043D8391E87F /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A54B6A1F1A2CC5FAF3CEE /* SplashView.swift */; };
-		F1E2D3C4B5A68990ABCDEF03 /* CompositionMicCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */; };
 		F2903EB080E11603E73CED60 /* ShimmerComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 471A0EDBCE4C17624925EAB6 /* ShimmerComponents.swift */; };
 		F4E1000111111111 /* HueEntertainmentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000100000000 /* HueEntertainmentClient.swift */; };
 		F4E1000211111111 /* EntertainmentConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000200000000 /* EntertainmentConfigManager.swift */; };
@@ -348,6 +348,7 @@
 		C0DEC0DE0122000000000000 /* AudioFeatureExtractor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioFeatureExtractor.swift; path = HueHome/Core/Audio/AudioFeatureExtractor.swift; sourceTree = "<group>"; };
 		C0DEC0DE0123000000000000 /* TempoEstimator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TempoEstimator.swift; path = HueHome/Core/Audio/TempoEstimator.swift; sourceTree = "<group>"; };
 		C0DEC0DE0124000000000000 /* BeatClock.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatClock.swift; path = HueHome/Core/Audio/BeatClock.swift; sourceTree = "<group>"; };
+		C0DEC0DE0127000000000000 /* AudioAnalysisEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioAnalysisEngine.swift; path = HueHome/Core/Audio/AudioAnalysisEngine.swift; sourceTree = "<group>"; };
 		C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioFeatureCoreTests.swift; path = ./HueHomeTests/AudioFeatureCoreTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionReactionTests.swift; path = ./HueHomeTests/CompositionReactionTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE010B000000000000 /* GatedBulkWriteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GatedBulkWriteTests.swift; path = ./HueHomeTests/GatedBulkWriteTests.swift; sourceTree = "<group>"; };
@@ -392,7 +393,6 @@
 		E7ACCF18A91D92561912E10F /* EffectEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Effects/EffectEngine.swift; sourceTree = "<group>"; };
 		ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/VisualizerEngine.swift; sourceTree = "<group>"; };
 		EF542C41EE24A79433CB5589 /* SyncModeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/SyncModeView.swift; sourceTree = "<group>"; };
-		F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionMicCapture.swift; path = ./HueHome/UI/Studio/CompositionMicCapture.swift; sourceTree = "<group>"; };
 		F4E1000100000000 /* HueEntertainmentClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueEntertainmentClient.swift; path = HueHome/Core/Network/HueEntertainmentClient.swift; sourceTree = "<group>"; };
 		F4E1000200000000 /* EntertainmentConfigManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentConfigManager.swift; path = HueHome/Core/Network/EntertainmentConfigManager.swift; sourceTree = "<group>"; };
 		F4E1000300000000 /* EntertainmentConfigBuilderView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentConfigBuilderView.swift; path = HueHome/UI/Sync/EntertainmentConfigBuilderView.swift; sourceTree = "<group>"; };
@@ -546,6 +546,7 @@
 				C0DEC0DE0122000000000000 /* AudioFeatureExtractor.swift */,
 				C0DEC0DE0123000000000000 /* TempoEstimator.swift */,
 				C0DEC0DE0124000000000000 /* BeatClock.swift */,
+				C0DEC0DE0127000000000000 /* AudioAnalysisEngine.swift */,
 			);
 			name = Audio;
 			sourceTree = "<group>";
@@ -735,7 +736,6 @@
 				B1RPSHEC5402CA37A711CBB8 /* RoomPickerSheetView.swift */,
 				B1RRLXA1B2C3D4E5F6071829 /* RoomRolodexView.swift */,
 				7B06F0F76E068D42895691A4 /* CompositionEngine.swift */,
-				F1E2D3C4B5A68990ABCDEF01 /* CompositionMicCapture.swift */,
 				92662E9280D48307551834BA /* CreateGlobalSceneView.swift */,
 			);
 			name = Scenes;
@@ -1280,6 +1280,7 @@
 				C0DEC0DE0122000000000001 /* AudioFeatureExtractor.swift in Sources */,
 				C0DEC0DE0123000000000001 /* TempoEstimator.swift in Sources */,
 				C0DEC0DE0124000000000001 /* BeatClock.swift in Sources */,
+				C0DEC0DE0127000000000001 /* AudioAnalysisEngine.swift in Sources */,
 				C0DEC0DE0110000000000001 /* BridgePairingRegistrar.swift in Sources */,
 				C0DEC0DE0113000000000001 /* EntertainmentAreasView.swift in Sources */,
 				C0DEC0DE010C000000000001 /* FailableDecodable.swift in Sources */,
@@ -1311,7 +1312,6 @@
 				0E7CD3AA335189BAFEFFB105 /* CompositionEngine.swift in Sources */,
 				C0DEC0DE005B000000000001 /* CompositionRoomPriorityScorer.swift in Sources */,
 				C0DEC0DE006B000000000001 /* CompositionLightResolver.swift in Sources */,
-				F1E2D3C4B5A68990ABCDEF03 /* CompositionMicCapture.swift in Sources */,
 				A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */,
 				CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */,
 				B2RPSH9FF07852E320B7354B /* RoomPickerSheetView.swift in Sources */,

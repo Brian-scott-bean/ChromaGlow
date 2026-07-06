@@ -126,8 +126,7 @@ actor BridgeAnimationEngine {
             let frames = CompositionEngine.render(
                 time: time,
                 channelIDs: channelIDs,
-                params: paramBox,
-                audioLevel: 0  // no mic on bridge
+                params: paramBox   // no mic/beat on bridge — defaults are silent
             )
             renderedFrames.append(frames)
         }
@@ -505,8 +504,7 @@ actor BridgeAnimationEngine {
         let frames = CompositionEngine.render(
             time: 0,
             channelIDs: channelIDs,
-            params: paramBox,
-            audioLevel: 0
+            params: paramBox
         )
 
         // ─── 3. Build v2 scene actions ───

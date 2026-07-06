@@ -959,7 +959,7 @@ final class StudioViewModel {
                 async let gamutTask = resolveDominantGamut(for: room, api: api, cachedLights: bridgeLights)
                 async let micHeadStart: Void = {
                     guard preset.reaction.requiresMic else { return }
-                    await CompositionMicCapture.shared.syncDemand(true)
+                    await AudioAnalysisEngine.shared.setDemand(.composerReaction, active: true)
                 }()
                 // Prefer completing mic handoff before blocking on gamut result — bridge fetch still runs in parallel.
                 await micHeadStart

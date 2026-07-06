@@ -180,9 +180,9 @@ extension Notification.Name {
     static let hueDemoExited      = Notification.Name("hueDemoExited")
     static let studioStartMicSync = Notification.Name("studioStartMicSync")
     static let studioStopAll      = Notification.Name("studioStopAll")
-    /// Composer mic claims AVAudioSession — Sync mode must release first.
-    static let composerMicExclusiveBegan = Notification.Name("composerMicExclusiveBegan")
-    /// Composer reaction mic unavailable (denied / hardware error).
+    // NOTE (Phase 2): composerMicExclusiveBegan removed — capture is unified
+    // in AudioAnalysisEngine, so there is no session handoff to coordinate.
+    /// Mic capture unavailable (denied / hardware error) — posted by AudioAnalysisEngine.
     static let compositionMicPermissionDenied = Notification.Name("compositionMicPermissionDenied")
 }
 
