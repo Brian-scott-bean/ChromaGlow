@@ -48,6 +48,55 @@
 
 ---
 
+## 2026-07-06 - [Claude] Composer/Studio/mic audit + Phase-1 reliability hardening (8 commits) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (checkpoint tag `checkpoint/pre-phase1-composer-2026-07-06` at `83e8ab4` for rollback)
+
+### Did
+- Full Composer/Studio/Effects/Sync/mic subsystem audit → `docs/ios/composer-studio-mic-audit-2026-07-06.md`.
+  **Scrap-vs-salvage decision: SALVAGE** — pure `CompositionEngine` render core, migration-safe models,
+  fixed M-13 persistence, and freshly hardened transports stay; audio analysis + reaction layer +
+  performance primitives get rebuilt in the DJ phases (plan approved by Brian).
+- Phase-1 fixes, one commit each, all build-gated on scheme `HueHome 1`:
+  - `c88409d` M-16+L-44: stored/cancellable per-room Turn-Off-at-End timers.
+  - `2eadf89` M-17: "All Rooms" wired via applyToAllRooms (per-bridge routing; app-driven refused);
+    fixed a `$selectedRoom`-sink race that could abort fan-outs mid-flight.
+  - `a47f185` L-41+L-54: preset params clamped to schema on restore; trap sites self-clamp.
+  - `ad080de` Sync interruption/background auto-resume; in-flight starts generation-guarded (L-19 class).
+  - `630b5ab` L-19/L-22/L-23: Composer mic guard-after-await + AVAudioApplication API; Open Settings
+    deep link; mic consent copy.
+  - `9c4040d` L-20/L-21: new `Core/Audio/AudioSpectrumProcessor` (cached FFT for both mic pipelines;
+    only pbxproj edit of the phase); inclusive bar-peak count.
+  - `799573d` M-10 follow-through: `isTerminallyFailed` on the entertainment client; Composer loop
+    fails over to the REST scheduler (same live paramBox); Sync flips to REST visibly.
+  - `94d14e8` Studio sendParam/sendColorParam routed through the studio RestSender mailbox.
+
+### Working
+- Builds green after every commit; test suites green on iPhone 15 / iOS 17.0:
+  MultiBridgeRoutingTests 7/7 (new All-Rooms fan-out + app-driven refusal),
+  HueDataModelsTests (+4 sanitizer cases), EntertainmentRobustnessTests 7/7 (new terminal-failure case).
+
+### Left
+- On-device checklist (M-10 reconnect, DTLS→REST failover, call-interruption resume, All-Rooms
+  multi-bridge, slider scrub) — §4 of the audit doc.
+- Dead wires documented, deliberately deferred to Phase 2: unobserved `.studioStartMicSync`
+  (Studio mic/gaming cards no-op) and `.compositionMicPermissionDenied` (silent Composer denial);
+  ReactionConfig `.color`/`.speed` targets still inert until the beat-clock work.
+- DJ phases 2–4 (unified audio engine + BeatClock, performance surface, sequencer) per approved plan.
+
+### Validation
+- `xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'generic/platform=iOS' build`
+  after every commit; targeted `-only-testing:` runs on `platform=iOS Simulator,name=iPhone 15,OS=17.0`.
+
+### Gotchas
+- EffectsViewModel's Combine sinks deliver asynchronously — anything that mutates selection state must
+  respect `isActivating`, and nested `activate()` calls must save/restore (not set/clear) that flag.
+- `AudioSpectrumProcessor` is single-writer-per-tap-thread BY CONTRACT (no hot-path locks); the composer
+  exclusivity handshake is what makes the ComposerMicLevels static instance safe.
+- `stop()` in SyncModeEngine must clear `resumeAfterInterruption` BEFORE its early-return guard, or a
+  user stop during a phone call zombie-resumes.
+
 ## 2026-07-02 - [Claude] Widgets round-4 — paginated Large widget + interactive Lock Screen (build 5) — LOCAL
 
 ### Branch
