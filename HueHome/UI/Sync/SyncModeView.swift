@@ -227,11 +227,21 @@ struct SyncModeView: View {
             }
 
             if engine.permissionDenied {
-                Text("Microphone access denied — enable in Settings")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.red.opacity(0.8))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
+                VStack(spacing: 8) {
+                    Text("Microphone access denied — enable in Settings")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                }
+                .padding(.horizontal, 40)
             }
         }
     }

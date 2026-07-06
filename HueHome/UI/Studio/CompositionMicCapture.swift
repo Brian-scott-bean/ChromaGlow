@@ -248,17 +248,20 @@ final class CompositionMicCapture {
         guard !engineRunning else { return }
 
 #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        switch session.recordPermission {
+        // L-22: AVAudioApplication permission API — AVAudioSession.recordPermission
+        // is deprecated in iOS 17. Same pattern as SyncModeEngine.
+        switch AVAudioApplication.shared.recordPermission {
         case .undetermined:
-            let granted = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
-                session.requestRecordPermission { cont.resume(returning: $0) }
-            }
+            let granted = await AVAudioApplication.requestRecordPermission()
             if !granted {
                 log.warning("Composition mic permission denied (user)")
                 NotificationCenter.default.post(name: .compositionMicPermissionDenied, object: nil)
                 return
             }
+            // L-19: demand may have dropped (composition stopped) while the
+            // system prompt was up — starting anyway leaves the mic live with
+            // the orange indicator on and no consumer.
+            guard desiredActive, !engineRunning else { return }
         case .denied:
             log.warning("Composition mic permission denied (settings)")
             NotificationCenter.default.post(name: .compositionMicPermissionDenied, object: nil)
