@@ -632,10 +632,31 @@ class HueAPIClient: @unchecked Sendable {
     }
 
     private func execute(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { return data }
+        // ⏱️ DIAG: one 🌐 line per request (method, path, status, ms, bytes) so any
+        // retry storm / stall on the startup path is visible live in the console.
+        // L-09: log the resource path only — the full URL embeds the bridge LAN IP.
+        let started = Date()
+        let method = request.httpMethod ?? "GET"
         let resourcePath = request.url?.path ?? ""
-        log.info("API: HTTP \(http.statusCode, privacy: .public) ← \(resourcePath)")
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            let code = (error as? URLError)?.code.rawValue ?? (error as NSError).code
+            #if DEBUG
+            print("🌐 \(method) \(resourcePath) FAIL code=\(code) \(ms)ms — \(error.localizedDescription)")
+            #endif
+            log.error("API: \(method, privacy: .public) \(resourcePath, privacy: .public) FAILED code=\(code) after \(ms)ms: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+        guard let http = response as? HTTPURLResponse else { return data }
+        let ms = Int(Date().timeIntervalSince(started) * 1000)
+        #if DEBUG
+        print("🌐 \(method) \(resourcePath) \(http.statusCode) \(ms)ms \(data.count)B")
+        #endif
+        log.info("API: HTTP \(http.statusCode, privacy: .public) ← \(resourcePath) (\(ms)ms)")
         guard (200...299).contains(http.statusCode) else {
             // Log the bridge's error body BEFORE throwing — it contains the exact reason.
             if let errorBody = String(data: data, encoding: .utf8) {

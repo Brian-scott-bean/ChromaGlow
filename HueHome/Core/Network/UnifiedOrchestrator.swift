@@ -705,6 +705,7 @@ final class UnifiedOrchestrator {
         isLoading = true
         errorMessage = nil
         let __loadStart = Date()   // TEMP PERF DIAG
+        StartupTimeline.mark("loadAll.begin", "bridges=\(clients.count)")
         defer { isLoading = false }
 
         // D-016 pin acquisition is now per-host inside fetchAndMergeAllBridges so a
@@ -715,8 +716,7 @@ final class UnifiedOrchestrator {
         // entertainment-session cleanup no longer shares this await — it is deferred
         // and throttled below so it never delays first paint or fires per toggle.
         await fetchAndMergeAllBridges()
-        // TEMP PERF DIAG — remove after capture
-        print("⏱️PERF loadAll: fetch done in \(Int(Date().timeIntervalSince(__loadStart) * 1000))ms — lightsCached per bridge=\(lightsByBridge.mapValues { $0.count })")
+        StartupTimeline.mark("loadAll.fetch-done", "in \(Int(Date().timeIntervalSince(__loadStart) * 1000))ms — lights per bridge=\(lightsByBridge.mapValues { $0.count })")
 
         // Yield so any pending main-thread interactions (e.g. tab bar) run before
         // large @Observable room list updates from rebuildAllRooms/Zones.
@@ -725,10 +725,13 @@ final class UnifiedOrchestrator {
         rebuildAllRooms()
         rebuildAllZones()
         lastLoadedAt = Date()
-        // TEMP PERF DIAG — remove after capture
-        print("⏱️PERF loadAll: TOTAL \(Int(Date().timeIntervalSince(__loadStart) * 1000))ms → allRooms=\(allRooms.count)")
+        StartupTimeline.mark("loadAll.total", "\(Int(Date().timeIntervalSince(__loadStart) * 1000))ms → allRooms=\(allRooms.count)")
         scheduleEntertainmentCleanup()
-        if let ctx = cacheContext { writeCache(to: ctx) }
+        if let ctx = cacheContext {
+            let __cacheStart = Date()
+            writeCache(to: ctx)
+            StartupTimeline.mark("cache.write.done", "\(Int(Date().timeIntervalSince(__cacheStart) * 1000))ms")
+        }
     }
 
     @ObservationIgnored private var entertainmentCleanupTask: Task<Void, Never>?
@@ -760,6 +763,7 @@ final class UnifiedOrchestrator {
         ) { group in
             for (bridgeID, client) in clients {
                 group.addTask { [client, bridgeID] in
+                    let __bridgeStart = Date()
                     do {
                         // D-016 migration: ensure THIS host is pinned before its fetch
                         // (a no-op once pinned — the steady state). Per-host so one offline
@@ -794,6 +798,10 @@ final class UnifiedOrchestrator {
                             self.connectionStatus[bridgeID] = .connected
                             self.log.info("Bridge \(bridgeID): \(roomCount) rooms, \(zoneCount) zones")
                         }
+                        StartupTimeline.mark(
+                            "loadAll.bridge-fetch.ok",
+                            "\(bridgeID) \(Int(Date().timeIntervalSince(__bridgeStart) * 1000))ms rooms=\(roomCount) zones=\(zoneCount)"
+                        )
                         return (
                             bridgeID,
                             displayModels.rooms,
@@ -803,6 +811,15 @@ final class UnifiedOrchestrator {
                             lights
                         )
                     } catch {
+                        // URLError code distinguishes timeout (-1001) vs refused (-1004)
+                        // vs no-route (-1009/NSURLErrorNotConnectedToInternet) — the
+                        // no-route pattern on a LAN IP is the Local Network permission
+                        // denial signature on a fresh install.
+                        let code = (error as? URLError)?.code.rawValue ?? (error as NSError).code
+                        StartupTimeline.mark(
+                            "loadAll.bridge-fetch.FAIL",
+                            "\(bridgeID) \(Int(Date().timeIntervalSince(__bridgeStart) * 1000))ms code=\(code) \(error.localizedDescription)"
+                        )
                         await MainActor.run {
                             self.connectionStatus[bridgeID] = .error(error.localizedDescription)
                             self.log.error("Bridge \(bridgeID) load failed: \(error.localizedDescription)")
@@ -1308,6 +1325,7 @@ final class UnifiedOrchestrator {
 
                 let (bytes, _) = try await sseSession.bytes(for: request)
                 connectionStatus[bridgeID] = .connected
+                StartupTimeline.mark("sse.connected", bridgeID)
                 retryDelay = 5_000_000_000   // reset on successful connection
 
                 // ── Line-by-line processing ─────────────────────────────────────────
@@ -1350,6 +1368,7 @@ final class UnifiedOrchestrator {
             }
 
             log.info("SSE: Reconnecting \(bridgeID) in \(retryDelay / 1_000_000_000)s")
+            StartupTimeline.mark("sse.retry", "\(bridgeID) in \(retryDelay / 1_000_000_000)s")
             try? await Task.sleep(nanoseconds: retryDelay)
             retryDelay = min(retryDelay * 2, maxDelay)
         }

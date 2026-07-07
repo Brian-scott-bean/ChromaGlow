@@ -21,6 +21,7 @@ struct HueHomeApp: App {
 
     // MARK: SwiftData Container (includes BridgeRecord from Stage 2A)
     let modelContainer: ModelContainer = {
+        StartupTimeline.mark("app-init.begin")
         let schema = Schema([
             BridgeRecord.self,
             HueLocalRoom.self,
@@ -57,7 +58,9 @@ struct HueHomeApp: App {
 
         let config = ModelConfiguration(schema: schema, url: storeURL)
         do {
-            return try ModelContainer(for: schema, configurations: [config])
+            let container = try ModelContainer(for: schema, configurations: [config])
+            StartupTimeline.mark("modelcontainer.done")
+            return container
         } catch {
             fatalError("HueHome: SwiftData container failed to initialize: \(error)")
         }
@@ -126,12 +129,17 @@ struct AppRootView: View {
                         if isDemoMode {
                             orchestrator.enterDemoMode()
                         } else {
+                            StartupTimeline.mark("tabs.task.begin", "bridges=\(bridges.count)")
                             orchestrator.configure(bridges: bridges, modelContext: modelContext)
+                            StartupTimeline.mark("configure.done")
                             let cachedRooms = (try? modelContext.fetch(FetchDescriptor<HueLocalRoom>())) ?? []
                             orchestrator.preloadCached(from: cachedRooms)
+                            StartupTimeline.mark("preload.done", "cachedRooms=\(cachedRooms.count)")
                             await orchestrator.loadAll(cacheContext: modelContext)
+                            StartupTimeline.mark("loadAll.returned")
                             orchestrator.startSSE()
                             orchestrator.startAllDayScenesIfNeeded()
+                            StartupTimeline.mark("sse.start")
 
                             // ── Pending automation (cold-start: user tapped notification) ──
                             if let presetID = UserDefaults.standard.string(forKey: "pendingAutomationPresetID") {
@@ -190,9 +198,14 @@ struct AppRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
+            StartupTimeline.mark("first-frame")
             let hasNewStyle = !bridges.isEmpty
             let hasLegacy   = (try? KeychainManager.shared.loadAPIToken()) != nil
             isPaired = hasNewStyle || hasLegacy
+            StartupTimeline.mark(
+                "pairing-gate",
+                isPaired ? "paired via \(hasNewStyle ? "bridge-records(\(bridges.count))" : "legacy-keychain")" : "unpaired"
+            )
         }
         // Activate WCSession after the first frame (was in App.init, blocking launch).
         .task { _ = WatchSessionManager.shared }

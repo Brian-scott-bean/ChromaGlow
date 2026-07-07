@@ -73,6 +73,7 @@ struct MainTabView: View {
     /// the bridge fetch hangs. First TAP on an unrealized tab still realizes it
     /// instantly via HueTabBar / swipe / onChange(selectedTab) inserts regardless.
     private func prewarmDeferredTabs() async {
+        StartupTimeline.mark("prewarm.wait-begin")
         try? await Task.sleep(for: .milliseconds(280))          // let Home paint
         let deadline = ContinuousClock.now + .seconds(3)
         while (orchestrator.isLoading || orchestrator.lastLoadedAt == .distantPast),
@@ -80,15 +81,22 @@ struct MainTabView: View {
               ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(100))
         }
+        StartupTimeline.mark(
+            "prewarm.released",
+            ContinuousClock.now >= deadline ? "3s CAP HIT — loadAll still not settled" : "loadAll settled"
+        )
         try? await Task.sleep(for: .milliseconds(250))          // settle gap: cache write / widget publish
         guard !Task.isCancelled else { return }
         realizedTabs.insert(.studio)
+        StartupTimeline.mark("prewarm.studio")
         await Task.yield()
         try? await Task.sleep(for: .milliseconds(200))
         realizedTabs.insert(.scenes)
+        StartupTimeline.mark("prewarm.scenes")
         await Task.yield()
         try? await Task.sleep(for: .milliseconds(200))
         realizedTabs.insert(.more)
+        StartupTimeline.mark("prewarm.more")
     }
 
     // MARK: iPhone Layout

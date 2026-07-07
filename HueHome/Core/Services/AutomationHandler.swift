@@ -41,6 +41,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUser
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
         log.info("AppDelegate: registered as UNUserNotificationCenter delegate")
+        StartupTimeline.mark("app.didFinishLaunching")
+        #if DEBUG
+        MainThreadWatchdog.shared.start()
+        #endif
         return true
     }
 

@@ -181,6 +181,7 @@ struct SplashView: View {
         guard !didRoute else { return }
 
         didRoute = true
+        StartupTimeline.mark("splash.route", alreadyPaired ? "legacy-paired → tabs" : "unpaired → setup")
         withAnimation(.easeInOut(duration: 0.4)) {
             if alreadyPaired {
                 onPaired?()

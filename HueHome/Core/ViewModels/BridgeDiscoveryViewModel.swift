@@ -116,6 +116,7 @@ final class BridgeDiscoveryViewModel {
                 let previousKeys = Set(self.discoveredBridgeChoices.map { Self.endpointKey($0) })
                 for bridge in deduped where !previousKeys.contains(Self.endpointKey(bridge)) {
                     self.appendLog("🌉 Resolved bridge choice: '\(bridge.name)' @ \(bridge.host):\(bridge.port)")
+                    StartupTimeline.mark("discovery.mdns-found", "\(bridge.host):\(bridge.port)")
                 }
                 self.discoveredBridgeChoices = deduped
             }
@@ -155,6 +156,7 @@ final class BridgeDiscoveryViewModel {
         scanningLabel = "Searching your Wi-Fi..."
         mdnsRetryDone = false
         appendLog("▶️  Scan initiated — mDNS (layer 1).")
+        StartupTimeline.mark("discovery.scan-start")
         discovery.startScan()
 
         // ── Layer 2: NUPnP fallback after 12 s if mDNS finds nothing ──
@@ -171,6 +173,7 @@ final class BridgeDiscoveryViewModel {
                 return
             }
             self.appendLog("⏱ mDNS timeout — falling back to Philips cloud discovery (layer 2).")
+            StartupTimeline.mark("discovery.mdns-timeout", "12s, nothing found")
             await MainActor.run { self.scanningLabel = "Trying cloud discovery..." }
             await self.discoverViaNUPnP()
         }
@@ -213,9 +216,12 @@ final class BridgeDiscoveryViewModel {
         }
         guard let url = URL(string: "https://discovery.meethue.com/api/nupnp") else { return }
         appendLog("☁️  GET https://discovery.meethue.com/api/nupnp")
+        StartupTimeline.mark("discovery.nupnp-start")
+        let __nupnpStart = Date()
 
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
+            StartupTimeline.mark("discovery.nupnp-done", "\(Int(Date().timeIntervalSince(__nupnpStart) * 1000))ms \(data.count)B")
 
             if let raw = String(data: data, encoding: .utf8) {
                 appendLog("   NUPnP response: \(raw)")
@@ -241,6 +247,7 @@ final class BridgeDiscoveryViewModel {
             phase = .bridgeFound(bridge)
 
         } catch {
+            StartupTimeline.mark("discovery.nupnp-FAIL", "\(Int(Date().timeIntervalSince(__nupnpStart) * 1000))ms \(error.localizedDescription)")
             appendLog("❌ NUPnP error: \(error.localizedDescription)")
 
             // M-11: bridges resolved while the cloud GET was failing — the
@@ -299,6 +306,7 @@ final class BridgeDiscoveryViewModel {
         pairedRecordID = nil
         pairedCanonicalBridgeID = nil
         phase = .pairing(bridge)
+        StartupTimeline.mark("pairing.begin", "\(bridge.host):\(bridge.port)")
         let scheme = bridge.port == 443 ? "https" : "http"
         appendLog("🤝 Attempting pairing POST to \(scheme)://\(bridge.host):\(bridge.port)/api …")
 
@@ -438,6 +446,7 @@ final class BridgeDiscoveryViewModel {
                 pairedRecordID = recordID
 
                 appendLog("💾 Credentials saved to per-bridge Keychain slots.")
+                StartupTimeline.mark("pairing.success", bridge.host)
                 phase = .paired(ip: bridge.host, token: token)
 
             } else {
