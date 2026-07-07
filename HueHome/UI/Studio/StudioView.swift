@@ -1085,14 +1085,26 @@ struct StudioView: View {
 
                 if case .composition = card.strategy {
                     GeometryReader { scrollGeo in
-                        ScrollView(showsIndicators: false) {
-                            compositionMixerBody
-                                .padding(.horizontal, HueSpacing.screenH)
-                                .padding(.top, HueSpacing.md)
-                                .padding(.bottom, HueSpacing.md)
+                        ScrollViewReader { proxy in
+                            ScrollView(showsIndicators: false) {
+                                compositionMixerBody
+                                    .padding(.horizontal, HueSpacing.screenH)
+                                    .padding(.top, HueSpacing.md)
+                                    .padding(.bottom, HueSpacing.md)
+                            }
+                            .scrollBounceBehavior(.basedOnSize)
+                            .frame(height: scrollGeo.size.height)
+                            // Auto-anchor: enabling a beat source scrolls the
+                            // beat controls into view — no hunting.
+                            .onChange(of: vm.activeCompositionBox?.reaction.source) { _, newSource in
+                                guard let newSource,
+                                      newSource == .beat || newSource == .onset || newSource == .tapTempo
+                                else { return }
+                                withAnimation(HueAnimation.fast) {
+                                    proxy.scrollTo("reactionBeatControls", anchor: .center)
+                                }
+                            }
                         }
-                        .scrollBounceBehavior(.basedOnSize)
-                        .frame(height: scrollGeo.size.height)
                     }
                 } else {
                     // ── Essential parameter sliders ──────────────
@@ -1423,8 +1435,12 @@ struct StudioView: View {
 
     private var compositionMixerBody: some View {
         VStack(alignment: .leading, spacing: HueSpacing.md) {
-            compositionSectionHeader("Layers", subtitle: "Choose a layer to edit live.")
-                .padding(.bottom, -2)
+            HStack(alignment: .top) {
+                compositionSectionHeader("Layers", subtitle: "Choose a layer to edit live.")
+                Spacer()
+                beatQuickToggle
+            }
+            .padding(.bottom, -2)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -1469,6 +1485,40 @@ struct StudioView: View {
             .transition(.opacity.combined(with: .scale(scale: 0.985)))
             .animation(HueAnimation.fast, value: activeCompositionTab)
         }
+    }
+
+    /// One-tap beat enable for the whole composition: flips the Reaction
+    /// source to .beat and jumps to the Reaction tab (the auto-anchor then
+    /// scrolls the beat controls into view). Tapping again turns it off.
+    private var beatQuickToggle: some View {
+        let source = vm.activeCompositionBox?.reaction.source ?? .none
+        let isBeatOn = source == .beat || source == .onset || source == .tapTempo
+        return Button {
+            withAnimation(HueAnimation.fast) {
+                if isBeatOn {
+                    vm.activeCompositionBox?.reaction.source = .none
+                } else {
+                    vm.activeCompositionBox?.reaction.source = .beat
+                    activeCompositionTab = .reaction
+                }
+            }
+            HapticManager.shared.selection()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "metronome.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(isBeatOn ? "Beat On" : "Beat")
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .foregroundStyle(isBeatOn ? Color.black.opacity(0.85) : HuePalette.amber)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule().fill(isBeatOn ? HuePalette.amber : HuePalette.amber.opacity(0.15))
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isBeatOn ? "Disable beat reaction" : "Enable beat reaction")
     }
 
     /// Harmony chips visible only in solid/gradient mode AND when room has color lights.
@@ -2402,6 +2452,7 @@ struct StudioView: View {
             }
 
             reactionBeatControls
+                .id("reactionBeatControls")   // ScrollViewReader auto-anchor target
 
             compositionSlider(
                 title: "Sensitivity",
