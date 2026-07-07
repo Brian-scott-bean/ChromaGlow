@@ -360,6 +360,7 @@ struct HueTabItem: View {
 // SwiftUI reconciles its own navigation state (value-, boolean-, and view-based
 // destinations alike) — no need to rewire the tabs to a bound NavigationPath.
 
+@MainActor
 @Observable
 final class TabNavRegistry {
     private final class WeakNav { weak var controller: UINavigationController?; init(_ c: UINavigationController?) { controller = c } }
