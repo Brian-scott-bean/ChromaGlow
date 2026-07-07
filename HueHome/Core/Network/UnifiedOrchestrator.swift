@@ -1378,11 +1378,25 @@ final class UnifiedOrchestrator {
         }
     }
 
+    /// Group ids (room or zone) the app is currently driving via a composition — REST
+    /// (`compositionRuntimes`) or DTLS (`compositionEntRoomByBridge`). Used to suppress
+    /// SSE echo of our own ~8 Hz per-light PUTs, which would otherwise rebuild the
+    /// dashboard at composition frame rate. Returns `[]` (no allocation) when nothing
+    /// is playing, so applySSEEvent behavior is unchanged in the common case.
+    private var appDrivenGroupIDs: Set<String> {
+        guard !compositionRuntimes.isEmpty || !compositionEntRoomByBridge.isEmpty else { return [] }
+        var ids = Set(compositionRuntimes.keys)
+        ids.formUnion(compositionEntRoomByBridge.values)
+        return ids
+    }
+
     /// Returns which of rooms/zones were mutated so callers can skip unnecessary rebuilds.
     @discardableResult
     func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> (rooms: Bool, zones: Bool) {
         var roomsMutated = false
         var zonesMutated = false
+        // Rooms/zones the app is actively driving — their SSE echoes are our own PUTs.
+        let driven = appDrivenGroupIDs
         for update in event.data {
             switch update.type {
 
@@ -1408,7 +1422,9 @@ final class UnifiedOrchestrator {
                     // Skip on/brightness if there is a pending optimistic action in flight.
                     // The SSE event pre-dates our PUT; applying it would cause a visible flicker.
                     let isPending = pendingActionDeadlines[update.id].map { Date() < $0 } ?? false
-                    if !isPending {
+                    // Skip if the app is driving this room via a composition — the echo of
+                    // our own per-light PUTs would rebuild the dashboard at frame rate.
+                    if !isPending && !driven.contains(rooms[idx].id) {
                         if let on  = update.on?.on              { rooms[idx].isOn       = on  }
                         if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
                         roomsByBridge[bridgeID] = rooms
@@ -1418,7 +1434,7 @@ final class UnifiedOrchestrator {
                 if var zones = zonesByBridge[bridgeID],
                    let idx = zones.firstIndex(where: { $0.groupedLightID == update.id }) {
                     let isPending = pendingActionDeadlines[update.id].map { Date() < $0 } ?? false
-                    if !isPending {
+                    if !isPending && !driven.contains(zones[idx].id) {
                         if let on  = update.on?.on              { zones[idx].isOn       = on  }
                         if let bri = update.dimming?.brightness { zones[idx].brightness = bri }
                         zonesByBridge[bridgeID] = zones
@@ -1433,6 +1449,7 @@ final class UnifiedOrchestrator {
 
                 if var rooms = roomsByBridge[bridgeID],
                    let roomID = lightIDToRoomID[update.id],
+                   !driven.contains(roomID),
                    let idx = rooms.firstIndex(where: { $0.id == roomID }) {
                     if let xy = update.color?.xy {
                         rooms[idx].dominantColorX = xy.x
@@ -1450,6 +1467,7 @@ final class UnifiedOrchestrator {
                 }
                 if var zones = zonesByBridge[bridgeID],
                    let zoneID = lightIDToZoneID[update.id],
+                   !driven.contains(zoneID),
                    let idx = zones.firstIndex(where: { $0.id == zoneID }) {
                     if let xy = update.color?.xy {
                         zones[idx].dominantColorX = xy.x
@@ -2418,6 +2436,10 @@ final class UnifiedOrchestrator {
             compositionSchedulerTask = nil
         }
         await refreshCompositionMicDemand()
+        // Re-sync this room's card to the bridge's confirmed state — while the
+        // composition ran, its SSE echoes were suppressed (appDrivenGroupIDs), so
+        // the card is frozen at its pre-composition color until a refresh lands.
+        scheduleStateRefresh()
         print("[Handoff] Composer teardown complete for roomID=\(roomID)")
     }
 
