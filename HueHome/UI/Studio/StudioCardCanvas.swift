@@ -55,8 +55,6 @@ struct StudioCardCanvas: View {
             case "cosmos", "enchant": drawOpal(context, size, time, intensity)
             case "sunbeam":     drawCandle(context, size, time, intensity)
             case "underwater":  drawAmbient(context, size, time, intensity)
-            case "music_sync":  drawMusicSync(context, size, time, intensity)
-            case "gaming":      drawGaming(context, size, time, intensity)
             case "party":       drawParty(context, size, time, intensity)
             case "strobe":      drawStrobe(context, size, time, intensity)
             case "thunderstorm": drawThunderstorm(context, size, time, intensity)
@@ -215,50 +213,7 @@ struct StudioCardCanvas: View {
     // MARK: - Live Mode Animations
     // ──────────────────────────────────────────────
 
-    /// Music Sync: 5 EQ bars that bounce
-    private func drawMusicSync(_ ctx: GraphicsContext, _ size: CGSize, _ t: Double, _ intensity: Double) {
-        let color = accentColor
-        let barCount = 5
-        let barWidth = size.width / CGFloat(barCount * 2 + 1)
 
-        for i in 0..<barCount {
-            let fi = Double(i)
-            let phase = seed + fi * 1.9
-            let bounce = 0.3 + 0.7 * abs(sin(t * (2.0 + fi * 0.8) + phase))
-            let height = size.height * bounce * 0.5
-            let x = barWidth * CGFloat(i * 2 + 1)
-            let y = size.height - height - 8
-
-            ctx.fill(
-                RoundedRectangle(cornerRadius: 2).path(in: CGRect(x: x, y: y, width: barWidth, height: height)),
-                with: .color(color.opacity(0.3 * intensity))
-            )
-        }
-    }
-
-    /// Gaming: horizontal scan line sweeping down
-    private func drawGaming(_ ctx: GraphicsContext, _ size: CGSize, _ t: Double, _ intensity: Double) {
-        let color = accentColor
-        let cycle = (t * 0.4 + seed).truncatingRemainder(dividingBy: 1.0)
-        let y = size.height * cycle
-        let thickness: CGFloat = 3
-
-        // Scan line
-        ctx.fill(
-            Rectangle().path(in: CGRect(x: 0, y: y - thickness / 2, width: size.width, height: thickness)),
-            with: .color(color.opacity(0.3 * intensity))
-        )
-
-        // Glow above
-        ctx.fill(
-            Rectangle().path(in: CGRect(x: 0, y: y - 20, width: size.width, height: 20)),
-            with: .linearGradient(
-                Gradient(colors: [.clear, color.opacity(0.1 * intensity)]),
-                startPoint: CGPoint(x: 0, y: y - 20),
-                endPoint: CGPoint(x: 0, y: y)
-            )
-        )
-    }
 
     /// Party: 12 confetti pieces drifting down
     private func drawParty(_ ctx: GraphicsContext, _ size: CGSize, _ t: Double, _ intensity: Double) {

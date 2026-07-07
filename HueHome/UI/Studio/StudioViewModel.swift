@@ -1825,41 +1825,6 @@ final class StudioViewModel {
     private static func buildLiveModeCards() -> [StudioCard] {
         return [
             StudioCard(
-                id: "music_sync",
-                name: "Music Sync",
-                tagline: "Lights pulse and flash to your music in real time via microphone",
-                icon: "waveform.and.mic",
-                accentColor: Color(hex: "#FF4D8C"),
-                requiresForeground: true,
-                params: [
-                    StudioParam(id: "sensitivity", label: "Sensitivity", kind: .slider(min: 0, max: 100), defaultValue: 70, tier: .essential),
-                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 80, tier: .essential),
-                    StudioParam(id: "color", label: "Color Palette", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 50), defaultValue: 10, tier: .advanced),
-                    StudioParam(id: "smoothness", label: "Smoothness", kind: .slider(min: 0, max: 100), defaultValue: 30, tier: .advanced),
-                    StudioParam(id: "saturation", label: "Saturation", kind: .slider(min: 0, max: 100), defaultValue: 100, tier: .advanced),
-                ],
-                strategy: .appDriven(engineKey: "mic"),
-                compositionLayerActivity: nil
-            ),
-            StudioCard(
-                id: "gaming",
-                name: "Gaming",
-                tagline: "Dynamic hue shifts during intense gaming sessions",
-                icon: "gamecontroller.fill",
-                accentColor: Color(hex: "#0A84FF"),
-                requiresForeground: true,
-                params: [
-                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 80, tier: .essential),
-                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
-                    StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 300, tier: .color),
-                    StudioParam(id: "saturation", label: "Saturation", kind: .slider(min: 0, max: 100), defaultValue: 80, tier: .advanced),
-                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 50), defaultValue: 15, tier: .advanced),
-                ],
-                strategy: .appDriven(engineKey: "gaming"),
-                compositionLayerActivity: nil
-            ),
-            StudioCard(
                 id: "party",
                 name: "Party",
                 tagline: "Fast multi-color flashes synchronized across the room",

@@ -116,3 +116,13 @@ enum AutomationAction: Equatable {
     }
 }
 
+
+// MARK: - Safe Array subscript
+// Moved from the deleted EffectsViewModel (R4 dead-surface cleanup) —
+// weekdaysLabel above is the live consumer.
+
+extension Array {
+    subscript(safeIndex index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}

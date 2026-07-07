@@ -178,7 +178,6 @@ struct AppRootView: View {
 extension Notification.Name {
     static let hueBridgeUnpaired  = Notification.Name("hueBridgeUnpaired")
     static let hueDemoExited      = Notification.Name("hueDemoExited")
-    static let studioStartMicSync = Notification.Name("studioStartMicSync")
     static let studioStopAll      = Notification.Name("studioStopAll")
     // NOTE (Phase 2): composerMicExclusiveBegan removed — capture is unified
     // in AudioAnalysisEngine, so there is no session handoff to coordinate.

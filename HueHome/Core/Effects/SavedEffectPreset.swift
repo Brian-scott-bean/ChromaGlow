@@ -112,3 +112,77 @@ final class EffectPresetsStore: ObservableObject, @unchecked Sendable {
         log.info("Loaded \(decoded.count) saved effect preset(s)")
     }
 }
+
+// MARK: - EffectParamState
+//
+// Runtime parameter state for a firmware/app effect. Moved here from the
+// deleted EffectsViewModel (R4 dead-surface cleanup): TimedEffectRouting
+// consumes paramsAreDefault(...) and the L-41/L-54 sanitizer is test-locked.
+
+struct EffectParamState {
+    var sliders:   [String: Double]  = [:]
+    var colors:    [String: Color]   = [:]
+    var palettes:  [String: [Color]] = [:]
+    var toggles:   [String: Bool]    = [:]
+    var segmented: [String: Int]     = [:]
+    var durations: [String: Int]     = [:]
+    /// Round 3: binding to the shared BeatClock (.off = legacy slider timing).
+    var beat: BeatBinding = .off
+
+    mutating func load(from params: [EffectParam]) {
+        for param in params {
+            switch param {
+            case .slider(let k, _, let v, _, _, _):         sliders[k]   = v
+            case .colorSwatch(let k, _, let c):             colors[k]    = c
+            case .colorPalette(let k, _, let cs, _):        palettes[k]  = cs
+            case .toggle(let k, _, let v):                  toggles[k]   = v
+            case .segmented(let k, _, _, let i):            segmented[k] = i
+            case .durationPicker(let k, _, let s, _, _):    durations[k] = s
+            }
+        }
+    }
+
+    func sliderValue(_ key: String, default d: Double = 0)     -> Double { sliders[key]   ?? d }
+    func boolValue  (_ key: String, default d: Bool = false)   -> Bool   { toggles[key]   ?? d }
+    func colorValue (_ key: String, default d: Color = .white) -> Color  { colors[key]    ?? d }
+    func paletteValue(_ key: String)                           -> [Color] { palettes[key]  ?? [] }
+    func segmentIndex(_ key: String, default d: Int = 0)       -> Int    { segmented[key] ?? d }
+    func durationValue(_ key: String, default d: Int = 900)    -> Int    { durations[key] ?? d }
+
+    /// L-41/L-54: builds state from a saved preset with every value clamped to
+    /// the effect's parameter schema. Preset JSON is persisted (and can drift
+    /// across versions or be hand-edited); unclamped values reach trap sites —
+    /// segmented indices into fixed arrays, UInt64 conversions of negative
+    /// intervals, and a ÷value Kelvin formatter. Keys absent from the schema
+    /// are dropped; keys absent from the preset keep their schema defaults.
+    static func sanitized(from preset: SavedEffectPreset, for effect: HueEffect) -> EffectParamState {
+        var state = EffectParamState()
+        state.load(from: effect.params)
+        for param in effect.params {
+            switch param {
+            case .slider(let key, _, _, let range, _, _):
+                if let v = preset.sliders[key] {
+                    state.sliders[key] = min(max(v, range.lowerBound), range.upperBound)
+                }
+            case .toggle(let key, _, _):
+                if let v = preset.toggles[key] { state.toggles[key] = v }
+            case .segmented(let key, _, let options, _):
+                if let idx = preset.segmented[key], !options.isEmpty {
+                    state.segmented[key] = max(0, min(options.count - 1, idx))
+                }
+            case .durationPicker(let key, _, _, let options, _):
+                if let secs = preset.durations[key], !options.isEmpty {
+                    state.durations[key] = options.min { abs($0 - secs) < abs($1 - secs) } ?? secs
+                }
+            case .colorSwatch(let key, _, _):
+                if let hsba = preset.colors[key] { state.colors[key] = Color.fromHSBA(hsba) }
+            case .colorPalette(let key, _, _, _):
+                if let arr = preset.palettes[key] { state.palettes[key] = arr.map { Color.fromHSBA($0) } }
+            }
+        }
+        // BeatBinding self-sanitizes (init snaps beatsPerCycle to the allowed
+        // steps and clamps the phase offset); nil = pre-Round-3 preset.
+        state.beat = preset.beat ?? .off
+        return state
+    }
+}

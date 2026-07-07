@@ -34,7 +34,8 @@ enum BridgeConnectionStatus {
 
 /// Represents one room that currently has a Hue effect applied.
 /// Stored in UnifiedOrchestrator.activeEffectEntries so both
-/// DashboardView (menu) and EffectsViewModel (card sync) share the same state.
+/// DashboardView (menu) reads this shared state (the old Effects surface's
+/// writer was deleted in R4 — see DEVLOG for the follow-up).
 /// Surfaced when a bulk write (All Off, automation preset/effect) could not
 /// reach every room even after the gate's retry (M-08) — the UI shows it so
 /// partial application is never silent.
@@ -242,7 +243,8 @@ final class UnifiedOrchestrator {
     // ── Active Effects (Now Playing) ─────────────────────────────────────────
     // Each room/zone can have an independently applied effect.
     // DashboardView reads this to build the Now Playing bar and per-room stop menu.
-    // EffectsViewModel writes to it via add/remove helpers below.
+    // The retired Effects surface wrote via the add/remove helpers below;
+    // orphaned readers (Now-Playing bar, Tap-Dial punchBurst) tracked in DEVLOG.
 
     /// All rooms that currently have an effect applied.
     var activeEffectEntries: [ActiveEffectEntry] = []
@@ -1823,25 +1825,6 @@ final class UnifiedOrchestrator {
         activeParamBox = paramBox
 
         switch key {
-        case "mic":
-            let sensitivity = params["sensitivity"] ?? 70
-            let brightness  = params["brightness"]  ?? 80
-            NotificationCenter.default.post(
-                name: .studioStartMicSync,
-                object: nil,
-                userInfo: ["groupedLightID": groupedLightID, "sensitivity": sensitivity, "brightness": brightness]
-            )
-
-        case "gaming":
-            // Gaming uses mic-reactive transient detection — delegate to SyncModeEngine
-            let sensitivity = params["sensitivity"] ?? 70
-            let brightness  = params["brightness"]  ?? 80
-            NotificationCenter.default.post(
-                name: .studioStartMicSync,
-                object: nil,
-                userInfo: ["groupedLightID": groupedLightID, "sensitivity": sensitivity, "brightness": brightness, "engine": "gaming"]
-            )
-
         case "strobe":
             // Try entertainment first for crisp on/off, fall back to REST
             let entClient = await tryStartEntertainment(room: room)
