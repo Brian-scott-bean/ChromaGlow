@@ -74,7 +74,10 @@ struct BridgeSetupView: View {
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showManualEntry) { manualIPSheet }
-        .onAppear { pulsing = true }
+        .onAppear {
+            StartupTimeline.mark("setup.appear")
+            pulsing = true
+        }
         .onChange(of: vm.phase) { _, newPhase in
             switch newPhase {
             case .paired(let ip, _):

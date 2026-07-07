@@ -121,6 +121,7 @@ final class BridgeDiscoveryViewModel {
                 self.discoveredBridgeChoices = deduped
             }
             .store(in: &cancellables)
+        StartupTimeline.mark("discovery.vm-init.done")
     }
 
     /// Collapses duplicate mDNS resolutions that share the same host and port.
