@@ -11,8 +11,8 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
-- **`main` @ `13e7c4b` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **12**).
+- **`main` @ `3dbf81a` is the current production anchor and the branch Brian installs from**
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **13**).
 - Everything below is MERGED TO MAIN and full-suite green:
   1. **2026-07 hardening P0+P1 audit remediation COMPLETE** — per-bundle privacy manifests (M-03),
      secret log scrub (H-03/H-04/L-09, `SecretLogScrubTests`), bridge TLS pinning (D-016,
@@ -40,6 +40,21 @@
      bounded mDNS resolve, and the full Swift 6 concurrency-warning cleanup
      (clean build = 0 errors / 0 warnings across app+widget+watch). The old `⏱️PERF` prints were
      CONVERTED to `StartupTimeline` marks, not removed.
+- **BUILD-12 DEVICE RESULT (2026-07-07) — THE STACKS NAMED THE BLOCKERS:** the 22.7s monster
+  is `swift_conformsToProtocol2` scanning conformance tables during SwiftUI construction of
+  BridgeSetup{View,Content} — every stack bottoms at `__debug_main_executable_dylib_entry_point`
+  (Xcode 16+ **debug-dylib** execution; a debug-tethered tax that grew with app size, not a
+  regression). Plus ~4.7s CoreGraphics rasterization (the setup screen's 60pt `.blur` glow),
+  ~1.3s TextInput `_sl_dlopen`, ~1.8s NSClassFromString/UIAccessibility (platform/first-launch
+  tax). Nothing in builds 10–12 made it slower — diagnostics made existing cost visible.
+- **IMMEDIATE NEXT STEP:** Brian installs **build 13** (fresh install) and reports: (1) the
+  console timeline vs build 12 — the conformance-scan hang should shrink drastically with the
+  debug dylib disabled; (2) **experiment A** — force-quit, relaunch from the home screen
+  untethered (no debugger): dramatically better?; (3) **experiment B** — Edit Scheme → Run →
+  Build Configuration → Release, run once: this is the App-Store-like experience. If A/B are
+  fast, remaining slowness is debug-run tax and we stop chasing it. Setup screen now paints a
+  static "Getting things ready…" frame before the heavy tree builds (a spinner cannot spin
+  while main is blocked — a still frame beats a frozen splash).
 - **BUILD-11 DEVICE RESULT (2026-07-07):** stacks were captured but Brian's console filter hid
   the frame lines (tooling bug, fixed in 12). Hard findings anyway: `discovery.vm-init.done`
   fired 6+ times (VM churn — `@State` initial value re-evaluated per parent re-render, fixed
@@ -118,6 +133,40 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-07 - [Claude] BUILD 13: debug-dylib OFF + getting-ready frame + gradient glow
+
+### Branch
+- `main` directly (rollback `checkpoint/pre-round4-2026-07-07`)
+
+### Why
+Build 12's now-visible stacks named the blockers (see snapshot). The dominant one is
+configuration, not code: debug-dylib execution makes Swift conformance scans pathologically
+slow while SwiftUI builds the setup screen's tree on device.
+
+### Did (`00eb121..3dbf81a`, build 13)
+- `ENABLE_DEBUG_DYLIB = NO` — app target Debug config only (pbxproj block `A11DB52F…`).
+  Verified the built app no longer contains `HueHome.debug.dylib`. Revert this single
+  setting if SwiftUI Previews misbehave.
+- BridgeSetupView shim: static "Getting things ready…" frame paints BEFORE the heavy
+  BridgeSetupContent construction (VM creation moved `.onAppear` → `.task` so the frame
+  commits first). No animation on purpose — nothing can animate during a main-thread hang.
+- Ambient glow: 60pt gaussian `.blur` on a 320pt circle → RadialGradient (the ~4.7s
+  CGDisplayListDrawInContextDelegate stack; re-paid per accent-color change).
+
+### Validation
+- Simulator fresh install: launch→setup 1.4s, `discovery.vm-init.done` ×1, ZERO hangs.
+- Full suite green; clean build 0 errors/0 warnings.
+
+### Left
+- Brian: build 13 fresh install + experiments A (untethered relaunch) and B (Release run) —
+  these size how much of the remaining slowness is debug-run tax vs real app work.
+
+### Gotchas
+- If Previews break for the app target: revert `ENABLE_DEBUG_DYLIB = NO` (one line).
+- The placeholder branch must stay animation-free — it exists to be a good STILL frame.
 
 ---
 
