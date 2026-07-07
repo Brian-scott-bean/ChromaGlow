@@ -444,6 +444,7 @@ enum CompositionTransportPreference: String {
     case entertainmentArea
 }
 
+@MainActor
 @Observable
 final class StudioViewModel {
 
@@ -547,12 +548,11 @@ final class StudioViewModel {
 
     /// Live composition param box — the render loop reads this each frame.
     /// UI writes to it on slider drag for instant light response.
-    nonisolated(unsafe) var activeCompositionBox: CompositionParamBox?
+    var activeCompositionBox: CompositionParamBox?
 
     // ── Status ────────────────────────────────────────────────
     var statusMessage: String = ""
 
-    @MainActor
     func configure(orchestrator: UnifiedOrchestrator) {
         self.orchestrator = orchestrator
         if selectedRoom == nil, let first = orchestrator.allRooms.first {
@@ -598,7 +598,6 @@ final class StudioViewModel {
         }
     }
 
-    @MainActor
     var activeRESTCadenceForSelectedRoom: Double? {
         guard let orchestrator else { return nil }
         if let roomID = selectedRoom?.id,
@@ -790,7 +789,6 @@ final class StudioViewModel {
     /// Rebuild coverage for the selected room. Keyed by card id; resolved by
     /// the strategy's effect-name string. Triggered by .task(id: room) in
     /// StudioView so rapid rolodex scrubs auto-cancel stale fetches.
-    @MainActor
     func refreshCoverage() async {
         guard let orchestrator, !orchestrator.isDemoMode,
               let room = selectedRoom,
@@ -868,14 +866,12 @@ final class StudioViewModel {
         return counts.max(by: { $0.value < $1.value })?.key ?? .c
     }
 
-    @MainActor
     func apply(_ card: StudioCard) async {
         await apply(card, roomOverride: nil, preferEntertainmentOverride: nil)
     }
 
     /// Apply using a captured room snapshot to avoid room-selection races
     /// when taps and room-swipes happen close together.
-    @MainActor
     func apply(_ card: StudioCard, roomOverride: RoomDisplayItem?, preferEntertainmentOverride: Bool?) async {
         print("[Studio] apply '\(card.name)' — selectedRoom: \(selectedRoom?.name ?? "nil")")
         guard let room = roomOverride ?? selectedRoom else {
@@ -1145,7 +1141,6 @@ final class StudioViewModel {
     }
 
     /// Stop the effect running on a specific room.
-    @MainActor
     private func stopEffect(on roomID: String) async {
         guard let effect = runningEffects[roomID],
               let orchestrator,
@@ -1192,7 +1187,6 @@ final class StudioViewModel {
 
     /// Public stop — called from the card grid (tap running card to toggle off)
     /// or from the mixer stop button.
-    @MainActor
     func stop(_ card: StudioCard) async {
         guard let room = selectedRoom else { return }
         isExplicitStop = false
@@ -1202,7 +1196,6 @@ final class StudioViewModel {
 
     /// Explicit stop — called when user taps the stop button directly.
     /// Turns off the room's lights.
-    @MainActor
     func explicitStop(_ card: StudioCard) async {
         guard let room = selectedRoom else { return }
         isExplicitStop = true
@@ -1211,7 +1204,6 @@ final class StudioViewModel {
     }
 
     /// Stop all running effects across all rooms.
-    @MainActor
     func stopAll() async {
         isExplicitStop = true
         let roomIDs = Array(runningEffects.keys)
@@ -1229,7 +1221,6 @@ final class StudioViewModel {
 
     /// Debounced param update — dispatches to the correct API call based on param ID.
     /// Waits 150ms after last change, then sends one PUT.
-    @MainActor
     func sendParam(cardID: String, paramID: String, value: Double) {
         paramTask?.cancel()
         paramTask = Task {
@@ -1306,7 +1297,6 @@ final class StudioViewModel {
 
     /// Send a color param change to the bridge (for base_color, flash_color, etc.).
     /// Converts SwiftUI Color to CIE xy using HueColorUtils.
-    @MainActor
     func sendColorParam(cardID: String, paramID: String, color: Color) {
         setParamColor(for: cardID, paramID: paramID, color: color)
 
@@ -1476,7 +1466,6 @@ final class StudioViewModel {
     }
 
     /// Ensures the hidden starter template exists so `.composition(starterID)` resolves in `apply()`.
-    @MainActor
     func ensureComposerStarterDraft() {
         guard !compositionStore.presets.contains(where: { $0.id == Self.composerStarterDraftPresetID }) else { return }
         let now = Date()
@@ -1504,14 +1493,12 @@ final class StudioViewModel {
         compositionStore.save(draft)
     }
 
-    @MainActor
     func applyStarterComposition() async {
         ensureComposerStarterDraft()
         // +Create should stay scoped to the selected room by default.
         await apply(starterCompositionCard(), roomOverride: nil, preferEntertainmentOverride: false)
     }
 
-    @MainActor
     func generateCompositionFromPrompt(_ rawPrompt: String) async -> CompositionPreset? {
         let prompt = String(rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines).prefix(220))
         guard !isGeneratingAIComposition else { return nil }
@@ -1568,7 +1555,6 @@ final class StudioViewModel {
     }
 
     /// Persist the currently running composition params as a new user preset.
-    @MainActor
     func saveActiveComposition(
         name rawName: String,
         icon: String,
@@ -1604,7 +1590,6 @@ final class StudioViewModel {
         return UIImage(systemName: trimmed) != nil ? trimmed : "sparkles"
     }
 
-    @MainActor
     func renameCompositionPreset(id: UUID, to rawName: String) {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, let idx = compositionStore.presets.firstIndex(where: { $0.id == id }) else { return }
@@ -1633,12 +1618,10 @@ final class StudioViewModel {
         }
     }
 
-    @MainActor
     func duplicateCompositionPreset(_ preset: CompositionPreset) {
         _ = compositionStore.duplicate(preset)
     }
 
-    @MainActor
     func deleteCompositionPreset(_ preset: CompositionPreset) async {
         let card = studioCard(for: preset)
         if runningCardID == card.id {
