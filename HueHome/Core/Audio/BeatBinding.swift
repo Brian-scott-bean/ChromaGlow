@@ -179,6 +179,24 @@ extension BeatMath {
     }
 }
 
+// MARK: - BeatBindingBox
+
+/// Thread-safe live holder so a RUNNING loop sees beat-binding edits
+/// immediately (mirrors the StudioParamBox pattern — the loop captures the
+/// reference, the UI writes the value). Effects-tab loops read `.value`
+/// once per iteration.
+final class BeatBindingBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: BeatBinding
+
+    init(_ value: BeatBinding = .off) { _value = value }
+
+    var value: BeatBinding {
+        get { lock.lock(); defer { lock.unlock() }; return _value }
+        set { lock.lock(); _value = newValue; lock.unlock() }
+    }
+}
+
 // MARK: - Studio param-box bridge
 
 extension BeatBinding {

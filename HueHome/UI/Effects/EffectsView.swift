@@ -217,6 +217,11 @@ struct EffectsView: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.white)
             Spacer()
+            BeatChipButton(
+                capabilities: .global,
+                binding: Binding(get: { vm.beatBinding }, set: { vm.beatBinding = $0 }),
+                compact: true
+            )
             Text("Live")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.green)

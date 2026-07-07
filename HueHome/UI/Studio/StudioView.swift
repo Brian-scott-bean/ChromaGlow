@@ -861,6 +861,22 @@ struct StudioView: View {
         }
     }
 
+    // ── Beat binding for Studio engine cards ─────────────────
+
+    /// Routes beat-panel edits through setParamValue so they persist in the
+    /// card's param dict AND push live to the running engine's param box —
+    /// writing the box directly would be clobbered by the next slider change.
+    private func studioBeatBinding(forCardID cardID: String) -> Binding<BeatBinding> {
+        Binding(
+            get: { BeatBinding.fromStudioValues(vm.paramValues[cardID] ?? [:]) },
+            set: { newValue in
+                for (key, value) in newValue.studioValues {
+                    vm.setParamValue(for: cardID, paramID: key, value: value)
+                }
+            }
+        )
+    }
+
     // ── Deck page dots ───────────────────────────────────────
 
     private var deckDots: some View {
@@ -925,6 +941,17 @@ struct StudioView: View {
                         Text("LIVE")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(HuePalette.Noir.success)
+                    }
+
+                    // Beat chip: engine cards read beat_mode/beat_per_cycle/
+                    // beat_phase from the live param box every tick, so panel
+                    // edits land without restarting the engine.
+                    if case .appDriven = card.strategy {
+                        BeatChipButton(
+                            capabilities: .global,
+                            binding: studioBeatBinding(forCardID: card.id),
+                            compact: true
+                        )
                     }
 
                     // Scope / transport badge for Studio engine cards

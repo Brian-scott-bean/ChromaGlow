@@ -95,6 +95,10 @@ final class EffectsViewModel: ObservableObject {
     private var isDemoMode:       Bool                 = false
     private weak var orchestrator: UnifiedOrchestrator? = nil
     private let engine            = EffectEngine()
+    /// Live beat-binding shared with the running loop: the loop captures
+    /// this box and reads it every iteration, so panel edits take effect
+    /// without restarting the effect.
+    let liveBeatBox               = BeatBindingBox()
     private let log               = Logger(subsystem: "com.lightshade.app", category: "Effects")
     private var cancellables      = Set<AnyCancellable>()
     /// M-16: pending "Turn Off at End" timers for gradual effects, keyed by room ID.
@@ -117,6 +121,25 @@ final class EffectsViewModel: ObservableObject {
     /// Set during room-switch param restoration to prevent the restored state
     /// from being auto-applied to the incoming room.
     private var suppressParamReapply = false
+
+    /// Beat panel read/write path: persists with the param state (and thus
+    /// presets) AND updates the box the running loop reads each iteration.
+    /// Suppresses the $paramState re-apply debounce (same 500 ms pattern as
+    /// room-switch restoration) — the live box already delivers the change,
+    /// so restarting the loop would only cause a visible hiccup.
+    @MainActor
+    var beatBinding: BeatBinding {
+        get { paramState.beat }
+        set {
+            suppressParamReapply = true
+            paramState.beat = newValue
+            liveBeatBox.value = newValue
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(500))
+                self?.suppressParamReapply = false
+            }
+        }
+    }
 
     // MARK: - Configure
 
@@ -518,6 +541,10 @@ final class EffectsViewModel: ObservableObject {
             statusMessage     = "'\(effect.name)' running — keep app open"
             setNowPlaying(effect)
 
+            // Seed the live box so the loop starts with the current binding;
+            // later panel edits reach the running loop through the same box.
+            liveBeatBox.value = paramState.beat
+
             // M-14: loops run through the room bridge's pacing gate and
             // collapse same-color frames to one grouped_light PUT.
             let loop: @Sendable () async throws -> Void
@@ -527,19 +554,19 @@ final class EffectsViewModel: ObservableObject {
                                           groupedLightID: groupedLightID, gate: gate,
                                           bpm: bpm, dutyCycle: dutyCycle,
                                           onXY: onXY, offBrightness: offDim,
-                                          beat: paramState.beat)
+                                          beat: liveBeatBox)
             case "party":
                 loop = EffectLoops.party(lights: lights, api: api,
                                          groupedLightID: groupedLightID, gate: gate,
                                          speed: speed, palette: palette,
                                          sync: sync, flash: flash,
-                                         beat: paramState.beat)
+                                         beat: liveBeatBox)
             case "thunderstorm":
                 loop = EffectLoops.thunderstorm(lights: lights, api: api,
                                                 groupedLightID: groupedLightID, gate: gate,
                                                 frequencyIndex: freqIdx,
                                                 baseXY: baseXY, flashXY: flashXY, baseBrightness: baseB,
-                                                beat: paramState.beat)
+                                                beat: liveBeatBox)
             default:
                 statusMessage = "Unknown effect: \(effect.id)"
                 isRunning     = false

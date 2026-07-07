@@ -78,7 +78,7 @@ enum EffectLoops {
         dutyCycle:      Double,    // 0.10...0.90
         onXY:           (Double, Double),
         offBrightness:  Double,
-        beat:           BeatBinding = .off
+        beat:           BeatBindingBox = BeatBindingBox()
     ) -> @Sendable () async throws -> Void {
         return {
             // Defense-in-depth (L-41 class): bpm ≤ 0 divides to ∞ (UInt64 trap)
@@ -88,13 +88,14 @@ enum EffectLoops {
             let periodNs   = UInt64(60_000_000_000 / bpm)
 
             while !Task.isCancelled {
-                if let lock = BeatMath.liveLock(beat) {
+                let beatNow = beat.value
+                if let lock = BeatMath.liveLock(beatNow) {
                     // Beat-locked (wcagSafeBeatsPerCycle keeps this ≤3 Hz —
                     // also ≤6 gate-paced PUTs/s). The boundary is re-derived
                     // from the live clock, never accumulated.
                     try await BeatMath.sleepUntilNextCycle(
                         beatsPerCycle: lock.beatsPerCycle,
-                        phaseOffsetBeats: beat.phaseOffsetBeats)
+                        phaseOffsetBeats: beatNow.phaseOffsetBeats)
                     guard !Task.isCancelled else { return }
 
                     var ok = await EffectLoops.setAll(lights: lights, api: api,
@@ -153,7 +154,7 @@ enum EffectLoops {
         palette:        [(Double, Double)],  // array of CIE xy pairs
         sync:           Bool,
         flash:          Bool,
-        beat:           BeatBinding = .off
+        beat:           BeatBindingBox = BeatBindingBox()
     ) -> @Sendable () async throws -> Void {
         return {
             // Defense-in-depth (L-41): speed > 11 makes the interval negative —
@@ -165,11 +166,12 @@ enum EffectLoops {
                 // Beat-locked: hold this frame until the next cycle boundary
                 // (≤3 Hz cap doubles as gate protection). Free-running falls
                 // through to the interval sleep at the bottom.
-                let lock = BeatMath.liveLock(beat)
+                let beatNow = beat.value
+                let lock = BeatMath.liveLock(beatNow)
                 if let lock {
                     try await BeatMath.sleepUntilNextCycle(
                         beatsPerCycle: lock.beatsPerCycle,
-                        phaseOffsetBeats: beat.phaseOffsetBeats)
+                        phaseOffsetBeats: beatNow.phaseOffsetBeats)
                     guard !Task.isCancelled else { return }
                 }
 
@@ -228,7 +230,7 @@ enum EffectLoops {
         baseXY:           (Double, Double),
         flashXY:          (Double, Double),
         baseBrightness:   Double,
-        beat:             BeatBinding = .off
+        beat:             BeatBindingBox = BeatBindingBox()
     ) -> @Sendable () async throws -> Void {
         return {
             // Base calm state
@@ -247,10 +249,11 @@ enum EffectLoops {
                 guard !Task.isCancelled else { return }
 
                 // Beat-locked: hold the strike until the next cycle boundary.
-                if let lock = BeatMath.liveLock(beat) {
+                let beatNow = beat.value
+                if let lock = BeatMath.liveLock(beatNow) {
                     try await BeatMath.sleepUntilNextCycle(
                         beatsPerCycle: lock.beatsPerCycle,
-                        phaseOffsetBeats: beat.phaseOffsetBeats)
+                        phaseOffsetBeats: beatNow.phaseOffsetBeats)
                     guard !Task.isCancelled else { return }
                 }
 

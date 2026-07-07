@@ -311,3 +311,35 @@ struct BeatPanelView: View {
         }
     }
 }
+
+// MARK: - BeatChipButton
+
+/// Drop-in chip + popover: the standard way a surface hosts the beat panel.
+/// The popover form keeps the host screen visible — beat tweaks are a
+/// glance-and-adjust interaction, not a navigation.
+struct BeatChipButton: View {
+    let capabilities: BeatPanelCapabilities
+    var binding: Binding<BeatBinding>? = nil
+    var compact = false
+
+    @State private var showPanel = false
+
+    var body: some View {
+        Button {
+            showPanel = true
+            HapticManager.shared.selection()
+        } label: {
+            BeatStatusChip(compact: compact)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showPanel, arrowEdge: .top) {
+            BeatPanelView(capabilities: capabilities, binding: binding)
+                .frame(minWidth: 300, maxWidth: 340)
+                .presentationCompactAdaptation(.popover)
+                .presentationBackground(Color(red: 0.075, green: 0.07, blue: 0.09))
+                .preferredColorScheme(.dark)
+        }
+        .accessibilityLabel("Beat clock")
+        .accessibilityHint("Opens tempo and beat sync controls")
+    }
+}

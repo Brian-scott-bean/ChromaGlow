@@ -314,6 +314,11 @@ struct DashboardView: View {
 
             Spacer()
 
+            // Global clock presence: transport-only panel (no per-effect
+            // binding from here — that lives on the owning surface).
+            BeatChipButton(capabilities: [.transport, .manualBPM, .barMeter],
+                           compact: true)
+
             Button {
                 if entries.count > 1 {
                     showEffectsMenu = true
