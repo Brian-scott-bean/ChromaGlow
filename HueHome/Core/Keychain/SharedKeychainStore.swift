@@ -16,7 +16,10 @@
 import Foundation
 import Security
 
-enum SharedKeychainStore {
+// nonisolated: stateless statics over thread-safe SecItem C APIs. Inert in the
+// app/widget targets; in the watch target (default actor isolation = MainActor)
+// this keeps the WCSession-delegate call sites legal without hopping actors.
+nonisolated enum SharedKeychainStore {
 
     /// LIVE Keychain service identifier — do NOT rename (AGENTS.md identity
     /// list): renaming orphans every existing user's stored credentials.

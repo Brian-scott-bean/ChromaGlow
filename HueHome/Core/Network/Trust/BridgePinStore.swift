@@ -16,7 +16,11 @@
 
 import Foundation
 
-final class BridgePinStore: @unchecked Sendable {
+// nonisolated: all state is guarded by the internal NSLock (@unchecked Sendable
+// contract below). Inert in the app/widget targets; in the watch target
+// (default actor isolation = MainActor) this keeps the TLS-callback and
+// WCSession-delegate call sites legal without hopping actors.
+nonisolated final class BridgePinStore: @unchecked Sendable {
 
     static let shared = BridgePinStore()
 
