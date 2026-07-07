@@ -48,6 +48,41 @@
 
 ---
 
+## 2026-07-06 - [Claude] Round 3 kickoff: Hue capability deep-dive + approved design (docs handoff) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (rollback tag for this round: `checkpoint/pre-round3-2026-07-06`;
+  revert = `git reset --hard checkpoint/pre-round3-2026-07-06` — branch is unpushed)
+
+### Did
+- Deep-dive into unused Hue capability (verified by code inventory + API research) → capability
+  matrix recorded in `docs/ios/composer-studio-mic-audit-2026-07-06.md` §6: effects_v2 (real
+  params + 4 absent effects), gradient.points/segments, native timed_effects, signaling
+  (incl. punchBurst), dynamic scene authoring, Tap Dial `relative_rotary`/`button` SSE events,
+  dead client methods. Plus beat/flow gap audit (six beat-blind loops, 3-tap beat panel, 2-tap
+  menus, per-apply transport dialog).
+- Design approved by Brian: **"One Clock, Full Bridge, Two Taps"** — user-confirmed order
+  **Beat panel → Hue power (A–G, Tap Dial IN) → Perform → Sequencer**. Full design + phasing in
+  audit doc §6.2 and the session plan file (deep-dazzling-prism).
+- Refreshed the published design-spec artifact (mockups for beat panel, two-tap flow, A–G
+  capability cards, Perform, sequencer): https://claude.ai/code/artifact/52839d43-4209-403f-98d3-b16f073b1ad0
+
+### Working
+- Nothing code-side yet this round — this entry is the docs handoff so any fresh context window
+  can continue from §6 of the audit doc alone. Suite remains 241/241 green at `4658a00`.
+
+### Left
+- R3-A commits 1–7 (BeatBinding/BeatMath → BeatPanelView → loop consumption → global chips →
+  flow fixes), then R3-B phases A–G, then Perform (R3-C) and sequencer (R3-D).
+
+### Gotchas
+- REST tier must beat-sync at BAR boundaries only (BridgeCommandGate ~10 cmd/s); per-beat locking
+  is DTLS-only.
+- `wcagSafeBeatsPerCycle` clamp is loop-side and mandatory (174 BPM × ½-beat → ×1).
+- Gradient work (R3-B F) is highest-risk and deliberately last REST feature; entertainment-config
+  builder needs refetch-after-create to stop fabricating channels.
+- Never accumulate beat phase in loops — always derive from `BeatClock.snapshot()` per tick.
+
 ## 2026-07-06 - [Claude] Phase 2: DJ-grade audio core + world-class motion engine (4 commits) — LOCAL
 
 ### Branch

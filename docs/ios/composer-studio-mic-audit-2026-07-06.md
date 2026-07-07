@@ -86,8 +86,50 @@ On-device additions to the §4 checklist:
 
 ## 5. Next phases (approved plan)
 
-- **Phase 2:** unified `AudioAnalysisEngine` (single capture owner, kills the exclusivity handshake) + `AudioFeatureExtractor` (AGC, spectral-flux onset) + `TempoEstimator` (BPM) + `BeatClock`; `CompositionEngine.render` gains `AudioFeatures` + `BeatSnapshot`; dead reaction knobs become real; envelope sliders exposed.
-- **Phase 3:** DJ performance surface — `CompositionMixer` (A/B frame-lerp crossfade, punch pads with ≤3 Hz strobe clamp, master fader), full-screen `PerformanceView`, queue.
-- **Phase 4:** step sequencer (`CompositionSequence` + `SequencePlayer` reusing the mixer), new motion patterns (chase/pulseCenter/spiral), richer palettes.
+- **Phase 2:** unified `AudioAnalysisEngine` (single capture owner, kills the exclusivity handshake) + `AudioFeatureExtractor` (AGC, spectral-flux onset) + `TempoEstimator` (BPM) + `BeatClock`; `CompositionEngine.render` gains `AudioFeatures` + `BeatSnapshot`; dead reaction knobs become real; envelope sliders exposed. **[SHIPPED 2026-07-06 — see §4b]**
+- **Phase 3:** DJ performance surface — `CompositionMixer` (A/B frame-lerp crossfade, punch pads with ≤3 Hz strobe clamp, master fader), full-screen `PerformanceView`, queue. **[Re-sequenced: now lands after Round 3 A+B below, and inherits punchBurst + Tap Dial.]**
+- **Phase 4:** step sequencer (`CompositionSequence` + `SequencePlayer` reusing the mixer), new motion patterns (chase/pulseCenter/spiral), richer palettes. **[Motion patterns shipped early in Phase 2.]**
 
 Full plan: session plan file (deep-dazzling-prism) — architecture, file map, per-phase validation.
+
+---
+
+## 6. Round 3 (2026-07-06): Hue capability deep-dive + approved "One Clock, Full Bridge, Two Taps" design
+
+> **Handoff note:** this section + the DEVLOG entry of the same date are sufficient for a fresh
+> context window to continue. Approved plan lives in the session plan file (deep-dazzling-prism);
+> the design spec artifact (mockups) is published at
+> https://claude.ai/code/artifact/52839d43-4209-403f-98d3-b16f073b1ad0.
+> Rollback tag for this round: `checkpoint/pre-round3-2026-07-06`.
+
+### 6.1 Capability matrix — what the bridge can do that the app never uses (verified)
+
+1. **`effects_v2`** — current firmware-effect API: per-effect params (`speed` 0–1, `color.xy`, `mirek`) + per-light `effect_values` capability discovery. App sends only the deprecated `effects.effect` enum; Effects-tab param sliders are partly cosmetic (only brightness lands). Four firmware effects entirely absent: **cosmos, enchant, sunbeam, underwater**.
+2. **`gradient.points`** — gradient lights (Play gradient strip, Signe, gradient lightstrip) take ≤5 CIE points via plain REST; app treats them as flat single-color bulbs. Entertainment v2 configs can expose gradient SEGMENTS as channels; our config builder makes one channel per light and never segments.
+3. **`timed_effects`** — native bridge-side sunrise/sunset with duration; app fakes them with `dynamics.duration` ramps that die with the app.
+4. **`signaling`** — alert/on_off/2-color alternating/timed: unmodeled. Free "flash to identify", notification blinks, and a REST-tier punch-pad primitive (**punchBurst**).
+5. **Dynamic scene authoring** — scene `palette` (colors/dimming/effects/speed) never written; native dynamic scenes loop on the bridge with zero app involvement.
+6. **Sensor/input ecosystem** — `button`, `relative_rotary` (Tap Dial), motion, light_level, temperature, battery: SSE handler filters to light/grouped_light only. Tap Dial = physical DJ controller (rotate → BPM nudge, press → tap tempo, buttons → punch pads).
+7. **Dead client code** — `setGroupedLightWithEffect`, `stopLightEffects` (0 callers); `HueLight` decodes no effects/effects_v2/timed_effects/gradient fields.
+
+**Beat/flow gaps (verified):** six timing loops never read BeatClock (Effects-tab strobe/party/thunderstorm + Studio strobe/party/ambient/thunderstorm); beat panel is Composer-only, 3 taps deep; `setBPM`/`nudgePhase` have no UI; pattern/source pickers are 2-tap `.menu`s; transport confirmation dialog fires on every composition apply; deck navigation is swipe-only; no global clock presence.
+
+### 6.2 Approved design (user-confirmed order: Beat panel → Hue power → Perform; Tap Dial IN)
+
+- **R3-A · Universal Beat Panel (7 commits):** new `Core/Audio/BeatBinding.swift` (`BeatBinding{mode, beatsPerCycle ∈ ¼…8, phaseOffsetBeats}` + pure `BeatMath` incl. `wcagSafeBeatsPerCycle` loop-side ≤3 Hz clamp) → new `UI/Components/BeatPanelView.swift` (capability-driven single panel + `BeatStatusChip` + `ChipPickerRow`) → six loops consume `BeatSnapshot` (DTLS per-beat, REST bar-boundary; `bpm==0` → legacy slider math) → chip in Dashboard NowPlaying/Studio mixer header/Effects banner (popover) → two-tap flow fixes (pill pickers, remembered transport dialog, tappable deck header, React auto-anchor). Storage: `EffectParamState.beat` + `SavedEffectPreset.beat?` (nil-additive); Studio via `StudioParamBox` keys; Composer keeps `ReactionConfig`. Rule: never accumulate phase — derive from `BeatClock.snapshot()` per frame.
+- **R3-B · Full Hue power (A–G):** A capability foundation (`HueLight` additive decode + `HueAPIClient+Effects/+Signaling/+Gradient` pure body builders + `EffectCapabilityResolver`; delete dead methods) → B effects_v2 cards/real params/coverage badges/400→v1 fallback → C `TimedEffectRouting` (native when all lights support, else app ramp) → D `SignalingService` (identify, AppAutomation blink, punchBurst) → E dynamic scene authoring (`CreateSceneRequest.palette/speed/auto_dynamic`, "Save as Hue dynamic scene" from Composer) → F gradient (**highest risk, last REST feature**: `GradientChannelMap` ≤5 virtual channels/strip, budget 20; builder two-position `service_locations` + refetch-after-create) → G Tap Dial (SSE `button`/`relative_rotary` decode, `subscribeToControlEvents` second stream, pure `ControlMappingEngine` 100 ms rotary accumulator, `PhysicalControlsView` "DJ Mode" template).
+- **R3-C · Perform** (per spec artifact; punch pads REST-tier via punchBurst, Tap Dial mappings, `.global` beat panel) → **R3-D · sequencer**.
+- **Invariants:** RestSender mailbox + BridgeCommandGate for every REST write; generation counters; WCAG ≤3 Hz loop-side; no app-driven effects payloads to grouped_light; additive Codable only; new logic in new files, orchestrator diffs surgical; build + full suite green per commit.
+
+### 6.3 Round-3 verification plan
+
+Unit: `BeatMathTests` (cycle phase/boundary/WCAG clamp incl. 174 BPM × ½), golden-JSON tests per body builder, spy-client routing tests (v2→v1 fallback, native-vs-ramp, gradient budget), pre-R3 migration fixtures (`beat == nil`), `ControlMappingEngine` accumulator tests.
+
+On-device additions:
+- [ ] Beat-locked strobe holds the grid at 128 BPM for 5 min (DTLS room).
+- [ ] Effects-tab v2 effect shows a real speed change (not cosmetic).
+- [ ] Native sunrise completes with the app force-quit mid-ramp.
+- [ ] punchBurst flashes a REST-only room from the Perform pads.
+- [ ] Gradient strip runs a chase along its own length.
+- [ ] "Save as Hue dynamic scene" keeps looping with the app killed.
+- [ ] Tap Dial rotate nudges BPM live; press×4 pins tap tempo.
