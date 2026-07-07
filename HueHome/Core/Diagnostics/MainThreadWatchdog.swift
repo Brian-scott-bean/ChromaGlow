@@ -39,8 +39,10 @@ final class MainThreadWatchdog: @unchecked Sendable {
     /// Ping cadence while healthy.
     private let pingInterval: TimeInterval = 0.10
     /// Additional waits before each in-hang stack sample (cumulative from the
-    /// threshold: samples land ~1s, ~3s, ~8s into the hang).
-    private let sampleDelays: [TimeInterval] = [0.75, 2.0, 5.0]
+    /// threshold: samples land ~0.65s, ~2.2s, ~6.2s, ~14.2s into the hang —
+    /// early enough to catch a ~1s tab-switch hang, staged enough to show
+    /// whether an 18s monster is one blocker or a stream of work).
+    private let sampleDelays: [TimeInterval] = [0.4, 1.5, 4.0, 8.0]
 
     private let startedLock = NSLock()
     private var started = false
@@ -73,13 +75,13 @@ final class MainThreadWatchdog: @unchecked Sendable {
                         let soFarMs = Int(Double(DispatchTime.now().uptimeNanoseconds - sentAt.uptimeNanoseconds) / 1_000_000)
                         let phase = StartupTimeline.lastMarkPhase
                         let frames = Self.captureStack(of: mainPort)
-                        let header = "🧵HANG-STACK main blocked ~\(soFarMs)ms so far (phase: \(phase)) — main thread is in:"
-                        print(header)
-                        log.error("\(header, privacy: .public)")
-                        for frame in frames {
-                            print("   \(frame)")
-                            log.error("   \(frame, privacy: .public)")
-                        }
+                        // ONE multi-line message: a console filter that matches
+                        // the header keeps the whole stack (separate per-frame
+                        // prints were invisible under a "hang" filter).
+                        let block = "🧵HANG-STACK main blocked ~\(soFarMs)ms so far (phase: \(phase)) — main thread is in:\n   "
+                            + frames.joined(separator: "\n   ")
+                        print(block)
+                        log.error("\(block, privacy: .public)")
                     }
                     if !recovered { sem.wait() }
 
