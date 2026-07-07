@@ -119,7 +119,10 @@ final class WatchStore: NSObject, ObservableObject {
     // Watch-local cache keys. Rooms/zones/ip are non-secret and stay in
     // UserDefaults.standard; the token and credential map live in the watch
     // Keychain (M-02/L-30, D-018) under the same key names as accounts.
-    private enum CacheKey {
+    // nonisolated: plain String constants — the watch target's MainActor
+    // default isolation otherwise blocks the nonisolated WCSession-delegate
+    // and clearAllStoredData call sites.
+    nonisolated private enum CacheKey {
         static let rooms    = "wc_rooms_v1"
         static let bridges  = "wc_bridges_v1"   // Keychain account (was a UserDefaults key pre-D-018)
         static let bridgeIP = "wc_bridge_ip"

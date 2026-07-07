@@ -668,7 +668,7 @@ final class StudioViewModel {
     private func sendPerLightBatched(
         lightIDs: [String],
         api: HueAPIClient,
-        action: @escaping (String) async -> Void
+        action: @escaping @Sendable (String) async -> Void
     ) async {
         let batchSize = 5
         for batchStart in stride(from: 0, to: lightIDs.count, by: batchSize) {
