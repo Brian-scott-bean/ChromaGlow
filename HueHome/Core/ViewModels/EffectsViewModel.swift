@@ -162,6 +162,16 @@ final class EffectsViewModel: ObservableObject {
         guard !isConfigured else { return }
         isConfigured = true
 
+        // Round 3 (B): capability coverage per room — drives the "4 of 6"
+        // card badges. Fires immediately with the current room, then on
+        // every room switch. Read-only fetches; independent of the
+        // activation sinks below.
+        $selectedRoom
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { await self?.refreshCoverage() }
+            }
+            .store(in: &cancellables)
 
         // Live re-apply: whenever paramState changes (slider/color/toggle),
         // debounce 350ms then re-apply the current effect to the lights.
@@ -434,13 +444,27 @@ final class EffectsViewModel: ObservableObject {
             statusMessage = "Applying '\(effect.name)'…"
             try? await api.setGroupedLightNativeEffect(id: groupedLightID, effect: effectName)
 
+            // Round 3 (B): parameter upgrade over effects_v2. The blanket v1
+            // enum above has NO parameters — this per-light pass is what makes
+            // the speed/color controls real on lights that support v2.
+            let coverage = await applyEffectV2Parameters(
+                effectName: effectName, api: api, gate: gate,
+                groupedLightID: groupedLightID
+            )
+
             // Set brightness separately if non-default (grouped_light native effect
             // call doesn't accept dimming in the same request body)
             if brightness != 70 {
                 try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: brightness)
             }
 
-            showStatus("'\(effect.name)' running on bridge ✓ — persists after closing app")
+            if let coverage, coverage.isEmpty {
+                showStatus("⚠ No lights in '\(room.name)' support '\(effect.name)'")
+            } else if let coverage, !coverage.isFull {
+                showStatus("'\(effect.name)' running on \(coverage.label) lights ✓ — persists after closing app")
+            } else {
+                showStatus("'\(effect.name)' running on bridge ✓ — persists after closing app")
+            }
             setNowPlaying(effect)
 
 
@@ -574,6 +598,81 @@ final class EffectsViewModel: ObservableObject {
             }
             await engine.start(effectID: effect.id, loop: loop)
         }
+    }
+
+    // MARK: - effects_v2 parameters + coverage (Round 3 B)
+
+    /// Per-light effects_v2 parameter upgrade for the lights that support
+    /// this effect (speed slider 1…10 → 0.1…1.0; candle-style segmented
+    /// speed → slow/medium/fast; "color"/"Tint" swatch → CIE xy). Lights
+    /// that reject v2 (HTTP 400) simply keep the blanket v1 effect.
+    /// Returns the room coverage for the status line, nil if lights
+    /// couldn't be fetched.
+    @MainActor
+    private func applyEffectV2Parameters(
+        effectName: String,
+        api: HueAPIClient,
+        gate: BridgeCommandGate,
+        groupedLightID: String
+    ) async -> EffectCapabilityResolver.Coverage? {
+        guard let roomLights = try? await fetchRoomLights(api: api, groupedLightID: groupedLightID)
+        else { return nil }
+        let coverage = EffectCapabilityResolver.coverage(for: effectName, lights: roomLights)
+
+        var speed: Double? = nil
+        if paramState.sliders["speed"] != nil {
+            speed = min(1.0, max(0.0, paramState.sliderValue("speed", default: 5) / 10.0))
+        } else if paramState.segmented["speed"] != nil {
+            speed = [0.25, 0.5, 0.85][max(0, min(2, paramState.segmentIndex("speed")))]
+        }
+        let colorXY = paramState.colors["color"].map { $0.toCIExy() }
+        guard speed != nil || colorXY != nil else { return coverage }
+
+        let v2Capable = roomLights.filter {
+            ($0.effects_v2?.action?.effect_values ?? []).contains(effectName)
+        }
+        guard !v2Capable.isEmpty else { return coverage }
+
+        let body = EffectsV2Body(effect: effectName, speed: speed,
+                                 colorXY: colorXY.map { CGPoint(x: $0.0, y: $0.1) })
+        for light in v2Capable {
+            // retry: false — a rejected upgrade must not stall the gate; the
+            // light stays on the parameterless v1 blanket.
+            _ = await gate.send(retry: false) {
+                try await api.setLightEffectV2(id: light.id, body: body)
+            }
+        }
+        return coverage
+    }
+
+    private func fetchRoomLights(api: HueAPIClient, groupedLightID: String) async throws -> [HueLight] {
+        let ids = Set(try await api.fetchLightIDsForGroup(groupedLightID: groupedLightID))
+        let all = try await api.fetchLights()
+        return all.filter { ids.contains($0.id) }
+    }
+
+    /// Round 3 (B): per-card coverage badges for the selected room —
+    /// "4 of 6" on cards the room only partially supports.
+    @Published var effectCoverage: [String: EffectCapabilityResolver.Coverage] = [:]
+
+    @MainActor
+    func refreshCoverage() async {
+        guard !isDemoMode,
+              let room = selectedRoom,
+              let groupedLightID = room.groupedLightID,
+              let api = orchestrator?.hueClient(for: room.bridgeID),
+              let lights = try? await fetchRoomLights(api: api, groupedLightID: groupedLightID)
+        else {
+            effectCoverage = [:]
+            return
+        }
+        var result: [String: EffectCapabilityResolver.Coverage] = [:]
+        for effect in EffectLibrary.all {
+            if case .bridgeNative(let name) = effect.strategy {
+                result[effect.id] = EffectCapabilityResolver.coverage(for: name, lights: lights)
+            }
+        }
+        effectCoverage = result
     }
 
     // MARK: - Stop

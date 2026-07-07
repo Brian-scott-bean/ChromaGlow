@@ -334,7 +334,15 @@ struct EffectsView: View {
                 }()
                 EffectCard(effect: effect,
                            isSelected: isActive,
-                           isRunning:  vm.isRunning && vm.runningEffectName == effect.name)
+                           isRunning:  vm.isRunning && vm.runningEffectName == effect.name,
+                           coverageLabel: {
+                               // "4 of 6" only when the room PARTIALLY supports
+                               // a firmware effect; full support needs no badge.
+                               guard case .bridgeNative = effect.strategy,
+                                     let cov = vm.effectCoverage[effect.id],
+                                     !cov.isFull else { return nil }
+                               return cov.isEmpty ? "not supported here" : "\(cov.label) lights"
+                           }())
                 {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                         if isActive {
@@ -526,6 +534,7 @@ struct EffectCard: View {
     let effect:     HueEffect
     let isSelected: Bool
     let isRunning:  Bool
+    var coverageLabel: String? = nil   // "4 of 6 lights" when partial
     let onTap:      () -> Void
 
     var body: some View {
@@ -545,10 +554,21 @@ struct EffectCard: View {
 
                 // ── Text ──────────────────────────────────────────────────
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(effect.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(effect.name)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        if let coverageLabel {
+                            Text(coverageLabel)
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.55))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(.white.opacity(0.08)))
+                                .lineLimit(1)
+                        }
+                    }
                     Text(effect.tagline)
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.45))

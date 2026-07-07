@@ -319,6 +319,91 @@ enum EffectLibrary {
                 .colorSwatch(key: "color", label: "Sparkle Color", color: .white),
             ]
         ),
+        // ── Round 3 (B): the firmware effects the app never offered. All are
+        // effects_v2-parameterized — speed and color land as REAL params on
+        // capable lights (v1 grouped enum remains the blanket/fallback).
+        HueEffect(
+            id: "cosmos",
+            name: "Cosmos",
+            tagline: "Drifting starfield shimmer",
+            icon: "moon.stars.fill",
+            accentColor: Color(hue: 0.68, saturation: 0.70, brightness: 0.95),
+            category: .dynamic,
+            strategy: .bridgeNative(effectName: "cosmos"),
+            params: [
+                .slider(key: "speed",      label: "Speed",      value: 5,  range: 1...10, step: 0.5, unit: ""),
+                .colorSwatch(key: "color", label: "Tint",       color: Color(hue: 0.68, saturation: 0.6, brightness: 0.9)),
+                .slider(key: "brightness", label: "Brightness", value: 70, range: 30...100, step: 1, unit: "%"),
+            ]
+        ),
+        HueEffect(
+            id: "enchant",
+            name: "Enchant",
+            tagline: "Slow magical color weave",
+            icon: "wand.and.stars",
+            accentColor: Color(hue: 0.80, saturation: 0.70, brightness: 0.95),
+            category: .dynamic,
+            strategy: .bridgeNative(effectName: "enchant"),
+            params: [
+                .slider(key: "speed",      label: "Speed",      value: 5,  range: 1...10, step: 0.5, unit: ""),
+                .colorSwatch(key: "color", label: "Tint",       color: Color(hue: 0.80, saturation: 0.6, brightness: 0.9)),
+                .slider(key: "brightness", label: "Brightness", value: 70, range: 30...100, step: 1, unit: "%"),
+            ]
+        ),
+        HueEffect(
+            id: "sunbeam",
+            name: "Sunbeam",
+            tagline: "Warm rays drifting through",
+            icon: "sun.max.fill",
+            accentColor: Color(hue: 0.11, saturation: 0.85, brightness: 1.0),
+            category: .dynamic,
+            strategy: .bridgeNative(effectName: "sunbeam"),
+            params: [
+                .slider(key: "speed",      label: "Speed",      value: 4,  range: 1...10, step: 0.5, unit: ""),
+                .colorSwatch(key: "color", label: "Tint",       color: Color(hue: 0.10, saturation: 0.75, brightness: 0.95)),
+                .slider(key: "brightness", label: "Brightness", value: 75, range: 30...100, step: 1, unit: "%"),
+            ]
+        ),
+        HueEffect(
+            id: "underwater",
+            name: "Underwater",
+            tagline: "Caustic light through water",
+            icon: "water.waves",
+            accentColor: Color(hue: 0.52, saturation: 0.75, brightness: 0.95),
+            category: .dynamic,
+            strategy: .bridgeNative(effectName: "underwater"),
+            params: [
+                .slider(key: "speed",      label: "Speed",      value: 5,  range: 1...10, step: 0.5, unit: ""),
+                .colorSwatch(key: "color", label: "Tint",       color: Color(hue: 0.52, saturation: 0.65, brightness: 0.9)),
+                .slider(key: "brightness", label: "Brightness", value: 70, range: 30...100, step: 1, unit: "%"),
+            ]
+        ),
+        HueEffect(
+            id: "opal",
+            name: "Opal",
+            tagline: "Iridescent slow shimmer",
+            icon: "circle.hexagongrid.fill",
+            accentColor: Color(hue: 0.55, saturation: 0.40, brightness: 1.0),
+            category: .dynamic,
+            strategy: .bridgeNative(effectName: "opal"),
+            params: [
+                .slider(key: "speed",      label: "Speed",      value: 4,  range: 1...10, step: 0.5, unit: ""),
+                .slider(key: "brightness", label: "Brightness", value: 70, range: 30...100, step: 1, unit: "%"),
+            ]
+        ),
+        HueEffect(
+            id: "glisten",
+            name: "Glisten",
+            tagline: "Soft glittering highlights",
+            icon: "sparkle",
+            accentColor: Color(hue: 0.13, saturation: 0.30, brightness: 1.0),
+            category: .dynamic,
+            strategy: .bridgeNative(effectName: "glisten"),
+            params: [
+                .slider(key: "speed",      label: "Speed",      value: 5,  range: 1...10, step: 0.5, unit: ""),
+                .slider(key: "brightness", label: "Brightness", value: 75, range: 30...100, step: 1, unit: "%"),
+            ]
+        ),
         HueEffect(
             id: "strobe",
             name: "Strobe",
