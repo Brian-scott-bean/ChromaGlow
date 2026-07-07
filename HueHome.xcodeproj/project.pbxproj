@@ -118,6 +118,7 @@
 		C0DEC0DE0124000000000001 /* BeatClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0124000000000000 /* BeatClock.swift */; };
 		C0DEC0DE0127000000000001 /* AudioAnalysisEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0127000000000000 /* AudioAnalysisEngine.swift */; };
 		C0DEC0DE0128000000000001 /* BeatBinding.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0128000000000000 /* BeatBinding.swift */; };
+		C0DEC0DE012A000000000001 /* BeatPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012A000000000000 /* BeatPanelView.swift */; };
 		C0DEC0DE0129000000000001 /* BeatMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0129000000000000 /* BeatMathTests.swift */; };
 		C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */; };
 		C0DEC0DE0126000000000001 /* CompositionReactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */; };
@@ -352,6 +353,7 @@
 		C0DEC0DE0124000000000000 /* BeatClock.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatClock.swift; path = HueHome/Core/Audio/BeatClock.swift; sourceTree = "<group>"; };
 		C0DEC0DE0127000000000000 /* AudioAnalysisEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioAnalysisEngine.swift; path = HueHome/Core/Audio/AudioAnalysisEngine.swift; sourceTree = "<group>"; };
 		C0DEC0DE0128000000000000 /* BeatBinding.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatBinding.swift; path = HueHome/Core/Audio/BeatBinding.swift; sourceTree = "<group>"; };
+		C0DEC0DE012A000000000000 /* BeatPanelView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatPanelView.swift; path = HueHome/UI/Components/BeatPanelView.swift; sourceTree = "<group>"; };
 		C0DEC0DE0129000000000000 /* BeatMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatMathTests.swift; path = ./HueHomeTests/BeatMathTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioFeatureCoreTests.swift; path = ./HueHomeTests/AudioFeatureCoreTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionReactionTests.swift; path = ./HueHomeTests/CompositionReactionTests.swift; sourceTree = "<group>"; };
@@ -697,6 +699,7 @@
 			children = (
 				6E9CDB81C2DBB66BC383759E /* HapticManager.swift */,
 				9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */,
+				C0DEC0DE012A000000000000 /* BeatPanelView.swift */,
 				D3A258BF9285E1A9E501678A /* HueColorUtils.swift */,
 				4E53201A81D93BB2967E3651 /* HueTokens.swift */,
 				304818D054AC8B4EFCF2AC92 /* HueTypography.swift */,
@@ -1265,6 +1268,7 @@
 				E1B00002AAAA000000000003 /* BridgeAnimationStore.swift in Sources */,
 				0C12896D88428F2FA94BFB93 /* HapticManager.swift in Sources */,
 				E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */,
+				C0DEC0DE012A000000000001 /* BeatPanelView.swift in Sources */,
 				84A2F3E0A417A58CAD2BDB08 /* RoomDetailView.swift in Sources */,
 				06FADE8E35C87CCC9AB5CECB /* LightDisplayItem.swift in Sources */,
 				25A0C7076C0B0342D9B3DA5D /* RoomDetailViewModel.swift in Sources */,
