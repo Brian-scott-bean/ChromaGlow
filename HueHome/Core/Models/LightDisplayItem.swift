@@ -42,3 +42,26 @@ struct LightDisplayItem: Identifiable, Hashable {
         hasher.combine(colorTempMirek)
     }
 }
+
+// MARK: - HueLight mapping
+
+extension LightDisplayItem {
+    /// UI model from a decoded CLIP v2 light — the one mapping every surface
+    /// shares (lifted from RoomDetailViewModel in R4's Scenes block). Lives
+    /// in an extension so the memberwise init survives.
+    /// Mirek schema falls back to the full Hue range; brightness to 100.
+    init(from light: HueLight) {
+        self.init(
+            id:             light.id,
+            name:           light.metadata.name,
+            archetype:      light.metadata.archetype,
+            isOn:           light.on.on,
+            brightness:     light.dimming?.brightness ?? 100.0,
+            colorX:         light.color?.xy.x,
+            colorY:         light.color?.xy.y,
+            colorTempMirek: light.color_temperature?.mirek,
+            mirekMin:       light.color_temperature?.mirek_schema?.mirek_minimum ?? 153,
+            mirekMax:       light.color_temperature?.mirek_schema?.mirek_maximum ?? 500
+        )
+    }
+}

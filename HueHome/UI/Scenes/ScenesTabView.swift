@@ -29,6 +29,7 @@ struct ScenesTabView: View {
     @State private var sceneToRename:  GlobalSceneItem? = nil
     @State private var renameText:     String           = ""
     @State private var showCreateScene = false
+    @State private var showBuildScene  = false
 
     @AppStorage("castchroma.useWideCards") private var useWideCards = false
     // Shared favorites contract: RAW bridge scene UUIDs (bridgeSceneID),
@@ -115,6 +116,9 @@ struct ScenesTabView: View {
         }
         .sheet(isPresented: $showCreateScene) {
             CreateGlobalSceneView()
+        }
+        .sheet(isPresented: $showBuildScene) {
+            SceneBuilderLauncherView()
         }
         .sheet(item: $sceneToRename) { scene in
             RenameSceneSheet(scene: scene, initialName: scene.name) { newName in
@@ -342,13 +346,26 @@ struct ScenesTabView: View {
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
-            Button {
-                showCreateScene = true
-                HapticManager.shared.light()
+            // Unified creation entry (R4): capture the room's current look,
+            // or build per-light colors — both existing flows, one door.
+            Menu {
+                Button {
+                    showCreateScene = true
+                    HapticManager.shared.light()
+                } label: {
+                    Label("Capture Room Look", systemImage: "camera.viewfinder")
+                }
+                Button {
+                    showBuildScene = true
+                    HapticManager.shared.light()
+                } label: {
+                    Label("Build Colors…", systemImage: "paintpalette")
+                }
             } label: {
                 Image(systemName: "plus")
                     .foregroundStyle(.white.opacity(0.8))
             }
+            .accessibilityLabel("New scene")
         }
         ToolbarItem(placement: .navigationBarTrailing) {
             Button {

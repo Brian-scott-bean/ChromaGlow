@@ -17,12 +17,12 @@ struct CreateGlobalSceneView: View {
     @State private var isSaving:     Bool   = false
     @State private var errorMessage: String?
 
-    private let glowColor = Color(red: 1.0, green: 0.76, blue: 0.2)
+    private let glowColor = HuePalette.amber
 
     var body: some View {
         ZStack {
             // Background
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
+            StagePalette.stage.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 // ── Header ────────────────────────────────────────────────

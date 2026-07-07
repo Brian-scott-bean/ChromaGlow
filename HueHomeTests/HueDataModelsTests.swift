@@ -292,4 +292,54 @@ final class HueDataModelsTests: XCTestCase {
         XCTAssertNil(state.sliders["nonexistent"], "keys absent from the schema must be dropped")
         XCTAssertEqual(state.sliderValue("speed"), 5, "keys absent from the preset keep schema defaults")
     }
+
+    // ── LightDisplayItem(from: HueLight) — R4 Scenes block ──
+
+    func testLightDisplayItemFromHueLightMapsColorAndDefaults() throws {
+        let colorJSON = """
+        {
+          "id": "L1",
+          "metadata": { "name": "Desk Strip", "archetype": "hue_lightstrip" },
+          "on": { "on": true },
+          "dimming": { "brightness": 63.5 },
+          "color": { "xy": { "x": 0.41, "y": 0.36 }, "gamut_type": "C" },
+          "color_temperature": {
+            "mirek": 366,
+            "mirek_schema": { "mirek_minimum": 200, "mirek_maximum": 454 }
+          }
+        }
+        """
+        let colorLight = try JSONDecoder().decode(HueLight.self, from: Data(colorJSON.utf8))
+        let item = LightDisplayItem(from: colorLight)
+        XCTAssertEqual(item.id, "L1")
+        XCTAssertEqual(item.name, "Desk Strip")
+        XCTAssertEqual(item.archetype, "hue_lightstrip")
+        XCTAssertTrue(item.isOn)
+        XCTAssertEqual(item.brightness, 63.5)
+        XCTAssertEqual(item.colorX, 0.41)
+        XCTAssertEqual(item.colorY, 0.36)
+        XCTAssertEqual(item.colorTempMirek, 366)
+        XCTAssertEqual(item.mirekMin, 200)
+        XCTAssertEqual(item.mirekMax, 454)
+        XCTAssertTrue(item.supportsColor)
+
+        // Off, dim-only bulb: mirek schema falls back to the full Hue range,
+        // brightness to 100.
+        let basicJSON = """
+        {
+          "id": "L2",
+          "metadata": { "name": "Hall Bulb", "archetype": "hue_bulb" },
+          "on": { "on": false }
+        }
+        """
+        let basicLight = try JSONDecoder().decode(HueLight.self, from: Data(basicJSON.utf8))
+        let basic = LightDisplayItem(from: basicLight)
+        XCTAssertFalse(basic.isOn)
+        XCTAssertEqual(basic.brightness, 100.0)
+        XCTAssertNil(basic.colorX)
+        XCTAssertFalse(basic.supportsColor)
+        XCTAssertNil(basic.colorTempMirek)
+        XCTAssertEqual(basic.mirekMin, 153)
+        XCTAssertEqual(basic.mirekMax, 500)
+    }
 }

@@ -135,6 +135,7 @@
 		C0DEC0DE013B000000000001 /* StageKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE013B000000000000 /* StageKitTests.swift */; };
 		C0DEC0DE013C000000000001 /* StudioEffectsV2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE013C000000000000 /* StudioEffectsV2Tests.swift */; };
 		C0DEC0DE013D000000000001 /* SceneProvenanceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE013D000000000000 /* SceneProvenanceStore.swift */; };
+		C0DEC0DE013F000000000001 /* SceneBuilderLauncherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE013F000000000000 /* SceneBuilderLauncherView.swift */; };
 		C0DEC0DE013E000000000001 /* SceneProvenanceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE013E000000000000 /* SceneProvenanceStoreTests.swift */; };
 		C0DEC0DE0129000000000001 /* BeatMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0129000000000000 /* BeatMathTests.swift */; };
 		C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */; };
@@ -384,6 +385,7 @@
 		C0DEC0DE013B000000000000 /* StageKitTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StageKitTests.swift; path = ./HueHomeTests/StageKitTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE013C000000000000 /* StudioEffectsV2Tests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioEffectsV2Tests.swift; path = ./HueHomeTests/StudioEffectsV2Tests.swift; sourceTree = "<group>"; };
 		C0DEC0DE013D000000000000 /* SceneProvenanceStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneProvenanceStore.swift; path = HueHome/Core/Models/SceneProvenanceStore.swift; sourceTree = "<group>"; };
+		C0DEC0DE013F000000000000 /* SceneBuilderLauncherView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneBuilderLauncherView.swift; path = HueHome/UI/Scenes/SceneBuilderLauncherView.swift; sourceTree = "<group>"; };
 		C0DEC0DE013E000000000000 /* SceneProvenanceStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneProvenanceStoreTests.swift; path = ./HueHomeTests/SceneProvenanceStoreTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0129000000000000 /* BeatMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatMathTests.swift; path = ./HueHomeTests/BeatMathTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioFeatureCoreTests.swift; path = ./HueHomeTests/AudioFeatureCoreTests.swift; sourceTree = "<group>"; };
@@ -784,6 +786,7 @@
 			isa = PBXGroup;
 			children = (
 				D7284B7AD7CD7BDF665D4B7E /* ScenesTabView.swift */,
+				C0DEC0DE013F000000000000 /* SceneBuilderLauncherView.swift */,
 				468C7402382CCA5F09F9C65F /* MoreView.swift */,
 				E0F56D4CFF98F22595FF4143 /* StudioViewModel.swift */,
 				8223FA80DC0EC19E9CE6C831 /* StudioView.swift */,
@@ -1380,6 +1383,7 @@
 				C0DEC0DE0139000000000001 /* MixerTrayView.swift in Sources */,
 				C0DEC0DE013A000000000001 /* StageKit.swift in Sources */,
 				C0DEC0DE013D000000000001 /* SceneProvenanceStore.swift in Sources */,
+				C0DEC0DE013F000000000001 /* SceneBuilderLauncherView.swift in Sources */,
 				C0DEC0DE006B000000000001 /* CompositionLightResolver.swift in Sources */,
 				A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */,
 				CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */,
