@@ -13,10 +13,11 @@ struct HueHomeApp: App {
     // Required for automation notifications to actually execute light changes.
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
-    init() {
-        // Activate WCSession early so the first room write can push to watch
-        _ = WatchSessionManager.shared
-    }
+    // NOTE: WCSession activation moved to AppRootView's .task (post-first-frame).
+    // It used to run here in init(), stacking an XPC handshake onto the same
+    // pre-frame window as the ModelContainer creation. push() guards on
+    // activationState == .activated, and the first widget/watch push happens
+    // ≥500ms after the first loadAll — far after the .task activates the session.
 
     // MARK: SwiftData Container (includes BridgeRecord from Stage 2A)
     let modelContainer: ModelContainer = {
@@ -193,6 +194,8 @@ struct AppRootView: View {
             let hasLegacy   = (try? KeychainManager.shared.loadAPIToken()) != nil
             isPaired = hasNewStyle || hasLegacy
         }
+        // Activate WCSession after the first frame (was in App.init, blocking launch).
+        .task { _ = WatchSessionManager.shared }
     }
 }
 
