@@ -263,6 +263,7 @@ struct PatternStripView: View {
     var animated: Bool = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isTabActive) private var isTabActive
 
     init(pattern: MotionConfig.Pattern, accent: Color = HuePalette.amber, animated: Bool = true) {
         self.pattern = pattern
@@ -270,7 +271,9 @@ struct PatternStripView: View {
         self.animated = animated
     }
 
-    private var isLive: Bool { animated && !reduceMotion }
+    // Also paused when the host tab is off-screen — these strips would otherwise
+    // redraw at 12fps per card behind the visible tab.
+    private var isLive: Bool { animated && !reduceMotion && isTabActive }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !isLive)) { timeline in

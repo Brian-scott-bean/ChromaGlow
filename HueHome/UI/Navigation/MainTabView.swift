@@ -98,6 +98,8 @@ struct MainTabView: View {
                     }
                     .opacity(selectedTab == tab ? 1 : 0)
                     .allowsHitTesting(selectedTab == tab)
+                    // Pause off-screen tabs' animation clocks (kept mounted for state).
+                    .environment(\.isTabActive, selectedTab == tab)
             }
             HueTabBar(selectedTab: $selectedTab, realizedTabs: $realizedTabs, navRegistry: navRegistry)
         }
@@ -389,5 +391,22 @@ struct NavControllerResolver: UIViewControllerRepresentable {
                 self?.onResolve(self?.navigationController)
             }
         }
+    }
+}
+
+// MARK: - Tab visibility environment
+
+/// True when the enclosing tab is the visible one. The iPhone shell keeps all
+/// realized tabs mounted in an opacity switcher (preserving each tab's nav +
+/// scroll state), so per-card animation clocks (PatternStripView, StudioCardCanvas,
+/// beat meters) read this to pause while their tab is off-screen instead of
+/// redrawing forever behind the visible tab. Defaults to `true` so sheets,
+/// full-screen covers (Perform), iPad detail, and previews animate normally.
+private struct TabActiveKey: EnvironmentKey { static let defaultValue = true }
+
+extension EnvironmentValues {
+    var isTabActive: Bool {
+        get { self[TabActiveKey.self] }
+        set { self[TabActiveKey.self] = newValue }
     }
 }

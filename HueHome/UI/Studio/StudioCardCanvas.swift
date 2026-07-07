@@ -20,13 +20,17 @@ struct StudioCardCanvas: View {
     let isRunning: Bool
     let isVisible: Bool  // false = off-screen deck, skip animation entirely
 
+    // Paused when the Studio tab itself is off-screen (isVisible only tracks the
+    // active deck, so canvases otherwise keep animating behind another tab).
+    @Environment(\.isTabActive) private var isTabActive
+
     // Seed derived from cardID — gives each card a unique animation phase
     private var seed: Double {
         Double(cardID.hashValue & 0xFFFF) / 65535.0
     }
 
     var body: some View {
-        if isVisible {
+        if isVisible && isTabActive {
             // Animate: running = full fps, idle = 4fps (subtle, saves GPU)
             TimelineView(.animation(minimumInterval: isRunning ? nil : 0.25)) { timeline in
                 let time = timeline.date.timeIntervalSinceReferenceDate
