@@ -1004,7 +1004,10 @@ struct RoomCard: View {
 // Only the room data determines whether a re-render is needed, allowing
 // .equatable() in the ForEach to skip body evaluation entirely for unchanged cards.
 extension RoomCard: Equatable {
-    static func == (lhs: RoomCard, rhs: RoomCard) -> Bool {
+    // nonisolated: Equatable's == requirement is nonisolated; `room` is a
+    // stored let of RoomDisplayItem (all-value-type, nonisolated ==), so the
+    // comparison needs no main-actor state.
+    nonisolated static func == (lhs: RoomCard, rhs: RoomCard) -> Bool {
         lhs.room == rhs.room
     }
 }

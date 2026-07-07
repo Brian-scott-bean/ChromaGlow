@@ -1160,7 +1160,9 @@ private extension View {
 
 struct StudioCardView: View, Equatable {
 
-    static func == (lhs: StudioCardView, rhs: StudioCardView) -> Bool {
+    // nonisolated: compares only Sendable stored values (String/Bool/enum);
+    // the onTap closure is deliberately excluded from equality.
+    nonisolated static func == (lhs: StudioCardView, rhs: StudioCardView) -> Bool {
         lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected && lhs.isVisible == rhs.isVisible && lhs.patternSignature == rhs.patternSignature && lhs.coverageLabel == rhs.coverageLabel
     }
 
