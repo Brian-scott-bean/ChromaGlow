@@ -8,7 +8,10 @@
 import Foundation
 import OSLog
 
-class BridgeAnimationStore {
+// @MainActor: the only production caller is the main-actor UnifiedOrchestrator,
+// so every real access already runs on main — this types that fact.
+@MainActor
+final class BridgeAnimationStore {
     static let shared = BridgeAnimationStore()
 
     private let log = Logger(subsystem: "com.chromaglow.app", category: "BridgeAnimStore")

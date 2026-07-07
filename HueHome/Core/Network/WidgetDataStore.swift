@@ -334,7 +334,9 @@ enum WidgetAPIClient {
 
     /// Test seam: replaces the pinned session so unit tests can stub or hang
     /// the transport (URLProtocol stubs cannot present a pinned server trust).
-    static var sessionOverride: URLSession?
+    /// nonisolated(unsafe): test-only — set once before any fetch on the
+    /// test's thread, always nil in production, never mutated concurrently.
+    nonisolated(unsafe) static var sessionOverride: URLSession?
 
     // ──────────────────────────────────────────────
     // MARK: - Response Models
