@@ -46,6 +46,8 @@ New/extended regression tests: `MultiBridgeRoutingTests` (All-Rooms two-bridge f
 
 Structural liabilities (tracked for the DJ phases, not Phase 1): `UnifiedOrchestrator.swift` 3.4k lines hosts all composition runtime; Composer UI has no module boundary (Deck 3 inside 2.7k-line `StudioView.swift`); three parallel effect subsystems (Studio decks / Effects tab / Sync tab) with two duplicated effect catalogs — binding rule from Phase 2 on: no new effect logic outside the Composer stack.
 
+> **Round-4 update (2026-07-06):** the Composer module boundary now EXISTS (`UI/Composer/CompositionEditorPanel.swift`, mixer tray in `UI/Studio/MixerTrayView.swift`; StudioView 3,160 → ~1,500 lines). The "Effects tab" and "Sync tab" subsystems turned out to be UNREACHABLE dead UI since the v0.15.0 nav rework — their unique value (effects_v2 cards, real params, coverage) was ported into Studio Deck 0 and the dead surfaces (EffectsView/EffectsViewModel/SyncModeView + shells) were deleted, collapsing the three parallel subsystems to one reachable stack. See the Round-4 DEVLOG entry.
+
 ---
 
 ## 4. On-device validation checklist (M-10 + failover + lifecycle)
@@ -99,6 +101,12 @@ Full plan: session plan file (deep-dazzling-prism) — architecture, file map, p
 > **STATUS: FULLY EXECUTED same day** — R3-0 docs → R3-A beat panel (7 commits) → R3-B Hue
 > power A–G (7 commits) → R3-C Perform → R3-D sequencer, plus DEVLOG entries per milestone.
 > Suite 305/305 green. Remaining work is the on-device checklist in §6.3 (physical bridge).
+>
+> **Round 4 (Stage redesign) also FULLY EXECUTED 2026-07-06** — extraction (CompositionEditorPanel,
+> MixerTrayView), StageKit, reskins, beat-panel unification, the Effects port + dead-surface
+> deletion, sequence-persistence UI, and the Scenes library block. Suite 327/327. NOTE: R3-B's
+> Effects-tab work (§6.1 item 1) had landed in the unreachable EffectsView — it is now live on
+> Studio Deck 0. See the Round-4 DEVLOG entry.
 
 > **Handoff note:** this section + the DEVLOG entry of the same date are sufficient for a fresh
 > context window to continue. Approved plan lives in the session plan file (deep-dazzling-prism);

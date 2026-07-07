@@ -1,5 +1,14 @@
 # Round 4 — Studio & Composer UX/UI Revamp ("Stage Redesign") — BUILD-READY PLAN
 
+> **STATUS: EXECUTED 2026-07-06** (13 commits, suite 305 → 327, rollback tag
+> `checkpoint/pre-round4-2026-07-06`). Executed with approved scope changes: the R4-6
+> "EffectCard (Effects tab)" reskin was OBSOLETE — the Effects tab has been unreachable since
+> the v0.15.0 nav rework — so the R3-B effects_v2 value was ported into Studio Deck 0 and the
+> dead Effects/Sync surfaces were deleted; a Scenes-tab block (provenance badges, favorites,
+> StageKit reskin, unified creation) was added. Corrections found during execution (extraction
+> input list, preset-id sentinel, pickers-vs-pills, pbxproj groups) are recorded in the Round-4
+> DEVLOG entry.
+
 **Written:** 2026-07-06 by Claude, at the end of Round 3, explicitly so a FRESH context
 window can execute this plan with no other conversation history.
 

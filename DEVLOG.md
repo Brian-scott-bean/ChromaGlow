@@ -48,6 +48,102 @@
 
 ---
 
+## 2026-07-06 - [Claude] ROUND 4 COMPLETE: Stage redesign + Effects port + Scenes library — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` @ `72147dd` (rollback `checkpoint/pre-round4-2026-07-06`;
+  revert = `git reset --hard checkpoint/pre-round4-2026-07-06`, branch unpushed)
+
+### Did
+13 commits, each independently shippable, build + full suite green per commit:
+- `622ece3` **R4-1 extract:** Composer editor (33 members, ~1,300 lines) → new
+  `UI/Composer/CompositionEditorPanel.swift` (new pbxproj UI/Composer group). Pure move; panel
+  owns transient state incl. the five @State the plan's input list missed (hue-pad quartet +
+  entertainment-builder flag). `applyHarmonyToComposition` deliberately stayed in StudioView —
+  its only caller is the body-level harmony-restore onChange, which must fire while the tray is
+  closed. StudioView 3,160 → 1,868 lines.
+- `fa1a39b` **R4-2 extract:** mixer tray → `UI/Studio/MixerTrayView.swift` (header, content
+  switch, drag gesture, badge helpers, studioBeatBinding). Save-sheet presentation hoisted to a
+  StudioView body-level .sheet; collapse/expand + height math stayed (Live Controls pill + card
+  taps use them). StudioView → 1,503 lines (plan's <1,400 assumed save sheet/height math moved).
+- `379fc3e` **R4-3 StageKit:** StageCard/StageSlider/PatternStripView/StageBadge + StagePalette
+  tokens in `UI/Components/StageKit.swift`. Strip = pure `StageStripMath.opacity(index:pattern:time:)`
+  under TimelineView(1/12), distinct signatures for all 10 patterns, Reduce Motion → static 0.6.
+  New StageKitTests (7): bounds, determinism, periodicity, pairwise distinctness, hot-cell travel.
+- `5559818` **R4-4 Composer reskin:** four layer StageCards, 16 sliders → StageSlider, live
+  Motion strip, stage tab pills. Presentation only.
+- `57152c2` **R4-5 beat unification:** BeatPanelView gains `reaction:` binding rendering punch
+  decay / quantized color step / motion lock via the R3-A capability flags (first `.composer`
+  consumer); bespoke reactionBeatControls deleted; segmented pickers → ChipPickerRow pills;
+  auto-scroll anchor intact.
+- `889a843` **R4-6 deck reskin:** running cards show PatternStripView (composition = preset's
+  pattern, engine = decorative bounce), stage deck pills, mixer-header badges.
+- `20bb780`+`b69e926` **Effects port (approved scope change):** discovered the Effects + Sync
+  tabs left navigation in v0.15.0 — EffectsView/EffectsViewModel/SyncModeView were UNREACHABLE
+  dead UI, and R3-B's effects_v2 work had landed only there, invisible to users. Ported to
+  Studio Deck 0: 4 new cards (Cosmos/Enchant/Sunbeam/Underwater) + speed on Opal/Glisten;
+  per-light v1 blanket THEN gate-paced per-light effects_v2 upgrade (KEPT Studio's per-light
+  blanket — the dead code's grouped_light effects blanket contradicts
+  StudioStrategy.groupedLightOnlyEffects); live speed/tint sliders re-parameterize the running
+  effect per-light via mailbox+gate; coverage badges ("N OF M LIGHTS") on cards + mixer header
+  via EffectCapabilityResolver with demo guard. THEN deleted the five dead files (~3,000 lines;
+  EffectParamState → SavedEffectPreset.swift, Array[safeIndex:] → AppAutomation.swift first),
+  removed the dead Music Sync/Gaming cards + `.studioStartMicSync` (zero observers), migrated
+  MultiBridgeRoutingTests 3-for-3 (H-05 → StudioViewModel.apply; M-17 fan-out +
+  app-driven-fallback → applyAutomationEffect). New StudioEffectsV2Tests (4).
+- `1ab27b1` **R4-7 sequence persistence:** PerformanceViewModel presetID + store; preload on
+  open; "Save with composition" in the sequence sheet (disabled for unsaved; the "+ Create"
+  draft SENTINEL `composerStarterDraftPresetID` counts as unsaved — never nil as the plan
+  assumed). CompositionStore.fileURL test-injectable; store round-trip test.
+- `84835b5`+`27f6a74`+`72147dd` **Scenes library (approved scope):** SceneProvenanceStore
+  (STUDIO badges on Composer-exported dynamic scenes via createSceneReturningID; key ==
+  GlobalSceneItem.id, test-locked) + favorites on the tab (RAW bridgeSceneID CSV contract,
+  order-preserving FavoriteSceneCSV helpers) + full StageKit reskin (zero Color(red literals,
+  VoiceOver labels, Reduce Motion) + unified creation: toolbar + menu → Capture Room Look /
+  Build Colors… (new SceneBuilderLauncherView room picker → existing SceneColorBuilderView;
+  LightDisplayItem(from: HueLight) shared mapping). SceneProvenanceStoreTests (9) + mapping test.
+
+### Working
+- Full suite **327/327** green (305 → 327; count never dropped). Build gate green per commit.
+- One visual system across Composer editor, Studio decks, mixer, Perform, and Scenes.
+
+### Left
+- **On-device (Brian):** Round-3 checklist (audit doc §4/§4b/§6.3) still pending, plus new:
+  cosmos/enchant/sunbeam/underwater run + speed slider visibly changes a v2 light; per-light
+  v1 `no_effect` on stop clears a v2-parameterized effect; colorloop card now honestly shows
+  "NOT SUPPORTED" on modern firmware (colorloop is not an effects_v2 value — expected); 10-min
+  composition + Perform soak for editor-refactor regressions; sequence save → force-quit →
+  reopen Perform; Scenes export → STUDIO badge; favorites Scenes↔Dashboard↔RoomDetail.
+- **Follow-ups:** Dashboard Now-Playing bar + Tap-Dial punchBurst read `activeEffectEntries`,
+  whose only writer died with EffectsViewModel — wire StudioViewModel in or remove the bar.
+  `.studioStopAll` posts with zero observers (same dead-wire class). EffectEngine.swift +
+  SyncModeEngine engines are production-orphaned but keep RestSender + gate-pacing tests —
+  candidates for a later cleanup. All-Rooms one-tap UI dropped with the dead surface
+  (automations + Home-zone selection cover it).
+- **Test flake (pre-existing):** KeychainSharingTests.testForgetAllClearsSharedCredentialSurface
+  intermittently races KeychainManagerTests' legacy keychain writes through WidgetDataStore's
+  legacy-credential fallback under parallel scheduling (seen twice, passes in isolation and on
+  re-run). Fix = keychain test isolation; out of R4 scope.
+
+### Validation
+- Per commit: `xcodebuild … "HueHome 1" … build` gate + full suite on iPhone 15 / iOS 17.0.
+- Extraction commits verified by rg (no moved symbol left behind) + diff symmetry.
+- New tests: StageKitTests 7, StudioEffectsV2Tests 4, SceneProvenanceStoreTests 9, sequence
+  store round-trip 1, LightDisplayItem mapping 1, MultiBridgeRoutingTests 3 migrated.
+
+### Gotchas
+- pbxproj: Studio UI files live under a group literally named "Scenes"; the only pre-R4
+  "Composer" group is Core's (and holds PerformanceView.swift). New UI/Composer group is
+  C0DEC0DE0138…; indexes now consumed through 013F.
+- setLightEffectV2 is an HueAPIClient EXTENSION method — spies must override the
+  `put(path:body:ip:token:)` class seam, not the extension.
+- EffectCapabilityResolver is v2-first: a light exposing any effects_v2 list is judged only by
+  it (its v1 list is ignored) — the honest reason colorloop shows NOT SUPPORTED.
+- StageStripMath must stay a pure function of (index, pattern, time) — StageKitTests locks
+  bounds/periodicity/distinctness; don't add state.
+- Favorites CSV = RAW bridgeSceneID (never "bridgeID:sceneID"); provenance keys = the composite
+  GlobalSceneItem.id. Both formats are test-locked.
+
 ## 2026-07-06 - [Claude] ROUND 3 COMPLETE: Perform surface + step sequencer (R3-C/D) — LOCAL
 
 ### Branch
