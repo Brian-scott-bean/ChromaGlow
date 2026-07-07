@@ -119,6 +119,11 @@
 		C0DEC0DE0127000000000001 /* AudioAnalysisEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0127000000000000 /* AudioAnalysisEngine.swift */; };
 		C0DEC0DE0128000000000001 /* BeatBinding.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0128000000000000 /* BeatBinding.swift */; };
 		C0DEC0DE012A000000000001 /* BeatPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012A000000000000 /* BeatPanelView.swift */; };
+		C0DEC0DE012B000000000001 /* HueAPIClient+Effects.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012B000000000000 /* HueAPIClient+Effects.swift */; };
+		C0DEC0DE012C000000000001 /* HueAPIClient+Signaling.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012C000000000000 /* HueAPIClient+Signaling.swift */; };
+		C0DEC0DE012D000000000001 /* HueAPIClient+Gradient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012D000000000000 /* HueAPIClient+Gradient.swift */; };
+		C0DEC0DE012E000000000001 /* EffectCapabilityResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012E000000000000 /* EffectCapabilityResolver.swift */; };
+		C0DEC0DE012F000000000001 /* HueCapabilityFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012F000000000000 /* HueCapabilityFoundationTests.swift */; };
 		C0DEC0DE0129000000000001 /* BeatMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0129000000000000 /* BeatMathTests.swift */; };
 		C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */; };
 		C0DEC0DE0126000000000001 /* CompositionReactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */; };
@@ -354,6 +359,11 @@
 		C0DEC0DE0127000000000000 /* AudioAnalysisEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioAnalysisEngine.swift; path = HueHome/Core/Audio/AudioAnalysisEngine.swift; sourceTree = "<group>"; };
 		C0DEC0DE0128000000000000 /* BeatBinding.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatBinding.swift; path = HueHome/Core/Audio/BeatBinding.swift; sourceTree = "<group>"; };
 		C0DEC0DE012A000000000000 /* BeatPanelView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatPanelView.swift; path = HueHome/UI/Components/BeatPanelView.swift; sourceTree = "<group>"; };
+		C0DEC0DE012B000000000000 /* HueAPIClient+Effects.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "HueAPIClient+Effects.swift"; path = "HueHome/Core/Network/HueAPIClient+Effects.swift"; sourceTree = "<group>"; };
+		C0DEC0DE012C000000000000 /* HueAPIClient+Signaling.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "HueAPIClient+Signaling.swift"; path = "HueHome/Core/Network/HueAPIClient+Signaling.swift"; sourceTree = "<group>"; };
+		C0DEC0DE012D000000000000 /* HueAPIClient+Gradient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "HueAPIClient+Gradient.swift"; path = "HueHome/Core/Network/HueAPIClient+Gradient.swift"; sourceTree = "<group>"; };
+		C0DEC0DE012E000000000000 /* EffectCapabilityResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EffectCapabilityResolver.swift; path = HueHome/Core/Network/EffectCapabilityResolver.swift; sourceTree = "<group>"; };
+		C0DEC0DE012F000000000000 /* HueCapabilityFoundationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueCapabilityFoundationTests.swift; path = ./HueHomeTests/HueCapabilityFoundationTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0129000000000000 /* BeatMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatMathTests.swift; path = ./HueHomeTests/BeatMathTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioFeatureCoreTests.swift; path = ./HueHomeTests/AudioFeatureCoreTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionReactionTests.swift; path = ./HueHomeTests/CompositionReactionTests.swift; sourceTree = "<group>"; };
@@ -586,6 +596,10 @@
 				C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */,
 				C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */,
 				C0DEC0DE010A000000000000 /* BridgeCommandGate.swift */,
+				C0DEC0DE012B000000000000 /* HueAPIClient+Effects.swift */,
+				C0DEC0DE012C000000000000 /* HueAPIClient+Signaling.swift */,
+				C0DEC0DE012D000000000000 /* HueAPIClient+Gradient.swift */,
+				C0DEC0DE012E000000000000 /* EffectCapabilityResolver.swift */,
 				C0DEC0DE010C000000000000 /* FailableDecodable.swift */,
 				C0DEC0DE0110000000000000 /* BridgePairingRegistrar.swift */,
 				C0DEC0DE0113000000000000 /* EntertainmentAreasView.swift */,
@@ -894,6 +908,7 @@
 				C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */,
 				C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */,
 				C0DEC0DE0129000000000000 /* BeatMathTests.swift */,
+				C0DEC0DE012F000000000000 /* HueCapabilityFoundationTests.swift */,
 				C0DEC0DE006B000000000004 /* CompositionLightResolverTests.swift */,
 				C0DEC0DE007B000000000004 /* ComposerFetchPathParityTests.swift */,
 				C0DEC0DE008C000000000004 /* OrchestratorCacheDemoTests.swift */,
@@ -1286,6 +1301,10 @@
 				C0DEC0DE0104000000000001 /* BridgePinnedTrustDelegate.swift in Sources */,
 				C0DEC0DE0106000000000001 /* SharedKeychainStore.swift in Sources */,
 				C0DEC0DE010A000000000001 /* BridgeCommandGate.swift in Sources */,
+				C0DEC0DE012B000000000001 /* HueAPIClient+Effects.swift in Sources */,
+				C0DEC0DE012C000000000001 /* HueAPIClient+Signaling.swift in Sources */,
+				C0DEC0DE012D000000000001 /* HueAPIClient+Gradient.swift in Sources */,
+				C0DEC0DE012E000000000001 /* EffectCapabilityResolver.swift in Sources */,
 				C0DEC0DE0120000000000001 /* AudioSpectrumProcessor.swift in Sources */,
 				C0DEC0DE0122000000000001 /* AudioFeatureExtractor.swift in Sources */,
 				C0DEC0DE0123000000000001 /* TempoEstimator.swift in Sources */,
@@ -1371,6 +1390,7 @@
 				C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */,
 				C0DEC0DE0126000000000001 /* CompositionReactionTests.swift in Sources */,
 				C0DEC0DE0129000000000001 /* BeatMathTests.swift in Sources */,
+				C0DEC0DE012F000000000001 /* HueCapabilityFoundationTests.swift in Sources */,
 				C0DEC0DE006B000000000003 /* CompositionLightResolverTests.swift in Sources */,
 				C0DEC0DE007B000000000003 /* ComposerFetchPathParityTests.swift in Sources */,
 				C0DEC0DE008C000000000003 /* OrchestratorCacheDemoTests.swift in Sources */,

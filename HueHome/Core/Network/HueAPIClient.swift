@@ -589,33 +589,9 @@ class HueAPIClient: @unchecked Sendable {
         logRaw(data, label: "PUT /grouped_light/\(id) native effect=\(effect)")
     }
 
-    /// Atomic: set on + effect + brightness in a SINGLE PUT.
-    /// Critical for avoiding rate limits — grouped_light allows ~1 PUT/sec.
-    /// Combining these fields prevents the bridge from silently dropping commands.
-    func setGroupedLightWithEffect(
-        id: String, on: Bool, effect: String, brightness: Double? = nil
-    ) async throws {
-        let (ip, token) = try credentials()
-        var body: [String: Any] = [
-            "on": ["on": on],
-            "effects": ["effect": effect]
-        ]
-        if let bri = brightness {
-            body["dimming"] = ["brightness": max(1, min(100, bri))]
-        }
-        let data = try await put(
-            path: "/clip/v2/resource/grouped_light/\(id)",
-            body: body, ip: ip, token: token
-        )
-        logRaw(data, label: "PUT /grouped_light/\(id) atomic on=\(on) effect=\(effect) bri=\(brightness ?? -1)")
-    }
-
-    /// Stop all effects on a light and return to neutral state.
-    func stopLightEffects(id: String) async throws {
-        try await setLightNativeEffect(id: id, effect: "no_effect")
-    }
-
-
+    // (Round 3: dead methods setGroupedLightWithEffect / stopLightEffects
+    // deleted — zero callers. effects_v2 / timed_effects / signaling /
+    // gradient live in the HueAPIClient+… extension files.)
 
     // ──────────────────────────────────────────────
     // MARK: - Private HTTP
@@ -689,7 +665,9 @@ class HueAPIClient: @unchecked Sendable {
     // MARK: - Logging
     // ──────────────────────────────────────────────
 
-    private func logRaw(_ data: Data, label: String) {
+    // Internal (not private): the +Effects/+Signaling/+Gradient extension
+    // files use the same response logging.
+    func logRaw(_ data: Data, label: String) {
 #if DEBUG
         guard let raw = String(data: data, encoding: .utf8) else { return }
         log.debug("API [\(label)] raw: \(raw)")
