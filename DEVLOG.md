@@ -76,10 +76,16 @@
   25 commits ahead of the checkpoint tag, all local/unpushed.
 
 ### Left
-- On-device validation only (audit doc §4/§4b/§6.3) — needs a physical bridge + lights.
+- **NEXT: Round 4 — Studio & Composer UX/UI revamp.** Build-ready, per-commit plan (verified
+  member inventory, extraction map, StageKit component specs, acceptance criteria) is in
+  `docs/ios/round4-studio-composer-revamp-plan.md` — written explicitly so a fresh context
+  window can execute it from the docs alone. Summary: R4-1/2 extract Composer +
+  mixer tray out of the 3,160-line StudioView (pure moves) → R4-3 StageKit (cards, sliders,
+  animated pattern strips, badges) → R4-4/5/6 reskin Composer editor (incl. BeatPanelView
+  .composer unification, deleting bespoke reactionBeatControls), Studio decks, Effects cards
+  → R4-7 sequence-persistence UI (preset.sequence model already shipped) → R4-8 docs.
+- On-device validation (audit doc §4/§4b/§6.3) — needs a physical bridge + lights.
 - Backlog (unchanged): Effects/Sync-tab consolidation, keyframe timeline (rejected), ML downbeat.
-- Sequence persistence UI: preset.sequence saves/loads with presets; a "save sequence into
-  preset" button from Perform is a small follow-up (model + player + editor all shipped).
 
 ### Gotchas
 - The Perform mix is keyed to its composition by deckA IDENTITY — promotion must COPY layer
