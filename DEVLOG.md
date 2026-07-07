@@ -11,9 +11,8 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
-- **`main` @ `6e8a34a` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **9**).
-  `ios-ref/hardening-p1-2026-07` is fast-forwarded to the same commit — they are identical.
+- **`main` @ `a447953` is the current production anchor and the branch Brian installs from**
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **10**).
 - Everything below is MERGED TO MAIN and full-suite green:
   1. **2026-07 hardening P0+P1 audit remediation COMPLETE** — per-bundle privacy manifests (M-03),
      secret log scrub (H-03/H-04/L-09, `SecretLogScrubTests`), bridge TLS pinning (D-016,
@@ -34,12 +33,21 @@
      seed written off-main (create-only), prewarm gated on loadAll settling + one tab per pass.
   5. **AVAudioEngine tap crash fix + CoreData store-dir noise fix** (`bc5b2ba`) — on-device repro
      still unconfirmed (route-dependent, not reproducible in Simulator).
-- **IMMEDIATE NEXT STEP:** Brian verifies build 9 on-device with a fresh install. Expect: ~0.7s to
-  the bridge-setup page, no post-pairing hang, `⏱️PERF room-open … INSTANT` in console. The TEMP
-  `⏱️PERF` prints (in `RoomDetailView.task` and `UnifiedOrchestrator.loadAll`) are IN ON PURPOSE —
-  remove them in a small cleanup commit ONLY after Brian confirms smoothness.
+  6. **Diagnostics build + Swift 6 zero-warning pass** (16 commits, `0f329b5..a447953`, build 10)
+     — live startup timeline (`StartupTimeline`, `⏱️TL` marks across the whole cold-start path),
+     `MainThreadWatchdog` (🧵HANG lines labeling every main-thread stall >250ms with its phase),
+     🌐 per-request log in `HueAPIClient.execute`, NUPnP 10s timeout (was 60s default),
+     bounded mDNS resolve, and the full Swift 6 concurrency-warning cleanup
+     (clean build = 0 errors / 0 warnings across app+widget+watch). The old `⏱️PERF` prints were
+     CONVERTED to `StartupTimeline` marks, not removed.
+- **IMMEDIATE NEXT STEP:** Brian installs build 10 (fresh install: delete app first), runs from
+  Xcode, filters the console on `⏱️TL|🧵HANG|🌐`. The launch reads as a timestamped story; any
+  gap >500ms is visible and labeled. Watch especially for: `loadAll.bridge-fetch.FAIL … code=-1009`
+  (Local Network permission denial — the prime fresh-install-hang suspect), `🧵HANG … (phase: …)`
+  lines, and `prewarm.released 3s CAP HIT`. Whatever phase owns the reported ~1 minute becomes the
+  next evidence-backed fix. Diagnostics stay in until the cold start is confirmed smooth.
 - **Open device issue:** Brian reported intermittent crashes launching from Xcode on builds ≤8.
-  Likely the audio-route crash `bc5b2ba` targets. If build 9 crashes on device: get the crash log
+  Likely the audio-route crash `bc5b2ba` targets. If build 10 crashes on device: get the crash log
   (Xcode → Window → Devices and Simulators → View Device Logs) before changing anything.
 - **Deferred iOS work (explicit decisions, do not resurrect without need):** async/two-phase
   ModelContainer (fresh-store creation on main in App.init, ~1-2s once per install — wide
@@ -49,7 +57,8 @@
   pbxproj edits); CompositionEngine.render off main-actor (measured cheap; mutates MainActor-
   confined `CompositionParamBox`, audit I-10); MoreView connectionStatus re-render trimming;
   `run_tests.sh` still has stale `SCHEME="HueHome"` — always pass `-scheme "HueHome 1"` manually.
-- **Rollback tags (all pushed):** `checkpoint/pre-freshfix-2026-07-08` @ `245dd5f`,
+- **Rollback tags (all pushed):** `checkpoint/pre-diagnostics-2026-07-07` @ `6b5c6ba`,
+  `checkpoint/pre-freshfix-2026-07-08` @ `245dd5f`,
   `checkpoint/pre-perf-2026-07-06` @ `c01b814`, plus earlier round checkpoints.
 - Working conventions Brian expects: create a rollback tag before any multi-commit run; keep
   `main` as the branch he builds from; bump `CURRENT_PROJECT_VERSION` (all 12 pbxproj entries)
@@ -96,6 +105,67 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-07 - [Claude] DIAGNOSTICS BUILD 10: live startup timeline + hang watchdog + Swift 6 zero warnings — ON MAIN
+
+### Branch
+- `main` directly (rollback `checkpoint/pre-diagnostics-2026-07-07` @ `6b5c6ba`;
+  revert = `git reset --hard checkpoint/pre-diagnostics-2026-07-07`)
+
+### Why
+Brian reports a fresh install still takes ~1 minute to become usable and first entry is
+sticky — worse than expected after the build-9 pass. He wants to SEE what the app is doing
+live. Verification of prior assumptions found one subagent claim wrong (REST clients DO have
+a 10s per-request timeout via `HueAPIClient.buildRequest` — no 60s REST stall exists) and one
+right (NUPnP had the bare-`URLSession.shared` 60s default). New prime suspect for the
+fresh-install minute: the iOS **Local Network permission** reset — until Allow is tapped,
+mDNS and direct LAN requests fail/stall, and nothing logged this. So this build makes the
+cold start fully observable instead of guessing further.
+
+### Did (16 commits, `0f329b5..a447953`)
+- `HueHome/Core/Diagnostics/StartupTimeline.swift` — `mark()` emits `⏱️TL +<ms-since-process-
+  start>  phase  (Δ ms)  detail` to console (DEBUG), OSLog `com.lightshade.app/Startup`, and an
+  os_signpost event. True process start via `sysctl kinfo_proc`.
+- `HueHome/Core/Diagnostics/MainThreadWatchdog.swift` (DEBUG only) — 100ms main-queue pings;
+  stalls >250ms print `🧵HANG main thread blocked ~Nms (phase: <last mark>)` on recovery.
+  Started from AppDelegate.didFinishLaunching.
+- Probes wired: app-init/modelcontainer, first-frame, pairing-gate(+source), splash.route,
+  discovery.{scan-start,mdns-found,mdns-timeout,resolve-waiting,nupnp-*}, pairing.{begin,success},
+  tabs.task, configure/preload, loadAll.{begin,bridge-fetch.ok/FAIL(URLError code),fetch-done,
+  total}, cache.write ms, sse.{connected,retry}, prewarm.{wait-begin,released(reason),per-tab},
+  room-open. Old `⏱️PERF` prints converted to marks. `HueAPIClient.execute` logs one 🌐 line
+  per request (method/path/status/ms/bytes; FAIL: URLError code). **Console filter:
+  `⏱️TL|🧵HANG|🌐`.** `loadAll.bridge-fetch.FAIL code=-1009` = Local Network denial signature.
+- Fixes: NUPnP explicit 10s timeout (was 60s default); `resolveEndpoint` NWConnection bounded
+  at 10s (used to dangle forever on advertised-but-unreachable endpoints).
+- Swift 6 cleanup, ALL of Brian's pasted warnings: unused values; allowBluetoothHFP;
+  WatchWidgetStore CodingKeys (NOT `var` — that would silently start decoding bridgeID);
+  nonisolated audio locks; RestSender mailbox typed `@Sendable @MainActor () async -> Void`
+  (closures already ran on main; kills the 12 sending-closure warnings); assumeIsolated in
+  queue:.main observers (Task{@MainActor} would defer .began past audio teardown);
+  @ObservationIgnored+nonisolated(unsafe) activeParamBox; nonisolated Equatable ==;
+  @MainActor TabNavRegistry/BridgeAnimationStore; nonisolated(unsafe) sessionOverride seam;
+  nonisolated SharedKeychainStore/BridgePinStore/CacheKey (watch MainActor default);
+  class-level @MainActor StudioViewModel (18 per-method annotations removed); orphan
+  AppIcon.png removed from the appiconset.
+
+### Validation
+- Full suite green: 327 test cases passed (`xcodebuild test`, scheme `HueHome 1`).
+- Clean build: **0 errors, 0 warnings**.
+- Build bumped to 10 (all 12 pbxproj entries).
+
+### Left
+- Brian: fresh install of build 10 on device, console filtered `⏱️TL|🧵HANG|🌐`, capture the
+  first-minute timeline. The phase that owns the minute becomes the next fix.
+- Diagnostics stay in until cold start is confirmed smooth; then trim to essentials.
+
+### Gotchas
+- StudioViewModel is now class-level @MainActor — the ONE change with an executor delta
+  (helper between-await bodies moved to main; struct filters, measured negligible). If Studio
+  apply/stop ever feels heavier, look here first.
+- The old `⏱️PERF` grep string is gone — grep `⏱️TL` now.
 
 ---
 
