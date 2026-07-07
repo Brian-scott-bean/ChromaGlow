@@ -215,8 +215,10 @@ final class BridgeDiscoveryViewModel {
             appendLog("☁️  Cloud fallback skipped — \(discoveredBridgeChoices.count) local bridge(s) already found.")
             return
         }
-        guard let url = URL(string: "https://discovery.meethue.com/api/nupnp") else { return }
-        appendLog("☁️  GET https://discovery.meethue.com/api/nupnp")
+        // Philips retired the /api/nupnp path (it now returns "404 page not
+        // found" — observed on device 2026-07-07); the JSON lives at the root.
+        guard let url = URL(string: "https://discovery.meethue.com/") else { return }
+        appendLog("☁️  GET https://discovery.meethue.com/")
         StartupTimeline.mark("discovery.nupnp-start")
         let __nupnpStart = Date()
 
