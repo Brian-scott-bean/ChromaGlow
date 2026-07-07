@@ -102,9 +102,17 @@ struct ScenesTabView: View {
             }
         }
         .navigationTitle("Scenes")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("SCENES")
+                    .font(.system(size: 14, weight: .bold))
+                    .tracking(1.4)
+                    .foregroundStyle(StagePalette.ink)
+            }
+        }
         .sheet(isPresented: $showCreateScene) {
             CreateGlobalSceneView()
         }
@@ -166,7 +174,7 @@ struct ScenesTabView: View {
                             title: "All",
                             icon: "sparkles",
                             isSelected: selectedRoomID == nil,
-                            accentColor: Color(red: 0.6, green: 0.4, blue: 0.9)
+                            accentColor: HuePalette.amber
                         ) {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                 selectedRoomID = nil
@@ -177,7 +185,7 @@ struct ScenesTabView: View {
                                 title: room.name,
                                 icon: archetypeIcon(for: roomArchetype(for: room.id)),
                                 isSelected: selectedRoomID == room.id,
-                                accentColor: Color(red: 1.0, green: 0.76, blue: 0.2)
+                                accentColor: HuePalette.amber
                             ) {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                     selectedRoomID = (selectedRoomID == room.id) ? nil : room.id
@@ -192,20 +200,10 @@ struct ScenesTabView: View {
 
                 // Scene count + active badge
                 HStack(spacing: 8) {
-                    Text("\(filteredScenes.count) scene\(filteredScenes.count == 1 ? "" : "s")")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.white.opacity(0.40))
-
+                    StageBadge(text: "\(filteredScenes.count) SCENE\(filteredScenes.count == 1 ? "" : "S")",
+                               style: .muted)
                     if activeCount > 0 {
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(Color.yellow)
-                                .frame(width: 6, height: 6)
-                                .shadow(color: .yellow.opacity(0.9), radius: 4)
-                            Text("\(activeCount) active")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.yellow)
-                        }
+                        StageBadge(text: "\(activeCount) ACTIVE", style: .live)
                     }
                     Spacer()
                 }
@@ -323,29 +321,19 @@ struct ScenesTabView: View {
 
     private var ambientBackground: some View {
         ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-            // Purple orb — reinforces scene/mood vibe
+            StagePalette.stage.ignoresSafeArea()
+            // One subdued amber glow — the stage language's single warm accent.
             Circle()
                 .fill(RadialGradient(
-                    colors: [Color(red: 0.5, green: 0.2, blue: 0.95).opacity(0.25), .clear],
-                    center: .center, startRadius: 0, endRadius: 150
+                    colors: [HuePalette.amber.opacity(0.10), .clear],
+                    center: .center, startRadius: 0, endRadius: 170
                 ))
-                .frame(width: 300)      // was 380 — clipped on SE (375pt)
-                .offset(x: 80, y: -160)
-                .blur(radius: 28)
-                .allowsHitTesting(false)
-            // Warm accent orb
-            Circle()
-                .fill(RadialGradient(
-                    colors: [Color(red: 1, green: 0.5, blue: 0.2).opacity(0.16), .clear],
-                    center: .center, startRadius: 0, endRadius: 140
-                ))
-                .frame(width: 260)      // was 280 — give some breathing room
-                .offset(x: -100, y: 120)
-                .blur(radius: 22)
+                .frame(width: 340)
+                .offset(x: 90, y: -170)
+                .blur(radius: 30)
                 .allowsHitTesting(false)
         }
-        .clipped()          // prevents circles from pushing ZStack wider than screen
+        .clipped()          // prevents the glow from pushing ZStack wider than screen
         .ignoresSafeArea()
     }
 
@@ -401,7 +389,7 @@ struct RenameSceneSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var text: String
-    private let glowColor = Color(red: 1.0, green: 0.76, blue: 0.2)
+    private let glowColor = HuePalette.amber
 
     init(scene: GlobalSceneItem, initialName: String, onRename: @escaping (String) -> Void) {
         self.scene       = scene
@@ -413,7 +401,7 @@ struct RenameSceneSheet: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
+                StagePalette.stage.ignoresSafeArea()
                 VStack(spacing: 24) {
                     TextField("Scene name", text: $text)
                         .font(.system(size: 18, weight: .medium))
@@ -498,13 +486,23 @@ struct SceneMoodCard: View {
                         .lineLimit(1)
                     HStack(spacing: 6) {
                         Text(roomName)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.45))
+                            .font(.system(size: 9, weight: .semibold))
+                            .tracking(1.0)
+                            .textCase(.uppercase)
+                            .foregroundStyle(StagePalette.muted)
                             .lineLimit(1)
                         // Provenance: exported from the Studio Composer.
                         if isStudio {
                             StageBadge(text: "STUDIO", style: .amber)
                         }
+                    }
+
+                    // Live pattern signature on running dynamic scenes —
+                    // decorative wave, same convention as engine cards.
+                    if scene.isDynamic && scene.isActive {
+                        PatternStripView(pattern: .wave, accent: scene.accentColor)
+                            .padding(.top, 4)
+                            .frame(maxWidth: 120)
                     }
                 }
 
@@ -532,16 +530,16 @@ struct SceneMoodCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(minHeight: 76)
             .background(
-                RoundedRectangle(cornerRadius: 18)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(scene.isActive
                           ? scene.accentColor.opacity(0.13)
                           : Color.white.opacity(0.06))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 18)
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .strokeBorder(
                                 scene.isActive
                                     ? scene.accentColor.opacity(0.55)
-                                    : Color.white.opacity(0.08),
+                                    : StagePalette.line,
                                 lineWidth: scene.isActive ? 1.5 : 1
                             )
                     )
@@ -550,7 +548,9 @@ struct SceneMoodCard: View {
                     radius: 12, x: 0, y: 4)
         }
         .buttonStyle(SceneCardPressStyle())
-        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityLabel(accessibilityDescription)
+        .accessibilityHint("Double tap to activate")
         // SPEED button overlaid for dynamic scenes — intercepts taps in its hit area
         .overlay(alignment: .topTrailing) {
             if scene.isDynamic {
@@ -561,11 +561,21 @@ struct SceneMoodCard: View {
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Scene speed")
                 .padding(.top, 6)
                 .padding(.trailing, 6)
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: scene.isActive)
+    }
+
+    private var accessibilityDescription: String {
+        var parts = ["\(scene.name), \(roomName)"]
+        if scene.isDynamic { parts.append("dynamic") }
+        if scene.isActive { parts.append("active") }
+        if isFavorite { parts.append("favorite") }
+        if isStudio { parts.append("created in Studio") }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -599,16 +609,16 @@ struct SceneFilterChip: View {
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
             }
-            .foregroundStyle(isSelected ? accentColor : .white.opacity(0.6))
+            .foregroundStyle(isSelected ? accentColor : StagePalette.muted)
             .padding(.horizontal, 13)
             .padding(.vertical, 8)
             .background(
                 Capsule()
-                    .fill(isSelected ? accentColor.opacity(0.18) : Color.white.opacity(0.07))
+                    .fill(isSelected ? accentColor.opacity(0.16) : Color.white.opacity(0.06))
                     .overlay(
                         Capsule()
                             .stroke(
-                                isSelected ? accentColor.opacity(0.55) : Color.white.opacity(0.12),
+                                isSelected ? accentColor.opacity(0.55) : StagePalette.line,
                                 lineWidth: 1
                             )
                     )
@@ -625,23 +635,27 @@ struct SceneFilterChip: View {
 
 struct SceneShimmerCard: View {
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shimmerPhase: CGFloat = -1
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 20)
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
             .fill(Color.white.opacity(0.05))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(
-                        LinearGradient(
-                            colors: [.clear, .white.opacity(0.07), .clear],
-                            startPoint: .init(x: shimmerPhase, y: 0),
-                            endPoint:   .init(x: shimmerPhase + 0.5, y: 1)
+            .overlay {
+                if !reduceMotion {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [.clear, .white.opacity(0.07), .clear],
+                                startPoint: .init(x: shimmerPhase, y: 0),
+                                endPoint:   .init(x: shimmerPhase + 0.5, y: 1)
+                            )
                         )
-                    )
-            )
+                }
+            }
             .aspectRatio(0.88, contentMode: .fit)
             .onAppear {
+                guard !reduceMotion else { return }
                 withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
                     shimmerPhase = 1.5
                 }
@@ -686,7 +700,7 @@ struct SceneSpeedSheet: View {
 
     var body: some View {
         ZStack {
-            Color(red: 0.06, green: 0.06, blue: 0.10).ignoresSafeArea()
+            StagePalette.stage.ignoresSafeArea()
 
             // Faint accent orb behind content
             Circle()
