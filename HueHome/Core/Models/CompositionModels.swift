@@ -665,6 +665,9 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
     var aiPrompt: String?
     var providerModel: String?
     var preferredTransport: CompositionPreferredTransport?
+    /// Round 3 (D): optional step sequence — looks that evolve with the
+    /// night. Additive: nil on every pre-sequencer preset.
+    var sequence: CompositionSequence?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -683,6 +686,7 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         case aiPrompt
         case providerModel
         case preferredTransport
+        case sequence
     }
 
     init(
@@ -701,7 +705,8 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         updatedAt: Date,
         aiPrompt: String? = nil,
         providerModel: String? = nil,
-        preferredTransport: CompositionPreferredTransport? = nil
+        preferredTransport: CompositionPreferredTransport? = nil,
+        sequence: CompositionSequence? = nil
     ) {
         self.id = id
         self.name = name
@@ -719,6 +724,7 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         self.aiPrompt = aiPrompt
         self.providerModel = providerModel
         self.preferredTransport = preferredTransport
+        self.sequence = sequence
     }
 
     init(from decoder: Decoder) throws {
@@ -745,6 +751,7 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         aiPrompt = try? container.decode(String.self, forKey: .aiPrompt)
         providerModel = try? container.decode(String.self, forKey: .providerModel)
         preferredTransport = try? container.decode(CompositionPreferredTransport.self, forKey: .preferredTransport)
+        sequence = try? container.decode(CompositionSequence.self, forKey: .sequence)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -765,6 +772,7 @@ struct CompositionPreset: Codable, Identifiable, Equatable {
         try container.encodeIfPresent(aiPrompt, forKey: .aiPrompt)
         try container.encodeIfPresent(providerModel, forKey: .providerModel)
         try container.encodeIfPresent(preferredTransport, forKey: .preferredTransport)
+        try container.encodeIfPresent(sequence, forKey: .sequence)
     }
 
     /// Whether this preset is seasonally relevant right now.

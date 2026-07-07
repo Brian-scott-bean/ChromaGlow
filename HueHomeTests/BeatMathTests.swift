@@ -291,6 +291,49 @@ final class CompositionMixerTests: XCTestCase {
         }
     }
 
+    // ── Sequencer model (Round 3 D) ──
+
+    func testSequenceStepDecodesFromEmptyObject() throws {
+        let step = try JSONDecoder().decode(CompositionSequence.Step.self,
+                                            from: Data("{}".utf8))
+        XCTAssertEqual(step.bars, 8)
+        XCTAssertEqual(step.crossfadeBeats, 4)
+        let seq = try JSONDecoder().decode(CompositionSequence.self,
+                                           from: Data("{}".utf8))
+        XCTAssertTrue(seq.steps.isEmpty)
+        XCTAssertTrue(seq.loops)
+    }
+
+    func testPresetSequenceRoundTripsAndOldPresetsDecodeNil() throws {
+        var preset = CompositionPreset(
+            id: UUID(), name: "Seq", icon: "sparkles", accentColorHex: "#FFB84D",
+            isBuiltIn: false, category: .myCreations, seasonMonths: nil,
+            palette: PaletteConfig(), motion: MotionConfig(),
+            envelope: EnvelopeConfig(), reaction: ReactionConfig(),
+            createdAt: Date(), updatedAt: Date())
+        preset.sequence = CompositionSequence(
+            steps: [CompositionSequence.Step(name: "Golden Hour", bars: 4, crossfadeBeats: 2)],
+            loops: false)
+        let data = try JSONEncoder().encode(preset)
+        let back = try JSONDecoder().decode(CompositionPreset.self, from: data)
+        XCTAssertEqual(back.sequence?.steps.first?.name, "Golden Hour")
+        XCTAssertEqual(back.sequence?.loops, false)
+
+        // Pre-sequencer JSON (id only — M-13 minimum) decodes with nil.
+        let old = try JSONDecoder().decode(
+            CompositionPreset.self,
+            from: Data(#"{"id":"\#(UUID().uuidString)"}"#.utf8))
+        XCTAssertNil(old.sequence)
+    }
+
+    func testAutoFadeBeatsVariantWithoutClockLandsInstantly() {
+        let mix = PerformanceMixBox(deckA: box())
+        mix.deckB = box(hueShift: 90)
+        mix.startAutoFade(beats: 4, beat: .none, hostNow: 0)
+        XCTAssertNil(mix.autoFade)
+        XCTAssertEqual(mix.crossfade, 1.0)   // lands rather than hangs
+    }
+
     func testAutoFadeIsBeatExactAndSelfCompletes() {
         let mix = PerformanceMixBox(deckA: box())
         mix.deckB = box(hueShift: 90)

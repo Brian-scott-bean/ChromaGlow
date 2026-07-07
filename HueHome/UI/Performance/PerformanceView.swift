@@ -62,6 +62,7 @@ final class PerformanceViewModel {
     }
 
     func end() {
+        stopSequence()
         pollTask?.cancel()
         pollTask = nil
         UIApplication.shared.isIdleTimerDisabled = false
@@ -131,6 +132,41 @@ final class PerformanceViewModel {
         deckAName = name
     }
 
+    // ── Step sequencer (Round 3 D — runs on the same mix) ──
+
+    var sequence = CompositionSequence()
+    private(set) var sequencePlayer: SequencePlayer? = nil
+    var isSequencePlaying: Bool { sequencePlayer?.isPlaying ?? false }
+    var currentSequenceStepID: UUID? = nil
+
+    /// A step is a captured look: all four layers inline, self-contained.
+    func captureCurrentStep() {
+        let a = mix.deckA
+        sequence.steps.append(CompositionSequence.Step(
+            name: "Step \(sequence.steps.count + 1)",
+            palette: a.palette, motion: a.motion,
+            envelope: a.envelope, reaction: a.reaction))
+        HapticManager.shared.selection()
+    }
+
+    func playSequence() {
+        guard !sequence.steps.isEmpty else { return }
+        mix.autoFade = nil
+        let player = sequencePlayer ?? SequencePlayer(mix: mix)
+        sequencePlayer = player
+        player.start(sequence) { [weak self] step in
+            self?.deckAName = step.name
+            self?.deckBName = nil
+            self?.currentSequenceStepID = step.id
+        }
+        HapticManager.shared.medium()
+    }
+
+    func stopSequence() {
+        sequencePlayer?.stop()
+        currentSequenceStepID = nil
+    }
+
     // ── Punch pads ──
 
     func punchDown(_ pad: PerformanceMixBox.PunchPad) {
@@ -164,6 +200,7 @@ struct PerformanceView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showQueuePicker = false
+    @State private var showSequencer = false
     @State private var heldPad: PerformanceMixBox.PunchPad? = nil
 
     private let stageBG = Color(red: 0.043, green: 0.043, blue: 0.059)
@@ -189,6 +226,7 @@ struct PerformanceView: View {
         .onAppear { viewModel.begin() }
         .onDisappear { viewModel.end() }
         .sheet(isPresented: $showQueuePicker) { queuePicker }
+        .sheet(isPresented: $showSequencer) { sequenceEditor }
     }
 
     // ── Header ──
@@ -204,6 +242,19 @@ struct PerformanceView: View {
                 .padding(.horizontal, 7).padding(.vertical, 3)
                 .background(Capsule().fill(.white.opacity(0.08)))
             Spacer()
+            Button {
+                showSequencer = true
+            } label: {
+                Image(systemName: "list.number")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(viewModel.isSequencePlaying
+                                     ? Color.black.opacity(0.85) : .white.opacity(0.7))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(viewModel.isSequencePlaying
+                                              ? AnyShapeStyle(HuePalette.amber)
+                                              : AnyShapeStyle(.white.opacity(0.08))))
+            }
+            .accessibilityLabel("Step sequencer")
             Button {
                 dismiss()
             } label: {
@@ -381,6 +432,90 @@ struct PerformanceView: View {
             }
         }
         .frame(height: 34)
+    }
+
+    // ── Step sequencer (Round 3 D) ──
+
+    private var sequenceEditor: some View {
+        @Bindable var vm = viewModel
+        return NavigationStack {
+            List {
+                Section {
+                    ForEach($vm.sequence.steps) { $step in
+                        HStack(spacing: 10) {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.white.opacity(0.3))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(step.name)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(viewModel.currentSequenceStepID == step.id
+                                                     ? HuePalette.amber : .white)
+                                Text("\(step.bars) bars · fade \(step.crossfadeBeats)♩")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.45))
+                            }
+                            Spacer()
+                            Menu("\(step.bars) bars") {
+                                ForEach([2, 4, 8, 16, 32], id: \.self) { bars in
+                                    Button("\(bars) bars") { step.bars = bars }
+                                }
+                            }
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            Menu("XF \(step.crossfadeBeats)♩") {
+                                ForEach([0, 2, 4, 8, 16], id: \.self) { beats in
+                                    Button(beats == 0 ? "Hard cut" : "\(beats) beats") {
+                                        step.crossfadeBeats = beats
+                                    }
+                                }
+                            }
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        }
+                        .listRowBackground(Color.white.opacity(0.05))
+                    }
+                    .onMove { vm.sequence.steps.move(fromOffsets: $0, toOffset: $1) }
+                    .onDelete { vm.sequence.steps.remove(atOffsets: $0) }
+
+                    Button {
+                        viewModel.captureCurrentStep()
+                    } label: {
+                        Label("Capture current look as a step", systemImage: "plus.viewfinder")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(HuePalette.amber)
+                    }
+                    .listRowBackground(Color.white.opacity(0.05))
+                } footer: {
+                    Text("Steps are self-contained snapshots — the current step plays on deck A, the next cues on deck B, and fades land on the beat grid.")
+                }
+
+                Section {
+                    Toggle("Loop", isOn: $vm.sequence.loops)
+                        .tint(HuePalette.amber)
+                        .listRowBackground(Color.white.opacity(0.05))
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(stageBG)
+            .navigationTitle("Sequence")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { EditButton() }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(viewModel.isSequencePlaying ? "Stop" : "Play") {
+                        if viewModel.isSequencePlaying {
+                            viewModel.stopSequence()
+                        } else {
+                            viewModel.playSequence()
+                            showSequencer = false
+                        }
+                    }
+                    .font(.system(size: 14, weight: .bold))
+                    .disabled(vm.sequence.steps.isEmpty && !viewModel.isSequencePlaying)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .presentationDetents([.medium, .large])
     }
 
     private var queuePicker: some View {

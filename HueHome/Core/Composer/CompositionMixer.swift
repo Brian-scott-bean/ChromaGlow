@@ -32,7 +32,7 @@ final class PerformanceMixBox: @unchecked Sendable {
         let fromValue: Double
         let toValue: Double
         let startBeats: Double     // continuous beats at start
-        let bars: Int
+        let totalBeats: Double     // fade length in beats
     }
 
     /// Deck A: the live composition's own param box (identity ties the mix
@@ -66,12 +66,23 @@ final class PerformanceMixBox: @unchecked Sendable {
 
     /// Start a bar-aligned auto-fade toward the opposite deck.
     func startAutoFade(bars: Int, beat: BeatSnapshot, hostNow: Double) {
-        guard beat.bpm > 0 else { return }
+        startAutoFade(beats: Double(max(1, bars) * max(1, beat.beatsPerBar)),
+                      beat: beat, hostNow: hostNow)
+    }
+
+    /// Beat-count variant (the sequencer fades over crossfadeBeats).
+    func startAutoFade(beats: Double, beat: BeatSnapshot, hostNow: Double) {
+        guard beat.bpm > 0, beats > 0 else {
+            // No clock: land instantly rather than hang mid-fade.
+            crossfade = crossfade < 0.5 ? 1.0 : 0.0
+            autoFade = nil
+            return
+        }
         let beatsNow = (hostNow - beat.beatEpoch) / beat.beatInterval
         autoFade = AutoFade(fromValue: crossfade,
                             toValue: crossfade < 0.5 ? 1.0 : 0.0,
                             startBeats: beatsNow,
-                            bars: max(1, bars))
+                            totalBeats: beats)
     }
 }
 
@@ -98,8 +109,7 @@ enum CompositionMixer {
         if let auto = mix.autoFade {
             if beat.bpm > 0 {
                 let beatsNow = (hostNow - beat.beatEpoch) / beat.beatInterval
-                let totalBeats = Double(auto.bars * max(1, beat.beatsPerBar))
-                let t = (beatsNow - auto.startBeats) / totalBeats
+                let t = (beatsNow - auto.startBeats) / max(0.001, auto.totalBeats)
                 if t >= 1 {
                     xf = auto.toValue
                     mix.crossfade = auto.toValue
