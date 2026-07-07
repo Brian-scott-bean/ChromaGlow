@@ -31,7 +31,30 @@ struct HueHomeApp: App {
             AppSettings.self,
             AppAutomation.self,   // user-created scheduled automations
         ])
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+
+        // SwiftData's store already lives in the App Group container: Core
+        // Data's defaultDirectoryURL() resolves there whenever an application-
+        // group entitlement is present (HueHome.entitlements declares
+        // group.com.huehome.pro). On a fresh container the
+        // "Library/Application Support" subfolder doesn't exist yet, so the
+        // first launch logs a wall of "Failed to create file / NSCocoaError
+        // 512 / errno 2" before Core Data self-recovers. Pre-create that
+        // directory and pin the store to its EXACT existing path
+        // (default.store) — the noise is gone and no data moves.
+        let appGroupID = "group.com.huehome.pro"
+        let fm = FileManager.default
+        let storeURL: URL = {
+            if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
+                let dir = container.appendingPathComponent("Library/Application Support", isDirectory: true)
+                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                return dir.appendingPathComponent("default.store")
+            }
+            // Fallback: mirror Core Data's own default location if the App
+            // Group container is somehow unavailable at launch.
+            return URL.applicationSupportDirectory.appendingPathComponent("default.store")
+        }()
+
+        let config = ModelConfiguration(schema: schema, url: storeURL)
         do {
             return try ModelContainer(for: schema, configurations: [config])
         } catch {

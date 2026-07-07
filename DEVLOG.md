@@ -48,6 +48,58 @@
 
 ---
 
+## 2026-07-07 - [Claude] Fix fatal AVAudioEngine crash + CoreData store-dir noise — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (rollback `checkpoint/pre-audio-coredata-fix-2026-07-07` @ `fc117d3`;
+  revert = `git reset --hard checkpoint/pre-audio-coredata-fix-2026-07-07`)
+
+### Did
+Triaged a device log dump (CoreData error wall + a hard termination). Two real fixes:
+- **P0 crash — `HueHome/Core/Audio/AudioAnalysisEngine.swift`.** The mic tap for the
+  music-reactive/sync feature was installed *before* the `AVAudioSession` was set to
+  `.playAndRecord` and activated, with no format validation. On a background→foreground
+  restart the input route isn't ready, so `inputNode.outputFormat(forBus:0)` returns a null
+  `0 Hz / 0 ch` format and `installTap` throws the uncatchable
+  `IsFormatSampleRateAndChannelCountValid` assertion → `com.apple.coreaudio.avfaudio`
+  termination (the "black screen you can't come back from"). Fix in `startEngineIfNeeded()`:
+  configure + `setActive(true)` the session FIRST, then read the format, then a
+  `guard format.sampleRate > 0, format.channelCount > 0` that defers (deactivates + returns
+  false) instead of ever reaching a crashing `installTap`. Added `routeChangeNotification` +
+  `mediaServicesWereResetNotification` observers so deferred/torn-down capture auto-recovers
+  once the route is back (also covers the previously-unhandled Bluetooth/headphone hand-off).
+- **P1 noise — `HueHome/HueHomeApp.swift`.** SwiftData's `default.store` lives in the App
+  Group container (Core Data's `defaultDirectoryURL()` resolves there when an app-group
+  entitlement exists — `group.com.huehome.pro`). The `Library/Application Support/` subdir
+  isn't pre-created, so first launch spams `NSCocoaError 512 / errno 2` then self-recovers.
+  Now pre-create that dir and pin `ModelConfiguration(url:)` to the EXACT existing path
+  (`default.store`) — no data moves, noise gone. Confirmed `groupContainer` exists in no
+  branch/stash/file, so this was default behavior, not a regression.
+
+### Working
+- Both changes compile: Debug build green, scheme `HueHome 1`, iPhone 17 Pro sim.
+
+### Left
+- **On-device verification (required, can't repro on Simulator):** enter sync/mic mode, churn
+  background↔foreground + Bluetooth connect/disconnect 10+ times → app must not terminate;
+  expect a benign `Input format not ready … deferring tap` log then auto-recovery.
+- Upgrade-install check: existing local SwiftData (rooms/scenes/favorites/settings) still loads
+  (proves the store URL still resolves to the same file).
+- Not committed — awaiting user go / checkpoint tag per their rollback preference.
+
+### Validation
+- Debug build **green** and full **HueHomeTests suite green** (`** TEST SUCCEEDED **`,
+  iPhone 17 Pro sim, scheme `HueHome 1`). On-device crash repro still required (route-dependent;
+  can't be reproduced on Simulator).
+
+### Gotchas
+- `installTap` with an invalid format is a C++ assertion — NOT catchable by Swift `try`; the
+  format guard is the only thing that prevents the crash. Do not remove it.
+- The store filename/subpath must stay exactly `Library/Application Support/default.store`;
+  renaming would orphan existing beta users' data.
+- Benign log lines left as-is (documented): pre-pairing `hue_api_token` keychain miss, cfprefs
+  app-group warning, TLS/TCP RST, UIAlertController width constraint, WCSession-not-installed.
+
 ## 2026-07-07 - [Claude] PERF PASS: launch + navigation smoothness — LOCAL
 
 ### Branch

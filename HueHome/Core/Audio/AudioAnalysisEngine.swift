@@ -129,6 +129,42 @@ final class AudioAnalysisEngine {
                 }
             }
         })
+
+        // A route change (Bluetooth/headphone hand-off, or the input route
+        // coming back after a foreground restart) is the natural "input is
+        // ready now" signal: recover capture that deferred on a 0 Hz / 0 ch
+        // format. Acts only while a demand is held and the engine isn't running
+        // — a route change on a healthy engine is left alone.
+        ncObservers.append(NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let reasonVal = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: reasonVal) else { return }
+            switch reason {
+            case .newDeviceAvailable, .oldDeviceUnavailable, .categoryChange,
+                 .routeConfigurationChange, .override:
+                Task { @MainActor in
+                    guard let self, self.hasActiveDemand, !self.engineRunning else { return }
+                    await self.startEngineIfNeeded()
+                }
+            default:
+                break
+            }
+        })
+
+        // Media services reset: the engine + session are torn down by the
+        // system, so rebuild from scratch if anything still needs audio.
+        ncObservers.append(NotificationCenter.default.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.stopEngine()
+                if self.hasActiveDemand { await self.startEngineIfNeeded() }
+            }
+        })
     }
 
     deinit {
@@ -185,29 +221,7 @@ final class AudioAnalysisEngine {
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        let sampleRate = Float(format.sampleRate)
         let extractor = self.extractor
-
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            // Audio thread: extract features, publish, fan out. No Tasks,
-            // no actor hops, no allocations beyond the extractor's warm-up.
-            if let data = buffer.floatChannelData?[0] {
-                let hostTime = CACurrentMediaTime()
-                if let features = extractor.process(
-                    data: data,
-                    frameCount: Int(buffer.frameLength),
-                    sampleRate: sampleRate,
-                    hostTime: hostTime
-                ) {
-                    AudioAnalysisEngine.publish(features)
-                }
-            }
-            AudioAnalysisEngine.tapsLock.lock()
-            let taps = AudioAnalysisEngine.bufferTaps
-            AudioAnalysisEngine.tapsLock.unlock()
-            for handler in taps.values { handler(buffer, sampleRate) }
-        }
 
         do {
             let session = AVAudioSession.sharedInstance()
@@ -219,6 +233,43 @@ final class AudioAnalysisEngine {
                 options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker]
             )
             try session.setActive(true, options: [])
+
+            // Read the input format ONLY after the session is active. Before
+            // activation — e.g. a background→foreground restart that fires
+            // before the hardware route is restored — it comes back as a null
+            // 0 Hz / 0 ch format, and installTap() with that throws an
+            // *uncatchable* AVFoundation assertion (CreateRecordingTap:
+            // IsFormatSampleRateAndChannelCountValid) that terminates the app.
+            // Guard, don't crash: bail and let a routeChange / mediaReset (or
+            // the next demand toggle) retry once the route is ready.
+            let format = input.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                log.warning("Input format not ready (\(format.sampleRate)Hz/\(format.channelCount)ch) — deferring tap; will retry on route change")
+                try? session.setActive(false, options: .notifyOthersOnDeactivation)
+                return false
+            }
+            let sampleRate = Float(format.sampleRate)
+
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+                // Audio thread: extract features, publish, fan out. No Tasks,
+                // no actor hops, no allocations beyond the extractor's warm-up.
+                if let data = buffer.floatChannelData?[0] {
+                    let hostTime = CACurrentMediaTime()
+                    if let features = extractor.process(
+                        data: data,
+                        frameCount: Int(buffer.frameLength),
+                        sampleRate: sampleRate,
+                        hostTime: hostTime
+                    ) {
+                        AudioAnalysisEngine.publish(features)
+                    }
+                }
+                AudioAnalysisEngine.tapsLock.lock()
+                let taps = AudioAnalysisEngine.bufferTaps
+                AudioAnalysisEngine.tapsLock.unlock()
+                for handler in taps.values { handler(buffer, sampleRate) }
+            }
+
             try engine.start()
             audioEngine = engine
             engineRunning = true
@@ -228,6 +279,7 @@ final class AudioAnalysisEngine {
         } catch {
             log.error("Audio analysis engine failed: \(error.localizedDescription)")
             input.removeTap(onBus: 0)
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             audioEngine = nil
             NotificationCenter.default.post(name: .compositionMicPermissionDenied, object: nil)
             return false
