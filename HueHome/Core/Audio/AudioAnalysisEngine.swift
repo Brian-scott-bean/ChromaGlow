@@ -44,7 +44,10 @@ final class AudioAnalysisEngine {
     private var engineRunning = false
     private var audioEngine: AVAudioEngine?
     private var tempoTask: Task<Void, Never>?
-    private var ncObservers: [NSObjectProtocol] = []
+    // nonisolated(unsafe): written only in init (before the singleton is
+    // published), read only in deinit — same pattern as SyncModeEngine's
+    // lifecycleObservers. The nonisolated deinit may not touch main-actor state.
+    nonisolated(unsafe) private var ncObservers: [NSObjectProtocol] = []
 
     /// Extractor + estimator are touched per the single-writer contracts
     /// documented on each type (tap thread / tempo task respectively).
@@ -52,7 +55,7 @@ final class AudioAnalysisEngine {
     private let tempoEstimator = TempoEstimator()
 
     // ── Published features (audio thread writes, anyone reads) ──
-    private static let featuresLock = NSLock()
+    nonisolated private static let featuresLock = NSLock()
     nonisolated(unsafe) private static var _latest = AudioFeatures.silent
     nonisolated(unsafe) private static var _tempoBPM: Double = 0
     nonisolated(unsafe) private static var _tempoConfidence: Double = 0
@@ -82,7 +85,7 @@ final class AudioAnalysisEngine {
     }
 
     // ── Raw-buffer fan-out (Sync engines) ──
-    private static let tapsLock = NSLock()
+    nonisolated private static let tapsLock = NSLock()
     nonisolated(unsafe) private static var bufferTaps: [String: @Sendable (AVAudioPCMBuffer, Float) -> Void] = [:]
 
     /// Register a raw-buffer consumer (runs on the audio thread — the

@@ -90,7 +90,7 @@ final class BeatClock {
     private var beatEpoch: Double = 0
 
     // ── Lock-guarded static mirror for render loops ──
-    private static let mirrorLock = NSLock()
+    nonisolated private static let mirrorLock = NSLock()
     nonisolated(unsafe) private static var mirror = BeatSnapshot.none
 
     /// Read the current clock from any thread (render loops, audio thread).
