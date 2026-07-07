@@ -48,6 +48,60 @@
 
 ---
 
+## 2026-07-07 - [Claude] FRESH-INSTALL PERF PASS: launch + pairing + post-pairing storm — MERGED TO MAIN
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` → fast-forwarded to `main` (rollback
+  `checkpoint/pre-freshfix-2026-07-08` @ `245dd5f`; revert = `git reset --hard` to it)
+
+### Why
+The earlier 9-stage perf pass fixed the WARM app but not fresh installs. Build-8 device
+logs showed loadAll fast (444ms) but two `Gesture: System gesture gate timed out` events —
+two real main-thread hangs (launch window; ~440ms post-pairing). Three exploration passes +
+one design pass traced both; 8 staged fixes landed (build 9):
+
+- `36d8f20` WidgetDataStore: cache the App Group UserDefaults instance (was a new instance
+  per access; amplified by fresh-install cfprefsd domain detach).
+- `6fb8616` Discovery: removed dead per-resolution legacy `hue_bridge_ip` Keychain write
+  (SecItemDelete+Add on main per endpoint per scan round; modern pairing never reads it).
+- `080fe93` WCSession activation moved out of App.init to AppRootView `.task` (was stacking
+  an XPC handshake onto the pre-first-frame window with ModelContainer creation).
+- `8728b58` Splash: keychain check before the dwell; unpaired users reach BridgeSetupView in
+  ~0.7s instead of a fixed 2.1s (view only renders for unpaired/legacy users).
+- `1db18f9` Studio `refreshCoverage` reuses `lightsByBridge` via new
+  `UnifiedOrchestrator.cachedRawLights(for:)` when `lastLoadedAt` < 60s (was a fresh
+  GET /light at tab prewarm, mid-storm, and on every rolodex change).
+- `eeda214` RoomDetail skips the immediate `loadLights` refetch when seeded and
+  `lastLoadedAt` < 30s (SSE keeps the open room live; stale/empty seed still refetches).
+- `1209d94` CompositionStore first-launch seed written inside the detached task
+  (was encode-20-presets + atomic write ON MAIN via MainActor.run). **Gotcha caught in
+  testing:** `Data.write` ASSERTS (untrappable by `try?`) when `.atomic` and
+  `.withoutOverwriting` are combined — the first cut crashed 100% of fresh installs at
+  launch (7 crash logs, `persistSeed` frame). Fixed to `.withoutOverwriting` alone
+  (create-only O_EXCL semantics preserve the M-13 no-clobber race guarantee; partial-file
+  crash recovery already handled by readPresets). Verified by full suite on a freshly
+  uninstalled app container — zero new crash logs.
+- `e2108fe` Prewarm gated on first loadAll settling (isLoading false + lastLoadedAt set;
+  demo escape; 3s cap) and realizes studio → scenes → more ONE per main-thread pass
+  (was scenes+more in one transaction at 440ms = three cold tab compiles in one pass,
+  the second gesture-gate hang). Tap-to-realize + iPad paths untouched.
+- `a1d6df0` Build number → 9.
+
+### Validation
+- Per-stage targeted suites + FULL HueHomeTests suite green on a fresh app container
+  (iPhone 17 Pro sim, scheme `HueHome 1`).
+- TEMP `⏱️PERF` prints (loadAll + room-open) intentionally KEPT for Brian's on-device
+  verification; remove in a cleanup commit once fresh-install smoothness is confirmed.
+
+### Left
+- On-device fresh-install verification (Brian): expect ~0.7s to bridge-setup page, no
+  post-pairing hang, `⏱️PERF room-open … INSTANT`.
+- Deferred by design: async/two-phase ModelContainer (fresh-store creation on main in
+  App.init, ~1-2s once per install — wide regression surface vs one-time cost); dead
+  Sync-engine stack removal; MoreView connectionStatus re-render trimming.
+
+---
+
 ## 2026-07-07 - [Claude] Fix fatal AVAudioEngine crash + CoreData store-dir noise — LOCAL
 
 ### Branch
