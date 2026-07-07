@@ -1715,6 +1715,10 @@ final class UnifiedOrchestrator {
         /// When non-empty, each light gets its own color (cascade/wave visible).
         /// Fallback to grouped_light if empty.
         let lightIDs: [String]
+        /// Round 3 (F): non-nil when the room has a gradient strip — its
+        /// channels render ALONG the strip via gradient.points. nil keeps
+        /// the flat per-light path byte-identical to before.
+        var gradientMap: GradientChannelMap? = nil
         let paramBox: CompositionParamBox
         let tier: CompositionTier
         let gamut: HueColorUtils.Gamut
@@ -2121,12 +2125,29 @@ final class UnifiedOrchestrator {
             isBridgeStored = false
         }
 
+        // Round 3 (F): expand gradient strips into virtual render channels
+        // for the REST tier. One full-lights fetch at start only; nil map =
+        // no strip in the room = existing flat path.
+        var compositionGradientMap: GradientChannelMap? = nil
+        if !compositionLightIDs.isEmpty,
+           let allLights = try? await api.fetchLights() {
+            let idSet = Set(compositionLightIDs)
+            compositionGradientMap = GradientChannelMap.build(
+                orderedLightIDs: compositionLightIDs,
+                lights: allLights.filter { idSet.contains($0.id) }
+            )
+            if let map = compositionGradientMap {
+                print("[Composer][Gradient] 🌈 \(map.entries.filter(\.isGradient).count) strip(s) → \(map.totalChannels) channels")
+            }
+        }
+
         compositionRuntimes[roomID] = CompositionRuntime(
             roomID: roomID,
             roomName: room.name,
             api: api,
             groupedLightID: groupedLightID,
             lightIDs: compositionLightIDs,
+            gradientMap: compositionGradientMap,
             paramBox: paramBox,
             tier: tier,
             gamut: compositionGamut,
@@ -2380,10 +2401,16 @@ final class UnifiedOrchestrator {
             let lightCount = runtime.lightIDs.count
             let usePerLight = lightCount > 0
 
-            // Build channel IDs: one per light for per-light mode, or [0] for grouped
-            let channelIDs: [UInt8] = usePerLight
-                ? (0..<UInt8(min(lightCount, 20))).map { $0 }
-                : [0]
+            // Build channel IDs: one per light for per-light mode, or [0] for
+            // grouped. A gradient map expands strips into extra channels so
+            // motion travels ALONG them (Round 3 F).
+            let channelIDs: [UInt8] = {
+                guard usePerLight else { return [0] }
+                if let map = runtime.gradientMap {
+                    return (0..<UInt8(min(map.totalChannels, 20))).map { $0 }
+                }
+                return (0..<UInt8(min(lightCount, 20))).map { $0 }
+            }()
 
             let frames = CompositionEngine.render(
                 time: elapsed,
@@ -2418,7 +2445,65 @@ final class UnifiedOrchestrator {
             let latestGen = compositionGenerations[roomID] ?? -1
             let capturedGamut = runtime.gamut
 
-            if usePerLight {
+            if usePerLight, let map = runtime.gradientMap {
+                // ── GRADIENT-AWARE PER-LIGHT MODE (Round 3 F) ──
+                // Strips get ONE gradient.points PUT carrying their whole
+                // channel range; flat lights keep the per-light PUT. Same
+                // mailbox, same pacing profile as the flat path.
+                let capturedMap = map
+                let capturedFrames = frames
+
+                await studioRestSender.enqueue {
+                    guard capturedGen == latestGen else { return }
+
+                    let batchSize = 5
+                    let entries = capturedMap.entries
+                    for batchStart in stride(from: 0, to: entries.count, by: batchSize) {
+                        let batchEnd = min(batchStart + batchSize, entries.count)
+                        await withTaskGroup(of: Void.self) { group in
+                            for entry in entries[batchStart..<batchEnd] {
+                                let entryFrames = entry.channelRange.compactMap { idx in
+                                    idx < capturedFrames.count ? capturedFrames[idx] : nil
+                                }
+                                guard let first = entryFrames.first else { continue }
+                                group.addTask {
+                                    if entry.isGradient {
+                                        let points = entryFrames.map { frame -> CGPoint in
+                                            let xy = HueColorUtils.clampXYToGamut(
+                                                x: frame.x, y: frame.y, gamut: capturedGamut)
+                                            return CGPoint(x: xy.x, y: xy.y)
+                                        }
+                                        let avgBri = entryFrames.map(\.brightness)
+                                            .reduce(0, +) / Double(entryFrames.count)
+                                        try? await capturedAPI.setLightGradient(
+                                            id: entry.lightID,
+                                            body: GradientBody(
+                                                pointsXY: points,
+                                                brightness: max(1, avgBri * 100.0),
+                                                on: true,
+                                                durationMs: 200))
+                                    } else {
+                                        let xy = HueColorUtils.clampXYToGamut(
+                                            x: first.x, y: first.y, gamut: capturedGamut)
+                                        try? await capturedAPI.setLightEffect(
+                                            id: entry.lightID, on: true,
+                                            brightness: max(1, first.brightness * 100.0),
+                                            xy: (xy.x, xy.y),
+                                            mirek: nil,
+                                            duration: 200)
+                                    }
+                                }
+                            }
+                        }
+                        if batchEnd < entries.count {
+                            try? await Task.sleep(for: .milliseconds(80))
+                        }
+                    }
+                    #if DEBUG
+                    print("[Composer][REST] ✅ gradient-aware room=\(roomID) entries=\(entries.count)")
+                    #endif
+                }
+            } else if usePerLight {
                 // ── PER-LIGHT MODE ──
                 // Each light gets its own color. Cascade/wave patterns visible.
                 // Bridge handles ~10 PUTs/sec for individual lights.

@@ -356,6 +356,69 @@ final class HueCapabilityFoundationTests: XCTestCase {
         XCTAssertEqual(engine.handleButton(controlID: 9, event: "initial_press"), .none)
     }
 
+    // MARK: - GradientChannelMap (Phase F)
+
+    func testGradientMapNilWithoutStrips() {
+        let lights = [light(id: "A"), light(id: "B")]
+        XCTAssertNil(GradientChannelMap.build(orderedLightIDs: ["A", "B"], lights: lights))
+    }
+
+    func testGradientMapExpandsStripAndPreservesOrder() throws {
+        let lights = [light(id: "strip", gradientPoints: 5),
+                      light(id: "b1"), light(id: "b2")]
+        let map = try XCTUnwrap(GradientChannelMap.build(
+            orderedLightIDs: ["b1", "strip", "b2"], lights: lights))
+        XCTAssertEqual(map.entries.map(\.lightID), ["b1", "strip", "b2"])
+        XCTAssertEqual(map.entries.map(\.channelCount), [1, 5, 1])
+        XCTAssertEqual(map.entries[1].channelRange, 1..<6)
+        XCTAssertEqual(map.totalChannels, 7)
+    }
+
+    func testGradientMapRespectsPointsCapable() {
+        let lights = [light(id: "s3", gradientPoints: 3)]
+        let map = GradientChannelMap.build(orderedLightIDs: ["s3"], lights: lights)
+        XCTAssertEqual(map?.entries.first?.channelCount, 3)
+    }
+
+    func testGradientMapBudgetNeverStarvesLaterLights() {
+        // 17 bulbs + strip + 2 bulbs = 20 lights: after reserving one
+        // channel for every light, nothing is left for the strip to expand
+        // into (20 − 17 − 2 = 1) — it stays flat, so the map is nil and the
+        // room takes the plain per-light path.
+        var ids = (0..<17).map { "b\($0)" }
+        ids.append("strip")
+        ids.append(contentsOf: ["t1", "t2"])
+        var lights = ids.map { light(id: $0) }
+        lights[17] = light(id: "strip", gradientPoints: 5)
+
+        XCTAssertNil(GradientChannelMap.build(orderedLightIDs: ids, lights: lights))
+    }
+
+    func testGradientMapBudgetTrimsStrip() throws {
+        // 16 bulbs + strip + 1 bulb: strip can expand into 20-16-1 = 3 channels.
+        var ids = (0..<16).map { "b\($0)" }
+        ids.append("strip")
+        ids.append("tail")
+        var lights = ids.map { light(id: $0) }
+        lights[16] = light(id: "strip", gradientPoints: 5)
+
+        let map = try XCTUnwrap(GradientChannelMap.build(orderedLightIDs: ids, lights: lights))
+        XCTAssertEqual(map.entries[16].channelCount, 3)
+        XCTAssertEqual(map.entries[17].channelCount, 1)
+        XCTAssertEqual(map.totalChannels, 20)
+        XCTAssertLessThanOrEqual(map.totalChannels, GradientChannelMap.channelBudget)
+    }
+
+    func testGradientBodyWithFrameExtras() {
+        let body = GradientBody(pointsXY: [CGPoint(x: 0.2, y: 0.3), CGPoint(x: 0.4, y: 0.5)],
+                                brightness: 60, on: true, durationMs: 200)
+        let dict = body.dictionary()
+        XCTAssertEqual((dict["on"] as? [String: Any])?["on"] as? Bool, true)
+        XCTAssertEqual((dict["dimming"] as? [String: Any])?["brightness"] as? Double, 60)
+        XCTAssertEqual((dict["dynamics"] as? [String: Any])?["duration"] as? Int, 200)
+        XCTAssertNotNil(dict["gradient"])
+    }
+
     func testSSEDecodesButtonAndRotaryEvents() throws {
         let json = """
         [{"id":"b-1","type":"button",

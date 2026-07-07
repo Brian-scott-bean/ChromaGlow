@@ -450,7 +450,10 @@ struct EntertainmentConfigBuilderView: View {
             let selectedLights = availableLights.filter { selectedLightIDs.contains($0.id) }
 
             // Build service_locations — match exact format of working Hue app config:
-            // requires BOTH position (object) + positions (array) + equalization_factor
+            // requires BOTH position (object) + positions (array) + equalization_factor.
+            // Round 3 (F): gradient-capable lights get TWO positions (a start
+            // and an end) — that is what makes the bridge segment the strip
+            // into multiple entertainment channels instead of one.
             var serviceLocations: [[String: Any]] = []
             for (index, light) in selectedLights.enumerated() {
                 guard let entID = lightToEntertainmentID[light.id] else { continue }
@@ -461,13 +464,26 @@ struct EntertainmentConfigBuilderView: View {
                 let x = -1.0 + t * 2.0
                 let pos: [String: Double] = ["x": x, "y": 0.0, "z": 0.0]
 
+                let isGradientStrip = (light.gradient?.points_capable ?? 0) >= 2
+                let positions: [[String: Double]]
+                if isGradientStrip {
+                    // Span the strip across its slot (clamped to the ±1 room cube).
+                    let halfSpan = 0.3
+                    positions = [
+                        ["x": max(-1.0, x - halfSpan), "y": 0.0, "z": 0.0],
+                        ["x": min(1.0, x + halfSpan),  "y": 0.0, "z": 0.0],
+                    ]
+                } else {
+                    positions = [pos]
+                }
+
                 serviceLocations.append([
                     "service": [
                         "rid": entID,
                         "rtype": "entertainment"
                     ],
                     "position": pos,
-                    "positions": [pos],
+                    "positions": positions,
                     "equalization_factor": 1.0
                 ])
             }
@@ -496,7 +512,14 @@ struct EntertainmentConfigBuilderView: View {
                let dataArr = json["data"] as? [[String: Any]],
                let first = dataArr.first,
                let rid = first["rid"] as? String {
-                let config = EntertainmentConfig(
+                // Round 3 (F): refetch the REAL config from the bridge — it
+                // assigns the actual channel ids/positions (and segments
+                // gradient strips into several channels). Fabricating them
+                // locally desynced channel counts from what DTLS streams to.
+                let real = (try? await EntertainmentConfigManager()
+                    .fetchConfigs(client: client))?
+                    .first(where: { $0.id == rid })
+                let config = real ?? EntertainmentConfig(
                     id: rid,
                     name: areaName.trimmingCharacters(in: .whitespaces),
                     channels: selectedLights.enumerated().map { (i, light) in

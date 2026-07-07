@@ -17,6 +17,10 @@ struct GradientBody: Equatable {
 
     var pointsXY: [CGPoint]
     var mode: String? = nil                 // e.g. "interpolated_palette"
+    // Composition-frame extras: one PUT carries the whole strip state.
+    var brightness: Double? = nil
+    var on: Bool? = nil
+    var durationMs: Int? = nil
 
     func dictionary() -> [String: Any] {
         // The bridge rejects fewer than 2 points — pad by repeating the last
@@ -29,7 +33,13 @@ struct GradientBody: Equatable {
             }
         ]
         if let mode { gradient["mode"] = mode }
-        return ["gradient": gradient]
+        var body: [String: Any] = ["gradient": gradient]
+        if let on { body["on"] = ["on": on] }
+        if let brightness {
+            body["dimming"] = ["brightness": min(100, max(1, brightness))]
+        }
+        if let durationMs { body["dynamics"] = ["duration": max(0, durationMs)] }
+        return body
     }
 }
 
