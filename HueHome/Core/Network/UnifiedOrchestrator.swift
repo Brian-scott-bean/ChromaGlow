@@ -1933,7 +1933,11 @@ final class UnifiedOrchestrator {
             self.colors = colors
         }
     }
-    nonisolated(unsafe) private var activeParamBox: StudioParamBox?
+    // @ObservationIgnored keeps this a STORED property so nonisolated(unsafe)
+    // takes effect (@Observable otherwise rewrites it computed, where the
+    // attribute is a no-op). Private and never view-observed; StudioParamBox
+    // is @unchecked Sendable with its documented cross-actor-write contract.
+    @ObservationIgnored nonisolated(unsafe) private var activeParamBox: StudioParamBox?
 
     /// Update live params while an engine is running (called by StudioViewModel on slider change).
     /// Nonisolated because StudioParamBox is @unchecked Sendable — safe for cross-actor writes.
