@@ -2,7 +2,7 @@
 
 This is the canonical project handoff for Codex, Claude, Cursor, and other coding agents. Do not duplicate this full context into tool-specific files. Tool-specific entry files, including `CLAUDE.md`, should point here.
 
-Last consolidated: 2026-06-24 · re-consolidated 2026-06-28 after Android parallel Batches 1 & 2 landed on `main` @ `7ed6468`; Batch 3 landed on `main` @ `f3380a7` and the Batch 4 Claude handoff was prepared 2026-06-29 (see "Android Current State").
+Last consolidated: 2026-06-24 · re-consolidated 2026-06-28 (Android Batches 1-3 on `main`) · re-consolidated **2026-07-07** after the iOS hardening-P1 + Rounds 3-4 + two performance passes were fast-forwarded to `main` @ `6e8a34a` (build 9). The freshest operational detail always lives in the `DEVLOG.md` "Current Status Snapshot".
 
 ## Startup Order
 
@@ -36,13 +36,20 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app with a native Android Kotlin/Jetpack Compose MVP underway. iOS remains the production/TestFlight anchor. Android has a complete demo flow plus discovery/manual entry, a secure credential boundary, and tested pairing foundations merged to `main` @ `f3380a7`. Batch 4 live pairing onboarding and durable local registration are READY under D-015/§11 for Claude to execute; the run pauses for human link-button validation before promotion.
+ChromaGlow is a native iOS Philips Hue app (production anchor, **`main` @ `6e8a34a`, 0.9.0 build 9** — hardening P0+P1 remediation complete, Rounds 3-4 Studio/Composer/Perform revamp shipped, warm-app + fresh-install performance passes merged; awaiting Brian's on-device fresh-install verification, after which the TEMP `⏱️PERF` prints get a cleanup commit) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
 
 ## Current Branch/Repo Facts
 
 - Remote: `git@github.com:Brian-scott-bean/ChromaGlow.git`
 - Default remote branch observed locally: `origin/main`
 - Current integration branch should be treated as `main` unless GitHub rules say otherwise.
+- **`main` is the branch Brian installs from** (Xcode → physical iPhone, scheme `HueHome 1`). Keep it
+  releasable; fast-forward validated work to it rather than letting it drift. As of 2026-07-07,
+  `ios-ref/hardening-p1-2026-07` == `main` @ `6e8a34a`.
+- Brian's working conventions: create a `checkpoint/*` rollback tag before any multi-commit run; bump
+  `CURRENT_PROJECT_VERSION` (all 12 pbxproj entries) each device-test round so stale installs are
+  detectable; one independently shippable commit per fix.
+- `main` has no GitHub branch protection (verified 2026-07-07 via API — returns 404).
 - Always run:
 
 ```bash
@@ -93,7 +100,7 @@ Current verified identity values:
 - iOS deployment target: iOS 17.0
 - watchOS deployment target: `26.4` (`WATCHOS_DEPLOYMENT_TARGET` in every watch build config — this resolves the earlier "verify watchOS target" follow-up)
 - Marketing version in project: `0.9.0`
-- Build number in project: `1`
+- Build number in project: `9` (bumped every device-test round; do not reuse a number)
 - App display name (main iOS target): `ChromaGlow`
 - Widget/watch target display names: still `LightShade` / `LightShadeWatch` (`INFOPLIST_KEY_CFBundleDisplayName`) — pending an explicitly assigned rename; do not rename casually.
 - iOS Keychain service identifier (`kSecAttrService`) **and** OSLog subsystem: `com.lightshade.app` — **LIVE, do NOT rename.** `KeychainManager.serviceName` uses this for every credential read/write; renaming it makes every existing user's stored app key + entertainment client key unreadable with no migration. (Audit L-35.)
@@ -216,6 +223,32 @@ Round 4 (2026-07-06) durable facts — full record in `docs/ios/round4-execution
   rework. Firmware effects (incl. effects_v2 params + coverage) live on Studio Deck 0.
   `EffectLibrary`/`HueEffect.swift` remains LIVE via automations; `SavedEffectPreset.swift` holds
   the relocated `EffectParamState`; RestSender still lives in `SyncModeEngine.swift`.
+
+Performance passes (2026-07-07) durable facts — these are load-bearing contracts, do not undo casually:
+
+- `UnifiedOrchestrator` caches raw per-bridge lights (`lightsByBridge`, filled by `loadAll`).
+  Consumers: `cachedLightItems(for:)` seeds RoomDetail for instant render; `cachedRawLights(for:)`
+  feeds Studio `refreshCoverage` when `lastLoadedAt` < 60s. RoomDetail additionally SKIPS its
+  immediate `loadLights()` refetch when seeded and `lastLoadedAt` < 30s — SSE keeps it live.
+- SSE-driven dashboard rebuilds are coalesced (~150ms trailing throttle, `scheduleSSERebuild`) and
+  SSE echo of the app's own composition PUTs is suppressed for driven rooms (`appDrivenGroupIDs`);
+  `stopCompositionMode` re-syncs via `scheduleStateRefresh()`.
+- `\.isTabActive` (defined in `MainTabView.swift`, default `true`) pauses hidden-tab animation
+  clocks: `PatternStripView`, `StudioCardCanvas`, `BeatStatusChip`, dashboard clock/banner timers.
+  New always-on animations MUST consume it.
+- `prewarmDeferredTabs` waits for the first `loadAll` to settle (3s cap, demo escape) and realizes
+  studio → scenes → more one per main-thread pass. Tap-to-realize is independent and instant.
+- `CompositionStore(loadsSynchronously: false)` (Studio's instance) loads off-main; mutations force
+  a sync load first (`ensureLoadedForMutation`, M-13). First-launch seed writes CREATE-ONLY via
+  `.withoutOverwriting` — NEVER combine it with `.atomic` in `Data.write`: that pair is a Swift
+  assertion failure (uncatchable crash), which we shipped-and-caught once already.
+- TLS pin acquisition is per-host inside each bridge's fetch task (not a global gate);
+  stuck-entertainment cleanup is deferred + 60s-throttled (`scheduleEntertainmentCleanup`) with a
+  DEBUG `testAwaitEntertainmentCleanup()` hook for LOAD-01.
+- Splash routing is lifecycle-safe (`.task` + scenePhase net + `didRoute`); unpaired dwell is 0.7s.
+  WCSession activates from AppRootView's `.task`, not App.init.
+- TEMP `⏱️PERF` prints in `RoomDetailView.task` + `UnifiedOrchestrator.loadAll` are diagnostic;
+  remove after Brian's on-device fresh-install verification (see DEVLOG snapshot).
 
 ## Android Current State
 
@@ -488,38 +521,42 @@ Start with no-op/local interfaces first:
 ## Current High-Priority Follow-Ups
 
 Security hardening audit (2026-07-01) — full report: `docs/audit/hardening-audit-2026-07-01.md`
-(0 Critical, 5 High, 19 Medium, 55 Low). Remediation, in priority order:
+(0 Critical, 5 High, 19 Medium, 55 Low).
 
-- **P0 iOS:** add per-bundle `PrivacyInfo.xcprivacy` to the widget + watch app + watch extension
-  targets (M-03, ITMS-91053 App Store upload blocker); scrub secrets from logs — remove the v1
-  URL/token logging and the raw pairing-response log, drop `privacy: .public` on token/URL/IP/name
-  strings (H-03/H-04/L-09); implement bridge TLS pinning so the app stops trust-all TLS on every
-  surface (H-01/H-02/M-01) — adopt the Android model (pin at pairing + bridgeid-CN after chain
-  validation) and route through the deferred **D-001** TLS-bootstrap decision.
-- **P1 iOS:** move shared credentials to a Keychain access group off App Group/watch UserDefaults
-  (M-02/L-30); guard `deactivateStuckEntertainmentSessions` so it can't kill the app's own active
-  DTLS session (M-06); sweep every room-targeted write off `primaryAPIClient` to `hueClient(for:)`
-  (M-07/H-05/M-18); fix bridge-animation correctness (M-04 positional light IDs, M-05 8-action rule
-  overflow); route bulk/effect writes through the `RestSender` mailbox (M-08/M-14/M-15); DTLS
-  robustness (M-09 double-resume, M-10 no recovery); non-destructive composition persistence (M-13);
-  Effects timer + dead "All Rooms" (M-16/M-17); NUPnP-vs-mDNS + location hang (M-11/M-12).
-- **P1 Android:** designate a canonical Android source tree and add an Android CI gate (M-19,
-  see "Canonical Android source tree" below).
+- **iOS P0 + P1 remediation: COMPLETE and merged to `main`** (2026-07 hardening-P1 run): per-bundle
+  privacy manifests (M-03), secret log scrub (H-03/H-04/L-09), bridge TLS pinning D-016
+  (H-01/H-02/M-01), Keychain access group D-018 (M-02/L-30), M-04..M-18 fixes, mic/session fixes
+  (L-19..L-23), plus the two 2026-07-07 performance passes. Evidence: `docs/ios/*`, branch history.
+- **P1 Android (still open):** designate a canonical Android source tree and add an Android CI gate
+  (M-19, see "Canonical Android source tree" below).
+
+iOS — active follow-ups (in order):
+
+1. **Brian's on-device fresh-install verification of build 9** (`main` @ `6e8a34a`): ~0.7s to
+   bridge-setup, no post-pairing hang, `⏱️PERF room-open … INSTANT`. This gates step 2.
+2. Cleanup commit removing the TEMP `⏱️PERF` prints (RoomDetailView + loadAll) once confirmed.
+3. Intermittent device crash reported on builds ≤8 — likely the AVAudioEngine route crash
+   (`bc5b2ba` fix unconfirmed on device). If build 9 crashes: capture the device crash log first.
+4. Deferred by explicit decision (don't resurrect without a driver): async/two-phase
+   ModelContainer; dead Sync-engine stack deletion (extract the live `RestSender` from
+   `SyncModeEngine.swift` first + pbxproj edits); `CompositionEngine.render` off main-actor
+   (cheap per measurement; `CompositionParamBox` is MainActor-confined, audit I-10); MoreView
+   `connectionStatus` re-render trimming; fix `run_tests.sh` stale `SCHEME="HueHome"`.
 
 Process/docs:
 
 - Keep `AGENTS.md` canonical and `CLAUDE.md` thin.
 - Keep `DEVLOG.md` current snapshot accurate.
-- Verify GitHub branch protection/ruleset status.
+- `main` has no branch protection (verified 2026-07-07); keep it releasable anyway — it is the
+  branch Brian installs from.
 
-iOS:
+iOS standing rules:
 
 - Avoid broad refactors in large Swift files.
-- Credential-sharing risk remains for App Group widget/watch paths (audit M-02 — move to a Keychain
-  access group).
-- Pairing logs must not expose full tokens/client keys (audit H-03/H-04 — currently violated).
-- watchOS deployment target is `26.4` (recorded in the identity list) — resolved.
-- Swift 6 concurrency warning surface should be reduced over time.
+- Respect the "Performance passes durable facts" contracts above (isTabActive, caches, coalescing,
+  prewarm gating, CompositionStore seed semantics).
+- Swift 6 concurrency warning surface should be reduced over time (known remaining:
+  `RoomCard: Equatable` main-actor isolation warning in DashboardView).
 
 Android:
 

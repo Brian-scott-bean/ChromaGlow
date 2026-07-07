@@ -4,23 +4,74 @@
 
 ---
 
-## Current Status Snapshot
+## Current Status Snapshot (updated 2026-07-07)
 
-- Canonical agent context: `AGENTS.md`.
-- Claude Code entry point: `CLAUDE.md` points to `AGENTS.md`.
-- Live shared handoff: append-only entries in this `DEVLOG.md`.
-- Git is the shared memory between tools; commit/push handoff updates when another agent needs them.
-- iOS production anchor: native Swift/SwiftUI app in `HueHome/`.
-- iOS build scheme: `HueHome 1` (not `HueHome`).
-- Android: Kotlin/Jetpack Compose demo MVP **on `main` @ `f3380a7`** — Setup (mDNS discovery / manual-IP / demo), Dashboard (room on/off + brightness), RoomDetail (per-light controls), Scenes (exclusive activation), Settings (exit demo); app-owned demo state survives navigation; Android Keystore credential boundary; **tested non-UI Hue pairing foundations under `core/hue/pairing/**` + bundled CA roots (Batch 3)**. Full feature inventory + durable code contracts: `AGENTS.md` → "Android Current State".
-- Android D-001/D-002 pairing TLS and canonical identity contracts are ACCEPTED. Batch 3 foundations —
-  including the accepted D-014 GET→POST identity-continuity correction — are **merged to `main` @
-  `f3380a7`**. Batch 4 live pairing onboarding is **EXECUTED and integrated on
-  `integration/parallel-batch-4` @ `040fed7`** (automated gate green; physical H0 link-button gate
-  pending re-run with the correct worktree APK — see the 2026-07-01 stale-APK diagnosis below);
-  **not yet merged to `main`.**
-- Parallel pipeline (lane registry, collision hotspots, execution-readiness gate, Claude⇄Codex Decision Log): `docs/coordination/parallel-agent-pipeline.md`. Batches 1 (`a3fe54f`), 2 (`7ed6468`), and **3 (`f3380a7`)** are merged to `main`. Batch 4 is **executed/integrated on `integration/parallel-batch-4` @ `040fed7`** (automated validation passed; physical bridge gate pending), not merged to `main`.
-- **Hardening audit (2026-07-01):** full cross-platform security + correctness audit recorded in `docs/audit/hardening-audit-2026-07-01.md` — 0 critical, 5 High, 19 Medium, 55 Low. P0: per-bundle privacy manifests (ITMS-91053 blocker), scrub secrets from iOS logs, iOS bridge TLS pinning (converge with Android under D-001). See the audit entry below.
+### Pointers
+- Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
+- Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
+
+### iOS — where we are RIGHT NOW
+- **`main` @ `6e8a34a` is the current production anchor and the branch Brian installs from**
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **9**).
+  `ios-ref/hardening-p1-2026-07` is fast-forwarded to the same commit — they are identical.
+- Everything below is MERGED TO MAIN and full-suite green:
+  1. **2026-07 hardening P0+P1 audit remediation COMPLETE** — per-bundle privacy manifests (M-03),
+     secret log scrub (H-03/H-04/L-09, `SecretLogScrubTests`), bridge TLS pinning (D-016,
+     `Trust/BridgePinnedTrustDelegate` + `BridgePinStore`), shared Keychain access group (D-018,
+     M-02/L-30), per-bridge client routing sweep (M-07/H-05/M-18), RestSender mailbox routing
+     (M-08/M-14/M-15), DTLS failover (M-09/M-10), non-destructive composition persistence (M-13),
+     M-04/M-05/M-06/M-11/M-12/M-16/M-17, mic-permission/interruption fixes (L-19..L-23), and more.
+  2. **Rounds 3–4** — DJ Perform surface, step sequencer, Stage redesign (`StageKit`), Composer
+     extraction (`CompositionEditorPanel`, `MixerTrayView`), Effects port to Studio Deck 0,
+     deletion of the dead Effects/Sync tab surfaces.
+  3. **Warm-app perf pass** (9 commits, `b454095..2d4f739`) — RoomDetail instant render from the
+     loadAll cache, CompositionStore off-main load, SSE rebuild coalescing (~150ms), composition
+     self-echo guard, `\.isTabActive` env key pausing hidden-tab animation clocks, beat/dashboard
+     timer gating, per-host TLS pin acquisition, deferred entertainment cleanup, mic-demand cache.
+  4. **Fresh-install perf pass** (8 commits, `36d8f20..e2108fe`, build 9) — cached App Group
+     UserDefaults, dead discovery Keychain writes removed, WCSession off App.init, 0.7s splash for
+     unpaired, Studio coverage from cache, RoomDetail skip-refetch when seeded fresh, first-launch
+     seed written off-main (create-only), prewarm gated on loadAll settling + one tab per pass.
+  5. **AVAudioEngine tap crash fix + CoreData store-dir noise fix** (`bc5b2ba`) — on-device repro
+     still unconfirmed (route-dependent, not reproducible in Simulator).
+- **IMMEDIATE NEXT STEP:** Brian verifies build 9 on-device with a fresh install. Expect: ~0.7s to
+  the bridge-setup page, no post-pairing hang, `⏱️PERF room-open … INSTANT` in console. The TEMP
+  `⏱️PERF` prints (in `RoomDetailView.task` and `UnifiedOrchestrator.loadAll`) are IN ON PURPOSE —
+  remove them in a small cleanup commit ONLY after Brian confirms smoothness.
+- **Open device issue:** Brian reported intermittent crashes launching from Xcode on builds ≤8.
+  Likely the audio-route crash `bc5b2ba` targets. If build 9 crashes on device: get the crash log
+  (Xcode → Window → Devices and Simulators → View Device Logs) before changing anything.
+- **Deferred iOS work (explicit decisions, do not resurrect without need):** async/two-phase
+  ModelContainer (fresh-store creation on main in App.init, ~1-2s once per install — wide
+  regression surface vs one-time cost); dead Sync-engine stack deletion (`SyncModeEngine`/
+  `VisualizerEngine`/`GamingEngine`/`AmbientEngine` are never instantiated, but the live
+  `RestSender` actor is defined inside `SyncModeEngine.swift` and must be extracted first, plus
+  pbxproj edits); CompositionEngine.render off main-actor (measured cheap; mutates MainActor-
+  confined `CompositionParamBox`, audit I-10); MoreView connectionStatus re-render trimming;
+  `run_tests.sh` still has stale `SCHEME="HueHome"` — always pass `-scheme "HueHome 1"` manually.
+- **Rollback tags (all pushed):** `checkpoint/pre-freshfix-2026-07-08` @ `245dd5f`,
+  `checkpoint/pre-perf-2026-07-06` @ `c01b814`, plus earlier round checkpoints.
+- Working conventions Brian expects: create a rollback tag before any multi-commit run; keep
+  `main` as the branch he builds from; bump `CURRENT_PROJECT_VERSION` (all 12 pbxproj entries)
+  every device-test round so stale binaries are detectable; one independently shippable commit
+  per fix; validate with
+  `xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`.
+
+### Android — unchanged since 2026-07-01
+- Kotlin/Compose demo MVP on `main` (originally landed @ `f3380a7`): Setup (mDNS/manual-IP/demo),
+  Dashboard, RoomDetail, Scenes, Settings; Android Keystore credential boundary; tested non-UI Hue
+  pairing foundations under `core/hue/pairing/**` + bundled CA roots (Batch 3, incl. D-014).
+  Full inventory + durable contracts: `AGENTS.md` → "Android Current State".
+- Batch 4 live pairing onboarding is executed/integrated on `integration/parallel-batch-4` @
+  `040fed7` (automated gate green; physical H0 link-button gate pending re-run with the correct
+  worktree APK — see the 2026-07-01 stale-APK diagnosis below); **not yet merged to `main`**.
+- Parallel pipeline docs (lane registry, Decision Log): `docs/coordination/parallel-agent-pipeline.md`.
+
+### Audit
+- 2026-07-01 cross-platform hardening audit: `docs/audit/hardening-audit-2026-07-01.md`
+  (0 Critical / 5 High / 19 Medium / 55 Low). **iOS P0+P1 remediation is COMPLETE and on `main`**
+  (see iOS section above). Remaining audit follow-ups are Android-side (M-19 canonical tree/CI)
+  and the deferred items listed above.
 
 ### Handoff Entry Template
 
