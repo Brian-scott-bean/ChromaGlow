@@ -26,6 +26,7 @@ struct DashboardView: View {
     private var appAutomations: [AppAutomation]
     @Environment(\.modelContext)         private var modelContext
     @Environment(\.scenePhase)           private var scenePhase
+    @Environment(\.isTabActive)          private var isTabActive
     /// Persist zones section open/closed state across launches.
     @AppStorage("dashboard.zonesExpanded")  private var zonesExpanded: Bool  = true
     @AppStorage("castchroma.useWideCards")  private var useWideCards: Bool   = false
@@ -145,7 +146,12 @@ struct DashboardView: View {
             UpcomingAutomationsSheet(automations: allUpcomingAutomations)
         }
         .onReceive(clockTimer) { _ in
+            // Skip the minute tick while Home is hidden; resync on return below.
+            guard isTabActive else { return }
             currentHour = Calendar.current.component(.hour, from: Date())
+        }
+        .onChange(of: isTabActive) { _, active in
+            if active { currentHour = Calendar.current.component(.hour, from: Date()) }
         }
         .task {
             // Stale-while-revalidate: trigger a background loadAll() on every
@@ -1294,12 +1300,22 @@ struct NextAutomationBanner: View {
     var moreCount: Int = 0          // number of additional automations beyond the first
 
     @State private var now: Date = Date()
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    @Environment(\.isTabActive) private var isTabActive
+    // 10s cadence (was 1s): the relative label only visibly changes near the final
+    // minute, and the ticker is paused entirely while the Home tab is off-screen.
+    private let ticker = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
+
+    /// Shared formatter — the previous code allocated a new RelativeDateTimeFormatter
+    /// on every tick. Accessed only on the main thread; nonisolated(unsafe) matches the
+    /// codebase idiom for main-confined shared state.
+    nonisolated(unsafe) fileprivate static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
 
     private var timeLabel: String {
-        let fmt = RelativeDateTimeFormatter()
-        fmt.unitsStyle = .abbreviated
-        let rel = fmt.localizedString(for: fireDate, relativeTo: now)
+        let rel = Self.relativeFormatter.localizedString(for: fireDate, relativeTo: now)
         let abs = fireDate.formatted(date: .omitted, time: .shortened)
         let interval = fireDate.timeIntervalSince(now)
         return interval < 6 * 3600 ? rel : abs
@@ -1363,7 +1379,15 @@ struct NextAutomationBanner: View {
                 )
         )
         .contentShape(Rectangle())
-        .onReceive(ticker) { now = $0 }
+        .onAppear { now = Date() }
+        .onReceive(ticker) { newNow in
+            // Paused while Home is hidden; resync on reappear/reactivation.
+            guard isTabActive else { return }
+            now = newNow
+        }
+        .onChange(of: isTabActive) { _, active in
+            if active { now = Date() }
+        }
     }
 }
 
@@ -1413,7 +1437,7 @@ struct UpcomingAutomationsSheet: View {
                                 Spacer()
 
                                 // Relative countdown
-                                Text(RelativeDateTimeFormatter().localizedString(for: item.date, relativeTo: Date()))
+                                Text(NextAutomationBanner.relativeFormatter.localizedString(for: item.date, relativeTo: Date()))
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(amber.opacity(0.85))
                                     .padding(.horizontal, 10)

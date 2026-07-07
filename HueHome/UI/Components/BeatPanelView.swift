@@ -44,10 +44,13 @@ struct BeatStatusChip: View {
     var compact = false
 
     private var clock: BeatClock { BeatClock.shared }
+    @Environment(\.isTabActive) private var isTabActive
 
     var body: some View {
         HStack(spacing: 6) {
-            TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { _ in
+            // Pause the 20fps dot when idle (dot is static at bpm 0 anyway) or when
+            // the host tab is off-screen. Re-evaluates when clock.bpm crosses zero.
+            TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !isTabActive || clock.bpm <= 0)) { _ in
                 // context.date only triggers redraw; the clock runs on the
                 // CACurrentMediaTime timebase.
                 let snap = BeatClock.snapshot()
@@ -196,7 +199,9 @@ struct BeatPanelView: View {
 
     // ── Bar meter: dots that fill as the bar advances ──
     private var barMeterRow: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { _ in
+        // Reading clock.bpm here also registers observation, so the meter resumes
+        // when a tempo starts (e.g. Tap inside the panel).
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: clock.bpm <= 0)) { _ in
             let snap = BeatClock.snapshot()
             let beats = max(1, snap.beatsPerBar)
             let now = CACurrentMediaTime()
