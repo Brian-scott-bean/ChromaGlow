@@ -205,6 +205,18 @@ High-risk large iOS files:
 
 Do not modify these without explicit task scope.
 
+Round 4 (2026-07-06) durable facts — full record in `docs/ios/round4-execution-record-2026-07-06.md`:
+
+- The Composer editor lives in `HueHome/UI/Composer/CompositionEditorPanel.swift` and the mixer
+  tray in `HueHome/UI/Studio/MixerTrayView.swift` (extracted from StudioView, now ~1.5k lines).
+- The stage design system is `HueHome/UI/Components/StageKit.swift` (StagePalette tokens,
+  StageCard/StageSlider/StageBadge/PatternStripView) — new UI should consume it.
+- The old Effects and Sync tab surfaces (`EffectsView`, `EffectControlsView`, `EffectsViewModel`,
+  `SyncModeView`, `TabShells`) were DELETED — they had been unreachable since the 4-tab nav
+  rework. Firmware effects (incl. effects_v2 params + coverage) live on Studio Deck 0.
+  `EffectLibrary`/`HueEffect.swift` remains LIVE via automations; `SavedEffectPreset.swift` holds
+  the relocated `EffectParamState`; RestSender still lives in `SyncModeEngine.swift`.
+
 ## Android Current State
 
 Android is a working Kotlin/Compose **demo MVP on `main` @ `f3380a7`**; both parallel-pipeline pilot
