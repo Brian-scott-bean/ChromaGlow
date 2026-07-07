@@ -300,7 +300,14 @@ struct RoomDetailView: View {
                     onToggle:     { desiredOn in vm.setLight(binding.wrappedValue, isOn: desiredOn) },
                     onBrightness: { vm.setBrightness($0, for: binding.wrappedValue) },
                     onColor:      { x, y in vm.setColor(x: x, y: y, for: binding.wrappedValue) },
-                    onColorTemp:  { vm.setColorTemp(mirek: $0, for: binding.wrappedValue) }
+                    onColorTemp:  { vm.setColorTemp(mirek: $0, for: binding.wrappedValue) },
+                    onIdentify:   {
+                        let lightID = binding.wrappedValue.id
+                        Task {
+                            await SignalingService(orchestrator: orchestrator)
+                                .identifyLight(id: lightID, bridgeID: room.bridgeID)
+                        }
+                    }
                 )
             }
         }

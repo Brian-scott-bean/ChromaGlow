@@ -22,6 +22,9 @@ struct LightControlView: View {
     let onBrightness: (Double) -> Void
     let onColor:      (Double, Double) -> Void      // x, y
     let onColorTemp:  (Int) -> Void                 // mirek
+    /// Round 3 (D): bridge-native identify flash. Optional so hosts without
+    /// a bridge context (previews, demo) simply don't show the button.
+    var onIdentify:   (() -> Void)? = nil
 
     // Local in-progress state (committed on gesture end)
     @State private var liveHue:        Double = 0
@@ -74,6 +77,20 @@ struct LightControlView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
+            if let onIdentify {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    // Free bridge signaling: 3 s flash, self-terminating.
+                    Button {
+                        HapticManager.shared.light()
+                        onIdentify()
+                    } label: {
+                        Image(systemName: "light.beacon.max")
+                            .font(.system(size: 17))
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                    .accessibilityLabel("Flash to identify")
+                }
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 // Power toggle in toolbar — always reliable, no clipping/gesture conflicts.
                 Button {
