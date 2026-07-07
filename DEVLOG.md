@@ -11,10 +11,8 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
-- **`main` @ `ba9fcc3` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **11**).
-  NOTE: local `main` is AHEAD of origin — pushing commits to `main` was permission-blocked;
-  Brian runs `git push origin main` (tags are already pushed).
+- **`main` @ `13e7c4b` is the current production anchor and the branch Brian installs from**
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **12**).
 - Everything below is MERGED TO MAIN and full-suite green:
   1. **2026-07 hardening P0+P1 audit remediation COMPLETE** — per-bundle privacy manifests (M-03),
      secret log scrub (H-03/H-04/L-09, `SecretLogScrubTests`), bridge TLS pinning (D-016,
@@ -42,18 +40,25 @@
      bounded mDNS resolve, and the full Swift 6 concurrency-warning cleanup
      (clean build = 0 errors / 0 warnings across app+widget+watch). The old `⏱️PERF` prints were
      CONVERTED to `StartupTimeline` marks, not removed.
+- **BUILD-11 DEVICE RESULT (2026-07-07):** stacks were captured but Brian's console filter hid
+  the frame lines (tooling bug, fixed in 12). Hard findings anyway: `discovery.vm-init.done`
+  fired 6+ times (VM churn — `@State` initial value re-evaluated per parent re-render, fixed
+  in 12); NUPnP `/api/nupnp` is a hard 404 (endpoint retired — fixed in 12 to site root);
+  first tab-switch hang now ~981ms (below old first sample offset); the 18.4s monster is
+  bracketed to AFTER `setup.appear`. "Booted back to discovery" = most likely delayed taps on
+  a frozen UI hitting "Pair Another Bridge" (gesture-gate timeouts prove input lag).
 - **BUILD-10 DEVICE RESULT (2026-07-07):** the timeline WORKED and ruled out the network — the
   minute is **pure main-thread blockage**: after `splash.route → setup`, `🧵HANG` chunks of
   3.6s / **18.5s** / 4.6s / 3.8s / 2.8s (~35s total) with ZERO `discovery.*` marks and ZERO 🌐
   lines (the scan is button-triggered and never started). Studio first-swipe lag = same pattern
   (`🧵HANG ~1997ms (phase: prewarm.more)` + gesture-gate timeout). Secondary, Xcode-inflated:
   +9.5s pre-main/debugger attach, `didFinishLaunching Δ2478ms`, `first-frame Δ1175ms`.
-- **IMMEDIATE NEXT STEP:** Brian installs **build 11** (fresh install: delete app first), runs
-  from Xcode, filters console on `⏱️TL|🧵HANG|🌐`. Build 11's watchdog now prints
-  `🧵HANG-STACK … — main thread is in:` + a symbolicated main-thread stack at ~1s/~3s/~8s into
-  every hang — those frames NAME the 18.5s setup blocker and the ~2s Studio-swipe blocker.
-  New brackets: `discovery.vm-init.done`, `setup.appear`. The named function becomes the next
-  targeted fix. Diagnostics stay in until the cold start is confirmed smooth.
+- **IMMEDIATE NEXT STEP:** Brian installs **build 12** (fresh install: delete app first), runs
+  from Xcode, console filter `⏱️TL|🧵HANG|🌐` (any filter matching the header now keeps the
+  whole stack — it's ONE multi-line entry). Expect: `discovery.vm-init.done` exactly once,
+  visible `🧵HANG-STACK` frames naming the remaining blocker(s) (samples at ~0.65/2.2/6.2/14.2s
+  into each hang), setup screen meaningfully less janky (VM churn eliminated). The named
+  function becomes the next targeted fix. Diagnostics stay in until cold start is smooth.
 - **Open device issue:** Brian reported intermittent crashes launching from Xcode on builds ≤8.
   Likely the audio-route crash `bc5b2ba` targets. If build 10 crashes on device: get the crash log
   (Xcode → Window → Devices and Simulators → View Device Logs) before changing anything.
@@ -113,6 +118,42 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-07 - [Claude] BUILD 12: filter-proof stacks + VM-churn fix + dead-NUPnP fix
+
+### Branch
+- `main` directly (rollback `checkpoint/pre-round3-2026-07-07`)
+
+### Why
+Build 11's device run: stacks captured but INVISIBLE (frame lines printed separately →
+console filter kept only headers). Plus two evidence-backed defects found via the timeline:
+`BridgeDiscoveryViewModel` constructed 6+ times on the setup screen (`@State` initial-value
+churn, inside the 18.4s hang window) and the NUPnP cloud fallback hitting a retired endpoint
+(hard 404 for every user).
+
+### Did (`698c855..13e7c4b`, build 12)
+- `MainThreadWatchdog`: HANG-STACK header + frames emitted as ONE multi-line entry (no filter
+  can decapitate it); sample offsets → [0.4, 1.5, 4.0, 8.0] (≈0.65/2.2/6.2/14.2s into a hang)
+  so ~1s tab-switch hangs get sampled too (device showed 981ms, just under the old 1s offset).
+- `BridgeSetupView` → thin shim owning `@State vm: BridgeDiscoveryViewModel?` created once in
+  `.onAppear`, injecting into `BridgeSetupContent` (the old body, untouched, `let vm`).
+  Simulator-verified: `discovery.vm-init.done` fires exactly once (was 6+ on device).
+- NUPnP URL: `discovery.meethue.com/api/nupnp` → `discovery.meethue.com/` (curl-verified:
+  old = hard 404; root = live, 429 when rate-limited → existing catch → warm mDNS retry).
+
+### Validation
+- Simulator smoke: single multi-line 🧵HANG-STACK block with symbolicated frames; vm-init ×1.
+- Full suite green (see run below); clean build 0 errors/0 warnings.
+
+### Left
+- Brian: fresh install build 12 → paste the now-visible 🧵HANG-STACK blocks. They name the
+  remaining blocker(s); the VM-churn fix may already shrink the setup-screen jank.
+
+### Gotchas
+- BridgeSetupView's public API unchanged (SplashView + BridgeManagerView construct it);
+  the content struct is `BridgeSetupContent` — put new setup-screen code there.
 
 ---
 
