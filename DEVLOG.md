@@ -48,6 +48,47 @@
 
 ---
 
+## 2026-07-06 - [Claude] R3-A Universal Beat Panel shipped (7 commits) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` @ `fba63a2` (rollback tag `checkpoint/pre-round3-2026-07-06`)
+
+### Did
+- `b2cc84a` Core/Audio/BeatBinding.swift: BeatBinding (off/beatLocked, ¼…8 beats/cycle, phase
+  offset; self-sanitizing decode) + pure BeatMath (cyclePhase/cycleIndex/nextCycleBoundary,
+  wcagSafeBeatsPerCycle ≤3 Hz clamp); EffectParamState.beat + SavedEffectPreset.beat? (nil-
+  additive); BeatClock.setBeatsPerBar. 21 tests (BeatMathTests).
+- `908b265` UI/Components/BeatPanelView.swift: capability-driven shared panel
+  (BeatPanelCapabilities .global/.composer), BeatStatusChip (pulsing), ChipPickerRow (one-tap
+  pills), manual BPM stepper + ±10 ms nudge UI.
+- `d9601f6` Six beat-blind loops consume BeatSnapshot: EffectLoops strobe/party/thunderstorm
+  (boundary-locked; box-based live binding) + Studio strobe/party DTLS (pure phase-derived
+  per-frame), REST variants bar-boundary synced (maxHz floors 1/0.9 & 1.0), ambient breathes
+  with the bar. BeatMath.liveLock + chunked sleepUntilNextCycle + BeatBinding.fromStudioValues.
+- `debf7b4` BeatChipButton (chip+popover) on Dashboard NowPlaying, Studio mixer header (binding
+  routed through setParamValue → live box), Effects running banner (EffectsViewModel.beatBinding
+  + BeatBindingBox so edits land mid-run without restart).
+- `197fd76` Pattern/Shape/Source .menu pickers → one-tap icon pill rows.
+- `f702f2e` Transport dialog remembers first choice; deck dots → named tappable pills.
+- `fba63a2` "Beat" quick-toggle in mixer header (1-tap beat-reactive composition) + auto-anchor
+  scroll to beat controls.
+
+### Working
+- Full suite 262/262 green on iPhone 15 / iOS 17.0; build gated per commit.
+
+### Left
+- R3-B Hue power phases A–G (capability foundation → effects_v2 → timed_effects → signaling →
+  dynamic scenes → gradient LAST → Tap Dial), then Perform (R3-C), sequencer (R3-D). Design +
+  matrix: audit doc §6.
+
+### Gotchas
+- Studio beat binding MUST go through StudioViewModel.setParamValue (writing activeParamBox
+  directly gets clobbered by the next slider push).
+- EffectsViewModel.beatBinding suppresses the 350 ms $paramState re-apply debounce (500 ms
+  delayed reset pattern) — without it every panel tweak restarts the running loop.
+- REST loops beat-sync at boundaries with a cadence floor via wcagSafeBeatsPerCycle(maxHz:) —
+  1/0.9 Hz (grouped-light strobe), 1.0 Hz (party/ambient); DTLS loops derive phase per frame.
+
 ## 2026-07-06 - [Claude] Round 3 kickoff: Hue capability deep-dive + approved design (docs handoff) — LOCAL
 
 ### Branch
