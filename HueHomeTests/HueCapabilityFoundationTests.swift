@@ -265,6 +265,53 @@ final class HueCapabilityFoundationTests: XCTestCase {
         XCTAssertFalse(TimedEffectRouting.paramsAreDefault(effectID: "sunset", state: sunset))
     }
 
+    // MARK: - Dynamic scene authoring (Phase E)
+
+    func testDynamicSceneRequestEncodesPaletteSpeedAndAutoDynamic() throws {
+        let colorLight = light(id: "C1")
+        // Give it color capability so it gets the first palette color.
+        let colored = HueLight(
+            id: "C1", metadata: LightMetadata(name: "C1", archetype: nil),
+            on: OnState(on: true), dimming: nil,
+            color: LightColor(xy: CIExy(x: 0.3, y: 0.3), gamut_type: "C"),
+            color_temperature: nil, owner: nil
+        )
+        _ = colorLight
+        let request = CreateSceneRequest.dynamicScene(
+            name: "Sunset Groove", groupID: "room-1", groupRtype: "room",
+            lights: [colored],
+            paletteXY: [(0.64, 0.33), (0.17, 0.70)],
+            brightness: 80, speed: 0.6, autoDynamic: true
+        )
+        let data = try JSONEncoder().encode(request)
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(json["type"] as? String, "scene")
+        XCTAssertEqual(json["speed"] as? Double, 0.6)
+        XCTAssertEqual(json["auto_dynamic"] as? Bool, true)
+
+        let palette = try XCTUnwrap(json["palette"] as? [String: Any])
+        let colors = try XCTUnwrap(palette["color"] as? [[String: Any]])
+        XCTAssertEqual(colors.count, 2)
+
+        let actions = try XCTUnwrap(json["actions"] as? [[String: Any]])
+        XCTAssertEqual(actions.count, 1)
+        let action = try XCTUnwrap(actions.first?["action"] as? [String: Any])
+        XCTAssertNotNil(action["color"])   // color light seeds first palette color
+    }
+
+    func testStaticSceneRequestOmitsDynamicFields() throws {
+        let request = CreateSceneRequest.fromHueLights(
+            name: "Static", groupID: "room-1", lights: [light(id: "A")])
+        let data = try JSONEncoder().encode(request)
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(json["palette"])       // pre-R3 body unchanged on the wire
+        XCTAssertNil(json["speed"])
+        XCTAssertNil(json["auto_dynamic"])
+    }
+
     func testTimedEffectsBodyClearsFirmwareEffectInSamePut() {
         let body = TimedEffectsBody(effect: "sunrise", durationMs: 60_000,
                                     clearFirmwareEffect: true)

@@ -96,6 +96,9 @@ struct StudioView: View {
     @State private var composerCategory: PresetCategory = .all
     @State private var renameCompositionTarget: CompositionPreset?
     @State private var renameCompositionText = ""
+    // Round 3 (E): "Save as Hue dynamic scene" name prompt.
+    @State private var showDynamicScenePrompt = false
+    @State private var dynamicSceneName = ""
     @State private var composerCreateBorderPhase: CGFloat = 0
     @State private var activeCompositionTab: CompositionLayerTab = .palette
     @State private var showCompositionSaveSheet = false
@@ -1572,6 +1575,83 @@ struct StudioView: View {
                 set: { vm.activeCompositionBox?.palette.randomize = $0 }
             ))
             .tint(HuePalette.amber)
+
+            // Round 3 (E): export this palette as a NATIVE Hue dynamic scene —
+            // the bridge cycles it forever with the app closed.
+            Button {
+                dynamicSceneName = ""
+                showDynamicScenePrompt = true
+                HapticManager.shared.selection()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.arrow.down.on.square")
+                        .font(.system(size: 11, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Save as Hue dynamic scene")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Loops on the bridge — works with the app closed")
+                            .font(.system(size: 10))
+                            .opacity(0.55)
+                    }
+                    Spacer()
+                }
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.07)))
+            }
+            .buttonStyle(.plain)
+            .alert("Save as Hue Dynamic Scene", isPresented: $showDynamicScenePrompt) {
+                TextField("Scene name", text: $dynamicSceneName)
+                Button("Cancel", role: .cancel) {}
+                Button("Save") {
+                    let name = dynamicSceneName.trimmingCharacters(in: .whitespaces)
+                    guard !name.isEmpty else { return }
+                    Task { await exportDynamicScene(named: name) }
+                }
+            } message: {
+                Text("The bridge cycles this palette on its own — no phone needed. It appears in your Scenes tab.")
+            }
+        }
+    }
+
+    /// Builds a native dynamic scene from the live palette layer and POSTs
+    /// it to the room's own bridge. One POST — no loops, no session.
+    private func exportDynamicScene(named name: String) async {
+        guard let room = vm.selectedRoom,
+              let groupedLightID = room.groupedLightID,
+              let api = orchestrator.hueClient(for: room.bridgeID),
+              let box = vm.activeCompositionBox else {
+            vm.statusMessage = "⚠ Select a room and composition first"
+            return
+        }
+        var paletteXY: [(x: Double, y: Double)] = [
+            (box.palette.color1.x, box.palette.color1.y),
+            (box.palette.color2.x, box.palette.color2.y),
+        ]
+        if let c3 = box.palette.color3 { paletteXY.append((c3.x, c3.y)) }
+
+        do {
+            let ids = Set(try await api.fetchLightIDsForGroup(groupedLightID: groupedLightID))
+            let lights = try await api.fetchLights().filter { ids.contains($0.id) }
+            guard !lights.isEmpty else {
+                vm.statusMessage = "⚠ No lights found in '\(room.name)'"
+                return
+            }
+            let request = CreateSceneRequest.dynamicScene(
+                name: name,
+                groupID: room.id,
+                groupRtype: room.kind == .zone ? "zone" : "room",
+                lights: lights,
+                paletteXY: paletteXY,
+                brightness: box.envelope.maxBrightness,
+                speed: max(0.1, min(1.0, box.motion.speed / 100.0))
+            )
+            try await api.createScene(request)
+            vm.statusMessage = "'\(name)' saved as a dynamic scene ✓ — find it in Scenes"
+            HapticManager.shared.medium()
+        } catch {
+            vm.statusMessage = "⚠ Couldn't save the scene — \(error.localizedDescription)"
         }
     }
 

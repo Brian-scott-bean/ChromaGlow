@@ -16,10 +16,28 @@ struct CreateSceneRequest: Encodable {
     let metadata: Metadata
     let group:    GroupRef
     let actions:  [SceneAction]
-    // Note: speed/dynamics are only valid in PUT (recall), not POST (create).
+    // Round 3 (E): dynamic-scene authoring. A palette + auto_dynamic makes
+    // the bridge cycle colors forever with zero app involvement; `speed`
+    // sets the cycle rate (0…1). All nil for classic static scenes —
+    // synthesized Encodable omits them (encodeIfPresent).
+    var palette:      Palette? = nil
+    var speed:        Double?  = nil
+    var auto_dynamic: Bool?    = nil
+    // Note: `recall` remains PUT-only; palette/speed/auto_dynamic are valid on POST.
 
     struct Metadata: Encodable {
         let name: String
+    }
+
+    /// The dynamic palette the bridge cycles through.
+    struct Palette: Encodable {
+        struct PaletteColor: Encodable {
+            let color:   SceneAction.Action.ColorXY
+            let dimming: SceneAction.Action.Dimming
+        }
+        let color: [PaletteColor]
+        let dimming: [SceneAction.Action.Dimming]
+        let color_temperature: [SceneAction.Action.ColorTemp]
     }
 
     struct GroupRef: Encodable {
@@ -133,6 +151,53 @@ extension CreateSceneRequest {
             metadata: .init(name: name),
             group:    .init(rid: groupID, rtype: groupRtype),
             actions:  actions
+        )
+    }
+
+    /// Round 3 (E): author a NATIVE dynamic scene from a Composer palette.
+    /// The bridge cycles `paletteXY` forever — app closed, phone away.
+    /// Color-capable lights start on the first palette color; white-only
+    /// lights just get brightness (they follow the dimming palette).
+    static func dynamicScene(
+        name:       String,
+        groupID:    String,
+        groupRtype: String = "room",
+        lights:     [HueLight],
+        paletteXY:  [(x: Double, y: Double)],
+        brightness: Double = 80,
+        speed:      Double = 0.5,
+        autoDynamic: Bool = true
+    ) -> CreateSceneRequest {
+        let bri = max(1.0, min(100.0, brightness))
+        // CLIP caps the color palette at 9 entries; clamp xy defensively.
+        let palettePoints = paletteXY.prefix(9).map { point in
+            Palette.PaletteColor(
+                color: .init(xy: .init(x: max(0, min(1, point.x)), y: max(0, min(1, point.y)))),
+                dimming: .init(brightness: bri)
+            )
+        }
+        let first = palettePoints.first
+        let actions: [SceneAction] = lights.map { light in
+            let supportsColor = light.color != nil
+            return SceneAction(
+                target: .init(rid: light.id, rtype: "light"),
+                action: .init(
+                    on: .init(on: true),
+                    dimming: .init(brightness: bri),
+                    color: supportsColor ? first?.color : nil,
+                    color_temperature: nil
+                )
+            )
+        }
+        return CreateSceneRequest(
+            metadata: .init(name: name),
+            group:    .init(rid: groupID, rtype: groupRtype),
+            actions:  actions,
+            palette:  Palette(color: Array(palettePoints),
+                              dimming: [.init(brightness: bri)],
+                              color_temperature: []),
+            speed:    max(0.0, min(1.0, speed)),
+            auto_dynamic: autoDynamic
         )
     }
 }
