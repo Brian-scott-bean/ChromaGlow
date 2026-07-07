@@ -17,6 +17,8 @@ struct EffectParamState {
     var toggles:   [String: Bool]    = [:]
     var segmented: [String: Int]     = [:]
     var durations: [String: Int]     = [:]
+    /// Round 3: binding to the shared BeatClock (.off = legacy slider timing).
+    var beat: BeatBinding = .off
 
     mutating func load(from params: [EffectParam]) {
         for param in params {
@@ -69,6 +71,9 @@ struct EffectParamState {
                 if let arr = preset.palettes[key] { state.palettes[key] = arr.map { Color.fromHSBA($0) } }
             }
         }
+        // BeatBinding self-sanitizes (init snaps beatsPerCycle to the allowed
+        // steps and clamps the phase offset); nil = pre-Round-3 preset.
+        state.beat = preset.beat ?? .off
         return state
     }
 }
@@ -654,7 +659,8 @@ final class EffectsViewModel: ObservableObject {
             segmented:    paramState.segmented,
             durations:    paramState.durations,
             colors:       encodedColors,
-            palettes:     encodedPalettes
+            palettes:     encodedPalettes,
+            beat:         paramState.beat.isActive ? paramState.beat : nil
         )
     }
 

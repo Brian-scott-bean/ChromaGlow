@@ -162,6 +162,12 @@ final class BeatClock {
         publishMirror()
     }
 
+    /// Set the bar length (time-signature numerator). Clamped 1…12.
+    func setBeatsPerBar(_ n: Int) {
+        beatsPerBar = min(12, max(1, n))
+        publishMirror()
+    }
+
     /// Return to audio-follow.
     func unpin() {
         isPinned = false

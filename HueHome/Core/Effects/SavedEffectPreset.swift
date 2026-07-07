@@ -24,6 +24,10 @@ struct SavedEffectPreset: Identifiable, Codable, Hashable {
     var colors:    [String: [Double]]  = [:]   // HSBA components [h, s, b, a]
     var palettes:  [String: [[Double]]] = [:]  // array of HSBA components
 
+    // Round 3: beat-clock binding. Optional so presets saved before the
+    // Universal Beat Panel decode unchanged (nil = free-running).
+    var beat: BeatBinding? = nil
+
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
