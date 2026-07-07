@@ -77,7 +77,9 @@ struct MixerTrayView: View {
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.white)
                         Text(effect.room.name)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: 9, weight: .semibold))
+                            .tracking(1.0)
+                            .textCase(.uppercase)
                             .foregroundStyle(.white.opacity(0.4))
                     }
 
@@ -103,18 +105,8 @@ struct MixerTrayView: View {
 
                     // Scope / transport badge for Studio engine cards
                     if case .appDriven = card.strategy {
-                        Text(effect.isEntertainment ? "ENT AREA" : "ROOM")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(effect.isEntertainment ? HuePalette.amber : .white.opacity(0.75))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule().fill(
-                                    effect.isEntertainment
-                                        ? HuePalette.amber.opacity(0.15)
-                                        : Color.white.opacity(0.10)
-                                )
-                            )
+                        StageBadge(text: effect.isEntertainment ? "ENT AREA" : "ROOM",
+                                   style: effect.isEntertainment ? .amber : .muted)
                     } else if case .composition = card.strategy {
                         VStack(alignment: .leading, spacing: 2) {
                             Menu {

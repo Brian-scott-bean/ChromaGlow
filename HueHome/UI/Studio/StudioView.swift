@@ -492,7 +492,10 @@ struct StudioView: View {
                         card: card,
                         isRunning: vm.runningCardID == card.id,
                         roomSelected: vm.selectedRoom != nil,
-                        isVisible: visible
+                        isVisible: visible,
+                        // Decorative signature for engine cards — they have no
+                        // MotionConfig; bounce reads as generic activity.
+                        patternSignature: .bounce
                     ) {
                         if vm.runningCardID == card.id {
                             if isMixerCollapsed {
@@ -806,7 +809,8 @@ struct StudioView: View {
                                 card: card,
                                 isRunning: vm.runningCardID == card.id,
                                 roomSelected: vm.selectedRoom != nil,
-                                isVisible: visible
+                                isVisible: visible,
+                                patternSignature: preset.motion.pattern
                             ) {
                                 if vm.runningCardID == card.id {
                                     if isMixerCollapsed {
@@ -860,12 +864,14 @@ struct StudioView: View {
                     HapticManager.shared.selection()
                 } label: {
                     Text(name)
-                        .font(.system(size: 11, weight: currentDeck == i ? .bold : .medium))
-                        .foregroundStyle(currentDeck == i ? .white : .white.opacity(0.45))
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1.2)
+                        .textCase(.uppercase)
+                        .foregroundStyle(currentDeck == i ? HuePalette.amber : .white.opacity(0.45))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 5)
                         .background(
-                            Capsule().fill(currentDeck == i ? Color.white.opacity(0.14) : .clear)
+                            Capsule().fill(currentDeck == i ? HuePalette.amber.opacity(0.15) : .clear)
                         )
                 }
                 .buttonStyle(.plain)
@@ -1141,13 +1147,14 @@ private extension View {
 struct StudioCardView: View, Equatable {
 
     static func == (lhs: StudioCardView, rhs: StudioCardView) -> Bool {
-        lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected && lhs.isVisible == rhs.isVisible
+        lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected && lhs.isVisible == rhs.isVisible && lhs.patternSignature == rhs.patternSignature
     }
 
     let card: StudioCard
     let isRunning: Bool
     let roomSelected: Bool
     let isVisible: Bool
+    var patternSignature: MotionConfig.Pattern? = nil
     let onTap: () -> Void
 
     private var accentColor: Color { card.accentColor }
@@ -1238,6 +1245,12 @@ struct StudioCardView: View, Equatable {
                             layerChip("🎤", isActive: activity.reaction)
                         }
                         .padding(.top, 5)
+                    }
+
+                    // Live pattern signature while the card runs.
+                    if isRunning, let patternSignature {
+                        PatternStripView(pattern: patternSignature, accent: accentColor)
+                            .padding(.top, 6)
                     }
 
                     if let tier = card.compositionTier {
