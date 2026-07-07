@@ -11,8 +11,10 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
-- **`main` @ `a447953` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **10**).
+- **`main` @ `ba9fcc3` is the current production anchor and the branch Brian installs from**
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **11**).
+  NOTE: local `main` is AHEAD of origin — pushing commits to `main` was permission-blocked;
+  Brian runs `git push origin main` (tags are already pushed).
 - Everything below is MERGED TO MAIN and full-suite green:
   1. **2026-07 hardening P0+P1 audit remediation COMPLETE** — per-bundle privacy manifests (M-03),
      secret log scrub (H-03/H-04/L-09, `SecretLogScrubTests`), bridge TLS pinning (D-016,
@@ -40,12 +42,18 @@
      bounded mDNS resolve, and the full Swift 6 concurrency-warning cleanup
      (clean build = 0 errors / 0 warnings across app+widget+watch). The old `⏱️PERF` prints were
      CONVERTED to `StartupTimeline` marks, not removed.
-- **IMMEDIATE NEXT STEP:** Brian installs build 10 (fresh install: delete app first), runs from
-  Xcode, filters the console on `⏱️TL|🧵HANG|🌐`. The launch reads as a timestamped story; any
-  gap >500ms is visible and labeled. Watch especially for: `loadAll.bridge-fetch.FAIL … code=-1009`
-  (Local Network permission denial — the prime fresh-install-hang suspect), `🧵HANG … (phase: …)`
-  lines, and `prewarm.released 3s CAP HIT`. Whatever phase owns the reported ~1 minute becomes the
-  next evidence-backed fix. Diagnostics stay in until the cold start is confirmed smooth.
+- **BUILD-10 DEVICE RESULT (2026-07-07):** the timeline WORKED and ruled out the network — the
+  minute is **pure main-thread blockage**: after `splash.route → setup`, `🧵HANG` chunks of
+  3.6s / **18.5s** / 4.6s / 3.8s / 2.8s (~35s total) with ZERO `discovery.*` marks and ZERO 🌐
+  lines (the scan is button-triggered and never started). Studio first-swipe lag = same pattern
+  (`🧵HANG ~1997ms (phase: prewarm.more)` + gesture-gate timeout). Secondary, Xcode-inflated:
+  +9.5s pre-main/debugger attach, `didFinishLaunching Δ2478ms`, `first-frame Δ1175ms`.
+- **IMMEDIATE NEXT STEP:** Brian installs **build 11** (fresh install: delete app first), runs
+  from Xcode, filters console on `⏱️TL|🧵HANG|🌐`. Build 11's watchdog now prints
+  `🧵HANG-STACK … — main thread is in:` + a symbolicated main-thread stack at ~1s/~3s/~8s into
+  every hang — those frames NAME the 18.5s setup blocker and the ~2s Studio-swipe blocker.
+  New brackets: `discovery.vm-init.done`, `setup.appear`. The named function becomes the next
+  targeted fix. Diagnostics stay in until the cold start is confirmed smooth.
 - **Open device issue:** Brian reported intermittent crashes launching from Xcode on builds ≤8.
   Likely the audio-route crash `bc5b2ba` targets. If build 10 crashes on device: get the crash log
   (Xcode → Window → Devices and Simulators → View Device Logs) before changing anything.
@@ -105,6 +113,43 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-07 - [Claude] BUILD 11: in-hang stack sampler — the watchdog now NAMES the blocker
+
+### Branch
+- `main` directly (rollback `checkpoint/pre-stacksampler-2026-07-07`)
+
+### Why
+Build 10's device run proved the fresh-install minute is main-thread blockage (~35s of hangs
+in the `splash.route`→BridgeSetupView window, 18.5s in one chunk; scan never started, zero
+network lines) — but the watchdog could only say WHEN, not WHAT. Build 11 adds in-hang stack
+sampling so the next run prints the guilty function by name.
+
+### Did (`44d5b2b..ba9fcc3`, build 11)
+- `MainThreadWatchdog`: while main is blocked, sample its stack at ~1s/~3s/~8s into the hang —
+  `thread_suspend` → `ARM_THREAD_STATE64` pc/lr → frame-pointer walk via `vm_read_overwrite`
+  (crash-safe) → `thread_resume` → `dladdr` symbolication strictly after resume. Prints
+  `🧵HANG-STACK main blocked ~Nms so far (phase: …) — main thread is in:` + one line per frame.
+  DEBUG-only, arm64-gated.
+- Narrowing marks: `discovery.vm-init.done` (end of `BridgeDiscoveryViewModel.init`),
+  `setup.appear` (`BridgeSetupView.onAppear`).
+
+### Validation
+- Simulator smoke test with a deliberate 3s `Thread.sleep` on main: sampler printed the full
+  symbolicated stack (`+[NSThread sleepForTimeInterval:]` ← AppDelegate closure ← dispatch ←
+  run loop). Temp sleep removed before commit.
+- Full suite re-run for build 11 (see below); clean build no new warnings.
+
+### Left
+- Brian: fresh install build 11, console filter `⏱️TL|🧵HANG|🌐`, paste the `🧵HANG-STACK`
+  blocks. Frames name the 18.5s setup blocker + the ~2s Studio-swipe blocker → targeted fix.
+
+### Gotchas
+- Symbolication must NEVER run while main is suspended (dyld locks) — keep the
+  capture/symbolicate split if editing the sampler.
+- Console shows each diagnostic line twice under Xcode (stdout + OSLog mirror) — cosmetic.
 
 ---
 
