@@ -89,6 +89,8 @@
 		C0DEC0DE00AE000000000003 /* OrchestratorOptimisticUpdateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE00AE000000000004 /* OrchestratorOptimisticUpdateTests.swift */; };
 		C0DEC0DE00BF000000000003 /* OrchestratorSSETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE00BF000000000004 /* OrchestratorSSETests.swift */; };
 		C0DEC0DE00D0000000000003 /* SecretLogScrubTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE00D0000000000004 /* SecretLogScrubTests.swift */; };
+		C0DEC0DE0200000000000001 /* StartupTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0200000000000000 /* StartupTimeline.swift */; };
+		C0DEC0DE0201000000000001 /* MainThreadWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0201000000000000 /* MainThreadWatchdog.swift */; };
 		C0DEC0DE0101000000000001 /* BridgeTrustEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0101000000000000 /* BridgeTrustEvaluator.swift */; };
 		C0DEC0DE0101000000000002 /* BridgeTrustEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0101000000000000 /* BridgeTrustEvaluator.swift */; };
 		C0DEC0DE0101000000000003 /* BridgeTrustEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0101000000000000 /* BridgeTrustEvaluator.swift */; };
@@ -349,6 +351,8 @@
 		C0DEC0DE00AE000000000004 /* OrchestratorOptimisticUpdateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OrchestratorOptimisticUpdateTests.swift; path = ./HueHomeTests/OrchestratorOptimisticUpdateTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE00BF000000000004 /* OrchestratorSSETests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OrchestratorSSETests.swift; path = ./HueHomeTests/OrchestratorSSETests.swift; sourceTree = "<group>"; };
 		C0DEC0DE00D0000000000004 /* SecretLogScrubTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SecretLogScrubTests.swift; path = ./HueHomeTests/SecretLogScrubTests.swift; sourceTree = "<group>"; };
+		C0DEC0DE0200000000000000 /* StartupTimeline.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StartupTimeline.swift; path = HueHome/Core/Diagnostics/StartupTimeline.swift; sourceTree = "<group>"; };
+		C0DEC0DE0201000000000000 /* MainThreadWatchdog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MainThreadWatchdog.swift; path = HueHome/Core/Diagnostics/MainThreadWatchdog.swift; sourceTree = "<group>"; };
 		C0DEC0DE0101000000000000 /* BridgeTrustEvaluator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeTrustEvaluator.swift; path = HueHome/Core/Network/Trust/BridgeTrustEvaluator.swift; sourceTree = "<group>"; };
 		C0DEC0DE0102000000000000 /* BridgePinStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgePinStore.swift; path = HueHome/Core/Network/Trust/BridgePinStore.swift; sourceTree = "<group>"; };
 		C0DEC0DE0103000000000000 /* HueBridgeTrustRoots.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueBridgeTrustRoots.swift; path = HueHome/Core/Network/Trust/HueBridgeTrustRoots.swift; sourceTree = "<group>"; };
@@ -963,10 +967,20 @@
 			name = HueHomeTests;
 			sourceTree = "<group>";
 		};
+		C0DEC0DE0202000000000000 /* Diagnostics */ = {
+			isa = PBXGroup;
+			children = (
+				C0DEC0DE0200000000000000 /* StartupTimeline.swift */,
+				C0DEC0DE0201000000000000 /* MainThreadWatchdog.swift */,
+			);
+			name = Diagnostics;
+			sourceTree = "<group>";
+		};
 		E44AF3E912AE191245436392 /* Core */ = {
 			isa = PBXGroup;
 			children = (
 				B1LDGRP000000000000000001 /* App */,
+				C0DEC0DE0202000000000000 /* Diagnostics */,
 				C0DEC0DE0121000000000000 /* Audio */,
 				DASHBD000000000000000003 /* Dashboard */,
 				C0DEC0DE005B000000000005 /* Composer */,
@@ -1328,6 +1342,8 @@
 				17B38DAEE68E25F798E2F817 /* SceneDisplayItem.swift in Sources */,
 				C1F360D81291713EACE0C1FD /* SettingsView.swift in Sources */,
 				04DEE771A7499DCB48E4F81A /* WidgetDataStore.swift in Sources */,
+				C0DEC0DE0200000000000001 /* StartupTimeline.swift in Sources */,
+				C0DEC0DE0201000000000001 /* MainThreadWatchdog.swift in Sources */,
 				C0DEC0DE0101000000000001 /* BridgeTrustEvaluator.swift in Sources */,
 				C0DEC0DE0102000000000001 /* BridgePinStore.swift in Sources */,
 				C0DEC0DE0103000000000001 /* HueBridgeTrustRoots.swift in Sources */,
