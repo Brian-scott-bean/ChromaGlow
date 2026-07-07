@@ -16,8 +16,12 @@ struct SplashView: View {
     @State private var barOpacity:      Double  = 0.0
     @State private var showSetup:       Bool    = false
     @State private var showDemoButton:  Bool    = false
+    /// Routing (splash → paired/setup) happens exactly once. Guards the .task and the
+    /// scenePhase safety net against double-firing.
+    @State private var didRoute:        Bool    = false
 
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.scenePhase)  private var scenePhase
 
     var body: some View {
         if showSetup {
@@ -131,12 +135,22 @@ struct SplashView: View {
             }
             .padding(.horizontal, 40)
         }
-        .onAppear(perform: runAnimation)
+        .onAppear(perform: startIntroAnimation)
+        // Route from a lifecycle-bound Task, not onAppear + DispatchQueue.asyncAfter.
+        // On a fresh install the main thread is busy creating the SwiftData store and
+        // the scene may not be .active when a one-shot timer fires, which used to leave
+        // the splash stuck until a manual background/foreground. .task cancels + restarts
+        // cleanly with the view, and the scenePhase net completes routing automatically
+        // if the first attempt lands while the scene isn't rendering.
+        .task { await routeAfterIntro() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await routeAfterIntro() } }
+        }
     }
 
     // MARK: - Animation Sequence
 
-    private func runAnimation() {
+    private func startIntroAnimation() {
         withAnimation(.spring(response: 0.55, dampingFraction: 0.65)) {
             iconScale   = 1.0
             iconOpacity = 1.0
@@ -147,22 +161,30 @@ struct SplashView: View {
             barOpacity      = 1.0
         }
         withAnimation(.easeInOut(duration: 1.4).delay(0.6)) { barProgress = 1.0 }
+    }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) {
-            let ip    = try? KeychainManager.shared.loadBridgeIP()
-            let token = try? KeychainManager.shared.loadAPIToken()
-            let alreadyPaired = (ip?.isEmpty == false) && (token?.isEmpty == false)
+    /// Holds the splash for its cosmetic dwell, then routes to paired/setup exactly once.
+    /// Idempotent (didRoute) so the .task and scenePhase net can both call it safely.
+    private func routeAfterIntro() async {
+        guard !didRoute else { return }
+        try? await Task.sleep(for: .seconds(2.1))
+        guard !didRoute else { return }
 
-            withAnimation(.easeInOut(duration: 0.4)) {
-                if alreadyPaired {
-                    onPaired?()
-                } else {
-                    showSetup = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        withAnimation(.easeOut(duration: 0.4)) { showDemoButton = true }
-                    }
-                }
+        let ip    = try? KeychainManager.shared.loadBridgeIP()
+        let token = try? KeychainManager.shared.loadAPIToken()
+        let alreadyPaired = (ip?.isEmpty == false) && (token?.isEmpty == false)
+
+        didRoute = true
+        withAnimation(.easeInOut(duration: 0.4)) {
+            if alreadyPaired {
+                onPaired?()
+            } else {
+                showSetup = true
             }
+        }
+        if !alreadyPaired {
+            try? await Task.sleep(for: .seconds(0.5))
+            withAnimation(.easeOut(duration: 0.4)) { showDemoButton = true }
         }
     }
 }
