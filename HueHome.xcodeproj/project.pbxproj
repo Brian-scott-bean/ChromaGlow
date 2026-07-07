@@ -124,6 +124,7 @@
 		C0DEC0DE012D000000000001 /* HueAPIClient+Gradient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012D000000000000 /* HueAPIClient+Gradient.swift */; };
 		C0DEC0DE012E000000000001 /* EffectCapabilityResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012E000000000000 /* EffectCapabilityResolver.swift */; };
 		C0DEC0DE012F000000000001 /* HueCapabilityFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012F000000000000 /* HueCapabilityFoundationTests.swift */; };
+		C0DEC0DE0130000000000001 /* TimedEffectRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0130000000000000 /* TimedEffectRouting.swift */; };
 		C0DEC0DE0129000000000001 /* BeatMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0129000000000000 /* BeatMathTests.swift */; };
 		C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */; };
 		C0DEC0DE0126000000000001 /* CompositionReactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */; };
@@ -364,6 +365,7 @@
 		C0DEC0DE012D000000000000 /* HueAPIClient+Gradient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "HueAPIClient+Gradient.swift"; path = "HueHome/Core/Network/HueAPIClient+Gradient.swift"; sourceTree = "<group>"; };
 		C0DEC0DE012E000000000000 /* EffectCapabilityResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EffectCapabilityResolver.swift; path = HueHome/Core/Network/EffectCapabilityResolver.swift; sourceTree = "<group>"; };
 		C0DEC0DE012F000000000000 /* HueCapabilityFoundationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueCapabilityFoundationTests.swift; path = ./HueHomeTests/HueCapabilityFoundationTests.swift; sourceTree = "<group>"; };
+		C0DEC0DE0130000000000000 /* TimedEffectRouting.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TimedEffectRouting.swift; path = HueHome/Core/Effects/TimedEffectRouting.swift; sourceTree = "<group>"; };
 		C0DEC0DE0129000000000000 /* BeatMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatMathTests.swift; path = ./HueHomeTests/BeatMathTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioFeatureCoreTests.swift; path = ./HueHomeTests/AudioFeatureCoreTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionReactionTests.swift; path = ./HueHomeTests/CompositionReactionTests.swift; sourceTree = "<group>"; };
@@ -676,6 +678,7 @@
 			children = (
 				4FB72B6AA166AE2318281F06 /* HueEffect.swift */,
 				E7ACCF18A91D92561912E10F /* EffectEngine.swift */,
+				C0DEC0DE0130000000000000 /* TimedEffectRouting.swift */,
 				0AFC6DD83A8A43FEA3352BB6 /* SavedEffectPreset.swift */,
 			);
 			name = Effects;
@@ -1362,6 +1365,7 @@
 				7AFCB8B820A30E0ECC0869C1 /* DevicesViewModel.swift in Sources */,
 				69C3283411F9F3D071E401C5 /* HueEffect.swift in Sources */,
 				81A97C848EAA34AD15696908 /* EffectEngine.swift in Sources */,
+				C0DEC0DE0130000000000001 /* TimedEffectRouting.swift in Sources */,
 				56C91AABFFCD9705BA5872F0 /* EffectsViewModel.swift in Sources */,
 				C5E607457B720B34157DA5DA /* EffectsView.swift in Sources */,
 				E81712B70CBF1AAFBC4065E3 /* EffectControlsView.swift in Sources */,

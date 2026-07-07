@@ -480,6 +480,42 @@ final class EffectsViewModel: ObservableObject {
             runningEffectName = nil
             statusMessage     = "Preparing '\(effect.name)'…"
 
+            // Round 3 (C): bridge-side timed_effects when the firmware can
+            // reproduce this exact look on EVERY light — the ramp then
+            // finishes even if the app is force-quit. Any customization,
+            // partial support, or per-light failure falls through to the
+            // proven app ramp below.
+            let defaults = TimedEffectRouting.paramsAreDefault(effectID: effect.id, state: paramState)
+            if defaults,
+               let roomLights = try? await fetchRoomLights(api: api, groupedLightID: groupedLightID),
+               case .native(let nativeName) = TimedEffectRouting.route(
+                   effectID: effect.id, paramsAreDefault: defaults, lights: roomLights) {
+                // clearFirmwareEffect: a running effect outranks timed_effects
+                // on the bridge — clear it in the same paced PUT.
+                let body = TimedEffectsBody(effect: nativeName,
+                                            durationMs: durationSec * 1000,
+                                            clearFirmwareEffect: true)
+                var nativeFailures = 0
+                for light in roomLights {
+                    let error = await gate.send(retry: false) {
+                        try await api.setLightTimedEffect(id: light.id, body: body)
+                    }
+                    if error != nil { nativeFailures += 1 }
+                }
+                if nativeFailures == 0 {
+                    showStatus("'\(effect.name)' running on the bridge ✓ — finishes even if you close the app")
+                    setNowPlaying(effect)
+                    return
+                }
+                // Partial start looks broken — cancel and take the app ramp.
+                for light in roomLights {
+                    _ = await gate.send(retry: false) {
+                        try await api.setLightTimedEffect(id: light.id,
+                                                          body: TimedEffectsBody(effect: "no_effect"))
+                    }
+                }
+            }
+
             // Step 1: clear any running native bridge effect per-light so the ramp can take over.
             // M-15: gate-paced instead of an unthrottled concurrent burst.
             let lightIDs = (try? await api.fetchLightIDsForGroup(groupedLightID: groupedLightID)) ?? []

@@ -221,4 +221,57 @@ final class HueCapabilityFoundationTests: XCTestCase {
                       light(id: "weird", gradientPoints: 1)]
         XCTAssertEqual(EffectCapabilityResolver.gradientLights(lights).map(\.id), ["strip"])
     }
+
+    // MARK: - TimedEffectRouting (Phase C)
+
+    func testTimedRoutingNativeWhenDefaultAndFullSupport() {
+        let lights = [light(id: "A", timed: ["sunrise", "sunset"]),
+                      light(id: "B", timed: ["sunrise", "sunset"])]
+        XCTAssertEqual(TimedEffectRouting.route(effectID: "sunrise",
+                                                paramsAreDefault: true, lights: lights),
+                       .native(effect: "sunrise"))
+    }
+
+    func testTimedRoutingFallsBackOnCustomizationAndPartialSupport() {
+        let full = [light(id: "A", timed: ["sunset"])]
+        XCTAssertEqual(TimedEffectRouting.route(effectID: "sunset",
+                                                paramsAreDefault: false, lights: full),
+                       .appRamp(reason: .customized))
+
+        let partial = [light(id: "A", timed: ["sunset"]), light(id: "B")]
+        XCTAssertEqual(TimedEffectRouting.route(effectID: "sunset",
+                                                paramsAreDefault: true, lights: partial),
+                       .appRamp(reason: .partialSupport))
+
+        XCTAssertEqual(TimedEffectRouting.route(effectID: "winddown",
+                                                paramsAreDefault: true, lights: full),
+                       .appRamp(reason: .notMappable))
+
+        XCTAssertEqual(TimedEffectRouting.route(effectID: "sunrise",
+                                                paramsAreDefault: true, lights: []),
+                       .appRamp(reason: .noLights))
+    }
+
+    func testTimedRoutingParamsAreDefault() {
+        var state = EffectParamState()
+        // Empty state reads the card defaults → default.
+        XCTAssertTrue(TimedEffectRouting.paramsAreDefault(effectID: "sunrise", state: state))
+        state.sliders["endBrightness"] = 70   // customized
+        XCTAssertFalse(TimedEffectRouting.paramsAreDefault(effectID: "sunrise", state: state))
+
+        var sunset = EffectParamState()
+        XCTAssertTrue(TimedEffectRouting.paramsAreDefault(effectID: "sunset", state: sunset))
+        sunset.toggles["turnOff"] = false     // firmware sunset always ends off
+        XCTAssertFalse(TimedEffectRouting.paramsAreDefault(effectID: "sunset", state: sunset))
+    }
+
+    func testTimedEffectsBodyClearsFirmwareEffectInSamePut() {
+        let body = TimedEffectsBody(effect: "sunrise", durationMs: 60_000,
+                                    clearFirmwareEffect: true)
+        let expected: [String: Any] = [
+            "timed_effects": ["effect": "sunrise", "duration": 60_000],
+            "effects": ["effect": "no_effect"],
+        ]
+        XCTAssertEqual(body.dictionary() as NSDictionary, expected as NSDictionary)
+    }
 }

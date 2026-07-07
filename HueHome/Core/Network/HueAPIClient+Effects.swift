@@ -48,13 +48,20 @@ struct TimedEffectsBody: Equatable {
 
     var effect: String                       // "sunrise" | "sunset" | "no_effect"
     var durationMs: Int? = nil
+    /// A running firmware effect takes precedence over timed_effects on the
+    /// bridge — set this to clear it in the SAME PUT (one paced command).
+    var clearFirmwareEffect = false
 
     func dictionary() -> [String: Any] {
         var timed: [String: Any] = ["effect": effect]
         if let durationMs {
             timed["duration"] = min(Self.maxDurationMs, max(0, durationMs))
         }
-        return ["timed_effects": timed]
+        var body: [String: Any] = ["timed_effects": timed]
+        if clearFirmwareEffect {
+            body["effects"] = ["effect": "no_effect"]
+        }
+        return body
     }
 }
 
