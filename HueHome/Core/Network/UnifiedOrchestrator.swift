@@ -700,12 +700,9 @@ final class UnifiedOrchestrator {
         errorMessage = nil
         defer { isLoading = false }
 
-        // D-016 upgrade migration: bridges paired before TLS pinning have no
-        // stored pin and the pinned data plane fails closed without one. This
-        // is a no-op once every configured host is pinned.
-        await BridgePinAcquirer.ensurePins(
-            hosts: clients.values.compactMap { try? $0.credentials().ip }
-        )
+        // D-016 pin acquisition is now per-host inside fetchAndMergeAllBridges so a
+        // single offline unpinned bridge no longer stalls every bridge's first fetch
+        // up to ~10s. Pinned hosts (the steady state) are a synchronous no-op there.
 
         // Entertainment cleanup + bridge fetches run in parallel so cold launch
         // does not wait for sequential stuck-session teardown before any room data loads.
@@ -735,6 +732,14 @@ final class UnifiedOrchestrator {
             for (bridgeID, client) in clients {
                 group.addTask { [client, bridgeID] in
                     do {
+                        // D-016 migration: ensure THIS host is pinned before its fetch
+                        // (a no-op once pinned — the steady state). Per-host so one offline
+                        // unpinned bridge waits only on its own probe instead of blocking
+                        // every bridge's first fetch, as the up-front global call used to.
+                        // Unpinned + unreachable simply fails the fetch below (fails closed).
+                        if let host = try? client.credentials().ip {
+                            await BridgePinAcquirer.ensurePins(hosts: [host])
+                        }
                         // 4 concurrent requests per bridge — eliminates N+1 pattern.
                         async let roomsFetch   = client.fetchRooms()
                         async let zonesFetch   = client.fetchZones()
