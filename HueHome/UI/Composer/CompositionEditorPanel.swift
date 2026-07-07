@@ -93,7 +93,9 @@ struct CompositionEditorPanel: View {
                             HapticManager.shared.selection()
                         } label: {
                             Label(tab.title, systemImage: tab.symbolName)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: 11, weight: .bold))
+                                .tracking(1.0)
+                                .textCase(.uppercase)
                                 .labelStyle(.titleAndIcon)
                                 .foregroundStyle(selected ? HuePalette.amber : .white.opacity(0.78))
                                 .padding(.horizontal, 12)
@@ -216,8 +218,8 @@ struct CompositionEditorPanel: View {
     }
 
     private var compositionPaletteControls: some View {
-        VStack(spacing: HueSpacing.sm) {
-            compositionSectionHeader("Color", subtitle: "Palette every light reads before motion and envelope.")
+        StageCard(icon: "paintpalette.fill", title: "Color", subtitle: "Palette every light reads before motion and envelope.") {
+            VStack(spacing: HueSpacing.sm) {
 
             Picker("Mode", selection: Binding(
                 get: { vm.activeCompositionBox?.palette.mode ?? .gradient },
@@ -240,7 +242,7 @@ struct CompositionEditorPanel: View {
             harmonyChipRow
 
             if (vm.activeCompositionBox?.palette.mode ?? .gradient) == .spectrum {
-                compositionSlider(
+                StageSlider(
                     title: "Hue Shift",
                     value: Binding(
                         get: { vm.activeCompositionBox?.palette.hueShift ?? 0 },
@@ -293,6 +295,7 @@ struct CompositionEditorPanel: View {
                 Text("The bridge cycles this palette on its own — no phone needed. It appears in your Scenes tab.")
             }
         }
+            }
     }
 
     /// Builds a native dynamic scene from the live palette layer and POSTs
@@ -701,8 +704,13 @@ struct CompositionEditorPanel: View {
     }
 
     private var compositionMotionControls: some View {
-        VStack(spacing: HueSpacing.sm) {
-            compositionSectionHeader("Motion", subtitle: "How color travels across lights over time.")
+        StageCard(icon: "wind", title: "Motion", subtitle: "How color travels across lights over time.") {
+            VStack(spacing: HueSpacing.sm) {
+
+            PatternStripView(
+                pattern: vm.activeCompositionBox?.motion.pattern ?? .cascade,
+                animated: vm.currentRoomEffect != nil
+            )
 
             // One-tap pattern pills: every pattern visible at once (was a
             // 2-tap menu). Icons give each motion a recognizable signature.
@@ -735,7 +743,7 @@ struct CompositionEditorPanel: View {
                 }
             }
 
-            compositionSlider(
+            StageSlider(
                 title: "Speed",
                 value: Binding(
                     get: { vm.activeCompositionBox?.motion.speed ?? 40 },
@@ -744,7 +752,7 @@ struct CompositionEditorPanel: View {
                 range: 0...100
             )
 
-            compositionSlider(
+            StageSlider(
                 title: "Spread",
                 value: Binding(
                     get: { vm.activeCompositionBox?.motion.spread ?? 70 },
@@ -759,7 +767,7 @@ struct CompositionEditorPanel: View {
             ))
             .tint(HuePalette.amber)
 
-            compositionSlider(
+            StageSlider(
                 title: "Offset",
                 value: Binding(
                     get: { vm.activeCompositionBox?.motion.offset ?? 50 },
@@ -774,6 +782,7 @@ struct CompositionEditorPanel: View {
             ))
             .tint(HuePalette.amber)
         }
+            }
     }
 
     // ──────────────────────────────────────────────
@@ -1062,8 +1071,8 @@ struct CompositionEditorPanel: View {
     }
 
     private var compositionEnvelopeControls: some View {
-        VStack(spacing: HueSpacing.sm) {
-            compositionSectionHeader("Envelope", subtitle: "Brightness shape over time.")
+        StageCard(icon: "waveform.path.ecg", title: "Envelope", subtitle: "Brightness shape over time.") {
+            VStack(spacing: HueSpacing.sm) {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Shape")
@@ -1082,7 +1091,7 @@ struct CompositionEditorPanel: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            compositionSlider(
+            StageSlider(
                 title: "BPM",
                 value: Binding(
                     get: { vm.activeCompositionBox?.envelope.bpm ?? 60 },
@@ -1091,7 +1100,7 @@ struct CompositionEditorPanel: View {
                 range: 20...240
             )
 
-            compositionSlider(
+            StageSlider(
                 title: "Depth",
                 value: Binding(
                     get: { vm.activeCompositionBox?.envelope.depth ?? 50 },
@@ -1103,7 +1112,7 @@ struct CompositionEditorPanel: View {
             // Shape-specific controls (the engine has always consumed these;
             // the sliders were simply missing from the editor).
             if (vm.activeCompositionBox?.envelope.shape ?? .breathe) == .swell {
-                compositionSlider(
+                StageSlider(
                     title: "Attack",
                     value: Binding(
                         get: { vm.activeCompositionBox?.envelope.attack ?? 50 },
@@ -1111,7 +1120,7 @@ struct CompositionEditorPanel: View {
                     ),
                     range: 0...100
                 )
-                compositionSlider(
+                StageSlider(
                     title: "Decay",
                     value: Binding(
                         get: { vm.activeCompositionBox?.envelope.decay ?? 50 },
@@ -1121,7 +1130,7 @@ struct CompositionEditorPanel: View {
                 )
             }
             if (vm.activeCompositionBox?.envelope.shape ?? .breathe) == .pulse {
-                compositionSlider(
+                StageSlider(
                     title: "Duty Cycle",
                     value: Binding(
                         get: { vm.activeCompositionBox?.envelope.dutyCycle ?? 50 },
@@ -1131,7 +1140,7 @@ struct CompositionEditorPanel: View {
                 )
             }
 
-            compositionSlider(
+            StageSlider(
                 title: "Min Brightness",
                 value: Binding(
                     get: { vm.activeCompositionBox?.envelope.minBrightness ?? 10 },
@@ -1139,7 +1148,7 @@ struct CompositionEditorPanel: View {
                 ),
                 range: 0...50
             )
-            compositionSlider(
+            StageSlider(
                 title: "Max Brightness",
                 value: Binding(
                     get: { vm.activeCompositionBox?.envelope.maxBrightness ?? 100 },
@@ -1148,11 +1157,12 @@ struct CompositionEditorPanel: View {
                 range: 50...100
             )
         }
+            }
     }
 
     private var compositionReactionControls: some View {
-        VStack(spacing: HueSpacing.sm) {
-            compositionSectionHeader("Reaction", subtitle: "Audio and responsiveness layered on top.")
+        StageCard(icon: "bolt.fill", title: "React", subtitle: "Audio and responsiveness layered on top.") {
+            VStack(spacing: HueSpacing.sm) {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Source")
@@ -1187,7 +1197,7 @@ struct CompositionEditorPanel: View {
             reactionBeatControls
                 .id("reactionBeatControls")   // ScrollViewReader auto-anchor target
 
-            compositionSlider(
+            StageSlider(
                 title: "Sensitivity",
                 value: Binding(
                     get: { vm.activeCompositionBox?.reaction.sensitivity ?? 70 },
@@ -1195,7 +1205,7 @@ struct CompositionEditorPanel: View {
                 ),
                 range: 0...100
             )
-            compositionSlider(
+            StageSlider(
                 title: "Threshold",
                 value: Binding(
                     get: { vm.activeCompositionBox?.reaction.threshold ?? 10 },
@@ -1203,7 +1213,7 @@ struct CompositionEditorPanel: View {
                 ),
                 range: 0...100
             )
-            compositionSlider(
+            StageSlider(
                 title: "Intensity",
                 value: Binding(
                     get: { vm.activeCompositionBox?.reaction.intensity ?? 70 },
@@ -1212,6 +1222,7 @@ struct CompositionEditorPanel: View {
                 range: 0...100
             )
         }
+            }
     }
 
     /// Beat-clock controls for the beat/onset/tap-tempo reaction sources:
@@ -1260,7 +1271,7 @@ struct CompositionEditorPanel: View {
                     }
                 }
 
-                compositionSlider(
+                StageSlider(
                     title: "Punch Decay",
                     value: Binding(
                         get: { vm.activeCompositionBox?.reaction.punchDecay ?? 40 },
@@ -1286,7 +1297,7 @@ struct CompositionEditorPanel: View {
                         }
                         .pickerStyle(.segmented)
                     }
-                    compositionSlider(
+                    StageSlider(
                         title: "Color Step %",
                         value: Binding(
                             get: { (vm.activeCompositionBox?.reaction.colorStepPerTrigger ?? 0.25) * 100 },
@@ -1313,22 +1324,6 @@ struct CompositionEditorPanel: View {
                     .pickerStyle(.segmented)
                 }
             }
-        }
-    }
-
-    private func compositionSlider(title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.60))
-                Spacer()
-                Text("\(Int(value.wrappedValue.rounded()))")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.40))
-            }
-            Slider(value: value, in: range)
-                .tint(HuePalette.amber)
         }
     }
 }
