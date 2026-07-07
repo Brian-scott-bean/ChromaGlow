@@ -86,7 +86,6 @@ struct StudioView: View {
     // ── Harmony Engine ────────────────────────────────────────
     @State private var activeHarmonyRule: HarmonyRule = .none
     @State private var editingSwatch: SwatchEditItem? = nil
-    @State private var mixerDragOffset: CGFloat = 0
     @State private var isMixerCollapsed = false
     @State private var isMixerExpanded = false
     @State private var showCompositionTransportPrompt = false
@@ -96,8 +95,6 @@ struct StudioView: View {
     @State private var compositionDeleteTarget: CompositionPreset?
     @FocusState private var aiPromptFocused: Bool
 
-    // ── Param sheet ───────────────────────────────────────
-    @State private var showParamSheet = false
 
     // ── Performance ───────────────────────────────────────
     @State private var blurReady = false  // deferred to avoid first-frame GPU hitch
@@ -182,10 +179,26 @@ struct StudioView: View {
                 if mixerVisible {
                     VStack {
                         Spacer()
-                        mixerTray
-                            .frame(height: mixerHeight)
-                            .offset(y: mixerDragOffset)
-                            .gesture(mixerDismissDragGesture)
+                    MixerTrayView(
+                        vm: vm,
+                        isMixerExpanded: $isMixerExpanded,
+                        showPerform: $showPerform,
+                        performVM: $performVM,
+                        activeCompositionTab: $activeCompositionTab,
+                        activeHarmonyRule: $activeHarmonyRule,
+                        editingSwatch: $editingSwatch,
+                        onCollapse: { collapseMixer() },
+                        onSaveComposition: { card in
+                            compositionSaveName = card.name == "New Composition" ? "" : card.name
+                            compositionSaveIcon = card.icon
+                            compositionSaveTransport = vm.compositionTransportPreference == .roomOnly ? .roomOnly : .entertainmentArea
+                            showCompositionSaveSheet = true
+                        },
+                        onTransportSwitch: { effect, preferEntertainment in
+                            switchRunningCompositionTransport(effect, preferEntertainment: preferEntertainment)
+                        }
+                    )
+                    .frame(height: mixerHeight)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                     .padding(.bottom, studioTabBarClearance(bottomInset: geo.safeAreaInsets.bottom))
@@ -271,6 +284,9 @@ struct StudioView: View {
                 PerformanceView(viewModel: performVM,
                                 presets: vm.compositionStore.presets)
             }
+        }
+        .sheet(isPresented: $showCompositionSaveSheet) {
+            compositionSaveSheet
         }
         .confirmationDialog(
             "Choose Composer Transport",
@@ -829,22 +845,6 @@ struct StudioView: View {
         }
     }
 
-    // ── Beat binding for Studio engine cards ─────────────────
-
-    /// Routes beat-panel edits through setParamValue so they persist in the
-    /// card's param dict AND push live to the running engine's param box —
-    /// writing the box directly would be clobbered by the next slider change.
-    private func studioBeatBinding(forCardID cardID: String) -> Binding<BeatBinding> {
-        Binding(
-            get: { BeatBinding.fromStudioValues(vm.paramValues[cardID] ?? [:]) },
-            set: { newValue in
-                for (key, value) in newValue.studioValues {
-                    vm.setParamValue(for: cardID, paramID: key, value: value)
-                }
-            }
-        )
-    }
-
     // ── Deck switcher ────────────────────────────────────────
 
     private static let deckNames = ["Effects", "Live", "Composer"]
@@ -872,358 +872,6 @@ struct StudioView: View {
                 .accessibilityAddTraits(currentDeck == i ? .isSelected : [])
             }
         }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Zone C: Mixer Tray
-    // ──────────────────────────────────────────────
-
-    private var mixerTray: some View {
-        let effect = vm.currentRoomEffect
-
-        return VStack(spacing: 0) {
-            if let effect {
-                let card = effect.card
-
-                // Full-width, taller grab-bar hit area: tap anywhere on the top bar to close.
-                Capsule()
-                    .fill(Color.white.opacity(0.28))
-                    .frame(width: 36, height: 4)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 28)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        collapseMixer()
-                        HapticManager.shared.light()
-                    }
-
-                // ── Header ───────────────────────────────────
-                HStack(spacing: 10) {
-                    // Effect icon
-                    ZStack {
-                        Circle()
-                            .fill(card.accentColor.opacity(0.20))
-                            .frame(width: 32, height: 32)
-                        Image(systemName: card.icon)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(card.accentColor)
-                    }
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(card.name)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white)
-                        Text(effect.room.name)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.4))
-                    }
-
-                    // Live indicator
-                    HStack(spacing: 4) {
-                        Circle().fill(HuePalette.Noir.success)
-                            .frame(width: 5, height: 5)
-                        Text("LIVE")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(HuePalette.Noir.success)
-                    }
-
-                    // Beat chip: engine cards read beat_mode/beat_per_cycle/
-                    // beat_phase from the live param box every tick, so panel
-                    // edits land without restarting the engine.
-                    if case .appDriven = card.strategy {
-                        BeatChipButton(
-                            capabilities: .global,
-                            binding: studioBeatBinding(forCardID: card.id),
-                            compact: true
-                        )
-                    }
-
-                    // Scope / transport badge for Studio engine cards
-                    if case .appDriven = card.strategy {
-                        Text(effect.isEntertainment ? "ENT AREA" : "ROOM")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(effect.isEntertainment ? HuePalette.amber : .white.opacity(0.75))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule().fill(
-                                    effect.isEntertainment
-                                        ? HuePalette.amber.opacity(0.15)
-                                        : Color.white.opacity(0.10)
-                                )
-                            )
-                    } else if case .composition = card.strategy {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Menu {
-                                Button {
-                                    switchRunningCompositionTransport(effect, preferEntertainment: true)
-                                } label: {
-                                    Label("Entertainment Area (Streaming)", systemImage: "bolt.fill")
-                                }
-
-                                Button {
-                                    switchRunningCompositionTransport(effect, preferEntertainment: false)
-                                } label: {
-                                    Label("Room Only (REST)", systemImage: "iphone")
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(composerTransportBadgeText(for: effect))
-                                        .font(.system(size: 9, weight: .bold))
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 7, weight: .bold))
-                                        .opacity(0.82)
-                                }
-                                .foregroundStyle(effect.isEntertainment ? HuePalette.amber : .white.opacity(0.75))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule().fill(
-                                        effect.isEntertainment
-                                            ? HuePalette.amber.opacity(0.15)
-                                            : Color.white.opacity(0.10)
-                                    )
-                                )
-                            }
-                            .buttonStyle(.plain)
-
-                            if orchestrator.isBridgeStored {
-                                Text("Running on bridge — close the app, lights keep going")
-                                    .font(.system(size: 8, weight: .medium))
-                                    .foregroundStyle(HuePalette.amber.opacity(0.9))
-                            } else if effect.transportFallback {
-                                Text("Streaming unavailable on this bridge/session, using REST")
-                                    .font(.system(size: 8, weight: .medium))
-                                    .foregroundStyle(HuePalette.amber.opacity(0.75))
-                            } else if !effect.isEntertainment, card.compositionTier == .runtimeOnly {
-                                Text(runtimeOnlyCadenceText())
-                                    .font(.system(size: 8, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.48))
-                            }
-                        }
-                    }
-
-                    // Active rooms count badge
-                    if vm.runningEffects.count > 1 {
-                        Text("\(vm.runningEffects.count) rooms")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(HuePalette.amber)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(HuePalette.amber.opacity(0.15)))
-                    }
-
-                    Spacer()
-
-                    if case .composition = card.strategy {
-                        // Round 3 (C): enter the full-screen Perform surface —
-                        // deck A inherits this live composition, uninterrupted.
-                        Button {
-                            guard let box = vm.activeCompositionBox else { return }
-                            performVM = PerformanceViewModel(
-                                orchestrator: orchestrator,
-                                room: effect.room,
-                                liveBox: box,
-                                liveName: card.name,
-                                isStreaming: effect.isEntertainment
-                            )
-                            showPerform = true
-                            HapticManager.shared.medium()
-                        } label: {
-                            Image(systemName: "slider.vertical.3")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color.black.opacity(0.85))
-                                .padding(8)
-                                .background(Circle().fill(HuePalette.amber))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Perform")
-
-                        Button {
-                            compositionSaveName = card.name == "New Composition" ? "" : card.name
-                            compositionSaveIcon = card.icon
-                            compositionSaveTransport = vm.compositionTransportPreference == .roomOnly ? .roomOnly : .entertainmentArea
-                            showCompositionSaveSheet = true
-                            HapticManager.shared.light()
-                        } label: {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 12))
-                                .foregroundStyle(HuePalette.amber)
-                                .padding(8)
-                                .background(
-                                    Circle()
-                                        .fill(HuePalette.amber.opacity(0.15))
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    // Stop control
-                    Button {
-                        Task { await vm.explicitStop(card) }
-                        HapticManager.shared.light()
-                    } label: {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(HuePalette.Noir.destructive)
-                            .padding(8)
-                            .background(
-                                Circle()
-                                    .fill(HuePalette.Noir.destructive.opacity(0.15))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, HueSpacing.screenH)
-                .padding(.top, HueSpacing.md)
-                .padding(.bottom, HueSpacing.sm)
-
-                // ── Separator ────────────────────────────────
-                Rectangle()
-                    .fill(HuePalette.Noir.separator)
-                    .frame(height: 0.5)
-                    .padding(.horizontal, HueSpacing.screenH)
-
-                if case .composition = card.strategy {
-                    GeometryReader { scrollGeo in
-                        ScrollViewReader { proxy in
-                            ScrollView(showsIndicators: false) {
-                                CompositionEditorPanel(
-                                    vm: vm,
-                                    activeCompositionTab: $activeCompositionTab,
-                                    activeHarmonyRule: $activeHarmonyRule,
-                                    editingSwatch: $editingSwatch
-                                )
-                                    .padding(.horizontal, HueSpacing.screenH)
-                                    .padding(.top, HueSpacing.md)
-                                    .padding(.bottom, HueSpacing.md)
-                            }
-                            .scrollBounceBehavior(.basedOnSize)
-                            .frame(height: scrollGeo.size.height)
-                            // Auto-anchor: enabling a beat source scrolls the
-                            // beat controls into view — no hunting.
-                            .onChange(of: vm.activeCompositionBox?.reaction.source) { _, newSource in
-                                guard let newSource,
-                                      newSource == .beat || newSource == .onset || newSource == .tapTempo
-                                else { return }
-                                withAnimation(HueAnimation.fast) {
-                                    proxy.scrollTo("reactionBeatControls", anchor: .center)
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // ── Essential parameter sliders ──────────────
-                    let essentialParams = card.params.filter { $0.tier == .essential }
-                    if !essentialParams.isEmpty {
-                        GeometryReader { scrollGeo in
-                            ScrollView(showsIndicators: false) {
-                                VStack(spacing: HueSpacing.md) {
-                                    ForEach(essentialParams) { param in
-                                        StudioParamRow(param: param, cardID: card.id, vm: vm)
-                                    }
-                                }
-                                .padding(.horizontal, HueSpacing.screenH)
-                                .padding(.top, HueSpacing.md)
-                                .padding(.bottom, HueSpacing.md)
-                            }
-                            .scrollBounceBehavior(.basedOnSize)
-                            .frame(height: scrollGeo.size.height)
-                        }
-                    }
-
-                    // ── More params chevron ──────────────────────
-                    let advancedCount = card.params.filter { $0.tier != .essential }.count
-                    if advancedCount > 0 {
-                        Button {
-                            showParamSheet = true
-                            HapticManager.shared.light()
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text("\(advancedCount) more")
-                                    .font(.system(size: 11, weight: .medium))
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 9, weight: .semibold))
-                            }
-                            .foregroundStyle(.white.opacity(0.45))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 6)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                // ── Param sheet (inside if-let for unwrapped card) ──
-                Color.clear.frame(height: 0)
-                    .sheet(isPresented: $showParamSheet) {
-                        StudioParamSheet(card: card, vm: vm)
-                            .presentationDetents([.medium, .large])
-                            .presentationDragIndicator(.visible)
-                            .presentationBackgroundInteraction(.enabled)
-                    }
-                    .sheet(isPresented: $showCompositionSaveSheet) {
-                        compositionSaveSheet
-                    }
-            }
-        }
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
-        .padding(.horizontal, HueSpacing.sm)
-        .id(vm.currentRoomEffect?.cardID ?? vm.selectedRoom?.id)
-        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
-    }
-
-    /// Bidirectional tray drag: up expands to near-full-screen, down collapses expanded→half,
-    /// then half→dismiss (to the "Live Controls" pill). Only captures drags that begin near the
-    /// tray header so child controls (like the hue/saturation pad) keep their own drag semantics.
-    private var mixerDismissDragGesture: some Gesture {
-        DragGesture(minimumDistance: 8)
-            .onChanged { value in
-                guard value.startLocation.y <= 64 else { return }
-                if value.translation.height >= 0 {
-                    mixerDragOffset = value.translation.height
-                } else {
-                    // Small rubber-band hint on upward drags.
-                    mixerDragOffset = max(value.translation.height, -48)
-                }
-            }
-            .onEnded { value in
-                guard value.startLocation.y <= 64 else {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                        mixerDragOffset = 0
-                    }
-                    return
-                }
-                let dragDistance = value.translation.height
-                let predictedDistance = value.predictedEndTranslation.height
-                let shouldExpand = dragDistance < -60 || predictedDistance < -120
-                let shouldCollapse = dragDistance > 100 || predictedDistance > 160
-
-                if shouldExpand && !isMixerExpanded {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                        isMixerExpanded = true
-                        mixerDragOffset = 0
-                    }
-                    HapticManager.shared.medium()
-                } else if shouldCollapse && isMixerExpanded {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                        isMixerExpanded = false
-                        mixerDragOffset = 0
-                    }
-                    HapticManager.shared.light()
-                } else if shouldCollapse {
-                    hideKeyboard()
-                    collapseMixer()
-                    HapticManager.shared.medium()
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                        mixerDragOffset = 0
-                    }
-                } else {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                        mixerDragOffset = 0
-                    }
-                }
-            }
     }
 
     private func collapseMixer() {
@@ -1254,13 +902,6 @@ struct StudioView: View {
         }
     }
 
-    private func runtimeOnlyCadenceText() -> String {
-        guard let cadence = vm.activeRESTCadenceForSelectedRoom else {
-            return "Runtime-only REST is rate-capped"
-        }
-        return "Runtime-only REST is rate-capped (Live: ~\(String(format: "%.1f", cadence))s)"
-    }
-
     private func applyCardWithTransportPrompt(_ card: StudioCard) {
         let roomSnapshot = vm.selectedRoom
         guard case .composition = card.strategy else {
@@ -1279,17 +920,6 @@ struct StudioView: View {
     private func clearPendingCompositionTransportPrompt() {
         pendingCompositionCard = nil
         pendingCompositionRoom = nil
-    }
-
-    private func composerTransportBadgeText(for effect: RunningEffect) -> String {
-        // Bridge-stored animations run on the bridge hardware itself
-        if orchestrator.isBridgeStored {
-            return "BRIDGE ⚡"
-        }
-        if effect.transportFallback {
-            return "COMPOSER: ROOM (REST FALLBACK)"
-        }
-        return effect.isEntertainment ? "COMPOSER: ENT AREA" : "COMPOSER: ROOM (REST)"
     }
 
     private func switchRunningCompositionTransport(_ effect: RunningEffect, preferEntertainment: Bool) {
