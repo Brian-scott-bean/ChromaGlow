@@ -48,10 +48,10 @@
 
 ---
 
-## 2026-07-06 - [Claude] R3-B Hue power phases A–E + G shipped (6 commits) — LOCAL
+## 2026-07-06 - [Claude] R3-B Hue power COMPLETE — phases A–G (7 commits) — LOCAL
 
 ### Branch
-- `ios-ref/hardening-p1-2026-07` @ `d8b1c4b` (rollback `checkpoint/pre-round3-2026-07-06`)
+- `ios-ref/hardening-p1-2026-07` @ `c59f1b4` (rollback `checkpoint/pre-round3-2026-07-06`)
 
 ### Did
 - `06146e7` **A foundation:** HueLight decodes effects/effects_v2/timed_effects/gradient
@@ -76,14 +76,18 @@
   (tap/resync/nudge/punchBurst on the playing room); PhysicalControlsView in More with DJ Mode
   toggle (UserDefaults chromaglow.djModeEnabled).
 
+- `c59f1b4` **F gradient (was highest-risk, landed last):** pure GradientChannelMap (strip →
+  ≤5 virtual render channels, budget 20, every light keeps 1 channel first, nil map = flat
+  path byte-identical); REST composition scheduler gradient-aware branch (strip channels =
+  ONE gradient.points PUT with dimming/on/dynamics); entertainment builder two-position
+  service_locations for strips + refetch-after-create (fabricated-channel bug fixed).
+
 ### Working
-- Full suite 288/288 green on iPhone 15 / iOS 17.0; build gated per commit.
+- Full suite 294/294 green on iPhone 15 / iOS 17.0; build gated per commit.
 
 ### Left
-- **R3-B F (gradient — highest risk, deliberately last):** GradientChannelMap (strip → ≤5
-  virtual channels, budget 20) + CompositionRuntime.gradientMap (nil default) + entertainment
-  config builder two-position service_locations + refetch-after-create. Then Perform (R3-C,
-  spec artifact) + sequencer (R3-D). Design: audit doc §6.2.
+- Perform surface (R3-C, per published spec artifact: crossfader/pads/queue; punch pads use
+  punchBurst on REST tier, Tap Dial drives tempo, .global beat panel) + sequencer (R3-D).
 - On-device checklist: audit doc §6.3.
 
 ### Gotchas
