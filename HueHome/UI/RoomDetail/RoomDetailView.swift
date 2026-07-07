@@ -227,11 +227,18 @@ struct RoomDetailView: View {
                 guard let orchestrator, !bridgeID.isEmpty else { return }
                 orchestrator.refreshDominantColors(for: bridgeID)
             }
+            // Seed came from the same fetchLights that loadAll ran moments ago — a
+            // re-fetch now would return identical data and queue behind the
+            // post-pairing storm on rate-limited bridges. SSE (subscribed below)
+            // keeps the seeded list live; a stale or empty seed still refetches.
+            let seedIsFresh = !__seed.isEmpty
+                && Date().timeIntervalSince(orchestrator.lastLoadedAt) < 30
+
             // Load data concurrently. SSE runs forever so it must NOT block the group.
             // Instead, launch SSE separately and use the group for finite fetches only.
             async let _: Void = vm.runSSE(eventStream: orchestrator.subscribeToLightEvents())
             await withTaskGroup(of: Void.self) { group in
-                group.addTask { await vm.loadLights() }
+                if !seedIsFresh { group.addTask { await vm.loadLights() } }
                 group.addTask { await vm.loadScenes() }
                 group.addTask { await vm.loadAutomations() }
             }
