@@ -10,6 +10,12 @@ import SwiftData
 
 // MARK: - BridgeSetupView
 
+/// Thin shim that constructs the discovery VM exactly ONCE per setup-screen
+/// lifetime. As a `@State` initial value inside the content view it was
+/// re-evaluated on every parent body re-render — a full @Observable VM +
+/// BridgeDiscoveryService + Combine pipelines built and discarded on the main
+/// thread each time (measured: repeated `discovery.vm-init.done` marks inside
+/// the fresh-install hang window on device).
 struct BridgeSetupView: View {
 
     var onPaired:        (() -> Void)? = nil
@@ -17,7 +23,35 @@ struct BridgeSetupView: View {
     var isAddingAdditional: Bool       = false
     var onBridgeAdded:   ((BridgeRecord) -> Void)? = nil
 
-    @State private var vm              = BridgeDiscoveryViewModel()
+    @State private var vm: BridgeDiscoveryViewModel? = nil
+
+    var body: some View {
+        Group {
+            if let vm {
+                BridgeSetupContent(
+                    onPaired: onPaired,
+                    onDemo: onDemo,
+                    isAddingAdditional: isAddingAdditional,
+                    onBridgeAdded: onBridgeAdded,
+                    vm: vm
+                )
+            } else {
+                Color.clear   // one frame at most; covered by the splash transition
+            }
+        }
+        .onAppear { if vm == nil { vm = BridgeDiscoveryViewModel() } }
+    }
+}
+
+struct BridgeSetupContent: View {
+
+    var onPaired:        (() -> Void)? = nil
+    var onDemo:          (() -> Void)? = nil
+    var isAddingAdditional: Bool       = false
+    var onBridgeAdded:   ((BridgeRecord) -> Void)? = nil
+
+    /// Owned by the BridgeSetupView shim — constructed once, injected here.
+    let vm: BridgeDiscoveryViewModel
     @State private var showManualEntry = false
     @State private var showDebugLog    = false
     @State private var manualIP        = ""
