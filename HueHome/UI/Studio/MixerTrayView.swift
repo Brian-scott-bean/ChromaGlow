@@ -183,12 +183,23 @@ struct MixerTrayView: View {
                         // deck A inherits this live composition, uninterrupted.
                         Button {
                             guard let box = vm.activeCompositionBox else { return }
+                            // R4-7: thread the backing preset so sequences can
+                            // persist. The "+ Create" draft sentinel counts as
+                            // unsaved — attaching a sequence to the hidden
+                            // template would corrupt every future draft.
+                            var presetID: UUID? = nil
+                            if case .composition(let pid) = card.strategy,
+                               pid != StudioViewModel.composerStarterDraftPresetID {
+                                presetID = pid
+                            }
                             performVM = PerformanceViewModel(
                                 orchestrator: orchestrator,
                                 room: effect.room,
                                 liveBox: box,
                                 liveName: card.name,
-                                isStreaming: effect.isEntertainment
+                                isStreaming: effect.isEntertainment,
+                                presetID: presetID,
+                                compositionStore: vm.compositionStore
                             )
                             showPerform = true
                             HapticManager.shared.medium()

@@ -326,6 +326,48 @@ final class CompositionMixerTests: XCTestCase {
         XCTAssertNil(old.sequence)
     }
 
+    /// R4-7 sequence-persistence UI: preset.sequence survives a full
+    /// CompositionStore save → reload cycle (what "Save with composition"
+    /// followed by an app relaunch exercises).
+    func testSequencePersistsThroughStoreSaveAndReload() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("seq-store-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("compositions.json")
+
+        let store = CompositionStore(fileURL: url)
+        var preset = CompositionPreset(
+            id: UUID(), name: "Seq Home", icon: "sparkles", accentColorHex: "#FFB84D",
+            isBuiltIn: false, category: .myCreations, seasonMonths: nil,
+            palette: PaletteConfig(), motion: MotionConfig(),
+            envelope: EnvelopeConfig(), reaction: ReactionConfig(),
+            createdAt: Date(), updatedAt: Date())
+        preset.sequence = CompositionSequence(
+            steps: [
+                CompositionSequence.Step(name: "Golden Hour", bars: 4, crossfadeBeats: 2),
+                CompositionSequence.Step(name: "Bass Drop", bars: 16, crossfadeBeats: 8),
+            ],
+            loops: false)
+        store.save(preset)
+
+        // Fresh store = relaunch.
+        let reloaded = CompositionStore(fileURL: url)
+        let restored = try XCTUnwrap(reloaded.presets.first(where: { $0.id == preset.id }))
+        let sequence = try XCTUnwrap(restored.sequence)
+        XCTAssertEqual(sequence.steps.map(\.name), ["Golden Hour", "Bass Drop"])
+        XCTAssertEqual(sequence.steps.map(\.bars), [4, 16])
+        XCTAssertEqual(sequence.steps.map(\.crossfadeBeats), [2, 8])
+        XCTAssertFalse(sequence.loops)
+
+        // Clearing the steps clears the field on the next save (nil-additive).
+        var cleared = restored
+        cleared.sequence = nil
+        reloaded.save(cleared)
+        let final = CompositionStore(fileURL: url)
+        XCTAssertNil(final.presets.first(where: { $0.id == preset.id })?.sequence)
+    }
+
     func testAutoFadeBeatsVariantWithoutClockLandsInstantly() {
         let mix = PerformanceMixBox(deckA: box())
         mix.deckB = box(hueShift: 90)

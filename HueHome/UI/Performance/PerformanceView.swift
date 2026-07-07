@@ -24,6 +24,10 @@ final class PerformanceViewModel {
     let room: RoomDisplayItem
     private unowned let orchestrator: UnifiedOrchestrator
     let isStreaming: Bool
+    /// Saved preset backing the live composition — nil for unsaved looks
+    /// (incl. the "+ Create" draft), which gates "Save with composition".
+    let presetID: UUID?
+    private let compositionStore: CompositionStore?
 
     var deckAName: String
     var deckBName: String? = nil
@@ -37,12 +41,21 @@ final class PerformanceViewModel {
          room: RoomDisplayItem,
          liveBox: CompositionParamBox,
          liveName: String,
-         isStreaming: Bool) {
+         isStreaming: Bool,
+         presetID: UUID? = nil,
+         compositionStore: CompositionStore? = nil) {
         self.mix = PerformanceMixBox(deckA: liveBox)
         self.room = room
         self.orchestrator = orchestrator
         self.deckAName = liveName
         self.isStreaming = isStreaming
+        self.presetID = presetID
+        self.compositionStore = compositionStore
+        // R4-7: reopen the preset's saved sequence, if any.
+        if let presetID,
+           let saved = compositionStore?.presets.first(where: { $0.id == presetID })?.sequence {
+            self.sequence = saved
+        }
     }
 
     func begin() {
@@ -165,6 +178,20 @@ final class PerformanceViewModel {
     func stopSequence() {
         sequencePlayer?.stop()
         currentSequenceStepID = nil
+    }
+
+    /// R4-7: persist the sequence onto its backing preset. No-op when the
+    /// live composition is unsaved (presetID nil — save the composition
+    /// first from the mixer tray).
+    @discardableResult
+    func saveSequenceToPreset() -> Bool {
+        guard let presetID,
+              let store = compositionStore,
+              var preset = store.presets.first(where: { $0.id == presetID }) else { return false }
+        preset.sequence = sequence.steps.isEmpty ? nil : sequence
+        store.save(preset)
+        HapticManager.shared.medium()
+        return true
     }
 
     // ── Punch pads ──
@@ -492,6 +519,24 @@ struct PerformanceView: View {
                     Toggle("Loop", isOn: $vm.sequence.loops)
                         .tint(HuePalette.amber)
                         .listRowBackground(Color.white.opacity(0.05))
+
+                    // R4-7: sequences travel with their composition preset.
+                    Button {
+                        vm.saveSequenceToPreset()
+                    } label: {
+                        Label("Save with composition", systemImage: "square.and.arrow.down")
+                            .foregroundStyle(vm.presetID == nil
+                                             ? Color.white.opacity(0.35)
+                                             : HuePalette.amber)
+                    }
+                    .disabled(vm.presetID == nil)
+                    .listRowBackground(Color.white.opacity(0.05))
+                } footer: {
+                    if vm.presetID == nil {
+                        Text("Save the composition first — sequences attach to saved compositions.")
+                    } else {
+                        Text("Saved sequences reopen with this composition's Perform surface.")
+                    }
                 }
             }
             .scrollContentBackground(.hidden)

@@ -14,12 +14,15 @@ final class CompositionStore {
 
     private(set) var presets: [CompositionPreset] = []
 
-    private let fileURL: URL = {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return docs.appendingPathComponent("compositions.json")
-    }()
+    private let fileURL: URL
 
-    init() {
+    /// `fileURL` is injectable for tests only — production always persists
+    /// to Documents/compositions.json.
+    init(fileURL: URL? = nil) {
+        self.fileURL = fileURL ?? {
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            return docs.appendingPathComponent("compositions.json")
+        }()
         load()
     }
 
