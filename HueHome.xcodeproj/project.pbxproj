@@ -132,6 +132,7 @@
 		C0DEC0DE0135000000000001 /* CompositionMixer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0135000000000000 /* CompositionMixer.swift */; };
 		C0DEC0DE0136000000000001 /* PerformanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0136000000000000 /* PerformanceView.swift */; };
 		C0DEC0DE0137000000000001 /* SequencePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0137000000000000 /* SequencePlayer.swift */; };
+		C0DEC0DE0138000000000001 /* CompositionEditorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0138000000000000 /* CompositionEditorPanel.swift */; };
 		C0DEC0DE0129000000000001 /* BeatMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0129000000000000 /* BeatMathTests.swift */; };
 		C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */; };
 		C0DEC0DE0126000000000001 /* CompositionReactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */; };
@@ -380,6 +381,7 @@
 		C0DEC0DE0135000000000000 /* CompositionMixer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionMixer.swift; path = HueHome/Core/Composer/CompositionMixer.swift; sourceTree = "<group>"; };
 		C0DEC0DE0136000000000000 /* PerformanceView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PerformanceView.swift; path = HueHome/UI/Performance/PerformanceView.swift; sourceTree = "<group>"; };
 		C0DEC0DE0137000000000000 /* SequencePlayer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SequencePlayer.swift; path = HueHome/Core/Composer/SequencePlayer.swift; sourceTree = "<group>"; };
+		C0DEC0DE0138000000000000 /* CompositionEditorPanel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionEditorPanel.swift; path = HueHome/UI/Composer/CompositionEditorPanel.swift; sourceTree = "<group>"; };
 		C0DEC0DE0129000000000000 /* BeatMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatMathTests.swift; path = ./HueHomeTests/BeatMathTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioFeatureCoreTests.swift; path = ./HueHomeTests/AudioFeatureCoreTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionReactionTests.swift; path = ./HueHomeTests/CompositionReactionTests.swift; sourceTree = "<group>"; };
@@ -728,6 +730,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		C0DEC0DE0138000000000002 /* Composer */ = {
+			isa = PBXGroup;
+			children = (
+				C0DEC0DE0138000000000000 /* CompositionEditorPanel.swift */,
+			);
+			name = Composer;
+			sourceTree = "<group>";
+		};
 		73A646F16F00FBAEADB52E4C /* Components */ = {
 			isa = PBXGroup;
 			children = (
@@ -878,6 +888,7 @@
 				92E66E00E9CE02C9BC81EFCC /* Scenes */,
 				78DE435CEDAD64AC61A4BD95 /* Devices */,
 				E14B4CD7D94D89FDF98B496C /* Effects */,
+				C0DEC0DE0138000000000002 /* Composer */,
 			);
 			name = UI;
 			sourceTree = "<group>";
@@ -1371,6 +1382,7 @@
 				C0DEC0DE0135000000000001 /* CompositionMixer.swift in Sources */,
 				C0DEC0DE0136000000000001 /* PerformanceView.swift in Sources */,
 				C0DEC0DE0137000000000001 /* SequencePlayer.swift in Sources */,
+				C0DEC0DE0138000000000001 /* CompositionEditorPanel.swift in Sources */,
 				C0DEC0DE006B000000000001 /* CompositionLightResolver.swift in Sources */,
 				A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */,
 				CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */,
