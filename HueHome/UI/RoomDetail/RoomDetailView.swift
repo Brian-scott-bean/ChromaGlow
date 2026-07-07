@@ -214,7 +214,8 @@ struct RoomDetailView: View {
             vm = RoomDetailViewModel(
                 room: room,
                 api: orchestrator.hueClient(for: room.bridgeID),
-                isDemoMode: orchestrator.isDemoMode
+                isDemoMode: orchestrator.isDemoMode,
+                initialLights: orchestrator.cachedLightItems(for: room)
             )
             // Wire the glow-refresh callback so color changes propagate to dashboard cards.
             let bridgeID = room.bridgeID ?? ""

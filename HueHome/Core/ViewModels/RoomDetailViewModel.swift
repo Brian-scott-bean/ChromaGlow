@@ -66,10 +66,22 @@ final class RoomDetailViewModel {
     // MARK: Init
     /// - Parameters:
     ///   - api: The HueAPIClient for this room's bridge. Pass nil to run in demo mode.
-    init(room: RoomDisplayItem, api: HueAPIClient? = nil, isDemoMode: Bool = false) {
+    /// - Parameter initialLights: seed rendered on the first frame so RoomDetail
+    ///   shows lights immediately (from the orchestrator's loadAll cache) instead
+    ///   of a blocking spinner; `loadLights()` still runs to refresh. Empty = today's
+    ///   cold behavior (spinner until the first fetch returns).
+    init(room: RoomDisplayItem,
+         api: HueAPIClient? = nil,
+         isDemoMode: Bool = false,
+         initialLights: [LightDisplayItem] = []) {
         self.room       = room
         self.api        = api
         self.isDemoMode = isDemoMode || (api == nil)
+        self.lights     = initialLights
+        // Seed room-level state from the display item so the header is correct on
+        // the first frame; loadRoomState() overwrites with authoritative grouped-light data.
+        self.roomIsOn       = room.isOn
+        self.roomBrightness = max(1, room.brightness)
     }
 
     // ──────────────────────────────────────────────

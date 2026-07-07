@@ -303,6 +303,12 @@ final class UnifiedOrchestrator {
     /// Zones per bridge — parallel to roomsByBridge.
     private var zonesByBridge: [String: [RoomDisplayItem]] = [:]
 
+    /// Raw lights per bridge — cached from the same fetch `loadAll` already runs so
+    /// RoomDetail can render instantly instead of blocking on a fresh `fetchLights()`.
+    /// @ObservationIgnored: infrastructure, read one-shot by `cachedLightItems(for:)`.
+    @ObservationIgnored
+    private var lightsByBridge: [String: [HueLight]] = [:]
+
     /// SSE tasks per bridge — cancelled when bridge is removed.
     /// @ObservationIgnored: purely infrastructure, no UI reads this.
     @ObservationIgnored
@@ -715,7 +721,7 @@ final class UnifiedOrchestrator {
         // Return type: (bridgeID, rooms?, zones?, roomLightMap, zoneLightMap)
         // nil rooms/zones = fetch failed; keep existing data (stale-while-revalidate).
         await withTaskGroup(
-            of: (String, [RoomDisplayItem]?, [RoomDisplayItem]?, [String: String], [String: String]).self
+            of: (String, [RoomDisplayItem]?, [RoomDisplayItem]?, [String: String], [String: String], [HueLight]?).self
         ) { group in
             for (bridgeID, client) in clients {
                 group.addTask { [client, bridgeID] in
@@ -750,19 +756,20 @@ final class UnifiedOrchestrator {
                             displayModels.rooms,
                             displayModels.zones,
                             displayModels.roomLightMap,
-                            displayModels.zoneLightMap
+                            displayModels.zoneLightMap,
+                            lights
                         )
                     } catch {
                         await MainActor.run {
                             self.connectionStatus[bridgeID] = .error(error.localizedDescription)
                             self.log.error("Bridge \(bridgeID) load failed: \(error.localizedDescription)")
                         }
-                        return (bridgeID, nil, nil, [:], [:])  // keep existing data
+                        return (bridgeID, nil, nil, [:], [:], nil)  // keep existing data
                     }
                 }
             }
 
-            for await (bridgeID, rooms, zones, roomLightMap, zoneLightMap) in group {
+            for await (bridgeID, rooms, zones, roomLightMap, zoneLightMap, lights) in group {
                 if let rooms {
                     roomsByBridge[bridgeID] = rooms
                     for (k, v) in roomLightMap { lightIDToRoomID[k] = v }
@@ -771,8 +778,33 @@ final class UnifiedOrchestrator {
                     zonesByBridge[bridgeID] = zones
                     for (k, v) in zoneLightMap { lightIDToZoneID[k] = v }
                 }
+                if let lights { lightsByBridge[bridgeID] = lights }
             }
         }
+    }
+
+    /// Lights for a room/zone drawn from the cache `loadAll` already populated.
+    /// Lets RoomDetail paint immediately; the view still runs its own `loadLights()`
+    /// in the background to refresh. Returns `[]` when there is no usable cache
+    /// (demo mode, cache-miss, or a room restored from `preloadCached` whose
+    /// `childResourceRefs` are empty) so the caller falls back to today's spinner.
+    /// Filter mirrors `RoomDetailViewModel.lightBelongsToRoom`; map/sort mirror
+    /// `loadLights` so the background refresh replaces the seed without a visible reorder.
+    func cachedLightItems(for room: RoomDisplayItem) -> [LightDisplayItem] {
+        guard !isDemoMode,
+              let bridgeID = room.bridgeID,
+              let all = lightsByBridge[bridgeID],
+              !room.childResourceRefs.isEmpty else { return [] }
+        let refs = room.childResourceRefs
+        return all
+            .filter { light in
+                refs.contains { ref in
+                    (ref.rtype == "light"  && ref.rid == light.id) ||
+                    (ref.rtype == "device" && light.owner?.rid == ref.rid)
+                }
+            }
+            .map(LightDisplayItem.init(from:))
+            .sorted { $0.name < $1.name }
     }
 
     // ──────────────────────────────────────────────
