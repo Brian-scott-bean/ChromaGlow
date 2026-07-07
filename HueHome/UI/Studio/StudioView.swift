@@ -299,28 +299,10 @@ struct StudioView: View {
             isPresented: $showCompositionTransportPrompt,
             titleVisibility: .visible
         ) {
-            Button("Room Only (REST)") {
-                guard let card = pendingCompositionCard else { return }
-                let room = pendingCompositionRoom
-                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false) }
-                clearPendingCompositionTransportPrompt()
-            }
+            // First choice is remembered (two-tap rule: this dialog should
+            // only ever be answered once). The transport badge on the
+            // running deck switches it live any time after.
             Button("Entertainment Area (Streaming)") {
-                guard let card = pendingCompositionCard else { return }
-                let room = pendingCompositionRoom
-                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true) }
-                clearPendingCompositionTransportPrompt()
-            }
-            Divider()
-            Button("Always Room Only") {
-                vm.compositionTransportPreference = .roomOnly
-                vm.isCompositionTransportPromptEnabled = false
-                guard let card = pendingCompositionCard else { return }
-                let room = pendingCompositionRoom
-                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false) }
-                clearPendingCompositionTransportPrompt()
-            }
-            Button("Always Entertainment Area") {
                 vm.compositionTransportPreference = .entertainmentArea
                 vm.isCompositionTransportPromptEnabled = false
                 guard let card = pendingCompositionCard else { return }
@@ -328,11 +310,19 @@ struct StudioView: View {
                 Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true) }
                 clearPendingCompositionTransportPrompt()
             }
+            Button("Room Only (REST)") {
+                vm.compositionTransportPreference = .roomOnly
+                vm.isCompositionTransportPromptEnabled = false
+                guard let card = pendingCompositionCard else { return }
+                let room = pendingCompositionRoom
+                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false) }
+                clearPendingCompositionTransportPrompt()
+            }
             Button("Cancel", role: .cancel) {
                 clearPendingCompositionTransportPrompt()
             }
         } message: {
-            Text("Entertainment is smoother but controls the whole entertainment area. Room Only keeps scope local with REST pacing.")
+            Text("Entertainment is smoother but controls the whole entertainment area; Room Only keeps scope local with REST pacing. Your choice is remembered — switch anytime from the transport badge on the running deck.")
         }
         .confirmationDialog(
             "Delete composition?",
@@ -877,15 +867,31 @@ struct StudioView: View {
         )
     }
 
-    // ── Deck page dots ───────────────────────────────────────
+    // ── Deck switcher ────────────────────────────────────────
 
+    private static let deckNames = ["Effects", "Live", "Composer"]
+
+    /// Named, tappable deck switcher — replaces the swipe-only page dots so
+    /// reaching any deck is one tap with an explicit destination. Swiping
+    /// the TabView still works.
     private var deckDots: some View {
         HStack(spacing: 6) {
-            ForEach(0..<3, id: \.self) { i in
-                Circle()
-                    .fill(currentDeck == i ? .white : .white.opacity(0.25))
-                    .frame(width: 6, height: 6)
-                    .animation(HueAnimation.fast, value: currentDeck)
+            ForEach(Array(Self.deckNames.enumerated()), id: \.offset) { i, name in
+                Button {
+                    withAnimation(HueAnimation.fast) { currentDeck = i }
+                    HapticManager.shared.selection()
+                } label: {
+                    Text(name)
+                        .font(.system(size: 11, weight: currentDeck == i ? .bold : .medium))
+                        .foregroundStyle(currentDeck == i ? .white : .white.opacity(0.45))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(currentDeck == i ? Color.white.opacity(0.14) : .clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(currentDeck == i ? .isSelected : [])
             }
         }
     }
