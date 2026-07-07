@@ -92,6 +92,14 @@ struct MixerTrayView: View {
                             .foregroundStyle(HuePalette.Noir.success)
                     }
 
+                    // Partial firmware-effect coverage (R4 Effects port) —
+                    // statusMessage is write-only, so the badge IS the signal.
+                    if case .bridgeNative = card.strategy,
+                       let cov = vm.effectCoverage[card.id],
+                       !cov.isFull, !cov.isEmpty {
+                        StageBadge(text: "\(cov.label.uppercased()) LIGHTS", style: .muted)
+                    }
+
                     // Beat chip: engine cards read beat_mode/beat_per_cycle/
                     // beat_phase from the live param box every tick, so panel
                     // edits land without restarting the engine.

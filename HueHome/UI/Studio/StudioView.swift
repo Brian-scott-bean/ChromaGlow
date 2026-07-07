@@ -238,6 +238,11 @@ struct StudioView: View {
             isMixerCollapsed = false
             isMixerExpanded = false
         }
+        // Coverage badges for Deck 0 — refires on room switch, auto-cancels
+        // stale fetches on rapid rolodex scrubs (R4 Effects port).
+        .task(id: vm.selectedRoom?.id) {
+            await vm.refreshCoverage()
+        }
         .onChange(of: vm.runningCardID) { _, newValue in
             if newValue == nil {
                 isMixerCollapsed = false
@@ -495,7 +500,16 @@ struct StudioView: View {
                         isVisible: visible,
                         // Decorative signature for engine cards — they have no
                         // MotionConfig; bounce reads as generic activity.
-                        patternSignature: .bounce
+                        patternSignature: .bounce,
+                        coverageLabel: {
+                            guard deckIndex == 0,
+                                  case .bridgeNative = card.strategy,
+                                  let cov = vm.effectCoverage[card.id],
+                                  !cov.isFull else { return nil }
+                            return cov.isEmpty
+                                ? "NOT SUPPORTED"
+                                : "\(cov.label.uppercased()) LIGHTS"
+                        }()
                     ) {
                         if vm.runningCardID == card.id {
                             if isMixerCollapsed {
@@ -1147,7 +1161,7 @@ private extension View {
 struct StudioCardView: View, Equatable {
 
     static func == (lhs: StudioCardView, rhs: StudioCardView) -> Bool {
-        lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected && lhs.isVisible == rhs.isVisible && lhs.patternSignature == rhs.patternSignature
+        lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected && lhs.isVisible == rhs.isVisible && lhs.patternSignature == rhs.patternSignature && lhs.coverageLabel == rhs.coverageLabel
     }
 
     let card: StudioCard
@@ -1155,6 +1169,8 @@ struct StudioCardView: View, Equatable {
     let roomSelected: Bool
     let isVisible: Bool
     var patternSignature: MotionConfig.Pattern? = nil
+    /// "N OF M LIGHTS" / "NOT SUPPORTED" firmware-effect coverage (Deck 0).
+    var coverageLabel: String? = nil
     let onTap: () -> Void
 
     private var accentColor: Color { card.accentColor }
@@ -1223,6 +1239,11 @@ struct StudioCardView: View, Equatable {
                         .foregroundStyle(.white.opacity(0.40))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if let coverageLabel {
+                        StageBadge(text: coverageLabel, style: .muted)
+                            .padding(.top, 4)
+                    }
 
                     if let activity = card.compositionLayerActivity {
                         HStack(spacing: 4) {

@@ -433,6 +433,9 @@ struct RunningEffect {
     let isEntertainment: Bool  // true = DTLS session active
     let requestedTransport: CompositionPreferredTransport?
     let transportFallback: Bool
+    /// Lights whose firmware accepted the effects_v2 upgrade — live
+    /// speed/color slider writes target exactly these (bridgeNative only).
+    var v2CapableLightIDs: [String] = []
 }
 
 enum CompositionTransportPreference: String {
@@ -719,6 +722,96 @@ final class StudioViewModel {
         return roomLightIDs
     }
 
+    /// [HueLight] models for a set of light ids (effects_v2 capability
+    /// checks need the decoded capability blocks, not just ids). Reuses the
+    /// bridge inventory apply() already fetched for rooms; zones cost one GET.
+    private func roomHueLights(
+        lightIDs: [String],
+        api: HueAPIClient,
+        cachedLights: [HueLight]?
+    ) async -> [HueLight] {
+        let idSet = Set(lightIDs)
+        if let cachedLights { return cachedLights.filter { idSet.contains($0.id) } }
+        guard let all = try? await api.fetchLights() else { return [] }
+        return all.filter { idSet.contains($0.id) }
+    }
+
+    /// Per-light effects_v2 upgrade (ported from the retired Effects surface
+    /// in the R4 Effects-port commit). Speed maps the card's 0–100 slider to
+    /// the API's 0…1; color is sent only when the user picked a base_color.
+    /// retry: false — a light that 400s must not stall the gate; it keeps
+    /// the v1 blanket. Returns the v2-capable light ids for live sliders.
+    private func applyStudioEffectV2Parameters(
+        card: StudioCard,
+        effectName: String,
+        roomLights: [HueLight],
+        api: HueAPIClient,
+        gate: BridgeCommandGate
+    ) async -> [String] {
+        let v2Capable = roomLights.filter {
+            ($0.effects_v2?.action?.effect_values ?? []).contains(effectName)
+        }
+        guard !v2Capable.isEmpty else { return [] }
+
+        var speed: Double? = nil
+        if let speedParam = card.params.first(where: { $0.id == "speed" }) {
+            let raw = paramValue(for: card.id, paramID: "speed",
+                                 default: speedParam.defaultValue)
+            speed = min(1.0, max(0.0, raw / 100.0))
+        }
+        var colorXY: CGPoint? = nil
+        if let color = paramColor(for: card.id, paramID: "base_color") {
+            let uiColor = UIColor(color)
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0
+            uiColor.getHue(&h, saturation: &s, brightness: &b, alpha: nil)
+            let xy = HueColorUtils.xyFrom(hue: Double(h), saturation: Double(s), brightness: Double(b))
+            colorXY = CGPoint(x: xy.x, y: xy.y)
+        }
+        guard speed != nil || colorXY != nil else { return v2Capable.map(\.id) }
+
+        let body = EffectsV2Body(effect: effectName, speed: speed, colorXY: colorXY)
+        for light in v2Capable {
+            _ = await gate.send(retry: false) {
+                try await api.setLightEffectV2(id: light.id, body: body)
+            }
+        }
+        return v2Capable.map(\.id)
+    }
+
+    // ── Coverage (R4 Effects port) ────────────────────────────
+
+    /// Per-card firmware-effect coverage for the selected room — drives the
+    /// "N OF M LIGHTS" badges on Deck 0 and the mixer-header badge.
+    var effectCoverage: [String: EffectCapabilityResolver.Coverage] = [:]
+
+    /// Rebuild coverage for the selected room. Keyed by card id; resolved by
+    /// the strategy's effect-name string. Triggered by .task(id: room) in
+    /// StudioView so rapid rolodex scrubs auto-cancel stale fetches.
+    @MainActor
+    func refreshCoverage() async {
+        guard let orchestrator, !orchestrator.isDemoMode,
+              let room = selectedRoom,
+              let api = orchestrator.hueClient(for: room.bridgeID) else {
+            effectCoverage = [:]
+            return
+        }
+        guard let all = try? await api.fetchLights() else { return }
+        let ids = Set(await resolveLightIDs(for: room, api: api, cachedLights: all))
+        guard !Task.isCancelled else { return }
+        let lights = all.filter { ids.contains($0.id) }
+        guard !lights.isEmpty else {
+            effectCoverage = [:]
+            return
+        }
+        var result: [String: EffectCapabilityResolver.Coverage] = [:]
+        for card in effectCards {
+            if case .bridgeNative(let name) = card.strategy {
+                result[card.id] = EffectCapabilityResolver.coverage(for: name, lights: lights)
+            }
+        }
+        effectCoverage = result
+    }
+
     /// Resolve a room-dominant Hue gamut for color-clamping in Composer.
     private func resolveDominantGamut(
         for room: RoomDisplayItem,
@@ -885,10 +978,26 @@ final class StudioViewModel {
                 try? await api.setLightNativeEffect(id: id, effect: effectName)
             }
 
+            // Step 3 (R4 Effects port): gate-paced per-light effects_v2
+            // parameter upgrade — real speed/color on capable lights; lights
+            // that reject v2 keep the parameterless v1 blanket above.
+            let roomLights = await roomHueLights(
+                lightIDs: lightIDs, api: api, cachedLights: bridgeLights
+            )
+            let v2Capable = await applyStudioEffectV2Parameters(
+                card: card, effectName: effectName, roomLights: roomLights,
+                api: api, gate: orchestrator.commandGate(for: room.bridgeID)
+            )
+            if !roomLights.isEmpty {
+                effectCoverage[card.id] =
+                    EffectCapabilityResolver.coverage(for: effectName, lights: roomLights)
+            }
+
             runningEffects[room.id] = RunningEffect(
                 cardID: card.id, card: card, room: room,
                 lightIDs: lightIDs, isEntertainment: false,
-                requestedTransport: nil, transportFallback: false
+                requestedTransport: nil, transportFallback: false,
+                v2CapableLightIDs: v2Capable
             )
             statusMessage = "🟢 \(card.name) → \(room.name)"
 
@@ -1147,9 +1256,31 @@ final class StudioViewModel {
                 // Stored locally — affects subsequent brightness/warmth/color sends.
                 // No immediate bridge command needed.
                 break
-            case "speed", "saturation":
-                // Bridge-native effects don't expose runtime speed/saturation.
-                // Values stored for app-driven engines and future composition emulation.
+            case "speed":
+                // R4 Effects port: while a bridge-native effect runs on
+                // v2-capable lights, the speed slider re-parameterizes the
+                // effect itself per-light (latest-wins mailbox + gate pacing).
+                if let effect = runningEffects[room.id],
+                   effect.cardID == cardID,
+                   case .bridgeNative(let effectName) = effect.card.strategy,
+                   !effect.v2CapableLightIDs.isEmpty {
+                    let clamped = min(1.0, max(0.0, value / 100.0))
+                    let gate = orchestrator.commandGate(for: room.bridgeID)
+                    let capable = effect.v2CapableLightIDs
+                    await orchestrator.enqueueStudioRestWrite {
+                        for id in capable {
+                            _ = await gate.send(retry: false) {
+                                try await api.setLightEffectV2(
+                                    id: id,
+                                    body: EffectsV2Body(effect: effectName, speed: clamped)
+                                )
+                            }
+                        }
+                    }
+                }
+            case "saturation":
+                // Bridge-native effects don't expose runtime saturation.
+                // Value stored for app-driven engines.
                 break
             default:
                 // App-driven params (speed, sensitivity, min_brightness, duty_cycle, etc.)
@@ -1187,6 +1318,29 @@ final class StudioViewModel {
 
             let xy = HueColorUtils.xyFrom(hue: Double(h), saturation: Double(s), brightness: Double(b))
             let transitionMs = Int(paramValue(for: cardID, paramID: "transition", default: 500))
+
+            // R4 Effects port: while this bridge-native effect runs on
+            // v2-capable lights, tint the EFFECT itself per-light; the
+            // grouped xy write below stays the v1-only path.
+            if let effect = runningEffects[room.id],
+               effect.cardID == cardID,
+               case .bridgeNative(let effectName) = effect.card.strategy,
+               !effect.v2CapableLightIDs.isEmpty {
+                let gate = orchestrator.commandGate(for: room.bridgeID)
+                let capable = effect.v2CapableLightIDs
+                let point = CGPoint(x: xy.x, y: xy.y)
+                await orchestrator.enqueueStudioRestWrite {
+                    for id in capable {
+                        _ = await gate.send(retry: false) {
+                            try await api.setLightEffectV2(
+                                id: id,
+                                body: EffectsV2Body(effect: effectName, colorXY: point)
+                            )
+                        }
+                    }
+                }
+                return
+            }
 
             // Same latest-wins routing as sendParam — see comment there.
             await orchestrator.enqueueStudioRestWrite {
@@ -1562,6 +1716,7 @@ final class StudioViewModel {
                 requiresForeground: false,
                 params: [
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 40, tier: .essential),
                     StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 300, tier: .color),
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 800, tier: .advanced),
@@ -1578,10 +1733,75 @@ final class StudioViewModel {
                 requiresForeground: false,
                 params: [
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 300, tier: .advanced),
                 ],
                 strategy: .bridgeNative(effect: "glisten"),
+                compositionLayerActivity: nil
+            ),
+            StudioCard(
+                id: "cosmos",
+                name: "Cosmos",
+                tagline: "Drifting starfield shimmer",
+                icon: "moon.stars.fill",
+                accentColor: Color(hex: "#5E5CE6"),
+                requiresForeground: false,
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
+                    StudioParam(id: "base_color", label: "Tint", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 800, tier: .advanced),
+                ],
+                strategy: .bridgeNative(effect: "cosmos"),
+                compositionLayerActivity: nil
+            ),
+            StudioCard(
+                id: "enchant",
+                name: "Enchant",
+                tagline: "Slow magical color weave",
+                icon: "wand.and.stars",
+                accentColor: Color(hex: "#BF5AF2"),
+                requiresForeground: false,
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
+                    StudioParam(id: "base_color", label: "Tint", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 800, tier: .advanced),
+                ],
+                strategy: .bridgeNative(effect: "enchant"),
+                compositionLayerActivity: nil
+            ),
+            StudioCard(
+                id: "sunbeam",
+                name: "Sunbeam",
+                tagline: "Warm rays drifting through",
+                icon: "sun.max.fill",
+                accentColor: Color(hex: "#FF9F0A"),
+                requiresForeground: false,
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 75, tier: .essential),
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 40, tier: .essential),
+                    StudioParam(id: "base_color", label: "Tint", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 800, tier: .advanced),
+                ],
+                strategy: .bridgeNative(effect: "sunbeam"),
+                compositionLayerActivity: nil
+            ),
+            StudioCard(
+                id: "underwater",
+                name: "Underwater",
+                tagline: "Caustic light through water",
+                icon: "water.waves",
+                accentColor: Color(hex: "#32ADE6"),
+                requiresForeground: false,
+                params: [
+                    StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
+                    StudioParam(id: "base_color", label: "Tint", kind: .colorPicker, defaultValue: 0, tier: .color),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .slider(min: 0, max: 6000), defaultValue: 800, tier: .advanced),
+                ],
+                strategy: .bridgeNative(effect: "underwater"),
                 compositionLayerActivity: nil
             ),
             StudioCard(

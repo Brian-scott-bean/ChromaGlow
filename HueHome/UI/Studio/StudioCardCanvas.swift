@@ -50,6 +50,11 @@ struct StudioCardCanvas: View {
             case "opal":        drawOpal(context, size, time, intensity)
             case "glisten":     drawGlisten(context, size, time, intensity)
             case "colorloop":   drawColorloop(context, size, time, intensity)
+            // R4 Effects port: decorative aliases for the new firmware
+            // effects — nearest existing look, purely visual.
+            case "cosmos", "enchant": drawOpal(context, size, time, intensity)
+            case "sunbeam":     drawCandle(context, size, time, intensity)
+            case "underwater":  drawAmbient(context, size, time, intensity)
             case "music_sync":  drawMusicSync(context, size, time, intensity)
             case "gaming":      drawGaming(context, size, time, intensity)
             case "party":       drawParty(context, size, time, intensity)
