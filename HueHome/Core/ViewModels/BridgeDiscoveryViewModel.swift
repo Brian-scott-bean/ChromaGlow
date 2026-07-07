@@ -548,7 +548,6 @@ final class BridgeDiscoveryViewModel {
     // MARK: - Convenience
     // ──────────────────────────────────────────────
 
-    var savedBridgeIP: String? { try? KeychainManager.shared.loadBridgeIP() }
     var savedToken: String?    { try? KeychainManager.shared.loadAPIToken() }
 }
 

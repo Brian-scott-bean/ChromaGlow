@@ -212,15 +212,11 @@ final class BridgeDiscoveryService: ObservableObject {
                     let msg = "🌉 Bridge resolved! Name: '\(name)' | IP: \(hostString) | Port: \(portValue)"
                     self.appendLog(msg)
                     self.log.info("mDNS: \(msg).")
-
-                    // Persist the Bridge IP immediately for later API use.
-                    do {
-                        try KeychainManager.shared.saveBridgeIP(hostString)
-                        self.appendLog("💾 Bridge IP '\(hostString)' saved to Keychain.")
-                    } catch {
-                        self.appendLog("⚠️  Keychain save failed: \(error.localizedDescription)")
-                        self.log.error("mDNS: Keychain save error — \(error.localizedDescription).")
-                    }
+                    // NOTE: no Keychain write here. This used to save the legacy
+                    // `hue_bridge_ip` slot per resolved endpoint (SecItemDelete+Add on
+                    // the main actor, per bridge, per scan round) — but modern pairing
+                    // writes namespaced per-bridge slots and every legacy consumer also
+                    // requires the legacy token, which discovery never writes. Pure waste.
 
                 case .failed(let error):
                     self.appendLog("❌ Resolution failed for '\(name)': \(error.localizedDescription)")
