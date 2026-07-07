@@ -833,6 +833,15 @@ final class UnifiedOrchestrator {
     /// `childResourceRefs` are empty) so the caller falls back to today's spinner.
     /// Filter mirrors `RoomDetailViewModel.lightBelongsToRoom`; map/sort mirror
     /// `loadLights` so the background refresh replaces the seed without a visible reorder.
+    /// Raw lights cached by the last loadAll for a bridge — nil when never fetched
+    /// (pre-loadAll, unknown bridge, demo mode). Capability blocks (effects_v2 etc.)
+    /// are topology-stable, so a recent snapshot is authoritative for coverage
+    /// resolution; callers gate freshness on `lastLoadedAt`.
+    func cachedRawLights(for bridgeID: String?) -> [HueLight]? {
+        guard !isDemoMode, let bridgeID else { return nil }
+        return lightsByBridge[bridgeID]
+    }
+
     func cachedLightItems(for room: RoomDisplayItem) -> [LightDisplayItem] {
         guard !isDemoMode,
               let bridgeID = room.bridgeID,

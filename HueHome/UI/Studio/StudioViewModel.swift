@@ -798,7 +798,18 @@ final class StudioViewModel {
             effectCoverage = [:]
             return
         }
-        guard let all = try? await api.fetchLights() else { return }
+        // Reuse the lights loadAll just cached instead of a fresh GET — this .task
+        // fires at tab prewarm, right in the post-pairing REST storm, and Hue bridges
+        // serialize CLIP v2 requests. Capability data is topology-stable, so a <60s
+        // snapshot is authoritative; fall back to the network when stale or missing.
+        let all: [HueLight]
+        if Date().timeIntervalSince(orchestrator.lastLoadedAt) < 60,
+           let cached = orchestrator.cachedRawLights(for: room.bridgeID) {
+            all = cached
+        } else {
+            guard let fetched = try? await api.fetchLights() else { return }
+            all = fetched
+        }
         let ids = Set(await resolveLightIDs(for: room, api: api, cachedLights: all))
         guard !Task.isCancelled else { return }
         let lights = all.filter { ids.contains($0.id) }
