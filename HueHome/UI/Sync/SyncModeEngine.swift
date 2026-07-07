@@ -45,11 +45,16 @@ enum SyncTransportMode: String {
 
 actor RestSender {
     private var isInflight = false
-    private var pending: (() async -> Void)?
+    // @MainActor function type: the enqueued closures are formed inside
+    // @MainActor methods and already execute on the main actor today (they
+    // synchronously touch main-actor state); typing that isolation makes the
+    // function value Sendable (SE-0434) so it can legally cross into this
+    // actor. Nonisolated closures (enqueueStudioRestWrite) convert implicitly.
+    private var pending: (@MainActor () async -> Void)?
 
     /// Enqueue work. If something is already in-flight the closure overwrites
     /// any previous pending value (old one is silently dropped).
-    func enqueue(_ work: @escaping () async -> Void) {
+    func enqueue(_ work: @escaping @MainActor () async -> Void) {
         pending = work          // always latest — overwrites stale pending
         guard !isInflight else { return }
         Task { await flush() }
