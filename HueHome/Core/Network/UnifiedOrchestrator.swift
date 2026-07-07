@@ -333,6 +333,13 @@ final class UnifiedOrchestrator {
     private var sseRebuildPendingRooms = false
     @ObservationIgnored
     private var sseRebuildPendingZones = false
+    /// Trailing throttle for SSE-driven rebuilds: the first event schedules one
+    /// rebuild ~150 ms out; events arriving inside that window just accumulate the
+    /// dirty flags above, instead of each triggering a full flatMap+sort+reassign
+    /// of `allRooms`. Composes with the `isNavigating` deferral (a rebuild that
+    /// fires mid-navigation re-buffers via the flags and `navigationResetTask` drains it).
+    @ObservationIgnored
+    private var sseRebuildTask: Task<Void, Never>?
 
     /// Continuation for the orchestrator light-event bus.
     /// RoomDetailViewModel subscribes here instead of opening its own SSE connection.
@@ -406,7 +413,9 @@ final class UnifiedOrchestrator {
         await resolveCompositionLightIDs(for: room, api: api)
     }
 
-    /// Mirrors decoded-event apply + conditional rebuild from `runSSE` (no line parsing or light yields).
+    /// Mirrors decoded-event apply + conditional rebuild from `runSSE` (no line parsing or
+    /// light yields). Rebuilds synchronously here — production coalesces via
+    /// `scheduleSSERebuild` — so tests can assert `allRooms` immediately after applying.
     @discardableResult
     func testApplySSEEventsAndRebuild(
         _ events: [SSEEvent],
@@ -1277,9 +1286,12 @@ final class UnifiedOrchestrator {
                             if result.zones { zonesMutated = true }
                         }
                         // Only rebuild what actually changed — avoids a full zone
-                        // sort + filter on every brightness slider SSE event.
-                        if roomsMutated { rebuildAllRooms() }
-                        if zonesMutated { rebuildAllZones() }
+                        // sort + filter on every brightness slider SSE event. Coalesced
+                        // via scheduleSSERebuild so a burst (e.g. a dimmer ramp) collapses
+                        // into one rebuild instead of a full allRooms rebuild per line.
+                        if roomsMutated || zonesMutated {
+                            scheduleSSERebuild(rooms: roomsMutated, zones: zonesMutated)
+                        }
                         let rawUpdates = events.flatMap { $0.data }
                         if !rawUpdates.isEmpty {
                             lightEventContinuation?.yield(rawUpdates)
@@ -1491,6 +1503,24 @@ final class UnifiedOrchestrator {
         }
         for staleID in zonesByBridge.keys where !liveBridgeIDs.contains(staleID) {
             zonesByBridge.removeValue(forKey: staleID)
+        }
+    }
+
+    /// Coalesce SSE-driven rebuilds behind one trailing ~150 ms task. A resetting
+    /// debounce could starve updates during a continuous ramp, so this is a throttle:
+    /// the first event fixes the deadline; later events only mark more work pending.
+    private func scheduleSSERebuild(rooms: Bool, zones: Bool) {
+        if rooms { sseRebuildPendingRooms = true }
+        if zones { sseRebuildPendingZones = true }
+        guard sseRebuildTask == nil else { return }
+        sseRebuildTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard let self else { return }
+            self.sseRebuildTask = nil
+            // Clear each flag before rebuilding: if a rebuild re-buffers because
+            // isNavigating is true, its flag stays set for navigationResetTask to drain.
+            if self.sseRebuildPendingRooms { self.sseRebuildPendingRooms = false; self.rebuildAllRooms() }
+            if self.sseRebuildPendingZones { self.sseRebuildPendingZones = false; self.rebuildAllZones() }
         }
     }
 
