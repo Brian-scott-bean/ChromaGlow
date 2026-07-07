@@ -1225,105 +1225,21 @@ struct CompositionEditorPanel: View {
             }
     }
 
-    /// Beat-clock controls for the beat/onset/tap-tempo reaction sources:
-    /// live BPM readout, tap tempo, downbeat resync, punch decay, quantized
-    /// color stepping, and beat-locked motion cycles.
+    /// Beat-clock section for the beat/onset/tap-tempo reaction sources —
+    /// the shared BeatPanelView with Composer capabilities plus the reaction
+    /// controls (punch decay, quantized color step, motion lock). One beat
+    /// panel app-wide since R4-5.
     @ViewBuilder
     private var reactionBeatControls: some View {
         let source = vm.activeCompositionBox?.reaction.source ?? .none
         if source == .beat || source == .onset || source == .tapTempo {
-            VStack(alignment: .leading, spacing: HueSpacing.sm) {
-                // ── Live clock row ──
-                HStack(spacing: 10) {
-                    let clock = BeatClock.shared
-                    Image(systemName: "metronome.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(HuePalette.amber)
-                    Text(clock.bpm > 0
-                         ? "\(Int(clock.bpm.rounded())) BPM · \(clock.source.rawValue.capitalized)"
-                         : "Listening for a beat…")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.7))
-                    Spacer()
-                    Button("Tap") {
-                        BeatClock.shared.tap()
-                        HapticManager.shared.light()
-                    }
-                    .font(.system(size: 12, weight: .semibold))
-                    .buttonStyle(.bordered)
-                    .tint(HuePalette.amber)
-                    if clock.isPinned {
-                        Button("Auto") {
-                            BeatClock.shared.unpin()
-                            HapticManager.shared.selection()
-                        }
-                        .font(.system(size: 12, weight: .semibold))
-                        .buttonStyle(.bordered)
-                        .tint(.white.opacity(0.5))
-                    } else if clock.bpm > 0 {
-                        Button("Sync 1") {
-                            BeatClock.shared.resyncDownbeat()
-                            HapticManager.shared.selection()
-                        }
-                        .font(.system(size: 12, weight: .semibold))
-                        .buttonStyle(.bordered)
-                        .tint(.white.opacity(0.5))
-                    }
-                }
-
-                StageSlider(
-                    title: "Punch Decay",
-                    value: Binding(
-                        get: { vm.activeCompositionBox?.reaction.punchDecay ?? 40 },
-                        set: { vm.activeCompositionBox?.reaction.punchDecay = $0 }
-                    ),
-                    range: 0...100
+            BeatPanelView(
+                capabilities: .composer,
+                reaction: Binding(
+                    get: { vm.activeCompositionBox?.reaction ?? ReactionConfig() },
+                    set: { vm.activeCompositionBox?.reaction = $0 }
                 )
-
-                if (vm.activeCompositionBox?.reaction.targets ?? []).contains(.color) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Color step every")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.60))
-                        Picker("Quantize", selection: Binding(
-                            get: { vm.activeCompositionBox?.reaction.quantizeBeats ?? 1 },
-                            set: { vm.activeCompositionBox?.reaction.quantizeBeats = $0 }
-                        )) {
-                            Text("¼ beat").tag(0.25)
-                            Text("½ beat").tag(0.5)
-                            Text("1 beat").tag(1.0)
-                            Text("2 beats").tag(2.0)
-                            Text("4 beats").tag(4.0)
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                    StageSlider(
-                        title: "Color Step %",
-                        value: Binding(
-                            get: { (vm.activeCompositionBox?.reaction.colorStepPerTrigger ?? 0.25) * 100 },
-                            set: { vm.activeCompositionBox?.reaction.colorStepPerTrigger = $0 / 100.0 }
-                        ),
-                        range: 0...100
-                    )
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Lock motion cycle to")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.60))
-                    Picker("Beats per cycle", selection: Binding(
-                        get: { vm.activeCompositionBox?.reaction.motionBeatsPerCycle ?? 0 },
-                        set: { vm.activeCompositionBox?.reaction.motionBeatsPerCycle = $0 }
-                    )) {
-                        Text("Off").tag(0.0)
-                        Text("1 beat").tag(1.0)
-                        Text("2 beats").tag(2.0)
-                        Text("4 beats").tag(4.0)
-                        Text("8 beats").tag(8.0)
-                    }
-                    .pickerStyle(.segmented)
-                }
-            }
+            )
         }
     }
 }

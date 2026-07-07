@@ -136,6 +136,10 @@ struct ChipPickerRow<Value: Hashable>: View {
 struct BeatPanelView: View {
     let capabilities: BeatPanelCapabilities
     var binding: Binding<BeatBinding>? = nil
+    /// Composer reaction controls (punch decay / quantized color step /
+    /// motion lock). Non-nil only on the Composer surface; each control
+    /// renders only when its capability flag is present (R4-5).
+    var reaction: Binding<ReactionConfig>? = nil
 
     private var clock: BeatClock { BeatClock.shared }
 
@@ -145,6 +149,7 @@ struct BeatPanelView: View {
             if capabilities.contains(.barMeter) { barMeterRow }
             if capabilities.contains(.manualBPM) { manualRow }
             if capabilities.contains(.binding), let binding { bindingSection(binding) }
+            if let reaction { reactionSection(reaction) }
         }
         .padding(HueSpacing.md)
     }
@@ -303,6 +308,66 @@ struct BeatPanelView: View {
         }
     }
 
+    // ── Composer reaction: punch decay / color step / motion lock ──
+    // Same bindings the bespoke editor block used (whole-struct writes
+    // through to the live CompositionParamBox via the outer binding).
+    @ViewBuilder
+    private func reactionSection(_ reaction: Binding<ReactionConfig>) -> some View {
+        if capabilities.contains(.punchDecay) {
+            StageSlider(
+                title: "Punch Decay",
+                value: Binding(
+                    get: { reaction.wrappedValue.punchDecay },
+                    set: { reaction.wrappedValue.punchDecay = $0 }
+                ),
+                range: 0...100
+            )
+        }
+
+        if capabilities.contains(.colorStep), reaction.wrappedValue.targets.contains(.color) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Color step every")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                ChipPickerRow(
+                    items: [0.25, 0.5, 1.0, 2.0, 4.0].map {
+                        ChipPickerRow<Double>.Item(value: $0, label: Self.stepLabel($0))
+                    },
+                    selection: Binding(
+                        get: { reaction.wrappedValue.quantizeBeats },
+                        set: { reaction.wrappedValue.quantizeBeats = $0 }
+                    )
+                )
+            }
+            StageSlider(
+                title: "Color Step %",
+                value: Binding(
+                    get: { reaction.wrappedValue.colorStepPerTrigger * 100 },
+                    set: { reaction.wrappedValue.colorStepPerTrigger = $0 / 100.0 }
+                ),
+                range: 0...100
+            )
+        }
+
+        if capabilities.contains(.motionLock) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Lock motion cycle to")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                ChipPickerRow(
+                    items: [ChipPickerRow<Double>.Item(value: 0, label: "Off")]
+                        + [1.0, 2.0, 4.0, 8.0].map {
+                            ChipPickerRow<Double>.Item(value: $0, label: Self.stepLabel($0))
+                        },
+                    selection: Binding(
+                        get: { reaction.wrappedValue.motionBeatsPerCycle },
+                        set: { reaction.wrappedValue.motionBeatsPerCycle = $0 }
+                    )
+                )
+            }
+        }
+    }
+
     static func stepLabel(_ step: Double) -> String {
         switch step {
         case 0.25: return "¼"
@@ -320,6 +385,7 @@ struct BeatPanelView: View {
 struct BeatChipButton: View {
     let capabilities: BeatPanelCapabilities
     var binding: Binding<BeatBinding>? = nil
+    var reaction: Binding<ReactionConfig>? = nil
     var compact = false
 
     @State private var showPanel = false
@@ -333,7 +399,7 @@ struct BeatChipButton: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $showPanel, arrowEdge: .top) {
-            BeatPanelView(capabilities: capabilities, binding: binding)
+            BeatPanelView(capabilities: capabilities, binding: binding, reaction: reaction)
                 .frame(minWidth: 300, maxWidth: 340)
                 .presentationCompactAdaptation(.popover)
                 .presentationBackground(Color(red: 0.075, green: 0.07, blue: 0.09))
