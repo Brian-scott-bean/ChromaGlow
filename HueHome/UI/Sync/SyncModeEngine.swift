@@ -112,7 +112,7 @@ final class SyncModeEngine {
     // MARK: Private — audio
     // Capture is owned by the shared AudioAnalysisEngine (Phase 2); this
     // engine registers a raw-buffer tap and holds the .syncMode demand.
-    private static let bufferTapID = "sync-mode"
+    nonisolated private static let bufferTapID = "sync-mode"
 
     /// Thread-safe stop flag — readable from the audio thread without actor isolation.
     @ObservationIgnored
@@ -187,13 +187,18 @@ final class SyncModeEngine {
                   let typeVal = info[AVAudioSessionInterruptionTypeKey] as? UInt,
                   let type = AVAudioSession.InterruptionType(rawValue: typeVal)
             else { return }
-            switch type {
-            case .began:
-                self.pauseForInterruption(reason: "audio session interrupted")
-            case .ended:
-                self.resumeAfterInterruptionIfNeeded(reason: "interruption ended")
-            @unknown default:
-                break
+            // queue: .main guarantees this block runs on the main thread;
+            // assumeIsolated keeps the call SYNCHRONOUS — a Task { @MainActor }
+            // hop would defer .began handling past the audio teardown.
+            MainActor.assumeIsolated {
+                switch type {
+                case .began:
+                    self.pauseForInterruption(reason: "audio session interrupted")
+                case .ended:
+                    self.resumeAfterInterruptionIfNeeded(reason: "interruption ended")
+                @unknown default:
+                    break
+                }
             }
         })
         lifecycleObservers.append(NotificationCenter.default.addObserver(
@@ -201,14 +206,14 @@ final class SyncModeEngine {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.pauseForInterruption(reason: "app backgrounded")
+            MainActor.assumeIsolated { self?.pauseForInterruption(reason: "app backgrounded") }
         })
         lifecycleObservers.append(NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.resumeAfterInterruptionIfNeeded(reason: "app foregrounded")
+            MainActor.assumeIsolated { self?.resumeAfterInterruptionIfNeeded(reason: "app foregrounded") }
         })
 
         Task { await loadEntertainmentConfigs() }
