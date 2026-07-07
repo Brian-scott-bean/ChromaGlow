@@ -276,8 +276,9 @@ class HueV1Client: @unchecked Sendable {
     /// Fetch current resource usage to check if the bridge has room
     /// for another animation rule chain.
     func fetchResourceCapacity() async throws -> BridgeResourceCapacity {
-        // v1 /config endpoint includes resource counts
-        let configData = try await get(path: "/config")
+        // v1 /config endpoint includes resource counts (fetched as a reachability
+        // probe; the counts below come from the per-resource endpoints).
+        _ = try await get(path: "/config")
         // Also count existing resources
         let rulesData = try await get(path: "/rules")
         let sensorsData = try await get(path: "/sensors")

@@ -689,7 +689,6 @@ final class SyncModeEngine {
 
         let capturedRooms = rooms
         let capturedBri   = bri
-        let capturedMirek = mirek
         let capturedGen   = gen
         let capturedOrc   = orc
         Task { await self.restSender.enqueue { [weak self] in

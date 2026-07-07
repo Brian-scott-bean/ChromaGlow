@@ -2682,7 +2682,7 @@ final class UnifiedOrchestrator {
                 let capturedLightIDs = runtime.lightIDs
                 let capturedFrames = frames
 
-                await studioRestSender.enqueue { [weak self] in
+                await studioRestSender.enqueue {
                     guard capturedGen == latestGen else { return }
 
                     // Send each light its unique color — batched with
@@ -2726,7 +2726,7 @@ final class UnifiedOrchestrator {
                 let capturedBri = firstBri
                 let capturedXY = firstXY
 
-                await studioRestSender.enqueue { [weak self] in
+                await studioRestSender.enqueue {
                     guard capturedGen == latestGen else { return }
                     try? await capturedAPI.setGroupedLightEffect(
                         id: capturedGLID, on: true,

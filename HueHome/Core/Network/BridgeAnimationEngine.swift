@@ -154,9 +154,9 @@ actor BridgeAnimationEngine {
         // v1 rules support PUT /lights/{id}/state which is more reliable
         // than scene activation via /groups/{id}/action.
         var perStepLightStates: [[[String: Any]]] = []  // [step][lightIndex] -> state dict
-        for (stepIndex, frames) in renderedFrames.enumerated() {
+        for frames in renderedFrames {
             var stepStates: [[String: Any]] = []
-            for (lightIndex, v1LightID) in v1LightIDs.enumerated() {
+            for (lightIndex, _) in v1LightIDs.enumerated() {
                 guard lightIndex < frames.count else { continue }
                 let frame = frames[lightIndex]
                 let xy = HueColorUtils.clampXYToGamut(x: frame.x, y: frame.y, gamut: gamut)
