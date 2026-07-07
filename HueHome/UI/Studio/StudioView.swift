@@ -1873,6 +1873,37 @@ struct StudioView: View {
         }
     }
 
+    /// One icon per motion pattern — the pill's visual signature.
+    private static let patternIcons: [String: String] = [
+        "static":       "pause.fill",
+        "cascade":      "arrow.right",
+        "wave":         "water.waves",
+        "scatter":      "shuffle",
+        "bounce":       "arrow.left.and.right",
+        "chase":        "forward.fill",
+        "comet":        "paperplane.fill",
+        "pulse_center": "target",
+        "spiral":       "hurricane",
+        "twinkle":      "sparkles",
+    ]
+
+    private static let sourceLabels: [String: String] = [
+        "none": "None", "mic_amplitude": "Mic", "mic_bass": "Bass",
+        "mic_mid": "Mid", "mic_treble": "Treble", "tap_tempo": "Tap",
+        "beat": "Beat", "onset": "Onset",
+    ]
+
+    private static let sourceIcons: [String: String] = [
+        "none":          "slash.circle",
+        "mic_amplitude": "mic.fill",
+        "mic_bass":      "speaker.wave.3.fill",
+        "mic_mid":       "speaker.wave.2.fill",
+        "mic_treble":    "speaker.wave.1.fill",
+        "tap_tempo":     "hand.tap",
+        "beat":          "metronome.fill",
+        "onset":         "bolt.fill",
+    ]
+
     /// Direction is relevant for all patterns except scatter.
     private var motionPatternIsSpatial: Bool {
         let pattern = vm.activeCompositionBox?.motion.pattern ?? .cascade
@@ -1884,15 +1915,27 @@ struct StudioView: View {
         VStack(spacing: HueSpacing.sm) {
             compositionSectionHeader("Motion", subtitle: "How color travels across lights over time.")
 
-            Picker("Pattern", selection: Binding(
-                get: { vm.activeCompositionBox?.motion.pattern ?? .cascade },
-                set: { vm.activeCompositionBox?.motion.pattern = $0 }
-            )) {
-                ForEach(MotionConfig.Pattern.allCases, id: \.self) { pattern in
-                    Text(pattern.rawValue.capitalized).tag(pattern)
-                }
+            // One-tap pattern pills: every pattern visible at once (was a
+            // 2-tap menu). Icons give each motion a recognizable signature.
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Pattern")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.60))
+                ChipPickerRow(
+                    items: MotionConfig.Pattern.allCases.map { pattern in
+                        ChipPickerRow<MotionConfig.Pattern>.Item(
+                            value: pattern,
+                            label: pattern.rawValue
+                                .replacingOccurrences(of: "_", with: " ").capitalized,
+                            icon: Self.patternIcons[pattern.rawValue])
+                    },
+                    selection: Binding(
+                        get: { vm.activeCompositionBox?.motion.pattern ?? .cascade },
+                        set: { vm.activeCompositionBox?.motion.pattern = $0 }
+                    )
+                )
             }
-            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // ── Direction Control ──
             if motionPatternIsSpatial {
@@ -2233,15 +2276,22 @@ struct StudioView: View {
         VStack(spacing: HueSpacing.sm) {
             compositionSectionHeader("Envelope", subtitle: "Brightness shape over time.")
 
-            Picker("Shape", selection: Binding(
-                get: { vm.activeCompositionBox?.envelope.shape ?? .breathe },
-                set: { vm.activeCompositionBox?.envelope.shape = $0 }
-            )) {
-                ForEach(EnvelopeConfig.Shape.allCases, id: \.self) { shape in
-                    Text(shape.rawValue.capitalized).tag(shape)
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Shape")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.60))
+                ChipPickerRow(
+                    items: EnvelopeConfig.Shape.allCases.map { shape in
+                        ChipPickerRow<EnvelopeConfig.Shape>.Item(
+                            value: shape, label: shape.rawValue.capitalized)
+                    },
+                    selection: Binding(
+                        get: { vm.activeCompositionBox?.envelope.shape ?? .breathe },
+                        set: { vm.activeCompositionBox?.envelope.shape = $0 }
+                    )
+                )
             }
-            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             compositionSlider(
                 title: "BPM",
@@ -2315,15 +2365,25 @@ struct StudioView: View {
         VStack(spacing: HueSpacing.sm) {
             compositionSectionHeader("Reaction", subtitle: "Audio and responsiveness layered on top.")
 
-            Picker("Source", selection: Binding(
-                get: { vm.activeCompositionBox?.reaction.source ?? .none },
-                set: { vm.activeCompositionBox?.reaction.source = $0 }
-            )) {
-                ForEach(ReactionConfig.Source.allCases, id: \.self) { source in
-                    Text(source.rawValue.replacingOccurrences(of: "_", with: " ").capitalized).tag(source)
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Source")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.60))
+                ChipPickerRow(
+                    items: ReactionConfig.Source.allCases.map { source in
+                        ChipPickerRow<ReactionConfig.Source>.Item(
+                            value: source,
+                            label: Self.sourceLabels[source.rawValue]
+                                ?? source.rawValue.replacingOccurrences(of: "_", with: " ").capitalized,
+                            icon: Self.sourceIcons[source.rawValue])
+                    },
+                    selection: Binding(
+                        get: { vm.activeCompositionBox?.reaction.source ?? .none },
+                        set: { vm.activeCompositionBox?.reaction.source = $0 }
+                    )
+                )
             }
-            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if (vm.activeCompositionBox?.reaction.source ?? .none) != .none {
                 VStack(alignment: .leading, spacing: 8) {
