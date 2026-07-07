@@ -27,15 +27,19 @@ struct SSEEnvelope: Decodable {
 /// Partial — only fields relevant to UI state are decoded; extras are silently ignored.
 struct SSEResourceUpdate: Decodable {
     let id: String                 // V2 resource UUID
-    let type: String               // "light" | "grouped_light" | "room" | …
+    let type: String               // "light" | "grouped_light" | "button" | "relative_rotary" | …
     let on: SSEOnState?
     let dimming: SSEDimmingState?
     let color: SSEColorState?
     let colorTemp: SSEColorTempState?
+    // Round 3 (G): physical-input events (Tap Dial, dimmer switches).
+    let button: SSEButtonState?
+    let relativeRotary: SSERotaryState?
 
     enum CodingKeys: String, CodingKey {
-        case id, type, on, dimming, color
+        case id, type, on, dimming, color, button
         case colorTemp = "color_temperature"
+        case relativeRotary = "relative_rotary"
     }
 }
 
@@ -44,6 +48,38 @@ struct SSEDimmingState: Decodable { let brightness: Double }
 struct SSEColorState: Decodable { let xy: SSECIExy }
 struct SSECIExy: Decodable { let x: Double; let y: Double }
 struct SSEColorTempState: Decodable { let mirek: Int? }
+
+/// `button` resource event: one physical button on a switch/dial.
+struct SSEButtonState: Decodable {
+    struct Report: Decodable {
+        let event: String?   // "initial_press" | "repeat" | "short_release" | "long_press" | "long_release"
+    }
+    let button_report: Report?
+    let last_event: String?  // pre-1.50 firmware fallback
+
+    var event: String? { button_report?.event ?? last_event }
+}
+
+/// `relative_rotary` resource event: the Tap Dial's rotating ring.
+struct SSERotaryState: Decodable {
+    struct Report: Decodable {
+        struct Rotation: Decodable {
+            let direction: String?   // "clock_wise" | "counter_clock_wise"
+            let steps: Int?
+            let duration: Int?
+        }
+        let action: String?          // "start" | "repeat"
+        let rotation: Rotation?
+    }
+    let rotary_report: Report?
+    let last_event: LegacyEvent?     // pre-1.50 firmware fallback
+
+    struct LegacyEvent: Decodable {
+        let rotation: Report.Rotation?
+    }
+
+    var rotation: Report.Rotation? { rotary_report?.rotation ?? last_event?.rotation }
+}
 
 
 // MARK: - HueSSEService

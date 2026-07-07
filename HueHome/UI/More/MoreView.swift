@@ -102,10 +102,14 @@ struct MoreView: View {
                 showEntertainmentAreas = true
             }
             moreDivider
-            moreRow(icon: "switch.2", iconColor: blue,
-                    title: "Accessories",
-                    subtitle: "Buttons, remotes, and motion sensors",
-                    badge: "Coming Soon") { }
+            NavigationLink(destination: PhysicalControlsView()) {
+                moreRowContent(
+                    icon: "dial.medium.fill", iconColor: blue,
+                    title: "Physical Controls",
+                    subtitle: "Tap Dial DJ Mode — tempo and punches by hand"
+                )
+            }
+            .buttonStyle(.plain)
         }
     }
 

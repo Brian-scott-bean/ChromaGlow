@@ -321,4 +321,52 @@ final class HueCapabilityFoundationTests: XCTestCase {
         ]
         XCTAssertEqual(body.dictionary() as NSDictionary, expected as NSDictionary)
     }
+
+    // MARK: - ControlMappingEngine (Phase G)
+
+    func testRotaryEmitsImmediatelyThenCoalesces() {
+        var engine = ControlMappingEngine()
+        // First twist: immediate emit (leading edge — latency matters).
+        XCTAssertEqual(engine.handleRotary(clockwise: true, steps: 5, now: 10.0),
+                       .nudgeBPM(delta: 1.0))
+        // Bursts inside the 100 ms window coalesce silently…
+        XCTAssertEqual(engine.handleRotary(clockwise: true, steps: 3, now: 10.03), .none)
+        XCTAssertEqual(engine.handleRotary(clockwise: true, steps: 2, now: 10.06), .none)
+        // …and flush (5 pending steps) on the first event past the window.
+        XCTAssertEqual(engine.handleRotary(clockwise: true, steps: 4, now: 10.15),
+                       .nudgeBPM(delta: 9 * ControlMappingEngine.bpmPerStep))
+    }
+
+    func testRotaryCounterClockwiseIsNegativeAndCancelsOut() {
+        var engine = ControlMappingEngine()
+        XCTAssertEqual(engine.handleRotary(clockwise: false, steps: 10, now: 0),
+                       .nudgeBPM(delta: -2.0))
+        // Opposite twists inside one window cancel to zero → no action.
+        _ = engine.handleRotary(clockwise: true, steps: 4, now: 0.02)
+        XCTAssertEqual(engine.handleRotary(clockwise: false, steps: 4, now: 0.2), .none)
+    }
+
+    func testButtonMappingDJMode() {
+        let engine = ControlMappingEngine()
+        XCTAssertEqual(engine.handleButton(controlID: 1, event: "initial_press"), .tapTempo)
+        XCTAssertEqual(engine.handleButton(controlID: 1, event: "long_press"), .resyncDownbeat)
+        XCTAssertEqual(engine.handleButton(controlID: 2, event: "initial_press"), .punchBurst(slot: 0))
+        XCTAssertEqual(engine.handleButton(controlID: 4, event: "initial_press"), .punchBurst(slot: 2))
+        XCTAssertEqual(engine.handleButton(controlID: 2, event: "short_release"), .none)
+        XCTAssertEqual(engine.handleButton(controlID: 9, event: "initial_press"), .none)
+    }
+
+    func testSSEDecodesButtonAndRotaryEvents() throws {
+        let json = """
+        [{"id":"b-1","type":"button",
+          "button":{"button_report":{"event":"initial_press"}}},
+         {"id":"r-1","type":"relative_rotary",
+          "relative_rotary":{"rotary_report":{"action":"start",
+            "rotation":{"direction":"counter_clock_wise","steps":12,"duration":400}}}}]
+        """
+        let updates = try JSONDecoder().decode([SSEResourceUpdate].self, from: Data(json.utf8))
+        XCTAssertEqual(updates[0].button?.event, "initial_press")
+        XCTAssertEqual(updates[1].relativeRotary?.rotation?.steps, 12)
+        XCTAssertEqual(updates[1].relativeRotary?.rotation?.direction, "counter_clock_wise")
+    }
 }

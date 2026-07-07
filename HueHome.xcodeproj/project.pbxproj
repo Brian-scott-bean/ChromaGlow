@@ -126,6 +126,8 @@
 		C0DEC0DE012F000000000001 /* HueCapabilityFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE012F000000000000 /* HueCapabilityFoundationTests.swift */; };
 		C0DEC0DE0130000000000001 /* TimedEffectRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0130000000000000 /* TimedEffectRouting.swift */; };
 		C0DEC0DE0131000000000001 /* SignalingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0131000000000000 /* SignalingService.swift */; };
+		C0DEC0DE0132000000000001 /* ControlMappingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0132000000000000 /* ControlMappingEngine.swift */; };
+		C0DEC0DE0133000000000001 /* PhysicalControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0133000000000000 /* PhysicalControlsView.swift */; };
 		C0DEC0DE0129000000000001 /* BeatMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0129000000000000 /* BeatMathTests.swift */; };
 		C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */; };
 		C0DEC0DE0126000000000001 /* CompositionReactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */; };
@@ -368,6 +370,8 @@
 		C0DEC0DE012F000000000000 /* HueCapabilityFoundationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueCapabilityFoundationTests.swift; path = ./HueHomeTests/HueCapabilityFoundationTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0130000000000000 /* TimedEffectRouting.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TimedEffectRouting.swift; path = HueHome/Core/Effects/TimedEffectRouting.swift; sourceTree = "<group>"; };
 		C0DEC0DE0131000000000000 /* SignalingService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SignalingService.swift; path = HueHome/Core/Effects/SignalingService.swift; sourceTree = "<group>"; };
+		C0DEC0DE0132000000000000 /* ControlMappingEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ControlMappingEngine.swift; path = HueHome/Core/Controls/ControlMappingEngine.swift; sourceTree = "<group>"; };
+		C0DEC0DE0133000000000000 /* PhysicalControlsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PhysicalControlsView.swift; path = HueHome/UI/More/PhysicalControlsView.swift; sourceTree = "<group>"; };
 		C0DEC0DE0129000000000000 /* BeatMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatMathTests.swift; path = ./HueHomeTests/BeatMathTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioFeatureCoreTests.swift; path = ./HueHomeTests/AudioFeatureCoreTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionReactionTests.swift; path = ./HueHomeTests/CompositionReactionTests.swift; sourceTree = "<group>"; };
@@ -600,6 +604,8 @@
 				C0DEC0DE0104000000000000 /* BridgePinnedTrustDelegate.swift */,
 				C0DEC0DE0106000000000000 /* SharedKeychainStore.swift */,
 				C0DEC0DE010A000000000000 /* BridgeCommandGate.swift */,
+				C0DEC0DE0132000000000000 /* ControlMappingEngine.swift */,
+				C0DEC0DE0133000000000000 /* PhysicalControlsView.swift */,
 				C0DEC0DE012B000000000000 /* HueAPIClient+Effects.swift */,
 				C0DEC0DE012C000000000000 /* HueAPIClient+Signaling.swift */,
 				C0DEC0DE012D000000000000 /* HueAPIClient+Gradient.swift */,
@@ -1307,6 +1313,8 @@
 				C0DEC0DE0104000000000001 /* BridgePinnedTrustDelegate.swift in Sources */,
 				C0DEC0DE0106000000000001 /* SharedKeychainStore.swift in Sources */,
 				C0DEC0DE010A000000000001 /* BridgeCommandGate.swift in Sources */,
+				C0DEC0DE0132000000000001 /* ControlMappingEngine.swift in Sources */,
+				C0DEC0DE0133000000000001 /* PhysicalControlsView.swift in Sources */,
 				C0DEC0DE012B000000000001 /* HueAPIClient+Effects.swift in Sources */,
 				C0DEC0DE012C000000000001 /* HueAPIClient+Signaling.swift in Sources */,
 				C0DEC0DE012D000000000001 /* HueAPIClient+Gradient.swift in Sources */,

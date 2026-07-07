@@ -75,4 +75,13 @@ extension HueAPIClient {
         )
         logRaw(data, label: "PUT /grouped_light/\(id) signaling \(body.signal.rawValue)")
     }
+
+    /// Round 3 (G): button resources — maps SSE button-event UUIDs to their
+    /// physical position on the device (Tap Dial control_id 1…4).
+    func fetchButtons() async throws -> [HueButtonResource] {
+        let (ip, token) = try credentials()
+        let data = try await get(path: "/clip/v2/resource/button", ip: ip, token: token)
+        struct Envelope: Decodable { let data: [HueButtonResource] }
+        return try decode(Envelope.self, from: data).data
+    }
 }

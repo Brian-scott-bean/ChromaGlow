@@ -1266,6 +1266,72 @@ final class UnifiedOrchestrator {
         }
     }
 
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Physical controls (Round 3 G: Tap Dial DJ Mode)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    private static let djModeDefaultsKey = "chromaglow.djModeEnabled"
+
+    /// "DJ Mode": rotate a Tap Dial to nudge BPM, button 1 = tap tempo
+    /// (long-press = downbeat resync), buttons 2–4 = punch pads on the
+    /// room that's currently playing. Events ride the SSE stream the app
+    /// already holds open — enabling this costs nothing extra.
+    var djModeEnabled: Bool = UserDefaults.standard.bool(forKey: UnifiedOrchestrator.djModeDefaultsKey) {
+        didSet {
+            UserDefaults.standard.set(djModeEnabled, forKey: Self.djModeDefaultsKey)
+            if djModeEnabled { Task { await self.loadButtonControlIDs() } }
+        }
+    }
+
+    private var controlEngine = ControlMappingEngine()
+    /// button resource UUID → physical control_id (1…4), across all bridges.
+    private var buttonControlIDs: [String: Int] = [:]
+
+    /// Resolves which physical button each SSE button UUID is. Cheap GET per
+    /// bridge; refreshed whenever DJ Mode turns on.
+    func loadButtonControlIDs() async {
+        var map: [String: Int] = [:]
+        for client in clients.values {
+            guard let buttons = try? await client.fetchButtons() else { continue }
+            for button in buttons {
+                map[button.id] = button.metadata?.control_id
+                    ?? map[button.id] ?? 1
+            }
+        }
+        buttonControlIDs = map
+    }
+
+    private func executeControlAction(_ action: ControlAction) {
+        switch action {
+        case .tapTempo:
+            BeatClock.shared.tap()
+        case .resyncDownbeat:
+            BeatClock.shared.resyncDownbeat()
+        case .nudgeBPM(let delta):
+            let clock = BeatClock.shared
+            guard clock.bpm > 0 else { return }
+            clock.setBPM(clock.bpm + delta)   // pins — exactly what a twist means
+        case .punchBurst(let slot):
+            // Punch the room that's currently playing; idle app = no-op.
+            guard let entry = activeEffectEntries.first,
+                  let room = allRooms.first(where: { $0.id == entry.id })
+            else { return }
+            // Fixed two-color pairs per pad slot (amber/white, red/blue, green/magenta).
+            let pairs: [(a: CGPoint, b: CGPoint)] = [
+                (CGPoint(x: 0.5500, y: 0.4100), CGPoint(x: 0.3127, y: 0.3290)),
+                (CGPoint(x: 0.6400, y: 0.3300), CGPoint(x: 0.1500, y: 0.0600)),
+                (CGPoint(x: 0.1700, y: 0.7000), CGPoint(x: 0.5400, y: 0.2300)),
+            ]
+            let pair = pairs[max(0, min(pairs.count - 1, slot))]
+            Task {
+                await SignalingService(orchestrator: self)
+                    .punchBurst(room: room, a: pair.a, b: pair.b, durationMs: 1500)
+            }
+        case .none:
+            break
+        }
+    }
+
     /// Returns which of rooms/zones were mutated so callers can skip unnecessary rebuilds.
     @discardableResult
     func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> (rooms: Bool, zones: Bool) {
@@ -1273,6 +1339,21 @@ final class UnifiedOrchestrator {
         var zonesMutated = false
         for update in event.data {
             switch update.type {
+
+            // ── physical inputs (Round 3 G) ────────────────────────────────────
+            case "button":
+                guard djModeEnabled, let buttonEvent = update.button?.event else { continue }
+                let controlID = buttonControlIDs[update.id] ?? 1
+                executeControlAction(
+                    controlEngine.handleButton(controlID: controlID, event: buttonEvent))
+
+            case "relative_rotary":
+                guard djModeEnabled, let rotation = update.relativeRotary?.rotation else { continue }
+                executeControlAction(
+                    controlEngine.handleRotary(
+                        clockwise: rotation.direction != "counter_clock_wise",
+                        steps: rotation.steps ?? 0,
+                        now: CACurrentMediaTime()))
 
             // ── grouped_light ──────────────────────────────────────────────────
             case "grouped_light":
