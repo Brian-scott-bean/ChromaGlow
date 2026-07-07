@@ -120,18 +120,38 @@ final class CompositionStore: @unchecked Sendable {
     /// Off-main variant: reads + decodes on a background executor, then applies on
     /// the main actor. No-ops if a mutation already forced a synchronous load
     /// (`isLoaded == true`) so it can never clobber freshly-saved user data.
+    /// The first-launch seed is also written INSIDE the detached task — encoding
+    /// 20 nested presets + an atomic file write used to run on the main thread via
+    /// MainActor.run, landing squarely in the post-pairing work storm.
     private func applyAsyncLoad() async {
         if isLoaded { return }
         let url = fileURL
         let result = await Task.detached(priority: .userInitiated) {
-            CompositionStore.readPresets(from: url)
+            let r = CompositionStore.readPresets(from: url)
+            if r.seedNeedsPersist {
+                CompositionStore.persistSeed(r.presets, to: url)
+            }
+            return r
         }.value
         await MainActor.run {
-            guard !self.isLoaded else { return }
+            guard !self.isLoaded else { return }   // sync load won the race — keep its data
             self.presets = result.presets
             self.isLoaded = true
-            if result.seedNeedsPersist { self.persist() }
         }
+    }
+
+    /// First-launch seed writer — encode + create-only write, off-main.
+    /// `.withoutOverwriting` (alone — combining it with `.atomic` is an assertion
+    /// failure in Data.write, not a thrown error) makes this a no-op loser if a
+    /// synchronous load (ensureLoadedForMutation → load → persist) already created
+    /// the file: the seed can never clobber a file that user data has since been
+    /// written to (M-13). Its O_EXCL create semantics mean the file either appears
+    /// fully written or the call errors; a partial file from a crash mid-write is
+    /// handled by readPresets' backup-and-defaults recovery. seedNeedsPersist is
+    /// only true when the file did not exist at read.
+    nonisolated private static func persistSeed(_ presets: [CompositionPreset], to url: URL) {
+        guard let data = try? JSONEncoder().encode(presets) else { return }
+        try? data.write(to: url, options: [.withoutOverwriting])
     }
 
     /// If an async load is still in flight, load synchronously before any mutation so
