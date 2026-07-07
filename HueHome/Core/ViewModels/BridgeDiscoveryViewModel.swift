@@ -220,7 +220,11 @@ final class BridgeDiscoveryViewModel {
         let __nupnpStart = Date()
 
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            // Explicit 10s timeout (matches performPairingRequest). The bare
+            // data(from:) call inherited URLSession's 60s default — the only
+            // unbounded stall on the discovery path (offline / captive portal).
+            let nupnpRequest = URLRequest(url: url, timeoutInterval: 10)
+            let (data, _) = try await URLSession.shared.data(for: nupnpRequest)
             StartupTimeline.mark("discovery.nupnp-done", "\(Int(Date().timeIntervalSince(__nupnpStart) * 1000))ms \(data.count)B")
 
             if let raw = String(data: data, encoding: .utf8) {

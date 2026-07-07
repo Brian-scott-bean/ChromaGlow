@@ -225,6 +225,9 @@ final class BridgeDiscoveryService: ObservableObject {
 
                 case .waiting(let error):
                     // This fires if the connection can't reach the host yet (e.g. LAN unreachable).
+                    // On a fresh install this is also the Local Network permission-denial
+                    // signature (mDNS resolves, TCP to the LAN IP is blocked until Allow).
+                    StartupTimeline.mark("discovery.resolve-waiting", "'\(name)' \(error.localizedDescription)")
                     self.appendLog("⏳ Resolution waiting for '\(name)': \(error.localizedDescription)")
 
                 default:
@@ -234,6 +237,21 @@ final class BridgeDiscoveryService: ObservableObject {
         }
 
         connection.start(queue: queue)
+
+        // Bounded resolution: an mDNS-advertised but unreachable endpoint used to
+        // leave this NWConnection dangling in .waiting/.preparing forever (only
+        // .ready and .failed cancel it above). 10s is generous for a LAN SRV→A
+        // lookup + TCP handshake; a cancelled attempt just drops this endpoint.
+        queue.asyncAfter(deadline: .now() + 10) { [weak self, weak connection] in
+            guard let connection else { return }
+            switch connection.state {
+            case .ready, .cancelled, .failed:
+                break   // already settled — handler above did/does the cleanup
+            default:
+                self?.log.warning("mDNS: Resolution timeout for '\(name)' after 10s — cancelling.")
+                connection.cancel()
+            }
+        }
     }
 
     // ──────────────────────────────────────────────
