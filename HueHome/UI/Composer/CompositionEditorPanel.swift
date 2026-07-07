@@ -330,9 +330,22 @@ struct CompositionEditorPanel: View {
                 brightness: box.envelope.maxBrightness,
                 speed: max(0.1, min(1.0, box.motion.speed / 100.0))
             )
-            try await api.createScene(request)
+            let sceneID = try await api.createSceneReturningID(request)
+            // R4 Scenes block: remember provenance so the Scenes tab can show
+            // the STUDIO badge, and refresh so the scene is already there
+            // when the user hops over.
+            if let bridgeID = room.bridgeID {
+                SceneProvenanceStore.shared.markStudioExported(bridgeID: bridgeID, sceneID: sceneID)
+            }
             vm.statusMessage = "'\(name)' saved as a dynamic scene ✓ — find it in Scenes"
             HapticManager.shared.medium()
+            await orchestrator.loadAllScenes()
+        } catch HueAPIError.decodingFailed {
+            // POST executed — the scene exists on the bridge; only the id
+            // parse failed. Success without a provenance badge.
+            vm.statusMessage = "'\(name)' saved as a dynamic scene ✓ — find it in Scenes"
+            HapticManager.shared.medium()
+            await orchestrator.loadAllScenes()
         } catch {
             vm.statusMessage = "⚠ Couldn't save the scene — \(error.localizedDescription)"
         }

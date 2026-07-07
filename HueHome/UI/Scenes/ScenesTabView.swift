@@ -31,6 +31,19 @@ struct ScenesTabView: View {
     @State private var showCreateScene = false
 
     @AppStorage("castchroma.useWideCards") private var useWideCards = false
+    // Shared favorites contract: RAW bridge scene UUIDs (bridgeSceneID),
+    // the same CSV RoomDetail writes and the Dashboard pills read.
+    @AppStorage("favoriteSceneIDs") private var favoriteSceneIDsRaw: String = ""
+    private var provenance: SceneProvenanceStore { SceneProvenanceStore.shared }
+
+    private func isFavorite(_ scene: GlobalSceneItem) -> Bool {
+        FavoriteSceneCSV.contains(favoriteSceneIDsRaw, id: scene.bridgeSceneID)
+    }
+
+    private func toggleFavorite(_ scene: GlobalSceneItem) {
+        favoriteSceneIDsRaw = FavoriteSceneCSV.toggled(favoriteSceneIDsRaw, id: scene.bridgeSceneID)
+        HapticManager.shared.light()
+    }
 
     private var gridColumns: [GridItem] {
         useWideCards
@@ -104,6 +117,11 @@ struct ScenesTabView: View {
         .alert("Delete Scene", isPresented: $showDeleteAlert, presenting: sceneToDelete) { scene in
             Button("Delete \"\(scene.name)\"", role: .destructive) {
                 orchestrator.deleteGlobalScene(scene)
+                // Hygiene: a deleted scene leaves no provenance badge key or
+                // dangling favorite behind.
+                provenance.remove(key: scene.id)
+                favoriteSceneIDsRaw = FavoriteSceneCSV.removing(favoriteSceneIDsRaw,
+                                                                id: scene.bridgeSceneID)
                 sceneToDelete  = nil
                 showDeleteAlert = false
             }
@@ -199,7 +217,9 @@ struct ScenesTabView: View {
                     ForEach(filteredScenes) { scene in
                         SceneMoodCard(
                             scene: scene,
-                            roomName: roomName(for: scene)
+                            roomName: roomName(for: scene),
+                            isFavorite: isFavorite(scene),
+                            isStudio: provenance.isStudioScene(key: scene.id)
                         ) {
                             // Tap: activate immediately
                             HapticManager.shared.medium()
@@ -214,6 +234,12 @@ struct ScenesTabView: View {
                             }
                         }
                         .contextMenu {
+                            Button {
+                                toggleFavorite(scene)
+                            } label: {
+                                Label(isFavorite(scene) ? "Unfavorite" : "Favorite",
+                                      systemImage: isFavorite(scene) ? "star.slash" : "star")
+                            }
                             Button {
                                 renameText    = scene.name
                                 sceneToRename = scene
@@ -435,6 +461,8 @@ struct SceneMoodCard: View {
 
     let scene:       GlobalSceneItem
     let roomName:    String
+    var isFavorite:  Bool = false
+    var isStudio:    Bool = false
     let onActivate:  () -> Void
     let onLongPress: () -> Void
 
@@ -468,16 +496,27 @@ struct SceneMoodCard: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
-                    Text(roomName)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.45))
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(roomName)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.45))
+                            .lineLimit(1)
+                        // Provenance: exported from the Studio Composer.
+                        if isStudio {
+                            StageBadge(text: "STUDIO", style: .amber)
+                        }
+                    }
                 }
 
                 Spacer()
 
                 // ── Active indicator + play affordance ────────────────────
                 HStack(spacing: 8) {
+                    if isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(HuePalette.amber)
+                    }
                     if scene.isActive {
                         Circle().fill(.green).frame(width: 7, height: 7)
                     }
