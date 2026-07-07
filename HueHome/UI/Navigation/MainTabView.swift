@@ -40,6 +40,7 @@ struct MainTabView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.horizontalSizeClass) var sizeClass
     @Environment(DeepLinkCoordinator.self) private var deepLink
+    @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var selectedTab: HueTab = .home
     /// Tabs whose root view has been constructed at least once — avoids building Studio/Scenes/More until first visit (reduces cold-launch work).
     @State private var realizedTabs: Set<HueTab> = [.home]
@@ -63,15 +64,30 @@ struct MainTabView: View {
         }
     }
 
-    /// Build deferred tab roots shortly after Home paints so the first tap on Studio /
-    /// Scenes / More does not pay the full SwiftUI cold-compile cost on the critical path.
+    /// Build deferred tab roots after Home paints AND the first loadAll has settled,
+    /// one tab per main-thread pass. The old version inserted .scenes and .more in the
+    /// same transaction ~440ms after appear — on a fresh pairing that first-compiled
+    /// three heavy tab trees in one pass, colliding with loadAll completion, the
+    /// first-time cache write, and SSE connects (device logs showed a gesture-gate
+    /// timeout at exactly that moment). Hard 3s cap: prewarm always happens even if
+    /// the bridge fetch hangs. First TAP on an unrealized tab still realizes it
+    /// instantly via HueTabBar / swipe / onChange(selectedTab) inserts regardless.
     private func prewarmDeferredTabs() async {
-        await Task.yield()
-        try? await Task.sleep(for: .milliseconds(280))
+        try? await Task.sleep(for: .milliseconds(280))          // let Home paint
+        let deadline = ContinuousClock.now + .seconds(3)
+        while (orchestrator.isLoading || orchestrator.lastLoadedAt == .distantPast),
+              !orchestrator.isDemoMode,
+              ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        try? await Task.sleep(for: .milliseconds(250))          // settle gap: cache write / widget publish
+        guard !Task.isCancelled else { return }
         realizedTabs.insert(.studio)
         await Task.yield()
-        try? await Task.sleep(for: .milliseconds(160))
+        try? await Task.sleep(for: .milliseconds(200))
         realizedTabs.insert(.scenes)
+        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(200))
         realizedTabs.insert(.more)
     }
 
