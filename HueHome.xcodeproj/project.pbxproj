@@ -129,6 +129,8 @@
 		C0DEC0DE0132000000000001 /* ControlMappingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0132000000000000 /* ControlMappingEngine.swift */; };
 		C0DEC0DE0133000000000001 /* PhysicalControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0133000000000000 /* PhysicalControlsView.swift */; };
 		C0DEC0DE0134000000000001 /* GradientChannelMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0134000000000000 /* GradientChannelMap.swift */; };
+		C0DEC0DE0135000000000001 /* CompositionMixer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0135000000000000 /* CompositionMixer.swift */; };
+		C0DEC0DE0136000000000001 /* PerformanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0136000000000000 /* PerformanceView.swift */; };
 		C0DEC0DE0129000000000001 /* BeatMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0129000000000000 /* BeatMathTests.swift */; };
 		C0DEC0DE0125000000000001 /* AudioFeatureCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */; };
 		C0DEC0DE0126000000000001 /* CompositionReactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */; };
@@ -374,6 +376,8 @@
 		C0DEC0DE0132000000000000 /* ControlMappingEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ControlMappingEngine.swift; path = HueHome/Core/Controls/ControlMappingEngine.swift; sourceTree = "<group>"; };
 		C0DEC0DE0133000000000000 /* PhysicalControlsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PhysicalControlsView.swift; path = HueHome/UI/More/PhysicalControlsView.swift; sourceTree = "<group>"; };
 		C0DEC0DE0134000000000000 /* GradientChannelMap.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GradientChannelMap.swift; path = HueHome/Core/Composer/GradientChannelMap.swift; sourceTree = "<group>"; };
+		C0DEC0DE0135000000000000 /* CompositionMixer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionMixer.swift; path = HueHome/Core/Composer/CompositionMixer.swift; sourceTree = "<group>"; };
+		C0DEC0DE0136000000000000 /* PerformanceView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PerformanceView.swift; path = HueHome/UI/Performance/PerformanceView.swift; sourceTree = "<group>"; };
 		C0DEC0DE0129000000000000 /* BeatMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatMathTests.swift; path = ./HueHomeTests/BeatMathTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0125000000000000 /* AudioFeatureCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioFeatureCoreTests.swift; path = ./HueHomeTests/AudioFeatureCoreTests.swift; sourceTree = "<group>"; };
 		C0DEC0DE0126000000000000 /* CompositionReactionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionReactionTests.swift; path = ./HueHomeTests/CompositionReactionTests.swift; sourceTree = "<group>"; };
@@ -826,6 +830,8 @@
 			children = (
 				C0DEC0DE005B000000000002 /* CompositionRoomPriorityScorer.swift */,
 				C0DEC0DE0134000000000000 /* GradientChannelMap.swift */,
+				C0DEC0DE0135000000000000 /* CompositionMixer.swift */,
+				C0DEC0DE0136000000000000 /* PerformanceView.swift */,
 				C0DEC0DE006B000000000002 /* CompositionLightResolver.swift */,
 			);
 			name = Composer;
@@ -1359,6 +1365,8 @@
 				0E7CD3AA335189BAFEFFB105 /* CompositionEngine.swift in Sources */,
 				C0DEC0DE005B000000000001 /* CompositionRoomPriorityScorer.swift in Sources */,
 				C0DEC0DE0134000000000001 /* GradientChannelMap.swift in Sources */,
+				C0DEC0DE0135000000000001 /* CompositionMixer.swift in Sources */,
+				C0DEC0DE0136000000000001 /* PerformanceView.swift in Sources */,
 				C0DEC0DE006B000000000001 /* CompositionLightResolver.swift in Sources */,
 				A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */,
 				CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */,

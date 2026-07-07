@@ -177,3 +177,134 @@ final class BeatMathTests: XCTestCase {
         XCTAssertEqual(clock.beatsPerBar, 1)
     }
 }
+
+// MARK: - CompositionMixerTests (Round 3 C: Perform)
+
+final class CompositionMixerTests: XCTestCase {
+
+    private let snap120 = BeatSnapshot(bpm: 120, beatEpoch: 0, beatsPerBar: 4)
+    private let channels: [UInt8] = [0, 1, 2]
+
+    private func box(hueShift: Double = 0) -> CompositionParamBox {
+        let box = CompositionParamBox(
+            palette: PaletteConfig(), motion: MotionConfig(),
+            envelope: EnvelopeConfig(), reaction: ReactionConfig())
+        box.palette.hueShift = hueShift
+        return box
+    }
+
+    private func assertFramesEqual(_ a: [LightFrame], _ b: [LightFrame],
+                                   file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(a.count, b.count, file: file, line: line)
+        for (fa, fb) in zip(a, b) {
+            XCTAssertEqual(fa.x, fb.x, accuracy: 1e-12, file: file, line: line)
+            XCTAssertEqual(fa.y, fb.y, accuracy: 1e-12, file: file, line: line)
+            XCTAssertEqual(fa.brightness, fb.brightness, accuracy: 1e-12, file: file, line: line)
+        }
+    }
+
+    func testCrossfadeEndpointsMatchPureDeckRenders() {
+        let deckA = box()
+        let deckB = box(hueShift: 90)
+        let mix = PerformanceMixBox(deckA: deckA)
+        mix.deckB = deckB
+
+        mix.crossfade = 0
+        assertFramesEqual(
+            CompositionMixer.renderMixed(time: 1.0, channelIDs: channels, mix: mix),
+            CompositionEngine.render(time: 1.0, channelIDs: channels, params: deckA))
+
+        mix.crossfade = 1
+        assertFramesEqual(
+            CompositionMixer.renderMixed(time: 1.0, channelIDs: channels, mix: mix),
+            CompositionEngine.render(time: 1.0, channelIDs: channels, params: deckB))
+    }
+
+    func testBlackoutPunchZeroesBrightnessWhileHeld() {
+        let mix = PerformanceMixBox(deckA: box())
+        mix.engagePunch(.blackout)
+        let frames = CompositionMixer.renderMixed(time: 1, channelIDs: channels, mix: mix,
+                                                  hostNow: 100)
+        XCTAssertTrue(frames.allSatisfy { $0.brightness < 1e-9 })
+    }
+
+    func testWhiteBurstDrivesD65FullBrightness() {
+        let mix = PerformanceMixBox(deckA: box())
+        mix.engagePunch(.whiteBurst)
+        let frames = CompositionMixer.renderMixed(time: 1, channelIDs: channels, mix: mix,
+                                                  hostNow: 100)
+        for frame in frames {
+            XCTAssertEqual(frame.x, 0.3127, accuracy: 1e-6)
+            XCTAssertEqual(frame.y, 0.3290, accuracy: 1e-6)
+            XCTAssertEqual(frame.brightness, 1.0, accuracy: 1e-9)
+        }
+    }
+
+    func testPunchReleaseRampsOverTwoHundredMs() {
+        let mix = PerformanceMixBox(deckA: box())
+        mix.engagePunch(.blackout)
+        mix.releasePunch(hostNow: 100)
+        XCTAssertEqual(CompositionMixer.punchStrength(mix: mix, hostNow: 100.1),
+                       0.5, accuracy: 1e-9)
+        // Past the ramp: strength 0 and the punch self-clears.
+        XCTAssertEqual(CompositionMixer.punchStrength(mix: mix, hostNow: 100.3), 0)
+        XCTAssertNil(mix.punch)
+    }
+
+    func testStrobeNeverExceedsThreeHz() {
+        // 300 BPM = 5 Hz beat rate — the strobe must clamp to the 3 Hz cap
+        // (free-running phase), giving a 1/3 s period.
+        let fast = BeatSnapshot(bpm: 300, beatEpoch: 0, beatsPerBar: 4)
+        let mix = PerformanceMixBox(deckA: box())
+        mix.engagePunch(.strobe)
+
+        func isOn(at t: Double) -> Bool {
+            CompositionMixer.renderMixed(time: 1, channelIDs: [0], mix: mix,
+                                         beat: fast, hostNow: t)[0].brightness > 0.5
+        }
+        // 3 Hz: ON for the first half of each 1/3 s cycle.
+        XCTAssertTrue(isOn(at: 90.02))          // phase 0.06
+        XCTAssertFalse(isOn(at: 90.02 + 1.0/6)) // half a cycle later → off
+        XCTAssertTrue(isOn(at: 90.02 + 1.0/3))  // full cycle later → on again
+    }
+
+    func testStrobeFollowsBeatWhenUnderCap() {
+        // 120 BPM (2 Hz ≤ 3 Hz): flashes ride the beat grid exactly.
+        let mix = PerformanceMixBox(deckA: box())
+        mix.engagePunch(.strobe)
+        let on = CompositionMixer.renderMixed(time: 1, channelIDs: [0], mix: mix,
+                                              beat: snap120, hostNow: 0.1)[0]  // beatPhase 0.2
+        let off = CompositionMixer.renderMixed(time: 1, channelIDs: [0], mix: mix,
+                                               beat: snap120, hostNow: 0.4)[0] // beatPhase 0.8
+        XCTAssertGreaterThan(on.brightness, 0.5)
+        XCTAssertLessThan(off.brightness, 0.5)
+    }
+
+    func testMasterFaderScalesPostBlend() {
+        let deckA = box()
+        let mix = PerformanceMixBox(deckA: deckA)
+        mix.masterIntensity = 0.5
+        let pure = CompositionEngine.render(time: 1, channelIDs: channels, params: deckA)
+        let mixed = CompositionMixer.renderMixed(time: 1, channelIDs: channels, mix: mix)
+        for (p, m) in zip(pure, mixed) {
+            XCTAssertEqual(m.brightness, p.brightness * 0.5, accuracy: 1e-9)
+        }
+    }
+
+    func testAutoFadeIsBeatExactAndSelfCompletes() {
+        let mix = PerformanceMixBox(deckA: box())
+        mix.deckB = box(hueShift: 90)
+        // 1 bar at 120 BPM 4/4 = 4 beats = 2.0 s, starting at host t=10.
+        mix.startAutoFade(bars: 1, beat: snap120, hostNow: 10)
+
+        _ = CompositionMixer.renderMixed(time: 1, channelIDs: [0], mix: mix,
+                                         beat: snap120, hostNow: 11)   // half-way
+        XCTAssertEqual(mix.crossfade, 0.5, accuracy: 1e-6)
+        XCTAssertNotNil(mix.autoFade)
+
+        _ = CompositionMixer.renderMixed(time: 1, channelIDs: [0], mix: mix,
+                                         beat: snap120, hostNow: 12.1) // past the bar
+        XCTAssertEqual(mix.crossfade, 1.0, accuracy: 1e-9)
+        XCTAssertNil(mix.autoFade)
+    }
+}

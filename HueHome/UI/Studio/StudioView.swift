@@ -99,6 +99,11 @@ struct StudioView: View {
     // Round 3 (E): "Save as Hue dynamic scene" name prompt.
     @State private var showDynamicScenePrompt = false
     @State private var dynamicSceneName = ""
+    // Round 3 (C): Perform surface. The VM is created ONCE at button tap —
+    // building it inside the cover closure would recreate it on every
+    // body re-evaluation while presented.
+    @State private var showPerform = false
+    @State private var performVM: PerformanceViewModel? = nil
     @State private var composerCreateBorderPhase: CGFloat = 0
     @State private var activeCompositionTab: CompositionLayerTab = .palette
     @State private var showCompositionSaveSheet = false
@@ -296,6 +301,12 @@ struct StudioView: View {
             }
         } message: {
             Text("This name appears on the Composer deck.")
+        }
+        .fullScreenCover(isPresented: $showPerform, onDismiss: { performVM = nil }) {
+            if let performVM {
+                PerformanceView(viewModel: performVM,
+                                presets: vm.compositionStore.presets)
+            }
         }
         .confirmationDialog(
             "Choose Composer Transport",
@@ -1041,6 +1052,29 @@ struct StudioView: View {
                     Spacer()
 
                     if case .composition = card.strategy {
+                        // Round 3 (C): enter the full-screen Perform surface —
+                        // deck A inherits this live composition, uninterrupted.
+                        Button {
+                            guard let box = vm.activeCompositionBox else { return }
+                            performVM = PerformanceViewModel(
+                                orchestrator: orchestrator,
+                                room: effect.room,
+                                liveBox: box,
+                                liveName: card.name,
+                                isStreaming: effect.isEntertainment
+                            )
+                            showPerform = true
+                            HapticManager.shared.medium()
+                        } label: {
+                            Image(systemName: "slider.vertical.3")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.black.opacity(0.85))
+                                .padding(8)
+                                .background(Circle().fill(HuePalette.amber))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Perform")
+
                         Button {
                             compositionSaveName = card.name == "New Composition" ? "" : card.name
                             compositionSaveIcon = card.icon

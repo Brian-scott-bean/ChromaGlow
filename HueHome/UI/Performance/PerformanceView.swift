@@ -1,0 +1,415 @@
+// PerformanceView.swift
+// ChromaGlow — Round 3 Phase C (the DJ Perform surface)
+//
+// Full-screen stage: deck A is the live composition (inherited, never
+// interrupted), deck B cues the next look, the crossfader blends them at
+// the render chokepoint, punch pads overlay momentary hits, and the
+// queue promotes-and-advances on every completed fade.
+//
+// Design rules (spec artifact): no scrolling, thumb-size targets,
+// hold-to-engage pads that self-release, honest transport badge, and the
+// shared beat panel — never bespoke clock UI.
+
+import SwiftUI
+import QuartzCore
+import UIKit
+
+// MARK: - PerformanceViewModel
+
+@MainActor
+@Observable
+final class PerformanceViewModel {
+
+    let mix: PerformanceMixBox
+    let room: RoomDisplayItem
+    private unowned let orchestrator: UnifiedOrchestrator
+    let isStreaming: Bool
+
+    var deckAName: String
+    var deckBName: String? = nil
+    var queue: [CompositionPreset] = []
+    var displayCrossfade: Double = 0
+    var autoFadeActive = false
+
+    private var pollTask: Task<Void, Never>? = nil
+
+    init(orchestrator: UnifiedOrchestrator,
+         room: RoomDisplayItem,
+         liveBox: CompositionParamBox,
+         liveName: String,
+         isStreaming: Bool) {
+        self.mix = PerformanceMixBox(deckA: liveBox)
+        self.room = room
+        self.orchestrator = orchestrator
+        self.deckAName = liveName
+        self.isStreaming = isStreaming
+    }
+
+    func begin() {
+        orchestrator.activePerformanceMix = mix
+        UIApplication.shared.isIdleTimerDisabled = true
+        // 10 Hz poll: mirrors mixer-owned state into observable UI state and
+        // runs promote-and-advance when an auto-fade lands.
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.displayCrossfade = self.mix.crossfade
+                self.autoFadeActive = self.mix.autoFade != nil
+                self.promoteIfFadeLanded()
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
+    func end() {
+        pollTask?.cancel()
+        pollTask = nil
+        UIApplication.shared.isIdleTimerDisabled = false
+        mix.punch = nil
+        mix.autoFade = nil
+        mix.masterIntensity = 1.0
+        // Whatever is showing keeps playing: if we ended on deck B, promote
+        // it into the live box first so the composition doesn't snap back.
+        if mix.crossfade >= 0.5, let b = mix.deckB {
+            adopt(b, name: deckBName ?? deckAName)
+        }
+        mix.crossfade = 0
+        orchestrator.activePerformanceMix = nil
+    }
+
+    // ── Decks & queue ──
+
+    func cue(_ preset: CompositionPreset) {
+        mix.deckB = CompositionParamBox(preset: preset)
+        deckBName = preset.name
+    }
+
+    func enqueue(_ preset: CompositionPreset) {
+        if mix.deckB == nil {
+            cue(preset)
+        } else {
+            queue.append(preset)
+        }
+    }
+
+    func setCrossfade(_ value: Double) {
+        mix.autoFade = nil           // manual touch always wins
+        mix.crossfade = min(1, max(0, value))
+        displayCrossfade = mix.crossfade
+        promoteIfFadeLanded()
+    }
+
+    func autoFade(bars: Int) {
+        mix.startAutoFade(bars: bars, beat: BeatClock.snapshot(),
+                          hostNow: CACurrentMediaTime())
+        HapticManager.shared.selection()
+    }
+
+    /// Full-B = deck B becomes the live look: copy its layers into the live
+    /// box (identity preserved — the render loop keeps its reference),
+    /// reset the fader, and cue the next queued preset.
+    private func promoteIfFadeLanded() {
+        guard mix.autoFade == nil, mix.crossfade >= 0.999, let b = mix.deckB else { return }
+        adopt(b, name: deckBName ?? deckAName)
+        mix.crossfade = 0
+        displayCrossfade = 0
+        if let next = queue.first {
+            queue.removeFirst()
+            cue(next)
+        } else {
+            mix.deckB = nil
+            deckBName = nil
+        }
+        HapticManager.shared.medium()
+    }
+
+    private func adopt(_ source: CompositionParamBox, name: String) {
+        mix.deckA.palette = source.palette
+        mix.deckA.motion = source.motion
+        mix.deckA.envelope = source.envelope
+        mix.deckA.reaction = source.reaction
+        deckAName = name
+    }
+
+    // ── Punch pads ──
+
+    func punchDown(_ pad: PerformanceMixBox.PunchPad) {
+        mix.engagePunch(pad)
+        HapticManager.shared.medium()
+        // REST tier: the mixer overlay only lands at scheduler cadence, so
+        // fire the bridge-native burst too — instant, self-terminating.
+        if !isStreaming, pad != .blackout {
+            let colors: (a: CGPoint, b: CGPoint) = pad == .strobe
+                ? (CGPoint(x: 0.3127, y: 0.3290), CGPoint(x: 0.3127, y: 0.3290))
+                : (CGPoint(x: 0.3127, y: 0.3290), CGPoint(x: 0.5500, y: 0.4100))
+            Task {
+                await SignalingService(orchestrator: orchestrator)
+                    .punchBurst(room: room, a: colors.a, b: colors.b, durationMs: 1200)
+            }
+        }
+    }
+
+    func punchUp() {
+        mix.releasePunch(hostNow: CACurrentMediaTime())
+        HapticManager.shared.light()
+    }
+}
+
+// MARK: - PerformanceView
+
+struct PerformanceView: View {
+
+    let viewModel: PerformanceViewModel
+    let presets: [CompositionPreset]
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showQueuePicker = false
+    @State private var heldPad: PerformanceMixBox.PunchPad? = nil
+
+    private let stageBG = Color(red: 0.043, green: 0.043, blue: 0.059)
+
+    var body: some View {
+        ZStack {
+            stageBG.ignoresSafeArea()
+            VStack(spacing: 14) {
+                header
+                clockCluster
+                deckRow
+                crossfaderSection
+                padGrid
+                masterRow
+                queueRow
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 24)
+        }
+        .preferredColorScheme(.dark)
+        .statusBarHidden()
+        .onAppear { viewModel.begin() }
+        .onDisappear { viewModel.end() }
+        .sheet(isPresented: $showQueuePicker) { queuePicker }
+    }
+
+    // ── Header ──
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text(viewModel.room.name.uppercased())
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.white)
+            Text(viewModel.isStreaming ? "⚡ STREAMING" : "🔌 REST")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(viewModel.isStreaming ? HuePalette.Noir.success : .white.opacity(0.6))
+                .padding(.horizontal, 7).padding(.vertical, 3)
+                .background(Capsule().fill(.white.opacity(0.08)))
+            Spacer()
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(.white.opacity(0.08)))
+            }
+            .accessibilityLabel("Close Perform")
+        }
+    }
+
+    // ── Clock (the shared beat panel — never bespoke) ──
+
+    private var clockCluster: some View {
+        HStack {
+            BeatChipButton(capabilities: .global)
+            Spacer()
+        }
+    }
+
+    // ── Decks ──
+
+    private var deckRow: some View {
+        HStack(spacing: 10) {
+            deckCard(tag: "DECK A · LIVE", name: viewModel.deckAName,
+                     active: viewModel.displayCrossfade < 0.5)
+            Button {
+                showQueuePicker = true
+            } label: {
+                deckCard(tag: "DECK B · CUED",
+                         name: viewModel.deckBName ?? "Tap to cue",
+                         active: viewModel.displayCrossfade >= 0.5,
+                         dimmed: viewModel.deckBName == nil)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func deckCard(tag: String, name: String, active: Bool, dimmed: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(tag)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(active ? HuePalette.amber : .white.opacity(0.4))
+                .tracking(1.2)
+            Text(name)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.white.opacity(dimmed ? 0.35 : 1))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.white.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(active ? HuePalette.amber.opacity(0.55) : .white.opacity(0.1),
+                                  lineWidth: active ? 1.5 : 1))
+        )
+    }
+
+    // ── Crossfader ──
+
+    private var crossfaderSection: some View {
+        VStack(spacing: 8) {
+            Slider(value: Binding(
+                get: { viewModel.displayCrossfade },
+                set: { viewModel.setCrossfade($0) }
+            ), in: 0...1)
+            .tint(HuePalette.amber)
+            .disabled(viewModel.deckBName == nil)
+            HStack {
+                Text("A").font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.5))
+                Spacer()
+                ForEach([4, 8, 16], id: \.self) { bars in
+                    Button("FADE \(bars)") {
+                        viewModel.autoFade(bars: bars)
+                    }
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .buttonStyle(.bordered)
+                    .tint(viewModel.autoFadeActive ? HuePalette.amber : .white.opacity(0.5))
+                    .disabled(viewModel.deckBName == nil)
+                }
+                Spacer()
+                Text("B").font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)))
+    }
+
+    // ── Punch pads (hold to engage, self-releasing) ──
+
+    private var padGrid: some View {
+        HStack(spacing: 10) {
+            punchPad(.strobe, icon: "bolt.fill", label: "STROBE")
+            punchPad(.blackout, icon: "square.fill", label: "BLACKOUT")
+            punchPad(.whiteBurst, icon: "sun.max.fill", label: "BURST")
+        }
+    }
+
+    private func punchPad(_ pad: PerformanceMixBox.PunchPad, icon: String, label: String) -> some View {
+        let isHeld = heldPad == pad
+        return VStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 20))
+            Text(label).font(.system(size: 9, weight: .bold, design: .monospaced)).tracking(1)
+        }
+        .foregroundStyle(isHeld ? Color.black.opacity(0.85) : HuePalette.amber)
+        .frame(maxWidth: .infinity)
+        .frame(height: 84)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(isHeld ? HuePalette.amber : HuePalette.amber.opacity(0.10))
+                .overlay(RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(HuePalette.amber.opacity(0.45), lineWidth: 1))
+        )
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard heldPad != pad else { return }
+                    heldPad = pad
+                    viewModel.punchDown(pad)
+                }
+                .onEnded { _ in
+                    heldPad = nil
+                    viewModel.punchUp()
+                }
+        )
+        .accessibilityLabel("\(label) punch pad")
+        .accessibilityHint("Hold to engage; releases on lift")
+    }
+
+    // ── Master ──
+
+    private var masterRow: some View {
+        HStack(spacing: 12) {
+            Text("MASTER")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.5))
+                .tracking(1.2)
+            Slider(value: Binding(
+                get: { viewModel.mix.masterIntensity },
+                set: { viewModel.mix.masterIntensity = min(1, max(0, $0)) }
+            ), in: 0...1)
+            .tint(HuePalette.amber)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)))
+    }
+
+    // ── Queue ──
+
+    private var queueRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(viewModel.queue) { preset in
+                    Text(preset.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(Capsule().fill(.white.opacity(0.07)))
+                }
+                Button {
+                    showQueuePicker = true
+                } label: {
+                    Label("Add", systemImage: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(HuePalette.amber)
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(Capsule().fill(HuePalette.amber.opacity(0.12)))
+                }
+            }
+        }
+        .frame(height: 34)
+    }
+
+    private var queuePicker: some View {
+        NavigationStack {
+            List(presets) { preset in
+                Button {
+                    viewModel.enqueue(preset)
+                    showQueuePicker = false
+                    HapticManager.shared.selection()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: preset.icon)
+                            .foregroundStyle(HuePalette.amber)
+                        Text(preset.name).foregroundStyle(.white)
+                        Spacer()
+                        if viewModel.deckBName == nil {
+                            Text("cues to B").font(.system(size: 11))
+                                .foregroundStyle(.white.opacity(0.4))
+                        }
+                    }
+                }
+                .listRowBackground(Color.white.opacity(0.05))
+            }
+            .scrollContentBackground(.hidden)
+            .background(stageBG)
+            .navigationTitle("Cue a Composition")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .preferredColorScheme(.dark)
+        .presentationDetents([.medium, .large])
+    }
+}

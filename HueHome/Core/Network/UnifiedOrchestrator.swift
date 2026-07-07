@@ -1699,6 +1699,12 @@ final class UnifiedOrchestrator {
     private var compositionOrder: [String] = []
     private var compositionSchedulerTask: Task<Void, Never>?
 
+    /// Round 3 (C): the live Perform mix. Non-nil while PerformanceView is
+    /// up. Keyed to its composition by deckA IDENTITY — the render loop
+    /// whose paramBox === deckA blends through CompositionMixer; every
+    /// other room renders normally. One property, both transports.
+    var activePerformanceMix: PerformanceMixBox? = nil
+
     private enum CompositionSchedulerProfile {
         case balanced
         case ultraResponsive
@@ -2228,15 +2234,28 @@ final class UnifiedOrchestrator {
             await refreshCompositionMicDemand()
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
 
-            // Render all channels in one frame
-            let frames = CompositionEngine.render(
-                time: elapsed,
-                channelIDs: channelIDs,
-                params: paramBox,
-                features: AudioAnalysisEngine.latestFeatures(),
-                beat: BeatClock.snapshot(),
-                hostNow: CACurrentMediaTime()
-            )
+            // Render all channels in one frame — through the Perform mixer
+            // when this composition is the live deck A (Round 3 C).
+            let frames: [LightFrame]
+            if let mix = activePerformanceMix, mix.deckA === paramBox {
+                frames = CompositionMixer.renderMixed(
+                    time: elapsed,
+                    channelIDs: channelIDs,
+                    mix: mix,
+                    features: AudioAnalysisEngine.latestFeatures(),
+                    beat: BeatClock.snapshot(),
+                    hostNow: CACurrentMediaTime()
+                )
+            } else {
+                frames = CompositionEngine.render(
+                    time: elapsed,
+                    channelIDs: channelIDs,
+                    params: paramBox,
+                    features: AudioAnalysisEngine.latestFeatures(),
+                    beat: BeatClock.snapshot(),
+                    hostNow: CACurrentMediaTime()
+                )
+            }
 
             // Convert to entertainment send format
             let channels = frames.map { frame in
@@ -2412,14 +2431,28 @@ final class UnifiedOrchestrator {
                 return (0..<UInt8(min(lightCount, 20))).map { $0 }
             }()
 
-            let frames = CompositionEngine.render(
-                time: elapsed,
-                channelIDs: channelIDs,
-                params: runtime.paramBox,
-                features: AudioAnalysisEngine.latestFeatures(),
-                beat: BeatClock.snapshot(),
-                hostNow: CACurrentMediaTime()
-            )
+            let frames: [LightFrame]
+            if let mix = activePerformanceMix, mix.deckA === runtime.paramBox {
+                // Perform mixer at the same chokepoint (Round 3 C) — the
+                // crossfade/pads work identically at REST cadence.
+                frames = CompositionMixer.renderMixed(
+                    time: elapsed,
+                    channelIDs: channelIDs,
+                    mix: mix,
+                    features: AudioAnalysisEngine.latestFeatures(),
+                    beat: BeatClock.snapshot(),
+                    hostNow: CACurrentMediaTime()
+                )
+            } else {
+                frames = CompositionEngine.render(
+                    time: elapsed,
+                    channelIDs: channelIDs,
+                    params: runtime.paramBox,
+                    features: AudioAnalysisEngine.latestFeatures(),
+                    beat: BeatClock.snapshot(),
+                    hostNow: CACurrentMediaTime()
+                )
+            }
             guard !frames.isEmpty else {
                 try? await Task.sleep(for: tickInterval)
                 continue
