@@ -47,14 +47,19 @@
   regression). Plus ~4.7s CoreGraphics rasterization (the setup screen's 60pt `.blur` glow),
   ~1.3s TextInput `_sl_dlopen`, ~1.8s NSClassFromString/UIAccessibility (platform/first-launch
   tax). Nothing in builds 10–12 made it slower — diagnostics made existing cost visible.
-- **IMMEDIATE NEXT STEP:** Brian installs **build 13** (fresh install) and reports: (1) the
-  console timeline vs build 12 — the conformance-scan hang should shrink drastically with the
-  debug dylib disabled; (2) **experiment A** — force-quit, relaunch from the home screen
-  untethered (no debugger): dramatically better?; (3) **experiment B** — Edit Scheme → Run →
-  Build Configuration → Release, run once: this is the App-Store-like experience. If A/B are
-  fast, remaining slowness is debug-run tax and we stop chasing it. Setup screen now paints a
-  static "Getting things ready…" frame before the heavy tree builds (a spinner cannot spin
-  while main is blocked — a still frame beats a frozen splash).
+- **BUILD-13 DEVICE RESULT (2026-07-07) — MYSTERY SOLVED:** debug dylib confirmed gone
+  (stacks bottom at `HueHome main`); the conformance-scan signature shrank to one sample.
+  Remaining tethered hangs are **Xcode-attach machinery**: `libBacktraceRecording.dylib
+  gcd_queue_item_dequeue_hook` (scheme queue-debugging — now disabled in the shared scheme),
+  `libAXSafeCategoryBundle class_replaceMethodsBulk` (debug accessibility swizzling), plus
+  one-time first-launch system work (FontParser glyph paths, vImage/CG color-space caches,
+  CFPreferences, TextInput dlopen). **Brian's untethered relaunch: "definitely faster."**
+- **IMMEDIATE NEXT STEP:** Brian pushes a TestFlight (Release) build and evaluates the real
+  ship experience — expect seconds of one-time first-launch work, not the tethered minute.
+  NOTE: the ⏱️TL/🧵HANG diagnostics are DEBUG-only and won't print on TestFlight (by design).
+  If TestFlight still feels slow anywhere, tell Claude WHERE (which screen/action) — the
+  debug-build sampler can then be pointed at that exact flow. Once TestFlight is confirmed
+  smooth, the diagnostics trim to essentials in a cleanup commit.
 - **BUILD-11 DEVICE RESULT (2026-07-07):** stacks were captured but Brian's console filter hid
   the frame lines (tooling bug, fixed in 12). Hard findings anyway: `discovery.vm-init.done`
   fired 6+ times (VM churn — `@State` initial value re-evaluated per parent re-render, fixed
