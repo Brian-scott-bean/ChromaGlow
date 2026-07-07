@@ -36,10 +36,32 @@ struct BridgeSetupView: View {
                     vm: vm
                 )
             } else {
-                Color.clear   // one frame at most; covered by the splash transition
+                // Static "getting ready" frame — painted BEFORE the heavy
+                // BridgeSetupContent tree is constructed (device stacks showed
+                // multi-second Swift conformance scans during that build).
+                // Deliberately zero animation/blur: while the main thread is
+                // busy nothing can animate, but a friendly still frame beats a
+                // frozen splash.
+                ZStack {
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.05, green: 0.05, blue: 0.12),
+                            Color(red: 0.08, green: 0.06, blue: 0.16),
+                            Color(red: 0.05, green: 0.05, blue: 0.12)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint:   .bottomTrailing
+                    )
+                    .ignoresSafeArea()
+                    Text("Getting things ready…")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.55))
+                }
             }
         }
-        .onAppear { if vm == nil { vm = BridgeDiscoveryViewModel() } }
+        // .task (not .onAppear): async, so the placeholder commits a frame
+        // first, THEN the expensive content construction happens behind it.
+        .task { if vm == nil { vm = BridgeDiscoveryViewModel() } }
     }
 }
 
@@ -78,11 +100,20 @@ struct BridgeSetupContent: View {
             )
             .ignoresSafeArea()
 
-            // Subtle ambient glow behind icon
+            // Subtle ambient glow behind icon. RadialGradient, NOT .blur():
+            // the 60pt gaussian on a 320pt layer was a multi-second CPU
+            // rasterization on device (CGDisplayListDrawInContextDelegate in
+            // the build-12 hang stacks), re-paid on every accent change.
             Circle()
-                .fill(accentColor.opacity(0.08))
+                .fill(
+                    RadialGradient(
+                        colors: [accentColor.opacity(0.08), accentColor.opacity(0.0)],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: 160
+                    )
+                )
                 .frame(width: 320, height: 320)
-                .blur(radius: 60)
                 .offset(y: -80)
 
             VStack(spacing: 0) {
