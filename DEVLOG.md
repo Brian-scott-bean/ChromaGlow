@@ -48,6 +48,76 @@
 
 ---
 
+## 2026-07-07 - [Claude] PERF PASS: launch + navigation smoothness — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` (rollback `checkpoint/pre-perf-2026-07-06` @ `c01b814`;
+  revert = `git reset --hard checkpoint/pre-perf-2026-07-06`, commits unpushed)
+
+### Did
+9 commits, each independently buildable + relevant tests green per commit; full HueHomeTests
+suite green at the end (scheme `HueHome 1`, iPhone 17 Pro sim). Deep-dive triggered by report of
+slow cold launch + ~4s page transitions. Root causes traced by 3 exploration passes, fixes
+designed by 2 plan passes, then implemented:
+
+- `b454095` **RoomDetail instant render** — RoomDetailView blocked on a fresh `fetchLights()`
+  (10s timeout ceiling) behind a spinner on every push, ignoring data loadAll already had.
+  Cache raw lights per bridge (`lightsByBridge`) + `cachedLightItems(for:)`; seed the VM so
+  the room paints immediately, background refresh still runs. Cold/miss/demo keep the spinner.
+- `065a23b` **CompositionStore off-main** — StudioViewModel's eager `@State` init (re-runs on
+  every tab switch) synchronously read + JSON-decoded the whole composition library on main.
+  Added `loadsSynchronously` flag (default true keeps all test constructions unchanged); Studio
+  loads off-main via a pure `nonisolated static readPresets`. `ensureLoadedForMutation()` guard
+  preserves the M-13 non-destructive contract; store is `@unchecked Sendable` (main-confined).
+- `6ca9d8b` **SSE rebuild coalescing** — each SSE line triggered a full `allRooms`
+  flatMap+sort+reassign. `scheduleSSERebuild` throttles to one trailing ~150ms rebuild;
+  composes with the existing `isNavigating` deferral. loadAll/optimistic rebuilds stay sync.
+- `3bda60e` **Self-echo guard** — a composition's own ~8Hz REST PUTs echo back as SSE and
+  rebuilt the dashboard at frame rate. `appDrivenGroupIDs` suppresses those rooms' SSE
+  mutations; `stopCompositionMode` calls `scheduleStateRefresh()` to re-sync after.
+- `01979ce` **Tab-visibility env key** — opacity switcher keeps all 4 tabs mounted, so scene
+  PatternStrips (12fps) + Studio canvases (up to 60fps, gated on deck not tab) animated behind
+  the visible tab. New `\.isTabActive` (default true) pauses them when off-screen.
+- `7eb84dd` **Beat + dashboard timers** — BeatStatusChip (20fps even at bpm 0), dashboard
+  clock, and NextAutomationBanner ticker (1s, allocating a formatter per tick) gated on
+  `isTabActive`/idle; ticker 1s→10s; shared cached `RelativeDateTimeFormatter`.
+- `db76ddc` **Per-host TLS pins** — loadAll awaited `ensurePins` for ALL hosts up front, so one
+  offline unpinned bridge stalled every bridge's first fetch ≤10s. Moved per-host into each
+  fetch task. Security posture unchanged (no Trust/ edits).
+- `75393ba` **Defer entertainment cleanup** — stuck-session GET ran inside loadAll's await on
+  every launch/foreground AND ~1.5s after every toggle. Now fire-and-forget `.utility`,
+  throttled 60s. DEBUG `testAwaitEntertainmentCleanup()` hook keeps LOAD-01 deterministic.
+- `2d4f739` **Mic-demand cache** — composition loops called `refreshCompositionMicDemand`
+  (actor hop) every frame; cache last value, early-return when unchanged.
+
+### Left / Deferred (deliberately NOT done)
+- **Dead Sync-engine stack removal** (`SyncModeEngine`/`VisualizerEngine`/`GamingEngine`/
+  `AmbientEngine`) — verified never instantiated, but removal needs pbxproj surgery + careful
+  extraction of the live `RestSender` actor (defined in `SyncModeEngine.swift`, used by the
+  orchestrator). Zero runtime gain; skipped this pass per Brian. Separate cleanup PR.
+- **CompositionEngine.render off main-actor** — deferred by design: it's O(≤20 channels) at
+  8–25Hz (µs) and mutates the MainActor-confined `CompositionParamBox` (audit I-10); moving it
+  off-main risks data races for negligible gain. Revisit only if os_signpost shows it matters.
+- Optional follow-up: keep `lightsByBridge` fresh from SSE (Stage 1 seed can be seconds stale
+  until the background `loadLights()` returns — sub-second in practice).
+
+### Validation
+- Per-commit: targeted `xcodebuild test -only-testing:...` (Orchestrator SSE/LoadAll/Optimistic/
+  CacheDemo, MultiBridgeRouting, NonDestructivePersistence, BeatMath/CompositionMixer,
+  StageKit, EntertainmentRobustness, BridgeTrustEvaluator, CompositionReaction, AudioFeatureCore).
+- Final: full `HueHomeTests` suite green. Only pre-existing warning is `RoomCard: Equatable`
+  main-actor isolation (not introduced here).
+- NOT yet done: on-device manual smoke (tap a room <2s after launch → instant lights; rapid tab
+  switching; run a Studio effect then sit on Home → CPU gauge; toggle → no entertainment GET in
+  60s). Recommend before TestFlight.
+
+### Gotchas
+- `run_tests.sh` still has a stale `SCHEME="HueHome"`; use `-scheme "HueHome 1"`.
+- CompositionStore `@unchecked Sendable` invariant: `presets`/`isLoaded` mutated only on main
+  (sync load on the constructing main context; async path applies inside `MainActor.run`).
+
+---
+
 ## 2026-07-06 - [Claude] ROUND 4 COMPLETE: Stage redesign + Effects port + Scenes library — LOCAL
 
 ### Branch
