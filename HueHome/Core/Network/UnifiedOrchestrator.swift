@@ -2713,14 +2713,29 @@ final class UnifiedOrchestrator {
             let minBri      = (p["min_brightness"] ?? 0) / 100.0
             let dutyCycle   = (p["duty_cycle"]    ?? 50) / 100.0
 
+            // Flash color — extract CIE xy from Color or default to white (D65)
+            let xy = extractXY(from: paramBox.colors["flash_color"]) ?? (x: 0.3127, y: 0.3290)
+
+            // Beat-locked: ON/OFF derived purely from clock phase each 20 ms
+            // frame — zero drift, tempo changes land within one frame, and
+            // wcagSafeBeatsPerCycle keeps the flash rate ≤3 Hz.
+            let binding = BeatBinding.fromStudioValues(p)
+            if let lock = BeatMath.liveLock(binding) {
+                let phase = BeatMath.cyclePhase(at: CACurrentMediaTime(),
+                                                snapshot: lock.snapshot,
+                                                beatsPerCycle: lock.beatsPerCycle,
+                                                phaseOffsetBeats: binding.phaseOffsetBeats)
+                let bri = phase < dutyCycle ? peakBri : minBri
+                await entClient.sendUniform(channelIDs: channelIDs, x: xy.x, y: xy.y, brightness: bri)
+                try? await Task.sleep(nanoseconds: frameInterval)
+                continue
+            }
+
             // Speed 0–100 → 0.5–3.0 Hz (WCAG safe: never exceeds 3 flashes/sec)
             let hz = 0.5 + (speed / 100.0) * 2.5
             let period = 1.0 / hz
             let onDuration = period * dutyCycle
             let offDuration = period * (1.0 - dutyCycle)
-
-            // Flash color — extract CIE xy from Color or default to white (D65)
-            let xy = extractXY(from: paramBox.colors["flash_color"]) ?? (x: 0.3127, y: 0.3290)
 
             // ON phase
             let onFrames = max(1, Int(onDuration / 0.02))
@@ -2765,6 +2780,18 @@ final class UnifiedOrchestrator {
 
             on.toggle()
 
+            // Beat-locked REST: flip exactly on cycle boundaries, with the
+            // beats-per-cycle floored so one flip never lands inside the
+            // 900 ms REST cadence (maxHz = 1/0.9).
+            let binding = BeatBinding.fromStudioValues(p)
+            if let lock = BeatMath.liveLock(binding, maxHz: 1.0 / 0.9) {
+                try? await BeatMath.sleepUntilNextCycle(
+                    beatsPerCycle: lock.beatsPerCycle,
+                    phaseOffsetBeats: binding.phaseOffsetBeats)
+                if Task.isCancelled { break }
+                continue
+            }
+
             do {
                 // REST rate limit: 900ms minimum between group commands
                 try await Task.sleep(nanoseconds: 900_000_000)
@@ -2803,6 +2830,32 @@ final class UnifiedOrchestrator {
             let peakBri     = (p["brightness"]    ?? 90) / 100.0
             let minBri      = (p["min_brightness"] ?? 5) / 100.0
             let smoothness  = (p["smoothness"]    ?? 20) / 100.0
+
+            // Beat-locked: color index AND hold/fade position both derived
+            // from the clock each frame — the palette steps exactly on cycle
+            // boundaries and the fade tracks the cycle, drift-free.
+            let binding = BeatBinding.fromStudioValues(p)
+            if let lock = BeatMath.liveLock(binding) {
+                let now = CACurrentMediaTime()
+                let idx = BeatMath.cycleIndex(at: now, snapshot: lock.snapshot,
+                                              beatsPerCycle: lock.beatsPerCycle,
+                                              phaseOffsetBeats: binding.phaseOffsetBeats)
+                let phase = BeatMath.cyclePhase(at: now, snapshot: lock.snapshot,
+                                                beatsPerCycle: lock.beatsPerCycle,
+                                                phaseOffsetBeats: binding.phaseOffsetBeats)
+                let color = palette[((idx % palette.count) + palette.count) % palette.count]
+                let hold = 1.0 - smoothness
+                let bri: Double
+                if phase < hold || smoothness <= 0 {
+                    bri = peakBri
+                } else {
+                    let t = (phase - hold) / max(smoothness, 0.001)
+                    bri = peakBri + (minBri - peakBri) * t
+                }
+                await entClient.sendUniform(channelIDs: channelIDs, x: color.x, y: color.y, brightness: bri)
+                try? await Task.sleep(nanoseconds: frameInterval)
+                continue
+            }
 
             // Speed 0–100 → 0.5–3.0 Hz
             let hz = 0.5 + (speed / 100.0) * 2.5
@@ -2849,8 +2902,20 @@ final class UnifiedOrchestrator {
             let smoothness = p["smoothness"] ?? 20
             let durationMs = Int(smoothness / 100.0 * 500)  // 0–500ms transition
 
-            let color = palette[colorIndex % palette.count]
-            colorIndex += 1
+            // Beat-locked REST: derive the palette index from the cycle count
+            // and step exactly on boundaries (floored to the 1 s REST cadence).
+            let binding = BeatBinding.fromStudioValues(p)
+            let lock = BeatMath.liveLock(binding, maxHz: 1.0)
+            let color: (x: Double, y: Double)
+            if let lock {
+                let idx = BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: lock.snapshot,
+                                              beatsPerCycle: lock.beatsPerCycle,
+                                              phaseOffsetBeats: binding.phaseOffsetBeats)
+                color = palette[((idx % palette.count) + palette.count) % palette.count]
+            } else {
+                color = palette[colorIndex % palette.count]
+                colorIndex += 1
+            }
 
             await studioRestSender.enqueue {
                 try? await api.setGroupedLightEffect(
@@ -2858,6 +2923,14 @@ final class UnifiedOrchestrator {
                     brightness: bri, xy: (color.x, color.y), mirek: nil,
                     duration: durationMs
                 )
+            }
+
+            if let lock {
+                try? await BeatMath.sleepUntilNextCycle(
+                    beatsPerCycle: lock.beatsPerCycle,
+                    phaseOffsetBeats: binding.phaseOffsetBeats)
+                if Task.isCancelled { break }
+                continue
             }
 
             do {
@@ -2896,6 +2969,28 @@ final class UnifiedOrchestrator {
                 let ambientColor = extractXY(from: paramBox.colors["ambient_color"]) ?? ambientXY
                 await entClient.sendUniform(channelIDs: channelIDs, x: ambientColor.x, y: ambientColor.y, brightness: minBri)
                 try? await Task.sleep(nanoseconds: frameInterval)
+            }
+
+            // Beat-locked: keep streaming ambient frames until the next cycle
+            // boundary so every strike opportunity lands on the grid. The
+            // DTLS stream must never pause — waiting means sending ambient.
+            let binding = BeatBinding.fromStudioValues(p)
+            if BeatMath.liveLock(binding) != nil {
+                let entrySnap = BeatClock.snapshot()
+                let entryIdx = BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: entrySnap,
+                                                   beatsPerCycle: binding.beatsPerCycle,
+                                                   phaseOffsetBeats: binding.phaseOffsetBeats)
+                while !Task.isCancelled {
+                    let snap = BeatClock.snapshot()
+                    guard snap.bpm > 0 else { break }
+                    if BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: snap,
+                                           beatsPerCycle: binding.beatsPerCycle,
+                                           phaseOffsetBeats: binding.phaseOffsetBeats) != entryIdx { break }
+                    let ambientColor = extractXY(from: paramBox.colors["ambient_color"]) ?? ambientXY
+                    await entClient.sendUniform(channelIDs: channelIDs, x: ambientColor.x, y: ambientColor.y, brightness: minBri)
+                    try? await Task.sleep(nanoseconds: frameInterval)
+                }
+                guard !Task.isCancelled else { return }
             }
 
             // Lightning strike — random chance based on frequency
@@ -2946,6 +3041,16 @@ final class UnifiedOrchestrator {
             let gap = UInt64((2.0 - frequency * 1.5) * 1_000_000_000)
             do { try await Task.sleep(nanoseconds: max(500_000_000, gap)) } catch { break }
 
+            // Beat-locked REST: hold the strike until the next cycle boundary
+            // (floored to 2 Hz so the alignment wait stays REST-friendly).
+            let binding = BeatBinding.fromStudioValues(p)
+            if let lock = BeatMath.liveLock(binding, maxHz: 2.0) {
+                try? await BeatMath.sleepUntilNextCycle(
+                    beatsPerCycle: lock.beatsPerCycle,
+                    phaseOffsetBeats: binding.phaseOffsetBeats)
+                if Task.isCancelled { break }
+            }
+
             // Random lightning
             let strikeChance = 0.3 + frequency * 0.5
             guard Double.random(in: 0...1) < strikeChance else { continue }
@@ -2987,8 +3092,21 @@ final class UnifiedOrchestrator {
             let period = 8.0 - (speed / 100.0) * 6.0
             let dt = 1.0  // update every 1 second
 
-            phase += dt * (2.0 * .pi) / period
-            let sine = sin(phase)  // -1 to +1
+            // Beat-locked: breathing phase derived from the clock (trough on
+            // the cycle boundary, swelling into the bar) instead of the
+            // accumulated free-run phase. Floored to ≥1 s cycles so the 1 s
+            // REST cadence can actually draw the wave.
+            let binding = BeatBinding.fromStudioValues(p)
+            let sine: Double
+            if let lock = BeatMath.liveLock(binding, maxHz: 1.0) {
+                let cp = BeatMath.cyclePhase(at: CACurrentMediaTime(), snapshot: lock.snapshot,
+                                             beatsPerCycle: lock.beatsPerCycle,
+                                             phaseOffsetBeats: binding.phaseOffsetBeats)
+                sine = sin(cp * 2.0 * .pi - .pi / 2.0)
+            } else {
+                phase += dt * (2.0 * .pi) / period
+                sine = sin(phase)  // -1 to +1
+            }
 
             // Brightness oscillation
             let range = peakBri - minBri

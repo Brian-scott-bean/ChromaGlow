@@ -65,6 +65,10 @@ enum EffectLoops {
     // ─────────────────────────────────────────────
 
     /// Alternates all lights between `onColor` and `offBrightness` at `bpm` beats/min.
+    /// With an active `beat` binding the flash rides the shared BeatClock
+    /// instead: ON exactly at each cycle boundary, held for `dutyCycle` of
+    /// the cycle. The lock is re-checked every iteration, so tapping a tempo
+    /// mid-run locks the strobe and clearing the clock frees it again.
     static func strobe(
         lights:         [LightDisplayItem],
         api:            HueAPIClient,
@@ -73,7 +77,8 @@ enum EffectLoops {
         bpm:            Double,    // 30...480
         dutyCycle:      Double,    // 0.10...0.90
         onXY:           (Double, Double),
-        offBrightness:  Double
+        offBrightness:  Double,
+        beat:           BeatBinding = .off
     ) -> @Sendable () async throws -> Void {
         return {
             // Defense-in-depth (L-41 class): bpm ≤ 0 divides to ∞ (UInt64 trap)
@@ -81,10 +86,39 @@ enum EffectLoops {
             let bpm        = min(max(bpm, 30), 480)
             let dutyCycle  = min(max(dutyCycle, 0.10), 0.90)
             let periodNs   = UInt64(60_000_000_000 / bpm)
-            let onNs       = UInt64(Double(periodNs) * dutyCycle)
-            let offNs      = periodNs - onNs
 
             while !Task.isCancelled {
+                if let lock = BeatMath.liveLock(beat) {
+                    // Beat-locked (wcagSafeBeatsPerCycle keeps this ≤3 Hz —
+                    // also ≤6 gate-paced PUTs/s). The boundary is re-derived
+                    // from the live clock, never accumulated.
+                    try await BeatMath.sleepUntilNextCycle(
+                        beatsPerCycle: lock.beatsPerCycle,
+                        phaseOffsetBeats: beat.phaseOffsetBeats)
+                    guard !Task.isCancelled else { return }
+
+                    var ok = await EffectLoops.setAll(lights: lights, api: api,
+                                                      groupedLightID: groupedLightID, gate: gate,
+                                                      on: true, brightness: 100,
+                                                      xy: onXY, duration: 0)
+                    let onSecs = lock.snapshot.beatInterval * lock.beatsPerCycle * dutyCycle
+                    let onNs = UInt64(onSecs * 1_000_000_000)
+                    try await Task.sleep(nanoseconds: ok ? onNs : onNs + EffectLoops.failureBackoffNs)
+                    guard !Task.isCancelled else { return }
+
+                    ok = await EffectLoops.setAll(lights: lights, api: api,
+                                                  groupedLightID: groupedLightID, gate: gate,
+                                                  on: offBrightness <= 0,
+                                                  brightness: offBrightness,
+                                                  xy: onXY, duration: 0)
+                    if !ok { try await Task.sleep(nanoseconds: EffectLoops.failureBackoffNs) }
+                    continue   // next ON waits for the next boundary
+                }
+
+                // Free-running (legacy slider math, byte for byte).
+                let onNs  = UInt64(Double(periodNs) * dutyCycle)
+                let offNs = periodNs - onNs
+
                 // ON phase
                 var ok = await EffectLoops.setAll(lights: lights, api: api,
                                                   groupedLightID: groupedLightID, gate: gate,
@@ -108,6 +142,8 @@ enum EffectLoops {
     // MARK: Party
     // ─────────────────────────────────────────────
 
+    /// With an active `beat` binding, colors step exactly on cycle
+    /// boundaries (the speed slider is ignored while locked).
     static func party(
         lights:         [LightDisplayItem],
         api:            HueAPIClient,
@@ -116,7 +152,8 @@ enum EffectLoops {
         speed:          Double,           // 1...10
         palette:        [(Double, Double)],  // array of CIE xy pairs
         sync:           Bool,
-        flash:          Bool
+        flash:          Bool,
+        beat:           BeatBinding = .off
     ) -> @Sendable () async throws -> Void {
         return {
             // Defense-in-depth (L-41): speed > 11 makes the interval negative —
@@ -125,6 +162,17 @@ enum EffectLoops {
             let intervalNs = UInt64((1.1 - speed / 10.0) * 1_500_000_000)
 
             while !Task.isCancelled {
+                // Beat-locked: hold this frame until the next cycle boundary
+                // (≤3 Hz cap doubles as gate protection). Free-running falls
+                // through to the interval sleep at the bottom.
+                let lock = BeatMath.liveLock(beat)
+                if let lock {
+                    try await BeatMath.sleepUntilNextCycle(
+                        beatsPerCycle: lock.beatsPerCycle,
+                        phaseOffsetBeats: beat.phaseOffsetBeats)
+                    guard !Task.isCancelled else { return }
+                }
+
                 var frameOK = true
                 if sync {
                     let xy = palette.randomElement() ?? (0.3, 0.3)
@@ -155,6 +203,10 @@ enum EffectLoops {
                     guard !Task.isCancelled else { return }
                 }
 
+                if lock != nil {
+                    if !frameOK { try await Task.sleep(nanoseconds: EffectLoops.failureBackoffNs) }
+                    continue   // next color waits for the next beat boundary
+                }
                 try await Task.sleep(nanoseconds: frameOK ? intervalNs : intervalNs + EffectLoops.failureBackoffNs)
             }
         }
@@ -164,6 +216,9 @@ enum EffectLoops {
     // MARK: Thunderstorm
     // ─────────────────────────────────────────────
 
+    /// With an active `beat` binding, each lightning burst is delayed to the
+    /// next cycle boundary after its random wait — strikes land on the grid
+    /// (e.g. 4 beats = downbeats) while keeping their random spacing.
     static func thunderstorm(
         lights:           [LightDisplayItem],
         api:              HueAPIClient,
@@ -172,7 +227,8 @@ enum EffectLoops {
         frequencyIndex:   Int,   // 0=Rare 1=Occasional 2=Frequent
         baseXY:           (Double, Double),
         flashXY:          (Double, Double),
-        baseBrightness:   Double
+        baseBrightness:   Double,
+        beat:             BeatBinding = .off
     ) -> @Sendable () async throws -> Void {
         return {
             // Base calm state
@@ -189,6 +245,14 @@ enum EffectLoops {
                 let waitNs = UInt64.random(in: avgWaitMs * 500_000 ..< avgWaitMs * 1_500_000)
                 try await Task.sleep(nanoseconds: waitNs)
                 guard !Task.isCancelled else { return }
+
+                // Beat-locked: hold the strike until the next cycle boundary.
+                if let lock = BeatMath.liveLock(beat) {
+                    try await BeatMath.sleepUntilNextCycle(
+                        beatsPerCycle: lock.beatsPerCycle,
+                        phaseOffsetBeats: beat.phaseOffsetBeats)
+                    guard !Task.isCancelled else { return }
+                }
 
                 // Lightning burst: 1–3 quick flashes
                 let flashes = Int.random(in: 1...3)

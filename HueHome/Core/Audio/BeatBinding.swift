@@ -14,6 +14,7 @@
 //    BeatMath.wcagSafeBeatsPerCycle before use (≤3 Hz photosensitivity cap).
 
 import Foundation
+import QuartzCore
 
 // MARK: - BeatBinding
 
@@ -131,5 +132,71 @@ enum BeatMath {
         return cyclePhase(at: t, snapshot: snapshot,
                           beatsPerCycle: binding.beatsPerCycle,
                           phaseOffsetBeats: binding.phaseOffsetBeats)
+    }
+}
+
+// MARK: - Live-clock helpers (loop side)
+
+extension BeatMath {
+
+    /// Per-tick lock check for effect loops: non-nil only when the binding
+    /// is active AND the shared clock is running right now. The returned
+    /// beatsPerCycle is already rate-capped (maxHz defaults to the WCAG
+    /// 3 Hz flash limit; REST loops pass their cadence floor instead,
+    /// e.g. 1.0/0.9 for the 900 ms grouped-light cadence).
+    static func liveLock(_ binding: BeatBinding,
+                         maxHz: Double = 3.0) -> (snapshot: BeatSnapshot, beatsPerCycle: Double)? {
+        guard binding.isActive else { return nil }
+        let snap = BeatClock.snapshot()
+        guard snap.bpm > 0 else { return nil }
+        return (snap, wcagSafeBeatsPerCycle(requested: binding.beatsPerCycle,
+                                            bpm: snap.bpm, maxHz: maxHz))
+    }
+
+    /// Chunked sleep to the next cycle boundary. Re-derives from the live
+    /// clock every ≤250 ms, so tempo changes, taps, and nudges retarget the
+    /// boundary mid-wait — the loop never accumulates phase. Returns
+    /// immediately if the clock disappears; throws on cancellation.
+    static func sleepUntilNextCycle(beatsPerCycle: Double,
+                                    phaseOffsetBeats: Double = 0) async throws {
+        let first = BeatClock.snapshot()
+        guard first.bpm > 0 else { return }
+        let startIndex = cycleIndex(at: CACurrentMediaTime(), snapshot: first,
+                                    beatsPerCycle: beatsPerCycle,
+                                    phaseOffsetBeats: phaseOffsetBeats)
+        while !Task.isCancelled {
+            let snap = BeatClock.snapshot()
+            guard snap.bpm > 0 else { return }
+            let now = CACurrentMediaTime()
+            if cycleIndex(at: now, snapshot: snap, beatsPerCycle: beatsPerCycle,
+                          phaseOffsetBeats: phaseOffsetBeats) != startIndex { return }
+            let boundary = nextCycleBoundary(after: now, snapshot: snap,
+                                             beatsPerCycle: beatsPerCycle,
+                                             phaseOffsetBeats: phaseOffsetBeats)
+            let chunk = max(0.002, min(boundary - now, 0.25))
+            try await Task.sleep(nanoseconds: UInt64(chunk * 1_000_000_000))
+        }
+    }
+}
+
+// MARK: - Studio param-box bridge
+
+extension BeatBinding {
+    /// Studio surfaces persist the binding as plain Doubles inside the live
+    /// param box so slider-style plumbing keeps working unchanged.
+    static let studioModeKey = "beat_mode"
+    static let studioPerCycleKey = "beat_per_cycle"
+    static let studioPhaseKey = "beat_phase"
+
+    static func fromStudioValues(_ p: [String: Double]) -> BeatBinding {
+        BeatBinding(mode: (p[studioModeKey] ?? 0) > 0.5 ? .beatLocked : .off,
+                    beatsPerCycle: p[studioPerCycleKey] ?? 1,
+                    phaseOffsetBeats: p[studioPhaseKey] ?? 0)
+    }
+
+    var studioValues: [String: Double] {
+        [Self.studioModeKey: isActive ? 1 : 0,
+         Self.studioPerCycleKey: beatsPerCycle,
+         Self.studioPhaseKey: phaseOffsetBeats]
     }
 }

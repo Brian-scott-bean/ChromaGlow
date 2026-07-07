@@ -526,17 +526,20 @@ final class EffectsViewModel: ObservableObject {
                 loop = EffectLoops.strobe(lights: lights, api: api,
                                           groupedLightID: groupedLightID, gate: gate,
                                           bpm: bpm, dutyCycle: dutyCycle,
-                                          onXY: onXY, offBrightness: offDim)
+                                          onXY: onXY, offBrightness: offDim,
+                                          beat: paramState.beat)
             case "party":
                 loop = EffectLoops.party(lights: lights, api: api,
                                          groupedLightID: groupedLightID, gate: gate,
                                          speed: speed, palette: palette,
-                                         sync: sync, flash: flash)
+                                         sync: sync, flash: flash,
+                                         beat: paramState.beat)
             case "thunderstorm":
                 loop = EffectLoops.thunderstorm(lights: lights, api: api,
                                                 groupedLightID: groupedLightID, gate: gate,
                                                 frequencyIndex: freqIdx,
-                                                baseXY: baseXY, flashXY: flashXY, baseBrightness: baseB)
+                                                baseXY: baseXY, flashXY: flashXY, baseBrightness: baseB,
+                                                beat: paramState.beat)
             default:
                 statusMessage = "Unknown effect: \(effect.id)"
                 isRunning     = false
