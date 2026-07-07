@@ -165,14 +165,20 @@ struct SplashView: View {
 
     /// Holds the splash for its cosmetic dwell, then routes to paired/setup exactly once.
     /// Idempotent (didRoute) so the .task and scenePhase net can both call it safely.
+    /// The keychain check runs BEFORE the sleep so a fresh install (unpaired) reaches
+    /// BridgeSetupView after ~0.7s instead of a fixed 2.1s — the icon spring (0.55s)
+    /// and title fade (0.6s) have finished by then. Legacy-paired users keep the full
+    /// dwell. Note this view only renders for unpaired/legacy users: AppRootView's
+    /// onAppear routes modern paired users straight to MainTabView.
     private func routeAfterIntro() async {
-        guard !didRoute else { return }
-        try? await Task.sleep(for: .seconds(2.1))
         guard !didRoute else { return }
 
         let ip    = try? KeychainManager.shared.loadBridgeIP()
         let token = try? KeychainManager.shared.loadAPIToken()
         let alreadyPaired = (ip?.isEmpty == false) && (token?.isEmpty == false)
+
+        try? await Task.sleep(for: .seconds(alreadyPaired ? 2.1 : 0.7))
+        guard !didRoute else { return }
 
         didRoute = true
         withAnimation(.easeInOut(duration: 0.4)) {
