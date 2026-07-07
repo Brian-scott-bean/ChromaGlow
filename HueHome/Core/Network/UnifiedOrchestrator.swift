@@ -435,6 +435,12 @@ final class UnifiedOrchestrator {
 
         return (rooms: roomsMutated, zones: zonesMutated)
     }
+
+    /// Awaits the deferred entertainment-cleanup task so tests can assert its GET
+    /// deterministically (loadAll now schedules cleanup fire-and-forget).
+    func testAwaitEntertainmentCleanup() async {
+        await entertainmentCleanupTask?.value
+    }
     #endif
 
     // ──────────────────────────────────────────────
@@ -704,12 +710,10 @@ final class UnifiedOrchestrator {
         // single offline unpinned bridge no longer stalls every bridge's first fetch
         // up to ~10s. Pinned hosts (the steady state) are a synchronous no-op there.
 
-        // Entertainment cleanup + bridge fetches run in parallel so cold launch
-        // does not wait for sequential stuck-session teardown before any room data loads.
-        await withTaskGroup(of: Void.self) { outer in
-            outer.addTask { await self.deactivateStuckEntertainmentSessions() }
-            outer.addTask { await self.fetchAndMergeAllBridges() }
-        }
+        // Fetch every bridge (per-bridge pin acquisition happens inside). Stuck
+        // entertainment-session cleanup no longer shares this await — it is deferred
+        // and throttled below so it never delays first paint or fires per toggle.
+        await fetchAndMergeAllBridges()
 
         // Yield so any pending main-thread interactions (e.g. tab bar) run before
         // large @Observable room list updates from rebuildAllRooms/Zones.
@@ -718,7 +722,27 @@ final class UnifiedOrchestrator {
         rebuildAllRooms()
         rebuildAllZones()
         lastLoadedAt = Date()
+        scheduleEntertainmentCleanup()
         if let ctx = cacheContext { writeCache(to: ctx) }
+    }
+
+    @ObservationIgnored private var entertainmentCleanupTask: Task<Void, Never>?
+    @ObservationIgnored private var lastEntertainmentCleanupAt: Date = .distantPast
+
+    /// Stuck entertainment-session cleanup used to run inside loadAll's await (an
+    /// `entertainment_configuration` GET per bridge) on every launch/foreground AND
+    /// ~1.5s after every toggle via `scheduleStateRefresh` → `loadAll`. Defer it off
+    /// the fetch path at low priority and throttle to once per 60s: launch/foreground
+    /// coverage is kept (stuck sessions throttle REST, so cleaning then matters), but
+    /// the per-toggle GETs are gone.
+    private func scheduleEntertainmentCleanup() {
+        guard entertainmentCleanupTask == nil,
+              Date().timeIntervalSince(lastEntertainmentCleanupAt) > 60 else { return }
+        lastEntertainmentCleanupAt = Date()
+        entertainmentCleanupTask = Task(priority: .utility) { [weak self] in
+            await self?.deactivateStuckEntertainmentSessions()
+            self?.entertainmentCleanupTask = nil
+        }
     }
 
     /// Per-bridge REST fetch + merge into `roomsByBridge` / `zonesByBridge` maps.

@@ -227,6 +227,8 @@ final class OrchestratorLoadAllTests: XCTestCase {
             return XCTFail("Expected connected bridge status")
         }
 
+        // Cleanup is now deferred off loadAll's critical path — await it before asserting.
+        await sut.orchestrator.testAwaitEntertainmentCleanup()
         let cleanupGETCount = await sut.recorder.cleanupGETCount
         let unexpectedPUTCount = await sut.recorder.unexpectedPUTCount
         XCTAssertGreaterThanOrEqual(cleanupGETCount, 1)
