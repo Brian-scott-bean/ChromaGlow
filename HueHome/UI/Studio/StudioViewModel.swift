@@ -522,7 +522,10 @@ final class StudioViewModel {
     let liveModeCards: [StudioCard] = StudioViewModel.buildLiveModeCards()
 
     // ── Composition store ─────────────────────────────────────
-    let compositionStore = CompositionStore()
+    // loadsSynchronously: false — StudioView constructs this VM eagerly (and again on
+    // every tab switch), so the composition-library file read + JSON decode must not run
+    // on the main thread. Presets publish shortly after; mutations force a sync load first.
+    let compositionStore = CompositionStore(loadsSynchronously: false)
     private let aiGenerator = AICompositionGenerator()
     var isGeneratingAIComposition = false
     var aiGenerationErrorMessage: String?

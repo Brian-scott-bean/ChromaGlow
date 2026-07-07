@@ -9,26 +9,44 @@ import Foundation
 
 // MARK: - CompositionStore
 
+/// `@unchecked Sendable` invariant: `presets` and `isLoaded` are mutated only on
+/// the main actor. The synchronous `load()` runs in the (main-actor) context that
+/// constructs the store, and the async path applies its result inside `MainActor.run`.
+/// The off-main read (`readPresets`) is a pure static that touches no instance state.
 @Observable
-final class CompositionStore {
+final class CompositionStore: @unchecked Sendable {
 
     private(set) var presets: [CompositionPreset] = []
+    /// True once presets reflect the file (or the seeded defaults). Guards the async
+    /// load against a racing mutation and lets `ensureLoadedForMutation()` know if a
+    /// synchronous load is still owed.
+    private(set) var isLoaded = false
 
     private let fileURL: URL
 
-    /// `fileURL` is injectable for tests only — production always persists
-    /// to Documents/compositions.json.
-    init(fileURL: URL? = nil) {
+    /// - Parameters:
+    ///   - fileURL: injectable for tests only — production persists to Documents/compositions.json.
+    ///   - loadsSynchronously: `true` (default) reads + decodes the file on the calling
+    ///     thread during init — the original behavior, kept for tests and any caller that
+    ///     reads `presets` immediately. `false` returns instantly with an empty `presets`
+    ///     and reads off-main, publishing when ready — used by StudioViewModel so the
+    ///     Studio tab's eager construction never blocks the main thread on file I/O.
+    init(fileURL: URL? = nil, loadsSynchronously: Bool = true) {
         self.fileURL = fileURL ?? {
             let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             return docs.appendingPathComponent("compositions.json")
         }()
-        load()
+        if loadsSynchronously {
+            load()
+        } else {
+            Task { [weak self] in await self?.applyAsyncLoad() }
+        }
     }
 
     // MARK: - CRUD
 
     func save(_ preset: CompositionPreset) {
+        ensureLoadedForMutation()
         if let index = presets.firstIndex(where: { $0.id == preset.id }) {
             presets[index] = preset
         } else {
@@ -38,6 +56,7 @@ final class CompositionStore {
     }
 
     func delete(_ preset: CompositionPreset) {
+        ensureLoadedForMutation()
         if preset.isBuiltIn {
             // Built-in presets reset to default instead of deleting
             if let original = Self.builtInPresets.first(where: { $0.name == preset.name }) {
@@ -50,6 +69,7 @@ final class CompositionStore {
     }
 
     func duplicate(_ preset: CompositionPreset) -> CompositionPreset {
+        ensureLoadedForMutation()
         let copy = CompositionPreset(
             id: UUID(),
             name: "\(preset.name) Copy",
@@ -89,42 +109,71 @@ final class CompositionStore {
 
     // MARK: - Persistence
 
+    /// Synchronous load — reads + decodes on the calling thread and publishes.
     private func load() {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            // First launch — seed with built-in presets
-            presets = Self.builtInPresets
-            persist()
-            return
+        let result = Self.readPresets(from: fileURL)
+        presets = result.presets
+        isLoaded = true
+        if result.seedNeedsPersist { persist() }
+    }
+
+    /// Off-main variant: reads + decodes on a background executor, then applies on
+    /// the main actor. No-ops if a mutation already forced a synchronous load
+    /// (`isLoaded == true`) so it can never clobber freshly-saved user data.
+    private func applyAsyncLoad() async {
+        if isLoaded { return }
+        let url = fileURL
+        let result = await Task.detached(priority: .userInitiated) {
+            CompositionStore.readPresets(from: url)
+        }.value
+        await MainActor.run {
+            guard !self.isLoaded else { return }
+            self.presets = result.presets
+            self.isLoaded = true
+            if result.seedNeedsPersist { self.persist() }
         }
-        // M-13: this read path must NEVER destroy user data.
-        //  - Elements decode leniently: one malformed preset is dropped, the
-        //    rest survive (the whole-array decode used to throw and reseed).
-        //  - On ANY decode problem the original file is backed up first and
-        //    the source is never overwritten from this path — the next
-        //    user-initiated save() is the first legitimate writer.
+    }
+
+    /// If an async load is still in flight, load synchronously before any mutation so
+    /// save/delete/duplicate can never persist over a not-yet-loaded library (M-13).
+    private func ensureLoadedForMutation() {
+        if !isLoaded { load() }
+    }
+
+    /// Pure, thread-safe read of the compositions file. Touches no instance state,
+    /// so it is safe to run off the main actor. Returns the presets to publish plus
+    /// whether the first-launch seed still needs persisting (the caller does that,
+    /// on the main actor). M-13: this read path must NEVER destroy user data.
+    ///  - Elements decode leniently: one malformed preset is dropped, the rest survive.
+    ///  - On ANY decode problem the original file is backed up first and the source is
+    ///    never overwritten from here — the next user-initiated save() is the first writer.
+    nonisolated static func readPresets(from fileURL: URL) -> (presets: [CompositionPreset], seedNeedsPersist: Bool) {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            // First launch — seed with built-in presets (caller persists).
+            return (builtInPresets, true)
+        }
         do {
             let data = try Data(contentsOf: fileURL)
             let wrapped = try JSONDecoder().decode([FailableDecodable<CompositionPreset>].self, from: data)
             let good = wrapped.compactMap(\.value)
             if good.count < wrapped.count {
                 print("[CompositionStore] ⚠ \(wrapped.count - good.count) preset(s) failed to decode — keeping \(good.count), backing up the original file")
-                backUpCompositionsFile()
+                backUpCompositionsFile(fileURL)
             }
-            presets = good.isEmpty ? Self.builtInPresets : good
+            return (good.isEmpty ? builtInPresets : good, false)
         } catch {
-            // The file is not a decodable array at all. Preserve the bytes in
-            // a timestamped .bak, run in-memory on defaults, and DO NOT
-            // persist() — overwriting the source on a read failure is how the
-            // whole library used to vanish.
+            // The file is not a decodable array at all. Preserve the bytes in a
+            // timestamped .bak, run in-memory on defaults, and DO NOT persist —
+            // overwriting the source on a read failure is how the library used to vanish.
             print("[CompositionStore] Failed to load: \(error). Backing up file and running on defaults (source NOT overwritten).")
-            backUpCompositionsFile()
-            presets = Self.builtInPresets
+            backUpCompositionsFile(fileURL)
+            return (builtInPresets, false)
         }
     }
 
     /// Copies compositions.json to a timestamped sibling before any recovery
     /// path can lose data (M-13).
-    private func backUpCompositionsFile() {
+    nonisolated private static func backUpCompositionsFile(_ fileURL: URL) {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         formatter.locale = Locale(identifier: "en_US_POSIX")
