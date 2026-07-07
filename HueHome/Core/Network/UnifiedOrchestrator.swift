@@ -2000,8 +2000,16 @@ final class UnifiedOrchestrator {
         return compositionEntParamBoxes.values.contains { $0.reaction.requiresMic }
     }
 
+    /// Last mic-demand value pushed to the audio engine. The composition render loops
+    /// call refreshCompositionMicDemand every frame (up to 25Hz), but demand almost
+    /// never changes frame-to-frame — skip the actor hop + Set mutation when unchanged.
+    @ObservationIgnored private var lastComposerMicDemand: Bool?
+
     private func refreshCompositionMicDemand() async {
-        await AudioAnalysisEngine.shared.setDemand(.composerReaction, active: anyCompositionNeedsMic())
+        let needed = anyCompositionNeedsMic()
+        guard needed != lastComposerMicDemand else { return }
+        lastComposerMicDemand = needed
+        await AudioAnalysisEngine.shared.setDemand(.composerReaction, active: needed)
     }
 
     /// Start a composition render loop for the given room.
@@ -2027,11 +2035,13 @@ final class UnifiedOrchestrator {
             compositionGamut = gamutOverride
             if paramBox.reaction.requiresMic {
                 await AudioAnalysisEngine.shared.setDemand(.composerReaction, active: true)
+                lastComposerMicDemand = true   // keep the per-frame refresh cache coherent
             }
         } else if paramBox.reaction.requiresMic {
             async let gamutResolved = resolveCompositionGamut(for: room, api: api)
             async let micHeadStart: Bool = AudioAnalysisEngine.shared.setDemand(.composerReaction, active: true)
             _ = await micHeadStart
+            lastComposerMicDemand = true   // keep the per-frame refresh cache coherent
             compositionGamut = await gamutResolved
         } else {
             compositionGamut = await resolveCompositionGamut(for: room, api: api)
