@@ -15,6 +15,14 @@ struct WatchRoomSnapshot: Codable, Identifiable {
     let lightCount:     Int
     let groupedLightId: String?
     let bridgeID:       String? = nil
+
+    // bridgeID is deliberately excluded from decoding: it stays nil on the
+    // watch even though the phone's WidgetRoomSnapshot writer encodes it —
+    // no watch reader exists. (Making it `var` per the compiler fix-it would
+    // silently start decoding real bridge IDs.)
+    private enum CodingKeys: String, CodingKey {
+        case id, name, archetype, isOn, brightness, lightCount, groupedLightId
+    }
 }
 
 final class WatchWidgetStore {
