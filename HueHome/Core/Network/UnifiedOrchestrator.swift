@@ -704,6 +704,7 @@ final class UnifiedOrchestrator {
         // refreshing in the background, giving immediate feedback without a jarring flash.
         isLoading = true
         errorMessage = nil
+        let __loadStart = Date()   // TEMP PERF DIAG
         defer { isLoading = false }
 
         // D-016 pin acquisition is now per-host inside fetchAndMergeAllBridges so a
@@ -714,6 +715,8 @@ final class UnifiedOrchestrator {
         // entertainment-session cleanup no longer shares this await — it is deferred
         // and throttled below so it never delays first paint or fires per toggle.
         await fetchAndMergeAllBridges()
+        // TEMP PERF DIAG — remove after capture
+        print("⏱️PERF loadAll: fetch done in \(Int(Date().timeIntervalSince(__loadStart) * 1000))ms — lightsCached per bridge=\(lightsByBridge.mapValues { $0.count })")
 
         // Yield so any pending main-thread interactions (e.g. tab bar) run before
         // large @Observable room list updates from rebuildAllRooms/Zones.
@@ -722,6 +725,8 @@ final class UnifiedOrchestrator {
         rebuildAllRooms()
         rebuildAllZones()
         lastLoadedAt = Date()
+        // TEMP PERF DIAG — remove after capture
+        print("⏱️PERF loadAll: TOTAL \(Int(Date().timeIntervalSince(__loadStart) * 1000))ms → allRooms=\(allRooms.count)")
         scheduleEntertainmentCleanup()
         if let ctx = cacheContext { writeCache(to: ctx) }
     }

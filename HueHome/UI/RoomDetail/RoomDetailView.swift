@@ -209,13 +209,17 @@ struct RoomDetailView: View {
             Button("Cancel", role: .cancel) {}
         }
         .task {
+            // TEMP PERF DIAG — remove after capture
+            let __diagStart = Date()
+            let __seed = orchestrator.cachedLightItems(for: room)
+            print("⏱️PERF room-open '\(room.name)': seed=\(__seed.count) refs=\(room.childResourceRefs.count) bridge=\(room.bridgeID ?? "nil") → \(__seed.isEmpty ? "SPINNER (fast-path SKIPPED)" : "INSTANT (fast-path engaged)")")
             // Re-build vm with the right bridge client now that orchestrator is available.
             // This replaces the placeholder vm created in init() with one that has correct credentials.
             vm = RoomDetailViewModel(
                 room: room,
                 api: orchestrator.hueClient(for: room.bridgeID),
                 isDemoMode: orchestrator.isDemoMode,
-                initialLights: orchestrator.cachedLightItems(for: room)
+                initialLights: __seed
             )
             // Wire the glow-refresh callback so color changes propagate to dashboard cards.
             let bridgeID = room.bridgeID ?? ""
@@ -233,6 +237,8 @@ struct RoomDetailView: View {
             }
             // Load room-level state after lights are loaded (needs light data for cross-check)
             await vm.loadRoomState()
+            // TEMP PERF DIAG — remove after capture
+            print("⏱️PERF room-open '\(room.name)': all loads finished in \(Int(Date().timeIntervalSince(__diagStart) * 1000))ms (lights=\(vm.lights.count))")
         }
         .preferredColorScheme(.dark)
         .overlay(alignment: .top) {
