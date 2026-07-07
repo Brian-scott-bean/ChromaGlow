@@ -86,7 +86,11 @@ final class WidgetDataStore: @unchecked Sendable {
     private init() {}
 
     private let group = "group.com.huehome.pro"
-    private var ud: UserDefaults? { UserDefaults(suiteName: group) }
+    /// One cached suite instance. This was a computed property constructing a NEW
+    /// UserDefaults per access (~30 call sites in this file) — costly on fresh
+    /// installs where cfprefsd detaches the not-yet-created group domain and every
+    /// access becomes an uncached plist hit. UserDefaults is thread-safe.
+    private let ud: UserDefaults? = UserDefaults(suiteName: "group.com.huehome.pro")
 
     private enum Key {
         static let rooms     = "hue_widget_rooms_v1"
