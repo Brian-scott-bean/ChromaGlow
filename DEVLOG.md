@@ -48,6 +48,52 @@
 
 ---
 
+## 2026-07-06 - [Claude] R3-B Hue power phases A–E + G shipped (6 commits) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` @ `d8b1c4b` (rollback `checkpoint/pre-round3-2026-07-06`)
+
+### Did
+- `06146e7` **A foundation:** HueLight decodes effects/effects_v2/timed_effects/gradient
+  (additive); pure golden-JSON body builders (EffectsV2Body/TimedEffectsBody/SignalingBody/
+  GradientBody) in HueAPIClient+Effects/+Signaling/+Gradient; EffectCapabilityResolver
+  (v2-first coverage, never model-ID guessing); dead setGroupedLightWithEffect/stopLightEffects
+  deleted.
+- `9e6ba2e` **B effects_v2:** Cosmos/Enchant/Sunbeam/Underwater/Opal/Glisten cards; v1 grouped
+  blanket THEN per-light v2 parameter upgrade (speed/color now REAL); "4 of 6 lights" coverage
+  badges + coverage-aware status.
+- `fa65824` **C timed_effects:** TimedEffectRouting — native bridge sunrise/sunset when all
+  lights support + card at defaults (survives force-quit); else app ramp; failed native starts
+  cancelled. clearFirmwareEffect merges effects:no_effect into the same PUT (effects outrank
+  timed_effects).
+- `5b7243f` **E dynamic scenes:** CreateSceneRequest.palette/speed/auto_dynamic (nil-additive,
+  wire-compat locked by test) + dynamicScene builder; Composer Color tab → "Save as Hue dynamic
+  scene" (bridge loops it forever, app closed).
+- `3451e20` **D signaling:** SignalingService (identifyLight/identifyRoom/punchBurst — the
+  REST-tier Perform punch primitive); beacon button in light detail toolbar.
+- `d8b1c4b` **G Tap Dial:** SSE button/relative_rotary decode; pure ControlMappingEngine
+  (100 ms leading-edge rotary accumulator; DJ button map); orchestrator executes actions
+  (tap/resync/nudge/punchBurst on the playing room); PhysicalControlsView in More with DJ Mode
+  toggle (UserDefaults chromaglow.djModeEnabled).
+
+### Working
+- Full suite 288/288 green on iPhone 15 / iOS 17.0; build gated per commit.
+
+### Left
+- **R3-B F (gradient — highest risk, deliberately last):** GradientChannelMap (strip → ≤5
+  virtual channels, budget 20) + CompositionRuntime.gradientMap (nil default) + entertainment
+  config builder two-position service_locations + refetch-after-create. Then Perform (R3-C,
+  spec artifact) + sequencer (R3-D). Design: audit doc §6.2.
+- On-device checklist: audit doc §6.3.
+
+### Gotchas
+- bridgeNative order matters: v1 grouped blanket FIRST, then per-light v2 upgrades — reversed
+  order would let the grouped call clobber v2 parameters.
+- effects outrank timed_effects on the bridge — always clear in the same PUT.
+- Static scene POST bodies must stay byte-identical (test-locked) — palette/speed/auto_dynamic
+  are encodeIfPresent.
+- Tap Dial: use initial_press (not short_release) for tap tempo/punch latency.
+
 ## 2026-07-06 - [Claude] R3-A Universal Beat Panel shipped (7 commits) — LOCAL
 
 ### Branch
