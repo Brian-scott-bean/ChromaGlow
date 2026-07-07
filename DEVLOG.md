@@ -48,6 +48,46 @@
 
 ---
 
+## 2026-07-06 - [Claude] ROUND 3 COMPLETE: Perform surface + step sequencer (R3-C/D) — LOCAL
+
+### Branch
+- `ios-ref/hardening-p1-2026-07` @ `fff1451` (rollback `checkpoint/pre-round3-2026-07-06`)
+
+### Did
+- `fbb533e` **R3-C Perform:** Core/Composer/CompositionMixer — PerformanceMixBox (deck A = the
+  LIVE composition's param box, mix keyed by IDENTITY; deck B cues presets) + renderMixed at
+  the render chokepoint: frame-lerp blend, punch pads post-blend (strobe ≤3 Hz hard cap, rides
+  the beat under 180 BPM; blackout; white burst; 200 ms release ramps), master fader,
+  beat-exact bar auto-fade DERIVED per frame. Orchestrator seam = one activePerformanceMix
+  property consulted by both DTLS + REST loops. UI/Performance/PerformanceView full-screen
+  cover from the running Composer deck's amber button: crossfader + FADE 4/8/16,
+  hold-to-engage pads (REST tier also fires signaling punchBurst), queue with
+  promote-and-advance (deck B layers copied INTO the live box — loop identity never breaks),
+  shared .global beat panel, idle timer off.
+- `fff1451` **R3-D sequencer:** CompositionSequence (self-contained step snapshots, hold-bars +
+  crossfade-beats, M-13-grade decode) + optional preset.sequence (nil-additive, round-trip
+  tested) + SequencePlayer driving the same mix (hold → cue → beat-exact fade → promote; loop
+  or once; startAutoFade(beats:) added, no-clock fades land instantly). Sequence sheet in
+  Perform: reorderable step cards, per-step bars/XF menus, capture-current-look, Loop, Play/Stop.
+
+### Working
+- Full suite 305/305 green on iPhone 15 / iOS 17.0. **Round 3 fully executed:**
+  R3-0 docs → R3-A beat panel (7) → R3-B Hue power (A–G) → R3-C Perform → R3-D sequencer.
+  25 commits ahead of the checkpoint tag, all local/unpushed.
+
+### Left
+- On-device validation only (audit doc §4/§4b/§6.3) — needs a physical bridge + lights.
+- Backlog (unchanged): Effects/Sync-tab consolidation, keyframe timeline (rejected), ML downbeat.
+- Sequence persistence UI: preset.sequence saves/loads with presets; a "save sequence into
+  preset" button from Perform is a small follow-up (model + player + editor all shipped).
+
+### Gotchas
+- The Perform mix is keyed to its composition by deckA IDENTITY — promotion must COPY layer
+  structs into deckA (never replace the box reference) or the render loop goes stale.
+- PerformanceViewModel is created at button tap, NOT inside the fullScreenCover closure
+  (SwiftUI re-evaluates cover content; inline creation would rebuild the VM mid-performance).
+- Strobe punch clamps at 3 Hz free-run above 180 BPM; below it, flashes ride beatPhase.
+
 ## 2026-07-06 - [Claude] R3-B Hue power COMPLETE — phases A–G (7 commits) — LOCAL
 
 ### Branch
