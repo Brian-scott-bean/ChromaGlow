@@ -1,9 +1,8 @@
 // HueHomeWidgetBundle.swift
 // HueHome Pro — Epic 5 / Widget
 //
-// Widget bundle entry point.
-// HueHomeWidgetControl (Control Center) removed — iOS 18 only and
-// not in scope for v0.1.0. Add back in a future story if needed.
+// Widget bundle entry point. The Controls are iOS 18+; the availability check
+// keeps the bundle loadable on iOS 17, where they simply don't appear.
 
 import WidgetKit
 import SwiftUI
@@ -12,5 +11,12 @@ import SwiftUI
 struct HueHomeWidgetBundle: WidgetBundle {
     var body: some Widget {
         HueHomeWidget()
+
+        if #available(iOSApplicationExtension 18.0, *) {
+            RoomToggleControl()
+            SceneControl()
+            PresetControl()
+            AllOffControl()
+        }
     }
 }

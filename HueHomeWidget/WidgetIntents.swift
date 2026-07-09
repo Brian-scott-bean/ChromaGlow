@@ -90,6 +90,44 @@ struct ToggleRoomIntent: AppIntent {
     }
 }
 
+// MARK: - SetRoomPowerIntent
+
+/// Backs `ControlWidgetToggle` (Control Center / Lock Screen / Action button).
+///
+/// Distinct from `ToggleRoomIntent`, which inverts a state the widget captured
+/// at render time. A `SetValueIntent` is handed the ABSOLUTE state the user just
+/// asked for, so the control can't desync from a stale timeline snapshot.
+/// The `value` parameter name is fixed by the SetValueIntent protocol.
+@available(iOS 18.0, *)
+struct SetRoomPowerIntent: SetValueIntent {
+    static var title: LocalizedStringResource = "Set Room Power"
+    static var description = IntentDescription("Turn a specific room or zone on or off.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "On")       var value: Bool
+    @Parameter(title: "Group ID") var roomID: String
+
+    init() { value = false; roomID = "" }
+    init(roomID: String) { self.value = false; self.roomID = roomID }
+
+    func perform() async throws -> some IntentResult {
+        let store = WidgetDataStore.shared
+        guard let group = store.groups.first(where: { $0.id == roomID }),
+              let creds = store.credentials(for: group.bridgeID),
+              let glID  = group.groupedLightId else {
+            return .result()
+        }
+        await BridgeWriter.patchGroupedLight(
+            id: glID,
+            body: ["on": ["on": value]],
+            ip: creds.ip, token: creds.token
+        )
+        store.applyOptimistic(groupID: roomID, isOn: value)
+        WidgetCenter.shared.reloadAllTimelines()
+        return .result()
+    }
+}
+
 // MARK: - AdjustBrightnessIntent
 
 /// A −/+ button nudges a room/zone brightness by a delta (percentage points).
@@ -199,12 +237,48 @@ struct ApplyPresetIntent: AppIntent {
     }
 
     private static func params(for id: String) -> (brightness: Double, mirek: Int) {
-        switch id {
-        case "energize": return (100, 156)
-        case "read":     return (75,  280)
-        case "relax":    return (40,  420)
-        case "sleep":    return (6,   490)
-        default:         return (60,  350)
+        switch PresetChoice(rawValue: id) {
+        case .energize: return (100, 156)
+        case .read:     return (75,  280)
+        case .relax:    return (40,  420)
+        case .sleep:    return (6,   490)
+        case nil:       return (60,  350)
+        }
+    }
+}
+
+// MARK: - PresetChoice
+
+/// The four built-in presets, as a pickable option for the Control Center /
+/// Lock Screen preset control. `rawValue` is the `presetID` ApplyPresetIntent
+/// already expects — do not rename the cases.
+enum PresetChoice: String, AppEnum, CaseIterable {
+    case energize, read, relax, sleep
+
+    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Lighting Preset")
+
+    static var caseDisplayRepresentations: [PresetChoice: DisplayRepresentation] = [
+        .energize: DisplayRepresentation(title: "Energize", image: .init(systemName: "bolt.fill")),
+        .read:     DisplayRepresentation(title: "Read",     image: .init(systemName: "book.fill")),
+        .relax:    DisplayRepresentation(title: "Relax",    image: .init(systemName: "moon.stars.fill")),
+        .sleep:    DisplayRepresentation(title: "Sleep",    image: .init(systemName: "zzz")),
+    ]
+
+    var label: String {
+        switch self {
+        case .energize: return "Energize"
+        case .read:     return "Read"
+        case .relax:    return "Relax"
+        case .sleep:    return "Sleep"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .energize: return "bolt.fill"
+        case .read:     return "book.fill"
+        case .relax:    return "moon.stars.fill"
+        case .sleep:    return "zzz"
         }
     }
 }
