@@ -1,11 +1,12 @@
 // ScenesTabView.swift
-// CastChroma — Stage 2B / Scenes Browser
+// CastChroma — Stage 2B / Scenes Browser (reorganized in the 2026-07 overhaul)
 //
 // Full cross-bridge scene browser:
 //   • Fetches all scenes from all active bridges in parallel
-//   • Room filter chips — tap to narrow by room
-//   • Full-text search by scene name or room name
-//   • 2-column glassmorphic mood card grid
+//   • Grouped-by-room collapsible sections (default) with a pinned
+//     ★ Favorites shelf, or flat sort modes (A–Z; Recent/Most Used follow
+//     with SceneUsageStore) with room filter chips
+//   • Full-text search by scene name or room name — flattens to one grid
 //   • Active scene indicator + optimistic activate on tap
 //   • Shimmer skeleton while loading
 //   • Demo mode aware (uses DemoDataProvider.globalScenes)
@@ -31,11 +32,22 @@ struct ScenesTabView: View {
     @State private var showCreateScene = false
     @State private var showBuildScene  = false
 
-    @AppStorage("castchroma.useWideCards") private var useWideCards = false
+    /// Persisted sort/group mode (SceneGrouping.SortMode raw value).
+    @AppStorage("castchroma.sceneSortMode") private var sortModeRaw =
+        SceneGrouping.SortMode.byRoom.rawValue
+    /// Collapsed room-section ids — same CSV helper family as favorites.
+    @AppStorage("castchroma.collapsedSceneRoomIDs") private var collapsedRoomIDsRaw = ""
     // Shared favorites contract: RAW bridge scene UUIDs (bridgeSceneID),
     // the same CSV RoomDetail writes and the Dashboard pills read.
     @AppStorage("favoriteSceneIDs") private var favoriteSceneIDsRaw: String = ""
     private var provenance: SceneProvenanceStore { SceneProvenanceStore.shared }
+
+    private var sortMode: SceneGrouping.SortMode {
+        SceneGrouping.SortMode(rawValue: sortModeRaw) ?? .byRoom
+    }
+
+    /// Recent/Most Used join this list when SceneUsageStore lands (Phase 2).
+    private let availableSortModes: [SceneGrouping.SortMode] = [.byRoom, .alphabetical]
 
     private func isFavorite(_ scene: GlobalSceneItem) -> Bool {
         FavoriteSceneCSV.contains(favoriteSceneIDsRaw, id: scene.bridgeSceneID)
@@ -47,22 +59,22 @@ struct ScenesTabView: View {
     }
 
     private var gridColumns: [GridItem] {
-        useWideCards
-            ? [GridItem(.flexible())]
-            : [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+        [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
     }
 
     // ── Derived data ──────────────────────────────────────
 
+    /// Name/archetype lookup across rooms AND zones — zone scenes previously
+    /// resolved as "Other" because only allRooms was searched.
+    private var roomIndex: [String: SceneGrouping.RoomInfo] {
+        SceneGrouping.roomIndex(groups: orchestrator.allRooms + orchestrator.allZones)
+    }
+
     private func roomName(for scene: GlobalSceneItem) -> String {
-        orchestrator.allRooms.first(where: { $0.id == scene.roomID })?.name ?? "Other"
+        SceneGrouping.roomName(for: scene, index: roomIndex)
     }
 
-    private func roomArchetype(for roomID: String) -> String? {
-        orchestrator.allRooms.first(where: { $0.id == roomID })?.archetype
-    }
-
-    /// Rooms that actually have scenes, sorted alphabetically.
+    /// Rooms that actually have scenes, sorted alphabetically (chip row).
     private var uniqueRooms: [(id: String, name: String)] {
         var seen = Set<String>()
         return orchestrator.globalScenes.compactMap { scene in
@@ -71,6 +83,8 @@ struct ScenesTabView: View {
             return (id: scene.roomID, name: roomName(for: scene))
         }.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
     }
+
+    private var isSearching: Bool { !searchText.isEmpty }
 
     private var filteredScenes: [GlobalSceneItem] {
         orchestrator.globalScenes.filter { scene in
@@ -82,8 +96,13 @@ struct ScenesTabView: View {
         }
     }
 
+    /// Scenes the current mode actually displays (drives the count badges).
+    private var displayedScenes: [GlobalSceneItem] {
+        (sortMode.isGrouped && !isSearching) ? orchestrator.globalScenes : filteredScenes
+    }
+
     private var activeCount: Int {
-        filteredScenes.filter { $0.isActive }.count
+        displayedScenes.filter { $0.isActive }.count
     }
 
     // ── Body ──────────────────────────────────────────────
@@ -171,40 +190,15 @@ struct ScenesTabView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
 
-                // Room filter chips
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        SceneFilterChip(
-                            title: "All",
-                            icon: "sparkles",
-                            isSelected: selectedRoomID == nil,
-                            accentColor: HuePalette.amber
-                        ) {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                selectedRoomID = nil
-                            }
-                        }
-                        ForEach(uniqueRooms, id: \.id) { room in
-                            SceneFilterChip(
-                                title: room.name,
-                                icon: archetypeIcon(for: roomArchetype(for: room.id)),
-                                isSelected: selectedRoomID == room.id,
-                                accentColor: HuePalette.amber
-                            ) {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    selectedRoomID = (selectedRoomID == room.id) ? nil : room.id
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 20)
+                // Room filter chips — flat modes only (sections replace them
+                // in grouped mode, and later double as drag-drop targets).
+                if !sortMode.isGrouped {
+                    chipRow
                 }
-                .padding(.top, 12)
-                .padding(.bottom, 10)
 
                 // Scene count + active badge
                 HStack(spacing: 8) {
-                    StageBadge(text: "\(filteredScenes.count) SCENE\(filteredScenes.count == 1 ? "" : "S")",
+                    StageBadge(text: "\(displayedScenes.count) SCENE\(displayedScenes.count == 1 ? "" : "S")",
                                style: .muted)
                     if activeCount > 0 {
                         StageBadge(text: "\(activeCount) ACTIVE", style: .live)
@@ -212,60 +206,170 @@ struct ScenesTabView: View {
                     Spacer()
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, 14)
+                .padding(.top, sortMode.isGrouped ? 12 : 0)
+                .padding(.bottom, 8)
 
-                // Scene mood grid — with context menu for rename / delete
-                LazyVGrid(columns: gridColumns, spacing: 14) {
-                    ForEach(filteredScenes) { scene in
-                        SceneMoodCard(
-                            scene: scene,
-                            roomName: roomName(for: scene),
-                            isFavorite: isFavorite(scene),
-                            isStudio: provenance.isStudioScene(key: scene.id)
-                        ) {
-                            // Tap: activate immediately
-                            HapticManager.shared.medium()
-                            orchestrator.activateGlobalScene(scene)
-                        } onLongPress: {
-                            // Long-press: open speed sheet (dynamic) or activate with haptic
-                            HapticManager.shared.heavy()
-                            if scene.isDynamic {
-                                speedSheetScene = scene
-                            } else {
-                                orchestrator.activateGlobalScene(scene)
-                            }
-                        }
-                        .contextMenu {
-                            Button {
-                                toggleFavorite(scene)
-                            } label: {
-                                Label(isFavorite(scene) ? "Unfavorite" : "Favorite",
-                                      systemImage: isFavorite(scene) ? "star.slash" : "star")
-                            }
-                            Button {
-                                renameText    = scene.name
-                                sceneToRename = scene
-                            } label: {
-                                Label("Rename", systemImage: "pencil")
-                            }
-                            Divider()
-                            Button(role: .destructive) {
-                                sceneToDelete  = scene
-                                showDeleteAlert = true
-                            } label: {
-                                Label("Delete Scene", systemImage: "trash")
-                            }
-                        }
-                    }
+                if sortMode.isGrouped && !isSearching {
+                    groupedContent
+                } else {
+                    flatGrid
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 108)   // clear custom tab bar
-                .animation(.spring(response: 0.35, dampingFraction: 0.8), value: filteredScenes.map { $0.id })
             }
         }
         .scrollIndicators(.hidden)
         .refreshable {
             await orchestrator.loadAllScenes()
+        }
+    }
+
+    private var chipRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                SceneFilterChip(
+                    title: "All",
+                    icon: "sparkles",
+                    isSelected: selectedRoomID == nil,
+                    accentColor: HuePalette.amber
+                ) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        selectedRoomID = nil
+                    }
+                }
+                ForEach(uniqueRooms, id: \.id) { room in
+                    SceneFilterChip(
+                        title: room.name,
+                        icon: archetypeIcon(for: roomIndex[room.id]?.archetype),
+                        isSelected: selectedRoomID == room.id,
+                        accentColor: HuePalette.amber
+                    ) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            selectedRoomID = (selectedRoomID == room.id) ? nil : room.id
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+    }
+
+    // ── Grouped mode: Favorites shelf + room sections ─────
+
+    private var groupedContent: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            let favorites = SceneGrouping.favorites(
+                scenes: orchestrator.globalScenes,
+                favoriteIDsCSV: favoriteSceneIDsRaw
+            )
+            if !favorites.isEmpty {
+                favoritesShelf(favorites)
+            }
+
+            ForEach(SceneGrouping.sections(
+                scenes: orchestrator.globalScenes,
+                index: roomIndex
+            )) { section in
+                SceneRoomSectionView(
+                    section: section,
+                    isCollapsed: FavoriteSceneCSV.contains(collapsedRoomIDsRaw, id: section.id),
+                    onToggleCollapse: {
+                        collapsedRoomIDsRaw = FavoriteSceneCSV.toggled(collapsedRoomIDsRaw,
+                                                                       id: section.id)
+                        HapticManager.shared.light()
+                    }
+                ) {
+                    // Room label is redundant inside a room's own section.
+                    sceneGrid(section.scenes, showsRoomLabel: false)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 108)   // clear custom tab bar
+    }
+
+    private func favoritesShelf(_ favorites: [GlobalSceneItem]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(HuePalette.amber)
+                Text("FAVORITES")
+                    .font(.system(size: 13, weight: .bold))
+                    .tracking(1.4)
+                    .foregroundStyle(StagePalette.ink)
+                Spacer()
+            }
+            .padding(.vertical, 10)
+
+            // Cross-room shelf — keep the room label on each card.
+            sceneGrid(favorites, showsRoomLabel: true)
+                .padding(.bottom, 6)
+        }
+    }
+
+    // ── Flat modes + search results ───────────────────────
+
+    private var flatGrid: some View {
+        sceneGrid(
+            SceneGrouping.flatSorted(scenes: filteredScenes, mode: sortMode),
+            showsRoomLabel: true
+        )
+        .padding(.horizontal, 20)
+        .padding(.bottom, 108)   // clear custom tab bar
+    }
+
+    // ── Shared card grid ──────────────────────────────────
+
+    private func sceneGrid(_ scenes: [GlobalSceneItem], showsRoomLabel: Bool) -> some View {
+        LazyVGrid(columns: gridColumns, spacing: 14) {
+            ForEach(scenes) { scene in
+                sceneCard(scene, showsRoomLabel: showsRoomLabel)
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: scenes.map { $0.id })
+    }
+
+    private func sceneCard(_ scene: GlobalSceneItem, showsRoomLabel: Bool) -> some View {
+        SceneMoodCard(
+            scene: scene,
+            roomName: roomName(for: scene),
+            showsRoomLabel: showsRoomLabel,
+            isFavorite: isFavorite(scene),
+            isStudio: provenance.isStudioScene(key: scene.id)
+        ) {
+            // Tap: activate immediately
+            HapticManager.shared.medium()
+            orchestrator.activateGlobalScene(scene)
+        } onLongPress: {
+            // Long-press: open speed sheet (dynamic) or activate with haptic
+            HapticManager.shared.heavy()
+            if scene.isDynamic {
+                speedSheetScene = scene
+            } else {
+                orchestrator.activateGlobalScene(scene)
+            }
+        }
+        .contextMenu {
+            Button {
+                toggleFavorite(scene)
+            } label: {
+                Label(isFavorite(scene) ? "Unfavorite" : "Favorite",
+                      systemImage: isFavorite(scene) ? "star.slash" : "star")
+            }
+            Button {
+                renameText    = scene.name
+                sceneToRename = scene
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            Divider()
+            Button(role: .destructive) {
+                sceneToDelete  = scene
+                showDeleteAlert = true
+            } label: {
+                Label("Delete Scene", systemImage: "trash")
+            }
         }
     }
 
@@ -368,13 +472,28 @@ struct ScenesTabView: View {
             .accessibilityLabel("New scene")
         }
         ToolbarItem(placement: .navigationBarTrailing) {
-            Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { useWideCards.toggle() }
-                HapticManager.shared.light()
+            Menu {
+                Picker("Sort", selection: Binding(
+                    get: { sortMode },
+                    set: { newMode in
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            sortModeRaw = newMode.rawValue
+                            // Chips are hidden in grouped mode — drop any
+                            // invisible filter so nothing is silently hidden.
+                            if newMode.isGrouped { selectedRoomID = nil }
+                        }
+                        HapticManager.shared.light()
+                    }
+                )) {
+                    ForEach(availableSortModes) { mode in
+                        Label(mode.label, systemImage: mode.icon).tag(mode)
+                    }
+                }
             } label: {
-                Image(systemName: useWideCards ? "rectangle.grid.1x2.fill" : "square.grid.2x2")
+                Image(systemName: "arrow.up.arrow.down")
                     .foregroundStyle(.white.opacity(0.7))
             }
+            .accessibilityLabel("Sort scenes")
         }
         ToolbarItem(placement: .navigationBarTrailing) {
             Button {
@@ -435,8 +554,3 @@ struct SceneFilterChip: View {
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
     }
 }
-
-// SceneMoodCard, SceneShimmerCard → SceneMoodCard.swift
-// SceneSpeedSheet → SceneSpeedSheet.swift
-// RenameSceneSheet → RenameSceneSheet.swift
-// (extracted in the Scenes overhaul Phase 0 decomposition)

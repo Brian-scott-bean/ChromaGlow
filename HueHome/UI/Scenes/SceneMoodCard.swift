@@ -16,6 +16,9 @@ struct SceneMoodCard: View {
 
     let scene:       GlobalSceneItem
     let roomName:    String
+    /// Hidden inside a room's own section (redundant there); shown on the
+    /// Favorites shelf, search results, and flat sort modes.
+    var showsRoomLabel: Bool = true
     var isFavorite:  Bool = false
     var isStudio:    Bool = false
     let onActivate:  () -> Void
@@ -52,12 +55,14 @@ struct SceneMoodCard: View {
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     HStack(spacing: 6) {
-                        Text(roomName)
-                            .font(.system(size: 9, weight: .semibold))
-                            .tracking(1.0)
-                            .textCase(.uppercase)
-                            .foregroundStyle(StagePalette.muted)
-                            .lineLimit(1)
+                        if showsRoomLabel {
+                            Text(roomName)
+                                .font(.system(size: 9, weight: .semibold))
+                                .tracking(1.0)
+                                .textCase(.uppercase)
+                                .foregroundStyle(StagePalette.muted)
+                                .lineLimit(1)
+                        }
                         // Provenance: exported from the Studio Composer.
                         if isStudio {
                             StageBadge(text: "STUDIO", style: .amber)
