@@ -55,6 +55,41 @@ struct HueLight: Decodable, Identifiable {
     }
 }
 
+// MARK: - SSE application
+
+extension HueLight {
+    /// Returns a copy with an SSE update's changed fields applied — same
+    /// semantics as `RoomDetailViewModel.applySSEUpdates`. Used to keep the
+    /// orchestrator's per-light cache (`lightsByBridge`) live between loadAll
+    /// fetches so the RoomDetail instant-render seed is accurate at any age.
+    /// Capability blocks (effects, gradient, schema) are topology-stable and
+    /// carried over unchanged.
+    func applying(sseUpdate update: SSEResourceUpdate) -> HueLight {
+        HueLight(
+            id: id,
+            metadata: metadata,
+            on: update.on.map { OnState(on: $0.on) } ?? on,
+            dimming: update.dimming.map { DimmingState(brightness: $0.brightness) } ?? dimming,
+            color: update.color.map {
+                LightColor(xy: CIExy(x: $0.xy.x, y: $0.xy.y), gamut_type: color?.gamut_type)
+            } ?? color,
+            color_temperature: update.colorTemp.map {
+                LightColorTemp(
+                    mirek: $0.mirek,
+                    mirek_schema: color_temperature?.mirek_schema,
+                    mirek_valid: color_temperature?.mirek_valid
+                )
+            } ?? color_temperature,
+            owner: owner,
+            id_v1: id_v1,
+            effects: effects,
+            effects_v2: effects_v2,
+            timed_effects: timed_effects,
+            gradient: gradient
+        )
+    }
+}
+
 struct LightMetadata: Decodable {
     let name: String
     let archetype: String?

@@ -451,6 +451,12 @@ final class UnifiedOrchestrator {
         for (k, v) in roomMap { lightIDToRoomID[k] = v }
         for (k, v) in zoneMap { lightIDToZoneID[k] = v }
     }
+
+    /// Seeds the private per-bridge raw-light cache so SSE cache-freshness
+    /// tests can run without a full loadAll. Read back via `cachedRawLights`.
+    func testSeedLightCache(bridgeID: String, lights: [HueLight]) {
+        lightsByBridge[bridgeID] = lights
+    }
     #endif
 
     // ──────────────────────────────────────────────
@@ -1516,6 +1522,22 @@ final class UnifiedOrchestrator {
 
             // ── light (dominant color + on-state cross-check) ──────────────────
             case "light":
+                // Keep the per-light cache (RoomDetail's instant-render seed and
+                // Studio's coverage source) live between loadAll fetches — this
+                // runs for OFF events too, since the whole point is a truthful
+                // seed. Lights in composition-driven rooms/zones are excluded so
+                // our own ~8 Hz PUT echoes don't churn the cache. No rebuild is
+                // triggered by this write (the cache is read imperatively, never
+                // from a View body).
+                let cacheRoomDriven = lightIDToRoomID[update.id].map(driven.contains) ?? false
+                let cacheZoneDriven = lightIDToZoneID[update.id].map(driven.contains) ?? false
+                if !cacheRoomDriven && !cacheZoneDriven,
+                   var cachedLights = lightsByBridge[bridgeID],
+                   let cacheIdx = cachedLights.firstIndex(where: { $0.id == update.id }) {
+                    cachedLights[cacheIdx] = cachedLights[cacheIdx].applying(sseUpdate: update)
+                    lightsByBridge[bridgeID] = cachedLights
+                }
+
                 let isNowOn = update.on?.on ?? true
                 guard isNowOn else { continue }
 

@@ -136,6 +136,67 @@ final class OrchestratorSSETests: XCTestCase {
         XCTAssertEqual(room.dominantColorY ?? -1, 0.32, accuracy: 0.0001)
     }
 
+    // MARK: - SSE-05 per-light cache stays live (RoomDetail seed freshness)
+
+    func testLightSSE_keepsRawLightCacheFresh() throws {
+        let orchestrator = makeOrchestratorSSESUT(isOn: true, brightness: 80)
+        orchestrator.testSeedLightIndex(lightIDToRoomID: ["light-001": "room-001"])
+        orchestrator.testSeedLightCache(
+            bridgeID: "bridge-1",
+            lights: [makeCachedLight(id: "light-001", isOn: false, brightness: 10)]
+        )
+
+        let onJSON = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"light-001","id_v1":null,"type":"light",
+          "on":{"on":true},"dimming":{"brightness":55},
+          "color":{"xy":{"x":0.2,"y":0.21}},"owner":null
+        }],"id":"evt-7","type":"update"}]
+        """
+        orchestrator.testApplySSEEventsAndRebuild(try decodeSSEEvents(onJSON), bridgeID: "bridge-1")
+
+        var cached = try XCTUnwrap(orchestrator.cachedRawLights(for: "bridge-1"))
+        XCTAssertTrue(cached[0].on.on, "the RoomDetail seed must reflect the SSE on event")
+        XCTAssertEqual(cached[0].dimming?.brightness ?? -1, 55, accuracy: 0.1)
+        XCTAssertEqual(cached[0].color?.xy.x ?? -1, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(cached[0].color?.gamut_type, "C",
+                       "capability fields must survive an SSE apply")
+
+        // OFF events refresh the cache too — a truthful seed is the point.
+        let offJSON = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"light-001","id_v1":null,"type":"light",
+          "on":{"on":false},"owner":null
+        }],"id":"evt-8","type":"update"}]
+        """
+        orchestrator.testApplySSEEventsAndRebuild(try decodeSSEEvents(offJSON), bridgeID: "bridge-1")
+
+        cached = try XCTUnwrap(orchestrator.cachedRawLights(for: "bridge-1"))
+        XCTAssertFalse(cached[0].on.on, "an external OFF must not leave a stale-on seed")
+        XCTAssertEqual(cached[0].dimming?.brightness ?? -1, 55, accuracy: 0.1,
+                       "fields absent from the event must carry over unchanged")
+    }
+
+    func testLightSSE_unknownLightLeavesCacheUntouched() throws {
+        let orchestrator = makeOrchestratorSSESUT(isOn: true, brightness: 80)
+        orchestrator.testSeedLightCache(
+            bridgeID: "bridge-1",
+            lights: [makeCachedLight(id: "light-001", isOn: false, brightness: 10)]
+        )
+
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"light-elsewhere","id_v1":null,"type":"light",
+          "on":{"on":true},"owner":null
+        }],"id":"evt-9","type":"update"}]
+        """
+        orchestrator.testApplySSEEventsAndRebuild(try decodeSSEEvents(json), bridgeID: "bridge-1")
+
+        let cached = try XCTUnwrap(orchestrator.cachedRawLights(for: "bridge-1"))
+        XCTAssertEqual(cached.count, 1)
+        XCTAssertFalse(cached[0].on.on)
+    }
+
     // MARK: - Fixtures
 
     private func makeOrchestratorSSECachedRoom(
@@ -165,6 +226,22 @@ final class OrchestratorSSETests: XCTestCase {
             ]
         )
         return orchestrator
+    }
+
+    private func makeCachedLight(
+        id: String,
+        isOn: Bool,
+        brightness: Double
+    ) -> HueLight {
+        HueLight(
+            id: id,
+            metadata: LightMetadata(name: "L-\(id)", archetype: nil),
+            on: OnState(on: isOn),
+            dimming: DimmingState(brightness: brightness),
+            color: LightColor(xy: CIExy(x: 0.5, y: 0.4), gamut_type: "C"),
+            color_temperature: nil,
+            owner: ResourceRef(rid: "device-\(id)", rtype: "device")
+        )
     }
 
     private func decodeSSEEvents(_ json: String) throws -> [SSEEvent] {
