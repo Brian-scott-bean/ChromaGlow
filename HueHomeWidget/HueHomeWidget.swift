@@ -373,6 +373,7 @@ struct SmallWidgetView: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Capsule().fill(amber))
+                    .tapTargetHeight(34)
                 }
                 .buttonStyle(.plain)
                 .padding(.bottom, 4)
@@ -640,6 +641,7 @@ struct LargeRoomRow: View {
                     .foregroundStyle(.white.opacity(0.55))
                     .frame(width: 20, height: 20)
                     .background(Circle().fill(Color.white.opacity(0.08)))
+                    .tapTarget(30)
             }
             .buttonStyle(.plain)
 
@@ -654,6 +656,7 @@ struct LargeRoomRow: View {
                     .foregroundStyle(.white.opacity(0.55))
                     .frame(width: 20, height: 20)
                     .background(Circle().fill(Color.white.opacity(0.08)))
+                    .tapTarget(30)
             }
             .buttonStyle(.plain)
 
@@ -662,6 +665,7 @@ struct LargeRoomRow: View {
                 Image(systemName: room.isOn ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 16))
                     .foregroundStyle(room.isOn ? amber : .white.opacity(0.3))
+                    .tapTarget(30)
             }
             .buttonStyle(.plain)
         }
@@ -685,6 +689,7 @@ struct LargePageBar: View {
                     .foregroundStyle(page > 0 ? amber : .white.opacity(0.2))
                     .frame(width: 30, height: 22)
                     .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.08)))
+                    .tapTarget(width: 44, height: 28)
             }
             .buttonStyle(.plain)
             .disabled(page == 0)
@@ -704,6 +709,7 @@ struct LargePageBar: View {
                     .foregroundStyle(page < count - 1 ? amber : .white.opacity(0.2))
                     .frame(width: 30, height: 22)
                     .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.08)))
+                    .tapTarget(width: 44, height: 28)
             }
             .buttonStyle(.plain)
             .disabled(page >= count - 1)
@@ -740,7 +746,10 @@ struct WidgetPresetStrip: View {
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
                     .background(Capsule().fill(p.color.opacity(0.15)))
+                    // Medium and Large are both near-full vertically; 26 is what
+                    // the tighter of the two (Medium) can spare.
                     .overlay(Capsule().strokeBorder(p.color.opacity(0.3), lineWidth: 0.5))
+                    .tapTargetHeight(26)
                 }
                 .buttonStyle(.plain)
             }
@@ -772,6 +781,7 @@ struct WidgetSceneStrip: View {
                     .padding(.vertical, 4)
                     .background(Capsule().fill(color.opacity(0.15)))
                     .overlay(Capsule().strokeBorder(color.opacity(0.3), lineWidth: 0.5))
+                    .tapTargetHeight(32)
                 }
                 .buttonStyle(.plain)
             }
@@ -801,12 +811,15 @@ struct FocusedSmallWidgetView: View {
                     Image(systemName: room.isOn ? "power.circle.fill" : "power.circle")
                         .font(.system(size: 16))
                         .foregroundStyle(room.isOn ? amber : .white.opacity(0.3))
+                        .tapTarget(30)
                 }
                 .buttonStyle(.plain)
             }
 
             Spacer()
 
+            // systemSmall is 130pt wide inside its padding: a 34pt readout plus
+            // two buttons caps each button near 30pt.
             HStack(alignment: .lastTextBaseline, spacing: 6) {
                 Text(room.isOn ? "\(Int(room.brightness))%" : "Off")
                     .font(.system(size: 34, weight: .bold, design: .rounded))
@@ -818,6 +831,7 @@ struct FocusedSmallWidgetView: View {
                         .foregroundStyle(.white.opacity(0.6))
                         .frame(width: 22, height: 22)
                         .background(Circle().fill(Color.white.opacity(0.08)))
+                        .tapTarget(30)
                 }
                 .buttonStyle(.plain)
                 Button(intent: AdjustBrightnessIntent(roomID: room.id, delta: 20)) {
@@ -826,6 +840,7 @@ struct FocusedSmallWidgetView: View {
                         .foregroundStyle(.white.opacity(0.6))
                         .frame(width: 22, height: 22)
                         .background(Circle().fill(Color.white.opacity(0.08)))
+                        .tapTarget(30)
                 }
                 .buttonStyle(.plain)
             }
@@ -881,6 +896,7 @@ struct FocusedMediumWidgetView: View {
                     Image(systemName: room.isOn ? "power.circle.fill" : "power.circle")
                         .font(.system(size: 22))
                         .foregroundStyle(room.isOn ? amber : .white.opacity(0.3))
+                        .tapTarget(44)
                 }
                 .buttonStyle(.plain)
             }
@@ -893,6 +909,7 @@ struct FocusedMediumWidgetView: View {
                         .foregroundStyle(.white.opacity(0.7))
                         .frame(width: 26, height: 26)
                         .background(Circle().fill(Color.white.opacity(0.10)))
+                        .tapTarget(40)
                 }
                 .buttonStyle(.plain)
 
@@ -919,6 +936,7 @@ struct FocusedMediumWidgetView: View {
                         .foregroundStyle(.white.opacity(0.7))
                         .frame(width: 26, height: 26)
                         .background(Circle().fill(Color.white.opacity(0.10)))
+                        .tapTarget(40)
                 }
                 .buttonStyle(.plain)
             }
@@ -955,6 +973,32 @@ struct HueHomeWidget: Widget {
             .systemSmall, .systemMedium, .systemLarge,
             .accessoryCircular, .accessoryRectangular, .accessoryInline
         ])
+    }
+}
+
+// MARK: - Tap targets
+//
+// Apple's minimum is 44×44pt. A widget's canvas is fixed, so that isn't always
+// reachable: the Large family stacks 6 rows + a page bar + a preset strip into
+// ~326pt, and Focused-Small must fit a 34pt percentage readout plus two buttons
+// across 130pt. These helpers grow the HIT area around unchanged artwork; each
+// call site passes the largest size its family can afford. Raise LargeRoomRow
+// past ~30pt only after lowering `HueWidgetEntry.largePageSize`.
+
+extension View {
+    /// Square hit area of `side`×`side`, centered on the existing glyph.
+    func tapTarget(_ side: CGFloat) -> some View {
+        frame(width: side, height: side).contentShape(Rectangle())
+    }
+
+    /// Rectangular hit area — for chevrons and other non-square controls.
+    func tapTarget(width: CGFloat, height: CGFloat) -> some View {
+        frame(width: width, height: height).contentShape(Rectangle())
+    }
+
+    /// Pill/chip buttons: grow the vertical hit area, let width stay intrinsic.
+    func tapTargetHeight(_ height: CGFloat) -> some View {
+        frame(minHeight: height).contentShape(Rectangle())
     }
 }
 
