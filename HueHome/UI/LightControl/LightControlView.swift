@@ -213,10 +213,71 @@ struct LightControlView: View {
                     // ── Quick color presets ─────────────────────
                     Divider().background(Color.white.opacity(0.08))
                     colorSwatchRow
+
+                    // ── My Colors (saved palette) ───────────────
+                    Divider().background(Color.white.opacity(0.08))
+                    myColorsRow
                         .padding(.bottom, 12)
                 }
             }
         }
+    }
+
+    /// Saved palette: ＋ captures the light's current look (color + brightness);
+    /// tapping a swatch applies it with the light's capability fallback.
+    private var myColorsRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("MY COLORS")
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(1.0)
+                .foregroundStyle(.white.opacity(0.4))
+                .padding(.leading, 16)
+            SavedColorStrip(
+                onSave: {
+                    let (x, y) = HueColorUtils.xyFrom(
+                        hue: liveHue, saturation: liveSaturation, brightness: 1
+                    )
+                    SavedColorStore.shared.add(SavedColor(
+                        x: x, y: y, brightness: displayBrightness
+                    ))
+                    HapticManager.shared.success()
+                },
+                onTapSwatch: { applySavedColor($0) }
+            )
+        }
+    }
+
+    private func applySavedColor(_ saved: SavedColor) {
+        switch saved.application(
+            supportsColor: light.supportsColor,
+            supportsColorTemp: light.supportsColorTemp,
+            mirekMin: light.mirekMin,
+            mirekMax: light.mirekMax
+        ) {
+        case .color(let x, let y, let brightness):
+            let (h, s, _) = HueColorUtils.hsb(fromX: x, y: y, brightness: brightness)
+            liveHue = h
+            liveSaturation = s
+            selectedSwatch = nil
+            light.colorX = x
+            light.colorY = y
+            onColor(x, y)
+            commitSavedBrightness(brightness)
+        case .colorTemp(let mirek, let brightness):
+            liveMirek = mirek
+            light.colorTempMirek = mirek
+            onColorTemp(mirek)
+            commitSavedBrightness(brightness)
+        case .brightnessOnly(let brightness):
+            commitSavedBrightness(brightness)
+        }
+        HapticManager.shared.heavy()
+    }
+
+    private func commitSavedBrightness(_ brightness: Double) {
+        displayBrightness = brightness
+        light.brightness = brightness
+        onBrightness(brightness)
     }
 
     private var colorSwatchRow: some View {
@@ -267,17 +328,43 @@ struct LightControlView: View {
             let kelvin = HueColorUtils.kelvin(from: liveMirek)
             sectionLabel("Color Temperature · \(kelvin)K")
             GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
-                ColorTempSlider(
-                    currentMirek: liveMirek,
-                    mirekMin: light.mirekMin,
-                    mirekMax: light.mirekMax
-                ) { mirek in
-                    liveMirek = mirek                // update label once on release
-                    light.colorTempMirek = mirek     // optimistic model update
-                    HapticManager.shared.heavy()
-                    onColorTemp(mirek)
+                VStack(spacing: 12) {
+                    ColorTempSlider(
+                        currentMirek: liveMirek,
+                        mirekMin: light.mirekMin,
+                        mirekMax: light.mirekMax
+                    ) { mirek in
+                        liveMirek = mirek                // update label once on release
+                        light.colorTempMirek = mirek     // optimistic model update
+                        HapticManager.shared.heavy()
+                        onColorTemp(mirek)
+                    }
+                    .padding(.top, 16)
+
+                    // CT-only lights have no color section — give them their
+                    // own My Colors row so warm/cool whites are saveable too.
+                    if !light.supportsColor {
+                        Divider().background(Color.white.opacity(0.08))
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("MY COLORS")
+                                .font(.system(size: 9, weight: .semibold))
+                                .tracking(1.0)
+                                .foregroundStyle(.white.opacity(0.4))
+                                .padding(.leading, 16)
+                            SavedColorStrip(
+                                onSave: {
+                                    SavedColorStore.shared.add(SavedColor(
+                                        mirek: liveMirek, brightness: displayBrightness
+                                    ))
+                                    HapticManager.shared.success()
+                                },
+                                onTapSwatch: { applySavedColor($0) }
+                            )
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
-                .padding(.vertical, 16)
+                .padding(.bottom, 16)
             }
         }
     }

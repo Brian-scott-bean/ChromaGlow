@@ -43,6 +43,10 @@ struct RoomDetailView: View {
     @State private var showRoomMenu  = false   // drives the ··· confirmationDialog
     @State private var showEditSheet = false   // drives the EditRoomSheet
 
+    /// Saved swatch armed for tap-to-apply — non-nil turns light cards into
+    /// apply targets (My Colors strip).
+    @State private var armedColor: SavedColor? = nil
+
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.dismiss)               private var dismiss
 
@@ -300,6 +304,12 @@ struct RoomDetailView: View {
                         .padding(.bottom, 24)
                 }
 
+                // ── MY COLORS section (saved palette → tap a light to apply) ──
+                if !SavedColorStore.shared.colors.isEmpty {
+                    myColorsSection
+                        .padding(.bottom, 24)
+                }
+
                 // ── LIGHTS section (horizontal scroll strip) ──
                 lightsSection
                     .padding(.bottom, 24)
@@ -335,6 +345,71 @@ struct RoomDetailView: View {
             await vm.loadAutomations()
         }
         .scrollIndicators(.hidden)
+    }
+
+    // ── My Colors Section (saved palette) ─────────
+
+    /// Tap a swatch to ARM it, then tap any light card to apply — the same
+    /// select-then-paint model as the scene builder. Tapping the armed
+    /// swatch again disarms.
+    private var myColorsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "paintpalette.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color(red: 0.35, green: 0.78, blue: 0.98))
+                    Text("MY COLORS")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+                Spacer()
+                if armedColor != nil {
+                    Text("Tap a light to apply")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
+                        .transition(.opacity)
+                }
+            }
+            .padding(.horizontal, 20)
+
+            SavedColorStrip(
+                armedColorID: armedColor?.id,
+                onTapSwatch: { saved in
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        armedColor = (armedColor?.id == saved.id) ? nil : saved
+                    }
+                    HapticManager.shared.light()
+                }
+            )
+            .padding(.horizontal, 4)
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: armedColor)
+    }
+
+    /// Send an armed swatch to one light, honoring its capabilities
+    /// (color → xy; CT-only → mirek; dimmable → brightness). Brightness
+    /// rides along so the saved look reproduces fully.
+    private func applyArmedColor(_ saved: SavedColor, to light: LightDisplayItem) {
+        switch saved.application(
+            supportsColor: light.supportsColor,
+            supportsColorTemp: light.supportsColorTemp,
+            mirekMin: light.mirekMin,
+            mirekMax: light.mirekMax
+        ) {
+        case .color(let x, let y, let brightness):
+            vm.setColor(x: x, y: y, for: light)
+            vm.setBrightness(brightness, for: light)
+        case .colorTemp(let mirek, let brightness):
+            vm.setColorTemp(mirek: mirek, for: light)
+            vm.setBrightness(brightness, for: light)
+        case .brightnessOnly(let brightness):
+            vm.setBrightness(brightness, for: light)
+        }
+        HapticManager.shared.success()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            armedColor = nil
+        }
     }
 
     // ── Lights Section (horizontal strip) ─────────
@@ -377,6 +452,22 @@ struct RoomDetailView: View {
                             onToggleSelect: { vm.toggleSelection(id: light.id) },
                             onLongPress:    { vm.enterSelectMode(preselecting: light.id) }
                         )
+                        // Armed-swatch apply target: while a My Colors swatch
+                        // is armed, a tap anywhere on the card applies it
+                        // (intercepts the card's own controls until disarmed).
+                        .overlay {
+                            if let armed = armedColor {
+                                RoundedRectangle(cornerRadius: 18)
+                                    .stroke(armed.displayColor.opacity(0.85), lineWidth: 2)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 18)
+                                            .fill(armed.displayColor.opacity(0.06))
+                                    )
+                                    .contentShape(RoundedRectangle(cornerRadius: 18))
+                                    .onTapGesture { applyArmedColor(armed, to: light) }
+                                    .transition(.opacity)
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 20)

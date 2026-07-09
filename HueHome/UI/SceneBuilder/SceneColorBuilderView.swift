@@ -104,6 +104,7 @@ struct SceneColorBuilderView: View {
 
                         if selectedSupportsColor {
                             colorControls
+                            myColorsStrip
                         }
 
                         if selectedHasAmbiance {
@@ -430,6 +431,48 @@ struct SceneColorBuilderView: View {
         .onChange(of: currentHue) { _, newHue in
             updateLightChipsLive(hue: newHue, saturation: currentSaturation, brightness: currentBrightness)
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // MARK: - My Colors (saved palette)
+    // ══════════════════════════════════════════════════════════════
+
+    /// Saved palette: ＋ captures the pad's current color, a swatch tap
+    /// paints the selected lights through the existing preview pipeline.
+    private var myColorsStrip: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("MY COLORS")
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(1.0)
+                .foregroundStyle(.white.opacity(0.4))
+                .padding(.leading, 4)
+            SavedColorStrip(
+                onSave: {
+                    let (x, y) = HueColorUtils.xyFrom(
+                        hue: currentHue, saturation: currentSaturation, brightness: 1
+                    )
+                    SavedColorStore.shared.add(SavedColor(
+                        x: x, y: y, brightness: max(1, currentBrightness * 100)
+                    ))
+                    HapticManager.shared.success()
+                },
+                onTapSwatch: { saved in
+                    if let x = saved.x, let y = saved.y {
+                        let (h, s, _) = HueColorUtils.hsb(fromX: x, y: y,
+                                                          brightness: saved.brightness)
+                        currentHue = h
+                        currentSaturation = s
+                        currentBrightness = max(0.1, saved.brightness / 100)
+                        applyColorToSelected(hue: h, saturation: s,
+                                             brightness: currentBrightness)
+                    } else if let mirek = saved.mirek {
+                        applyColorTempToSelected(mirek: mirek)
+                    }
+                    HapticManager.shared.medium()
+                }
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // ══════════════════════════════════════════════════════════════
