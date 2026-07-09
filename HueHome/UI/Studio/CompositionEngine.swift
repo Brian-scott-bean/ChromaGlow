@@ -7,57 +7,67 @@
 //
 // Thread safety: layer configs are value types read from a reference-type
 // wrapper (CompositionParamBox) each frame — same pattern as StudioParamBox.
+// The box is @Observable so the Composer editor panel updates live when a
+// layer config changes; runtime fields are @ObservationIgnored (see below).
 
 import SwiftUI
+import Observation
 
 // MARK: - CompositionParamBox
 
 /// Mutable reference container for live composition params.
 /// The render loop reads from this each frame; the UI writes to it on slider drag.
 /// Same pattern as `StudioParamBox` in UnifiedOrchestrator.
+///
+/// Only the four layer configs are observed — they're what the editor panel
+/// renders. Every runtime/plumbing field below is @ObservationIgnored, and
+/// that annotation is LOAD-BEARING: render() mutates those fields at 25fps on
+/// the main actor, so observing them would invalidate the Studio tab at frame
+/// rate (breaking the \.isTabActive animation-pause contract).
+@Observable
 final class CompositionParamBox: @unchecked Sendable {
     var palette: PaletteConfig
     var motion: MotionConfig
     var envelope: EnvelopeConfig
     var reaction: ReactionConfig
-    var isColorPadInteracting: Bool = false
+    @ObservationIgnored var isColorPadInteracting: Bool = false
     /// UI-driven short burst window to bypass REST low-power skipping
     /// so direct user edits flush to the bridge immediately.
-    var forceRESTBurstUntil: TimeInterval = 0
+    @ObservationIgnored var forceRESTBurstUntil: TimeInterval = 0
 
     // ── Spatial Motion ────────────────────────────────────────
     /// Pre-computed normalized spatial positions (0–1) for each channel.
     /// Ordered to match channelIDs in render(). Empty = use index fallback.
-    var spatialPositions: [Double] = []
+    @ObservationIgnored var spatialPositions: [Double] = []
     /// Target positions for smooth lerp transitions when angle changes.
-    var targetSpatialPositions: [Double] = []
+    @ObservationIgnored var targetSpatialPositions: [Double] = []
     /// Progress 0→1 for lerp from spatialPositions to targetSpatialPositions.
     /// 1.0 = transition complete, use targetSpatialPositions directly.
-    var spatialLerpProgress: Double = 1.0
+    @ObservationIgnored var spatialLerpProgress: Double = 1.0
     /// Timestamp of last render frame — used to advance lerp progress.
-    var lastRenderTime: Double = 0
+    @ObservationIgnored var lastRenderTime: Double = 0
 
     /// Normalized distance from the room centroid per channel (pulseCenter).
     /// Empty = derive from the linear position by center-folding.
-    var radialPositions: [Double] = []
+    @ObservationIgnored var radialPositions: [Double] = []
     /// Normalized angle around the centroid per channel (spiral).
     /// Empty = use the linear position.
-    var angularPositions: [Double] = []
+    @ObservationIgnored var angularPositions: [Double] = []
 
     // ── Reaction runtime state (Phase 2) ──────────────────────
     // Mutated by render() each frame; MainActor-confined by the same
     // convention as the rest of this box (audit I-10).
     /// Speed-warped motion time — accumulates dt × speed multiplier so the
     /// `.speed` reaction target changes tempo without phase jumps.
-    var warpedMotionTime: Double = 0
+    @ObservationIgnored var warpedMotionTime: Double = 0
     /// Beat-advanced palette offset (`.color` target, quantized triggers).
-    var reactionColorPhase: Double = 0
+    @ObservationIgnored var reactionColorPhase: Double = 0
     /// Last quantized trigger index consumed (Int.min = not yet anchored).
-    var lastTriggerBeatIndex: Int = .min
+    @ObservationIgnored var lastTriggerBeatIndex: Int = .min
     /// One-pole smoothed reaction drive — finally implements `smoothing`.
-    var smoothedReactionLevel: Float = 0
+    @ObservationIgnored var smoothedReactionLevel: Float = 0
     /// Last onset timestamp consumed by the `.color` advance (dedup at 25 fps).
-    var lastOnsetSeen: Double = 0
+    @ObservationIgnored var lastOnsetSeen: Double = 0
 
     init(preset: CompositionPreset) {
         self.palette = preset.palette

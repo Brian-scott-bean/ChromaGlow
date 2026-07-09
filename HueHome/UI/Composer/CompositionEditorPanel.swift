@@ -1067,7 +1067,9 @@ struct CompositionEditorPanel: View {
     // ──────────────────────────────────────────────
 
     /// Recompute spatial positions when the angle changes.
-    /// Called from Binding setters and chip taps (NOT onChange — CompositionParamBox is not @Observable).
+    /// Called from Binding setters and chip taps so position recompute happens
+    /// exactly once per user edit (CompositionParamBox is @Observable, but an
+    /// onChange would also fire on programmatic writes like preset loads).
     private func recomputeSpatialPositions(angle: Double) {
         guard let config = orchestrator.activeEntertainmentConfig(for: vm.selectedRoom),
               let box = vm.activeCompositionBox else { return }

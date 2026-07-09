@@ -294,4 +294,51 @@ final class CompositionReactionTests: XCTestCase {
         let diff = abs(g.angular[1] - g.angular[3])
         XCTAssertEqual(min(diff, 1 - diff), 0.5, accuracy: 0.05)
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Observation contract (@Observable box)
+    // ──────────────────────────────────────────────
+    // The editor panel depends on layer-config mutations being observable;
+    // the \.isTabActive perf contract depends on render()'s 25fps runtime
+    // writes staying @ObservationIgnored. Both directions are locked in here.
+
+    func testLayerConfigMutationFiresObservation() {
+        let box = makeBox()
+        var fired = false
+        withObservationTracking {
+            _ = box.motion.pattern
+            _ = box.reaction.source
+            _ = box.envelope.shape
+            _ = box.palette.mode
+        } onChange: {
+            fired = true
+        }
+        box.motion.pattern = .chase
+        XCTAssertTrue(fired, "editing a layer config must invalidate the composer panel")
+    }
+
+    func testRenderFiresNoObservationOnTrackedBox() {
+        var loud = AudioFeatures.silent
+        loud.level = 1.0
+        loud.timestamp = 1
+
+        let box = makeBox(reaction: ReactionConfig(source: .micAmplitude, smoothing: 0))
+        var fired = false
+        withObservationTracking {
+            _ = box.motion.pattern
+            _ = box.reaction.source
+            _ = box.envelope.shape
+            _ = box.palette.mode
+        } onChange: {
+            fired = true
+        }
+        for step in 1...10 {
+            _ = CompositionEngine.render(
+                time: Double(step) * 0.04, channelIDs: channels, params: box, features: loud
+            )
+        }
+        XCTAssertFalse(fired,
+                       "render()'s per-frame runtime writes must stay @ObservationIgnored — " +
+                       "observing them would re-render the Studio tab at 25fps")
+    }
 }
