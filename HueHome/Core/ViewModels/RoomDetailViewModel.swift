@@ -659,6 +659,9 @@ final class RoomDetailViewModel {
             return
         }
 
+        // Per-room SceneDisplayItem.id IS the raw bridge scene UUID — the
+        // same identity the Scenes tab's usage-based sorts key on.
+        SceneUsageStore.shared.recordActivation(bridgeSceneID: item.id)
         activatingSceneID = item.id
         Task {
             do {

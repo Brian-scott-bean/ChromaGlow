@@ -3699,6 +3699,8 @@ final class UnifiedOrchestrator {
         globalScenes = updated   // full assignment — reliably triggers @Observable
 
         guard let client = clients[scene.bridgeID] else { return }
+        // After the client guard so demo mode never records usage.
+        SceneUsageStore.shared.recordActivation(bridgeSceneID: scene.bridgeSceneID)
         Task {
             // Pass speed only for dynamic scenes; static scenes ignore the dynamics block.
             let speed: Double? = scene.isDynamic ? scene.speed : nil

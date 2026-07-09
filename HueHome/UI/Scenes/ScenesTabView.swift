@@ -46,8 +46,7 @@ struct ScenesTabView: View {
         SceneGrouping.SortMode(rawValue: sortModeRaw) ?? .byRoom
     }
 
-    /// Recent/Most Used join this list when SceneUsageStore lands (Phase 2).
-    private let availableSortModes: [SceneGrouping.SortMode] = [.byRoom, .alphabetical]
+    private let availableSortModes = SceneGrouping.SortMode.allCases
 
     private func isFavorite(_ scene: GlobalSceneItem) -> Bool {
         FavoriteSceneCSV.contains(favoriteSceneIDsRaw, id: scene.bridgeSceneID)
@@ -311,8 +310,14 @@ struct ScenesTabView: View {
     // ── Flat modes + search results ───────────────────────
 
     private var flatGrid: some View {
-        sceneGrid(
-            SceneGrouping.flatSorted(scenes: filteredScenes, mode: sortMode),
+        let usage = SceneUsageStore.shared
+        return sceneGrid(
+            SceneGrouping.flatSorted(
+                scenes: filteredScenes,
+                mode: sortMode,
+                lastUsed: { usage.lastUsed(bridgeSceneID: $0.bridgeSceneID) },
+                useCount: { usage.useCount(bridgeSceneID: $0.bridgeSceneID) }
+            ),
             showsRoomLabel: true
         )
         .padding(.horizontal, 20)
