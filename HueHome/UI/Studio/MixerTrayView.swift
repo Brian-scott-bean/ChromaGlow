@@ -325,10 +325,8 @@ struct MixerTrayView: View {
                 // ── Param sheet (inside if-let for unwrapped card) ──
                 Color.clear.frame(height: 0)
                     .sheet(isPresented: $showParamSheet) {
+                        // StageSheetScaffold owns detents / drag indicator / background interaction.
                         StudioParamSheet(card: card, vm: vm)
-                            .presentationDetents([.medium, .large])
-                            .presentationDragIndicator(.visible)
-                            .presentationBackgroundInteraction(.enabled)
                     }
             }
         }

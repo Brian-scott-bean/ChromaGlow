@@ -75,6 +75,8 @@ struct StudioParam: Identifiable {
     let kind: StudioParamKind
     let defaultValue: Double
     let tier: ParamTier
+    /// Optional human-readable value formatter (Hz, Kelvin, %). Nil → plain Int.
+    var format: ((Double) -> String)? = nil
     var displayValue: String { "\(Int(defaultValue))" }
 
     enum ParamTier: String {
@@ -88,6 +90,9 @@ enum StudioParamKind {
     case slider(min: Double, max: Double)
     case colorPicker
     case toggle
+    /// One-tap chip choices (label + stored value) for params whose value
+    /// space is really a few meaningful presets (e.g. transition smoothness).
+    case segmented(options: [(label: String, value: Double)])
 }
 
 enum StudioStrategy: Equatable {
