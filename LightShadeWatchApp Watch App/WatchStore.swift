@@ -239,23 +239,63 @@ final class WatchStore: NSObject, ObservableObject {
         saveToLocalCache()
     }
 
-    // MARK: - Set Brightness
+    // MARK: - Set Brightness (latest-wins mailbox)
 
-    func setBrightness(_ brightness: Double, for room: WatchRoom) async {
-        guard let glID = room.groupedLightId,
+    /// Newest requested brightness per grouped_light, waiting to be written.
+    private var pendingBrightness: [String: (value: Double, ip: String, token: String)] = [:]
+    /// At most one in-flight writer per grouped_light. It always picks up the
+    /// newest pending value, so intermediate steps are dropped rather than queued.
+    private var brightnessWriters: [String: Task<Void, Never>] = [:]
+
+    /// Minimum spacing between two brightness PUTs for the same group. The Hue
+    /// bridge is rate-limited and both the Digital Crown and a held ⊖/⊕ press
+    /// emit a value per step — without coalescing, one sweep is ~99 PUTs.
+    private static let brightnessWriteInterval: Duration = .milliseconds(250)
+
+    /// Records the new brightness locally (instant UI) and hands the value to the
+    /// coalescing writer. Deliberately synchronous: callers must not await a PUT.
+    func setBrightness(_ brightness: Double, for room: WatchRoom) {
+        guard let glID  = room.groupedLightId,
               let creds = credentials(for: room.bridgeID) else { return }
-        if let idx = rooms.firstIndex(where: { $0.id == room.id }) {
+        let clamped = min(100, max(1, brightness.rounded()))
+
+        applyLocalBrightness(clamped, groupID: room.id)
+        pendingBrightness[glID] = (clamped, creds.ip, creds.token)
+        startBrightnessWriter(for: glID)
+    }
+
+    /// Optimistic @Published update only — no persistence, no timeline reload.
+    /// Those are expensive and happen once, when the writer drains.
+    private func applyLocalBrightness(_ brightness: Double, groupID: String) {
+        if let idx = rooms.firstIndex(where: { $0.id == groupID }) {
             rooms[idx].brightness = brightness; rooms[idx].isOn = brightness > 0
         }
-        if let idx = zones.firstIndex(where: { $0.id == room.id }) {
+        if let idx = zones.firstIndex(where: { $0.id == groupID }) {
             zones[idx].brightness = brightness; zones[idx].isOn = brightness > 0
         }
-        let body: [String: Any] = [
-            "on":      ["on": brightness > 0],
-            "dimming": ["brightness": brightness]
-        ]
-        await patch(id: glID, body: body, ip: creds.ip, token: creds.token)
-        saveToLocalCache()
+    }
+
+    private func startBrightnessWriter(for glID: String) {
+        // A live writer will observe the value we just stashed; don't spawn a second.
+        guard brightnessWriters[glID] == nil else { return }
+
+        brightnessWriters[glID] = Task { [weak self] in
+            // `while let` drains the mailbox: each pass takes the NEWEST value and
+            // discards everything that arrived while the previous PUT was in flight.
+            while let next = self?.pendingBrightness.removeValue(forKey: glID) {
+                await self?.patch(
+                    id: glID,
+                    body: ["on":      ["on": next.value > 0],
+                           "dimming": ["brightness": next.value]],
+                    ip: next.ip, token: next.token
+                )
+                try? await Task.sleep(for: Self.brightnessWriteInterval)
+            }
+            // No await between the drained check and this clear, and both run on
+            // the MainActor — so a value cannot slip in and be stranded here.
+            self?.brightnessWriters[glID] = nil
+            self?.saveToLocalCache()
+        }
     }
 
     // MARK: - Apply Preset (all rooms)

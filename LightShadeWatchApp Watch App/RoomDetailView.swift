@@ -76,7 +76,7 @@ struct RoomDetailView: View {
                                               isHapticFeedbackEnabled: true)
                         #endif
                         .onChange(of: brightness) { _, new in
-                            Task { await store.setBrightness(new, for: currentRoom) }
+                            store.setBrightness(new, for: currentRoom)
                         }
                     }
                     .padding(.horizontal, 4)
