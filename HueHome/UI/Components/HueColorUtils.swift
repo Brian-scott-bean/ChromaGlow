@@ -133,6 +133,23 @@ enum HueColorUtils {
     /// Convert mirek to Kelvin.
     static func kelvin(from mirek: Int) -> Int { 1_000_000 / mirek }
 
+    /// Approximate the correlated color temperature of a CIE xy point as
+    /// mirek (McCamy 1992). Used when a color scene action lands on a
+    /// CT-only light during scene copy — a warm white maps to a believable
+    /// warm CT instead of being dropped. Result is clamped to the given
+    /// range (defaults to the full Hue span 153–500).
+    static func mirek(fromX x: Double, y: Double, min: Int = 153, max: Int = 500) -> Int {
+        // McCamy with n = (x - 0.3320) / (0.1858 - y) — the sign-flipped form,
+        // so all coefficients are positive. Guard the singularity at y = 0.1858.
+        let denom = 0.1858 - y
+        guard abs(denom) > 0.0001 else { return Swift.min(Swift.max(300, min), max) }
+        let n = (x - 0.3320) / denom
+        let cct = 449.0 * pow(n, 3) + 3525.0 * pow(n, 2) + 6823.3 * n + 5520.33
+        guard cct.isFinite, cct > 0 else { return Swift.min(Swift.max(300, min), max) }
+        let raw = Int((1_000_000.0 / cct).rounded())
+        return Swift.min(Swift.max(raw, min), max)
+    }
+
     /// Convert mirek to a 0–1 slider value given the valid mirek range.
     /// 0 = warmest (max mirek), 1 = coolest (min mirek).
     static func sliderValue(mirek: Int, min: Int, max: Int) -> Double {

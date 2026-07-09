@@ -3752,6 +3752,29 @@ final class UnifiedOrchestrator {
         try? await client.renameScene(id: scene.bridgeSceneID, name: newName)
     }
 
+    /// Fetch the given room/zone's lights from its bridge — the child-ref
+    /// filter shared by scene capture and scene copy.
+    func roomLights(for room: RoomDisplayItem) async throws -> [HueLight] {
+        guard let bridgeID = room.bridgeID,
+              let client   = clients[bridgeID] else {
+            throw HueAPIError.missingCredentials
+        }
+        let allLights = try await client.fetchLights()
+
+        // Filter to lights belonging to this room using its child resource refs
+        let childIDs  = Set(room.childResourceRefs.map { $0.rid })
+        let usesDirect = room.childResourceRefs.first?.rtype == "light"
+        if usesDirect {
+            // Zones and newer-firmware rooms reference lights directly
+            return allLights.filter { childIDs.contains($0.id) }
+        }
+        // Older-firmware rooms reference devices — match via light.owner.rid
+        return allLights.filter { light in
+            guard let ownerRID = light.owner?.rid else { return false }
+            return childIDs.contains(ownerRID)
+        }
+    }
+
     /// Creates a new scene by snapshotting the current light states in the given room.
     /// Fetches all lights for the bridge, filters to this room's lights, and POSTs a scene.
     func createSceneFromRoom(name: String, room: RoomDisplayItem) async throws {
@@ -3759,33 +3782,72 @@ final class UnifiedOrchestrator {
               let client   = clients[bridgeID] else {
             throw HueAPIError.missingCredentials
         }
-        // Fetch all lights from this bridge
-        let allLights = try await client.fetchLights()
-
-        // Filter to lights belonging to this room using its child resource refs
-        let childIDs  = Set(room.childResourceRefs.map { $0.rid })
-        let usesDirect = room.childResourceRefs.first?.rtype == "light"
-        let roomLights: [HueLight]
-        if usesDirect {
-            // Zones and newer-firmware rooms reference lights directly
-            roomLights = allLights.filter { childIDs.contains($0.id) }
-        } else {
-            // Older-firmware rooms reference devices — match via light.owner.rid
-            roomLights = allLights.filter { light in
-                guard let ownerRID = light.owner?.rid else { return false }
-                return childIDs.contains(ownerRID)
-            }
-        }
+        let sceneLights = try await roomLights(for: room)
 
         let req = CreateSceneRequest.fromHueLights(
             name:       name,
             groupID:    room.id,
             groupRtype: room.kind == .zone ? "zone" : "room",
-            lights:     roomLights
+            lights:     sceneLights
         )
         try await client.createScene(req)
         // Refresh the scene list so the new scene appears immediately
         await loadAllScenes()
+    }
+
+    /// Fetch a scene's stored actions for the copy sheet's preview.
+    func fetchSceneDetail(_ scene: GlobalSceneItem) async throws -> HueSceneDetail {
+        guard let client = clients[scene.bridgeID] else {
+            throw HueAPIError.missingCredentials
+        }
+        return try await client.fetchSceneDetail(id: scene.bridgeSceneID)
+    }
+
+    /// Copy (or move) a scene to another room/zone. Hue has no move API —
+    /// this remaps the source actions onto the target group's lights via
+    /// SceneCopyEngine, POSTs a NEW scene on the target's bridge (cross-
+    /// bridge copies fall out naturally: the request is built fresh against
+    /// target rids), then optionally deletes the original.
+    /// Returns the created scene's bridge UUID so the caller can offer undo.
+    @discardableResult
+    func copyScene(
+        detail: HueSceneDetail,
+        source: GlobalSceneItem,
+        to targetRoom: RoomDisplayItem,
+        name: String,
+        deleteOriginal: Bool
+    ) async throws -> String {
+        guard !isDemoMode else { throw HueAPIError.missingCredentials }
+        guard let targetBridgeID = targetRoom.bridgeID,
+              let targetClient   = clients[targetBridgeID] else {
+            throw HueAPIError.missingCredentials
+        }
+
+        let targetLights = try await roomLights(for: targetRoom)
+        let remapped = SceneCopyEngine.remap(detail: detail, targetLights: targetLights)
+        let request = SceneCopyEngine.request(
+            name: name,
+            targetGroupID: targetRoom.id,
+            targetRtype: targetRoom.kind == .zone ? "zone" : "room",
+            remapped: remapped,
+            detail: detail
+        )
+        let newSceneID = try await targetClient.createSceneReturningID(request)
+
+        // Studio provenance follows the copy (same look, new identity).
+        if SceneProvenanceStore.shared.isStudioScene(key: source.id) {
+            SceneProvenanceStore.shared.markStudioExported(
+                bridgeID: targetBridgeID, sceneID: newSceneID
+            )
+        }
+
+        if deleteOriginal, let sourceClient = clients[source.bridgeID] {
+            try? await sourceClient.deleteScene(id: source.bridgeSceneID)
+            SceneProvenanceStore.shared.remove(key: source.id)
+        }
+
+        await loadAllScenes()
+        return newSceneID
     }
 
     /// Update an existing scene's name and per-light actions.

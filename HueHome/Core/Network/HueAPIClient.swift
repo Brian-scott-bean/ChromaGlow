@@ -122,6 +122,19 @@ class HueAPIClient: @unchecked Sendable {
         return try decode(HueV2Response<HueScene>.self, from: data).data
     }
 
+    /// Fetch one scene's FULL resource, including the stored per-light
+    /// actions[] the list fetch deliberately never decodes (scene copy/move
+    /// needs them; scene listing must never depend on them decoding).
+    func fetchSceneDetail(id: String) async throws -> HueSceneDetail {
+        let (ip, token) = try credentials()
+        let data = try await get(path: "/clip/v2/resource/scene/\(id)", ip: ip, token: token)
+        logRaw(data, label: "GET /scene/\(id)")
+        guard let detail = try decode(HueV2Response<HueSceneDetail>.self, from: data).data.first else {
+            throw HueAPIError.decodingFailed("Scene \(id) missing from detail response")
+        }
+        return detail
+    }
+
     /// Activate a scene by its V2 resource UUID.
     /// Activate a scene on the Bridge.
     ///

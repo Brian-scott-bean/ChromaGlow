@@ -32,6 +32,17 @@ struct ScenesTabView: View {
     @State private var showCreateScene = false
     @State private var showBuildScene  = false
 
+    // Scene copy/move (CopySceneSheet + undo toast)
+    private struct CopySheetContext: Identifiable {
+        let id = UUID()
+        let scene: GlobalSceneItem
+        let mode: CopySceneSheet.Mode
+        var preselectedTargetID: String? = nil
+    }
+    @State private var copySheetContext: CopySheetContext? = nil
+    @State private var copyUndo: SceneCopyUndo? = nil
+    @State private var copyUndoDismissTask: Task<Void, Never>? = nil
+
     /// Persisted sort/group mode (SceneGrouping.SortMode raw value).
     @AppStorage("castchroma.sceneSortMode") private var sortModeRaw =
         SceneGrouping.SortMode.byRoom.rawValue
@@ -138,6 +149,29 @@ struct ScenesTabView: View {
         .sheet(isPresented: $showBuildScene) {
             SceneBuilderLauncherView()
         }
+        .sheet(item: $copySheetContext) { ctx in
+            CopySceneSheet(
+                scene: ctx.scene,
+                mode: ctx.mode,
+                preselectedTargetID: ctx.preselectedTargetID
+            ) { undo in
+                showCopyUndo(undo)
+            }
+        }
+        .overlay(alignment: .top) {
+            if let undo = copyUndo {
+                HueActionToast(
+                    message: "\(undo.mode == .move ? "Moved" : "Copied") to \(undo.targetRoomName)",
+                    actionTitle: "Undo"
+                ) {
+                    performCopyUndo(undo)
+                }
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(10)
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: copyUndo == nil)
         .sheet(item: $sceneToRename) { scene in
             RenameSceneSheet(scene: scene, initialName: scene.name) { newName in
                 Task { await orchestrator.renameGlobalScene(scene, to: newName) }
@@ -368,6 +402,18 @@ struct ScenesTabView: View {
             } label: {
                 Label("Rename", systemImage: "pencil")
             }
+            if !orchestrator.isDemoMode {
+                Button {
+                    copySheetContext = CopySheetContext(scene: scene, mode: .copy)
+                } label: {
+                    Label("Copy to Room…", systemImage: "doc.on.doc")
+                }
+                Button {
+                    copySheetContext = CopySheetContext(scene: scene, mode: .move)
+                } label: {
+                    Label("Move to Room…", systemImage: "arrow.turn.up.right")
+                }
+            }
             Divider()
             Button(role: .destructive) {
                 sceneToDelete  = scene
@@ -375,6 +421,39 @@ struct ScenesTabView: View {
             } label: {
                 Label("Delete Scene", systemImage: "trash")
             }
+        }
+    }
+
+    // ── Copy/Move undo toast ──────────────────────────────
+
+    private func showCopyUndo(_ undo: SceneCopyUndo) {
+        withAnimation { copyUndo = undo }
+        copyUndoDismissTask?.cancel()
+        copyUndoDismissTask = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation { copyUndo = nil }
+        }
+    }
+
+    /// Copy-undo deletes the created scene; move-undo also re-POSTs the
+    /// retained original verbatim (its actions still target its own room).
+    private func performCopyUndo(_ undo: SceneCopyUndo) {
+        copyUndoDismissTask?.cancel()
+        withAnimation { copyUndo = nil }
+        HapticManager.shared.light()
+        Task {
+            if let targetClient = orchestrator.hueClient(for: undo.targetBridgeID) {
+                try? await targetClient.deleteScene(id: undo.newSceneID)
+            }
+            SceneProvenanceStore.shared.remove(key: "\(undo.targetBridgeID):\(undo.newSceneID)")
+            if undo.mode == .move,
+               let sourceClient = orchestrator.hueClient(for: undo.sourceScene.bridgeID) {
+                try? await sourceClient.createScene(
+                    SceneCopyEngine.recreateRequest(detail: undo.sourceDetail)
+                )
+            }
+            await orchestrator.loadAllScenes()
         }
     }
 
