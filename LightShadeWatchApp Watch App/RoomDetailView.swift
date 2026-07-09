@@ -1,13 +1,26 @@
 // RoomDetailView.swift — LightShadeWatchApp
-// Per-room control: brightness via Digital Crown, presets, on/off toggle.
+// Per-room control: brightness via ⊖/⊕ (tap ±10%, hold to ramp) or the
+// Digital Crown (fine 1%), plus presets, scenes, and an on/off toggle.
 
 import SwiftUI
+#if os(watchOS)
+import WatchKit
+#endif
 
 struct RoomDetailView: View {
     let room: WatchRoom
     @StateObject private var store = WatchStore.shared
     @State private var brightness: Double = 50
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+
+    /// One tap of ⊖/⊕. The Crown still moves in 1% increments for fine trim.
+    private static let tapStep: Double = 10
+    /// Cadence of a held ⊖/⊕. WatchStore coalesces the PUTs these produce.
+    private static let holdInterval: Duration = .milliseconds(150)
+
+    @State private var repeatTask: Task<Void, Never>?
+    /// Set when a hold begins so the trailing tap gesture doesn't add an extra step.
+    @State private var didRepeat = false
 
     var currentRoom: WatchRoom {
         store.allGroups.first { $0.id == room.id } ?? room
@@ -59,27 +72,45 @@ struct RoomDetailView: View {
                 }
                 .buttonStyle(.plain)
 
-                // ── Brightness slider (Digital Crown) ──
+                // ── Brightness: tap ±10%, hold to ramp, Crown for fine 1% ──
                 if currentRoom.isOn {
-                    VStack(spacing: 4) {
+                    VStack(spacing: 6) {
                         Text("Brightness")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
-                        Slider(value: $brightness, in: 1...100, step: 1) {
-                            Text("Brightness")
+
+                        HStack(spacing: 8) {
+                            brightnessStepper("minus", delta: -Self.tapStep)
+                            Text("\(Int(brightness))%")
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
+                                .frame(maxWidth: .infinity)
+                            brightnessStepper("plus", delta: Self.tapStep)
                         }
-                        .tint(amber)
+
+                        // The Crown needs a focusable target; this bar is it.
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.white.opacity(0.12))
+                                Capsule()
+                                    .fill(amber)
+                                    .frame(width: max(4, geo.size.width * CGFloat(brightness / 100)))
+                            }
+                        }
+                        .frame(height: 6)
                         #if os(watchOS)
                         .focusable()
                         .digitalCrownRotation($brightness, from: 1, through: 100, by: 1,
                                               sensitivity: .medium, isContinuous: false,
                                               isHapticFeedbackEnabled: true)
                         #endif
-                        .onChange(of: brightness) { _, new in
-                            store.setBrightness(new, for: currentRoom)
-                        }
                     }
                     .padding(.horizontal, 4)
+                    // Single write path: every input (tap, hold, Crown) mutates
+                    // `brightness`; the store coalesces the resulting PUTs.
+                    .onChange(of: brightness) { _, new in
+                        store.setBrightness(new, for: currentRoom)
+                    }
                 }
 
                 // ── Scenes (this room/zone) ──
@@ -156,5 +187,58 @@ struct RoomDetailView: View {
         .onAppear {
             brightness = currentRoom.brightness
         }
+        .onDisappear { stopRepeating() }
+    }
+
+    // MARK: - Brightness stepper
+
+    /// Tap = one `delta` step. Press-and-hold = repeat every `holdInterval`
+    /// until release or a rail. Not a `Button`: pairing a Button action with a
+    /// long-press gesture fires the action again on release.
+    private func brightnessStepper(_ symbol: String, delta: Double) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 16, weight: .bold))
+            .foregroundStyle(amber)
+            .frame(width: 44, height: 40)
+            .background(Capsule().fill(amber.opacity(0.15)))
+            .contentShape(Capsule())
+            .onTapGesture {
+                guard !didRepeat else { return }
+                step(by: delta)
+            }
+            .onLongPressGesture(
+                minimumDuration: 0.35,
+                pressing: { isPressing in
+                    if isPressing { didRepeat = false } else { stopRepeating() }
+                },
+                perform: { startRepeating(delta) }
+            )
+    }
+
+    private func step(by delta: Double) {
+        let next = min(100, max(1, (brightness + delta).rounded()))
+        guard next != brightness else { return }
+        brightness = next
+        #if os(watchOS)
+        WKInterfaceDevice.current().play(.click)
+        #endif
+    }
+
+    private func startRepeating(_ delta: Double) {
+        didRepeat = true
+        repeatTask?.cancel()
+        repeatTask = Task { @MainActor in
+            while !Task.isCancelled {
+                let before = brightness
+                step(by: delta)
+                if brightness == before { break }   // hit 1% or 100%
+                try? await Task.sleep(for: Self.holdInterval)
+            }
+        }
+    }
+
+    private func stopRepeating() {
+        repeatTask?.cancel()
+        repeatTask = nil
     }
 }
