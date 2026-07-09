@@ -47,6 +47,9 @@ struct MainTabView: View {
     /// Holds a weak reference to each tab's underlying UINavigationController so a
     /// re-tap on the active tab (or programmatic back) can pop one page.
     @State private var navRegistry = TabNavRegistry()
+    /// Home's navigation stack. Owned here so a widget deep link can push a room.
+    /// `DashboardView` supplies the matching `.navigationDestination(for:)`.
+    @State private var homePath: [RoomDisplayItem] = []
 
     var body: some View {
         Group {
@@ -57,11 +60,40 @@ struct MainTabView: View {
             }
         }
         .task { await prewarmDeferredTabs() }
-        // A widget / Lock-Screen tap deep-links here — surface the Home dashboard.
-        .onChange(of: deepLink.openToken) { _, _ in
-            realizedTabs.insert(.home)
-            withAnimation(HueAnimation.toggle) { selectedTab = .home }
+        // A widget / Lock-Screen tap deep-links here.
+        .onChange(of: deepLink.openToken) { _, _ in consumeDeepLink() }
+        // A cold launch from a widget arrives before `loadAll` has any rooms, so
+        // the id can't resolve yet. Retry when the groups land.
+        .onChange(of: orchestrator.allRooms.count) { _, _ in retryPendingDeepLink() }
+        .onChange(of: orchestrator.allZones.count) { _, _ in retryPendingDeepLink() }
+    }
+
+    // MARK: - Deep link
+
+    /// Surfaces Home and, when the widget named a room/zone, pushes its detail.
+    /// A plain `lightshade://dashboard` tap pops back to the dashboard root.
+    private func consumeDeepLink() {
+        realizedTabs.insert(.home)
+        withAnimation(HueAnimation.toggle) { selectedTab = .home }
+
+        guard let id = deepLink.pendingGroupID else {
+            homePath = []
+            return
         }
+        guard let room = resolveGroup(id) else { return }   // retried on load
+        homePath = [room]
+        deepLink.pendingGroupID = nil
+    }
+
+    private func retryPendingDeepLink() {
+        guard let id = deepLink.pendingGroupID, let room = resolveGroup(id) else { return }
+        homePath = [room]
+        deepLink.pendingGroupID = nil
+    }
+
+    private func resolveGroup(_ id: String) -> RoomDisplayItem? {
+        orchestrator.allRooms.first { $0.id == id }
+            ?? orchestrator.allZones.first { $0.id == id }
     }
 
     /// Build deferred tab roots after Home paints AND the first loadAll has settled,
@@ -204,7 +236,10 @@ struct MainTabView: View {
     private func tabContent(for tab: HueTab) -> some View {
         switch tab {
         case .home:
-            NavigationStack {
+            // Path-bound so a widget deep link can push a room. The tab bar's
+            // re-tap-to-pop still drives the UINavigationController directly;
+            // SwiftUI mirrors that pop back into `homePath`.
+            NavigationStack(path: $homePath) {
                 DashboardView()
                     .background(NavControllerResolver { navRegistry.register(.home, $0) })
             }

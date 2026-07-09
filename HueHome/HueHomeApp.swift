@@ -84,8 +84,10 @@ struct HueHomeApp: App {
 // MARK: - Deep Link Coordinator
 //
 // Widgets / Lock-Screen taps open `lightshade://room/{id}`, `lightshade://zone/{id}`,
-// or `lightshade://dashboard`. The tab shell (MainTabView) observes this and switches
-// to Home; `pendingGroupID` names the room/zone the user tapped (best-effort focus).
+// or `lightshade://dashboard`. The tab shell (MainTabView) observes `openToken`,
+// switches to Home, and pushes `pendingGroupID`'s room detail — clearing the id once
+// consumed. On a cold launch the id outlives the first frame: no group resolves until
+// `loadAll` returns, so MainTabView retries when the rooms/zones arrive.
 
 @Observable
 final class DeepLinkCoordinator {
