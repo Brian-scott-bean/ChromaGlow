@@ -12,7 +12,12 @@
 //   • RoomToggleControl — pick a room/zone, toggle it on/off
 //   • SceneControl      — pick a saved Hue scene, recall it
 //   • PresetControl     — pick Energize/Read/Relax/Sleep, apply everywhere
+//   • AllLightsControl  — master switch: everything on (80%, warm) or off
 //   • AllOffControl     — kill every light on every bridge
+//
+// The Lock Screen has only two corner slots, so AllLightsControl exists to spend
+// one slot instead of two. AllOffControl remains for Control Center, which has
+// no slot limit, and for anyone who wants a one-way kill switch.
 //
 // The value providers read WidgetDataStore (App Group + shared Keychain) ONLY.
 // They must never hit the network: the system renders controls on demand and a
@@ -205,6 +210,36 @@ struct PresetControl: ControlWidget {
         .displayName("Lighting Preset")
         .description("Apply a preset to every room and zone.")
         .promptsForUserConfiguration()
+    }
+}
+
+// MARK: - All lights (master switch)
+
+/// "On" means ANY group is lit, so the toggle reads on whenever a single room is
+/// on and one tap kills the house — the mental model of a master switch.
+@available(iOS 18.0, *)
+struct AllLightsValueProvider: ControlValueProvider {
+    var previewValue: Bool { true }
+
+    func currentValue() async throws -> Bool {
+        WidgetDataStore.shared.groups.contains { $0.isOn }
+    }
+}
+
+@available(iOS 18.0, *)
+struct AllLightsControl: ControlWidget {
+    static let kind = "com.lightshade.app.AllLightsControl"
+
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: Self.kind, provider: AllLightsValueProvider()) { isOn in
+            ControlWidgetToggle("All Lights", isOn: isOn, action: SetAllLightsPowerIntent()) { on in
+                Label(on ? "On" : "Off",
+                      systemImage: on ? "lightbulb.2.fill" : "lightbulb.slash")
+            }
+            .tint(.orange)
+        }
+        .displayName("All Lights")
+        .description("Turn every room and zone on or off.")
     }
 }
 

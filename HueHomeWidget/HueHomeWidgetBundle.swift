@@ -16,6 +16,7 @@ struct HueHomeWidgetBundle: WidgetBundle {
             RoomToggleControl()
             SceneControl()
             PresetControl()
+            AllLightsControl()
             AllOffControl()
         }
     }

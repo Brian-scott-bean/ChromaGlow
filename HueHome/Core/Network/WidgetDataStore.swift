@@ -178,12 +178,19 @@ final class WidgetDataStore: @unchecked Sendable {
         }
     }
 
-    /// Optimistically mark every room and zone off (used by All-Off).
-    func markAllGroupsOff() {
-        let offRooms = rooms.map { r -> WidgetRoomSnapshot in var c = r; c.isOn = false; return c }
-        let offZones = zones.map { z -> WidgetRoomSnapshot in var c = z; c.isOn = false; return c }
-        if let d = try? JSONEncoder().encode(offRooms) { ud?.set(d, forKey: Key.rooms) }
-        if let d = try? JSONEncoder().encode(offZones) { ud?.set(d, forKey: Key.zones) }
+    /// Optimistically mark every room and zone on or off (used by All-Off and the
+    /// All-Lights control). `brightness` is applied only when non-nil.
+    func markAllGroups(on isOn: Bool, brightness: Double? = nil) {
+        func patched(_ list: [WidgetRoomSnapshot]) -> [WidgetRoomSnapshot] {
+            list.map { g -> WidgetRoomSnapshot in
+                var c = g
+                c.isOn = isOn
+                if let brightness { c.brightness = brightness }
+                return c
+            }
+        }
+        if let d = try? JSONEncoder().encode(patched(rooms)) { ud?.set(d, forKey: Key.rooms) }
+        if let d = try? JSONEncoder().encode(patched(zones)) { ud?.set(d, forKey: Key.zones) }
     }
 
     /// Remove the pre-D-018 plaintext token copies from the App Group.

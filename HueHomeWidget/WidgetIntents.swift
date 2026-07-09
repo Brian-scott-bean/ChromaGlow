@@ -338,7 +338,57 @@ struct AllOffIntent: AppIntent {
                 }
             }
         }
-        store.markAllGroupsOff()
+        store.markAllGroups(on: false)
+        WidgetCenter.shared.reloadAllTimelines()
+        return .result()
+    }
+}
+
+// MARK: - SetAllLightsPowerIntent
+
+/// Backs the "All Lights" `ControlWidgetToggle` — the master switch on the Lock
+/// Screen and in Control Center.
+///
+/// Turning ON does not merely send `on: true`, which would restore each group's
+/// last level: after a Sleep preset the whole house would come back at 6%. It
+/// applies a deliberate "welcome home" state instead.
+@available(iOS 18.0, *)
+struct SetAllLightsPowerIntent: SetValueIntent {
+    static var title: LocalizedStringResource = "All Lights"
+    static var description = IntentDescription("Turn every room and zone on or off.")
+    static var openAppWhenRun: Bool = false
+
+    /// Parameter name fixed by the SetValueIntent protocol.
+    @Parameter(title: "On") var value: Bool
+
+    /// Bright enough to be useful, warm enough not to be harsh.
+    private static let onBrightness: Double = 80
+    private static let onMirek: Int = 350
+
+    init() { value = false }
+
+    func perform() async throws -> some IntentResult {
+        let store = WidgetDataStore.shared
+        let body: [String: Any] = value
+            ? ["on":                ["on": true],
+               "dimming":           ["brightness": Self.onBrightness],
+               "color_temperature": ["mirek": Self.onMirek],
+               "dynamics":          ["duration": 800]]
+            : ["on": ["on": false]]
+
+        await withTaskGroup(of: Void.self) { group in
+            for item in store.groups {
+                guard let glID = item.groupedLightId,
+                      let creds = store.credentials(for: item.bridgeID) else { continue }
+                let capturedID = glID
+                group.addTask {
+                    await BridgeWriter.patchGroupedLight(
+                        id: capturedID, body: body, ip: creds.ip, token: creds.token
+                    )
+                }
+            }
+        }
+        store.markAllGroups(on: value, brightness: value ? Self.onBrightness : nil)
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }
