@@ -1105,35 +1105,42 @@ struct AccessoryCircularView: View {
     let entry: HueWidgetEntry
 
     var body: some View {
-        if let room = entry.selectedRoom {
-            // Pinned room — TAP TOGGLES it (lock-screen control); the gauge
-            // still shows its brightness. iOS 17+ interactive accessory widget.
-            Button(intent: ToggleRoomIntent(roomID: room.id, currentlyOn: room.isOn)) {
-                Gauge(value: room.isOn ? room.brightness / 100 : 0) {
-                    Image(systemName: room.isOn ? widgetArchetypeIcon(room.archetype) : "power")
-                        .widgetAccentable()
-                } currentValueLabel: {
-                    Text(room.isOn ? "\(Int(room.brightness))" : "off")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                }
-                .gaugeStyle(.accessoryCircularCapacity)
-                .widgetAccentable()
-            }
-            .buttonStyle(.plain)
-        } else {
-            // All rooms — on/off fraction
-            let fraction = entry.totalCount > 0
-                ? Double(entry.onCount) / Double(entry.totalCount)
-                : 0
-            Gauge(value: fraction) {
-                Image(systemName: "lightbulb.fill")
+        ZStack {
+            AccessoryWidgetBackground()
+            if let room = entry.selectedRoom {
+                // Pinned room — TAP TOGGLES it; the gauge shows its brightness.
+                Button(intent: ToggleRoomIntent(roomID: room.id, currentlyOn: room.isOn)) {
+                    Gauge(value: room.isOn ? room.brightness / 100 : 0) {
+                        Image(systemName: room.isOn ? widgetArchetypeIcon(room.archetype) : "power")
+                            .widgetAccentable()
+                    } currentValueLabel: {
+                        Text(room.isOn ? "\(Int(room.brightness))" : "off")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    }
+                    .gaugeStyle(.accessoryCircularCapacity)
                     .widgetAccentable()
-            } currentValueLabel: {
-                Text("\(entry.onCount)")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                }
+                .buttonStyle(.plain)
+            } else {
+                // No pinned room. This branch used to render a bare Gauge with no
+                // Button, so an unconfigured Lock Screen widget was completely
+                // inert. Tap = All Off across every bridge.
+                let fraction = entry.totalCount > 0
+                    ? Double(entry.onCount) / Double(entry.totalCount)
+                    : 0
+                Button(intent: AllOffIntent()) {
+                    Gauge(value: fraction) {
+                        Image(systemName: entry.onCount > 0 ? "lightbulb.fill" : "lightbulb.slash.fill")
+                            .widgetAccentable()
+                    } currentValueLabel: {
+                        Text("\(entry.onCount)")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                    }
+                    .gaugeStyle(.accessoryCircularCapacity)
+                    .widgetAccentable()
+                }
+                .buttonStyle(.plain)
             }
-            .gaugeStyle(.accessoryCircularCapacity)
-            .widgetAccentable()
         }
     }
 }
@@ -1200,14 +1207,25 @@ struct AccessoryRectangularView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            // All rooms — top 3 by on-state
-            let display = entry.rooms.sorted { $0.isOn && !$1.isOn }.prefix(3)
+            // No pinned room. This branch was a read-only list, which is why an
+            // unconfigured Lock Screen widget did nothing. Each row's power glyph
+            // now toggles that room, and the header toggles everything off.
+            let display = entry.rooms.sorted { $0.isOn && !$1.isOn }.prefix(2)
             VStack(alignment: .leading, spacing: 2) {
-                Label("HueHome • \(entry.onCount) on", systemImage: "lightbulb.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .widgetAccentable()
+                HStack(spacing: 4) {
+                    Label("\(entry.onCount) on", systemImage: "lightbulb.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .widgetAccentable()
+                    Spacer(minLength: 2)
+                    Button(intent: AllOffIntent()) {
+                        Image(systemName: "power.circle")
+                            .font(.system(size: 13))
+                    }
+                    .buttonStyle(.plain)
+                    .widgetAccentable(entry.onCount > 0)
+                }
                 ForEach(display) { room in
-                    HStack {
+                    HStack(spacing: 4) {
                         Image(systemName: widgetArchetypeIcon(room.archetype))
                             .font(.system(size: 9))
                             .foregroundStyle(room.isOn ? .primary : .secondary)
@@ -1216,10 +1234,16 @@ struct AccessoryRectangularView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(room.isOn ? .primary : .secondary)
                             .lineLimit(1)
-                        Spacer()
+                        Spacer(minLength: 2)
                         Text(room.isOn ? "\(Int(room.brightness))%" : "—")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.secondary)
+                        Button(intent: ToggleRoomIntent(roomID: room.id, currentlyOn: room.isOn)) {
+                            Image(systemName: room.isOn ? "power.circle.fill" : "power.circle")
+                                .font(.system(size: 12))
+                        }
+                        .buttonStyle(.plain)
+                        .widgetAccentable(room.isOn)
                     }
                 }
             }
