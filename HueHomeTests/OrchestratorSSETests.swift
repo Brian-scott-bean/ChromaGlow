@@ -73,6 +73,69 @@ final class OrchestratorSSETests: XCTestCase {
         XCTAssertEqual(orchestrator.allRooms[0].brightness, 80, accuracy: 0.1)
     }
 
+    // MARK: - SSE-04 light on-event proves a lagging room card on
+
+    func testLightOnSSE_flipsOffRoomCardOn() throws {
+        let orchestrator = makeOrchestratorSSESUT(isOn: false, brightness: 1)
+        orchestrator.testSeedLightIndex(lightIDToRoomID: ["light-001": "room-001"])
+
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"light-001","id_v1":null,"type":"light",
+          "on":{"on":true},"owner":null
+        }],"id":"evt-4","type":"update"}]
+        """
+        let events = try decodeSSEEvents(json)
+
+        let result = orchestrator.testApplySSEEventsAndRebuild(events, bridgeID: "bridge-1")
+
+        XCTAssertTrue(result.rooms)
+        XCTAssertTrue(orchestrator.allRooms[0].isOn,
+                      "an explicit light-on event must prove the room on even when " +
+                      "the grouped_light event lags or never arrives")
+    }
+
+    func testLightOffSSE_neverFlipsRoomCardOff() throws {
+        let orchestrator = makeOrchestratorSSESUT(isOn: true, brightness: 80)
+        orchestrator.testSeedLightIndex(lightIDToRoomID: ["light-001": "room-001"])
+
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"light-001","id_v1":null,"type":"light",
+          "on":{"on":false},"owner":null
+        }],"id":"evt-5","type":"update"}]
+        """
+        let events = try decodeSSEEvents(json)
+
+        orchestrator.testApplySSEEventsAndRebuild(events, bridgeID: "bridge-1")
+
+        XCTAssertTrue(orchestrator.allRooms[0].isOn,
+                      "a single light going off never implies the room is off — " +
+                      "grouped_light events own the off aggregate")
+    }
+
+    func testLightColorOnlySSE_updatesGlowWithoutFlippingOffRoomOn() throws {
+        let orchestrator = makeOrchestratorSSESUT(isOn: false, brightness: 1)
+        orchestrator.testSeedLightIndex(lightIDToRoomID: ["light-001": "room-001"])
+
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"light-001","id_v1":null,"type":"light",
+          "color":{"xy":{"x":0.31,"y":0.32}},"owner":null
+        }],"id":"evt-6","type":"update"}]
+        """
+        let events = try decodeSSEEvents(json)
+
+        orchestrator.testApplySSEEventsAndRebuild(events, bridgeID: "bridge-1")
+
+        let room = orchestrator.allRooms[0]
+        XCTAssertFalse(room.isOn,
+                       "only an explicit on:true may flip a card on — a color-only " +
+                       "event proves nothing about power state")
+        XCTAssertEqual(room.dominantColorX ?? -1, 0.31, accuracy: 0.0001)
+        XCTAssertEqual(room.dominantColorY ?? -1, 0.32, accuracy: 0.0001)
+    }
+
     // MARK: - Fixtures
 
     private func makeOrchestratorSSECachedRoom(

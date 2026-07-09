@@ -441,6 +441,16 @@ final class UnifiedOrchestrator {
     func testAwaitEntertainmentCleanup() async {
         await entertainmentCleanupTask?.value
     }
+
+    /// Seeds the private light→room/zone reverse maps so SSE light-event tests
+    /// can exercise applySSEEvent without running a full loadAll.
+    func testSeedLightIndex(
+        lightIDToRoomID roomMap: [String: String],
+        lightIDToZoneID zoneMap: [String: String] = [:]
+    ) {
+        for (k, v) in roomMap { lightIDToRoomID[k] = v }
+        for (k, v) in zoneMap { lightIDToZoneID[k] = v }
+    }
     #endif
 
     // ──────────────────────────────────────────────
@@ -1504,7 +1514,7 @@ final class UnifiedOrchestrator {
                     }
                 }
 
-            // ── light (dominant color) ─────────────────────────────────────────
+            // ── light (dominant color + on-state cross-check) ──────────────────
             case "light":
                 let isNowOn = update.on?.on ?? true
                 guard isNowOn else { continue }
@@ -1513,17 +1523,33 @@ final class UnifiedOrchestrator {
                    let roomID = lightIDToRoomID[update.id],
                    !driven.contains(roomID),
                    let idx = rooms.firstIndex(where: { $0.id == roomID }) {
+                    var mutated = false
+                    // A light explicitly turning ON proves the room is on even when
+                    // the grouped_light event lags or never arrives (scene recall,
+                    // per-light control from another app). ON-direction only —
+                    // grouped_light events own the off aggregate. Skipped while an
+                    // optimistic action on this room's grouped_light is in flight,
+                    // so a pre-PUT echo can't flip a card the user just turned off.
+                    let glPending = rooms[idx].groupedLightID
+                        .flatMap { pendingActionDeadlines[$0] }
+                        .map { Date() < $0 } ?? false
+                    if update.on?.on == true && !rooms[idx].isOn && !glPending {
+                        rooms[idx].isOn = true
+                        mutated = true
+                    }
                     if let xy = update.color?.xy {
                         rooms[idx].dominantColorX = xy.x
                         rooms[idx].dominantColorY = xy.y
                         rooms[idx].dominantMirek  = nil
-                        roomsByBridge[bridgeID]   = rooms
-                        roomsMutated = true
+                        mutated = true
                     } else if let mirek = update.colorTemp?.mirek {
                         rooms[idx].dominantColorX = nil
                         rooms[idx].dominantColorY = nil
                         rooms[idx].dominantMirek  = mirek
-                        roomsByBridge[bridgeID]   = rooms
+                        mutated = true
+                    }
+                    if mutated {
+                        roomsByBridge[bridgeID] = rooms
                         roomsMutated = true
                     }
                 }
@@ -1531,17 +1557,28 @@ final class UnifiedOrchestrator {
                    let zoneID = lightIDToZoneID[update.id],
                    !driven.contains(zoneID),
                    let idx = zones.firstIndex(where: { $0.id == zoneID }) {
+                    var mutated = false
+                    // Same on-direction cross-check as rooms above.
+                    let glPending = zones[idx].groupedLightID
+                        .flatMap { pendingActionDeadlines[$0] }
+                        .map { Date() < $0 } ?? false
+                    if update.on?.on == true && !zones[idx].isOn && !glPending {
+                        zones[idx].isOn = true
+                        mutated = true
+                    }
                     if let xy = update.color?.xy {
                         zones[idx].dominantColorX = xy.x
                         zones[idx].dominantColorY = xy.y
                         zones[idx].dominantMirek  = nil
-                        zonesByBridge[bridgeID]   = zones
-                        zonesMutated = true
+                        mutated = true
                     } else if let mirek = update.colorTemp?.mirek {
                         zones[idx].dominantColorX = nil
                         zones[idx].dominantColorY = nil
                         zones[idx].dominantMirek  = mirek
-                        zonesByBridge[bridgeID]   = zones
+                        mutated = true
+                    }
+                    if mutated {
+                        zonesByBridge[bridgeID] = zones
                         zonesMutated = true
                     }
                 }
