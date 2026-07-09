@@ -1105,41 +1105,42 @@ struct AccessoryCircularView: View {
     let entry: HueWidgetEntry
 
     var body: some View {
+        // `.accessoryCircularCapacity` draws the ring and the currentValueLabel
+        // ONLY — a Gauge's `label` is never rendered in this style. The room icon
+        // used to live there, which is why the gauge showed a bare number. Icon +
+        // value now share currentValueLabel; `label` stays for VoiceOver.
         ZStack {
             AccessoryWidgetBackground()
             if let room = entry.selectedRoom {
-                // Pinned room — TAP TOGGLES it; the gauge shows its brightness.
-                Button(intent: ToggleRoomIntent(roomID: room.id, currentlyOn: room.isOn)) {
-                    Gauge(value: room.isOn ? room.brightness / 100 : 0) {
+                Gauge(value: room.isOn ? room.brightness / 100 : 0) {
+                    Text(room.name)
+                } currentValueLabel: {
+                    VStack(spacing: -1) {
                         Image(systemName: room.isOn ? widgetArchetypeIcon(room.archetype) : "power")
-                            .widgetAccentable()
-                    } currentValueLabel: {
+                            .font(.system(size: 11, weight: .semibold))
                         Text(room.isOn ? "\(Int(room.brightness))" : "off")
                             .font(.system(size: 10, weight: .semibold, design: .rounded))
                     }
-                    .gaugeStyle(.accessoryCircularCapacity)
-                    .widgetAccentable()
                 }
-                .buttonStyle(.plain)
+                .gaugeStyle(.accessoryCircularCapacity)
+                .widgetAccentable()
             } else {
-                // No pinned room. This branch used to render a bare Gauge with no
-                // Button, so an unconfigured Lock Screen widget was completely
-                // inert. Tap = All Off across every bridge.
+                // All rooms — on/off fraction.
                 let fraction = entry.totalCount > 0
                     ? Double(entry.onCount) / Double(entry.totalCount)
                     : 0
-                Button(intent: AllOffIntent()) {
-                    Gauge(value: fraction) {
+                Gauge(value: fraction) {
+                    Text("Lights on")
+                } currentValueLabel: {
+                    VStack(spacing: -1) {
                         Image(systemName: entry.onCount > 0 ? "lightbulb.fill" : "lightbulb.slash.fill")
-                            .widgetAccentable()
-                    } currentValueLabel: {
+                            .font(.system(size: 11, weight: .semibold))
                         Text("\(entry.onCount)")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
                     }
-                    .gaugeStyle(.accessoryCircularCapacity)
-                    .widgetAccentable()
                 }
-                .buttonStyle(.plain)
+                .gaugeStyle(.accessoryCircularCapacity)
+                .widgetAccentable()
             }
         }
     }
@@ -1149,47 +1150,32 @@ struct AccessoryCircularView: View {
 
 /// Wide rectangle on the lock screen — fits 3 compact room rows.
 /// When a room is pinned it shows that room's name, status, and brightness bar.
+///
+/// Status only. iPhone Lock Screen widgets are not interactive — a tap anywhere
+/// follows `.widgetURL` into the app — so this used to render −/+ and power
+/// glyphs that could never fire. Real control is the Controls in the bottom
+/// corners (HueHomeWidgetControl.swift).
 struct AccessoryRectangularView: View {
     let entry: HueWidgetEntry
 
     var body: some View {
         if let room = entry.selectedRoom {
-            // Pinned room/zone — with an interactive power toggle (iOS 17+).
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 4) {
-                    Label(room.name, systemImage: widgetArchetypeIcon(room.archetype))
-                        .font(.system(size: 13, weight: .semibold))
-                        .widgetAccentable()
-                        .lineLimit(1)
-                    Spacer(minLength: 2)
-                    Button(intent: ToggleRoomIntent(roomID: room.id, currentlyOn: room.isOn)) {
-                        Image(systemName: room.isOn ? "power.circle.fill" : "power.circle")
-                            .font(.system(size: 14))
-                    }
-                    .buttonStyle(.plain)
-                    .widgetAccentable(room.isOn)
-                }
+                Label(room.name, systemImage: widgetArchetypeIcon(room.archetype))
+                    .font(.system(size: 13, weight: .semibold))
+                    .widgetAccentable()
+                    .lineLimit(1)
 
-                // Interactive −/+ brightness (iOS 17+) + readout.
-                HStack(spacing: 8) {
-                    Button(intent: AdjustBrightnessIntent(roomID: room.id, delta: -20)) {
-                        Image(systemName: "minus.circle.fill")
-                            .font(.system(size: 15))
-                    }
-                    .buttonStyle(.plain)
-
+                HStack(spacing: 6) {
                     Text(room.isOn ? "\(Int(room.brightness))%" : "Off")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
-
-                    Button(intent: AdjustBrightnessIntent(roomID: room.id, delta: 20)) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 15))
-                    }
-                    .buttonStyle(.plain)
+                    Text(room.isZone ? "Zone" : "\(room.lightCount) bulb\(room.lightCount == 1 ? "" : "s")")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                     Spacer(minLength: 0)
                 }
-                .widgetAccentable(room.isOn)
 
                 if room.isOn {
                     // Compact brightness bar
@@ -1207,25 +1193,16 @@ struct AccessoryRectangularView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            // No pinned room. This branch was a read-only list, which is why an
-            // unconfigured Lock Screen widget did nothing. Each row's power glyph
-            // now toggles that room, and the header toggles everything off.
-            let display = entry.rooms.sorted { $0.isOn && !$1.isOn }.prefix(2)
+            // All rooms — top 3 by on-state. Status only: iPhone Lock Screen
+            // widgets aren't interactive, and the whole widget is a .widgetURL
+            // tap target. Real control lives in the Controls (bottom corners).
+            let display = entry.rooms.sorted { $0.isOn && !$1.isOn }.prefix(3)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Label("\(entry.onCount) on", systemImage: "lightbulb.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .widgetAccentable()
-                    Spacer(minLength: 2)
-                    Button(intent: AllOffIntent()) {
-                        Image(systemName: "power.circle")
-                            .font(.system(size: 13))
-                    }
-                    .buttonStyle(.plain)
-                    .widgetAccentable(entry.onCount > 0)
-                }
+                Label("HueHome • \(entry.onCount) on", systemImage: "lightbulb.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .widgetAccentable()
                 ForEach(display) { room in
-                    HStack(spacing: 4) {
+                    HStack {
                         Image(systemName: widgetArchetypeIcon(room.archetype))
                             .font(.system(size: 9))
                             .foregroundStyle(room.isOn ? .primary : .secondary)
@@ -1234,16 +1211,10 @@ struct AccessoryRectangularView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(room.isOn ? .primary : .secondary)
                             .lineLimit(1)
-                        Spacer(minLength: 2)
+                        Spacer()
                         Text(room.isOn ? "\(Int(room.brightness))%" : "—")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.secondary)
-                        Button(intent: ToggleRoomIntent(roomID: room.id, currentlyOn: room.isOn)) {
-                            Image(systemName: room.isOn ? "power.circle.fill" : "power.circle")
-                                .font(.system(size: 12))
-                        }
-                        .buttonStyle(.plain)
-                        .widgetAccentable(room.isOn)
                     }
                 }
             }

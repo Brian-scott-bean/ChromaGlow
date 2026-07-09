@@ -100,15 +100,22 @@ struct LightShadeWatchEntryView: View {
 struct CircularView: View {
     let entry: WatchEntry
 
+    // `.accessoryCircularCapacity` renders the ring and the currentValueLabel
+    // ONLY; a Gauge's `label` is never drawn in this style, so the icon that
+    // used to live there never appeared. Icon + value share currentValueLabel
+    // now, and `label` remains for VoiceOver.
     var body: some View {
         if let room = entry.selectedRoom {
             // Pinned room: brightness gauge
             Gauge(value: room.brightness / 100) {
-                Image(systemName: watchArchetypeIcon(room.archetype))
-                    .widgetAccentable()
+                Text(room.name)
             } currentValueLabel: {
-                Text("\(Int(room.brightness))")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                VStack(spacing: -1) {
+                    Image(systemName: watchArchetypeIcon(room.archetype))
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("\(Int(room.brightness))")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                }
             }
             .gaugeStyle(.accessoryCircularCapacity)
             .widgetAccentable()
@@ -117,11 +124,14 @@ struct CircularView: View {
             let fraction = entry.total > 0
                 ? Double(entry.onCount) / Double(entry.total) : 0
             Gauge(value: fraction) {
-                Image(systemName: entry.onCount > 0 ? "lightbulb.fill" : "lightbulb.slash")
-                    .widgetAccentable()
+                Text("Lights on")
             } currentValueLabel: {
-                Text("\(entry.onCount)")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                VStack(spacing: -1) {
+                    Image(systemName: entry.onCount > 0 ? "lightbulb.fill" : "lightbulb.slash")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("\(entry.onCount)")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                }
             }
             .gaugeStyle(.accessoryCircularCapacity)
             .widgetAccentable()
