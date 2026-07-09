@@ -12,7 +12,9 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **16**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **17**).
+- **BUILD 17 (2026-07-08):** added an **All Lights** master-switch Control (one Lock Screen corner
+  slot, on ↔ off). Turning on applies a "welcome home" 80% / mirek 350, not a bare `on: true`.
 - **BUILD 16 (2026-07-08):** iPhone Lock Screen *widgets* are status-only — taps always open the
   app; the interactive surface is a **Control** in the bottom corners. Fixed the accessory gauge
   never drawing its icon (`.accessoryCircularCapacity` ignores a Gauge's `label`), removed
@@ -152,6 +154,56 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-08 - [Claude] BUILD 17: "All Lights" master-switch Control
+
+### Branch
+- `main` directly (rollback `checkpoint/pre-widgets-2026-07-08` @ `15c0435`)
+
+### Why
+Brian: "we need an all lights on lock screen widget." Two constraints reshaped the ask —
+Lock Screen *widgets* can't run intents (build 16), so it must be a **Control**; and the Lock
+Screen has only **two corner slots**, so a separate On button beside the existing All Off
+button would consume both.
+
+### Did (`932f60a`, build 17)
+- **`AllLightsControl`** — a single `ControlWidgetToggle`: everything on when off, off when on,
+  rendering the current state. One slot, not two. `AllOffControl` stays for Control Center
+  (no slot limit) and for anyone wanting a one-way kill switch.
+- **`SetAllLightsPowerIntent: SetValueIntent`** (iOS 18+) — same `withTaskGroup` fan-out as
+  `AllOffIntent`, same `BridgeWriter` pinned-trust session (D-016).
+  **Turning ON is not a bare `on: true`.** That restores each group's last level, so after a
+  Sleep preset the house returns at 6%. It applies a "welcome home" state instead:
+  **80% brightness, mirek 350** (warm-neutral), 800ms dynamics. Both are named constants
+  (`onBrightness`, `onMirek`) — retune freely.
+- **`AllLightsValueProvider`** reports on when **any** group is lit, so the toggle reads on with
+  a single lamp on and one tap kills the house. Master-switch model. App Group read only —
+  a control's `currentValue()` must never touch the network.
+- `WidgetDataStore.markAllGroupsOff()` → **`markAllGroups(on:brightness:)`**. Sole caller
+  (`AllOffIntent`) updated. Shared source: app + widget targets both rebuilt.
+
+### Validation
+- Clean build 0 errors / 0 warnings: `HueHomeWidgetExtension` and the app (which also compiles
+  the renamed `WidgetDataStore` helper). `** TEST SUCCEEDED **` on iPhone 17 Pro.
+- Registration proven, not just compilation: `Metadata.appintents` carries
+  `SetAllLightsPowerIntent`, and `com.lightshade.app.AllLightsControl` is in
+  `HueHomeWidgetExtension.debug.dylib` alongside the other four kinds.
+
+### Left (Brian, device)
+1. Lock Screen → Customize → tap a bottom corner → Controls → ChromaGlow → **All Lights**.
+2. Lights off, tap it **while locked**: everything comes up ~80%, warm, over ~0.8s.
+3. Tap again: everything off. The label tracks state.
+4. Judge the 80% / mirek 350 "welcome home" state — say the word and I'll retune the constants.
+
+### Gotchas
+- Toggle state is "any group on", not "all groups on". Deliberate.
+- Turning on **overwrites** each room's remembered brightness. That is the cost of the
+  predictable 80%; the alternative (bare `on: true`) was rejected because Sleep leaves 6%.
+- `currentValue()` reads the App Group snapshot, so the rendered state can lag a change made
+  in-app until the next timeline refresh. The write is always immediate.
+- Controls need **iOS 18+**; on 17 the bundle loads and they simply don't appear.
 
 ---
 
