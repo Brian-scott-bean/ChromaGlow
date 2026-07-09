@@ -112,6 +112,42 @@ final class StudioParamCatalogTests: XCTestCase {
         }
     }
 
+    // ── Tray metrics ──────────────────────────────────────────
+
+    /// Tray height is derived from content now — more inline rows must never
+    /// produce a shorter tray, and the compact cap must hold.
+    func testEngineHeightIsMonotonicInRowCountAndCapped() {
+        let sorted = allCards.sorted {
+            MixerTrayMetrics.inlineParams(for: $0).count < MixerTrayMetrics.inlineParams(for: $1).count
+        }
+        var lastRows = -1
+        var lastHeight: CGFloat = -1
+        for card in sorted {
+            let rows = MixerTrayMetrics.inlineParams(for: card).count
+            let height = MixerTrayMetrics.engineHeight(for: card, isCompact: false)
+            if rows > lastRows && lastHeight >= 0 {
+                XCTAssertGreaterThanOrEqual(height, lastHeight,
+                                            "\(card.id): more rows produced a shorter tray")
+            }
+            XCTAssertGreaterThanOrEqual(height, MixerTrayMetrics.grabBarHeight + MixerTrayMetrics.headerHeight)
+            XCTAssertLessThanOrEqual(MixerTrayMetrics.engineHeight(for: card, isCompact: true),
+                                     MixerTrayMetrics.compactHeightCap)
+            lastRows = rows
+            lastHeight = height
+        }
+    }
+
+    /// Inline + overflow must partition the catalog exactly — no param can
+    /// be orphaned (unreachable from both the tray and the sheet reveal).
+    func testInlineAndOverflowPartitionEveryCard() {
+        for card in allCards {
+            let inline = MixerTrayMetrics.inlineParams(for: card).map(\.id)
+            let overflow = MixerTrayMetrics.overflowParams(for: card).map(\.id)
+            XCTAssertEqual(Set(inline + overflow), Set(card.params.map(\.id)), card.id)
+            XCTAssertTrue(Set(inline).isDisjoint(with: Set(overflow)), card.id)
+        }
+    }
+
     // ── ENT-only flags ────────────────────────────────────────
 
     /// Strobe's REST fallback runs a fixed 900 ms cycle and ignores these.

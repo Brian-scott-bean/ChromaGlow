@@ -9,6 +9,55 @@
 
 import SwiftUI
 
+// MARK: - MixerTrayMetrics
+
+/// Pure layout math for the mixer tray: which params render inline in the
+/// compact tray, which overflow to the "+N more" reveal, and the
+/// content-derived tray height (replaces the old hardcoded 390/420).
+enum MixerTrayMetrics {
+    static let grabBarHeight: CGFloat = 28
+    static let headerHeight: CGFloat = 60
+    static let sliderRowHeight: CGFloat = 56
+    static let moreRowHeight: CGFloat = 44
+    static let verticalPadding: CGFloat = 16
+    static let compactHeightCap: CGFloat = 360
+
+    /// Compact-tray params: essentials plus every color picker — color is
+    /// the most-hunted adjustment, worth one always-visible row.
+    static func inlineParams(for card: StudioCard) -> [StudioParam] {
+        let essentials = card.params.filter { $0.tier == .essential }
+        let colors = card.params.filter {
+            if case .colorPicker = $0.kind { return $0.tier != .essential }
+            return false
+        }
+        return essentials + colors
+    }
+
+    /// Everything else, revealed by "+N more" (sheet) or inline when the
+    /// tray is dragged up.
+    static func overflowParams(for card: StudioCard) -> [StudioParam] {
+        let inlineIDs = Set(inlineParams(for: card).map(\.id))
+        return card.params.filter { !inlineIDs.contains($0.id) }
+    }
+
+    /// Content-derived compact height for engine cards.
+    static func engineHeight(for card: StudioCard, isCompact: Bool) -> CGFloat {
+        let rows = inlineParams(for: card).count
+        let hasMore = !overflowParams(for: card).isEmpty
+        var height = grabBarHeight + headerHeight
+            + CGFloat(rows) * sliderRowHeight
+            + verticalPadding
+        if hasMore { height += moreRowHeight }
+        return isCompact ? min(height, compactHeightCap) : height
+    }
+
+    /// Composition tray height (header + layer tabs + active-tab essentials;
+    /// the inner ScrollView absorbs overflow).
+    static func compositionHeight(isCompact: Bool) -> CGFloat {
+        isCompact ? 390 : 430
+    }
+}
+
 // MARK: - StudioParamRow
 
 struct StudioParamRow: View {

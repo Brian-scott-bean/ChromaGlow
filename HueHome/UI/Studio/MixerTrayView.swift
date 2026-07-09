@@ -59,13 +59,13 @@ struct MixerTrayView: View {
                         HapticManager.shared.light()
                     }
 
-                // ── Header ───────────────────────────────────
+                // ── Header (Perform grammar: 34pt circles, mono tags, bold name) ──
                 HStack(spacing: 10) {
                     // Effect icon
                     ZStack {
                         Circle()
                             .fill(card.accentColor.opacity(0.20))
-                            .frame(width: 32, height: 32)
+                            .frame(width: 34, height: 34)
                         Image(systemName: card.icon)
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(card.accentColor)
@@ -73,23 +73,17 @@ struct MixerTrayView: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(card.name)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(StagePalette.ink)
                         Text(effect.room.name)
-                            .font(.system(size: 9, weight: .semibold))
-                            .tracking(1.0)
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .tracking(1.2)
                             .textCase(.uppercase)
                             .foregroundStyle(.white.opacity(0.4))
                     }
 
                     // Live indicator
-                    HStack(spacing: 4) {
-                        Circle().fill(HuePalette.Noir.success)
-                            .frame(width: 5, height: 5)
-                        Text("LIVE")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(HuePalette.Noir.success)
-                    }
+                    StageBadge(text: "LIVE", style: .live)
 
                     // Partial firmware-effect coverage (R4 Effects port) —
                     // statusMessage is write-only, so the badge IS the signal.
@@ -167,12 +161,7 @@ struct MixerTrayView: View {
 
                     // Active rooms count badge
                     if vm.runningEffects.count > 1 {
-                        Text("\(vm.runningEffects.count) rooms")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(HuePalette.amber)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(HuePalette.amber.opacity(0.15)))
+                        StageBadge(text: "\(vm.runningEffects.count) ROOMS", style: .amber)
                     }
 
                     Spacer()
@@ -205,7 +194,7 @@ struct MixerTrayView: View {
                             Image(systemName: "slider.vertical.3")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(Color.black.opacity(0.85))
-                                .padding(8)
+                                .frame(width: 34, height: 34)
                                 .background(Circle().fill(HuePalette.amber))
                         }
                         .buttonStyle(.plain)
@@ -218,7 +207,7 @@ struct MixerTrayView: View {
                             Image(systemName: "square.and.arrow.down")
                                 .font(.system(size: 12))
                                 .foregroundStyle(HuePalette.amber)
-                                .padding(8)
+                                .frame(width: 34, height: 34)
                                 .background(
                                     Circle()
                                         .fill(HuePalette.amber.opacity(0.15))
@@ -235,7 +224,7 @@ struct MixerTrayView: View {
                         Image(systemName: "stop.fill")
                             .font(.system(size: 12))
                             .foregroundStyle(HuePalette.Noir.destructive)
-                            .padding(8)
+                            .frame(width: 34, height: 34)
                             .background(
                                 Circle()
                                     .fill(HuePalette.Noir.destructive.opacity(0.15))
@@ -249,7 +238,7 @@ struct MixerTrayView: View {
 
                 // ── Separator ────────────────────────────────
                 Rectangle()
-                    .fill(HuePalette.Noir.separator)
+                    .fill(StagePalette.line)
                     .frame(height: 0.5)
                     .padding(.horizontal, HueSpacing.screenH)
 
@@ -282,14 +271,33 @@ struct MixerTrayView: View {
                         }
                     }
                 } else {
-                    // ── Essential parameter sliders ──────────────
-                    let essentialParams = card.params.filter { $0.tier == .essential }
-                    if !essentialParams.isEmpty {
+                    // ── Inline params: essentials + the color row (color is the
+                    // most-hunted adjustment — it costs one row to keep it out
+                    // of the sheet). Remaining advanced params live behind
+                    // "+N more", or inline when the tray is dragged up.
+                    let inlineParams = MixerTrayMetrics.inlineParams(for: card)
+                    let overflowParams = MixerTrayMetrics.overflowParams(for: card)
+
+                    if !inlineParams.isEmpty {
                         GeometryReader { scrollGeo in
                             ScrollView(showsIndicators: false) {
                                 VStack(spacing: HueSpacing.md) {
-                                    ForEach(essentialParams) { param in
+                                    ForEach(inlineParams) { param in
                                         StudioParamRow(param: param, cardID: card.id, vm: vm)
+                                    }
+
+                                    // Dragged-up tray shows everything inline —
+                                    // no sheet hunting for power users.
+                                    if isMixerExpanded && !overflowParams.isEmpty {
+                                        Text("ADVANCED")
+                                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                            .tracking(1.2)
+                                            .foregroundStyle(.white.opacity(0.38))
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.top, 6)
+                                        ForEach(overflowParams) { param in
+                                            StudioParamRow(param: param, cardID: card.id, vm: vm)
+                                        }
                                     }
                                 }
                                 .padding(.horizontal, HueSpacing.screenH)
@@ -301,24 +309,11 @@ struct MixerTrayView: View {
                         }
                     }
 
-                    // ── More params chevron ──────────────────────
-                    let advancedCount = card.params.filter { $0.tier != .essential }.count
-                    if advancedCount > 0 {
-                        Button {
+                    // ── More params reveal ───────────────────────
+                    if !overflowParams.isEmpty && !isMixerExpanded {
+                        StageMoreButton(count: overflowParams.count) {
                             showParamSheet = true
-                            HapticManager.shared.light()
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text("\(advancedCount) more")
-                                    .font(.system(size: 11, weight: .medium))
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 9, weight: .semibold))
-                            }
-                            .foregroundStyle(.white.opacity(0.45))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 6)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
 
@@ -330,8 +325,18 @@ struct MixerTrayView: View {
                     }
             }
         }
-        .background(.ultraThinMaterial)
+        // Flat stage surface (Perform grammar) — no live blur over the
+        // animating card grid.
+        .background(
+            RoundedRectangle(cornerRadius: HueRadius.xl, style: .continuous)
+                .fill(StagePalette.surface)
+        )
         .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
+        .overlay(
+            RoundedRectangle(cornerRadius: HueRadius.xl, style: .continuous)
+                .strokeBorder(StagePalette.line, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.45), radius: 20, y: -2)
         .padding(.horizontal, HueSpacing.sm)
         .id(vm.currentRoomEffect?.cardID ?? vm.selectedRoom?.id)
         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))

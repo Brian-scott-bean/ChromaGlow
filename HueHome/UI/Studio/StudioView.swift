@@ -368,13 +368,9 @@ struct StudioView: View {
     private func computeMixerHeight() -> CGFloat {
         guard let effect = vm.currentRoomEffect else { return 0 }
         if case .composition = effect.card.strategy {
-            // Taller tray on small phones; inner `ScrollView` fills remaining space below header.
-            return isCompactStudio ? 390 : 420
+            return MixerTrayMetrics.compositionHeight(isCompact: isCompactStudio)
         }
-        let essentialCount = effect.card.params.filter { $0.tier == .essential }.count
-        // Header (60) + essential sliders (56 each) + chevron row (36) + padding
-        let calculated = CGFloat(60 + essentialCount * 56 + 36 + 16)
-        return isCompactStudio ? min(calculated, 360) : calculated
+        return MixerTrayMetrics.engineHeight(for: effect.card, isCompact: isCompactStudio)
     }
 
     private var allCards: [StudioCard] {
