@@ -19,7 +19,7 @@ Important current facts (2026-07-07):
   scheme explicitly). Validate with:
   `xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`.
 - **`main` is the branch Brian installs from** (Xcode → physical iPhone). Keep it releasable;
-  fast-forward validated work to it. Current: `main` @ `6e8a34a`, 0.9.0 build 9.
+  fast-forward validated work to it. Current: `main`, 0.9.0 build 19 (see DEVLOG snapshot).
 - Brian's conventions: `checkpoint/*` rollback tag before any multi-commit run; bump
   `CURRENT_PROJECT_VERSION` (all 12 pbxproj entries) each device-test round; one shippable
   commit per fix.

@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app (production anchor, **`main` @ `6e8a34a`, 0.9.0 build 9** — hardening P0+P1 remediation complete, Rounds 3-4 Studio/Composer/Perform revamp shipped, warm-app + fresh-install performance passes merged; awaiting Brian's on-device fresh-install verification, after which the TEMP `⏱️PERF` prints get a cleanup commit) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
+ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 19** — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged, 2026-07-09 card-parity + Composer-live-update fixes (build 18) and the Scenes overhaul (grouped IA, saved colors, scene copy/move — build 19) landed; both await Brian's on-device verification, see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
 
 ## Current Branch/Repo Facts
 
@@ -249,6 +249,23 @@ Performance passes (2026-07-07) durable facts — these are load-bearing contrac
   WCSession activates from AppRootView's `.task`, not App.init.
 - TEMP `⏱️PERF` prints in `RoomDetailView.task` + `UnifiedOrchestrator.loadAll` are diagnostic;
   remove after Brian's on-device fresh-install verification (see DEVLOG snapshot).
+
+Scenes overhaul (2026-07-09) durable facts — full record in the DEVLOG build-19 entry:
+
+- `CompositionParamBox` is `@Observable`; its runtime fields (spatial positions, lerp progress,
+  reaction phases, etc.) are `@ObservationIgnored` and that is **LOAD-BEARING** — render()
+  writes them at 25fps and observing them would invalidate the Studio tab at frame rate.
+  Locked by observation-contract tests in `CompositionReactionTests`.
+- `fetchScenes()` (list) NEVER decodes scene `actions[]`; all action decoding lives in the
+  on-demand `HueSceneDetail` / `fetchSceneDetail(id:)` so odd firmware action blocks can't
+  break scene listing. `SceneCopyEngine` (pure, tested) owns all copy/move remap logic —
+  the orchestrator only does I/O (`roomLights(for:)`, `copyScene`).
+- Scenes tab IA: `SceneGrouping` (pure model) + `SceneRoomSectionView`; favorites CSV and the
+  new `SceneUsageStore` both key on RAW `bridgeSceneID`. Saved colors: `SavedColorStore` /
+  `SavedColorStrip`, drag-drop via exported UTTypes `com.lightshade.savedcolor` /
+  `com.lightshade.scene-ref` (declared in `HueHome/Info.plist`).
+- New-file pbxproj registration for this feature set: `add_scenes_overhaul_files.rb`
+  (idempotent, xcodeproj gem).
 
 ## Android Current State
 

@@ -12,7 +12,18 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **18**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **19**).
+- **BUILD 19 (2026-07-09): SCENES OVERHAUL — AWAITING BRIAN'S ON-DEVICE CHECK.** Seven
+  shippable commits (same rollback tag as build 18): grouped-by-room collapsible Scenes tab
+  with ★ Favorites shelf + sort menu (Group by Room / A–Z / Recently Used / Most Used, backed
+  by new `SceneUsageStore`); **saved color palette** ("My Colors" — capture in LightControl or
+  the scene builder, tap-to-apply OR drag a swatch onto any light card in RoomDetail, with
+  per-capability fallback); **scene copy/move between rooms** (context menu "Copy/Move to
+  Room…" AND drag a scene card onto a room section/chip → `CopySceneSheet` with live remap
+  preview + 5s undo toast; pure `SceneCopyEngine`, cross-bridge capable). Also fixed: zone
+  scenes displayed as "Other" (name lookup skipped zones). On-device checklist in the
+  2026-07-09 Scenes entry below. Cross-bridge copy needs Brian's two-bridge check.
+  Feature roadmap (R1–R4 + differentiators): `docs/ios/feature-roadmap-2026-07.md`.
 - **BUILD 18 (2026-07-09): card-parity + Composer live-update bug fixes — AWAITING BRIAN'S
   ON-DEVICE CHECK.** Five shippable fixes (rollback `checkpoint/pre-scenesrun-2026-07-09` @
   `72669f1`): ① Composer layers panel updates live (`CompositionParamBox` is now `@Observable`;
@@ -21,9 +32,7 @@
   RoomDetail's); ③ SSE light-on events flip room/zone cards on (ON-direction only); ④ SSE keeps
   `lightsByBridge` live so RoomDetail's <30s instant-render seed is always truthful; ⑤ light-event
   bus token guard (rapid room A→B switch no longer kills room B's SSE updates). On-device
-  checklist in the 2026-07-09 entry below. Next after verification: Scenes overhaul phases
-  (grouped-by-room IA, saved colors, scene copy-to-room) per the approved plan; feature roadmap at
-  `docs/ios/feature-roadmap-2026-07.md`.
+  checklist in the 2026-07-09 entry below.
 - **BUILD 17 (2026-07-08):** added an **All Lights** master-switch Control (one Lock Screen corner
   slot, on ↔ off). Turning on applies a "welcome home" 80% / mirek 350, not a bare `on: true`.
 - **BUILD 16 (2026-07-08):** iPhone Lock Screen *widgets* are status-only — taps always open the
@@ -165,6 +174,74 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-09 - [Claude] BUILD 19: Scenes overhaul — grouped IA, saved colors, scene copy/move
+
+### Branch
+- `main` directly (rollback `checkpoint/pre-scenesrun-2026-07-09` @ `72669f1`)
+
+### Did
+- **Roadmap (`073c638`):** `docs/ios/feature-roadmap-2026-07.md` — verified capability
+  inventory, gap table, prioritized phases R1 Automation / R2 Sensors & switches / R3 Presence
+  & away / R4 Media & gradient, plus 8 differentiators (Live Activity effects, Focus-mode
+  lighting, ShazamKit palette, RoomPlan 3D placement, composition share, knock-flash
+  accessibility, energy insights, countdown lighting). Suggested next run: R1.0 scheduling
+  spike → scene scheduling; quick win D2 (Focus).
+- **Phase 0 (`28febad`):** decomposed ScenesTabView (809→~410 lines) — SceneMoodCard/
+  SceneShimmerCard, SceneSpeedSheet, RenameSceneSheet extracted verbatim. New idempotent
+  `add_scenes_overhaul_files.rb` registers this run's files in the pbxproj.
+- **Phase 1 (`733f207`):** grouped-by-room Scenes IA — ★ Favorites shelf (CSV order), one
+  collapsible section per room/zone (`SceneRoomSectionView`, collapse persisted via
+  `castchroma.collapsedSceneRoomIDs` CSV), toolbar sort menu replaces the wide-card toggle,
+  chips only in flat modes, search flattens. Pure tested `SceneGrouping` model. **Fixed: zone
+  scenes showed as "Other"** (roomName lookup searched allRooms only).
+- **Phase 2 (`03d7c5d`):** `SceneUsageStore` (UserDefaults JSON, LRU cap 500, keyed by raw
+  bridgeSceneID) recorded from both activation paths → Recently Used / Most Used sorts. Also
+  feeds roadmap R3.2 (vacation mimic) later.
+- **Phase 3 (`a08dad9`):** "My Colors" saved palette — `SavedColor(Store)` (xy or mirek +
+  brightness), `SavedColorStrip` shared component; save from LightControlView (color row +
+  CT-only row) and SceneColorBuilderView; RoomDetail strip arms a swatch → tap a light to
+  apply; capability fallback (color→xy, CT-only→clamped mirek, dimmable→brightness) unit-tested.
+- **Phase 4 (`ce65ea0`):** swatches `.draggable`; light cards `.dropDestination` with amber
+  targeting ring. `UTExportedTypeDeclarations` added to Info.plist (savedcolor + scene-ref).
+- **Phase 5 (`0a31e26`):** scene copy/move — new on-demand `HueSceneDetail` decode +
+  `fetchSceneDetail(id:)` (list decode UNTOUCHED by design: odd firmware action blocks must
+  never break scene listing), `HueColorUtils.mirek(fromX:y:)` (McCamy), pure `SceneCopyEngine`
+  (recipe extraction sorted color-hue→CT-warm→cool; round-robin/evenly-spaced distribution;
+  gamut clamp / CT approximation / brightness-only downgrades; dynamic palette passthrough),
+  orchestrator `roomLights(for:)` extraction + `copyScene` (~50 narrow lines), `CopySceneSheet`
+  (bridge-grouped picker, live per-light remap preview with downgrade badges, 32-char name),
+  `HueActionToast` 5s undo (copy-undo deletes; move-undo re-POSTs the retained original).
+- **Phase 6 (`67934c2`):** scene cards `.draggable`; room sections (grouped) / filter chips
+  (flat) are drop targets → CopySceneSheet opens pre-targeted. Never a blind copy.
+- Bumped `CURRENT_PROJECT_VERSION` 18 → 19 (all 12 entries).
+
+### Working
+- Full suite green after every commit (incl. new SceneGroupingTests, SceneUsageStoreTests,
+  SavedColorStoreTests, SceneCopyEngineTests — 26 new tests).
+
+### Left — Brian's on-device checklist (build 19, after the build-18 items)
+1. Scenes tab: rooms appear as collapsible sections; collapse survives relaunch; Favorites
+   shelf on top; sort menu switches to flat modes and brings chips back; search flattens.
+2. Zone scenes now show their zone name (previously "Other").
+3. LightControl: save a color via ＋ in MY COLORS; RoomDetail: tap swatch → tap light applies;
+   drag swatch onto a light card → applies with ring highlight; CT-only + dimmable lights get
+   sensible fallbacks.
+4. Scene context menu → Copy to Room…: preview shows target lights tinted with remapped
+   colors; confirm creates the scene in the target room; Undo removes it. Move restores on Undo.
+5. Drag a scene card onto another room's section header → sheet opens pre-targeted.
+6. Dynamic scene copy keeps its palette + speed (preview shows the palette strip).
+7. **Two-bridge check:** copy a scene to a room on the OTHER bridge; verify colors land.
+8. Demo mode: no Copy/Move menu items; drops rejected.
+
+### Gotchas
+- `fetchScenes()` list decode must stay actions-free — all action decoding lives in
+  `HueSceneDetail` (see Phase 5 rationale).
+- SceneCopyEngine is pure; the orchestrator gained only I/O plumbing. Keep it that way.
+- Favorites CSV + SceneUsageStore both key on RAW `bridgeSceneID` (shared identity contract).
+- `add_scenes_overhaul_files.rb` is the pbxproj registrar for this run's files (idempotent).
 
 ---
 
