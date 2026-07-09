@@ -46,6 +46,18 @@ enum HueFont {
     static func sectionHeader() -> some View {
         EmptyView() // Use via ViewModifier below
     }
+
+    // MARK: Stage (adjustment surfaces — text-style-relative so Dynamic Type scales)
+    /// Mono bold uppercase tag — deck/section labels, sheet titles. Apply ~1.2 tracking at call site.
+    static let stageTag     = Font.system(.caption2, design: .monospaced).weight(.bold)
+    /// Mono value readouts (slider values, BPM, Hz, Kelvin).
+    static let stageValue   = Font.system(.caption, design: .monospaced).weight(.medium)
+    /// Control titles (slider / toggle / swatch-row labels).
+    static let stageControl = Font.system(.footnote).weight(.medium)
+    /// Card and effect names in tray headers.
+    static let stageName    = Font.system(.callout).weight(.bold)
+    /// Chip labels (pill pickers, capsule buttons).
+    static let stageChip    = Font.system(.caption).weight(.semibold)
 }
 
 // MARK: - Typography ViewModifiers

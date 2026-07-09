@@ -99,15 +99,18 @@ struct StageSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
     var format: (Double) -> String = { "\(Int($0.rounded()))" }
+    var onEditingChanged: ((Bool) -> Void)? = nil
 
     init(title: String,
          value: Binding<Double>,
          range: ClosedRange<Double>,
-         format: @escaping (Double) -> String = { "\(Int($0.rounded()))" }) {
+         format: @escaping (Double) -> String = { "\(Int($0.rounded()))" },
+         onEditingChanged: ((Bool) -> Void)? = nil) {
         self.title = title
         self._value = value
         self.range = range
         self.format = format
+        self.onEditingChanged = onEditingChanged
     }
 
     var body: some View {
@@ -121,8 +124,10 @@ struct StageSlider: View {
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.40))
             }
-            Slider(value: $value, in: range)
-                .tint(HuePalette.amber)
+            Slider(value: $value, in: range) { editing in
+                onEditingChanged?(editing)
+            }
+            .tint(HuePalette.amber)
         }
     }
 }
@@ -169,6 +174,153 @@ struct StageBadge: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(background))
+    }
+}
+
+// MARK: - Stage Toggle Row
+
+/// Labeled toggle row: title left, amber toggle right. 44pt minimum height.
+struct StageToggleRow: View {
+    let title: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.60))
+        }
+        .tint(HuePalette.amber)
+        .frame(minHeight: 44)
+    }
+}
+
+// MARK: - Stage Swatch Math
+
+/// Color matching for swatch selection. `Color` equality is unreliable across
+/// construction paths (hex vs xy round-trips), so compare resolved RGB with a
+/// tolerance instead.
+enum StageSwatchMath {
+    static func matches(_ a: Color, _ b: Color, tolerance: Double = 0.01) -> Bool {
+        let ra = a.resolve(in: EnvironmentValues())
+        let rb = b.resolve(in: EnvironmentValues())
+        return abs(Double(ra.red - rb.red)) <= tolerance
+            && abs(Double(ra.green - rb.green)) <= tolerance
+            && abs(Double(ra.blue - rb.blue)) <= tolerance
+    }
+}
+
+// MARK: - Stage Color Swatch Row
+
+/// Label + tappable preset color circles. Circles render at 28pt but sit in a
+/// 44pt hit area. Selection ring follows `selected` via tolerance matching.
+struct StageColorSwatchRow: View {
+    let title: String
+    let swatches: [Color]
+    let selected: Color?
+    let onSelect: (Color) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.60))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(swatches.enumerated()), id: \.offset) { _, color in
+                        let isSelected = selected.map { StageSwatchMath.matches($0, color) } ?? false
+                        Button {
+                            HapticManager.shared.selection()
+                            onSelect(color)
+                        } label: {
+                            Circle()
+                                .fill(color)
+                                .frame(width: 28, height: 28)
+                                .overlay(
+                                    Circle().strokeBorder(.white, lineWidth: isSelected ? 2 : 0)
+                                )
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Stage More Button
+
+/// The "+N more ▾" progressive-disclosure affordance shared by the mixer tray
+/// and the composer layer tabs.
+struct StageMoreButton: View {
+    let count: Int
+    var isExpanded: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            HapticManager.shared.light()
+            action()
+        } label: {
+            HStack(spacing: 5) {
+                Text(isExpanded ? "SHOW LESS" : "+\(count) MORE")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .tracking(1.0)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            }
+            .foregroundStyle(StagePalette.muted)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Stage Sheet Scaffold
+
+/// Unified chrome for every adjustment sheet: stage background, mono tracked
+/// title, medium/large detents, and background interaction at medium so the
+/// lights stay visible while adjusting.
+struct StageSheetScaffold<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 14) {
+                    content()
+                }
+                .padding(16)
+            }
+            .scrollContentBackground(.hidden)
+            .background(StagePalette.stage)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title.uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .tracking(1.2)
+                        .foregroundStyle(StagePalette.muted)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .font(.system(size: 13, weight: .semibold))
+                        .tint(HuePalette.amber)
+                }
+            }
+            .toolbarBackground(StagePalette.stage, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        .preferredColorScheme(.dark)
     }
 }
 

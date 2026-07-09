@@ -6,6 +6,7 @@
 // and visually distinct per pattern. No views, no clocks.
 
 import XCTest
+import SwiftUI
 @testable import HueHome
 
 final class StageKitTests: XCTestCase {
@@ -115,5 +116,25 @@ final class StageKitTests: XCTestCase {
             }
             XCTAssertNotEqual(hottest(at: 0.05), hottest(at: 0.85), "\(pattern) hot cell never moved")
         }
+    }
+
+    // ── Swatch matching ───────────────────────────────────────
+
+    /// Swatch selection uses tolerance matching because Color equality is
+    /// unreliable across construction paths (hex string vs RGB components).
+    func testSwatchMatchesSameColorAcrossConstructionPaths() {
+        XCTAssertTrue(StageSwatchMath.matches(Color(hex: "#FF0000"), Color(red: 1, green: 0, blue: 0)))
+        XCTAssertTrue(StageSwatchMath.matches(Color(hex: "#FFC107"), Color(hex: "#FFC107")))
+    }
+
+    func testSwatchRejectsDistinctColorsAndHonorsTolerance() {
+        XCTAssertFalse(StageSwatchMath.matches(Color(hex: "#FF0000"), Color(hex: "#00FF00")))
+        // Nearby but beyond default tolerance (~2.5/255 > 0.01).
+        XCTAssertFalse(StageSwatchMath.matches(Color(red: 0.5, green: 0.5, blue: 0.5),
+                                               Color(red: 0.52, green: 0.5, blue: 0.5)))
+        // Same pair passes with a wider tolerance.
+        XCTAssertTrue(StageSwatchMath.matches(Color(red: 0.5, green: 0.5, blue: 0.5),
+                                              Color(red: 0.52, green: 0.5, blue: 0.5),
+                                              tolerance: 0.05))
     }
 }
