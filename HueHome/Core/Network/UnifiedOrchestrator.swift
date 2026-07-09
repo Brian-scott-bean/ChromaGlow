@@ -347,6 +347,13 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private var lightEventContinuation: AsyncStream<[SSEResourceUpdate]>.Continuation?
 
+    /// Identity of the CURRENT light-event subscriber. A stale stream's
+    /// deferred onTermination (room A popped, room B already subscribed) must
+    /// not nil out the newer subscriber's continuation — it checks this token
+    /// first. @ObservationIgnored: infrastructure.
+    @ObservationIgnored
+    private var lightEventSubscriberToken = UUID()
+
     /// Debounced task for widget + watch writes.
     /// Cancelled and re-scheduled on every rebuildAllRooms/Zones call so that
     /// rapid SSE events (e.g. a dimmer ramp) only trigger ONE write 500 ms after
@@ -456,6 +463,12 @@ final class UnifiedOrchestrator {
     /// tests can run without a full loadAll. Read back via `cachedRawLights`.
     func testSeedLightCache(bridgeID: String, lights: [HueLight]) {
         lightsByBridge[bridgeID] = lights
+    }
+
+    /// Yields updates on the light-event bus exactly as runSSE would, so
+    /// subscriber-lifecycle tests run without a live SSE connection.
+    func testYieldLightEvents(_ updates: [SSEResourceUpdate]) {
+        lightEventContinuation?.yield(updates)
     }
     #endif
 
@@ -1242,13 +1255,21 @@ final class UnifiedOrchestrator {
     /// (SwiftUI .task cancellation propagates correctly).
     func subscribeToLightEvents() -> AsyncStream<[SSEResourceUpdate]>? {
         guard !isDemoMode else { return nil }
+        // Proactively end any stale stream — its consumer is gone or about to be.
+        lightEventContinuation?.finish()
+        let token = UUID()
+        lightEventSubscriberToken = token
         return AsyncStream { [weak self] continuation in
             self?.lightEventContinuation = continuation
             // onTermination is called from a Sendable context (off main actor).
             // Hop back to MainActor to safely nil the @MainActor-isolated property.
+            // Token check: on a rapid room A→B switch, A's deferred termination
+            // lands AFTER B subscribed — without it, B's continuation is nil'd
+            // and room B never receives another SSE light update.
             continuation.onTermination = { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    self?.lightEventContinuation = nil
+                    guard let self, self.lightEventSubscriberToken == token else { return }
+                    self.lightEventContinuation = nil
                 }
             }
         }

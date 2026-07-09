@@ -197,6 +197,45 @@ final class OrchestratorSSETests: XCTestCase {
         XCTAssertFalse(cached[0].on.on)
     }
 
+    // MARK: - SSE-06 light-event bus survives a rapid room A→B resubscribe
+
+    func testSubscribeToLightEvents_rapidResubscribe_newSubscriberStillReceives() async throws {
+        let orchestrator = makeOrchestratorSSESUT(isOn: true, brightness: 80)
+
+        // Room A subscribes, then its consumer tears down (view pop)…
+        let streamA = try XCTUnwrap(orchestrator.subscribeToLightEvents())
+        let consumerA = Task { for await _ in streamA {} }
+        consumerA.cancel()
+
+        // …and room B subscribes immediately after, before A's deferred
+        // onTermination hop has run.
+        let streamB = try XCTUnwrap(orchestrator.subscribeToLightEvents())
+
+        // Let A's deferred MainActor termination task land — pre-fix, this is
+        // the moment it clobbered B's continuation to nil.
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"light-001","id_v1":null,"type":"light",
+          "on":{"on":true},"owner":null
+        }],"id":"evt-10","type":"update"}]
+        """
+        let events = try decodeSSEEvents(json)
+
+        let received = expectation(description: "room B receives light events")
+        let consumerB = Task {
+            for await updates in streamB where !updates.isEmpty {
+                received.fulfill()
+                break
+            }
+        }
+        orchestrator.testYieldLightEvents(events[0].data)
+
+        await fulfillment(of: [received], timeout: 2)
+        consumerB.cancel()
+    }
+
     // MARK: - Fixtures
 
     private func makeOrchestratorSSECachedRoom(
