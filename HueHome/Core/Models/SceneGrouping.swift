@@ -9,6 +9,27 @@
 // index here must always be built from rooms + zones.
 
 import Foundation
+import CoreTransferable
+import UniformTypeIdentifiers
+
+// MARK: - SceneDragPayload
+
+/// What a dragged scene card carries: the composite GlobalSceneItem id
+/// ("bridgeID:sceneID"). Dropping on a room section/chip re-resolves it
+/// against orchestrator.globalScenes and opens CopySceneSheet pre-targeted
+/// — never a blind copy.
+struct SceneDragPayload: Codable, Transferable {
+    let sceneID: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .sceneRef)
+    }
+}
+
+extension UTType {
+    /// Exported custom type for scene drags (declared in Info.plist).
+    static let sceneRef = UTType(exportedAs: "com.lightshade.scene-ref")
+}
 
 enum SceneGrouping {
 

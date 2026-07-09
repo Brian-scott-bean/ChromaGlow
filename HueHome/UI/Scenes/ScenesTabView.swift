@@ -42,6 +42,8 @@ struct ScenesTabView: View {
     @State private var copySheetContext: CopySheetContext? = nil
     @State private var copyUndo: SceneCopyUndo? = nil
     @State private var copyUndoDismissTask: Task<Void, Never>? = nil
+    /// Room section / filter chip a scene drag is hovering (highlight).
+    @State private var dropTargetRoomID: String? = nil
 
     /// Persisted sort/group mode (SceneGrouping.SortMode raw value).
     @AppStorage("castchroma.sceneSortMode") private var sortModeRaw =
@@ -272,11 +274,21 @@ struct ScenesTabView: View {
                     SceneFilterChip(
                         title: room.name,
                         icon: archetypeIcon(for: roomIndex[room.id]?.archetype),
-                        isSelected: selectedRoomID == room.id,
+                        isSelected: selectedRoomID == room.id || dropTargetRoomID == room.id,
                         accentColor: HuePalette.amber
                     ) {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                             selectedRoomID = (selectedRoomID == room.id) ? nil : room.id
+                        }
+                    }
+                    // Flat modes: the chips double as scene-drop targets.
+                    .dropDestination(for: SceneDragPayload.self) { items, _ in
+                        handleSceneDrop(items, targetRoomID: room.id)
+                    } isTargeted: { targeting in
+                        if targeting {
+                            dropTargetRoomID = room.id
+                        } else if dropTargetRoomID == room.id {
+                            dropTargetRoomID = nil
                         }
                     }
                 }
@@ -314,6 +326,26 @@ struct ScenesTabView: View {
                 ) {
                     // Room label is redundant inside a room's own section.
                     sceneGrid(section.scenes, showsRoomLabel: false)
+                }
+                // A whole section is a drop target for a dragged scene card —
+                // dropping opens the copy sheet pre-targeted to that room.
+                .overlay {
+                    if dropTargetRoomID == section.id {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(HuePalette.amber, lineWidth: 2)
+                            .padding(-6)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .dropDestination(for: SceneDragPayload.self) { items, _ in
+                    handleSceneDrop(items, targetRoomID: section.id)
+                } isTargeted: { targeting in
+                    guard section.id != SceneGrouping.otherSectionID else { return }
+                    if targeting {
+                        dropTargetRoomID = section.id
+                    } else if dropTargetRoomID == section.id {
+                        dropTargetRoomID = nil
+                    }
                 }
             }
         }
@@ -422,6 +454,26 @@ struct ScenesTabView: View {
                 Label("Delete Scene", systemImage: "trash")
             }
         }
+        // Drag the card onto a room section (grouped mode) or filter chip
+        // (flat modes) to copy it there — lands in CopySceneSheet
+        // pre-targeted, never a blind copy.
+        .draggable(SceneDragPayload(sceneID: scene.id))
+    }
+
+    /// Shared handler for section/chip drops: resolve the payload back to a
+    /// live scene and open the copy sheet pre-targeted at the drop room.
+    private func handleSceneDrop(_ items: [SceneDragPayload], targetRoomID: String) -> Bool {
+        dropTargetRoomID = nil
+        guard !orchestrator.isDemoMode,
+              targetRoomID != SceneGrouping.otherSectionID,
+              let payload = items.first,
+              let scene = orchestrator.globalScenes.first(where: { $0.id == payload.sceneID })
+        else { return false }
+        HapticManager.shared.medium()
+        copySheetContext = CopySheetContext(
+            scene: scene, mode: .copy, preselectedTargetID: targetRoomID
+        )
+        return true
     }
 
     // ── Copy/Move undo toast ──────────────────────────────
