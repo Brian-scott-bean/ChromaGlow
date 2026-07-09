@@ -248,6 +248,7 @@ struct MixerTrayView: View {
                             ScrollView(showsIndicators: false) {
                                 CompositionEditorPanel(
                                     vm: vm,
+                                    isExpanded: isMixerExpanded,
                                     activeCompositionTab: $activeCompositionTab,
                                     activeHarmonyRule: $activeHarmonyRule,
                                     editingSwatch: $editingSwatch

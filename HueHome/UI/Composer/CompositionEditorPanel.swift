@@ -54,18 +54,18 @@ struct CompositionEditorPanel: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let vm: StudioViewModel
+    /// True while the mixer tray is dragged up near-full-screen — advanced
+    /// controls render inline instead of behind the "+N more" sheet.
+    let isExpanded: Bool
     @Binding var activeCompositionTab: CompositionLayerTab
     @Binding var activeHarmonyRule: HarmonyRule
     @Binding var editingSwatch: SwatchEditItem?
 
-    // Round 3 (E): "Save as Hue dynamic scene" name prompt.
-    @State private var showDynamicScenePrompt = false
-    @State private var dynamicSceneName = ""
     @State private var isHuePadDragging = false
     @State private var huePadLiveHue: Double = 0
     @State private var huePadLiveSaturation: Double = 1
     @State private var lastHuePadHapticAt: CFAbsoluteTime = 0
-    @State private var showEntertainmentBuilder = false
+    @State private var showLayerSheet = false
 
     var body: some View {
         compositionMixerBody
@@ -128,6 +128,25 @@ struct CompositionEditorPanel: View {
             .id(activeCompositionTab)
             .transition(.opacity.combined(with: .scale(scale: 0.985)))
             .animation(HueAnimation.fast, value: activeCompositionTab)
+
+            // ── Progressive disclosure (COMPOSER_SPEC): essentials above,
+            // the rest behind "+N more" — or inline when dragged up.
+            let advancedCount = ComposerControlCatalog.advancedCount(
+                tab: activeCompositionTab, box: vm.activeCompositionBox)
+            if advancedCount > 0 {
+                if isExpanded {
+                    StageCard(title: "Advanced") {
+                        ComposerAdvancedControls(vm: vm, tab: activeCompositionTab)
+                    }
+                } else {
+                    StageMoreButton(count: advancedCount) {
+                        showLayerSheet = true
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showLayerSheet) {
+            ComposerLayerSheet(vm: vm, tab: activeCompositionTab)
         }
     }
 
@@ -221,134 +240,49 @@ struct CompositionEditorPanel: View {
         StageCard(icon: "paintpalette.fill", title: "Color", subtitle: "Palette every light reads before motion and envelope.") {
             VStack(spacing: HueSpacing.sm) {
 
-            Picker("Mode", selection: Binding(
-                get: { vm.activeCompositionBox?.palette.mode ?? .gradient },
-                set: { newMode in
-                    vm.activeCompositionBox?.palette.mode = newMode
-                    // Auto-dismiss harmony when switching to a mode that ignores color fields
-                    if newMode != .solid && newMode != .gradient && activeHarmonyRule != .none {
-                        activeHarmonyRule = .none
-                    }
-                }
-            )) {
-                ForEach(PaletteConfig.Mode.allCases, id: \.self) { mode in
-                    Text(mode.rawValue.capitalized).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            hueSaturationPad
-
-            harmonyChipRow
-
-            if (vm.activeCompositionBox?.palette.mode ?? .gradient) == .spectrum {
-                StageSlider(
-                    title: "Hue Shift",
-                    value: Binding(
-                        get: { vm.activeCompositionBox?.palette.hueShift ?? 0 },
-                        set: { vm.activeCompositionBox?.palette.hueShift = $0 }
-                    ),
-                    range: -180...180
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Mode")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.60))
+                ChipPickerRow(
+                    items: PaletteConfig.Mode.allCases.map { mode in
+                        ChipPickerRow<PaletteConfig.Mode>.Item(
+                            value: mode, label: mode.rawValue.capitalized)
+                    },
+                    selection: Binding(
+                        get: { vm.activeCompositionBox?.palette.mode ?? .gradient },
+                        set: { newMode in
+                            vm.activeCompositionBox?.palette.mode = newMode
+                            // Auto-dismiss harmony when switching to a mode that ignores color fields
+                            if newMode != .solid && newMode != .gradient && activeHarmonyRule != .none {
+                                activeHarmonyRule = .none
+                            }
+                        }
+                    )
                 )
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Toggle("Randomize", isOn: Binding(
-                get: { vm.activeCompositionBox?.palette.randomize ?? false },
-                set: { vm.activeCompositionBox?.palette.randomize = $0 }
-            ))
-            .tint(HuePalette.amber)
+            if (vm.activeCompositionBox?.palette.mode ?? .gradient) == .temperature {
+                // Temperature mode ignores color1/saturation — the pad was a
+                // fully dead control surface here. Warmth is what the engine
+                // reads (spectrum approximation live, real mirek one-shot).
+                StageSlider(
+                    title: "Warmth",
+                    value: Binding(
+                        get: { Double(vm.activeCompositionBox?.palette.temperature ?? 366) },
+                        set: { vm.activeCompositionBox?.palette.temperature = Int($0.rounded()) }
+                    ),
+                    range: 153...500,
+                    format: StudioParamFormat.kelvin
+                )
+            } else {
+                hueSaturationPad
+            }
 
-            // Round 3 (E): export this palette as a NATIVE Hue dynamic scene —
-            // the bridge cycles it forever with the app closed.
-            Button {
-                dynamicSceneName = ""
-                showDynamicScenePrompt = true
-                HapticManager.shared.selection()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "square.and.arrow.down.on.square")
-                        .font(.system(size: 11, weight: .semibold))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Save as Hue dynamic scene")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Loops on the bridge — works with the app closed")
-                            .font(.system(size: 10))
-                            .opacity(0.55)
-                    }
-                    Spacer()
-                }
-                .foregroundStyle(.white.opacity(0.85))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.07)))
-            }
-            .buttonStyle(.plain)
-            .alert("Save as Hue Dynamic Scene", isPresented: $showDynamicScenePrompt) {
-                TextField("Scene name", text: $dynamicSceneName)
-                Button("Cancel", role: .cancel) {}
-                Button("Save") {
-                    let name = dynamicSceneName.trimmingCharacters(in: .whitespaces)
-                    guard !name.isEmpty else { return }
-                    Task { await exportDynamicScene(named: name) }
-                }
-            } message: {
-                Text("The bridge cycles this palette on its own — no phone needed. It appears in your Scenes tab.")
-            }
+            harmonyChipRow
         }
             }
-    }
-
-    /// Builds a native dynamic scene from the live palette layer and POSTs
-    /// it to the room's own bridge. One POST — no loops, no session.
-    private func exportDynamicScene(named name: String) async {
-        guard let room = vm.selectedRoom,
-              let groupedLightID = room.groupedLightID,
-              let api = orchestrator.hueClient(for: room.bridgeID),
-              let box = vm.activeCompositionBox else {
-            vm.statusMessage = "⚠ Select a room and composition first"
-            return
-        }
-        var paletteXY: [(x: Double, y: Double)] = [
-            (box.palette.color1.x, box.palette.color1.y),
-            (box.palette.color2.x, box.palette.color2.y),
-        ]
-        if let c3 = box.palette.color3 { paletteXY.append((c3.x, c3.y)) }
-
-        do {
-            let ids = Set(try await api.fetchLightIDsForGroup(groupedLightID: groupedLightID))
-            let lights = try await api.fetchLights().filter { ids.contains($0.id) }
-            guard !lights.isEmpty else {
-                vm.statusMessage = "⚠ No lights found in '\(room.name)'"
-                return
-            }
-            let request = CreateSceneRequest.dynamicScene(
-                name: name,
-                groupID: room.id,
-                groupRtype: room.kind == .zone ? "zone" : "room",
-                lights: lights,
-                paletteXY: paletteXY,
-                brightness: box.envelope.maxBrightness,
-                speed: max(0.1, min(1.0, box.motion.speed / 100.0))
-            )
-            let sceneID = try await api.createSceneReturningID(request)
-            // R4 Scenes block: remember provenance so the Scenes tab can show
-            // the STUDIO badge, and refresh so the scene is already there
-            // when the user hops over.
-            if let bridgeID = room.bridgeID {
-                SceneProvenanceStore.shared.markStudioExported(bridgeID: bridgeID, sceneID: sceneID)
-            }
-            vm.statusMessage = "'\(name)' saved as a dynamic scene ✓ — find it in Scenes"
-            HapticManager.shared.medium()
-            await orchestrator.loadAllScenes()
-        } catch HueAPIError.decodingFailed {
-            // POST executed — the scene exists on the bridge; only the id
-            // parse failed. Success without a provenance badge.
-            vm.statusMessage = "'\(name)' saved as a dynamic scene ✓ — find it in Scenes"
-            HapticManager.shared.medium()
-            await orchestrator.loadAllScenes()
-        } catch {
-            vm.statusMessage = "⚠ Couldn't save the scene — \(error.localizedDescription)"
-        }
     }
 
     // ──────────────────────────────────────────────
@@ -709,13 +643,6 @@ struct CompositionEditorPanel: View {
         "onset":         "bolt.fill",
     ]
 
-    /// Direction is relevant for all patterns except scatter.
-    private var motionPatternIsSpatial: Bool {
-        let pattern = vm.activeCompositionBox?.motion.pattern ?? .cascade
-        // Scatter and twinkle are non-directional (per-light hashing).
-        return pattern != .scatter && pattern != .twinkle
-    }
-
     private var compositionMotionControls: some View {
         StageCard(icon: "wind", title: "Motion", subtitle: "How color travels across lights over time.") {
             VStack(spacing: HueSpacing.sm) {
@@ -747,342 +674,37 @@ struct CompositionEditorPanel: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // ── Direction Control ──
-            if motionPatternIsSpatial {
-                if orchestrator.activeEntertainmentConfig(for: vm.selectedRoom) != nil {
-                    directionControl
-                } else {
-                    entertainmentAreaPrompt
-                }
-            }
-
-            StageSlider(
-                title: "Speed",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.motion.speed ?? 40 },
-                    set: { vm.activeCompositionBox?.motion.speed = $0 }
-                ),
-                range: 0...100
-            )
-
-            StageSlider(
-                title: "Spread",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.motion.spread ?? 70 },
-                    set: { vm.activeCompositionBox?.motion.spread = $0 }
-                ),
-                range: 0...100
-            )
-
-            Toggle("Forward", isOn: Binding(
-                get: { vm.activeCompositionBox?.motion.forward ?? true },
-                set: { vm.activeCompositionBox?.motion.forward = $0 }
-            ))
-            .tint(HuePalette.amber)
-
-            StageSlider(
-                title: "Offset",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.motion.offset ?? 50 },
-                    set: { vm.activeCompositionBox?.motion.offset = $0 }
-                ),
-                range: 0...100
-            )
-
-            Toggle("Mirror", isOn: Binding(
-                get: { vm.activeCompositionBox?.motion.mirror ?? false },
-                set: { vm.activeCompositionBox?.motion.mirror = $0 }
-            ))
-            .tint(HuePalette.amber)
-        }
-            }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Direction Control
-    // ──────────────────────────────────────────────
-
-    private let directionPresets: [(label: String, angle: Double)] = [
-        ("→", 0), ("↗", 45), ("↑", 90), ("↖", 135),
-        ("←", 180), ("↙", 225), ("↓", 270), ("↘", 315)
-    ]
-
-    private var directionControl: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("DIRECTION")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white.opacity(0.38))
-                .tracking(0.6)
-
-            HStack(spacing: 16) {
-                // Mini-map
-                spatialMiniMap
-
-                Spacer()
-
-                // Angle dial
-                motionAngleDial
-            }
-
-            // Direction presets
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(0..<directionPresets.count, id: \.self) { i in
-                        let preset = directionPresets[i]
-                        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
-                        let isSelected = abs(currentAngle - preset.angle) < 5 || abs(currentAngle - preset.angle - 360) < 5
-                        Button {
-                            recomputeSpatialPositions(angle: preset.angle)
-                            HapticManager.shared.medium()
-                        } label: {
-                            Text(preset.label)
-                                .font(.system(size: 16, weight: .medium))
-                                .frame(width: 36, height: 36)
-                                .foregroundStyle(isSelected ? .black : .white.opacity(0.7))
-                                .background(
-                                    Circle().fill(isSelected ? HuePalette.amber : Color.white.opacity(0.08))
-                                )
-                                .overlay(
-                                    Circle().strokeBorder(isSelected ? .clear : .white.opacity(0.08), lineWidth: 1)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Direction \(Int(preset.angle)) degrees")
-                    }
-                }
-            }
-        }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Angle Dial
-    // ──────────────────────────────────────────────
-
-    private var motionAngleDial: some View {
-        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
-        let size: CGFloat = 80
-        let indicatorRad: CGFloat = (CGFloat(currentAngle) - 90) * .pi / 180
-
-        return ZStack {
-            Circle()
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    Circle()
-                        .strokeBorder(.white.opacity(0.12), lineWidth: 1.5)
+            // .static ignores speed/forward/spread/offset/mirror entirely —
+            // showing them would be dead controls (the engine returns a
+            // fixed phase). Direction and the rest live in Advanced.
+            let pattern = vm.activeCompositionBox?.motion.pattern ?? .cascade
+            if pattern != .static {
+                StageSlider(
+                    title: "Speed",
+                    value: Binding(
+                        get: { vm.activeCompositionBox?.motion.speed ?? 40 },
+                        set: { vm.activeCompositionBox?.motion.speed = $0 }
+                    ),
+                    range: 0...100
                 )
 
-            ForEach(0..<8, id: \.self) { i in
-                let tickAngle: CGFloat = CGFloat(i) * 45
-                let rad: CGFloat = (tickAngle - 90) * .pi / 180
-                let inner: CGFloat = size / 2 - 10
-                let outer: CGFloat = size / 2 - 4
-                let cosRad: CGFloat = CoreGraphics.cos(rad)
-                let sinRad: CGFloat = CoreGraphics.sin(rad)
-
-                Path { path in
-                    path.move(to: CGPoint(
-                        x: size / 2 + cosRad * inner,
-                        y: size / 2 + sinRad * inner
-                    ))
-                    path.addLine(to: CGPoint(
-                        x: size / 2 + cosRad * outer,
-                        y: size / 2 + sinRad * outer
-                    ))
-                }
-                .stroke(.white.opacity(0.2), lineWidth: 1.5)
-            }
-
-            let indicatorCos: CGFloat = CoreGraphics.cos(indicatorRad)
-            let indicatorSin: CGFloat = CoreGraphics.sin(indicatorRad)
-
-            Path { path in
-                path.move(to: CGPoint(x: size / 2, y: size / 2))
-                path.addLine(to: CGPoint(
-                    x: size / 2 + indicatorCos * (size / 2 - 14),
-                    y: size / 2 + indicatorSin * (size / 2 - 14)
-                ))
-            }
-            .stroke(
-                HuePalette.amber,
-                style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
-            )
-
-            Circle()
-                .fill(HuePalette.amber)
-                .frame(width: 6, height: 6)
-
-            Text("\(Int(currentAngle))°")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.45))
-                .offset(y: size / 2 + 10)
-        }
-        .frame(width: size, height: size)
-        .contentShape(Circle())
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { gesture in
-                    let center = CGPoint(x: size / 2, y: size / 2)
-                    let dx = gesture.location.x - center.x
-                    let dy = gesture.location.y - center.y
-                    var angle = atan2(dy, dx) * 180 / .pi + 90
-                    if angle < 0 { angle += 360 }
-                    let snapped = (angle / 5).rounded() * 5
-                    let final = snapped.truncatingRemainder(dividingBy: 360)
-
-                    let prev = vm.activeCompositionBox?.motion.motionAngle ?? 0
-                    let prevSlot = Int(prev / 45)
-                    let newSlot = Int(final / 45)
-                    if prevSlot != newSlot {
-                        HapticManager.shared.selection()
-                    }
-
-                    recomputeSpatialPositions(angle: final)
-                }
-        )
-        .animation(.interactiveSpring(response: 0.2), value: currentAngle)
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Spatial Mini-Map
-    // ──────────────────────────────────────────────
-
-    private var spatialMiniMap: some View {
-        let mapSize: CGFloat = 80
-        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
-
-        return ZStack {
-            // Background
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(.white.opacity(0.10), lineWidth: 1)
-                )
-
-            // Direction arrow through center
-            let arrowRad: CGFloat = (CGFloat(currentAngle) - 90) * .pi / 180
-            let arrowCos: CGFloat = CoreGraphics.cos(arrowRad)
-            let arrowSin: CGFloat = CoreGraphics.sin(arrowRad)
-            Path { path in
-                let cx = mapSize / 2, cy = mapSize / 2
-                let len: CGFloat = mapSize / 2 - 8
-                path.move(to: CGPoint(
-                    x: cx - arrowCos * len * 0.3,
-                    y: cy - arrowSin * len * 0.3
-                ))
-                path.addLine(to: CGPoint(
-                    x: cx + arrowCos * len,
-                    y: cy + arrowSin * len
-                ))
-            }
-            .stroke(
-                HuePalette.amber.opacity(0.35),
-                style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3])
-            )
-
-            // Light position dots
-            if let config = orchestrator.activeEntertainmentConfig(for: vm.selectedRoom) {
-                let channels = config.channels
-                // Normalize positions to fit in map
-                let xs = channels.map { $0.position.x }
-                let zs = channels.map { $0.position.z }
-                let minX = xs.min() ?? -1, maxX = xs.max() ?? 1
-                let minZ = zs.min() ?? -1, maxZ = zs.max() ?? 1
-                let rangeX = max(maxX - minX, 0.01)
-                let rangeZ = max(maxZ - minZ, 0.01)
-                let scale = max(rangeX, rangeZ)
-
-                ForEach(0..<channels.count, id: \.self) { i in
-                    let ch = channels[i]
-                    let nx = (ch.position.x - minX) / scale
-                    let nz = (ch.position.z - minZ) / scale
-                    // Center in map with padding
-                    let pad: CGFloat = 14
-                    let usable = mapSize - pad * 2
-                    let dotX = pad + CGFloat(nx) * usable
-                    let dotY = pad + CGFloat(nz) * usable
-                    let dotColor = harmonySwatchColor(at: i % 3)
-
-                    Circle()
-                        .fill(dotColor)
-                        .frame(width: 8, height: 8)
-                        .overlay(Circle().strokeBorder(.white.opacity(0.6), lineWidth: 0.5))
-                        .shadow(color: dotColor.opacity(0.5), radius: 3)
-                        .position(x: dotX, y: dotY)
-                }
-            }
-        }
-        .frame(width: mapSize, height: mapSize)
-        .animation(.interactiveSpring(response: 0.3), value: currentAngle)
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Entertainment Area Prompt
-    // ──────────────────────────────────────────────
-
-    private var entertainmentAreaPrompt: some View {
-        Button {
-            showEntertainmentBuilder = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus.circle")
-                    .font(.system(size: 14))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Create Entertainment Area")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Unlock directional motion across your room")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.4))
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.3))
-            }
-            .foregroundStyle(HuePalette.amber.opacity(0.85))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(HuePalette.amber.opacity(0.06))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(HuePalette.amber.opacity(0.15), lineWidth: 1)
+                if ComposerControlCatalog.isSpatialPattern(pattern) {
+                    StageToggleRow(
+                        title: "Forward",
+                        isOn: Binding(
+                            get: { vm.activeCompositionBox?.motion.forward ?? true },
+                            set: { vm.activeCompositionBox?.motion.forward = $0 }
+                        )
                     )
-            )
-        }
-        .buttonStyle(.plain)
-        .sheet(isPresented: $showEntertainmentBuilder) {
-            EntertainmentConfigBuilderView { newConfig in
-                let bid = vm.selectedRoom?.bridgeID ?? ""
-                orchestrator.entertainmentConfigsByBridge[bid] = newConfig
-                recomputeSpatialPositions(angle: max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0))
+                }
+            } else {
+                Text("Static holds every light on its palette color — pick a moving pattern to unlock speed and direction.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.40))
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .environment(orchestrator)
         }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Spatial Position Recomputation
-    // ──────────────────────────────────────────────
-
-    /// Recompute spatial positions when the angle changes.
-    /// Called from Binding setters and chip taps so position recompute happens
-    /// exactly once per user edit (CompositionParamBox is @Observable, but an
-    /// onChange would also fire on programmatic writes like preset loads).
-    private func recomputeSpatialPositions(angle: Double) {
-        guard let config = orchestrator.activeEntertainmentConfig(for: vm.selectedRoom),
-              let box = vm.activeCompositionBox else { return }
-        box.motion.motionAngle = angle
-        let newPositions = CompositionEngine.computeSpatialPositionsForEntertainment(
-            channels: config.channels,
-            motionAngle: angle
-        )
-        guard !newPositions.isEmpty else { return }
-        // Start smooth lerp transition
-        box.targetSpatialPositions = newPositions
-        box.spatialLerpProgress = 0.0
-        box.triggerRESTBurst()
+            }
     }
 
     private var compositionEnvelopeControls: some View {
@@ -1106,71 +728,26 @@ struct CompositionEditorPanel: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            StageSlider(
-                title: "BPM",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.bpm ?? 60 },
-                    set: { vm.activeCompositionBox?.envelope.bpm = $0 }
-                ),
-                range: 20...240
-            )
-
-            StageSlider(
-                title: "Depth",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.depth ?? 50 },
-                    set: { vm.activeCompositionBox?.envelope.depth = $0 }
-                ),
-                range: 0...100
-            )
-
-            // Shape-specific controls (the engine has always consumed these;
-            // the sliders were simply missing from the editor).
-            if (vm.activeCompositionBox?.envelope.shape ?? .breathe) == .swell {
+            // .steady returns max brightness only — bpm/depth are no-ops.
+            if (vm.activeCompositionBox?.envelope.shape ?? .breathe) != .steady {
                 StageSlider(
-                    title: "Attack",
+                    title: "BPM",
                     value: Binding(
-                        get: { vm.activeCompositionBox?.envelope.attack ?? 50 },
-                        set: { vm.activeCompositionBox?.envelope.attack = $0 }
+                        get: { vm.activeCompositionBox?.envelope.bpm ?? 60 },
+                        set: { vm.activeCompositionBox?.envelope.bpm = $0 }
                     ),
-                    range: 0...100
+                    range: 20...240
                 )
+
                 StageSlider(
-                    title: "Decay",
+                    title: "Depth",
                     value: Binding(
-                        get: { vm.activeCompositionBox?.envelope.decay ?? 50 },
-                        set: { vm.activeCompositionBox?.envelope.decay = $0 }
+                        get: { vm.activeCompositionBox?.envelope.depth ?? 50 },
+                        set: { vm.activeCompositionBox?.envelope.depth = $0 }
                     ),
                     range: 0...100
                 )
             }
-            if (vm.activeCompositionBox?.envelope.shape ?? .breathe) == .pulse {
-                StageSlider(
-                    title: "Duty Cycle",
-                    value: Binding(
-                        get: { vm.activeCompositionBox?.envelope.dutyCycle ?? 50 },
-                        set: { vm.activeCompositionBox?.envelope.dutyCycle = $0 }
-                    ),
-                    range: 10...90
-                )
-            }
-
-            StageSlider(
-                title: "Min Brightness",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.minBrightness ?? 10 },
-                    set: { vm.activeCompositionBox?.envelope.minBrightness = $0 }
-                ),
-                range: 0...50
-            )
-            StageSlider(
-                title: "Max Brightness",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.maxBrightness ?? 100 },
-                    set: { vm.activeCompositionBox?.envelope.maxBrightness = $0 }
-                ),
-                range: 50...100
-            )
         }
             }
     }
@@ -1212,30 +789,18 @@ struct CompositionEditorPanel: View {
             reactionBeatControls
                 .id("reactionBeatControls")   // ScrollViewReader auto-anchor target
 
-            StageSlider(
-                title: "Sensitivity",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.reaction.sensitivity ?? 70 },
-                    set: { vm.activeCompositionBox?.reaction.sensitivity = $0 }
-                ),
-                range: 0...100
-            )
-            StageSlider(
-                title: "Threshold",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.reaction.threshold ?? 10 },
-                    set: { vm.activeCompositionBox?.reaction.threshold = $0 }
-                ),
-                range: 0...100
-            )
-            StageSlider(
-                title: "Intensity",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.reaction.intensity ?? 70 },
-                    set: { vm.activeCompositionBox?.reaction.intensity = $0 }
-                ),
-                range: 0...100
-            )
+            // Sensitivity shapes the MIC drive only — beat/onset sources use
+            // punchDecay (in the beat panel) for their feel.
+            if ComposerControlCatalog.isMicSource(vm.activeCompositionBox?.reaction.source ?? .none) {
+                StageSlider(
+                    title: "Sensitivity",
+                    value: Binding(
+                        get: { vm.activeCompositionBox?.reaction.sensitivity ?? 70 },
+                        set: { vm.activeCompositionBox?.reaction.sensitivity = $0 }
+                    ),
+                    range: 0...100
+                )
+            }
         }
             }
     }
