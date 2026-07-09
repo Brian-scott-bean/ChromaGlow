@@ -12,7 +12,18 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **17**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **18**).
+- **BUILD 18 (2026-07-09): card-parity + Composer live-update bug fixes — AWAITING BRIAN'S
+  ON-DEVICE CHECK.** Five shippable fixes (rollback `checkpoint/pre-scenesrun-2026-07-09` @
+  `72669f1`): ① Composer layers panel updates live (`CompositionParamBox` is now `@Observable`;
+  runtime fields `@ObservationIgnored` — LOAD-BEARING, see the 2026-07-09 entry); ② dashboard
+  room/zone cards trust member lights when `grouped_light` lags (builder cross-check, mirrors
+  RoomDetail's); ③ SSE light-on events flip room/zone cards on (ON-direction only); ④ SSE keeps
+  `lightsByBridge` live so RoomDetail's <30s instant-render seed is always truthful; ⑤ light-event
+  bus token guard (rapid room A→B switch no longer kills room B's SSE updates). On-device
+  checklist in the 2026-07-09 entry below. Next after verification: Scenes overhaul phases
+  (grouped-by-room IA, saved colors, scene copy-to-room) per the approved plan; feature roadmap at
+  `docs/ios/feature-roadmap-2026-07.md`.
 - **BUILD 17 (2026-07-08):** added an **All Lights** master-switch Control (one Lock Screen corner
   slot, on ↔ off). Turning on applies a "welcome home" 80% / mirek 350, not a bare `on: true`.
 - **BUILD 16 (2026-07-08):** iPhone Lock Screen *widgets* are status-only — taps always open the
@@ -154,6 +165,64 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-09 - [Claude] BUILD 18: card state parity + Composer live-update fixes
+
+### Branch
+- `main` directly (rollback `checkpoint/pre-scenesrun-2026-07-09` @ `72669f1`)
+
+### Did
+- **Composer fix (`8c7f351`):** `CompositionParamBox` (CompositionEngine.swift) is now
+  `@Observable` — the layers panel (Motion/Envelope/React chips, direction dial, mini-map)
+  updates live instead of requiring a tab round-trip. Every runtime field render() writes at
+  25fps is `@ObservationIgnored`; that annotation is **LOAD-BEARING** (observing them would
+  invalidate the Studio tab at frame rate and break the `\.isTabActive` pause contract). Two
+  observation-contract tests lock in both directions.
+- **Dashboard builder (`4e87a64`):** room/zone `isOn` now ORs in member-light state when
+  `grouped_light` reports off (the bridge lags after scene recall / per-light control).
+  Brightness = average of lit members; dominant glow follows. One-directional: lights prove ON,
+  never off. LOAD-02 fixture corrected (its member light was hardcoded on in the all-off case).
+- **SSE on-state (`d540615`):** an explicit `on:true` light event flips its room/zone card on —
+  gated on `pendingActionDeadlines` (no pre-PUT echo flips) and `appDrivenGroupIDs` (composition
+  echo suppression intact). Rebuilds still flow only through the coalesced `scheduleSSERebuild`.
+- **Seed freshness (`72480c7`):** `applySSEEvent` now patches `lightsByBridge` in place via new
+  `HueLight.applying(sseUpdate:)` (OFF events included; composition-driven rooms excluded), so
+  RoomDetail's <30s skip-refetch seed and Studio's `cachedRawLights` coverage source are accurate
+  at any age. This STRENGTHENS the instant-render contract, no rebuilds added.
+- **Subscriber race (`72f13fe`):** `subscribeToLightEvents` continuations carry a UUID token;
+  a popped room's deferred onTermination can no longer nil a newer room's continuation (which
+  froze all in-room SSE updates until re-open). Stale streams are proactively `finish()`ed.
+- Test seams added (DEBUG): `testSeedLightIndex`, `testSeedLightCache`, `testYieldLightEvents`.
+- Bumped `CURRENT_PROJECT_VERSION` 17 → 18 (all 12 entries).
+
+### Working
+- Full suite green after every commit
+  (`xcodebuild test -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`).
+
+### Left — Brian's on-device checklist (build 18)
+1. Toggle a light from the official Hue app → dashboard card lights up ≤2s without opening the room.
+2. Within 30s of an external toggle, open that room → cards correct instantly AND the fast-path
+   still engages (no spinner).
+3. Open room A → back → immediately open room B → toggle a B light externally → B updates live.
+4. Activate a scene → dashboard card + room header show on despite grouped_light lag.
+5. Run a composition → dashboard card does NOT flicker at frame rate; stop → state settles.
+6. Composer: with a composition running, tap a new Motion pattern / Envelope shape / React source,
+   drag the direction dial → panel reflects it immediately, no tab-switch; sliders don't hitch;
+   leaving the tab still pauses animations.
+7. Regressions: card power toggle instant, All Off, pull-to-refresh, widget snapshots correct.
+
+### Deferred (documented, intentionally not fixed)
+- 1.5s pending-window SSE suppression can drop legit external changes (self-corrects).
+- 120s dashboard refresh debounce (SSE now carries liveness).
+- Optimistic `localIsOn` no-rollback when `setRoom`/`setLight` early-returns (broken-pairing only).
+- Dead `LightCard` in RoomDetailView (L776–920) — never instantiated; cleanup candidate.
+
+### Gotchas
+- `@ObservationIgnored` on CompositionParamBox runtime fields is load-bearing (see above).
+- The LOAD-02 fixture light now follows the scenario's on state — an "all off" test must
+  actually turn its lights off or the builder cross-check correctly flips the room on.
 
 ---
 
