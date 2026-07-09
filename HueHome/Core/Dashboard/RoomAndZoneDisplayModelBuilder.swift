@@ -30,6 +30,21 @@ enum RoomAndZoneDisplayModelBuilder {
                 }
             }
 
+            // grouped_light can lag after scene activation / per-light control
+            // and report off while member lights are on. Trust the lights —
+            // same cross-check RoomDetailViewModel.loadRoomState applies.
+            // One-directional: lights can prove a room ON, never off.
+            if !isOn {
+                let onLights = roomLights.filter { $0.on.on }
+                if !onLights.isEmpty {
+                    isOn = true
+                    let avg = onLights
+                        .map { $0.dimming?.brightness ?? 100 }
+                        .reduce(0, +) / Double(onLights.count)
+                    brightness = max(1, avg)
+                }
+            }
+
             var dominantColorXY: (x: Double, y: Double)? = nil
             var dominantMirek: Int? = nil
             if isOn {
@@ -74,6 +89,18 @@ enum RoomAndZoneDisplayModelBuilder {
             }
             let zoneLights = lights.filter { light in
                 zone.children.contains { $0.rid == light.id }
+            }
+
+            // Same grouped_light-lag cross-check as rooms above.
+            if !isOn {
+                let onLights = zoneLights.filter { $0.on.on }
+                if !onLights.isEmpty {
+                    isOn = true
+                    let avg = onLights
+                        .map { $0.dimming?.brightness ?? 100 }
+                        .reduce(0, +) / Double(onLights.count)
+                    brightness = max(1, avg)
+                }
             }
 
             var dominantColorXY: (x: Double, y: Double)? = nil

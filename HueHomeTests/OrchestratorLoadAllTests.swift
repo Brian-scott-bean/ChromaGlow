@@ -148,11 +148,14 @@ private enum OrchestratorLoadAllFixtures {
         try decodeEnvelope(from: on ? groupedLightsOnJSON : groupedLightsOffJSON)
     }
 
-    static func light() -> HueLight {
+    // The member light follows the scenario's on state: the display builder
+    // treats a lit member light as proof the room is on (grouped_light lag
+    // cross-check), so an "all off" scenario must turn the light off too.
+    static func light(on: Bool = true) -> HueLight {
         HueLight(
             id: "light-001",
             metadata: LightMetadata(name: "Ceiling", archetype: "sultan_bulb"),
-            on: OnState(on: true),
+            on: OnState(on: on),
             dimming: DimmingState(brightness: 80),
             color: nil,
             color_temperature: nil,
@@ -189,7 +192,7 @@ private func makeOrchestratorLoadAllSUT(
         recorder: recorder,
         rooms: try OrchestratorLoadAllFixtures.rooms(),
         zones: [],
-        lights: [OrchestratorLoadAllFixtures.light()],
+        lights: [OrchestratorLoadAllFixtures.light(on: groupedLightOn)],
         groupedLights: try OrchestratorLoadAllFixtures.groupedLights(on: groupedLightOn)
     )
     if forceResourceFetchError {

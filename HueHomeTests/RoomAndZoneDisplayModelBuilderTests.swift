@@ -198,6 +198,8 @@ final class RoomAndZoneDisplayModelBuilderTests: XCTestCase {
         XCTAssertNil(mirekFallback.rooms[0].dominantColorY)
         XCTAssertEqual(mirekFallback.rooms[0].dominantMirek, 220)
 
+        // grouped_light lag: gl reports off but a member light is on — the
+        // member-light cross-check must win (and dominant color follows).
         let groupedOff = RoomAndZoneDisplayModelBuilder.makeDisplayModels(
             rooms: [roomInput],
             zones: [],
@@ -207,10 +209,96 @@ final class RoomAndZoneDisplayModelBuilderTests: XCTestCase {
             groupedLights: [groupedLight(id: "gl-room", isOn: false, brightness: 12)],
             bridgeID: "bridge-a"
         )
-        XCTAssertFalse(groupedOff.rooms[0].isOn)
-        XCTAssertNil(groupedOff.rooms[0].dominantColorX)
-        XCTAssertNil(groupedOff.rooms[0].dominantColorY)
-        XCTAssertNil(groupedOff.rooms[0].dominantMirek)
+        XCTAssertTrue(groupedOff.rooms[0].isOn,
+                      "a lit member light must prove the room on despite grouped_light lag")
+        XCTAssertEqual(groupedOff.rooms[0].brightness, 100, accuracy: 0.0001)
+        XCTAssertEqual(groupedOff.rooms[0].dominantColorX ?? -1, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(groupedOff.rooms[0].dominantColorY ?? -1, 0.2, accuracy: 0.0001)
+    }
+
+    func testMemberLightCrossCheckOverridesLaggingGroupedLight() {
+        let roomInput = room(
+            id: "room-1",
+            name: "Den",
+            children: [ref("light-1", "light"), ref("light-2", "light"), ref("light-3", "light")],
+            groupedLightID: "gl-room"
+        )
+
+        // gl off, two lights on → room on, brightness = average of ON lights only.
+        let lagging = RoomAndZoneDisplayModelBuilder.makeDisplayModels(
+            rooms: [roomInput],
+            zones: [],
+            lights: [
+                light(id: "light-1", isOn: true, brightness: 40, xy: (0.3, 0.3)),
+                light(id: "light-2", isOn: true, brightness: 80, mirek: 300),
+                light(id: "light-3", isOn: false, brightness: 100, xy: (0.9, 0.1)),
+            ],
+            groupedLights: [groupedLight(id: "gl-room", isOn: false, brightness: 5)],
+            bridgeID: "bridge-a"
+        )
+        XCTAssertTrue(lagging.rooms[0].isOn)
+        XCTAssertEqual(lagging.rooms[0].brightness, 60, accuracy: 0.0001,
+                       "brightness must average the ON member lights, ignoring off ones")
+
+        // All member lights off + gl off → room stays off (no false positives).
+        let allOff = RoomAndZoneDisplayModelBuilder.makeDisplayModels(
+            rooms: [roomInput],
+            zones: [],
+            lights: [
+                light(id: "light-1", isOn: false, brightness: 40),
+                light(id: "light-2", isOn: false, brightness: 80),
+            ],
+            groupedLights: [groupedLight(id: "gl-room", isOn: false, brightness: 5)],
+            bridgeID: "bridge-a"
+        )
+        XCTAssertFalse(allOff.rooms[0].isOn)
+
+        // gl ON stays authoritative — cross-check never runs when gl says on.
+        let glOn = RoomAndZoneDisplayModelBuilder.makeDisplayModels(
+            rooms: [roomInput],
+            zones: [],
+            lights: [light(id: "light-1", isOn: true, brightness: 40)],
+            groupedLights: [groupedLight(id: "gl-room", isOn: true, brightness: 77)],
+            bridgeID: "bridge-a"
+        )
+        XCTAssertTrue(glOn.rooms[0].isOn)
+        XCTAssertEqual(glOn.rooms[0].brightness, 77, accuracy: 0.0001,
+                       "grouped_light brightness stays authoritative when it reports on")
+    }
+
+    func testZoneMemberLightCrossCheckMirrorsRooms() {
+        let zoneInput = zone(
+            id: "zone-1",
+            name: "Upstairs",
+            children: [ref("z-light-1", "light"), ref("z-light-2", "light")],
+            groupedLightID: "gl-zone"
+        )
+        let lagging = RoomAndZoneDisplayModelBuilder.makeDisplayModels(
+            rooms: [],
+            zones: [zoneInput],
+            lights: [
+                light(id: "z-light-1", isOn: true, brightness: 50, xy: (0.4, 0.4)),
+                light(id: "z-light-2", isOn: false, brightness: 90),
+            ],
+            groupedLights: [groupedLight(id: "gl-zone", isOn: false, brightness: 8)],
+            bridgeID: "bridge-a"
+        )
+        XCTAssertTrue(lagging.zones[0].isOn,
+                      "zones must apply the same member-light cross-check as rooms")
+        XCTAssertEqual(lagging.zones[0].brightness, 50, accuracy: 0.0001)
+        XCTAssertEqual(lagging.zones[0].dominantColorX ?? -1, 0.4, accuracy: 0.0001)
+
+        let allOff = RoomAndZoneDisplayModelBuilder.makeDisplayModels(
+            rooms: [],
+            zones: [zoneInput],
+            lights: [
+                light(id: "z-light-1", isOn: false, brightness: 50),
+                light(id: "z-light-2", isOn: false, brightness: 90),
+            ],
+            groupedLights: [groupedLight(id: "gl-zone", isOn: false, brightness: 8)],
+            bridgeID: "bridge-a"
+        )
+        XCTAssertFalse(allOff.zones[0].isOn)
     }
 
     func testOverlapAndMultiBridgeIsolation() {
