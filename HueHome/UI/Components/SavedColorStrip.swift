@@ -92,6 +92,9 @@ struct SavedColorStrip: View {
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isArmed)
         }
         .buttonStyle(.plain)
+        // Drag a swatch straight onto a light card (RoomDetail's cards are
+        // dropDestinations). Tap-to-apply stays as the accessible path.
+        .draggable(saved)
         .accessibilityLabel(saved.accessibilityName)
         .accessibilityHint(isArmed ? "Armed — tap a light to apply, or tap again to cancel"
                                    : "Tap to use this color")

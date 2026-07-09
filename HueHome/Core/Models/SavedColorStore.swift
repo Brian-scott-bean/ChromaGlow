@@ -7,6 +7,7 @@
 // EffectPresetsStore precedent — with an injectable suite for tests.
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - SavedColor
 
@@ -107,6 +108,19 @@ final class SavedColorStore {
         if let data = try? JSONEncoder().encode(colors) {
             defaults.set(data, forKey: Self.defaultsKey)
         }
+    }
+}
+
+// MARK: - Drag & drop
+
+extension UTType {
+    /// Exported custom type for saved-color drags (declared in Info.plist).
+    static let savedColor = UTType(exportedAs: "com.lightshade.savedcolor")
+}
+
+extension SavedColor: Transferable {
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .savedColor)
     }
 }
 

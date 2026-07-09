@@ -46,6 +46,8 @@ struct RoomDetailView: View {
     /// Saved swatch armed for tap-to-apply — non-nil turns light cards into
     /// apply targets (My Colors strip).
     @State private var armedColor: SavedColor? = nil
+    /// Light card a swatch drag is currently hovering (drop-target ring).
+    @State private var dropTargetLightID: String? = nil
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.dismiss)               private var dismiss
@@ -390,7 +392,7 @@ struct RoomDetailView: View {
     /// Send an armed swatch to one light, honoring its capabilities
     /// (color → xy; CT-only → mirek; dimmable → brightness). Brightness
     /// rides along so the saved look reproduces fully.
-    private func applyArmedColor(_ saved: SavedColor, to light: LightDisplayItem) {
+    private func applySavedColor(_ saved: SavedColor, to light: LightDisplayItem) {
         switch saved.application(
             supportsColor: light.supportsColor,
             supportsColorTemp: light.supportsColorTemp,
@@ -464,8 +466,28 @@ struct RoomDetailView: View {
                                             .fill(armed.displayColor.opacity(0.06))
                                     )
                                     .contentShape(RoundedRectangle(cornerRadius: 18))
-                                    .onTapGesture { applyArmedColor(armed, to: light) }
+                                    .onTapGesture { applySavedColor(armed, to: light) }
                                     .transition(.opacity)
+                            }
+                        }
+                        // Drop target for a dragged My Colors swatch.
+                        .overlay {
+                            if dropTargetLightID == light.id {
+                                RoundedRectangle(cornerRadius: 18)
+                                    .stroke(Color(red: 1.0, green: 0.76, blue: 0.20),
+                                            lineWidth: 2.5)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .dropDestination(for: SavedColor.self) { items, _ in
+                            guard let saved = items.first else { return false }
+                            applySavedColor(saved, to: light)
+                            return true
+                        } isTargeted: { targeting in
+                            if targeting {
+                                dropTargetLightID = light.id
+                            } else if dropTargetLightID == light.id {
+                                dropTargetLightID = nil
                             }
                         }
                     }

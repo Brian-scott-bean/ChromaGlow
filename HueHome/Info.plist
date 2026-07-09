@@ -50,6 +50,29 @@
 	<string>ChromaGlow uses your microphone to make your lights react to music and sound in real time. Audio is processed on-device and never recorded or sent anywhere.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>ChromaGlow uses your location one time to calculate sunrise and sunset for All Day Scenes. Your location is not tracked continuously.</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>ChromaGlow Saved Color</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.lightshade.savedcolor</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>ChromaGlow Scene Reference</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.lightshade.scene-ref</string>
+		</dict>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
