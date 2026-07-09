@@ -166,6 +166,23 @@ struct MixerTrayView: View {
 
                     Spacer()
 
+                    if case .composition(let presetID) = card.strategy,
+                       presetID != StudioViewModel.composerStarterDraftPresetID {
+                        // Revert live edits back to the saved preset.
+                        Button {
+                            vm.revertActiveComposition()
+                            HapticManager.shared.light()
+                        } label: {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.75))
+                                .frame(width: 34, height: 34)
+                                .background(Circle().fill(Color.white.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Revert to saved")
+                    }
+
                     if case .composition = card.strategy {
                         // Round 3 (C): enter the full-screen Perform surface —
                         // deck A inherits this live composition, uninterrupted.

@@ -79,6 +79,7 @@ struct StudioView: View {
     @State private var showCompositionSaveSheet = false
     @State private var compositionSaveName = ""
     @State private var compositionSaveIcon = "sparkles"
+    @State private var compositionSaveAccent = "#FFB340"
     @State private var compositionSaveTransport: CompositionSaveTransportOption = .entertainmentArea
     @State private var isAIPromptExpanded = false
     @State private var aiPromptText = ""
@@ -1094,6 +1095,29 @@ struct StudioView: View {
                         }
                     }
                 }
+                Section("Accent") {
+                    // User saves were hardcoded #FFB340 while AI/starter cards
+                    // got distinctive accents — let creations stand out too.
+                    let accents = ["#FFB340", "#FF6B6B", "#BF5AF2", "#5E9EFF",
+                                   "#30D158", "#40D9BF", "#FF9F0A", "#F2F0EA"]
+                    HStack(spacing: 6) {
+                        ForEach(accents, id: \.self) { hex in
+                            let isSelected = hex == compositionSaveAccent
+                            Button {
+                                compositionSaveAccent = hex
+                                HapticManager.shared.selection()
+                            } label: {
+                                Circle()
+                                    .fill(Color(hex: hex))
+                                    .frame(width: 26, height: 26)
+                                    .overlay(Circle().strokeBorder(.white, lineWidth: isSelected ? 2 : 0))
+                                    .frame(maxWidth: .infinity, minHeight: 40)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
                 Section("Transport") {
                     Picker("Target", selection: $compositionSaveTransport) {
                         ForEach(CompositionSaveTransportOption.allCases) { option in
@@ -1121,6 +1145,7 @@ struct StudioView: View {
                         _ = vm.saveActiveComposition(
                             name: compositionSaveName,
                             icon: compositionSaveIcon,
+                            accentColorHex: compositionSaveAccent,
                             preferredTransport: compositionSaveTransport.presetValue
                         )
                         showCompositionSaveSheet = false

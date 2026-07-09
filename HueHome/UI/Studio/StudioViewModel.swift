@@ -586,6 +586,52 @@ final class StudioViewModel {
         if selectedRoom == nil, let first = orchestrator.allRooms.first {
             selectedRoom = first
         }
+        restoreLastUsedParams()
+    }
+
+    /// Restore per-card last-used params (clamped by the store). Values set
+    /// earlier this session win over the persisted snapshot.
+    private var didRestoreParams = false
+    private func restoreLastUsedParams() {
+        guard !didRestoreParams else { return }
+        didRestoreParams = true
+        let restored = StudioParamStore.shared.load(cards: effectCards + liveModeCards)
+        paramValues.merge(restored.values) { session, _ in session }
+        paramColors.merge(restored.colors) { session, _ in session }
+    }
+
+    /// Wipe a card back to factory defaults — dicts, persistence, and the
+    /// running effect if it's live (app-driven loops fall back to their own
+    /// defaults on an empty box; bridge-native re-applies v1+v2 defaults).
+    func resetParams(for card: StudioCard) async {
+        paramValues[card.id] = nil
+        paramColors[card.id] = nil
+        StudioParamStore.shared.saveNow(values: paramValues, colors: paramColors)
+        guard card.id == runningCardID else { return }
+        switch card.strategy {
+        case .appDriven:
+            orchestrator?.updateStudioParams(values: [:], colors: [:])
+        case .bridgeNative:
+            await apply(card)
+        case .composition:
+            break   // compositions revert via revertActiveComposition()
+        }
+    }
+
+    /// Copy the backing preset's four layer configs back into the live box —
+    /// the composer's "revert to saved".
+    func revertActiveComposition() {
+        guard let box = activeCompositionBox,
+              let effect = currentRoomEffect,
+              case .composition(let pid) = effect.card.strategy,
+              pid != Self.composerStarterDraftPresetID,
+              let preset = compositionStore.presets.first(where: { $0.id == pid }) else { return }
+        box.palette = preset.palette
+        box.motion = preset.motion
+        box.envelope = preset.envelope
+        box.reaction = preset.reaction
+        box.triggerRESTBurst()
+        statusMessage = "Reverted to saved '\(preset.name)'"
     }
 
     private enum PrefKeys {
@@ -655,6 +701,7 @@ final class StudioViewModel {
                 colors: paramColors[cardID] ?? [:]
             )
         }
+        StudioParamStore.shared.scheduleSave(values: paramValues, colors: paramColors)
     }
 
     /// Read a param color for a specific card.
@@ -673,6 +720,7 @@ final class StudioViewModel {
                 colors: paramColors[cardID] ?? [:]
             )
         }
+        StudioParamStore.shared.scheduleSave(values: paramValues, colors: paramColors)
     }
 
     // ──────────────────────────────────────────────
@@ -1586,6 +1634,7 @@ final class StudioViewModel {
     func saveActiveComposition(
         name rawName: String,
         icon: String,
+        accentColorHex: String = "#FFB340",
         preferredTransport: CompositionPreferredTransport?
     ) -> CompositionPreset? {
         guard let box = activeCompositionBox else { return nil }
@@ -1596,7 +1645,7 @@ final class StudioViewModel {
             id: UUID(),
             name: trimmed.isEmpty ? "My Composition" : trimmed,
             icon: safeIcon,
-            accentColorHex: "#FFB340",
+            accentColorHex: accentColorHex,
             isBuiltIn: false,
             category: .myCreations,
             seasonMonths: nil,

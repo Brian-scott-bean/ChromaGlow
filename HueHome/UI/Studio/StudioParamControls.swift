@@ -190,8 +190,10 @@ private struct StudioSliderRow: View {
             seeded = true
         }
         .onChange(of: vm.paramValues[cardID]?[param.id]) { _, newValue in
-            guard !isDragging, let value = newValue, value != localValue else { return }
-            localValue = value
+            guard !isDragging else { return }
+            // nil = the card was reset to defaults — snap back to the default.
+            let resolved = newValue ?? param.defaultValue
+            if resolved != localValue { localValue = resolved }
         }
     }
 }
@@ -221,6 +223,27 @@ struct StudioParamSheet: View {
             if !advancedParams.isEmpty {
                 paramSection(title: "Advanced", params: advancedParams)
             }
+
+            // ── Reset to defaults ────────────────────
+            Button {
+                Task { await vm.resetParams(for: card) }
+                HapticManager.shared.light()
+            } label: {
+                HStack {
+                    Image(systemName: "arrow.counterclockwise")
+                    Text("Reset to Defaults")
+                        .fontWeight(.semibold)
+                }
+                .foregroundStyle(.white.opacity(0.75))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: HueRadius.lg)
+                        .fill(Color.white.opacity(0.07))
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.top, HueSpacing.sm)
 
             // ── Stop button ──────────────────────────
             Button {

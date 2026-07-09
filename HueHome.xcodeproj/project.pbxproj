@@ -27,6 +27,7 @@
 		27E9D9CD68EA525AC16A7D44 /* SceneUsageStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F678EF918001EEDBFFC3F18 /* SceneUsageStoreTests.swift */; };
 		2CBD48F48BAACBC512C084BA /* DeviceDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F57BF74DE7F5F2F1B870513F /* DeviceDisplayItem.swift */; };
 		30FA38B7726B382D54F58DB7 /* CompositionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8090A732A95BB7D22AD00660 /* CompositionModels.swift */; };
+		337C09D50ECD05A4004456FC /* StudioParamStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AB668A9941D3BABDFBEAF5 /* StudioParamStore.swift */; };
 		3458991AEB0E4C6EC32929BC /* SavedColorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F455EC41C3270071A4466701 /* SavedColorStoreTests.swift */; };
 		3703A6704D1E838A0BF402C0 /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468C7402382CCA5F09F9C65F /* MoreView.swift */; };
 		3F1B6562A7F0651FA0CC8E82 /* SceneSpeedSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6602A00BA2C47CCF1AFD9A36 /* SceneSpeedSheet.swift */; };
@@ -74,6 +75,7 @@
 		A03A3F4A3446001F9FFB8C95 /* StudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8223FA80DC0EC19E9CE6C831 /* StudioView.swift */; };
 		A47252DC03C35BD018C4DDFF /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B983F6E356486FF116DE5D82 /* Foundation.framework */; };
 		A95DF050FC3DEB539D31A007 /* AutomationHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C70C1F68EEBD0C03E0A62BD /* AutomationHandler.swift */; };
+		A962B474DA2EF6034928154A /* StudioParamStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBD73B2ED375BB08875A8E1E /* StudioParamStoreTests.swift */; };
 		AA1234BB5678CCDD00EEFF11 /* GamingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2345CC6789DDEE00FF0022 /* GamingEngine.swift */; };
 		AA2222222222222222222222 /* RoomDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1111111111111111111111 /* RoomDisplayItem.swift */; };
 		AB000BRAND002 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000BRAND001 /* AppBrand.swift */; };
@@ -468,8 +470,10 @@
 		E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationEngine.swift; path = HueHome/Core/Network/BridgeAnimationEngine.swift; sourceTree = "<group>"; };
 		E1B00001AAAA000000000003 /* BridgeAnimationStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationStore.swift; path = HueHome/Core/Persistence/BridgeAnimationStore.swift; sourceTree = "<group>"; };
 		E7ACCF18A91D92561912E10F /* EffectEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Effects/EffectEngine.swift; sourceTree = "<group>"; };
+		EBD73B2ED375BB08875A8E1E /* StudioParamStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioParamStoreTests.swift; path = ./HueHomeTests/StudioParamStoreTests.swift; sourceTree = "<group>"; };
 		ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/VisualizerEngine.swift; sourceTree = "<group>"; };
 		EFC0CA6833BC4EC5140FFD63 /* ComposerLayerSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ComposerLayerSheet.swift; path = ./HueHome/UI/Composer/ComposerLayerSheet.swift; sourceTree = "<group>"; };
+		F1AB668A9941D3BABDFBEAF5 /* StudioParamStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioParamStore.swift; path = ./HueHome/Core/Effects/StudioParamStore.swift; sourceTree = "<group>"; };
 		F455EC41C3270071A4466701 /* SavedColorStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SavedColorStoreTests.swift; path = ./HueHomeTests/SavedColorStoreTests.swift; sourceTree = "<group>"; };
 		F4E1000100000000 /* HueEntertainmentClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueEntertainmentClient.swift; path = HueHome/Core/Network/HueEntertainmentClient.swift; sourceTree = "<group>"; };
 		F4E1000200000000 /* EntertainmentConfigManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentConfigManager.swift; path = HueHome/Core/Network/EntertainmentConfigManager.swift; sourceTree = "<group>"; };
@@ -735,6 +739,7 @@
 				C0DEC0DE0130000000000000 /* TimedEffectRouting.swift */,
 				C0DEC0DE0131000000000000 /* SignalingService.swift */,
 				0AFC6DD83A8A43FEA3352BB6 /* SavedEffectPreset.swift */,
+				F1AB668A9941D3BABDFBEAF5 /* StudioParamStore.swift */,
 			);
 			name = Effects;
 			sourceTree = "<group>";
@@ -1034,6 +1039,7 @@
 				D553B5FE1416CC61158E2455 /* SceneCopyEngineTests.swift */,
 				726A550B251AB9F630BD6D11 /* StudioParamCatalogTests.swift */,
 				75C0F12B8786D40CB3EA99D1 /* ComposerControlCatalogTests.swift */,
+				EBD73B2ED375BB08875A8E1E /* StudioParamStoreTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1503,6 +1509,7 @@
 				0F0F1315A550084CFC7AED04 /* CopySceneSheet.swift in Sources */,
 				EC0B3D1FDBE6FE9085F580C0 /* StudioParamControls.swift in Sources */,
 				490529F81A5193DF91EF0836 /* ComposerLayerSheet.swift in Sources */,
+				337C09D50ECD05A4004456FC /* StudioParamStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1548,6 +1555,7 @@
 				B014F251CB4FF6B5EE092DD9 /* SceneCopyEngineTests.swift in Sources */,
 				EC742CA724A515F49C4C0B41 /* StudioParamCatalogTests.swift in Sources */,
 				D3E30CFDAD4AAA4B6383F9F9 /* ComposerControlCatalogTests.swift in Sources */,
+				A962B474DA2EF6034928154A /* StudioParamStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
