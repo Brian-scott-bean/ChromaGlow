@@ -12,7 +12,12 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **15**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **16**).
+- **BUILD 16 (2026-07-08):** iPhone Lock Screen *widgets* are status-only — taps always open the
+  app; the interactive surface is a **Control** in the bottom corners. Fixed the accessory gauge
+  never drawing its icon (`.accessoryCircularCapacity` ignores a Gauge's `label`), removed
+  accessory buttons that could never fire, and wired the widget deep link so a tap opens the
+  **tapped room**, not just the dashboard (`pendingGroupID` had zero readers).
 - **BUILD 15 (2026-07-08):** widget audit. iOS 18 Control Center / Lock Screen **Controls**
   (room toggle, scene, preset, all-off) — the real fix for "the Lock Screen widget doesn't
   work", since accessory-widget taps fall through to launching the app. Plus enlarged Home
@@ -147,6 +152,65 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-08 - [Claude] BUILD 16: Lock-Screen widget reality check — icons, deep link, dead buttons
+
+### Branch
+- `main` directly (rollback `checkpoint/pre-widgets-2026-07-08` @ `15c0435`)
+
+### Why
+Brian put both Lock Screen widgets in the widget bar: "they have no pictures or icons and
+when tapped they just bring me into the app… doesn't even bring me to a room. I don't know
+what these are supposed to do."
+
+### The framing that was missing
+**iPhone Lock Screen widgets (the accessory families, in the bar around the clock) are NOT
+interactive.** A tap anywhere follows `.widgetURL` into the app. They are glanceable status
+only. The interactive Lock Screen surface is a **Control** in the two bottom corner slots
+(iOS 18, `HueHomeWidgetControl.swift`, shipped in build 15) — Brian had not added one.
+
+### Did (`4ada3d8..`, build 16)
+- `4ada3d8` **icons**: both `AccessoryCircularView` (iOS) and `CircularView` (watch) passed the
+  room icon as the Gauge's `label`. `.accessoryCircularCapacity` renders the ring and the
+  `currentValueLabel` **only** — `label` is never drawn, so the icon had NEVER appeared. Icon +
+  value now share `currentValueLabel`; `label` keeps the room name for VoiceOver.
+- `4ada3d8` **dead buttons**: the accessory views rendered power and −/+ `Button(intent:)`s that
+  can never fire. Removed all of them — including the ones added the same day in `c9a1870`,
+  which had also cost the rectangular widget a room row (restored to 3). Keeping the
+  pre-existing pinned buttons while deleting the identical unpinned ones would have been
+  incoherent. `AccessoryWidgetBackground()` stays.
+- `ba07d73` **deep link**: `DeepLinkCoordinator.pendingGroupID` was written and read by
+  **zero code** — every widget tap landed on the dashboard. Home's `NavigationStack` now takes
+  a `[RoomDisplayItem]` path owned by `MainTabView`, and `openToken` pushes the resolved room.
+  A cold launch resolves nothing (loadAll hasn't returned), so the id stays pending and
+  MainTabView retries on `allRooms`/`allZones` arrival. `DashboardView` untouched — it already
+  declares the `.navigationDestination(for:)`, and AGENTS.md protects it.
+
+### Validation
+- Clean build 0 errors / 0 warnings: app, `HueHomeWidgetExtension`, watch app (which embeds the
+  complication). `** TEST SUCCEEDED **` on iPhone 17 Pro.
+- Simulator: installed, launched, and sent `lightshade://room/{unresolvable-id}` and
+  `lightshade://dashboard` via `simctl openurl` — same PID throughout, no crash, pending id
+  correctly parked.
+
+### Left (Brian, device)
+1. **Add a Control**: Lock Screen → Customize → tap a bottom corner → Controls gallery →
+   ChromaGlow → *Room Lights* / *Activate Scene* / *Lighting Preset* / *All Lights Off*.
+   These run with the phone locked. Same four appear in Control Center.
+2. Lock Screen widget: the circular gauge should now show a room icon above its number.
+3. Tap a pinned widget → the app should open **that room's detail**, not the dashboard.
+4. **Regression to watch for:** Home's NavigationStack is now path-bound. Confirm the tab bar's
+   re-tap-to-pop and the interactive back-swipe still behave (they drive the
+   `UINavigationController` directly via `TabNavRegistry.popOne`).
+
+### Gotchas
+- Don't re-add `Button(intent:)` to accessory widgets. It cannot fire on the iPhone Lock Screen
+  and it renders a control that lies. Put it in a Control instead.
+- `.accessoryCircularCapacity` never draws a Gauge's `label`. Anything that must be visible
+  belongs in `currentValueLabel`.
+- Controls need **iOS 18+**. If Brian's phone is on 17 they won't appear at all.
 
 ---
 
