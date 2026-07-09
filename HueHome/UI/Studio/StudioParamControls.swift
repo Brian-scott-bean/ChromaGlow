@@ -18,6 +18,27 @@ struct StudioParamRow: View {
     @Bindable var vm: StudioViewModel
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            control
+            if showsEntOnlyHint {
+                Text("STREAMING ONLY — INACTIVE OVER REST")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundStyle(HuePalette.amber.opacity(0.65))
+            }
+        }
+    }
+
+    /// ENT-only params are ignored by the REST fallback loop — surface that
+    /// while the card is actually running over REST.
+    private var showsEntOnlyHint: Bool {
+        param.entOnly
+            && vm.currentRoomEffect?.cardID == cardID
+            && vm.currentRoomEffect?.isEntertainment == false
+    }
+
+    @ViewBuilder
+    private var control: some View {
         switch param.kind {
         case .slider(let min, let max):
             StudioSliderRow(param: param, cardID: cardID, min: min, max: max, vm: vm)
