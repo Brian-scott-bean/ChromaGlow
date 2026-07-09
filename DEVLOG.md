@@ -12,7 +12,13 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **14**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **15**).
+- **BUILD 15 (2026-07-08):** widget audit. iOS 18 Control Center / Lock Screen **Controls**
+  (room toggle, scene, preset, all-off) — the real fix for "the Lock Screen widget doesn't
+  work", since accessory-widget taps fall through to launching the app. Plus enlarged Home
+  Screen tap targets, interactive unpinned accessory widgets, watch brightness at 10%/tap with
+  press-and-hold ramp, and a **latest-wins mailbox** that stops the watch flooding the bridge
+  (~99 PUTs per Crown sweep). Awaiting device verification. See the build-15 entry below.
 - **BUILD 14 (2026-07-08):** fixed the DJ Perform surface presenting a black full-screen page on
   first open (`.fullScreenCover(isPresented:)` + `if let performVM` → `item:`). Awaiting Brian's
   on-device confirmation. See the build-14 entry below.
@@ -141,6 +147,89 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-08 - [Claude] BUILD 15: widget audit — Lock Screen Controls, tap targets, watch brightness
+
+### Branch
+- `main` directly (rollback `checkpoint/pre-widgets-2026-07-08` @ `15c0435`)
+
+### Why
+Brian's on-device audit of all three widget surfaces: Home Screen widget works but its
+buttons are too small to hit; the Lock Screen widget "doesn't function at all"; the Watch
+moves brightness 1% per tap and has no press-and-hold.
+
+### Root causes
+1. **Lock Screen inert by construction.** `selectedRoomID` comes from the widget's config
+   intent. Until a room is pinned via *Edit Widget* it is nil — and that branch of
+   `AccessoryCircularView` / `AccessoryRectangularView` rendered **zero Buttons**. Separately,
+   iOS Lock Screen *accessory* widgets don't reliably run `Button(intent:)` at all; the tap
+   falls through and launches the app. The sanctioned interactive Lock Screen surface is an
+   **iOS 18 Control Widget** — stubbed in `HueHomeWidgetControl.swift` since v0.1.0, never built.
+2. **Tap targets.** Large −/+ 20×20, Focused-Small 22×22, Focused-Medium 26×26, chips ~17pt
+   tall, three power toggles with no frame at all.
+3. **Watch had no ± buttons.** What Brian tapped was the native watchOS `Slider`, which draws
+   its own −/+ and was declared `step: 1`; the Crown was `by: 1`.
+4. **Watch flooded the bridge (bug, found en route).** `setBrightness` awaited one PUT per
+   value change with no debounce, and `.onChange` fires per step — a Crown sweep issued ~99
+   sequential PUTs, each also running `saveToLocalCache()` + `reloadAllTimelines()`. Violated
+   AGENTS.md's "latest-wins mailbox" and "do not queue unlimited bridge writes".
+
+### Did (`4c359a0..`, build 15) — one shippable commit per fix
+- `4c359a0` **watch mailbox**: `setBrightness` is now synchronous — optimistic @Published
+  update, then a per-grouped_light latest-wins mailbox drained by one writer task that PUTs
+  the newest value and spaces writes 250ms. Persistence + timeline reload once, on drain.
+- `8e19195` **watch UX**: ⊖/readout/⊕ row. Tap ±10%, press-and-hold (0.35s) ramps every 150ms
+  with a `.click` haptic; a progress bar carries the Crown at 1% for fine trim.
+- `5b1e474` **tap targets**: new `tapTarget(_:)` / `tapTarget(width:height:)` /
+  `tapTargetHeight(_:)` grow the hit region via `.contentShape(Rectangle())` around unchanged
+  glyphs. Sizes are the largest each family's fixed canvas allows (see Gotchas).
+- `c9a1870` **accessory widgets**: unpinned circular gauge is now an `AllOffIntent` button;
+  unpinned rectangular gains an All-Off header control + per-row power toggles (3 rows → 2).
+  Added `AccessoryWidgetBackground()`, absent everywhere despite being HIG-recommended.
+- `f1e22ea` **Controls (iOS 18+)**: `RoomToggleControl` (ControlWidgetToggle),
+  `SceneControl`, `PresetControl`, `AllOffControl`. New `SetRoomPowerIntent: SetValueIntent`
+  (absolute set, unlike `ToggleRoomIntent`'s invert-a-stale-snapshot), `SceneAppEntity` +
+  query, `PresetChoice: AppEnum` (now the single source for the brightness/mirek table).
+  Registered behind `if #available(iOSApplicationExtension 18.0, *)`.
+
+### Validation
+- Clean build **0 errors / 0 warnings**: app (`generic/platform=iOS`), `HueHomeWidgetExtension`,
+  and `LightShadeWatchApp Watch App` (`generic/platform=watchOS`) built separately — the watch
+  target does NOT compile `WidgetDataStore.swift`, so an iOS build won't catch watch breakage.
+- `xcodebuild test -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`:
+  ** TEST SUCCEEDED **.
+- Verified the Controls really register: `HueHomeWidgetExtension.appex/Metadata.appintents`
+  contains `SetRoomPowerIntent`, `SelectRoom/Scene/PresetControlIntent`, `SceneAppEntity`,
+  `PresetChoice`; all four `com.lightshade.app.*Control` kinds are in the extension binary.
+- **NOT exercised on device.** Controls can't be proven from a build.
+
+### Left (Brian, device)
+1. Lock Screen → Customize → add a ChromaGlow control to a bottom slot. Tap it **locked**;
+   the light must toggle without unlocking. Same controls in Control Center + Action button.
+2. Home Screen widget: −/+/power/chips comfortably hittable.
+3. Watch: tap ⊕ → +10%. Hold ⊕ → smooth ramp, lights track it. Crown → fine 1%.
+
+### Gotchas
+- **Controls need iOS 18+.** On iOS 17 the bundle still loads; the controls just don't appear.
+- A widget's canvas is fixed, so a uniform 44pt is unreachable. Actual sizes: Focused-Medium
+  power **44** (the only true 44pt target), Focused-Medium −/+ 40, Large row −/+/power **30**,
+  Focused-Small 30, page chevrons 44×28, scene chips 32 tall, preset chips 26, "All Off" 34.
+  **Raising the Large row past ~30pt requires lowering `HueWidgetEntry.largePageSize` (6) first**
+  — 6 rows + page bar + preset strip already fill its ~326pt.
+- `SetValueIntent`'s `value` parameter name is fixed by the protocol; do not rename.
+- Control value providers must never do network I/O — they read the App Group snapshot, so a
+  toggle's rendered state can lag until the next timeline refresh. The write itself is immediate.
+- The **widget extension still builds with `ENABLE_DEBUG_DYLIB`** (build 13 disabled it for the
+  app target only). Its code lives in `HueHomeWidgetExtension.debug.dylib`. Not a startup-path
+  cost, but that is why `strings` on the `.appex` executable finds nothing.
+- Still dead, still untouched: `HueHome/Intents/` (`HueIntents.swift`, `HueIntentAPIClient.swift`,
+  `HueRoomEntity.swift`, `HueAppShortcuts.swift`) is compiled into **no target**. It holds a
+  second, orphaned `ToggleRoomIntent`/`SetBrightnessIntent`. Wire up or delete — needs a decision.
+- Cosmetic, unfixed (AGENTS.md forbids casual renames): widget `configurationDisplayName` says
+  "CastChroma" while `HueHomeWidget/Info.plist`'s `NSLocalNetworkUsageDescription` says
+  "ChromaGlow" — a user-visible inconsistency in the local-network permission prompt.
 
 ---
 
