@@ -4,15 +4,18 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-07-07)
+## Current Status Snapshot (updated 2026-07-08)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
-- **`main` @ `3dbf81a` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **13**).
+- **`main` is the current production anchor and the branch Brian installs from**
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **14**).
+- **BUILD 14 (2026-07-08):** fixed the DJ Perform surface presenting a black full-screen page on
+  first open (`.fullScreenCover(isPresented:)` + `if let performVM` → `item:`). Awaiting Brian's
+  on-device confirmation. See the build-14 entry below.
 - Everything below is MERGED TO MAIN and full-suite green:
   1. **2026-07 hardening P0+P1 audit remediation COMPLETE** — per-bundle privacy manifests (M-03),
      secret log scrub (H-03/H-04/L-09, `SecretLogScrubTests`), bridge TLS pinning (D-016,
@@ -138,6 +141,51 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-08 - [Claude] BUILD 14: fix black-on-first-open DJ Perform cover
+
+### Branch
+- `main` directly (single commit)
+
+### Why
+Brian: opening the Perform (DJ) surface the first time showed a completely black
+full-screen page with no dismiss affordance; backgrounding the app and returning
+made it appear.
+
+### Root cause
+`StudioView` presented Perform with `.fullScreenCover(isPresented: $showPerform)` whose
+content was `if let performVM { … }` — presentation keyed off a **Bool** while the content
+depended on **separate** state. Both were written through `@Binding`s from `MixerTrayView`'s
+button. SwiftUI captures the cover's content closure against the view value it holds when
+`isPresented` flips, which still had `performVM == nil` ⇒ the `if let` failed, the cover
+committed `EmptyView` (a black full-screen with no chrome to dismiss). Backgrounding forced a
+StudioView body re-evaluation, the closure re-ran with a non-nil VM, and the deck appeared.
+Nothing inside `PerformanceView` was ever at fault — its `stageBG` base layer always draws.
+
+### Did (build 14)
+- `PerformanceViewModel: Identifiable` + `nonisolated let id = UUID()`.
+- `StudioView`: `.fullScreenCover(item: $performVM) { performer in … }` — presentation is now
+  keyed off the data itself, so there is no nil window and no `if let`. Dismissal nils the
+  item automatically (dropped the manual `onDismiss`).
+- Deleted the now-redundant `showPerform` `@State` + its `@Binding` in `MixerTrayView`;
+  assigning `performVM` is what presents the cover.
+- Bumped `CURRENT_PROJECT_VERSION` 13 → 14 (all 12 pbxproj entries).
+
+### Validation
+- `xcodebuild build -destination 'generic/platform=iOS'`: BUILD SUCCEEDED, 0 errors / 0 warnings.
+- `xcodebuild test -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`:
+  ** TEST SUCCEEDED **.
+- NOT yet exercised on device — Brian to confirm first-open of the Perform surface paints
+  immediately from a cold launch.
+
+### Gotchas
+- Do not reintroduce a separate `isPresented` Bool for Perform. `item:` is load-bearing here.
+  Same trap applies to any cover/sheet whose content unwraps a different `@State` than the one
+  driving presentation (`editingSwatch` already uses the `item:` form correctly).
+- `PerformanceViewModel` is `@MainActor`; its `id` must stay `nonisolated` to satisfy
+  `Identifiable` without a Swift 6 isolation warning.
 
 ---
 

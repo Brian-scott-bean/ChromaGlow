@@ -18,7 +18,12 @@ import UIKit
 
 @MainActor
 @Observable
-final class PerformanceViewModel {
+final class PerformanceViewModel: Identifiable {
+
+    /// Drives `.fullScreenCover(item:)` in StudioView — presentation must key off
+    /// the VM itself, never a separate Bool, or the cover can commit before the
+    /// VM lands and present an empty (black) screen.
+    nonisolated let id = UUID()
 
     let mix: PerformanceMixBox
     let room: RoomDisplayItem

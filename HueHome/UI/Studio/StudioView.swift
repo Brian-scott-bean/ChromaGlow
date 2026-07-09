@@ -71,8 +71,8 @@ struct StudioView: View {
     @State private var renameCompositionText = ""
     // Round 3 (C): Perform surface. The VM is created ONCE at button tap —
     // building it inside the cover closure would recreate it on every
-    // body re-evaluation while presented.
-    @State private var showPerform = false
+    // body re-evaluation while presented. Assigning it also *presents* the
+    // cover (`item:`); dismissal nils it back out.
     @State private var performVM: PerformanceViewModel? = nil
     @State private var composerCreateBorderPhase: CGFloat = 0
     @State private var activeCompositionTab: CompositionLayerTab = .palette
@@ -182,7 +182,6 @@ struct StudioView: View {
                     MixerTrayView(
                         vm: vm,
                         isMixerExpanded: $isMixerExpanded,
-                        showPerform: $showPerform,
                         performVM: $performVM,
                         activeCompositionTab: $activeCompositionTab,
                         activeHarmonyRule: $activeHarmonyRule,
@@ -284,11 +283,9 @@ struct StudioView: View {
         } message: {
             Text("This name appears on the Composer deck.")
         }
-        .fullScreenCover(isPresented: $showPerform, onDismiss: { performVM = nil }) {
-            if let performVM {
-                PerformanceView(viewModel: performVM,
-                                presets: vm.compositionStore.presets)
-            }
+        .fullScreenCover(item: $performVM) { performer in
+            PerformanceView(viewModel: performer,
+                            presets: vm.compositionStore.presets)
         }
         .sheet(isPresented: $showCompositionSaveSheet) {
             compositionSaveSheet

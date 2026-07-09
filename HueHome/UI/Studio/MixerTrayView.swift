@@ -20,7 +20,6 @@ struct MixerTrayView: View {
 
     let vm: StudioViewModel
     @Binding var isMixerExpanded: Bool
-    @Binding var showPerform: Bool
     @Binding var performVM: PerformanceViewModel?
     @Binding var activeCompositionTab: CompositionLayerTab
     @Binding var activeHarmonyRule: HarmonyRule
@@ -201,7 +200,6 @@ struct MixerTrayView: View {
                                 presetID: presetID,
                                 compositionStore: vm.compositionStore
                             )
-                            showPerform = true
                             HapticManager.shared.medium()
                         } label: {
                             Image(systemName: "slider.vertical.3")
