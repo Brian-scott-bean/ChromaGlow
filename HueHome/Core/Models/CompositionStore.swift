@@ -245,7 +245,7 @@ final class CompositionStore: @unchecked Sendable {
             category: .ambient, seasonMonths: nil,
             palette: PaletteConfig(mode: .gradient,
                 color1: CodableColor(x: 0.1600, y: 0.2300),   // teal
-                color2: CodableColor(x: 0.1500, y: 0.0600)),  // deep blue
+                color2: CodableColor(x: 0.1549, y: 0.0626)),  // deep blue
             motion: MotionConfig(pattern: .wave, speed: 40),
             envelope: EnvelopeConfig(shape: .swell, bpm: 30, depth: 35),
             reaction: ReactionConfig(),
@@ -324,7 +324,7 @@ final class CompositionStore: @unchecked Sendable {
             category: .energetic, seasonMonths: nil,
             palette: PaletteConfig(mode: .gradient,
                 color1: CodableColor.white,
-                color2: CodableColor(x: 0.1500, y: 0.0600)),  // deep blue
+                color2: CodableColor(x: 0.1549, y: 0.0626)),  // deep blue
             motion: MotionConfig(pattern: .scatter, speed: 50),
             envelope: EnvelopeConfig(shape: .flicker, bpm: 90, depth: 70),
             reaction: ReactionConfig(source: .micTreble, sensitivity: 80, targets: [.brightness]),
@@ -385,7 +385,7 @@ final class CompositionStore: @unchecked Sendable {
             category: .holiday, seasonMonths: [2],
             palette: PaletteConfig(mode: .gradient,
                 color1: CodableColor(x: 0.6400, y: 0.3300),   // red
-                color2: CodableColor(x: 0.5400, y: 0.2300)),  // pink
+                color2: CodableColor(x: 0.5359, y: 0.2347)),  // pink
             motion: MotionConfig(pattern: .static),
             envelope: EnvelopeConfig(shape: .heartbeat, bpm: 60, depth: 50),
             reaction: ReactionConfig(),
@@ -400,7 +400,7 @@ final class CompositionStore: @unchecked Sendable {
             palette: PaletteConfig(mode: .spectrum,
                 color1: CodableColor(x: 0.6400, y: 0.3300),   // red
                 color2: CodableColor.white,
-                color3: CodableColor(x: 0.1500, y: 0.0600)),  // blue
+                color3: CodableColor(x: 0.1549, y: 0.0626)),  // blue
             motion: MotionConfig(pattern: .cascade, speed: 70),
             envelope: EnvelopeConfig(shape: .pulse, bpm: 120, depth: 60),
             reaction: ReactionConfig(),
@@ -413,7 +413,7 @@ final class CompositionStore: @unchecked Sendable {
             accentColorHex: "#30D158", isBuiltIn: true,
             category: .holiday, seasonMonths: [3],
             palette: PaletteConfig(mode: .gradient,
-                color1: CodableColor(x: 0.2100, y: 0.7100),   // bright green
+                color1: CodableColor(x: 0.1920, y: 0.6808),   // bright green
                 color2: CodableColor(x: 0.1700, y: 0.5000)),  // forest green
             motion: MotionConfig(pattern: .wave, speed: 35),
             envelope: EnvelopeConfig(shape: .breathe, bpm: 40, depth: 30),
@@ -439,7 +439,7 @@ final class CompositionStore: @unchecked Sendable {
             accentColorHex: "#0A84FF", isBuiltIn: true,
             category: .holiday, seasonMonths: [12],
             palette: PaletteConfig(mode: .gradient,
-                color1: CodableColor(x: 0.1500, y: 0.0600),   // blue
+                color1: CodableColor(x: 0.1549, y: 0.0626),   // blue
                 color2: CodableColor.white),
             motion: MotionConfig(pattern: .cascade, speed: 20),
             envelope: EnvelopeConfig(shape: .swell, bpm: 30, depth: 25),
