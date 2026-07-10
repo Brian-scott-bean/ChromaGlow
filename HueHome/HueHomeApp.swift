@@ -68,7 +68,7 @@ struct HueHomeApp: App {
 
     // MARK: Stage 2A — UnifiedOrchestrator (shared across entire app)
     @State private var orchestrator = UnifiedOrchestrator()
-    @State private var deepLink = DeepLinkCoordinator()
+    @State private var deepLink = DeepLinkCoordinator.shared
 
     init() {
         // Compositions saved/renamed/deleted → re-donate so Siri's
@@ -106,14 +106,27 @@ struct HueHomeApp: App {
 
 @Observable
 final class DeepLinkCoordinator {
+    /// One instance app-wide. Open-app Siri intents run in-process AFTER the
+    /// app foregrounds, so they hand Studio their action through this shared
+    /// coordinator rather than a URL round-trip.
+    static let shared = DeepLinkCoordinator()
+
     /// The room/zone id from the tapped widget (nil for a plain dashboard open).
     var pendingGroupID: String?
     /// A scene decoded from a share link, awaiting the user's confirmation.
     var pendingSharedScene: SharedScene?
     /// Why the last share link could not be opened. Shown, then cleared.
     var pendingShareError: ScenePayloadError?
+    /// A Siri "start this in that room" awaiting Studio's drain.
+    var pendingStudioAction: PendingStudioAction?
     /// Bumped on every deep link so observers can react even to a repeated target.
     var openToken: Int = 0
+
+    /// Entry point for the open-app Siri intents (StartComposition/Effect).
+    func requestStudioAction(_ action: PendingStudioAction) {
+        pendingStudioAction = action
+        openToken += 1
+    }
 
     func handle(_ url: URL) {
         guard url.scheme == "lightshade" else { return }

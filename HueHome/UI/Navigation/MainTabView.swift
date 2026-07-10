@@ -64,6 +64,8 @@ struct MainTabView: View {
         // openToken) before this view existed, so the onChange below never
         // sees it. Route once on mount if a scene is already waiting.
         .task { routePendingShare() }
+        // Same cold-launch window for a Siri "start X in Y" — route on mount.
+        .task { routePendingStudioAction() }
         // A widget / Lock-Screen tap deep-links here.
         .onChange(of: deepLink.openToken) { _, _ in consumeDeepLink() }
         // A cold launch from a widget arrives before `loadAll` has any rooms, so
@@ -79,6 +81,7 @@ struct MainTabView: View {
     /// A share link goes to Studio instead — see `routePendingShare`.
     private func consumeDeepLink() {
         if routePendingShare() { return }
+        if routePendingStudioAction() { return }
 
         realizedTabs.insert(.home)
         withAnimation(HueAnimation.toggle) { selectedTab = .home }
@@ -100,6 +103,17 @@ struct MainTabView: View {
     private func routePendingShare() -> Bool {
         guard deepLink.pendingSharedScene != nil || deepLink.pendingShareError != nil
         else { return false }
+        realizedTabs.insert(.studio)
+        withAnimation(HueAnimation.toggle) { selectedTab = .studio }
+        return true
+    }
+
+    /// Surfaces Studio when Siri asked for a composition/effect start.
+    /// Realizing the tab is what makes StudioView's drain run — the apply
+    /// must go through StudioViewModel so Studio's state stays in sync.
+    @discardableResult
+    private func routePendingStudioAction() -> Bool {
+        guard deepLink.pendingStudioAction != nil else { return false }
         realizedTabs.insert(.studio)
         withAnimation(HueAnimation.toggle) { selectedTab = .studio }
         return true

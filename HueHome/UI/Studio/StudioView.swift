@@ -389,8 +389,14 @@ struct StudioView: View {
         }
         // A share link or a scanned QR decodes in DeepLinkCoordinator; Studio
         // owns the store, so the confirmation and the save happen here.
-        .onChange(of: deepLink.openToken) { _, _ in consumePendingShare() }
+        .onChange(of: deepLink.openToken) { _, _ in
+            consumePendingShare()
+            consumePendingStudioAction()
+        }
         .task { consumePendingShare() }
+        // Siri "start X in Y": runs on mount and re-runs as each cold-launch
+        // dependency lands (presets load off-main, rooms arrive with loadAll).
+        .task(id: siriDrainRetryKey) { consumePendingStudioAction() }
         .confirmationDialog(
             "Choose Composer Transport",
             isPresented: $showCompositionTransportPrompt,
@@ -1164,6 +1170,61 @@ struct StudioView: View {
             importFailure = ImportFailure(error: error)
             deepLink.clearShare()
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Siri studio action
+    // ──────────────────────────────────────────────
+
+    /// The cold-launch dependencies a pending Siri action waits on: any
+    /// change re-fires the drain task.
+    private var siriDrainRetryKey: String {
+        "\(vm.compositionStore.isLoaded)-\(orchestrator.allRooms.count)-\(orchestrator.allZones.count)"
+    }
+
+    /// Drains a Siri "start X in Y". Both cold-launch dependencies retry via
+    /// onChange: presets (store loads off-main) and rooms (loadAll). A target
+    /// that resolved for Siri but has since been deleted clears the action
+    /// with an honest status instead of waiting forever.
+    private func consumePendingStudioAction() {
+        guard let action = deepLink.pendingStudioAction else { return }
+        switch action {
+        case .composition(let presetID, let groupID):
+            guard vm.compositionStore.isLoaded else { return }   // retried on isLoaded
+            guard let preset = vm.compositionStore.presets.first(where: { $0.id == presetID }) else {
+                deepLink.pendingStudioAction = nil
+                vm.statusMessage = "⚠ That Composer scene no longer exists"
+                return
+            }
+            guard let room = resolveStudioActionGroup(groupID) else { return }
+            deepLink.pendingStudioAction = nil
+            let card = vm.studioCard(for: preset)
+            Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: nil) }
+
+        case .effect(let effectID, let groupID):
+            guard let card = (vm.effectCards + vm.liveModeCards).first(where: { $0.id == effectID }) else {
+                deepLink.pendingStudioAction = nil
+                vm.statusMessage = "⚠ That effect no longer exists"
+                return
+            }
+            guard let room = resolveStudioActionGroup(groupID) else { return }
+            deepLink.pendingStudioAction = nil
+            Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: nil) }
+        }
+    }
+
+    /// nil while rooms are still loading (retried); nil-and-clear is handled
+    /// by the caller only for entities that can't arrive later.
+    private func resolveStudioActionGroup(_ id: String) -> RoomDisplayItem? {
+        if let room = orchestrator.allRooms.first(where: { $0.id == id }) { return room }
+        if let zone = orchestrator.allZones.first(where: { $0.id == id }) { return zone }
+        // Groups are loaded but the id is gone — the room was deleted after
+        // Siri resolved it. Give up rather than hold the action hostage.
+        if !orchestrator.allRooms.isEmpty || !orchestrator.allZones.isEmpty {
+            deepLink.pendingStudioAction = nil
+            vm.statusMessage = "⚠ That room no longer exists"
+        }
+        return nil
     }
 
     private func switchRunningCompositionTransport(_ effect: RunningEffect, preferEntertainment: Bool) {

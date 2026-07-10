@@ -104,6 +104,18 @@ struct HueAppShortcuts: AppShortcutsProvider {
             systemImageName: "house.fill"
         )
 
+        // ── 8. Start a Composer scene (opens the app) ────────────
+        AppShortcut(
+            intent: StartCompositionIntent(),
+            phrases: [
+                "Start \(\.$composition) in \(.applicationName)",
+                "Play \(\.$composition) in \(.applicationName)",
+                "Run \(\.$composition) in \(.applicationName)",
+            ],
+            shortTitle: "Start Composer Scene",
+            systemImageName: "sparkles"
+        )
+
         // ── 10. Stop effects (lights stay on) ────────────────────
         AppShortcut(
             intent: StopLightEffectsIntent(),
