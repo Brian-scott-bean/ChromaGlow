@@ -93,6 +93,27 @@ final class HueIntentEntityTests: XCTestCase {
         }
     }
 
+    // ── Whole-home dedupe (rooms + zones overlap) ─────────
+
+    func testDedupedWholeHomeTargetsPrefersRooms() {
+        // Zones' member lights usually live in rooms too — writing both
+        // double-hits the shared lights with concurrent PUTs.
+        let groups = [snapshot(id: "a"), snapshot(id: "z1", kind: "zone"), snapshot(id: "b")]
+        XCTAssertEqual(LightingPresetIntent.dedupedWholeHomeTargets(groups).map(\.id),
+                       ["a", "b"])
+    }
+
+    func testDedupedWholeHomeTargetsFallsBackToZonesWhenNoRooms() {
+        let groups = [snapshot(id: "z1", kind: "zone"), snapshot(id: "z2", kind: "zone")]
+        XCTAssertEqual(LightingPresetIntent.dedupedWholeHomeTargets(groups).map(\.id),
+                       ["z1", "z2"],
+                       "zone-only setups must still get whole-home control")
+    }
+
+    func testDedupedWholeHomeTargetsEmptyInEmptyOut() {
+        XCTAssertTrue(LightingPresetIntent.dedupedWholeHomeTargets([]).isEmpty)
+    }
+
     func testWelcomeHomeMatchesWidgetContract() {
         XCTAssertEqual(AllLightsIntent.welcomeHome.brightness, 80)
         XCTAssertEqual(AllLightsIntent.welcomeHome.mirek, 350)

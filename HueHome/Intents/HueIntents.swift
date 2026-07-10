@@ -226,7 +226,9 @@ struct LightingPresetIntent: AppIntent {
             throw IntentError.unknownEntity("preset")
         }
         let store = WidgetDataStore.shared
-        let targets = Self.presetTargets(groups: store.groups, scopeID: group?.id)
+        let scoped = Self.presetTargets(groups: store.groups, scopeID: group?.id)
+        // Whole-home only: drop zones that would double-hit room lights.
+        let targets = group == nil ? Self.dedupedWholeHomeTargets(scoped) : scoped
         guard !targets.isEmpty else {
             throw group == nil ? IntentError.noBridgeConnection
                                : IntentError.unknownEntity("room")
@@ -281,7 +283,8 @@ struct AllLightsIntent: AppIntent {
         guard !store.groups.isEmpty else { throw IntentError.noBridgeConnection }
 
         let isOn = power.isOn
-        let outcomes = await Self.fanOut(to: store.groups, store: store) { glId, creds in
+        let targets = Self.dedupedWholeHomeTargets(store.groups)
+        let outcomes = await Self.fanOut(to: targets, store: store) { glId, creds in
             if isOn {
                 try await HueIntentAPIClient.applyPreset(Self.welcomeHome, to: glId, ip: creds.ip, token: creds.token)
             } else {
@@ -330,7 +333,8 @@ struct StopLightEffectsIntent: AppIntent {
         // design — kill them from here. Per-group failures are tolerated:
         // some firmware 400s no_effect when nothing is running.
         let store = WidgetDataStore.shared
-        _ = await Self.fanOut(to: store.groups, store: store) { glId, creds in
+        _ = await Self.fanOut(to: Self.dedupedWholeHomeTargets(store.groups),
+                              store: store) { glId, creds in
             try await HueIntentAPIClient.stopNativeEffects(id: glId, ip: creds.ip, token: creds.token)
         }
         return .result(dialog: "Stopped light effects.")
@@ -340,29 +344,63 @@ struct StopLightEffectsIntent: AppIntent {
 // MARK: - Fan-out helper
 
 extension AppIntent {
-    /// Concurrent write to many groups, collecting per-group outcomes for
-    /// honest partial-failure dialogs. Groups with no grouped light or no
+    /// Whole-home target selection. `store.groups` is rooms PLUS zones, and a
+    /// zone's member lights usually belong to rooms too — writing both fires
+    /// two concurrent PUTs at the shared lights. Prefer rooms; zones only for
+    /// zone-only setups. Trade-off (deliberate): a light that sits in a zone
+    /// but is assigned to NO room is skipped by whole-home operations — the
+    /// official Hue app pushes every light into a room, so this is rare.
+    static func dedupedWholeHomeTargets(_ groups: [WidgetRoomSnapshot]) -> [WidgetRoomSnapshot] {
+        let rooms = groups.filter { !$0.isZone }
+        return rooms.isEmpty ? groups : rooms
+    }
+
+    /// Write to many groups, collecting per-group outcomes for honest
+    /// partial-failure dialogs. Groups with no grouped light or no
     /// credentials count as failures (named, never silent).
+    ///
+    /// Pacing: bridges run concurrently, but each bridge's groups are written
+    /// SEQUENTIALLY with a 150ms gap (the sendPerLightBatched constant) — a
+    /// whole-home utterance on a many-room home must not burst past the
+    /// bridge's ~10 cmd/s grouped-light budget. 10 rooms ≈ 1.5s, comfortably
+    /// inside the background-intent window.
     static func fanOut(
         to targets: [WidgetRoomSnapshot],
         store: WidgetDataStore,
         _ write: @escaping @Sendable (String, WidgetBridgeCredentials) async throws -> Void
     ) async -> [(name: String, ok: Bool)] {
-        await withTaskGroup(of: (String, Bool).self) { tasks in
-            for target in targets {
-                guard let glId = target.groupedLightId,
-                      let creds = store.credentials(for: target.bridgeID) else {
-                    tasks.addTask { (target.name, false) }
-                    continue
-                }
-                let name = target.name
+        // Resolve credentials up front (same trust rule as before).
+        // Tuple, not a nested struct — types can't nest in a generic context.
+        typealias Job = (name: String, glId: String?, creds: WidgetBridgeCredentials?, bridgeKey: String)
+        let jobs: [Job] = targets.map { t in
+            (name: t.name, glId: t.groupedLightId,
+             creds: store.credentials(for: t.bridgeID),
+             bridgeKey: t.bridgeID ?? "")
+        }
+        let byBridge = Dictionary(grouping: jobs, by: { $0.bridgeKey })
+
+        return await withTaskGroup(of: [(String, Bool)].self) { tasks in
+            for (_, bridgeJobs) in byBridge {
                 tasks.addTask {
-                    do { try await write(glId, creds); return (name, true) }
-                    catch { return (name, false) }
+                    var results: [(String, Bool)] = []
+                    var sentAny = false
+                    for job in bridgeJobs {
+                        guard let glId = job.glId, let creds = job.creds else {
+                            results.append((job.name, false))
+                            continue
+                        }
+                        if sentAny { try? await Task.sleep(for: .milliseconds(150)) }
+                        sentAny = true
+                        do { try await write(glId, creds); results.append((job.name, true)) }
+                        catch { results.append((job.name, false)) }
+                    }
+                    return results
                 }
             }
             var results: [(name: String, ok: Bool)] = []
-            for await result in tasks { results.append(result) }
+            for await chunk in tasks {
+                results.append(contentsOf: chunk.map { (name: $0.0, ok: $0.1) })
+            }
             return results
         }
     }
