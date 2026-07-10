@@ -129,7 +129,12 @@ final class DeepLinkCoordinator {
     /// paired; BridgeSetup during onboarding). Decode-only, like scenes —
     /// the accept (pairing + registrar) lives in JoinSharedHomeView.
     var pendingInvite: HomeJoinPayload?
+    /// A decoded token-bearing guest invite (kind "invite", Phase 2).
+    /// Decode-only — the accept (identity gate + token probe + registrar +
+    /// grant) lives in GuestInviteAcceptor/GuestInviteAcceptView.
+    var pendingGuestInvite: GuestInvitePayload?
     /// Why the last invite link could not be opened. Shown, then cleared.
+    /// Shared by both invite kinds.
     var pendingInviteError: InvitePayloadError?
     /// A Siri "start this in that room" awaiting Studio's drain.
     var pendingStudioAction: PendingStudioAction?
@@ -148,10 +153,12 @@ final class DeepLinkCoordinator {
         if ScenePayloadCodec.isShareLink(url) {
             // One URL host, many kinds (the envelope's design): probe the
             // kind so an invite never lands in Studio's scene-import flow.
-            if let kind = try? ScenePayloadCodec.probeKind(url).kind,
-               kind == InvitePayloadCodec.homeJoinKind {
+            switch try? ScenePayloadCodec.probeKind(url).kind {
+            case InvitePayloadCodec.homeJoinKind:
                 acceptInviteLink(url)
-            } else {
+            case InvitePayloadCodec.inviteKind:
+                acceptGuestInviteLink(url)
+            default:
                 acceptShareLink(url)
             }
             openToken &+= 1
@@ -212,8 +219,38 @@ final class DeepLinkCoordinator {
         }
     }
 
+    /// Decode-only, same token rule as acceptInviteLink. The one secret-
+    /// bearing payload kind: decoded into memory for the accept flow, never
+    /// logged, never persisted here.
+    func acceptGuestInviteLink(_ url: URL) {
+        pendingGroupID = nil
+        do {
+            pendingGuestInvite = try InvitePayloadCodec.decodeInvite(url)
+            pendingInviteError = nil
+        } catch let error as InvitePayloadError {
+            pendingGuestInvite = nil
+            pendingInviteError = error
+        } catch {
+            pendingGuestInvite = nil
+            pendingInviteError = .malformedPayload
+        }
+    }
+
+    /// Scanner entry for BOTH invite kinds ("Join a Shared Home" accepts a
+    /// home-join or a token invite; the scene scanner stays separate). A
+    /// scene link scanned here surfaces the home-join decoder's honest
+    /// refusal via pendingInviteError.
+    func acceptEitherInviteLink(_ url: URL) {
+        if (try? ScenePayloadCodec.probeKind(url).kind) == InvitePayloadCodec.inviteKind {
+            acceptGuestInviteLink(url)
+        } else {
+            acceptInviteLink(url)
+        }
+    }
+
     func clearInvite() {
         pendingInvite = nil
+        pendingGuestInvite = nil
         pendingInviteError = nil
     }
 }

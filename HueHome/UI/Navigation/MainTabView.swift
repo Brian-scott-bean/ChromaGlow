@@ -52,11 +52,18 @@ struct MainTabView: View {
     @State private var homePath: [RoomDisplayItem] = []
     /// A home-join invite being presented (tapped link / scanned QR while paired).
     @State private var presentedInvite: InvitePresentation?
+    /// A token-bearing guest invite being presented (Phase 2).
+    @State private var presentedGuestInvite: GuestInvitePresentation?
     @State private var inviteError: InvitePayloadError?
 
     private struct InvitePresentation: Identifiable {
         let id = UUID()
         let payload: HomeJoinPayload
+    }
+
+    private struct GuestInvitePresentation: Identifiable {
+        let id = UUID()
+        let payload: GuestInvitePayload
     }
 
     var body: some View {
@@ -84,6 +91,19 @@ struct MainTabView: View {
         .onChange(of: orchestrator.allZones.count) { _, _ in retryPendingDeepLink() }
         .sheet(item: $presentedInvite) { presentation in
             JoinSharedHomeView(
+                payload: presentation.payload,
+                isAddingAdditional: true,
+                onBridgeAdded: { record in
+                    orchestrator.addBridge(record)
+                    Task { await orchestrator.loadAll() }
+                }
+            )
+        }
+        .sheet(item: $presentedGuestInvite) { presentation in
+            // The grant was already written by the accept flow (upsert →
+            // updateGuestGrants happen BEFORE this closure), so the first
+            // loadAll of the new bridge is filtered from the start.
+            GuestInviteAcceptView(
                 payload: presentation.payload,
                 isAddingAdditional: true,
                 onBridgeAdded: { record in
@@ -162,6 +182,11 @@ struct MainTabView: View {
         if let payload = deepLink.pendingInvite {
             deepLink.clearInvite()
             presentedInvite = InvitePresentation(payload: payload)
+            return true
+        }
+        if let payload = deepLink.pendingGuestInvite {
+            deepLink.clearInvite()
+            presentedGuestInvite = GuestInvitePresentation(payload: payload)
             return true
         }
         if let error = deepLink.pendingInviteError {

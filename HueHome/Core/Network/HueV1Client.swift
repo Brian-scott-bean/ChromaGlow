@@ -112,6 +112,37 @@ class HueV1Client: @unchecked Sendable {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Token authorization probe (Family Sharing)
+    // ──────────────────────────────────────────────
+
+    enum TokenProbeOutcome {
+        case authorized
+        /// The bridge explicitly refused this key (v1 error type 1 or an
+        /// HTTP 401/403) — the L-30-grade signal, never inferred from
+        /// network failure.
+        case unauthorized
+    }
+
+    /// Cheap liveness check for a just-received guest key BEFORE anything
+    /// persists. v1 answers GET /lights with HTTP 200 either way: an
+    /// unauthorized key yields [{"error":{"type":1,…}}], an authorized one
+    /// a lights dictionary. Network/transport failures THROW — callers
+    /// must treat those as unreachable, not as revocation.
+    func probeTokenAuthorization() async throws -> TokenProbeOutcome {
+        do {
+            let data = try await get(path: "/lights")
+            if let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+               let error = array.first?["error"] as? [String: Any],
+               (error["type"] as? Int) == 1 {
+                return .unauthorized
+            }
+            return .authorized
+        } catch HueAPIError.httpError(let status) where status == 401 || status == 403 {
+            return .unauthorized
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - CLIP Sensors
     // ──────────────────────────────────────────────
 

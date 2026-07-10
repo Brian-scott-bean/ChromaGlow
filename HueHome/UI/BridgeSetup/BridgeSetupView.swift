@@ -77,14 +77,20 @@ struct BridgeSetupContent: View {
     @State private var showManualEntry = false
     @State private var showDebugLog    = false
     @State private var manualIP        = ""
-    // ── Share Invite (home-join) ──────────────────────────
+    // ── Share Invite (home-join + guest invite) ───────────
     @State private var showInviteScanner = false
     @State private var presentedInvite: JoinInvitePresentation?
+    @State private var presentedGuestInvite: GuestInvitePresentation?
     @State private var inviteError: InvitePayloadError?
 
     private struct JoinInvitePresentation: Identifiable {
         let id = UUID()
         let payload: HomeJoinPayload
+    }
+
+    private struct GuestInvitePresentation: Identifiable {
+        let id = UUID()
+        let payload: GuestInvitePayload
     }
     /// The record created (or reused) for the CURRENT pairing — finalized the
     /// moment the phase reaches `.paired` (L-15: record + credentials are
@@ -153,11 +159,21 @@ struct BridgeSetupContent: View {
         .sheet(isPresented: $showInviteScanner, onDismiss: drainPendingInvite) {
             ScanSceneView(title: "SCAN AN INVITE",
                           hint: "Point at a ChromaGlow invite QR code") { url in
-                DeepLinkCoordinator.shared.acceptInviteLink(url)
+                // Accepts BOTH invite kinds (home-join and the Phase 2
+                // token invite); a scene QR refuses honestly.
+                DeepLinkCoordinator.shared.acceptEitherInviteLink(url)
             }
         }
         .sheet(item: $presentedInvite) { presentation in
             JoinSharedHomeView(
+                payload: presentation.payload,
+                isAddingAdditional: isAddingAdditional,
+                onBridgeAdded: onBridgeAdded,
+                onFirstPairingComplete: onPaired
+            )
+        }
+        .sheet(item: $presentedGuestInvite) { presentation in
+            GuestInviteAcceptView(
                 payload: presentation.payload,
                 isAddingAdditional: isAddingAdditional,
                 onBridgeAdded: onBridgeAdded,
@@ -785,6 +801,9 @@ struct BridgeSetupContent: View {
         if let payload = coordinator.pendingInvite {
             coordinator.clearInvite()
             presentedInvite = JoinInvitePresentation(payload: payload)
+        } else if let payload = coordinator.pendingGuestInvite {
+            coordinator.clearInvite()
+            presentedGuestInvite = GuestInvitePresentation(payload: payload)
         } else if let error = coordinator.pendingInviteError {
             coordinator.clearInvite()
             inviteError = error

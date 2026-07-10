@@ -49,6 +49,7 @@
 		3703A6704D1E838A0BF402C0 /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468C7402382CCA5F09F9C65F /* MoreView.swift */; };
 		37E309A80062A916CF67FFBB /* JoinSharedHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 116B182DF95D3F33E6F0EA32 /* JoinSharedHomeView.swift */; };
 		38EE8062CE8F84D5B235495B /* EntertainmentAvailabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 934A3C25869139CAEED528C7 /* EntertainmentAvailabilityTests.swift */; };
+		3C465105D2ADE1113C1E966E /* GuestInviteAcceptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1819E1C21C24411637B24FFA /* GuestInviteAcceptor.swift */; };
 		3F1B6562A7F0651FA0CC8E82 /* SceneSpeedSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6602A00BA2C47CCF1AFD9A36 /* SceneSpeedSheet.swift */; };
 		4640662A0AF423F6FF7E4042 /* LightShadeWatchExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = DDC82E852FA0878E00324E29 /* LightShadeWatchExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		4668FF0EDF1D485E15A77B52 /* EditRoomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4FF8FA2BF756D1FE5830903 /* EditRoomSheet.swift */; };
@@ -65,6 +66,7 @@
 		5329A0B82AD2097453A9DAEE /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B983F6E356486FF116DE5D82 /* Foundation.framework */; };
 		5346410AA668208A625CDE56 /* HueDataModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C79FF00C4642AFCDC55029F /* HueDataModels.swift */; };
 		53D116C6CB4B5497212ED6E2 /* SceneColorBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B49C42A69FC79EABED9C77FC /* SceneColorBuilderView.swift */; };
+		549F510609BEA5A1D6CE2639 /* GuestInviteAcceptorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1503A7C27BEF5B41FABF3E38 /* GuestInviteAcceptorTests.swift */; };
 		55F7FADECD1644A7DD421F2C /* ScenePayloadCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 206B58A9E34CFAA4FC9F602A /* ScenePayloadCodecTests.swift */; };
 		56A04D9E635396CAE5C8032C /* ScenePayloadCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88E80CA16BFC59AC7048945E /* ScenePayloadCodec.swift */; };
 		57552C12E5AD6646689CDC69 /* AppAutomation.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA281A8CB2DE9C9C10F26015 /* AppAutomation.swift */; };
@@ -87,6 +89,7 @@
 		6CA660D29BB803FE431EA5A9 /* AutomationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9C1B531286D8743DE92175E /* AutomationScheduler.swift */; };
 		6CFE6DBC7CCD9FBEE095DD98 /* LightControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98DD9ECC2BC7B6BB5012428A /* LightControlView.swift */; };
 		6D190E9952B8F412C9C011FC /* ColorClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C015E15C9235F874A17ED1 /* ColorClipboard.swift */; };
+		6E14F44F47C219D6B7EBA46E /* GuestInviteAcceptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0B95A446E099276067861C2 /* GuestInviteAcceptView.swift */; };
 		6E36AB0D147E9462788961EC /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42D8A158EFAE9D6D53696D3E /* MainTabView.swift */; };
 		6F0FE079D7AA179677CDD222 /* RoomColorWashPlannerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D0167EBD1B1188E7F135FF /* RoomColorWashPlannerTests.swift */; };
 		705F9B0F725C2186A5B3C80B /* HueHomeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F0FFA8F2F2B85EFEB2FF25D /* HueHomeApp.swift */; };
@@ -360,6 +363,8 @@
 		116B182DF95D3F33E6F0EA32 /* JoinSharedHomeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JoinSharedHomeView.swift; path = ./HueHome/UI/Invite/JoinSharedHomeView.swift; sourceTree = "<group>"; };
 		12D0ED5E69F39077FFDF968F /* BridgeDynamicSceneExporterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeDynamicSceneExporterTests.swift; path = HueHomeTests/BridgeDynamicSceneExporterTests.swift; sourceTree = "<group>"; };
 		1341A038B7CF19D1F8DCE27A /* GuestAccessModelsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestAccessModelsTests.swift; path = ./HueHomeTests/GuestAccessModelsTests.swift; sourceTree = "<group>"; };
+		1503A7C27BEF5B41FABF3E38 /* GuestInviteAcceptorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteAcceptorTests.swift; path = ./HueHomeTests/GuestInviteAcceptorTests.swift; sourceTree = "<group>"; };
+		1819E1C21C24411637B24FFA /* GuestInviteAcceptor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteAcceptor.swift; path = ./HueHome/Core/Share/GuestInviteAcceptor.swift; sourceTree = "<group>"; };
 		1AA4CC7E83E29A5E252517C9 /* GuestInviteSpec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteSpec.swift; path = ./HueHome/Core/Share/GuestInviteSpec.swift; sourceTree = "<group>"; };
 		1DB2272228C12BF09711E036 /* RoomAggregateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomAggregateTests.swift; path = ./HueHomeTests/RoomAggregateTests.swift; sourceTree = "<group>"; };
 		1E394B8CB521A7239F42E2C2 /* HueAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueAPIClient.swift; path = HueHome/Core/Network/HueAPIClient.swift; sourceTree = "<group>"; };
@@ -567,6 +572,7 @@
 		DDC82F252FA1140A00324E29 /* LightShadeWatchApp Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "LightShadeWatchApp Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		DDC82F312FA1140C00324E29 /* LightShadeWatchApp Watch AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "LightShadeWatchApp Watch AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		DDC82F3B2FA1140C00324E29 /* LightShadeWatchApp Watch AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "LightShadeWatchApp Watch AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		E0B95A446E099276067861C2 /* GuestInviteAcceptView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteAcceptView.swift; path = ./HueHome/UI/Invite/GuestInviteAcceptView.swift; sourceTree = "<group>"; };
 		E0F56D4CFF98F22595FF4143 /* StudioViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioViewModel.swift; path = ./HueHome/UI/Studio/StudioViewModel.swift; sourceTree = "<group>"; };
 		E1B00001AAAA000000000001 /* HueV1Client.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueV1Client.swift; path = HueHome/Core/Network/HueV1Client.swift; sourceTree = "<group>"; };
 		E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationEngine.swift; path = HueHome/Core/Network/BridgeAnimationEngine.swift; sourceTree = "<group>"; };
@@ -822,6 +828,7 @@
 				8B4A8E4979A464BDD6CA98DC /* ShareInviteSheet.swift */,
 				116B182DF95D3F33E6F0EA32 /* JoinSharedHomeView.swift */,
 				D922A77C6E53D4664F5B21B8 /* GuestInviteMintSheet.swift */,
+				E0B95A446E099276067861C2 /* GuestInviteAcceptView.swift */,
 			);
 			name = Invite;
 			sourceTree = "<group>";
@@ -833,6 +840,7 @@
 				5FE8BB403C3BA723AFC596B6 /* SceneQRRenderer.swift */,
 				825FE84E577223087FB6A47F /* InvitePayloadCodec.swift */,
 				1AA4CC7E83E29A5E252517C9 /* GuestInviteSpec.swift */,
+				1819E1C21C24411637B24FFA /* GuestInviteAcceptor.swift */,
 			);
 			name = Share;
 			sourceTree = "<group>";
@@ -1217,6 +1225,7 @@
 				0B0424BC636C78445FF3DA99 /* GuestAccessPolicyTests.swift */,
 				E2BA60597F6D11E201025E1F /* OrchestratorGuestAccessTests.swift */,
 				7820F4F2BD3F6510DA6C4164 /* GuestKeyStoreTests.swift */,
+				1503A7C27BEF5B41FABF3E38 /* GuestInviteAcceptorTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1733,6 +1742,8 @@
 				1D6BAC76260A96A94D2AD9DA /* GuestKeyStore.swift in Sources */,
 				BD911DBE93356F3D40E251D0 /* GuestInviteSpec.swift in Sources */,
 				78C62D47189CF9AB74654512 /* GuestInviteMintSheet.swift in Sources */,
+				3C465105D2ADE1113C1E966E /* GuestInviteAcceptor.swift in Sources */,
+				6E14F44F47C219D6B7EBA46E /* GuestInviteAcceptView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1802,6 +1813,7 @@
 				69465976904E89D8376F0088 /* GuestAccessPolicyTests.swift in Sources */,
 				466A52B44016CB49EBFCBE55 /* OrchestratorGuestAccessTests.swift in Sources */,
 				CD1BB6B919DAFADD498EBDD0 /* GuestKeyStoreTests.swift in Sources */,
+				549F510609BEA5A1D6CE2639 /* GuestInviteAcceptorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
