@@ -186,6 +186,22 @@ final class MultiBridgeRoutingTests: XCTestCase {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Per-room composition transport truth
+    // ──────────────────────────────────────────────
+
+    func testCompositionTransportIsPerRoomAndStopClearsOnlyThatRoom() async throws {
+        orchestrator.compositionTransportByRoom["room-a"] = .bridgeStored
+        orchestrator.compositionTransportByRoom["room-b"] = .entertainment
+
+        await orchestrator.stopCompositionMode(roomID: "room-a")
+
+        XCTAssertNil(orchestrator.compositionTransportByRoom["room-a"],
+                     "stop must clear the stopped room's transport")
+        XCTAssertEqual(orchestrator.compositionTransportByRoom["room-b"], .entertainment,
+                       "one room's stop must not mislabel another room's transport")
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - H-05 heir: Studio Deck 0 targets the selected room's bridge
     // ──────────────────────────────────────────────
 

@@ -141,7 +141,6 @@ struct MixerTrayView: View {
                                     room: effect.room,
                                     liveBox: box,
                                     liveName: card.name,
-                                    isStreaming: effect.isEntertainment,
                                     presetID: presetID,
                                     compositionStore: vm.compositionStore
                                 )
@@ -256,12 +255,12 @@ struct MixerTrayView: View {
                                             .font(.system(size: 7, weight: .bold))
                                             .opacity(0.82)
                                     }
-                                    .foregroundStyle(effect.isEntertainment ? HuePalette.amber : .white.opacity(0.75))
+                                    .foregroundStyle(composerIsStreaming(effect) ? HuePalette.amber : .white.opacity(0.75))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(
                                         Capsule().fill(
-                                            effect.isEntertainment
+                                            composerIsStreaming(effect)
                                                 ? HuePalette.amber.opacity(0.15)
                                                 : Color.white.opacity(0.10)
                                         )
@@ -490,7 +489,7 @@ struct MixerTrayView: View {
     ) -> (text: String, tint: Color)? {
         guard case .composition = card.strategy else { return nil }
 
-        if orchestrator.isBridgeStored {
+        if orchestrator.compositionTransportByRoom[effect.room.id] == .bridgeStored {
             return ("Running on bridge — close the app, lights keep going",
                     HuePalette.amber.opacity(0.9))
         }
@@ -510,10 +509,20 @@ struct MixerTrayView: View {
     /// directly beneath it, where there is room to say it properly.
     private func composerTransportBadgeText(for effect: RunningEffect) -> String {
         // Bridge-stored animations run on the bridge hardware itself
-        if orchestrator.isBridgeStored {
+        if orchestrator.compositionTransportByRoom[effect.room.id] == .bridgeStored {
             return "BRIDGE ⚡"
         }
-        return effect.isEntertainment ? "ENT AREA" : "ROOM · REST"
+        return composerIsStreaming(effect) ? "ENT AREA" : "ROOM · REST"
+    }
+
+    /// Live transport for a composition card — the orchestrator's per-room
+    /// truth survives a mid-session DTLS→REST failover; the RunningEffect's
+    /// `isEntertainment` is a snapshot from apply time and does not.
+    private func composerIsStreaming(_ effect: RunningEffect) -> Bool {
+        if let transport = orchestrator.compositionTransportByRoom[effect.room.id] {
+            return transport == .entertainment
+        }
+        return effect.isEntertainment
     }
 
     private func hideMixerKeyboard() {

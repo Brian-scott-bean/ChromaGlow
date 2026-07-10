@@ -2034,9 +2034,18 @@ final class UnifiedOrchestrator {
     // MARK: Bridge-Stored Animation (v1 API)
     private let bridgeAnimationEngine = BridgeAnimationEngine()
     private let bridgeAnimationStore = BridgeAnimationStore.shared
-    /// Whether the active composition is running on the bridge (v1 rules chain).
-    /// Exposed for UI badge display.
-    var isBridgeStored: Bool = false
+
+    /// Which transport is driving each room's composition right now.
+    enum CompositionTransport: Equatable {
+        case entertainment   // DTLS streaming
+        case rest            // app-driven REST scheduler
+        case bridgeStored    // v1 rules chain on the bridge itself
+    }
+    /// Per-room transport truth (absent key = no composition running there).
+    /// Written only at start / stop / failover — never per frame — so views
+    /// may observe it freely. Replaces the old global `isBridgeStored` flag,
+    /// which mislabeled every room whenever ANY room ran bridge-stored.
+    var compositionTransportByRoom: [String: CompositionTransport] = [:]
     /// Entertainment configs keyed by bridgeID.
     /// StudioView reads the config for the currently selected room's bridge.
     var entertainmentConfigsByBridge: [String: EntertainmentConfig] = [:]
@@ -2361,6 +2370,7 @@ final class UnifiedOrchestrator {
                     paramBox.radialPositions = entGeometry.radial
                     paramBox.angularPositions = entGeometry.angular
                     compositionEntRoomByBridge[bridgeID] = roomID
+                    compositionTransportByRoom[roomID] = .entertainment
                     compositionEntParamBoxes[bridgeID] = paramBox
                     compositionEntTasks[bridgeID]?.cancel()
                     let capturedRoom = room
@@ -2436,7 +2446,7 @@ final class UnifiedOrchestrator {
                     v1Client: v1Client
                 )
                 bridgeAnimationStore.save(manifest)
-                isBridgeStored = true
+                compositionTransportByRoom[roomID] = .bridgeStored
                 print("[Composer] ⚡ Bridge-stored animation active! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s/step")
                 print("[Composer] ⚡ Close the app — lights will keep going!")
 
@@ -2467,11 +2477,8 @@ final class UnifiedOrchestrator {
                 return  // Don't start app-driven scheduler
             } catch {
                 print("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
-                isBridgeStored = false
-                // Fall through to REST/Entertainment path
+                // Fall through to the REST path, which records `.rest` below.
             }
-        } else {
-            isBridgeStored = false
         }
 
         // Round 3 (F): expand gradient strips into virtual render channels
@@ -2490,6 +2497,7 @@ final class UnifiedOrchestrator {
             }
         }
 
+        compositionTransportByRoom[roomID] = .rest
         compositionRuntimes[roomID] = CompositionRuntime(
             roomID: roomID,
             roomName: room.name,
@@ -2628,6 +2636,9 @@ final class UnifiedOrchestrator {
         // replacement start already cleaned this key — never resurrect.
         guard compositionEntRoomByBridge[bridgeID] == roomID else { return }
         print("[Composer] ⚠ Entertainment session lost for room=\(roomID) — failing over to REST")
+        // Re-entry below records `.rest`; if its guard bails instead, the room
+        // correctly reads "not running" rather than a phantom `.entertainment`.
+        compositionTransportByRoom.removeValue(forKey: roomID)
         compositionEntParamBoxes.removeValue(forKey: bridgeID)
         compositionEntTasks.removeValue(forKey: bridgeID)   // this task; loop already ended
         compositionEntRoomByBridge.removeValue(forKey: bridgeID)
@@ -2687,7 +2698,7 @@ final class UnifiedOrchestrator {
             }
             bridgeAnimationStore.remove(presetID: manifest.presetID, roomID: roomID)
         }
-        isBridgeStored = false
+        compositionTransportByRoom.removeValue(forKey: roomID)
         print("[Handoff] Clearing studio REST sender mailbox for roomID=\(roomID)")
         await studioRestSender.clear()
         // Give Hue bridge firmware a brief settle window before any new owner starts writing.

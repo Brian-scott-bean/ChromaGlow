@@ -28,7 +28,12 @@ final class PerformanceViewModel: Identifiable {
     let mix: PerformanceMixBox
     let room: RoomDisplayItem
     private unowned let orchestrator: UnifiedOrchestrator
-    let isStreaming: Bool
+
+    /// Live per-room transport truth — a construction-time snapshot went
+    /// stale on mid-set DTLS→REST failover (wrong badge, wrong punch branch).
+    var isStreaming: Bool {
+        orchestrator.compositionTransportByRoom[room.id] == .entertainment
+    }
     /// Saved preset backing the live composition — nil for unsaved looks
     /// (incl. the "+ Create" draft), which gates "Save with composition".
     let presetID: UUID?
@@ -46,14 +51,12 @@ final class PerformanceViewModel: Identifiable {
          room: RoomDisplayItem,
          liveBox: CompositionParamBox,
          liveName: String,
-         isStreaming: Bool,
          presetID: UUID? = nil,
          compositionStore: CompositionStore? = nil) {
         self.mix = PerformanceMixBox(deckA: liveBox)
         self.room = room
         self.orchestrator = orchestrator
         self.deckAName = liveName
-        self.isStreaming = isStreaming
         self.presetID = presetID
         self.compositionStore = compositionStore
         // R4-7: reopen the preset's saved sequence, if any.
