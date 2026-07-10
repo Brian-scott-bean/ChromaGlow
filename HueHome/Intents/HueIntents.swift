@@ -1,76 +1,109 @@
-// ToggleRoomIntent.swift
-// CastChroma — Siri Shortcuts
+// HueIntents.swift
+// ChromaGlow — Siri Shortcuts
 //
 // "Hey Siri, turn on Living Room in ChromaGlow"
-// "Hey Siri, turn off Kitchen in ChromaGlow"
+// "Hey Siri, dim Kitchen in ChromaGlow"
+//
+// Background intents: openAppWhenRun = false, so they run in a background
+// launch of the app process where the orchestrator is NEVER configured
+// (AppRootView.task doesn't fire). They must stay on the lightweight
+// direct-client pattern — WidgetDataStore snapshot + HueIntentAPIClient —
+// and never touch UnifiedOrchestrator.
 
 import AppIntents
 
-struct ToggleRoomIntent: AppIntent {
+// MARK: - PowerState
 
-    static var title: LocalizedStringResource = "Toggle Room Lights"
+/// On/off as an AppEnum. A Bool parameter can neither appear in a Siri
+/// phrase nor be reliably prefilled in an AppShortcut, so "Turn on X" and
+/// "Turn off X" are two shortcuts prefilled with these cases.
+enum PowerState: String, AppEnum {
+    case on
+    case off
+
+    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Power")
+    static var caseDisplayRepresentations: [PowerState: DisplayRepresentation] = [
+        .on:  "On",
+        .off: "Off",
+    ]
+
+    var isOn: Bool { self == .on }
+}
+
+// MARK: - GroupPowerIntent
+
+struct GroupPowerIntent: AppIntent {
+
+    static var title: LocalizedStringResource = "Turn Lights On or Off"
     static var description = IntentDescription(
-        "Turn a room's lights on or off.",
+        "Turn a room's or zone's lights on or off.",
         categoryName: "Lights"
     )
     static var openAppWhenRun: Bool = false
 
-    @Parameter(title: "Room")
-    var room: HueRoomEntity
+    @Parameter(title: "Room or Zone")
+    var group: HueGroupEntity
 
-    @Parameter(title: "Turn On", default: true)
-    var turnOn: Bool
+    @Parameter(title: "Power", default: .on)
+    var power: PowerState
+
+    init() {}
+
+    init(power: PowerState) {
+        self.power = power
+    }
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        guard let creds = WidgetDataStore.shared.credentials(for: room.bridgeID) else {
+        guard let creds = WidgetDataStore.shared.credentials(for: group.bridgeID) else {
             throw IntentError.noBridgeConnection
         }
-        guard let glId = room.groupedLightId else {
-            throw IntentError.noGroupedLight(room.name)
+        guard let glId = group.groupedLightId else {
+            throw IntentError.noGroupedLight(group.name)
         }
-        try await HueIntentAPIClient.setGroupedLight(
-            id: glId,
-            on: turnOn,
-            ip: creds.ip,
-            token: creds.token
-        )
-        let state = turnOn ? "on" : "off"
-        return .result(dialog: "\(room.name) is now \(state).")
+        do {
+            try await HueIntentAPIClient.setGroupedLight(
+                id: glId, on: power.isOn, ip: creds.ip, token: creds.token
+            )
+        } catch {
+            throw IntentError.bridgeUnreachable(group.name)
+        }
+        return .result(dialog: "\(group.name) is now \(power.rawValue).")
     }
 }
 
-// MARK: - SetBrightnessIntent
+// MARK: - GroupBrightnessIntent
 
-struct SetBrightnessIntent: AppIntent {
+struct GroupBrightnessIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Set Room Brightness"
+    static var title: LocalizedStringResource = "Set Brightness"
     static var description = IntentDescription(
-        "Set the brightness of a room's lights.",
+        "Set the brightness of a room's or zone's lights.",
         categoryName: "Lights"
     )
     static var openAppWhenRun: Bool = false
 
-    @Parameter(title: "Room")
-    var room: HueRoomEntity
+    @Parameter(title: "Room or Zone")
+    var group: HueGroupEntity
 
     @Parameter(title: "Brightness", default: 80,
                inclusiveRange: (lowerBound: 1, upperBound: 100))
     var brightness: Int
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        guard let creds = WidgetDataStore.shared.credentials(for: room.bridgeID) else {
+        guard let creds = WidgetDataStore.shared.credentials(for: group.bridgeID) else {
             throw IntentError.noBridgeConnection
         }
-        guard let glId = room.groupedLightId else {
-            throw IntentError.noGroupedLight(room.name)
+        guard let glId = group.groupedLightId else {
+            throw IntentError.noGroupedLight(group.name)
         }
-        try await HueIntentAPIClient.setGroupedLight(
-            id: glId,
-            brightness: Double(brightness),
-            ip: creds.ip,
-            token: creds.token
-        )
-        return .result(dialog: "\(room.name) brightness set to \(brightness)%.")
+        do {
+            try await HueIntentAPIClient.setGroupedLight(
+                id: glId, brightness: Double(brightness), ip: creds.ip, token: creds.token
+            )
+        } catch {
+            throw IntentError.bridgeUnreachable(group.name)
+        }
+        return .result(dialog: "\(group.name) brightness set to \(brightness)%.")
     }
 }
 
@@ -79,6 +112,10 @@ struct SetBrightnessIntent: AppIntent {
 enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
     case noBridgeConnection
     case noGroupedLight(String)
+    case bridgeUnreachable(String)
+    case staleSnapshot
+    case unknownEntity(String)
+    case partialFailure(String, [String])
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
@@ -86,6 +123,14 @@ enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
             return "ChromaGlow couldn't reach your bridge. Open the app and try again."
         case .noGroupedLight(let name):
             return "Couldn't find light controls for \(name). Open ChromaGlow to refresh."
+        case .bridgeUnreachable(let name):
+            return "ChromaGlow couldn't reach the bridge for \(name). Check that you're on your home Wi-Fi."
+        case .staleSnapshot:
+            return "ChromaGlow's light list may be out of date — open the app to refresh."
+        case .unknownEntity(let kind):
+            return "That \(kind) no longer exists. Open ChromaGlow to see what's available."
+        case .partialFailure(let operation, let failedNames):
+            return "\(operation) mostly worked, but \(failedNames.joined(separator: ", ")) didn't respond."
         }
     }
 }

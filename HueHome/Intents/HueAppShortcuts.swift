@@ -1,14 +1,16 @@
 // HueAppShortcuts.swift
-// CastChroma — Siri Shortcuts
+// ChromaGlow — Siri Shortcuts
 //
 // AppShortcutsProvider donates phrases to Siri automatically at app launch.
-// No user setup required — "Hey Siri" works immediately after install.
+// No user setup required — "Hey Siri" works after install + first launch
+// (allow a few minutes for the system to index the metadata).
 //
-// Phrases users can say:
-//   "Turn on Living Room in HueHome"
-//   "Turn off Kitchen in HueHome"
-//   "Set Living Room to 50 percent in HueHome"
-//   "Set brightness of Bedroom in HueHome"
+// Rules this file lives by (enforced by the appintentsmetadataprocessor):
+//   - At most 10 AppShortcuts per app.
+//   - At most ONE dynamic parameter per phrase, and it must be an
+//     AppEntity/AppEnum — never Int/Bool/String (Siri prompts for those).
+//   - Every phrase embeds \(.applicationName): a bare "turn on kitchen"
+//     routes to HomeKit, not to us.
 
 import AppIntents
 
@@ -18,26 +20,37 @@ struct HueAppShortcuts: AppShortcutsProvider {
 
     static var appShortcuts: [AppShortcut] {
 
-        // ── Toggle room on/off ──────────────────────────────────
+        // ── 1. Turn on ──────────────────────────────────────────
         AppShortcut(
-            intent: ToggleRoomIntent(),
+            intent: GroupPowerIntent(power: .on),
             phrases: [
-                "Turn on \(\.$room) in \(.applicationName)",
-                "Turn off \(\.$room) in \(.applicationName)",
-                "Switch on \(\.$room) in \(.applicationName)",
-                "Switch off \(\.$room) in \(.applicationName)",
+                "Turn on \(\.$group) in \(.applicationName)",
+                "Switch on \(\.$group) in \(.applicationName)",
+                "Turn on the \(\.$group) lights in \(.applicationName)",
             ],
-            shortTitle: "Toggle Room",
+            shortTitle: "Turn On",
             systemImageName: "lightbulb.fill"
         )
 
-        // ── Set brightness ──────────────────────────────────────
+        // ── 2. Turn off ─────────────────────────────────────────
         AppShortcut(
-            intent: SetBrightnessIntent(),
+            intent: GroupPowerIntent(power: .off),
             phrases: [
-                "Set \(\.$room) to \(\.$brightness) percent in \(.applicationName)",
-                "Set brightness of \(\.$room) in \(.applicationName)",
-                "Dim \(\.$room) in \(.applicationName)",
+                "Turn off \(\.$group) in \(.applicationName)",
+                "Switch off \(\.$group) in \(.applicationName)",
+                "Turn off the \(\.$group) lights in \(.applicationName)",
+            ],
+            shortTitle: "Turn Off",
+            systemImageName: "lightbulb.slash.fill"
+        )
+
+        // ── 3. Set brightness (Siri prompts the number) ─────────
+        AppShortcut(
+            intent: GroupBrightnessIntent(),
+            phrases: [
+                "Set \(\.$group) brightness in \(.applicationName)",
+                "Dim \(\.$group) in \(.applicationName)",
+                "Change \(\.$group) brightness in \(.applicationName)",
             ],
             shortTitle: "Set Brightness",
             systemImageName: "sun.max.fill"
