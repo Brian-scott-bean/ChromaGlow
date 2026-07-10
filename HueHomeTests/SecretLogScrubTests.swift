@@ -127,6 +127,60 @@ final class SecretLogScrubTests: XCTestCase {
                        "entertainment client key leaked into pairing log lines")
     }
 
+    // ──────────────────────────────────────────────
+    // MARK: - Phase 2: guest mint + invite URL (checklist §7.4)
+    // ──────────────────────────────────────────────
+
+    /// A guest-key mint's log lines must carry neither the minted token nor
+    /// any share-link blob — the invite URL IS a secret once it embeds a
+    /// token, so no `lightshade://share` string may ever reach a log sink.
+    @MainActor
+    func testGuestMintLogLinesNeverContainSecretsOrInviteURLs() async throws {
+        var lines: [String] = []
+        let minter = ApplicationKeyMinter(appendLog: { lines.append($0) })
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        minter.sessionOverride = URLSession(configuration: config)
+        minter.pinAcquisitionOverride = { _ in true }
+
+        let success = "[{\"success\":{\"username\":\"\(Self.fakeToken)\"}}]"
+        StubURLProtocol.stubs["/api"] = (Data(success.utf8), 200)
+
+        let result = await minter.mint(
+            endpoint: BridgeEndpoint(name: "TestBridge", host: "192.0.2.10", port: 443),
+            devicetype: AppBrand.guestHueDeviceType(
+                deviceSegment: ApplicationKeyMinter.guestDeviceSegment(
+                    profileName: "Guest", profileID: UUID().uuidString)),
+            generateClientKey: false,
+            expectedIdentity: nil
+        )
+        guard case .success(let minted) = result else {
+            return XCTFail("guest mint did not succeed; got \(result)")
+        }
+        XCTAssertNil(minted.clientKey)
+
+        // Encode the invite the way the mint sheet would — then prove the
+        // URL blob shares no substring with the collected log lines.
+        let url = try InvitePayloadCodec.encodeInvite(GuestInvitePayload(
+            bridges: [SharedBridgeInviteGrant(
+                bid: "ECB5FAFFFE123456", host: "192.0.2.10", port: 443,
+                name: "TestBridge", pinPK: "dGVzdA==",
+                token: minted.token, allowedGroups: ["room-1"],
+                features: GuestFeature.all,
+                expiresAt: Date().addingTimeInterval(900))],
+            homeName: "Test", profileName: "Guest", issuedAt: Date()
+        ))
+
+        let joined = lines.joined(separator: "\n")
+        XCTAssertFalse(joined.contains(Self.fakeToken),
+                       "guest application key leaked into mint log lines")
+        XCTAssertFalse(joined.contains("lightshade://"),
+                       "a share-link (secret-bearing for invites) leaked into log lines")
+        let blob = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            .queryItems!.first { $0.name == ScenePayloadCodec.queryKey }!.value!
+        XCTAssertFalse(joined.contains(blob), "invite URL blob leaked into log lines")
+    }
+
     @MainActor
     func testPairingErrorLogLinesContainNoSecrets() async throws {
         let vm = BridgeDiscoveryViewModel()
