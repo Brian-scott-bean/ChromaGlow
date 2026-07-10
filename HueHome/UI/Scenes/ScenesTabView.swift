@@ -50,6 +50,10 @@ struct ScenesTabView: View {
         SceneGrouping.SortMode.byRoom.rawValue
     /// Collapsed room-section ids — same CSV helper family as favorites.
     @AppStorage("castchroma.collapsedSceneRoomIDs") private var collapsedRoomIDsRaw = ""
+    /// Card density: false = 2-up grid, true = full-width bars. Separate key
+    /// from the Dashboard's castchroma.useWideCards so the screens stay
+    /// independently configurable.
+    @AppStorage("castchroma.sceneWideCards") private var sceneWideCards = false
     // Shared favorites contract: RAW bridge scene UUIDs (bridgeSceneID),
     // the same CSV RoomDetail writes and the Dashboard pills read.
     @AppStorage("favoriteSceneIDs") private var favoriteSceneIDsRaw: String = ""
@@ -71,7 +75,14 @@ struct ScenesTabView: View {
     }
 
     private var gridColumns: [GridItem] {
-        [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+        // SceneMoodCard is already a full-width bar internally (maxWidth
+        // .infinity) — one column IS the full-bar layout. Every grid on the
+        // page (grouped sections, favorites shelf, flat/search, skeleton)
+        // routes through this property.
+        if sceneWideCards {
+            return [GridItem(.flexible(), spacing: 14)]
+        }
+        return [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
     }
 
     // ── Derived data ──────────────────────────────────────
@@ -606,6 +617,19 @@ struct ScenesTabView: View {
                     .foregroundStyle(.white.opacity(0.8))
             }
             .accessibilityLabel("New scene")
+        }
+        ToolbarItem(placement: .navigationBarTrailing) {
+            // Grid ↔ full-bar density toggle (Dashboard useWideCards precedent).
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    sceneWideCards.toggle()
+                }
+                HapticManager.shared.light()
+            } label: {
+                Image(systemName: sceneWideCards ? "rectangle.grid.1x2.fill" : "square.grid.2x2")
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            .accessibilityLabel(sceneWideCards ? "Switch to grid layout" : "Switch to full-width layout")
         }
         ToolbarItem(placement: .navigationBarTrailing) {
             Menu {
