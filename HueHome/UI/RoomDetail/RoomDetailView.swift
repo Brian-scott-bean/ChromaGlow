@@ -382,9 +382,7 @@ struct RoomDetailView: View {
             SavedColorStrip(
                 armedColorID: armedColor?.id,
                 onTapSwatch: { saved in
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        armedColor = (armedColor?.id == saved.id) ? nil : saved
-                    }
+                    armPaintMode(with: (armedColor?.id == saved.id) ? nil : saved)
                     HapticManager.shared.light()
                 }
             )
@@ -413,8 +411,46 @@ struct RoomDetailView: View {
             vm.setBrightness(brightness, for: light)
         }
         HapticManager.shared.success()
+        // Deliberately stays armed: an armed color paints until the user
+        // says Done (paint pill / tap the armed swatch / leave the room).
+    }
+
+    /// Armed-state chrome in the LIGHTS header: swatch dot + "Painting" + Done.
+    /// StageBadge's amber recipe, but it carries a live swatch and a button so
+    /// it stays a local view rather than a StageKit component.
+    private func paintModePill(for armed: SavedColor) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(armed.displayColor)
+                .frame(width: 12, height: 12)
+                .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 0.5))
+            Text("Painting")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
+            Button("Done") {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    armedColor = nil
+                }
+                HapticManager.shared.light()
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(
+            Capsule().fill(Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.14))
+        )
+        .transition(.opacity)
+    }
+
+    /// Arm a color for paint mode. Select mode and paint mode are mutually
+    /// exclusive — an armed overlay would fight the selection Buttons for
+    /// the same taps.
+    private func armPaintMode(with color: SavedColor?) {
+        if vm.isSelecting { vm.exitSelectMode() }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            armedColor = nil
+            armedColor = color
         }
     }
 
@@ -441,6 +477,9 @@ struct RoomDetailView: View {
         }
         if !vm.isSelecting {
             Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    armedColor = nil   // paint mode and select mode are exclusive
+                }
                 vm.enterSelectMode(preselecting: light.id)
             } label: {
                 Label("Select Lights", systemImage: "checklist")
@@ -465,14 +504,20 @@ struct RoomDetailView: View {
                         .foregroundStyle(.white.opacity(0.25))
                 }
                 Spacer()
-                // Select / Done button for multi-select mode
-                Button(vm.isSelecting ? "Done" : "Select") {
-                    if vm.isSelecting { vm.exitSelectMode() } else { vm.enterSelectMode() }
+                if let armed = armedColor {
+                    // Paint mode: swaps in for the Select button (same row,
+                    // same height — zero layout shift).
+                    paintModePill(for: armed)
+                } else {
+                    // Select / Done button for multi-select mode
+                    Button(vm.isSelecting ? "Done" : "Select") {
+                        if vm.isSelecting { vm.exitSelectMode() } else { vm.enterSelectMode() }
+                    }
+                    .font(.system(size: 12, weight: vm.isSelecting ? .semibold : .regular))
+                    .foregroundStyle(vm.isSelecting
+                                     ? Color(red: 1.0, green: 0.76, blue: 0.20)
+                                     : .white.opacity(0.5))
                 }
-                .font(.system(size: 12, weight: vm.isSelecting ? .semibold : .regular))
-                .foregroundStyle(vm.isSelecting
-                                 ? Color(red: 1.0, green: 0.76, blue: 0.20)
-                                 : .white.opacity(0.5))
             }
             .padding(.horizontal, 20)
 
