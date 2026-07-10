@@ -6,6 +6,7 @@
 
 import SwiftUI
 import Observation
+import MediaAccessibility
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -478,7 +479,6 @@ final class StudioViewModel {
 
     // ── Selection state ───────────────────────────────────────
     var selectedRoom: RoomDisplayItem? = nil
-    var selectedCard: StudioCard?      = nil
 
     /// All currently running effects, keyed by room ID.
     /// Multiple rooms can have independent effects running simultaneously.
@@ -522,12 +522,11 @@ final class StudioViewModel {
         UIAccessibility.isReduceMotionEnabled
     }
 
-    /// True if iOS "Dim Flashing Lights" is enabled — strobe brightness capped at 30%.
-    /// Note: This API requires iOS 17+. Falls back to false on older SDKs.
+    /// True if iOS "Dim Flashing Lights" is enabled — strobe brightness capped
+    /// at 30%. The accommodation lives in MediaAccessibility (iOS 16.4+), not
+    /// UIAccessibility; the old hardcoded `false` silently disabled it.
     var isDimFlashingLightsEnabled: Bool {
-        // UIAccessibility.isDimFlashingLightsEnabled requires iOS 17+ SDK.
-        // When building against older SDKs, this safely returns false.
-        false
+        MADimFlashingLightsEnabled()
     }
 
     /// Whether to show the strobe warning dialog before activating strobe.
@@ -906,6 +905,8 @@ final class StudioViewModel {
     /// Per-card firmware-effect coverage for the selected room — drives the
     /// "N OF M LIGHTS" badges on Deck 0 and the mixer-header badge.
     var effectCoverage: [String: EffectCapabilityResolver.Coverage] = [:]
+    /// Room the current `effectCoverage` was computed for.
+    @ObservationIgnored private var coverageRoomID: String?
 
     /// Rebuild coverage for the selected room. Keyed by card id; resolved by
     /// the strategy's effect-name string. Triggered by .task(id: room) in
@@ -916,6 +917,12 @@ final class StudioViewModel {
               let api = orchestrator.hueClient(for: room.bridgeID) else {
             effectCoverage = [:]
             return
+        }
+        // Room switch: the visible badges are still the PREVIOUS room's
+        // coverage until this finishes — clear rather than mislabel.
+        if coverageRoomID != room.id {
+            effectCoverage = [:]
+            coverageRoomID = room.id
         }
         // Reuse the lights loadAll just cached instead of a fresh GET — this .task
         // fires at tab prewarm, right in the post-pairing REST storm, and Hue bridges
@@ -1354,15 +1361,6 @@ final class StudioViewModel {
 
         runningEffects.removeValue(forKey: roomID)
         orchestrator.removeActiveEffect(roomID: roomID)
-    }
-
-    /// Public stop — called from the card grid (tap running card to toggle off)
-    /// or from the mixer stop button.
-    func stop(_ card: StudioCard) async {
-        guard let room = selectedRoom else { return }
-        isExplicitStop = false
-        await stopEffect(on: room.id)
-        statusMessage = ""
     }
 
     /// Explicit stop — called when user taps the stop button directly.

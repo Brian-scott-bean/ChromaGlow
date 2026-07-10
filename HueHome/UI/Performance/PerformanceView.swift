@@ -315,7 +315,10 @@ struct PerformanceView: View {
 
     private var clockCluster: some View {
         HStack {
-            BeatChipButton(capabilities: .global)
+            // Transport-only: Perform passes no BeatBinding, so requesting
+            // `.global` (which includes `.binding`) advertised a per-effect
+            // sync section the panel silently skipped.
+            BeatChipButton(capabilities: [.transport, .manualBPM, .barMeter])
             Spacer()
         }
     }
