@@ -2,7 +2,8 @@
 // CastChroma — v0.17.0 Studio + Composer Deck 3
 //
 // Layout: Three fixed zones (no root scroll)
-//   Zone A: Rolodex room selector (36pt capsule, expands on tap)
+//   Zone A: Rolodex room/zone selector (~126pt: a 26pt legend row over a 96pt
+//           two-axis wheel; hidden while a full-screen entertainment effect runs)
 //   Zone B: 2-column living card grid (paged: Effects / Live / Composer decks)
 //   Zone C: Mixer Tray (springs from bottom when an effect runs)
 //
@@ -126,8 +127,7 @@ struct StudioView: View {
                     if !isEntertainmentRunning {
                         roomRolodex
                             .padding(.horizontal, HueSpacing.lg)
-                            .padding(.top, HueSpacing.xs)
-                            .padding(.bottom, HueSpacing.sm)
+                            .padding(.vertical, HueSpacing.xs)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
 

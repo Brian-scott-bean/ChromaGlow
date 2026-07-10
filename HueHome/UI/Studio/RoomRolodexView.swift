@@ -2,7 +2,9 @@
 // CastChroma — v0.18.0 Studio Room Rolodex
 //
 // A compact, floating two-axis wheel picker for choosing a room or a zone —
-// sized to hover inline near the top of the Studio section.
+// sized to hover inline near the top of the Studio section. The whole control
+// is ~126pt (a 26pt legend row over a 96pt three-detent wheel); it sits above
+// Studio's deck grid, which claims every point the wheel does not take.
 //   • Vertical wheel   = ROOMS  (spin up / down)     → Apple-time-picker cylinder
 //   • Horizontal wheel = ZONES  (spin left / right)  → same cylinder, rotated 90°
 //   • Both cross at a glowing amber "lens" that always frames the live selection.
@@ -26,11 +28,16 @@ struct RoomRolodexView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // ── Compact geometry ──────────────────────────────────────────────
-    private let stageHeight:   CGFloat = 148       // the wheel viewport
-    private let rowHeight:      CGFloat = 40        // vertical detent height
+    //
+    // The stage shows exactly three room detents (96 = 3 × 32): the selection
+    // in the lens plus one neighbour above and below, which is the least a
+    // wheel can show and still read as a wheel. Studio's deck grid takes every
+    // point this gives back, so the stage does not get to be generous.
+    private let stageHeight:   CGFloat = 96        // the wheel viewport
+    private let rowHeight:      CGFloat = 32        // vertical detent height
     private let colWidth:       CGFloat = 150       // horizontal detent width
     private let lensWidth:      CGFloat = 214
-    private let lensHeight:     CGFloat = 42
+    private let lensHeight:     CGFloat = 36
 
     // ── Selection + drag state ────────────────────────────────────────
     @State private var selRoom = 0                  // committed room index
@@ -77,7 +84,7 @@ struct RoomRolodexView: View {
     private var activeID: String? { activeItem?.id }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 4) {
             header
             wheelStage
                 .frame(height: stageHeight)
