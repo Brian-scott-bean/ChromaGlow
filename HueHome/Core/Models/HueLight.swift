@@ -73,13 +73,7 @@ extension HueLight {
             color: update.color.map {
                 LightColor(xy: CIExy(x: $0.xy.x, y: $0.xy.y), gamut_type: color?.gamut_type)
             } ?? color,
-            color_temperature: update.colorTemp.map {
-                LightColorTemp(
-                    mirek: $0.mirek,
-                    mirek_schema: color_temperature?.mirek_schema,
-                    mirek_valid: color_temperature?.mirek_valid
-                )
-            } ?? color_temperature,
+            color_temperature: appliedColorTemperature(for: update),
             owner: owner,
             id_v1: id_v1,
             effects: effects,
@@ -87,6 +81,30 @@ extension HueLight {
             timed_effects: timed_effects,
             gradient: gradient
         )
+    }
+
+    /// CT carry-over for an SSE update. A color-only event means the light
+    /// left CT mode: the bridge nulls mirek in color mode ("that's the mode
+    /// signal"), so carrying the old value verbatim left a stale mirek that
+    /// mis-captured color-mode lights as CT (Copy Color, updateScene's CT
+    /// fallback). The schema is topology-stable and preserved so
+    /// supportsColorTemp / slider ranges survive.
+    private func appliedColorTemperature(for update: SSEResourceUpdate) -> LightColorTemp? {
+        if let ct = update.colorTemp {
+            return LightColorTemp(
+                mirek: ct.mirek,
+                mirek_schema: color_temperature?.mirek_schema,
+                mirek_valid: color_temperature?.mirek_valid
+            )
+        }
+        if update.color != nil, let existing = color_temperature {
+            return LightColorTemp(
+                mirek: nil,
+                mirek_schema: existing.mirek_schema,
+                mirek_valid: false
+            )
+        }
+        return color_temperature
     }
 }
 

@@ -936,6 +936,13 @@ final class RoomDetailViewModel {
             if let color = update.color {
                 arr[idx].colorX = color.xy.x
                 arr[idx].colorY = color.xy.y
+                // A color-only event means the light left CT mode — the bridge
+                // nulls mirek in color mode and ColorClipboard treats non-nil
+                // mirek as the CT-mode signal, so a stale value here made
+                // Copy Color grab warm white instead of the actual color.
+                if update.colorTemp == nil {
+                    arr[idx].colorTempMirek = nil
+                }
                 changed = true
             }
             if let ct = update.colorTemp {
