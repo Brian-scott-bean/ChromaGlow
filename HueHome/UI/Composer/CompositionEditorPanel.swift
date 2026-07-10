@@ -187,7 +187,7 @@ struct CompositionEditorPanel: View {
     private func compositionSectionHeader(_ title: String, subtitle: String?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title.uppercased())
-                .font(.system(size: 10, weight: .bold))
+                .font(HueFont.stageTag)
                 .foregroundStyle(.white.opacity(0.38))
                 .tracking(0.6)
             if let subtitle {
@@ -242,7 +242,7 @@ struct CompositionEditorPanel: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Mode")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(HueFont.stageControl)
                     .foregroundStyle(.white.opacity(0.60))
                 ChipPickerRow(
                     items: PaletteConfig.Mode.allCases.map { mode in
@@ -294,7 +294,7 @@ struct CompositionEditorPanel: View {
         if showHarmonyControls {
             VStack(alignment: .leading, spacing: 8) {
                 Text("HARMONY")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(HueFont.stageTag)
                     .foregroundStyle(.white.opacity(0.38))
                     .tracking(0.6)
 
@@ -497,7 +497,7 @@ struct CompositionEditorPanel: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Hue + Saturation")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(HueFont.stageControl)
                     .foregroundStyle(.white.opacity(0.60))
                 Spacer()
                 Circle()
@@ -505,7 +505,7 @@ struct CompositionEditorPanel: View {
                     .frame(width: 12, height: 12)
                     .overlay(Circle().strokeBorder(.white.opacity(0.7), lineWidth: 1))
                 Text("\(Int((displayHue * 360).rounded()))° • \(Int((displaySat * 100).rounded()))%")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(HueFont.stageValue)
                     .foregroundStyle(.white.opacity(0.42))
             }
 
@@ -656,7 +656,7 @@ struct CompositionEditorPanel: View {
             // 2-tap menu). Icons give each motion a recognizable signature.
             VStack(alignment: .leading, spacing: 4) {
                 Text("Pattern")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(HueFont.stageControl)
                     .foregroundStyle(.white.opacity(0.60))
                 ChipPickerRow(
                     items: MotionConfig.Pattern.allCases.map { pattern in
@@ -713,7 +713,7 @@ struct CompositionEditorPanel: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Shape")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(HueFont.stageControl)
                     .foregroundStyle(.white.opacity(0.60))
                 ChipPickerRow(
                     items: EnvelopeConfig.Shape.allCases.map { shape in
@@ -758,7 +758,7 @@ struct CompositionEditorPanel: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Source")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(HueFont.stageControl)
                     .foregroundStyle(.white.opacity(0.60))
                 ChipPickerRow(
                     items: ReactionConfig.Source.allCases.map { source in

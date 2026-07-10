@@ -114,8 +114,7 @@ struct ChipPickerRow<Value: Hashable>: View {
                                 Image(systemName: icon).font(.system(size: 10, weight: .semibold))
                             }
                             Text(item.label)
-                                .font(.system(size: 12, weight: selected ? .bold : .medium,
-                                              design: .monospaced))
+                                .font(HueFont.stageValue.weight(selected ? .bold : .medium))
                         }
                         .padding(.horizontal, 11)
                         .padding(.vertical, 6)

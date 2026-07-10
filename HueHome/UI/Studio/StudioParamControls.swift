@@ -71,7 +71,7 @@ struct StudioParamRow: View {
             control
             if showsEntOnlyHint {
                 Text("STREAMING ONLY — INACTIVE OVER REST")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(HueFont.stageTag)
                     .tracking(0.8)
                     .foregroundStyle(HuePalette.amber.opacity(0.65))
             }
@@ -129,7 +129,7 @@ struct StudioParamRow: View {
     private func segmentedRow(param: StudioParam, options: [(label: String, value: Double)]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(param.label)
-                .font(.system(size: 12, weight: .medium))
+                .font(HueFont.stageControl)
                 .foregroundStyle(.white.opacity(0.60))
             ChipPickerRow(
                 items: options.map { ChipPickerRow<Double>.Item(value: $0.value, label: $0.label) },

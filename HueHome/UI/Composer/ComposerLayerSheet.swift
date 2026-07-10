@@ -451,7 +451,7 @@ struct ComposerAdvancedControls: View {
     private var directionControl: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("DIRECTION")
-                .font(.system(size: 10, weight: .bold))
+                .font(HueFont.stageTag)
                 .foregroundStyle(.white.opacity(0.38))
                 .tracking(0.6)
 

@@ -73,10 +73,10 @@ struct MixerTrayView: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(card.name)
-                            .font(.system(size: 16, weight: .bold))
+                            .font(HueFont.stageName)
                             .foregroundStyle(StagePalette.ink)
                         Text(effect.room.name)
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .font(HueFont.stageTag)
                             .tracking(1.2)
                             .textCase(.uppercase)
                             .foregroundStyle(.white.opacity(0.4))

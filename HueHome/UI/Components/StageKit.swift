@@ -63,13 +63,13 @@ struct StageCard<Content: View>: View {
                             .foregroundStyle(HuePalette.amber.opacity(0.85))
                     }
                     Text(title.uppercased())
-                        .font(.system(size: 10, weight: .bold))
+                        .font(HueFont.stageTag)
                         .foregroundStyle(.white.opacity(0.38))
                         .tracking(1.2)
                 }
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 11))
+                        .font(.caption)
                         .foregroundStyle(.white.opacity(0.45))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -117,11 +117,11 @@ struct StageSlider: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(HueFont.stageControl)
                     .foregroundStyle(.white.opacity(0.60))
                 Spacer()
                 Text(format(value))
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(HueFont.stageValue)
                     .foregroundStyle(.white.opacity(0.40))
             }
             Slider(value: $value, in: range) { editing in
@@ -168,7 +168,7 @@ struct StageBadge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
+            .font(HueFont.stageTag)
             .tracking(0.6)
             .foregroundStyle(foreground)
             .padding(.horizontal, 6)
@@ -187,7 +187,7 @@ struct StageToggleRow: View {
     var body: some View {
         Toggle(isOn: $isOn) {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(HueFont.stageControl)
                 .foregroundStyle(.white.opacity(0.60))
         }
         .tint(HuePalette.amber)
@@ -223,7 +223,7 @@ struct StageColorSwatchRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(HueFont.stageControl)
                 .foregroundStyle(.white.opacity(0.60))
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -266,7 +266,7 @@ struct StageMoreButton: View {
         } label: {
             HStack(spacing: 5) {
                 Text(isExpanded ? "SHOW LESS" : "+\(count) MORE")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(HueFont.stageTag)
                     .tracking(1.0)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
@@ -304,7 +304,7 @@ struct StageSheetScaffold<Content: View>: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text(title.uppercased())
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .font(HueFont.stageTag)
                         .tracking(1.2)
                         .foregroundStyle(StagePalette.muted)
                 }
