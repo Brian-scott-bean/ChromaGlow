@@ -376,6 +376,30 @@ final class CompositionMixerTests: XCTestCase {
         XCTAssertEqual(mix.crossfade, 1.0)   // lands rather than hangs
     }
 
+    /// Only a render loop clears autoFade — with none consuming the mix
+    /// (bridge-stored preset, effect stopped underneath), the player must
+    /// land the fade itself instead of hanging the sequence forever.
+    @MainActor
+    func testSequenceAdvancesPastAFadeNoRendererClears() async {
+        BeatClock.shared.setBPM(300)      // fast clock → short bars + fades
+        defer { BeatClock.shared.unpin() }
+
+        let mix = PerformanceMixBox(deckA: box())
+        let player = SequencePlayer(mix: mix)
+        let sequence = CompositionSequence(steps: [
+            CompositionSequence.Step(name: "One", bars: 1, crossfadeBeats: 1),
+            CompositionSequence.Step(name: "Two", bars: 1, crossfadeBeats: 1),
+        ], loops: false)
+
+        let advanced = expectation(description: "promoted past the unconsumed fade")
+        player.start(sequence) { step in
+            if step.name == "Two" { advanced.fulfill() }
+        }
+        await fulfillment(of: [advanced], timeout: 10)
+        player.stop()
+        XCTAssertNil(mix.autoFade, "the landed fade must not linger")
+    }
+
     func testAutoFadeIsBeatExactAndSelfCompletes() {
         let mix = PerformanceMixBox(deckA: box())
         mix.deckB = box(hueShift: 90)

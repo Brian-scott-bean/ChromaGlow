@@ -137,13 +137,26 @@ final class SequencePlayer {
             mix.deckB = CompositionParamBox(palette: next.palette, motion: next.motion,
                                             envelope: next.envelope, reaction: next.reaction)
             if step.crossfadeBeats > 0 {
+                let snap = BeatClock.snapshot()
                 mix.startAutoFade(beats: Double(step.crossfadeBeats),
-                                  beat: BeatClock.snapshot(),
+                                  beat: snap,
                                   hostNow: CACurrentMediaTime())
-                while !Task.isCancelled, mix.autoFade != nil {
+                // Only a render loop clears autoFade (renderMixed). If none is
+                // consuming this mix — bridge-stored preset, effect stopped
+                // underneath — bound the wait to the fade's own duration plus
+                // grace and land it manually, or the sequence hangs forever.
+                let expected = snap.bpm > 0
+                    ? Double(step.crossfadeBeats) * snap.beatInterval : 0
+                let deadline = CACurrentMediaTime() + expected + 2.0
+                while !Task.isCancelled, mix.autoFade != nil,
+                      CACurrentMediaTime() < deadline {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
                 guard !Task.isCancelled else { return }
+                if let auto = mix.autoFade {
+                    mix.crossfade = auto.toValue
+                    mix.autoFade = nil
+                }
             }
 
             adopt(next)

@@ -105,8 +105,10 @@ struct MixerTrayView: View {
                         .layoutPriority(1)
 
                         if case .composition(let presetID) = card.strategy,
-                           presetID != StudioViewModel.composerStarterDraftPresetID {
+                           presetID != StudioViewModel.composerStarterDraftPresetID,
+                           card.compositionTier != .bridgeOptimized {
                             // Revert live edits back to the saved preset.
+                            // (One-shots have no live box — nothing to revert.)
                             Button {
                                 vm.revertActiveComposition()
                                 HapticManager.shared.light()
@@ -122,7 +124,11 @@ struct MixerTrayView: View {
                             .accessibilityLabel("Revert to saved")
                         }
 
-                        if case .composition = card.strategy {
+                        if case .composition = card.strategy,
+                           card.compositionTier != .bridgeOptimized {
+                            // Perform + Save need the live box and render loop a
+                            // bridge-optimized one-shot never has — both buttons
+                            // were silent no-ops there.
                             // Round 3 (C): enter the full-screen Perform surface —
                             // deck A inherits this live composition, uninterrupted.
                             Button {
@@ -303,7 +309,25 @@ struct MixerTrayView: View {
                     .frame(height: 0.5)
                     .padding(.horizontal, HueSpacing.screenH)
 
-                if case .composition = card.strategy {
+                if case .composition = card.strategy,
+                   card.compositionTier == .bridgeOptimized {
+                    // One-shot scene: no live box, so the editor's bindings
+                    // would write to nothing (or, pre-fix, another room's box).
+                    VStack(spacing: HueSpacing.sm) {
+                        Image(systemName: "photo.on.rectangle")
+                            .font(.system(size: 22, weight: .light))
+                            .foregroundStyle(.white.opacity(0.35))
+                        Text("Applied in one shot — a still scene has no live controls.")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.6))
+                        Text("Add it to a room from the Scenes tab's Studio shelf to keep it on the bridge.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, HueSpacing.screenH * 2)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if case .composition = card.strategy {
                     GeometryReader { scrollGeo in
                         ScrollViewReader { proxy in
                             ScrollView(showsIndicators: false) {
