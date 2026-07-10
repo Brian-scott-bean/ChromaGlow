@@ -15,9 +15,28 @@ final class KeychainManagerTests: XCTestCase {
     var tokenKey: String { "test_token_\(name)" }
     var ipKey:    String { "test_ip_\(name)" }
 
+    // The API-token/bridge-IP tests below write the LEGACY single-bridge
+    // slots (hue_api_token / hue_bridge_ip) — real shared state that
+    // WidgetDataStore.credentials(for:) still consults as a fallback.
+    // Leaving them populated polluted any later test in the same runner
+    // process that asserts on a clean credential surface
+    // (KeychainSharingTests.testForgetAllClearsSharedCredentialSurface).
+    // Snapshot & restore, mirroring SecretLogScrubTests.
+    private var savedLegacyToken: String?
+    private var savedLegacyIP:    String?
+
+    override func setUpWithError() throws {
+        savedLegacyToken = try? keychain.loadAPIToken()
+        savedLegacyIP    = try? keychain.loadBridgeIP()
+    }
+
     override func tearDownWithError() throws {
         try? keychain.delete(for: tokenKey)
         try? keychain.delete(for: ipKey)
+        if let savedLegacyToken { try? keychain.saveAPIToken(savedLegacyToken) }
+        else                    { try? keychain.deleteAPIToken() }
+        if let savedLegacyIP    { try? keychain.saveBridgeIP(savedLegacyIP) }
+        else                    { try? keychain.deleteBridgeIP() }
     }
 
     // MARK: - API Token
