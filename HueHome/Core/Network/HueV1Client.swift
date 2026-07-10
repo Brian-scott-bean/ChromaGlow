@@ -90,14 +90,28 @@ class HueV1Client: @unchecked Sendable {
 
     /// Strips the `/api/{token}` prefix from a v1 URL path, leaving only the
     /// token-free resource path (e.g. "/api/SECRET/schedules/3" → "/schedules/3").
+    /// A whitelist element segment is ANOTHER app's key (H-03) — masked in
+    /// the same pass so `/config/whitelist/<key>` can never reach a log sink.
     static func redactedPath(fromV1URLPath path: String) -> String {
         let components = path.split(separator: "/", omittingEmptySubsequences: true)
-        guard components.first == "api" else { return path }
-        return "/" + components.dropFirst(2).joined(separator: "/")
+        guard components.first == "api" else { return maskWhitelistElement(in: path) }
+        return maskWhitelistElement(in: "/" + components.dropFirst(2).joined(separator: "/"))
     }
 
-    /// Removes this client's token (and any /api/{…} segment) from free-form
-    /// text such as bridge error bodies before it can be logged.
+    /// Masks the path segment FOLLOWING "whitelist" — that segment is an
+    /// application key belonging to some app on this bridge.
+    static func maskWhitelistElement(in path: String) -> String {
+        var parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard parts.count >= 2 else { return path }
+        for index in 0..<(parts.count - 1) where parts[index] == "whitelist" {
+            parts[index + 1] = "<redacted>"
+        }
+        return (path.hasPrefix("/") ? "/" : "") + parts.joined(separator: "/")
+    }
+
+    /// Removes this client's token (and any /api/{…} or whitelist/{…}
+    /// segment) from free-form text such as bridge error bodies before it
+    /// can be logged.
     func sanitizedForLog(_ text: String) -> String {
         var result = text
         if !token.isEmpty {
@@ -108,7 +122,108 @@ class HueV1Client: @unchecked Sendable {
             with: "/api/<redacted>",
             options: .regularExpression
         )
+        // Error bodies echo whitelist DELETE addresses — those embed other
+        // apps' keys (H-03).
+        result = result.replacingOccurrences(
+            of: #"whitelist/[^/\s"\\]+"#,
+            with: "whitelist/<redacted>",
+            options: .regularExpression
+        )
         return result
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Whitelist (Family Sharing revocation — the shipped spike)
+    // ──────────────────────────────────────────────
+    // Modern Signify firmware is believed to have removed the local
+    // whitelist DELETE (and possibly the read). Rather than blocking on a
+    // hardware spike, BOTH outcomes are first-class here: fetchWhitelist
+    // returns nil when the firmware omits the map, and deleteWhitelistEntry
+    // trusts only a verify-by-re-read — never the DELETE's own response.
+
+    struct WhitelistEntry: Identifiable, Equatable {
+        /// The FULL key — needed to issue the DELETE; another app's secret
+        /// (H-03): never logged, never rendered whole.
+        let element: String
+        /// "app#device" as the bridge stores it.
+        let name: String
+        let createDate: String?
+        let lastUseDate: String?
+
+        var id: String { element }
+        /// The only renderable form: first 6 chars + ellipsis.
+        var displayID: String { element.count > 8 ? "\(element.prefix(6))…" : "••••" }
+    }
+
+    enum WhitelistDeleteOutcome: Equatable {
+        /// The re-read no longer lists the element — genuinely gone.
+        case deletedVerified
+        /// The bridge refused (or the whitelist isn't exposed) — the key
+        /// can only be revoked via official Hue tooling.
+        case unsupportedByFirmware(String)
+        /// The DELETE claimed success but the re-read still lists it —
+        /// treat exactly like unsupported.
+        case stillPresent
+    }
+
+    /// GET /config and extract the whitelist. nil = this firmware does not
+    /// expose it locally (the expected answer on current bridges).
+    func fetchWhitelist() async throws -> [WhitelistEntry]? {
+        let data = try await get(path: "/config")
+        guard let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw HueAPIError.decodingFailed("v1 /config did not return an object")
+        }
+        guard let whitelist = dict["whitelist"] as? [String: [String: Any]] else {
+            return nil
+        }
+        return whitelist.map { element, fields in
+            WhitelistEntry(
+                element: element,
+                name: fields["name"] as? String ?? "unknown app",
+                createDate: fields["create date"] as? String,
+                lastUseDate: fields["last use date"] as? String
+            )
+        }
+        .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+    }
+
+    /// Best-effort DELETE, then verify by re-read — the re-read is the only
+    /// trusted signal (ancient firmware honors the delete; modern firmware
+    /// may 200 an error body, 403, or silently no-op).
+    func deleteWhitelistEntry(element: String) async throws -> WhitelistDeleteOutcome {
+        var bridgeError: String?
+        do {
+            let data = try await delete(path: "/config/whitelist/\(element)")
+            if let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+               let err = array.first?["error"] as? [String: Any],
+               let description = err["description"] as? String {
+                bridgeError = sanitizedForLog(description)
+            }
+        } catch HueAPIError.httpError(let status) {
+            bridgeError = "HTTP \(status)"
+        }
+        let after = try await fetchWhitelist()
+        return Self.whitelistDeleteOutcome(afterReread: after, element: element,
+                                           bridgeError: bridgeError)
+    }
+
+    /// Pure outcome mapping (unit-tested): the re-read decides.
+    static func whitelistDeleteOutcome(
+        afterReread: [WhitelistEntry]?,
+        element: String,
+        bridgeError: String?
+    ) -> WhitelistDeleteOutcome {
+        guard let afterReread else {
+            return .unsupportedByFirmware(
+                bridgeError ?? "This bridge's firmware doesn't expose its key list locally."
+            )
+        }
+        if !afterReread.contains(where: { $0.element == element }) {
+            // Gone on re-read — the delete worked, whatever the DELETE said.
+            return .deletedVerified
+        }
+        if let bridgeError { return .unsupportedByFirmware(bridgeError) }
+        return .stillPresent
     }
 
     // ──────────────────────────────────────────────
@@ -497,7 +612,8 @@ class HueV1Client: @unchecked Sendable {
         }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = "GET"
-        log.info("V1 GET \(path)")
+        // H-03: `path` is token-free but may carry a whitelist element.
+        log.info("V1 GET \(Self.maskWhitelistElement(in: path))")
         return try await execute(req)
     }
 
@@ -510,7 +626,7 @@ class HueV1Client: @unchecked Sendable {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        log.info("V1 POST \(path)")
+        log.info("V1 POST \(Self.maskWhitelistElement(in: path))")
         return try await execute(req)
     }
 
@@ -523,7 +639,7 @@ class HueV1Client: @unchecked Sendable {
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        log.info("V1 PUT \(path)")
+        log.info("V1 PUT \(Self.maskWhitelistElement(in: path))")
         return try await execute(req)
     }
 
@@ -534,7 +650,8 @@ class HueV1Client: @unchecked Sendable {
         }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = "DELETE"
-        log.info("V1 DELETE \(path)")
+        // H-03: the whitelist DELETE path embeds another app's key.
+        log.info("V1 DELETE \(Self.maskWhitelistElement(in: path))")
         return try await execute(req)
     }
 
@@ -589,4 +706,12 @@ class HueV1Client: @unchecked Sendable {
         }
         return dict.count
     }
+}
+
+// H-03: a default reflective dump (String(describing:)/(reflecting:))
+// would print `element` — another app's key. Both textual forms are
+// pinned to the truncated display id.
+extension HueV1Client.WhitelistEntry: CustomStringConvertible, CustomDebugStringConvertible {
+    var description: String { "\(displayID) (\(name))" }
+    var debugDescription: String { description }
 }

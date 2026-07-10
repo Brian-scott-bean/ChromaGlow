@@ -20,6 +20,7 @@ struct ProfilesAccessView: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
 
     @Query(sort: \GuestProfile.createdAt) private var profiles: [GuestProfile]
+    @Query(sort: \BridgeRecord.sortOrder) private var bridges: [BridgeRecord]
 
     @State private var editingProfile: GuestProfile?
     @State private var showCreateSheet = false
@@ -69,6 +70,10 @@ struct ProfilesAccessView: View {
                     }
 
                     newProfileButton
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+
+                    keysOnBridgeSection
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
 
@@ -202,6 +207,50 @@ struct ProfilesAccessView: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    /// Phase 4 diagnostic: the whitelist runtime probe, one row per active
+    /// bridge. Reveals — on real firmware — whether local key listing and
+    /// removal still exist, with honest copy either way.
+    @ViewBuilder
+    private var keysOnBridgeSection: some View {
+        let activeBridges = bridges.filter(\.isActive)
+        if !activeBridges.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("KEYS ON YOUR BRIDGES")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(.white.opacity(0.45))
+                    .padding(.leading, 4)
+                ForEach(activeBridges) { bridge in
+                    NavigationLink(destination: BridgeKeysView(bridge: bridge)) {
+                        GlassmorphicCard(isActive: false, glowColor: HuePalette.amber) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "key.horizontal.fill")
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundStyle(HuePalette.amber)
+                                    .frame(width: 36, height: 36)
+                                    .background(Circle().fill(HuePalette.amber.opacity(0.15)))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(bridge.name)
+                                        .font(.system(size: 15, weight: .regular))
+                                        .foregroundStyle(.white)
+                                    Text("See every app key this bridge holds")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.white.opacity(0.45))
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.28))
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 8)
+        }
     }
 
     private var honestyFootnote: some View {
