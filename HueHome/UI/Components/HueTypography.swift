@@ -58,6 +58,8 @@ enum HueFont {
     static let stageName    = Font.system(.callout).weight(.bold)
     /// Chip labels (pill pickers, capsule buttons).
     static let stageChip    = Font.system(.caption).weight(.semibold)
+    /// Full-sentence status lines under a tray header ("Running on bridge…").
+    static let stageStatus  = Font.system(.caption2).weight(.medium)
 }
 
 // MARK: - Typography ViewModifiers

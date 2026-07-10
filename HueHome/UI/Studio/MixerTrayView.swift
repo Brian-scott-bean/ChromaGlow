@@ -1,12 +1,14 @@
 // MixerTrayView.swift
 // CastChroma — Zone C mixer tray (extracted from StudioView in Round 4, R4-2).
 //
-// The bottom tray that springs up when an effect runs: header (icon, name,
-// LIVE chip, beat chip, transport/scope badge, save, Perform, stop) plus the
-// content area — the CompositionEditorPanel for composition cards, or the
-// essential StudioParamRow sliders for engine cards.
+// The bottom tray that springs up when an effect runs: a three-row header —
+// (1) icon, name, room, and the revert/Perform/save/stop circles; (2) a
+// horizontally scrolling badge lane (LIVE, coverage, beat chip, transport
+// badge, room count); (3) the transport status sentence at full width — plus
+// the content area: the CompositionEditorPanel for composition cards, or the
+// essential StudioParamRow sliders for engine cards. Header heights are
+// declared in `MixerTrayMetrics.headerBlockHeight`.
 //
-// Pure move — view content is byte-identical to the StudioView original.
 // The tray owns its transient state (drag offset, param sheet); expand /
 // collapse-to-half mutate the `isMixerExpanded` binding; full dismissal and
 // save-sheet population go through callbacks because their state must
@@ -60,194 +62,228 @@ struct MixerTrayView: View {
                     }
 
                 // ── Header (Perform grammar: 34pt circles, mono tags, bold name) ──
-                HStack(spacing: 10) {
-                    // Effect icon
-                    ZStack {
-                        Circle()
-                            .fill(card.accentColor.opacity(0.20))
-                            .frame(width: 34, height: 34)
-                        Image(systemName: card.icon)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(card.accentColor)
-                    }
+                //
+                // Three rows, because one row cannot hold this much. Up to four
+                // 34pt action circles plus an icon are ~170pt of incompressible
+                // width; on a 360pt phone that left the name and the transport
+                // status sentence a few points each, and they wrapped mid-word.
+                // Row 1 is identity + actions, row 2 is a scrollable badge lane
+                // (so N badges never squeeze the name), row 3 is the status
+                // sentence at full width. Nothing is truncated.
+                VStack(alignment: .leading, spacing: HueSpacing.xs) {
 
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(card.name)
-                            .font(HueFont.stageName)
-                            .foregroundStyle(StagePalette.ink)
-                        Text(effect.room.name)
-                            .font(HueFont.stageTag)
-                            .tracking(1.2)
-                            .textCase(.uppercase)
-                            .foregroundStyle(.white.opacity(0.4))
-                    }
+                    // ── Row 1: identity + actions ────────────────
+                    HStack(spacing: 10) {
+                        // Effect icon
+                        ZStack {
+                            Circle()
+                                .fill(card.accentColor.opacity(0.20))
+                                .frame(width: 34, height: 34)
+                            Image(systemName: card.icon)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(card.accentColor)
+                        }
+                        .fixedSize()
 
-                    // Live indicator
-                    StageBadge(text: "LIVE", style: .live)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(card.name)
+                                .font(HueFont.stageName)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                                .allowsTightening(true)
+                                .foregroundStyle(StagePalette.ink)
+                            Text(effect.room.name)
+                                .font(HueFont.stageTag)
+                                .tracking(1.2)
+                                .textCase(.uppercase)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                                .allowsTightening(true)
+                                .foregroundStyle(.white.opacity(0.4))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .layoutPriority(1)
 
-                    // Partial firmware-effect coverage (R4 Effects port) —
-                    // statusMessage is write-only, so the badge IS the signal.
-                    if case .bridgeNative = card.strategy,
-                       let cov = vm.effectCoverage[card.id],
-                       !cov.isFull, !cov.isEmpty {
-                        StageBadge(text: "\(cov.label.uppercased()) LIGHTS", style: .muted)
-                    }
-
-                    // Beat chip: engine cards read beat_mode/beat_per_cycle/
-                    // beat_phase from the live param box every tick, so panel
-                    // edits land without restarting the engine.
-                    if case .appDriven = card.strategy {
-                        BeatChipButton(
-                            capabilities: .global,
-                            binding: studioBeatBinding(forCardID: card.id),
-                            compact: true
-                        )
-                    }
-
-                    // Scope / transport badge for Studio engine cards
-                    if case .appDriven = card.strategy {
-                        StageBadge(text: effect.isEntertainment ? "ENT AREA" : "ROOM",
-                                   style: effect.isEntertainment ? .amber : .muted)
-                    } else if case .composition = card.strategy {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Menu {
-                                Button {
-                                    onTransportSwitch(effect, true)
-                                } label: {
-                                    Label("Entertainment Area (Streaming)", systemImage: "bolt.fill")
-                                }
-
-                                Button {
-                                    onTransportSwitch(effect, false)
-                                } label: {
-                                    Label("Room Only (REST)", systemImage: "iphone")
-                                }
+                        if case .composition(let presetID) = card.strategy,
+                           presetID != StudioViewModel.composerStarterDraftPresetID {
+                            // Revert live edits back to the saved preset.
+                            Button {
+                                vm.revertActiveComposition()
+                                HapticManager.shared.light()
                             } label: {
-                                HStack(spacing: 4) {
-                                    Text(composerTransportBadgeText(for: effect))
-                                        .font(.system(size: 9, weight: .bold))
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 7, weight: .bold))
-                                        .opacity(0.82)
-                                }
-                                .foregroundStyle(effect.isEntertainment ? HuePalette.amber : .white.opacity(0.75))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule().fill(
-                                        effect.isEntertainment
-                                            ? HuePalette.amber.opacity(0.15)
-                                            : Color.white.opacity(0.10)
-                                    )
-                                )
+                                Image(systemName: "arrow.uturn.backward")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.75))
+                                    .frame(width: 34, height: 34)
+                                    .background(Circle().fill(Color.white.opacity(0.08)))
                             }
                             .buttonStyle(.plain)
-
-                            if orchestrator.isBridgeStored {
-                                Text("Running on bridge — close the app, lights keep going")
-                                    .font(.system(size: 8, weight: .medium))
-                                    .foregroundStyle(HuePalette.amber.opacity(0.9))
-                            } else if effect.transportFallback {
-                                Text("Streaming unavailable on this bridge/session, using REST")
-                                    .font(.system(size: 8, weight: .medium))
-                                    .foregroundStyle(HuePalette.amber.opacity(0.75))
-                            } else if !effect.isEntertainment, card.compositionTier == .runtimeOnly {
-                                Text(runtimeOnlyCadenceText())
-                                    .font(.system(size: 8, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.48))
-                            }
+                            .fixedSize()
+                            .accessibilityLabel("Revert to saved")
                         }
-                    }
 
-                    // Active rooms count badge
-                    if vm.runningEffects.count > 1 {
-                        StageBadge(text: "\(vm.runningEffects.count) ROOMS", style: .amber)
-                    }
+                        if case .composition = card.strategy {
+                            // Round 3 (C): enter the full-screen Perform surface —
+                            // deck A inherits this live composition, uninterrupted.
+                            Button {
+                                guard let box = vm.activeCompositionBox else { return }
+                                // R4-7: thread the backing preset so sequences can
+                                // persist. The "+ Create" draft sentinel counts as
+                                // unsaved — attaching a sequence to the hidden
+                                // template would corrupt every future draft.
+                                var presetID: UUID? = nil
+                                if case .composition(let pid) = card.strategy,
+                                   pid != StudioViewModel.composerStarterDraftPresetID {
+                                    presetID = pid
+                                }
+                                performVM = PerformanceViewModel(
+                                    orchestrator: orchestrator,
+                                    room: effect.room,
+                                    liveBox: box,
+                                    liveName: card.name,
+                                    isStreaming: effect.isEntertainment,
+                                    presetID: presetID,
+                                    compositionStore: vm.compositionStore
+                                )
+                                HapticManager.shared.medium()
+                            } label: {
+                                Image(systemName: "slider.vertical.3")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(Color.black.opacity(0.85))
+                                    .frame(width: 34, height: 34)
+                                    .background(Circle().fill(HuePalette.amber))
+                            }
+                            .buttonStyle(.plain)
+                            .fixedSize()
+                            .accessibilityLabel("Perform")
 
-                    Spacer()
+                            Button {
+                                onSaveComposition(card)
+                                HapticManager.shared.light()
+                            } label: {
+                                Image(systemName: "square.and.arrow.down")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(HuePalette.amber)
+                                    .frame(width: 34, height: 34)
+                                    .background(
+                                        Circle()
+                                            .fill(HuePalette.amber.opacity(0.15))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .fixedSize()
+                            .accessibilityLabel("Save composition")
+                        }
 
-                    if case .composition(let presetID) = card.strategy,
-                       presetID != StudioViewModel.composerStarterDraftPresetID {
-                        // Revert live edits back to the saved preset.
+                        // Stop control
                         Button {
-                            vm.revertActiveComposition()
+                            Task { await vm.explicitStop(card) }
                             HapticManager.shared.light()
                         } label: {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.75))
-                                .frame(width: 34, height: 34)
-                                .background(Circle().fill(Color.white.opacity(0.08)))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Revert to saved")
-                    }
-
-                    if case .composition = card.strategy {
-                        // Round 3 (C): enter the full-screen Perform surface —
-                        // deck A inherits this live composition, uninterrupted.
-                        Button {
-                            guard let box = vm.activeCompositionBox else { return }
-                            // R4-7: thread the backing preset so sequences can
-                            // persist. The "+ Create" draft sentinel counts as
-                            // unsaved — attaching a sequence to the hidden
-                            // template would corrupt every future draft.
-                            var presetID: UUID? = nil
-                            if case .composition(let pid) = card.strategy,
-                               pid != StudioViewModel.composerStarterDraftPresetID {
-                                presetID = pid
-                            }
-                            performVM = PerformanceViewModel(
-                                orchestrator: orchestrator,
-                                room: effect.room,
-                                liveBox: box,
-                                liveName: card.name,
-                                isStreaming: effect.isEntertainment,
-                                presetID: presetID,
-                                compositionStore: vm.compositionStore
-                            )
-                            HapticManager.shared.medium()
-                        } label: {
-                            Image(systemName: "slider.vertical.3")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color.black.opacity(0.85))
-                                .frame(width: 34, height: 34)
-                                .background(Circle().fill(HuePalette.amber))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Perform")
-
-                        Button {
-                            onSaveComposition(card)
-                            HapticManager.shared.light()
-                        } label: {
-                            Image(systemName: "square.and.arrow.down")
+                            Image(systemName: "stop.fill")
                                 .font(.system(size: 12))
-                                .foregroundStyle(HuePalette.amber)
+                                .foregroundStyle(HuePalette.Noir.destructive)
                                 .frame(width: 34, height: 34)
                                 .background(
                                     Circle()
-                                        .fill(HuePalette.amber.opacity(0.15))
+                                        .fill(HuePalette.Noir.destructive.opacity(0.15))
                                 )
                         }
                         .buttonStyle(.plain)
+                        .fixedSize()
+                        .accessibilityLabel("Stop \(card.name)")
                     }
 
-                    // Stop control
-                    Button {
-                        Task { await vm.explicitStop(card) }
-                        HapticManager.shared.light()
-                    } label: {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(HuePalette.Noir.destructive)
-                            .frame(width: 34, height: 34)
-                            .background(
-                                Circle()
-                                    .fill(HuePalette.Noir.destructive.opacity(0.15))
-                            )
+                    // ── Row 2: badge lane (scrolls rather than squeezes) ──
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            // Live indicator
+                            StageBadge(text: "LIVE", style: .live)
+
+                            // Partial firmware-effect coverage (R4 Effects port) —
+                            // statusMessage is write-only, so the badge IS the signal.
+                            if case .bridgeNative = card.strategy,
+                               let cov = vm.effectCoverage[card.id],
+                               !cov.isFull, !cov.isEmpty {
+                                StageBadge(text: "\(cov.label.uppercased()) LIGHTS", style: .muted)
+                            }
+
+                            // Beat chip: engine cards read beat_mode/beat_per_cycle/
+                            // beat_phase from the live param box every tick, so panel
+                            // edits land without restarting the engine.
+                            if case .appDriven = card.strategy {
+                                BeatChipButton(
+                                    capabilities: .global,
+                                    binding: studioBeatBinding(forCardID: card.id),
+                                    compact: true
+                                )
+                                .fixedSize()
+                            }
+
+                            // Scope / transport badge for Studio engine cards
+                            if case .appDriven = card.strategy {
+                                StageBadge(text: effect.isEntertainment ? "ENT AREA" : "ROOM",
+                                           style: effect.isEntertainment ? .amber : .muted)
+                            } else if case .composition = card.strategy {
+                                Menu {
+                                    Button {
+                                        onTransportSwitch(effect, true)
+                                    } label: {
+                                        Label("Entertainment Area (Streaming)", systemImage: "bolt.fill")
+                                    }
+
+                                    Button {
+                                        onTransportSwitch(effect, false)
+                                    } label: {
+                                        Label("Room Only (REST)", systemImage: "iphone")
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(composerTransportBadgeText(for: effect))
+                                            .font(HueFont.stageTag)
+                                            .tracking(0.6)
+                                            .lineLimit(1)
+                                        Image(systemName: "chevron.up.chevron.down")
+                                            .font(.system(size: 7, weight: .bold))
+                                            .opacity(0.82)
+                                    }
+                                    .foregroundStyle(effect.isEntertainment ? HuePalette.amber : .white.opacity(0.75))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule().fill(
+                                            effect.isEntertainment
+                                                ? HuePalette.amber.opacity(0.15)
+                                                : Color.white.opacity(0.10)
+                                        )
+                                    )
+                                    .fixedSize()
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            // Active rooms count badge
+                            if vm.runningEffects.count > 1 {
+                                StageBadge(text: "\(vm.runningEffects.count) ROOMS", style: .amber)
+                            }
+                        }
+                        // The trailing capsule otherwise kisses the screen edge.
+                        .padding(.trailing, 2)
                     }
-                    .buttonStyle(.plain)
+                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                    .frame(height: MixerTrayMetrics.badgeLaneHeight)
+
+                    // ── Row 3: transport status, full width ──────
+                    if let status = transportStatus(for: effect, card: card) {
+                        Text(status.text)
+                            .font(HueFont.stageStatus)
+                            .foregroundStyle(status.tint)
+                            .multilineTextAlignment(.leading)
+                            // Wrap on word breaks across the full tray width,
+                            // instead of being squeezed into a badge column.
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
                 .padding(.horizontal, HueSpacing.screenH)
                 .padding(.top, HueSpacing.md)
@@ -436,15 +472,39 @@ struct MixerTrayView: View {
         return "Runtime-only REST is rate-capped (Live: ~\(String(format: "%.1f", cadence))s)"
     }
 
+    /// The one-sentence transport status under the header, or nil when the
+    /// running transport is exactly what was asked for and needs no comment.
+    /// Composition cards only — engine cards say it all in the scope badge.
+    private func transportStatus(
+        for effect: RunningEffect,
+        card: StudioCard
+    ) -> (text: String, tint: Color)? {
+        guard case .composition = card.strategy else { return nil }
+
+        if orchestrator.isBridgeStored {
+            return ("Running on bridge — close the app, lights keep going",
+                    HuePalette.amber.opacity(0.9))
+        }
+        if effect.transportFallback {
+            return ("Streaming unavailable on this bridge/session, using REST",
+                    HuePalette.amber.opacity(0.75))
+        }
+        if !effect.isEntertainment, card.compositionTier == .runtimeOnly {
+            return (runtimeOnlyCadenceText(), .white.opacity(0.48))
+        }
+        return nil
+    }
+
+    /// The badge names the transport in the same grammar engine cards use
+    /// ("ENT AREA" / "ROOM"). It stays short because the nuance — why we fell
+    /// back, what bridge-stored means — lives in `transportStatus`'s sentence
+    /// directly beneath it, where there is room to say it properly.
     private func composerTransportBadgeText(for effect: RunningEffect) -> String {
         // Bridge-stored animations run on the bridge hardware itself
         if orchestrator.isBridgeStored {
             return "BRIDGE ⚡"
         }
-        if effect.transportFallback {
-            return "COMPOSER: ROOM (REST FALLBACK)"
-        }
-        return effect.isEntertainment ? "COMPOSER: ENT AREA" : "COMPOSER: ROOM (REST)"
+        return effect.isEntertainment ? "ENT AREA" : "ROOM · REST"
     }
 
     private func hideMixerKeyboard() {

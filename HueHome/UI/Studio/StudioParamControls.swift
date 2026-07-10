@@ -16,11 +16,32 @@ import SwiftUI
 /// content-derived tray height (replaces the old hardcoded 390/420).
 enum MixerTrayMetrics {
     static let grabBarHeight: CGFloat = 28
+    /// Row 1 of the tray header: 34pt icon/action circles plus padding.
     static let headerHeight: CGFloat = 60
+    /// Row 2: the horizontally scrolling badge lane (LIVE, coverage, beat,
+    /// transport, room count). Fixed so the tray height never depends on how
+    /// many badges happen to be showing.
+    static let badgeLaneHeight: CGFloat = 24
+    /// Row 3: the transport status sentence. Reserved for composition cards
+    /// so the tray does not resize when the sentence appears or clears.
+    static let statusLineHeight: CGFloat = 26
     static let sliderRowHeight: CGFloat = 56
     static let moreRowHeight: CGFloat = 44
     static let verticalPadding: CGFloat = 16
-    static let compactHeightCap: CGFloat = 360
+    /// Raised by one badge-lane row (24 + 4 spacing) when the header went from
+    /// one row to three, so compact devices keep the inline slider count they
+    /// had before.
+    static let compactHeightCap: CGFloat = 388
+
+    /// Total height of the three-row tray header: identity+actions, badge
+    /// lane, and — for composition cards — the transport status sentence.
+    /// The status line is *reserved* rather than measured so the tray does not
+    /// resize when a transport switch makes the sentence appear or clear.
+    static func headerBlockHeight(hasStatusLine: Bool) -> CGFloat {
+        var height = headerHeight + HueSpacing.xs + badgeLaneHeight
+        if hasStatusLine { height += HueSpacing.xs + statusLineHeight }
+        return height
+    }
 
     /// Compact-tray params: essentials plus every color picker — color is
     /// the most-hunted adjustment, worth one always-visible row.
@@ -40,11 +61,12 @@ enum MixerTrayMetrics {
         return card.params.filter { !inlineIDs.contains($0.id) }
     }
 
-    /// Content-derived compact height for engine cards.
+    /// Content-derived compact height for engine cards. Engine cards say their
+    /// scope in a badge, so they get no status line.
     static func engineHeight(for card: StudioCard, isCompact: Bool) -> CGFloat {
         let rows = inlineParams(for: card).count
         let hasMore = !overflowParams(for: card).isEmpty
-        var height = grabBarHeight + headerHeight
+        var height = grabBarHeight + headerBlockHeight(hasStatusLine: false)
             + CGFloat(rows) * sliderRowHeight
             + verticalPadding
         if hasMore { height += moreRowHeight }
@@ -52,9 +74,11 @@ enum MixerTrayMetrics {
     }
 
     /// Composition tray height (header + layer tabs + active-tab essentials;
-    /// the inner ScrollView absorbs overflow).
+    /// the inner ScrollView absorbs overflow). The 390/430 body figures are
+    /// unchanged — only the taller three-row header is added on top.
     static func compositionHeight(isCompact: Bool) -> CGFloat {
-        isCompact ? 390 : 430
+        let body: CGFloat = isCompact ? 390 : 430
+        return body - headerHeight + headerBlockHeight(hasStatusLine: true)
     }
 }
 
@@ -254,6 +278,9 @@ struct StudioParamSheet: View {
                     Image(systemName: "stop.fill")
                     Text("Stop \(card.name)")
                         .fontWeight(.semibold)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .allowsTightening(true)
                 }
                 .foregroundStyle(HuePalette.Noir.destructive)
                 .frame(maxWidth: .infinity)

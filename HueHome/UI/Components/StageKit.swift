@@ -170,10 +170,15 @@ struct StageBadge: View {
         Text(text)
             .font(HueFont.stageTag)
             .tracking(0.6)
+            .lineLimit(1)
             .foregroundStyle(foreground)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(background))
+            // A badge is an atom: it must never absorb the squeeze of a
+            // crowded row by wrapping mid-word. Callers put badges in a
+            // scrollable lane instead.
+            .fixedSize()
     }
 }
 
@@ -303,9 +308,17 @@ struct StageSheetScaffold<Content: View>: View {
             .background(StagePalette.stage)
             .toolbar {
                 ToolbarItem(placement: .principal) {
+                    // The principal slot is narrow (a trailing "Done" eats into
+                    // it) and uppercase + tracking widens the string, so long
+                    // titles like "WINTER WONDERLAND" wrap mid-word. Scale to
+                    // fit rather than wrap or truncate — the whole name stays
+                    // readable.
                     Text(title.uppercased())
                         .font(HueFont.stageTag)
                         .tracking(1.2)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .allowsTightening(true)
                         .foregroundStyle(StagePalette.muted)
                 }
                 ToolbarItem(placement: .topBarTrailing) {

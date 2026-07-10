@@ -137,6 +137,46 @@ final class StudioParamCatalogTests: XCTestCase {
         }
     }
 
+    // ── Three-row header ──────────────────────────────────────
+    //
+    // The tray header is icon/name/actions, then a badge lane, then (for
+    // composition cards) a transport status sentence. These heights are
+    // reserved, not measured, so if someone adds a row without paying for it
+    // here the tray silently clips it — which is exactly the squeeze that
+    // made the text wrap mid-word in the first place.
+
+    /// The reserved header must cover the real intrinsic content: a 34pt
+    /// action circle, the tray's top/bottom padding, and each extra row plus
+    /// the 4pt spacing above it.
+    func testHeaderBlockReservesRoomForEveryRow() {
+        let actionCircle: CGFloat = 34
+        let padding = HueSpacing.md + HueSpacing.sm
+
+        let identityAndBadges = padding + actionCircle
+            + HueSpacing.xs + MixerTrayMetrics.badgeLaneHeight
+        XCTAssertGreaterThanOrEqual(
+            MixerTrayMetrics.headerBlockHeight(hasStatusLine: false), identityAndBadges,
+            "badge lane would be clipped")
+
+        let withStatus = identityAndBadges + HueSpacing.xs + MixerTrayMetrics.statusLineHeight
+        XCTAssertGreaterThanOrEqual(
+            MixerTrayMetrics.headerBlockHeight(hasStatusLine: true), withStatus,
+            "status sentence would be clipped")
+    }
+
+    /// A status line always costs height; engine cards never pay for one.
+    func testStatusLineCostsHeightAndCompositionTrayPaysIt() {
+        XCTAssertGreaterThan(MixerTrayMetrics.headerBlockHeight(hasStatusLine: true),
+                             MixerTrayMetrics.headerBlockHeight(hasStatusLine: false))
+
+        for isCompact in [true, false] {
+            XCTAssertGreaterThanOrEqual(
+                MixerTrayMetrics.compositionHeight(isCompact: isCompact),
+                MixerTrayMetrics.headerBlockHeight(hasStatusLine: true),
+                "composition tray is shorter than its own header (compact=\(isCompact))")
+        }
+    }
+
     /// Inline + overflow must partition the catalog exactly — no param can
     /// be orphaned (unreachable from both the tray and the sheet reveal).
     func testInlineAndOverflowPartitionEveryCard() {
