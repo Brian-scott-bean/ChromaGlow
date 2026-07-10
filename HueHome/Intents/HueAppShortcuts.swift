@@ -116,6 +116,18 @@ struct HueAppShortcuts: AppShortcutsProvider {
             systemImageName: "sparkles"
         )
 
+        // ── 9. Start a Studio effect (opens the app) ─────────────
+        AppShortcut(
+            intent: StartStudioEffectIntent(),
+            phrases: [
+                "Start the \(\.$effect) effect in \(.applicationName)",
+                "Run \(\.$effect) in \(.applicationName)",
+                "Start \(\.$effect) lights in \(.applicationName)",
+            ],
+            shortTitle: "Start Effect",
+            systemImageName: "wand.and.stars"
+        )
+
         // ── 10. Stop effects (lights stay on) ────────────────────
         AppShortcut(
             intent: StopLightEffectsIntent(),

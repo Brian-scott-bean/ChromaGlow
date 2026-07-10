@@ -36,6 +36,27 @@ final class StudioIntentTests: XCTestCase {
                        "the + Create starter draft must never be sayable")
     }
 
+    // ── Effect choice ↔ deck catalog parity ───────────────
+
+    func testEffectChoiceMatchesStudioDeckCatalogs() {
+        let cards = StudioViewModel.buildEffectCards() + StudioViewModel.buildLiveModeCards()
+        let cardIDs   = Set(cards.map(\.id))
+        let choiceIDs = Set(StudioEffectChoice.allCases.map(\.rawValue))
+        XCTAssertEqual(choiceIDs, cardIDs,
+                       "StudioEffectChoice must mirror the deck catalogs exactly — "
+                       + "missing: \(cardIDs.subtracting(choiceIDs)), "
+                       + "phantom: \(choiceIDs.subtracting(cardIDs))")
+    }
+
+    func testEffectChoiceDisplayNamesMatchCardNames() {
+        let cards = StudioViewModel.buildEffectCards() + StudioViewModel.buildLiveModeCards()
+        for choice in StudioEffectChoice.allCases {
+            let card = cards.first { $0.id == choice.rawValue }
+            XCTAssertEqual(choice.displayName, card?.name,
+                           "\(choice.rawValue): Siri must call the effect what the deck calls it")
+        }
+    }
+
     // ── Pending action semantics ──────────────────────────
 
     func testRequestStudioActionBumpsOpenToken() {

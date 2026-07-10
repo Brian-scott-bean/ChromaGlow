@@ -1956,7 +1956,10 @@ final class StudioViewModel {
     // MARK: - Card Catalog
     // ──────────────────────────────────────────────
 
-    private static func buildEffectCards() -> [StudioCard] {
+    // internal (not private): StudioIntentTests pins StudioEffectChoice's
+    // case list to these catalogs so a new deck card can't silently be
+    // missing from Siri.
+    static func buildEffectCards() -> [StudioCard] {
         return [
             StudioCard(
                 id: "candle",
@@ -2138,7 +2141,7 @@ final class StudioViewModel {
         ]
     }
 
-    private static func buildLiveModeCards() -> [StudioCard] {
+    static func buildLiveModeCards() -> [StudioCard] {
         return [
             StudioCard(
                 id: "party",

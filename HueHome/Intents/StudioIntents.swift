@@ -75,6 +75,63 @@ struct CompositionEntityQuery: EntityStringQuery {
     }
 }
 
+// MARK: - StudioEffectChoice
+
+/// The Studio deck cards Siri can start, by card id. This is the STUDIO
+/// catalog (StudioViewModel.buildEffectCards/buildLiveModeCards — what
+/// apply() can actually run), NOT EffectLibrary (the automations surface).
+/// A parity test pins the case list to the catalogs.
+enum StudioEffectChoice: String, AppEnum, CaseIterable {
+    case candle, fire, sparkle, prism, opal, glisten
+    case cosmos, enchant, sunbeam, underwater, colorloop
+    case party, strobe, thunderstorm, ambient
+
+    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Studio Effect")
+
+    static var caseDisplayRepresentations: [StudioEffectChoice: DisplayRepresentation] = [
+        .candle: "Candle", .fire: "Fire", .sparkle: "Sparkle",
+        .prism: "Prism", .opal: "Opal", .glisten: "Glisten",
+        .cosmos: "Cosmos", .enchant: "Enchant", .sunbeam: "Sunbeam",
+        .underwater: "Underwater", .colorloop: "Color Loop",
+        .party: "Party", .strobe: "Strobe",
+        .thunderstorm: "Thunderstorm", .ambient: "Ambient",
+    ]
+
+    /// Name as spoken back in the result dialog (matches the card name).
+    var displayName: String {
+        switch self {
+        case .colorloop: return "Color Loop"
+        default:         return rawValue.capitalized
+        }
+    }
+}
+
+// MARK: - StartStudioEffectIntent
+
+struct StartStudioEffectIntent: AppIntent {
+
+    static var title: LocalizedStringResource = "Start Studio Effect"
+    static var description = IntentDescription(
+        "Open ChromaGlow and start a Studio effect in a room.",
+        categoryName: "Studio"
+    )
+    static var openAppWhenRun: Bool = true
+
+    @Parameter(title: "Effect")
+    var effect: StudioEffectChoice
+
+    @Parameter(title: "Room or Zone")
+    var group: HueGroupEntity
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        DeepLinkCoordinator.shared.requestStudioAction(
+            .effect(effectID: effect.rawValue, groupID: group.id)
+        )
+        return .result(dialog: "Starting \(effect.displayName) in \(group.name).")
+    }
+}
+
 // MARK: - StartCompositionIntent
 
 struct StartCompositionIntent: AppIntent {
