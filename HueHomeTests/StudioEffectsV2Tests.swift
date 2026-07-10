@@ -151,9 +151,14 @@ final class StudioEffectsV2Tests: XCTestCase {
         XCTAssertFalse(cov.isFull)
     }
 
-    // ── 2. no capable lights → blanket only ──
+    // ── 2. no light can run the effect → say so, don't claim it started ──
 
-    func testV2UpgradeSkippedWhenNoCapableLights() async throws {
+    /// These bulbs advertise `candle` and nothing else, so nobody in the room
+    /// can run Cosmos. The bridge answers each PUT with a 400 and the sender
+    /// discards it, so this used to register a running effect and report a
+    /// green success over a room that had not changed. It now reports the
+    /// truth and registers nothing.
+    func testUnsupportedEffectIsReportedRatherThanClaimedAsRunning() async throws {
         spy.lightsFixture = [
             try light("L1", v2Effects: [], v1Effects: ["candle"]),
             try light("L2", v2Effects: ["candle"]),
@@ -162,10 +167,12 @@ final class StudioEffectsV2Tests: XCTestCase {
 
         await vm.apply(try cosmosCard(), roomOverride: nil, preferEntertainmentOverride: nil)
 
-        XCTAssertEqual(spy.v1Effects.count, 2, "v1 blanket still lands")
+        XCTAssertEqual(spy.v1Effects.count, 2, "the blanket is still attempted")
         XCTAssertTrue(spy.v2Puts.isEmpty, "no v2 traffic without capable lights")
-        XCTAssertEqual(vm.runningEffects["room-a"]?.v2CapableLightIDs, [])
+        XCTAssertNil(vm.runningEffects["room-a"], "nothing is running — do not register an effect")
         XCTAssertEqual(vm.effectCoverage["cosmos"]?.isEmpty, true)
+        XCTAssertTrue(vm.statusMessage.contains("No lights"),
+                      "expected an explanation, got: \(vm.statusMessage)")
     }
 
     // ── 3. live speed slider lands per-light v2 while running ──

@@ -43,6 +43,39 @@ enum EffectCapabilityResolver {
         return Coverage(capableIDs: capable.map(\.id), total: lights.count)
     }
 
+    /// What to do when the user taps a firmware-effect card.
+    ///
+    /// The bridge answers an effect it cannot run with a 400, and the sender
+    /// discards it. So a room of white-only bulbs used to report a cheerful
+    /// "🟢 Cosmos → Kitchen" while nothing whatsoever happened. Deciding this
+    /// up front, from the lights' own capability lists, is the difference
+    /// between a scene that works and a scene that lies.
+    enum Routing: Equatable {
+        /// Send to these lights. `coverage` drives the "4 of 6" badge.
+        case run(lightIDs: [String], coverage: Coverage)
+        /// Not one light can run it. Say so; do not pretend to start.
+        case unsupported(effect: String)
+        /// We could not read the room's lights, so capability is unknown.
+        /// Send to everything and let the bridge decide — a transient fetch
+        /// failure must not block a user from an effect that would work.
+        case runUnverified(lightIDs: [String])
+    }
+
+    static func routing(for effect: String, lights: [HueLight], fallbackIDs: [String]) -> Routing {
+        guard !lights.isEmpty else { return .runUnverified(lightIDs: fallbackIDs) }
+
+        // If not one light advertises any firmware effect, we are reading a
+        // capability list that is not there — a decode gap or a firmware that
+        // omits the field — rather than a room of incapable bulbs. Refusing
+        // every effect on that evidence would be worse than trying.
+        let anyCapabilityReported = lights.contains { !effectValues(for: $0).isEmpty }
+        guard anyCapabilityReported else { return .runUnverified(lightIDs: fallbackIDs) }
+
+        let coverage = coverage(for: effect, lights: lights)
+        guard !coverage.isEmpty else { return .unsupported(effect: effect) }
+        return .run(lightIDs: coverage.capableIDs, coverage: coverage)
+    }
+
     // ── timed_effects ──
 
     static func timedEffectCoverage(for effect: String, lights: [HueLight]) -> Coverage {

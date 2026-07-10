@@ -1066,6 +1066,10 @@ final class StudioViewModel {
                 statusMessage = "⚠ No lights found in \(room.name)"
                 return
             }
+            // Fire the blanket first: this is a live performance surface, and
+            // `bridgeLights` is usually nil, so resolving capability up front
+            // would put a fetchLights() between the tap and the first bulb.
+            // Incapable lights answer the PUT with a 400 and change nothing.
             print("[Studio] 📡 Per-light effect=\(effectName) to \(lightIDs.count) lights in \(room.name)")
             await sendPerLightBatched(lightIDs: lightIDs, api: api) { id in
                 try? await api.setLightNativeEffect(id: id, effect: effectName)
@@ -1081,18 +1085,45 @@ final class StudioViewModel {
                 card: card, effectName: effectName, roomLights: roomLights,
                 api: api, gate: orchestrator.commandGate(for: room.bridgeID)
             )
-            if !roomLights.isEmpty {
-                effectCoverage[card.id] =
-                    EffectCapabilityResolver.coverage(for: effectName, lights: roomLights)
+
+            // Now say what actually happened. Those 400s were discarded, so a
+            // room of white-only bulbs used to report a cheerful green success
+            // over a room that had not changed at all.
+            let routing = EffectCapabilityResolver.routing(
+                for: effectName, lights: roomLights, fallbackIDs: lightIDs
+            )
+            let drivenIDs: [String]
+            var coverage: EffectCapabilityResolver.Coverage? = nil
+
+            switch routing {
+            case .unsupported:
+                effectCoverage[card.id] = EffectCapabilityResolver.coverage(
+                    for: effectName, lights: roomLights)
+                statusMessage = "⚠ No lights in \(room.name) can run \(card.name)"
+                HapticManager.shared.light()
+                return   // nothing is running; do not register an effect
+            case .run(let ids, let cov):
+                drivenIDs = ids      // teardown targets only the lights we moved
+                coverage = cov
+            case .runUnverified(let ids):
+                drivenIDs = ids      // capability unknown; assume the bridge obliged
             }
+
+            if let coverage { effectCoverage[card.id] = coverage }
 
             runningEffects[room.id] = RunningEffect(
                 cardID: card.id, card: card, room: room,
-                lightIDs: lightIDs, isEntertainment: false,
+                lightIDs: drivenIDs, isEntertainment: false,
                 requestedTransport: nil, transportFallback: false,
                 v2CapableLightIDs: v2Capable
             )
-            statusMessage = "🟢 \(card.name) → \(room.name)"
+            // Partial coverage is not a failure, but the user should hear it
+            // from the status line rather than infer it from a badge.
+            if let coverage, !coverage.isFull {
+                statusMessage = "🟢 \(card.name) → \(room.name) — \(coverage.label) lights"
+            } else {
+                statusMessage = "🟢 \(card.name) → \(room.name)"
+            }
 
         case .appDriven(let engineKey):
             if engineKey == "strobe" && isReduceMotionEnabled {
