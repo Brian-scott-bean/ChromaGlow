@@ -388,15 +388,15 @@ struct StudioView: View {
             ImportSceneFailureSheet(error: failure.error)
         }
         // A share link or a scanned QR decodes in DeepLinkCoordinator; Studio
-        // owns the store, so the confirmation and the save happen here.
-        .onChange(of: deepLink.openToken) { _, _ in
-            consumePendingShare()
-            consumePendingStudioAction()
-        }
-        .task { consumePendingShare() }
-        // Siri "start X in Y": runs on mount and re-runs as each cold-launch
-        // dependency lands (presets load off-main, rooms arrive with loadAll).
-        .task(id: siriDrainRetryKey) { consumePendingStudioAction() }
+        // owns the store, so the confirmation and the save happen here. One
+        // modifier, not three — this body sits at the Swift type-checker's
+        // ceiling (AGENTS.md), so wiring is extracted, never stacked.
+        .modifier(StudioDrainWiring(
+            openToken: deepLink.openToken,
+            retryKey: siriDrainRetryKey,
+            drainShare: consumePendingShare,
+            drainStudioAction: consumePendingStudioAction
+        ))
         .confirmationDialog(
             "Choose Composer Transport",
             isPresented: $showCompositionTransportPrompt,
@@ -1774,5 +1774,30 @@ struct StudioCardButtonStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
             .animation(HueAnimation.fast, value: configuration.isPressed)
+    }
+}
+
+// MARK: - StudioDrainWiring
+// Deep-link/Siri drain wiring, extracted off StudioView's body (which is at
+// the Swift type-checker's ceiling — AGENTS.md). Reproduces the exact former
+// modifiers, behavior-identical: onChange(openToken) fires both drains (a
+// warm re-fire of a share or "start X in Y"); `.task` on mount drains any
+// pending share; `.task(id: retryKey)` re-runs the Siri drain as each
+// cold-launch dependency lands (presets load off-main, rooms via loadAll).
+
+private struct StudioDrainWiring: ViewModifier {
+    let openToken: Int
+    let retryKey: String
+    let drainShare: () -> Void
+    let drainStudioAction: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: openToken) { _, _ in
+                drainShare()
+                drainStudioAction()
+            }
+            .task { drainShare() }
+            .task(id: retryKey) { drainStudioAction() }
     }
 }
