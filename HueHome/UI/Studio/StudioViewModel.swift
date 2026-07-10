@@ -1538,6 +1538,19 @@ final class StudioViewModel {
         }
     }
 
+    /// Composer creations that behave like firmware effects — surfaced on
+    /// Deck 0 under the built-in cards, because that is where a user looks
+    /// for "the things that move".
+    var composerEffectPresets: [CompositionPreset] {
+        composerDeckPresetsSorted.filter { PresetSurfaceClassifier.surface(for: $0) == .effect }
+    }
+
+    /// Composer creations that listen (mic/beat) — surfaced on Deck 1 next to
+    /// party/strobe/thunderstorm.
+    var composerLivePresets: [CompositionPreset] {
+        composerDeckPresetsSorted.filter { PresetSurfaceClassifier.surface(for: $0) == .live }
+    }
+
     /// Pure section ordering for the All view (unit-tested).
     static func sectionOrder(holidayInSeason: Bool) -> [PresetCategory] {
         var order: [PresetCategory] = [.myCreations]

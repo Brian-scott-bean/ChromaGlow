@@ -24,6 +24,14 @@ final class CompositionStore: @unchecked Sendable {
 
     private let fileURL: URL
 
+    /// Where production persists. Exposed so read-only surfaces (the Scenes
+    /// tab's "Studio scenes" shelf) can `readPresets(from:)` a fresh snapshot
+    /// without holding a second live store next to Studio's.
+    nonisolated static var defaultFileURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("compositions.json")
+    }
+
     /// - Parameters:
     ///   - fileURL: injectable for tests only — production persists to Documents/compositions.json.
     ///   - loadsSynchronously: `true` (default) reads + decodes the file on the calling
@@ -32,10 +40,7 @@ final class CompositionStore: @unchecked Sendable {
     ///     and reads off-main, publishing when ready — used by StudioViewModel so the
     ///     Studio tab's eager construction never blocks the main thread on file I/O.
     init(fileURL: URL? = nil, loadsSynchronously: Bool = true) {
-        self.fileURL = fileURL ?? {
-            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            return docs.appendingPathComponent("compositions.json")
-        }()
+        self.fileURL = fileURL ?? Self.defaultFileURL
         if loadsSynchronously {
             load()
         } else {

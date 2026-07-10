@@ -561,12 +561,14 @@ struct StudioView: View {
 
     private var cardGrid: some View {
         TabView(selection: $currentDeck) {
-            // Deck 0: Effects
-            deckGrid(cards: vm.effectCards, deckIndex: 0)
+            // Deck 0: Effects — built-ins, then Composer creations that move
+            deckGrid(cards: vm.effectCards, deckIndex: 0,
+                     composerPresets: vm.composerEffectPresets)
                 .tag(0)
 
-            // Deck 1: Live Modes
-            deckGrid(cards: vm.liveModeCards, deckIndex: 1)
+            // Deck 1: Live Modes — built-ins, then Composer creations that listen
+            deckGrid(cards: vm.liveModeCards, deckIndex: 1,
+                     composerPresets: vm.composerLivePresets)
                 .tag(1)
 
             // Deck 2: Composer (presets + Create)
@@ -577,7 +579,8 @@ struct StudioView: View {
         // Avoid animating the entire deck subtree — reduces hitch when paging to Composer.
     }
 
-    private func deckGrid(cards: [StudioCard], deckIndex: Int) -> some View {
+    private func deckGrid(cards: [StudioCard], deckIndex: Int,
+                          composerPresets: [CompositionPreset] = []) -> some View {
         let columns = [
             GridItem(.flexible(), spacing: HueSpacing.md),
             GridItem(.flexible(), spacing: HueSpacing.md)
@@ -621,6 +624,39 @@ struct StudioView: View {
             }
             .padding(.horizontal, HueSpacing.screenH)
             .padding(.vertical, HueSpacing.sm)
+
+            // ── From Composer ─────────────────────────────────
+            // Creations that behave like this deck's built-ins, classified
+            // from their own layers (PresetSurfaceClassifier). Full cards —
+            // apply, tray, transport, overflow menu — not shortcuts.
+            if !composerPresets.isEmpty {
+                VStack(alignment: .leading, spacing: HueSpacing.md) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(HuePalette.amber.opacity(0.8))
+                        Text("FROM COMPOSER")
+                            .font(HueFont.stageTag)
+                            .tracking(1.2)
+                            .foregroundStyle(.white.opacity(0.55))
+                        Text("\(composerPresets.count)")
+                            .font(HueFont.stageTag)
+                            .foregroundStyle(.white.opacity(0.30))
+                        Spacer()
+                    }
+
+                    LazyVGrid(columns: [
+                        GridItem(.flexible(), spacing: HueSpacing.md),
+                        GridItem(.flexible(), spacing: HueSpacing.md)
+                    ], spacing: HueSpacing.md) {
+                        ForEach(composerPresets) { preset in
+                            composerPresetCell(preset: preset, visible: currentDeck == deckIndex)
+                        }
+                    }
+                }
+                .padding(.horizontal, HueSpacing.screenH)
+                .padding(.bottom, HueSpacing.sm)
+            }
         }
     }
 

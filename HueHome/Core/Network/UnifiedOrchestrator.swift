@@ -3974,6 +3974,35 @@ final class UnifiedOrchestrator {
         scheduleStateRefresh()
     }
 
+    /// The Scenes tab's "Studio scenes" shelf: turn a scene-like Composer
+    /// preset into a REAL bridge scene in the chosen room. Reuses the exporter
+    /// recipe (palette sampled through `color(at:)`, gamut-clamped, speed
+    /// mapped) so the scene matches what the Composer shows. Returns the new
+    /// scene's id, or nil with no side effects.
+    func addStudioSceneToRoom(preset: CompositionPreset, room: RoomDisplayItem) async -> String? {
+        guard BridgeDynamicSceneExporter.ineligibilityReason(for: preset) == nil,
+              let bridgeID = room.bridgeID,
+              let api = clients[bridgeID],
+              let lights = try? await roomLights(for: room),
+              !lights.isEmpty
+        else { return nil }
+
+        let recipe = BridgeDynamicSceneExporter.recipe(for: preset, gamut: .c)
+        let request = CreateSceneRequest.dynamicScene(
+            name: preset.name,
+            groupID: room.id,
+            groupRtype: room.kind == .zone ? "zone" : "room",
+            lights: lights,
+            paletteXY: recipe.palette.map { (x: $0.x, y: $0.y) },
+            brightness: recipe.brightness,
+            speed: recipe.speed
+        )
+        guard let sceneID = try? await api.createSceneReturningID(request) else { return nil }
+        SceneProvenanceStore.shared.markStudioExported(bridgeID: bridgeID, sceneID: sceneID)
+        await loadAllScenes()
+        return sceneID
+    }
+
     /// Creates a new scene by snapshotting the current light states in the given room.
     /// Fetches all lights for the bridge, filters to this room's lights, and POSTs a scene.
     func createSceneFromRoom(name: String, room: RoomDisplayItem) async throws {

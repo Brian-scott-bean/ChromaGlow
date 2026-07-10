@@ -20,6 +20,7 @@ import SwiftUI
 struct ScenesTabView: View {
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Environment(\.isTabActive) private var isTabActive
     @State private var searchText:     String            = ""
     @State private var selectedRoomID: String?           = nil
     @State private var speedSheetScene: GlobalSceneItem? = nil   // non-nil = sheet open
@@ -42,6 +43,17 @@ struct ScenesTabView: View {
     @State private var copySheetContext: CopySheetContext? = nil
     @State private var copyUndo: SceneCopyUndo? = nil
     @State private var copyUndoDismissTask: Task<Void, Never>? = nil
+
+    // ── Studio scenes shelf (scene-like Composer creations) ──
+    /// Read-only snapshot of the compositions file, filtered to presets whose
+    /// layers make them scenes (static look, no reaction). Studio owns the only
+    /// live CompositionStore; this tab re-reads the file per appearance instead
+    /// of holding a second mutable store next to it.
+    @State private var studioScenePresets: [CompositionPreset] = []
+    /// Preset awaiting a room choice (sheet item).
+    @State private var studioSceneToAdd: CompositionPreset? = nil
+    @State private var studioAddBusy = false
+    @AppStorage("castchroma.studioShelfCollapsed") private var studioShelfCollapsed = false
     /// Room section / filter chip a scene drag is hovering (highlight).
     @State private var dropTargetRoomID: String? = nil
 
@@ -162,6 +174,15 @@ struct ScenesTabView: View {
         .sheet(isPresented: $showBuildScene) {
             SceneBuilderLauncherView()
         }
+        .sheet(item: $studioSceneToAdd) { preset in
+            studioSceneRoomPicker(preset: preset)
+        }
+        // Fresh read-only snapshot each visit — Studio may have saved new
+        // creations since the last one.
+        .task { refreshStudioScenePresets() }
+        .onChange(of: isTabActive) { _, active in
+            if active { refreshStudioScenePresets() }
+        }
         .sheet(item: $copySheetContext) { ctx in
             CopySceneSheet(
                 scene: ctx.scene,
@@ -255,6 +276,14 @@ struct ScenesTabView: View {
                 .padding(.top, sortMode.isGrouped ? 12 : 0)
                 .padding(.bottom, 8)
 
+                // Studio scenes — Composer creations whose layers make them
+                // scenes. Tapping one creates a REAL bridge scene in a room
+                // you pick, so it joins that room's list right here.
+                if !studioScenePresets.isEmpty {
+                    studioScenesShelf
+                        .padding(.bottom, 8)
+                }
+
                 if sortMode.isGrouped && !isSearching {
                     groupedContent
                 } else {
@@ -266,6 +295,134 @@ struct ScenesTabView: View {
         .refreshable {
             await orchestrator.loadAllScenes()
         }
+    }
+
+    // ── Studio scenes shelf ───────────────────────────────
+
+    /// Fresh read-only snapshot of scene-like Composer creations. Off-main
+    /// read, filtered by the same classifier the Studio decks use; the hidden
+    /// starter draft never shows.
+    private func refreshStudioScenePresets() {
+        Task.detached(priority: .userInitiated) {
+            let presets = CompositionStore.readPresets(from: CompositionStore.defaultFileURL).presets
+                .filter {
+                    $0.id != StudioViewModel.composerStarterDraftPresetID
+                        && PresetSurfaceClassifier.surface(for: $0) == .scene
+                }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            await MainActor.run { studioScenePresets = presets }
+        }
+    }
+
+    private var studioScenesShelf: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(HueAnimation.fast) { studioShelfCollapsed.toggle() }
+                HapticManager.shared.selection()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(HuePalette.amber.opacity(0.8))
+                    Text("STUDIO SCENES")
+                        .font(HueFont.stageTag)
+                        .tracking(1.2)
+                        .foregroundStyle(.white.opacity(0.55))
+                    Text("\(studioScenePresets.count)")
+                        .font(HueFont.stageTag)
+                        .foregroundStyle(.white.opacity(0.30))
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .rotationEffect(.degrees(studioShelfCollapsed ? -90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 20)
+            .accessibilityLabel("Studio scenes, \(studioScenePresets.count), \(studioShelfCollapsed ? "collapsed" : "expanded")")
+
+            if !studioShelfCollapsed {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(studioScenePresets) { preset in
+                            Button {
+                                studioSceneToAdd = preset
+                                HapticManager.shared.light()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: preset.icon)
+                                        .font(.system(size: 11, weight: .semibold))
+                                    Text(preset.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .lineLimit(1)
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.system(size: 11))
+                                        .opacity(0.6)
+                                }
+                                .foregroundStyle(Color(hex: preset.accentColorHex))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Capsule().fill(Color(hex: preset.accentColorHex).opacity(0.13)))
+                                .overlay(Capsule().strokeBorder(Color(hex: preset.accentColorHex).opacity(0.3), lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Add \(preset.name) to a room as a scene")
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+            }
+        }
+    }
+
+    /// Pick the room the Studio scene lands in — it becomes a real bridge
+    /// scene there, provenance-badged STUDIO like the Composer's own export.
+    private func studioSceneRoomPicker(preset: CompositionPreset) -> some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(orchestrator.allRooms + orchestrator.allZones) { room in
+                        Button {
+                            guard !studioAddBusy else { return }
+                            studioAddBusy = true
+                            Task {
+                                let sceneID = await orchestrator.addStudioSceneToRoom(preset: preset, room: room)
+                                studioAddBusy = false
+                                studioSceneToAdd = nil
+                                if sceneID != nil { HapticManager.shared.medium() }
+                            }
+                        } label: {
+                            HStack {
+                                Text(room.name).foregroundStyle(.white)
+                                if room.kind == .zone {
+                                    Text("Zone")
+                                        .font(.caption2)
+                                        .foregroundStyle(.white.opacity(0.4))
+                                }
+                                Spacer()
+                                if studioAddBusy { ProgressView() }
+                            }
+                        }
+                        .disabled(studioAddBusy)
+                    }
+                } header: {
+                    Text("Add \"\(preset.name)\" to…")
+                } footer: {
+                    Text("Creates a real Hue scene in that room — it runs from the bridge like any other scene.")
+                }
+            }
+            .navigationTitle(preset.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { studioSceneToAdd = nil }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .preferredColorScheme(.dark)
     }
 
     private var chipRow: some View {
