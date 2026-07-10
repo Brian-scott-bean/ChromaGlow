@@ -70,6 +70,16 @@ struct HueHomeApp: App {
     @State private var orchestrator = UnifiedOrchestrator()
     @State private var deepLink = DeepLinkCoordinator()
 
+    init() {
+        // Compositions saved/renamed/deleted → re-donate so Siri's
+        // "Start <composition>" phrases track the library. Wired here (not
+        // in CompositionStore) so unit tests with injected stores never
+        // trigger system donation calls.
+        CompositionStore.onPersist = {
+            HueAppShortcuts.updateAppShortcutParameters()
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             AppRootView()

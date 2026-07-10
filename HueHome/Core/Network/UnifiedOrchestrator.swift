@@ -1802,6 +1802,10 @@ final class UnifiedOrchestrator {
                 scenes: sceneSnaps,
                 bridges: WidgetDataStore.shared.bridges
             )
+            // Room/zone/scene names just changed — re-donate so Siri's
+            // parameterized phrases recognize them (rides this task's
+            // existing 500ms debounce).
+            HueAppShortcuts.updateAppShortcutParameters()
         }
     }
 

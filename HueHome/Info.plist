@@ -31,6 +31,17 @@
 			</array>
 		</dict>
 	</array>
+	<key>INAlternativeAppNames</key>
+	<array>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Chroma Glow</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Hue Home</string>
+		</dict>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>

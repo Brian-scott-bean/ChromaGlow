@@ -24,6 +24,13 @@ final class CompositionStore: @unchecked Sendable {
 
     private let fileURL: URL
 
+    /// Called after every persist. Production wires this to Siri shortcut
+    /// re-donation (HueAppShortcuts.updateAppShortcutParameters) at app
+    /// startup so renamed/created compositions become sayable; injectable
+    /// (and nil by default) so unit tests with injected fileURLs never
+    /// trigger system donation calls.
+    nonisolated(unsafe) static var onPersist: (() -> Void)? = nil
+
     /// Where production persists. Exposed so read-only surfaces (the Scenes
     /// tab's "Studio scenes" shelf) can `readPresets(from:)` a fresh snapshot
     /// without holding a second live store next to Studio's.
@@ -236,6 +243,7 @@ final class CompositionStore: @unchecked Sendable {
         do {
             let data = try JSONEncoder().encode(presets)
             try data.write(to: fileURL, options: .atomic)
+            Self.onPersist?()
         } catch {
             print("[CompositionStore] Failed to save: \(error)")
         }
