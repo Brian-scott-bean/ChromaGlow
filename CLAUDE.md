@@ -13,19 +13,20 @@ Read order:
 
 Do not duplicate project strategy here. If strategy, status, rules, commands, or source-of-truth mappings change, update `AGENTS.md` and append `DEVLOG.md`.
 
-Important current facts (2026-07-09):
+Important current facts (2026-07-10):
 
 - iOS scheme is `HueHome 1`, not `HueHome` (`run_tests.sh` still names the wrong one — pass the
   scheme explicitly). Validate with:
   `xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`.
 - **`main` is the branch Brian installs from** (Xcode → physical iPhone). Keep it releasable;
-  fast-forward validated work to it. Current: `main`, 0.9.0 build 23 (see DEVLOG snapshot).
+  fast-forward validated work to it. Current: `main`, 0.9.0 build 24 (see DEVLOG snapshot).
 - Brian's conventions: `checkpoint/*` rollback tag before any multi-commit run; bump
   `CURRENT_PROJECT_VERSION` (all 12 pbxproj entries) each device-test round; one shippable
   commit per fix.
 - The freshest "where are we / what's next" is the DEVLOG "Current Status Snapshot" — as of now:
-  builds 18-23 await Brian's on-device verification (build 23 = engine coherence: Now-Playing
-  bar revived, Perform mic demand, punch unification, per-room transport truth). The TEMP `⏱️PERF` prints
+  builds 18-24 await Brian's on-device verification (build 24 = light-card color copy/paste +
+  the first working Siri integration: 10 App Shortcuts, zones, colors, scenes, presets,
+  open-app composition/effect starts, hybrid stop). The TEMP `⏱️PERF` prints
   (from build 9) still want removing in a cleanup commit.
 - Android exists under `android/`; demo MVP + pairing foundations are on `main`, Batch 4 live
   pairing awaits its physical link-button gate on `integration/parallel-batch-4`.

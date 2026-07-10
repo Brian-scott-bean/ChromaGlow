@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 23** — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-23 landed 2026-07-09: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty), Studio Round 2 (room-scoped presets, ChromaGlow rename, composer categories, engine parity, room color popup, creation cross-surfacing), and the engine-coherence run (Now-Playing bar revived via one shared registry, Perform holds the mic demand, Tap-Dial/on-screen punch unified, per-room transport truth, bridgeOptimized one-shot guards). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
+ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 24** — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-24 landed 2026-07-09/10: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty), Studio Round 2 (room-scoped presets, ChromaGlow rename, composer categories, engine parity, room color popup, creation cross-surfacing), the engine-coherence run (Now-Playing bar revived via one shared registry, Perform holds the mic demand, Tap-Dial/on-screen punch unified, per-room transport truth, bridgeOptimized one-shot guards), and build 24: light-card color copy/paste (context menu + sticky paint mode) plus the FIRST working Siri integration (the Intents folder was never in a target; now 10 App Shortcuts incl. zones, named colors, scenes, presets, open-app composition/effect starts, hybrid stop). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
 
 ## Current Branch/Repo Facts
 
@@ -367,6 +367,47 @@ Engine-coherence run (2026-07-09, build 23) durable facts — full record in the
   `mix.autoFade`.
 - **Dim Flashing Lights** is `MADimFlashingLightsEnabled()` (MediaAccessibility) — there is no
   UIAccessibility equivalent; do not "simplify" it back to a constant.
+
+Copy/paste color + Siri integration (2026-07-10, build 24) durable facts — full record in the
+DEVLOG build-24 entry:
+
+- **`HueHome/Intents/` is LIVE as of build 24** — before this it was in NO target (the app had
+  never shipped a working Siri command). The app target uses an explicit sources phase; only
+  `HueHomeWidget/` is folder-synchronized. New intent files register via
+  `add_siri_intent_files.rb` (idempotent, lists the whole train).
+- **10 App Shortcuts — the hard cap is fully allocated** (power on / power off / brightness /
+  color / scene / preset / all-lights / start-composition / start-effect / stop). A new
+  Siri-phrased intent must evict one. Phrase rules the metadata processor enforces: ≤1 dynamic
+  param per phrase, AppEnum/AppEntity only (Bool/Int are prompted) — on/off is TWO shortcuts
+  prefilled with `PowerState`.
+- Background intents (openAppWhenRun = false) run in a background app launch where the
+  orchestrator is NEVER configured — they must stay on the WidgetDataStore + HueIntentAPIClient
+  direct-client pattern. `HueIntentAPIClient` throws (Siri owes honest dialogs); the widget's
+  `BridgeWriter` stays fire-and-forget — deliberate twins, do not unify casually.
+- Open-app intents hand off via `DeepLinkCoordinator.shared.pendingStudioAction`
+  (`requestStudioAction` bumps `openToken`); StudioView drains through
+  `vm.apply(card, roomOverride:)` ONLY (bypassing it desyncs runningEffects/registry/tray) with
+  cold-launch retries via one `task(id: siriDrainRetryKey)` — StudioView's body is at the Swift
+  type-checker's ceiling; do NOT stack more modifiers on it.
+- `StudioEffectChoice` (15 cases) mirrors the STUDIO deck catalogs, pinned by parity test to
+  `StudioViewModel.buildEffectCards()/buildLiveModeCards()` (internal for that test) — adding a
+  deck card without extending the enum fails the suite. `CompositionEntity` reads
+  `compositions.json` in-process via pure `readPresets` (no snapshot; starter draft excluded).
+- Donation freshness: `HueAppShortcuts.updateAppShortcutParameters()` fires from
+  `scheduleWidgetWrite()` and the injectable `CompositionStore.onPersist` (wired in
+  HueHomeApp.init, nil in tests — keep it that way or unit tests trigger system donations).
+- `SiriColorTable`: named colors ride `HueColorUtils.xyFrom + clampXYToGamut(.c)`. Gamut tests
+  use 1e-9 re-clamp stability, not exactness — saturated yellows project ONTO the red–green
+  gamut edge and re-project with one-ulp drift.
+- **Siri "stop the lights"** posts `.siriStopAllEffects`; AppRootView loops
+  `activeEffectEntries` → `requestNowPlayingStop(roomID:)` (the b20f0ef registry contract) and
+  the intent separately fans out grouped_light `no_effect` for bridge-persistent effects.
+- **RoomDetail light cards:** long-press = context menu (the old gesture entered select mode —
+  that lives in the menu + header button now). `ColorClipboard` (app-wide, session-only) holds
+  copies; capture rule: non-nil `colorTempMirek` == CT mode (bridge nulls mirek in color mode) →
+  copy mirek, else xy, dimmable-only → nil (Copy/Save hide). **Paint mode is sticky**:
+  `applySavedColor` no longer disarms — exits are the header "Painting · Done" pill, re-tapping
+  the armed swatch, or leaving the room. Paint mode and select mode are mutually exclusive.
 
 ## Android Current State
 

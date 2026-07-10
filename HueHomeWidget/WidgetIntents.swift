@@ -60,6 +60,9 @@ struct ToggleRoomIntent: AppIntent {
     static var title: LocalizedStringResource = "Toggle Lights"
     static var description = IntentDescription("Turn a specific room or zone on or off.")
     static var openAppWhenRun: Bool = false
+    /// Widget-button plumbing with a raw Group ID param — hidden from the
+    /// Shortcuts gallery so it doesn't sit next to the app's Siri actions.
+    static var isDiscoverable: Bool = false
 
     /// Stable room/zone identifier from WidgetDataStore.
     @Parameter(title: "Group ID")     var roomID: String
@@ -136,6 +139,8 @@ struct AdjustBrightnessIntent: AppIntent {
     static var title: LocalizedStringResource = "Adjust Brightness"
     static var description = IntentDescription("Raise or lower a room or zone's brightness.")
     static var openAppWhenRun: Bool = false
+    /// Widget-button plumbing (raw Group ID + delta) — hidden from Shortcuts.
+    static var isDiscoverable: Bool = false
 
     @Parameter(title: "Group ID") var roomID: String
     @Parameter(title: "Delta")    var delta: Int   // e.g. +20 / −20 (percentage points)
@@ -294,6 +299,8 @@ struct WidgetPageIntent: AppIntent {
     static var title: LocalizedStringResource = "Change Widget Page"
     static var description = IntentDescription("Page through the light list on the Large widget.")
     static var openAppWhenRun: Bool = false
+    /// Pure widget-UI plumbing — meaningless outside the Large widget.
+    static var isDiscoverable: Bool = false
 
     @Parameter(title: "Direction") var direction: Int   // +1 next, −1 previous
     @Parameter(title: "Page Size") var pageSize: Int

@@ -12,7 +12,27 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **23**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **24**).
+- **BUILD 24 (2026-07-10): COPY/PASTE COLOR + FULL SIRI INTEGRATION — AWAITING BRIAN'S
+  ON-DEVICE CHECK.** Thirteen shippable commits (rollback tag
+  `checkpoint/copycolor-siri-2026-07-09`). **Light cards:** long-press → context menu (Copy
+  Color / Paste Color / Save to My Colors / Identify / Select Lights); copy arms a **sticky
+  paint mode** (tap lights to paste, "Painting · Done" pill in the LIGHTS header; My Colors
+  swatch arming is sticky now too); the clipboard (`ColorClipboard`) is app-wide, so menu
+  Paste works across rooms; CT-mode copies mirek (bridge nulls mirek in color mode — that's
+  the mode signal), dimmable-only lights hide Copy/Save. **Siri:** discovered
+  `HueHome/Intents/` was NEVER in any target — the app shipped ZERO working Siri commands;
+  registered + rewrote it (two latent bugs: Bool-bound "turn off" phrases would turn lights
+  ON; rooms-only entities). Now 10 App Shortcuts: on/off (rooms AND zones, Room/Zone
+  disambiguation), brightness, 22 named colors + 5 whites (gamut-C-safe via the Composer's
+  pipeline), scene recall, Energize/Read/Relax/Sleep (room-scoped or home), all lights
+  on ("welcome home" 80%/mirek 350)/off, **open-app "Start ⟨composition⟩/⟨effect⟩ in
+  ⟨room⟩"** (pendingStudioAction handoff → StudioView drains through vm.apply, cold-launch
+  retries via one task(id:)), and a hybrid "stop the lights" (registry-routed in-app stop +
+  background no_effect fan-out). Donation freshness hooks in scheduleWidgetWrite +
+  CompositionStore.onPersist; INAlternativeAppNames. All phrases require "in ChromaGlow" —
+  bare "turn on kitchen" routes to HomeKit by design. Full checklist in the 2026-07-10
+  BUILD 24 entry below. Full suite green (two consecutive runs).
 - **BUILD 23 (2026-07-09): ENGINE COHERENCE RUN 1 — NOW-PLAYING BAR REVIVED, PERFORM LISTENS,
   PUNCH UNIFIED, PER-ROOM TRANSPORT TRUTH — AWAITING BRIAN'S ON-DEVICE CHECK.** Eight shippable
   commits (rollback tag `checkpoint/coherence-run1-2026-07-09`), from the Studio/DJ/live-FX
@@ -7040,3 +7060,118 @@ this run fixed the connective tissue. One shippable commit per fix:
   there is no UIAccessibility equivalent (that wrong guess is why it was stubbed `false`).
 - Tap-Dial punch routing tests stop at the pure mapping layer; the orchestrator branch is
   6 lines of glue — covered by build + the on-device checklist.
+
+---
+
+## 2026-07-10 - [Claude] BUILD 24 — Copy/paste color on light cards + the first working Siri integration
+
+### Branch
+- `main` (13 shippable commits, rollback tag `checkpoint/copycolor-siri-2026-07-09` @ `df9711c`;
+  revert with `git reset --hard checkpoint/copycolor-siri-2026-07-09`)
+
+### Did
+**Workstream A — light-card color copy/paste (RoomDetail, rooms + zones):**
+- `ColorClipboard` (new, `Core/Models/`): app-wide session clipboard; pure `capture(from:)`
+  rule — non-nil `colorTempMirek` means the light is IN CT mode (bridge nulls mirek in color
+  mode), so mirek wins over stale xy; dimmable-only captures nil (Copy/Save hide); OFF lights
+  copy their last-known look. Registered via `add_color_clipboard_files.rb`.
+- Long-press on `CompactLightCard` → context menu (replaces the bare enter-select-mode gesture,
+  which would race the menu recognizer): Copy Color · Paste Color (hidden until something is
+  copied) · Save to My Colors · Identify · Select Lights. Menu attached at the ForEach call
+  site (needs vm/armedColor/orchestrator scope), scene-chip precedent.
+- **Sticky paint mode:** `applySavedColor` no longer disarms after one apply; the LIGHTS header
+  swaps Select ↔ a "Painting · Done" pill (zero layout shift) while armed. Copy arms
+  immediately; swatch arming is sticky too (one mental model). Paint and select mode are
+  mutually exclusive. Leaving the room disarms (@State); the clipboard survives → cross-room
+  menu Paste.
+
+**Workstream B — Siri (the headline: `HueHome/Intents/` was dead code):**
+- The four intent files were in NO target (zero pbxproj refs) — ChromaGlow had never shipped a
+  working Siri command. `add_siri_intent_files.rb` registers the whole train (idempotent).
+- Rewrote the foundation fixing two latent bugs: "Turn off X" phrases were bound to a Bool
+  defaulting `true` (Bool can't be phrase-bound → `PowerState` AppEnum, two prefilled
+  shortcuts), and entities were rooms-only (`HueGroupEntity` now serves rooms + zones with
+  Room/Zone subtitles + case/diacritic-insensitive `EntityStringQuery` matching).
+- 10 App Shortcuts (the hard cap, all slots used): power on / power off / brightness (number
+  is Siri-prompted — ints can't live in phrases) / color / scene / preset / all lights /
+  start composition / start effect / stop.
+- `SiriColorTable`: 22 chromatic names via `HueColorUtils.xyFrom + clampXYToGamut(.c)` (legal
+  by construction; test pins re-clamp stability to 1e-9 — saturated yellows project ONTO the
+  gamut edge and re-project with ulp drift) + 5 whites as mirek 156/200/300/370/450.
+- `HueSceneEntity`: app-target twin of the widget's SceneAppEntity (deliberate duplicate —
+  dual-targeting a file inside the synchronized HueHomeWidget/ folder needs exception-set
+  surgery; HueRoomEntity/RoomAppEntity set the precedent). Subtitled by owning room.
+- Presets (Energize/Read/Relax/Sleep; optional room scope — unknown scope selects NOTHING
+  rather than blasting the home), All Lights (ON = the widget's 80%/mirek-350 welcome-home
+  contract), and fan-outs that name their failures (`partialFailure` dialogs, never silent).
+- **Open-app intents:** `StartCompositionIntent` / `StartStudioEffectIntent`
+  (openAppWhenRun = true) hand off via `DeepLinkCoordinator.shared.pendingStudioAction`
+  (the pendingSharedScene pattern); MainTabView surfaces Studio; StudioView drains through
+  `vm.apply(card, roomOverride:)` so runningEffects/the shared registry/mixer tray stay
+  truthful. Cold-launch retries via ONE `task(id: siriDrainRetryKey)` — StudioView's body is
+  at the type-checker's limit; stacking onChange modifiers broke the build (error at :437).
+- `CompositionEntity` reads `compositions.json` via pure `readPresets` in-process (entity
+  queries run in the app process) — no App Group snapshot, never stale; starter draft excluded.
+- `StudioEffectChoice` mirrors the STUDIO deck catalogs (15 cards), NOT EffectLibrary (23,
+  the automations surface); parity test pins ids + display names to
+  `buildEffectCards()/buildLiveModeCards()` (made internal for the test).
+- **Stop is a hybrid:** in-process notification → AppRootView loops `activeEffectEntries` →
+  `requestNowPlayingStop(roomID:)` (the build-23 registry path — bare stopStudioMode/
+  stopCompositionMode is the exact bug class b20f0ef fixed) + background grouped_light
+  `no_effect` fan-out kills bridge-persistent candle/fire after app death. Lights stay on.
+- Donation freshness: `updateAppShortcutParameters()` in `scheduleWidgetWrite()` (rides its
+  500ms debounce) + injectable `CompositionStore.onPersist` (wired in HueHomeApp.init; nil in
+  tests). `INAlternativeAppNames`: "Chroma Glow", "Hue Home".
+- Widget-intent hygiene: `isDiscoverable = false` on the raw-param plumbing intents
+  (ToggleRoomIntent/AdjustBrightnessIntent/WidgetPageIntent). Control-backing intents untouched.
+
+### Working
+- Full suite green, two consecutive runs at 548/548 (519 at the workstream-A gate; +29 new
+  tests across ColorClipboard/entity/client/color-table/studio-intent suites).
+- Build 24 in all 12 pbxproj entries.
+
+### Left / on-device checklist for Brian (build 24)
+**A — copy/paste color (repeat a pass in a ZONE):**
+1. Long-press a light card → menu appears; plain tap still opens the light editor; power
+   button still toggles without opening the menu; strip still scrolls.
+2. Copy Color on a color-mode light → every card rings; tap 3–4 lights → each repaints,
+   ring STAYS; Done exits. 3. Copy from a CT-mode light → paste onto CT bulb (mirek), color
+   bulb (white via xy), dimmable (brightness only). 4. Dimmable-only card: no Copy/Save in
+   menu; Paste still offered. 5. Copy → leave → other room → menu Paste works; paint mode NOT
+   auto-armed. 6. Paste onto an OFF light turns it on in the color. 7. **Long-press while
+   paint mode armed → menu still opens** (the one flagged risk; fallback: attach the same menu
+   to the armed overlay). 8. Select Lights from menu ↔ paint pill mutual exclusion; drag-drop
+   swatch still works and keeps paint mode.
+**B — Siri (install, launch once, WAIT ~2–5 min for indexing; verify the Shortcuts app shows
+10 ChromaGlow tiles first — that separates donation from recognition):**
+1. "Turn on ⟨room⟩ in ChromaGlow" / off. 2. Same for a ZONE (name a room and zone alike →
+   expect Room/Zone disambiguation). 3. "Dim ⟨room⟩ in ChromaGlow" → Siri asks the number
+   (expected — ints can't be phrase-bound). 4. "Make my lights teal in ChromaGlow" → asks
+   which room. 5. "Make my lights warm white in ChromaGlow" (CT path). 6. "Activate ⟨scene⟩
+   in ChromaGlow" (duplicate names disambiguate by room). 7. "Set the lights to Relax in
+   ChromaGlow" (whole home). 8. "Turn off all lights in ChromaGlow", then on (expect 80%
+   warm). 9. "Start ⟨composer scene⟩ in ChromaGlow" → asks room → app opens → Studio running
+   it; try warm, backgrounded, and killed-app cold launch. 10. Rename a composition, wait a
+   minute, say the new name (re-donation). 11. "Start the Candle effect in ChromaGlow".
+   12. Start candle → force-kill the app → "Stop the lights in ChromaGlow" → candle dies from
+   background; with an app-driven effect running, same phrase stops it and Dashboard's
+   Now-Playing bar clears. 13. Bare "turn on kitchen" (no app name) → HomeKit takes it —
+   expected, phrases require the app name. 14. Bridge unreachable → honest error dialog.
+
+### Validation
+- `xcodebuild test` scheme "HueHome 1", iPhone 17 Pro sim — full suite green ×2 (verified via
+  xcresulttool, not piped tail). Per-commit targeted suites during the run.
+
+### Gotchas
+- **`HueHome/Intents/` was never registered** — do not assume a folder on disk is in a target;
+  the app target uses an explicit sources phase (only `HueHomeWidget/` is folder-synchronized).
+- StudioView's body is at the Swift type-checker's ceiling: adding 4 modifiers produced
+  "unable to type-check this expression in reasonable time" at :437. One `task(id:)` keyed on
+  a combined string replaced four onChange modifiers.
+- `CompositionPreset`'s memberwise init requires `seasonMonths/createdAt/updatedAt` — test
+  fixtures must pass them.
+- AppShortcut phrase rules (enforced at build by appintentsmetadataprocessor): ≤10 shortcuts,
+  ≤1 dynamic param per phrase, AppEnum/AppEntity only — Bool/Int params are prompted, never
+  spoken inline. On/off therefore ships as TWO shortcuts prefilled with a `PowerState` enum.
+- Saturated yellow xy sits ON the gamut-C red–green edge: clamp-identity tests need 1e-9
+  tolerance, not exactness (re-projecting an edge point drifts one ulp).
