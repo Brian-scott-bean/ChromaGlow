@@ -130,6 +130,8 @@ struct StudioView: View {
     // link or a scanned QR is imported here — never in the deep-link handler,
     // which decodes but does not save.
     @State private var shareTarget: CompositionPreset?
+    @State private var bridgeExportTarget: CompositionPreset?
+    @State private var bridgeExportName = ""
     @State private var showSceneScanner = false
     @State private var importRequest: ImportRequest?
     @State private var importFailure: ImportFailure?
@@ -320,6 +322,21 @@ struct StudioView: View {
         }
         .animation(HueAnimation.slow, value: vm.currentRoomEffect != nil)
         .animation(HueAnimation.card, value: vm.runningCardID)
+        .alert("Save to Bridge", isPresented: Binding(
+            get: { bridgeExportTarget != nil },
+            set: { if !$0 { bridgeExportTarget = nil } }
+        )) {
+            TextField("Scene name", text: $bridgeExportName)
+            Button("Cancel", role: .cancel) { bridgeExportTarget = nil }
+            Button("Save") {
+                guard let preset = bridgeExportTarget else { return }
+                let name = bridgeExportName
+                bridgeExportTarget = nil
+                Task { await vm.exportPresetAsDynamicScene(preset, named: name) }
+            }
+        } message: {
+            Text("The bridge cycles this palette on its own — no phone needed. It appears in your Scenes tab.")
+        }
         .alert("Rename Composition", isPresented: Binding(
             get: { renameCompositionTarget != nil },
             set: { if !$0 { renameCompositionTarget = nil } }
@@ -1176,6 +1193,18 @@ struct StudioView: View {
             HapticManager.shared.light()
         } label: {
             Label("Share…", systemImage: "qrcode")
+        }
+
+        // The third engine: uploaded once, then the bridge runs it alone.
+        // Mic-reactive scenes are the one thing a bridge cannot do.
+        if BridgeDynamicSceneExporter.ineligibilityReason(for: preset) == nil {
+            Button {
+                bridgeExportName = preset.name
+                bridgeExportTarget = preset
+                HapticManager.shared.light()
+            } label: {
+                Label("Save to Bridge…", systemImage: "externaldrive.badge.checkmark")
+            }
         }
 
         Divider()

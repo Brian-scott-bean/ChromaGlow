@@ -260,11 +260,17 @@ struct ComposerAdvancedControls: View {
             vm.statusMessage = "⚠ Select a room and composition first"
             return
         }
-        var paletteXY: [(x: Double, y: Double)] = [
-            (box.palette.color1.x, box.palette.color1.y),
-            (box.palette.color2.x, box.palette.color2.y),
-        ]
-        if let c3 = box.palette.color3 { paletteXY.append((c3.x, c3.y)) }
+        // Sample the palette through the same function the Composer renders
+        // with. Reading color1/color2 straight off the config — as this used to
+        // — exports the wrong scene in spectrum mode (the colours come from the
+        // hue wheel) and in temperature mode (they come from mirek).
+        let recipe = BridgeDynamicSceneExporter.recipe(
+            palette: box.palette,
+            motion: box.motion,
+            envelope: box.envelope,
+            gamut: vm.activeCompositionGamut
+        )
+        let paletteXY = recipe.palette.map { (x: $0.x, y: $0.y) }
 
         do {
             let ids = Set(try await api.fetchLightIDsForGroup(groupedLightID: groupedLightID))
@@ -279,8 +285,8 @@ struct ComposerAdvancedControls: View {
                 groupRtype: room.kind == .zone ? "zone" : "room",
                 lights: lights,
                 paletteXY: paletteXY,
-                brightness: box.envelope.maxBrightness,
-                speed: max(0.1, min(1.0, box.motion.speed / 100.0))
+                brightness: recipe.brightness,
+                speed: recipe.speed
             )
             let sceneID = try await api.createSceneReturningID(request)
             // R4 Scenes block: remember provenance so the Scenes tab can show
@@ -289,13 +295,13 @@ struct ComposerAdvancedControls: View {
             if let bridgeID = room.bridgeID {
                 SceneProvenanceStore.shared.markStudioExported(bridgeID: bridgeID, sceneID: sceneID)
             }
-            vm.statusMessage = "'\(name)' saved as a dynamic scene ✓ — find it in Scenes"
+            vm.statusMessage = BridgeDynamicSceneExporter.successMessage(name: name, willAnimate: recipe.willAnimate)
             HapticManager.shared.medium()
             await orchestrator.loadAllScenes()
         } catch HueAPIError.decodingFailed {
             // POST executed — the scene exists on the bridge; only the id
             // parse failed. Success without a provenance badge.
-            vm.statusMessage = "'\(name)' saved as a dynamic scene ✓ — find it in Scenes"
+            vm.statusMessage = BridgeDynamicSceneExporter.successMessage(name: name, willAnimate: recipe.willAnimate)
             HapticManager.shared.medium()
             await orchestrator.loadAllScenes()
         } catch {

@@ -1728,6 +1728,67 @@ final class StudioViewModel {
         _ = compositionStore.duplicate(preset)
     }
 
+    /// Upload a saved preset to its room's bridge as a native dynamic scene.
+    /// The bridge then cycles the palette on its own — app closed, phone away.
+    /// This is the third engine, and the only one that outlives the app.
+    ///
+    /// Works straight from the stored preset, so it does not require the
+    /// composition to be running first (the Composer's own export operates on
+    /// the live, possibly-unsaved param box instead).
+    func exportPresetAsDynamicScene(_ preset: CompositionPreset, named name: String) async {
+        if let reason = BridgeDynamicSceneExporter.ineligibilityReason(for: preset) {
+            statusMessage = "⚠ \(reason)"
+            return
+        }
+        guard let orchestrator,
+              let room = selectedRoom,
+              let groupedLightID = room.groupedLightID,
+              let api = orchestrator.hueClient(for: room.bridgeID) else {
+            statusMessage = "⚠ Select a room first"
+            return
+        }
+
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sceneName = trimmed.isEmpty ? preset.name : trimmed
+
+        do {
+            let ids = Set(try await api.fetchLightIDsForGroup(groupedLightID: groupedLightID))
+            let lights = try await api.fetchLights().filter { ids.contains($0.id) }
+            guard !lights.isEmpty else {
+                statusMessage = "⚠ No lights found in '\(room.name)'"
+                return
+            }
+
+            let gamut = await resolveDominantGamut(for: room, api: api, cachedLights: nil)
+            let recipe = BridgeDynamicSceneExporter.recipe(for: preset, gamut: gamut)
+
+            let request = CreateSceneRequest.dynamicScene(
+                name: sceneName,
+                groupID: room.id,
+                groupRtype: room.kind == .zone ? "zone" : "room",
+                lights: lights,
+                paletteXY: recipe.palette.map { (x: $0.x, y: $0.y) },
+                brightness: recipe.brightness,
+                speed: recipe.speed
+            )
+            let sceneID = try await api.createSceneReturningID(request)
+            if let bridgeID = room.bridgeID {
+                SceneProvenanceStore.shared.markStudioExported(bridgeID: bridgeID, sceneID: sceneID)
+            }
+            statusMessage = BridgeDynamicSceneExporter.successMessage(
+                name: sceneName, willAnimate: recipe.willAnimate)
+            HapticManager.shared.medium()
+            await orchestrator.loadAllScenes()
+        } catch HueAPIError.decodingFailed {
+            // The POST landed — only the id parse failed. The scene exists.
+            statusMessage = "'\(sceneName)' saved to your bridge ✓ — find it in Scenes"
+            HapticManager.shared.medium()
+            await orchestrator.loadAllScenes()
+        } catch {
+            statusMessage = "⚠ Couldn't save the scene — \(error.localizedDescription)"
+        }
+    }
+
     /// Persist which engine a preset asks for. `nil` means Auto: let
     /// `preferredEntertainmentForCompositionTier` decide at apply time.
     /// Takes effect on the next apply — a running effect is switched from the
