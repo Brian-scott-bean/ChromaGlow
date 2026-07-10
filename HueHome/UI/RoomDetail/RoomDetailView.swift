@@ -418,6 +418,36 @@ struct RoomDetailView: View {
         }
     }
 
+    /// Long-press menu on a light card. Copy/Save hide (rather than no-op)
+    /// on dimmable-only lights, where there is no color to capture.
+    @ViewBuilder
+    private func lightContextMenu(for light: LightDisplayItem) -> some View {
+        if let captured = ColorClipboard.capture(from: light) {
+            Button {
+                SavedColorStore.shared.add(captured)
+                HapticManager.shared.success()
+            } label: {
+                Label("Save to My Colors", systemImage: "paintpalette")
+            }
+        }
+        Divider()
+        Button {
+            Task {
+                await SignalingService(orchestrator: orchestrator)
+                    .identifyLight(id: light.id, bridgeID: room.bridgeID)
+            }
+        } label: {
+            Label("Identify", systemImage: "rays")
+        }
+        if !vm.isSelecting {
+            Button {
+                vm.enterSelectMode(preselecting: light.id)
+            } label: {
+                Label("Select Lights", systemImage: "checklist")
+            }
+        }
+    }
+
     // ── Lights Section (horizontal strip) ─────────
 
     private var lightsSection: some View {
@@ -455,8 +485,7 @@ struct RoomDetailView: View {
                             isSelecting:    vm.isSelecting,
                             isSelected:     isSelected,
                             onToggle:       { desiredOn in vm.setLight(light, isOn: desiredOn) },
-                            onToggleSelect: { vm.toggleSelection(id: light.id) },
-                            onLongPress:    { vm.enterSelectMode(preselecting: light.id) }
+                            onToggleSelect: { vm.toggleSelection(id: light.id) }
                         )
                         // Armed-swatch apply target: while a My Colors swatch
                         // is armed, a tap anywhere on the card applies it
@@ -494,6 +523,7 @@ struct RoomDetailView: View {
                                 dropTargetLightID = nil
                             }
                         }
+                        .contextMenu { lightContextMenu(for: light) }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -1084,7 +1114,6 @@ struct CompactLightCard: View {
     let isSelected:     Bool
     let onToggle:       (Bool)   -> Void
     let onToggleSelect: ()       -> Void
-    let onLongPress:    ()       -> Void
 
     @State private var localIsOn: Bool
 
@@ -1093,15 +1122,13 @@ struct CompactLightCard: View {
         isSelecting:    Bool             = false,
         isSelected:     Bool             = false,
         onToggle:       @escaping (Bool)   -> Void,
-        onToggleSelect: @escaping ()       -> Void = {},
-        onLongPress:    @escaping ()       -> Void = {}
+        onToggleSelect: @escaping ()       -> Void = {}
     ) {
         self.light          = light
         self.isSelecting    = isSelecting
         self.isSelected     = isSelected
         self.onToggle       = onToggle
         self.onToggleSelect = onToggleSelect
-        self.onLongPress    = onLongPress
         _localIsOn          = State(initialValue: light.isOn)
     }
 
@@ -1175,9 +1202,11 @@ struct CompactLightCard: View {
                 Button { onToggleSelect() } label: { content }
                     .buttonStyle(.plain)
             } else {
+                // Long-press is the context menu's gesture now (attached at
+                // the RoomDetailView call site) — a competing recognizer
+                // here would race it.
                 NavigationLink(value: light) { content }
                     .buttonStyle(.plain)
-                    .onLongPressGesture(minimumDuration: 0.45) { onLongPress() }
             }
         }
         .opacity(isSelecting ? (isSelected ? 1.0 : 0.58) : (localIsOn ? 1.0 : 0.55))
