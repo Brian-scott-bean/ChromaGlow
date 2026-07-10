@@ -27,6 +27,10 @@ struct ProfilesAccessView: View {
     @State private var invitingProfile: GuestProfile?
     @State private var profileToDelete: GuestProfile?
     @State private var showDeleteAlert = false
+    @State private var profileToRevoke: GuestProfile?
+    @State private var showRevokeAlert = false
+    @State private var revokeOutcomeMessage: String?
+    @State private var revokeInFlight = false
 
     var body: some View {
         ZStack {
@@ -53,6 +57,14 @@ struct ProfilesAccessView: View {
                                     editingProfile = profile
                                 } label: {
                                     Label("Edit", systemImage: "pencil")
+                                }
+                                if !profile.mintedKeyRefs.isEmpty && profile.revokedAt == nil {
+                                    Button(role: .destructive) {
+                                        profileToRevoke = profile
+                                        showRevokeAlert = true
+                                    } label: {
+                                        Label("Revoke Access", systemImage: "nosign")
+                                    }
                                 }
                                 Button(role: .destructive) {
                                     profileToDelete = profile
@@ -117,6 +129,23 @@ struct ProfilesAccessView: View {
             Text(profile.mintedKeyRefs.isEmpty
                  ? "This removes \(profile.name)'s profile. No keys were issued to it."
                  : "Deleting removes \(profile.name)'s key from this phone and blocks re-inviting from this profile. Their existing bridge access can only be fully revoked from the official Philips Hue app (or by resetting app keys).")
+        }
+        .alert("Revoke \(profileToRevoke?.name ?? "guest")'s access?",
+               isPresented: $showRevokeAlert, presenting: profileToRevoke) { profile in
+            Button("Revoke", role: .destructive) {
+                Task { await revoke(profile) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("ChromaGlow will try to delete their key from each bridge and always forgets it on this phone (their invite can't be re-issued). If a bridge's firmware refuses, their existing access can only be fully revoked from the official Philips Hue app.")
+        }
+        .alert("Revocation", isPresented: Binding(
+            get: { revokeOutcomeMessage != nil },
+            set: { if !$0 { revokeOutcomeMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { revokeOutcomeMessage = nil }
+        } message: {
+            Text(revokeOutcomeMessage ?? "")
         }
     }
 
@@ -315,10 +344,34 @@ struct ProfilesAccessView: View {
 
     private func delete(_ profile: GuestProfile) {
         // Owner-side wipe: the stored key material goes with the profile.
-        // Bridge-side access survives until real revocation (Phase 4 / the
-        // official Hue app) — the alert said exactly that.
+        // Bridge-side access survives until real revocation (the Revoke
+        // action / the official Hue app) — the alert said exactly that.
         GuestKeyStore.delete(accounts: profile.mintedKeyRefs)
         modelContext.delete(profile)
         try? modelContext.save()
+    }
+
+    private func revoke(_ profile: GuestProfile) async {
+        guard !revokeInFlight else { return }
+        revokeInFlight = true
+        defer { revokeInFlight = false }
+
+        let report = await GuestRevocationService.revoke(
+            profileID: profile.id,
+            mintedKeyRefs: profile.mintedKeyRefs
+        )
+
+        // The keys are gone from this phone either way — mark revoked so the
+        // mint sheet refuses to re-show or regenerate a QR for this profile.
+        profile.revokedAt = Date()
+        try? modelContext.save()
+
+        if report.fullyRevokedEverywhere {
+            revokeOutcomeMessage =
+                "\(profile.name)'s key was deleted from the bridge itself — they're fully signed out."
+        } else {
+            revokeOutcomeMessage =
+                "\(profile.name)'s key was removed from this phone and can't be re-issued. At least one bridge's firmware refused the delete — their existing access there can only be fully revoked from the official Philips Hue app (or by resetting app keys)."
+        }
     }
 }

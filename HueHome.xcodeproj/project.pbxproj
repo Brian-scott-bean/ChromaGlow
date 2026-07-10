@@ -54,6 +54,7 @@
 		3D3EBC20321A85103BCB66CB /* BridgeKeysView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9C1EB0FA9755284BADA8893 /* BridgeKeysView.swift */; };
 		3F1B6562A7F0651FA0CC8E82 /* SceneSpeedSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6602A00BA2C47CCF1AFD9A36 /* SceneSpeedSheet.swift */; };
 		4581D3F6DD6D7DD7F2507238 /* RoomAccessPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0E0F77DAE2A16ED3DF08393 /* RoomAccessPicker.swift */; };
+		4607C7C58A45E30B2455277B /* GuestRevocationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F8043CD9345FBFA1ED49CF7 /* GuestRevocationService.swift */; };
 		4640662A0AF423F6FF7E4042 /* LightShadeWatchExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = DDC82E852FA0878E00324E29 /* LightShadeWatchExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		4668FF0EDF1D485E15A77B52 /* EditRoomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4FF8FA2BF756D1FE5830903 /* EditRoomSheet.swift */; };
 		466A52B44016CB49EBFCBE55 /* OrchestratorGuestAccessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2BA60597F6D11E201025E1F /* OrchestratorGuestAccessTests.swift */; };
@@ -235,6 +236,7 @@
 		D20946D4288104E57A94FFD2 /* SavedColorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2386EBB36B78EB6A3160432 /* SavedColorStore.swift */; };
 		D34F7F1AC57538EA745C8E61 /* HueIntentAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850FF1B3391225414ACFB723 /* HueIntentAPIClient.swift */; };
 		D3E30CFDAD4AAA4B6383F9F9 /* ComposerControlCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75C0F12B8786D40CB3EA99D1 /* ComposerControlCatalogTests.swift */; };
+		D7FFE3F62496D310600CA4EA /* GuestRevocationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54726B6BE2C734CF18C8C2B8 /* GuestRevocationServiceTests.swift */; };
 		D9348A47ECA726BD65E659DD /* KeychainManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5675A53CA2175A97EE572F /* KeychainManagerTests.swift */; };
 		DADBEE459E4F759FCCB8AEBD /* VisualizerEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */; };
 		DASHBD000000000000000002 /* DashboardDisplayModelBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = DASHBD000000000000000001 /* DashboardDisplayModelBuilder.swift */; };
@@ -406,10 +408,12 @@
 		532AEB39DB4A570EDFB5EB43 /* DevicesViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/ViewModels/DevicesViewModel.swift; sourceTree = "<group>"; };
 		53E5462DF42B214508BF5FC2 /* ImportSceneSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImportSceneSheet.swift; path = ./HueHome/UI/Share/ImportSceneSheet.swift; sourceTree = "<group>"; };
 		5454484EA8B91B91C949F06F /* DevicesView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Devices/DevicesView.swift; sourceTree = "<group>"; };
+		54726B6BE2C734CF18C8C2B8 /* GuestRevocationServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestRevocationServiceTests.swift; path = ./HueHomeTests/GuestRevocationServiceTests.swift; sourceTree = "<group>"; };
 		555AB61503BFE201ED78FC27 /* HueGroupEntity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueGroupEntity.swift; path = ./HueHome/Intents/HueGroupEntity.swift; sourceTree = "<group>"; };
 		57B377F0586FBE253CB29989 /* StudioIntentTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioIntentTests.swift; path = ./HueHomeTests/StudioIntentTests.swift; sourceTree = "<group>"; };
 		59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/SyncModeEngine.swift; sourceTree = "<group>"; };
 		5DA4F44D15C88C91CEB5C798 /* AutomationsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationsView.swift; path = HueHome/UI/Automations/AutomationsView.swift; sourceTree = "<group>"; };
+		5F8043CD9345FBFA1ED49CF7 /* GuestRevocationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestRevocationService.swift; path = ./HueHome/Core/Share/GuestRevocationService.swift; sourceTree = "<group>"; };
 		5FE8BB403C3BA723AFC596B6 /* SceneQRRenderer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneQRRenderer.swift; path = ./HueHome/Core/Share/SceneQRRenderer.swift; sourceTree = "<group>"; };
 		6038536A72D3748FAA2BF81F /* SceneMoodCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneMoodCard.swift; path = ./HueHome/UI/Scenes/SceneMoodCard.swift; sourceTree = "<group>"; };
 		6135738C5F72FCC699CF515B /* HueIntentEntityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueIntentEntityTests.swift; path = ./HueHomeTests/HueIntentEntityTests.swift; sourceTree = "<group>"; };
@@ -853,6 +857,7 @@
 				825FE84E577223087FB6A47F /* InvitePayloadCodec.swift */,
 				1AA4CC7E83E29A5E252517C9 /* GuestInviteSpec.swift */,
 				1819E1C21C24411637B24FFA /* GuestInviteAcceptor.swift */,
+				5F8043CD9345FBFA1ED49CF7 /* GuestRevocationService.swift */,
 			);
 			name = Share;
 			sourceTree = "<group>";
@@ -1252,6 +1257,7 @@
 				7820F4F2BD3F6510DA6C4164 /* GuestKeyStoreTests.swift */,
 				1503A7C27BEF5B41FABF3E38 /* GuestInviteAcceptorTests.swift */,
 				6E980E3A3C509B6DB94828A9 /* WhitelistRedactionTests.swift */,
+				54726B6BE2C734CF18C8C2B8 /* GuestRevocationServiceTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1775,6 +1781,7 @@
 				4581D3F6DD6D7DD7F2507238 /* RoomAccessPicker.swift in Sources */,
 				2630AD68CFAC77AB8FB6509F /* GuestAccessBanner.swift in Sources */,
 				3D3EBC20321A85103BCB66CB /* BridgeKeysView.swift in Sources */,
+				4607C7C58A45E30B2455277B /* GuestRevocationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1846,6 +1853,7 @@
 				CD1BB6B919DAFADD498EBDD0 /* GuestKeyStoreTests.swift in Sources */,
 				549F510609BEA5A1D6CE2639 /* GuestInviteAcceptorTests.swift in Sources */,
 				7DB958E44E25D8D712E6D5C0 /* WhitelistRedactionTests.swift in Sources */,
+				D7FFE3F62496D310600CA4EA /* GuestRevocationServiceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
