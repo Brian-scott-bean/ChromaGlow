@@ -234,6 +234,14 @@ final class UnifiedOrchestrator {
     /// True while a scenes fetch is in flight.
     var isLoadingScenes: Bool = false
 
+    /// True once a scenes fetch (real or demo) has populated `globalScenes`
+    /// this session. Until then the widget/watch publisher preserves the
+    /// previously stored snapshot: launch publishes fire from room/zone
+    /// rebuilds BEFORE scenes have loaded, and an unconditional write would
+    /// clobber the stored scenes with an empty array (the "scenes vanished
+    /// from every widget" bug). No view reads this — infrastructure only.
+    @ObservationIgnored private var hasLoadedScenesOnce = false
+
     // ── Zones (Stage 2B) ──────────────────────────────────────
 
     /// All zones across every active bridge, sorted alphabetically.
@@ -772,6 +780,13 @@ final class UnifiedOrchestrator {
         rebuildAllZones()
         lastLoadedAt = Date()
         StartupTimeline.mark("loadAll.total", "\(Int(Date().timeIntervalSince(__loadStart) * 1000))ms → allRooms=\(allRooms.count)")
+        // Scenes load lazily (Scenes tab realize), but the widget/watch
+        // publisher must not preserve a stale snapshot all session. Fetch
+        // once per cold session — detached from this await so the cold-start
+        // critical section and the prewarm gate are untouched.
+        if !hasLoadedScenesOnce {
+            Task { [weak self] in await self?.loadAllScenes() }
+        }
         scheduleEntertainmentCleanup()
         if let ctx = cacheContext {
             let __cacheStart = Date()
@@ -1791,10 +1806,11 @@ final class UnifiedOrchestrator {
                                    bridgeName: z.bridgeID.flatMap { self.bridgeName(for: $0) },
                                    kind: "zone")
             }
-            let sceneSnaps = self.globalScenes.map { s in
-                WidgetSceneSnapshot(id: s.bridgeSceneID, name: s.name,
-                                    ownerGroupID: s.roomID, bridgeID: s.bridgeID)
-            }
+            let sceneSnaps = Self.scenesForPublish(
+                hasLoaded: self.hasLoadedScenesOnce,
+                live:      self.globalScenes,
+                stored:    WidgetDataStore.shared.scenes
+            )
             WidgetDataStore.shared.write(rooms: roomSnaps, zones: zoneSnaps, scenes: sceneSnaps)
             WatchSessionManager.shared.push(
                 rooms: roomSnaps,
@@ -1806,6 +1822,24 @@ final class UnifiedOrchestrator {
             // parameterized phrases recognize them (rides this task's
             // existing 500ms debounce).
             HueAppShortcuts.updateAppShortcutParameters()
+        }
+    }
+
+    /// Publish selection for the widget/watch scene snapshot. Until the first
+    /// real scene load of the session, keep what is already stored — the
+    /// launch-time publish fires from room/zone rebuilds before scenes exist,
+    /// and clobbering the store with `[]` blanked scenes on every widget
+    /// surface. After a genuine load the live list is the truth, INCLUDING
+    /// an empty one (a user who deleted every scene must see that propagate).
+    static func scenesForPublish(
+        hasLoaded: Bool,
+        live: [GlobalSceneItem],
+        stored: [WidgetSceneSnapshot]
+    ) -> [WidgetSceneSnapshot] {
+        guard hasLoaded else { return stored }
+        return live.map { s in
+            WidgetSceneSnapshot(id: s.bridgeSceneID, name: s.name,
+                                ownerGroupID: s.roomID, bridgeID: s.bridgeID)
         }
     }
 
@@ -3197,6 +3231,7 @@ final class UnifiedOrchestrator {
         allRooms = []
         allZones = []
         globalScenes = []
+        hasLoadedScenesOnce = false
         log.info("Forget-all: cleared clients, snapshots, and sessions")
     }
 
@@ -3821,11 +3856,16 @@ final class UnifiedOrchestrator {
     func loadAllScenes() async {
         if isDemoMode {
             globalScenes = DemoDataProvider.globalScenes
+            hasLoadedScenesOnce = true
+            scheduleWidgetWrite()
             return
         }
 
         guard !clients.isEmpty else { return }
 
+        // Reentrancy guard: loadAll's post-launch kick and the Scenes tab's
+        // realize task can race; two merges would double-fetch every bridge.
+        guard !isLoadingScenes else { return }
         isLoadingScenes = true
         defer { isLoadingScenes = false }
 
@@ -3872,6 +3912,11 @@ final class UnifiedOrchestrator {
             }
 
         log.info("Loaded \(self.globalScenes.count) scenes across \(self.clients.count) bridge(s)")
+
+        // Scenes are now the truth — publish to widgets/watch (and re-donate
+        // Siri scene phrases) through the debounced writer.
+        hasLoadedScenesOnce = true
+        scheduleWidgetWrite()
     }
 
     /// Activate a scene. Optimistic: marks it active locally, clears others
@@ -3917,6 +3962,7 @@ final class UnifiedOrchestrator {
     /// Optimistically removes the scene from globalScenes, then fires the bridge DELETE.
     func deleteGlobalScene(_ scene: GlobalSceneItem) {
         globalScenes.removeAll { $0.id == scene.id }
+        scheduleWidgetWrite()
         guard let client = clients[scene.bridgeID] else { return }
         Task { try? await client.deleteScene(id: scene.bridgeSceneID) }
     }
@@ -3937,6 +3983,7 @@ final class UnifiedOrchestrator {
                 speed:         scene.speed
             )
             globalScenes = updated
+            scheduleWidgetWrite()
         }
         guard let client = clients[scene.bridgeID] else { return }
         try? await client.renameScene(id: scene.bridgeSceneID, name: newName)

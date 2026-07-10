@@ -398,6 +398,43 @@ final class OrchestratorTests: XCTestCase {
         XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
     }
 
+    // MARK: - Widget scene publish selection (launch-clobber guard)
+
+    func testScenesForPublish_beforeFirstLoad_preservesStoredSnapshot() {
+        let stored = [WidgetSceneSnapshot(id: "s1", name: "Relax",
+                                          ownerGroupID: "room-1", bridgeID: "bridge-1")]
+
+        let out = UnifiedOrchestrator.scenesForPublish(hasLoaded: false, live: [], stored: stored)
+
+        XCTAssertEqual(out.map(\.id), ["s1"],
+                       "Launch publishes fire before scenes load — they must not clobber the store")
+    }
+
+    func testScenesForPublish_afterLoad_mapsLiveScenes() {
+        let live = [GlobalSceneItem(id: "bridge-1:s2", bridgeSceneID: "s2", name: "Energize",
+                                    roomID: "room-1", bridgeID: "bridge-1",
+                                    isActive: false, isDynamic: false, speed: 0.5)]
+        let stored = [WidgetSceneSnapshot(id: "stale", name: "Old",
+                                          ownerGroupID: "room-9", bridgeID: "bridge-9")]
+
+        let out = UnifiedOrchestrator.scenesForPublish(hasLoaded: true, live: live, stored: stored)
+
+        XCTAssertEqual(out.map(\.id), ["s2"])
+        XCTAssertEqual(out.first?.name, "Energize")
+        XCTAssertEqual(out.first?.ownerGroupID, "room-1")
+        XCTAssertEqual(out.first?.bridgeID, "bridge-1")
+    }
+
+    func testScenesForPublish_afterLoad_emptyLivePropagates() {
+        let stored = [WidgetSceneSnapshot(id: "s1", name: "Relax",
+                                          ownerGroupID: "room-1", bridgeID: "bridge-1")]
+
+        let out = UnifiedOrchestrator.scenesForPublish(hasLoaded: true, live: [], stored: stored)
+
+        XCTAssertTrue(out.isEmpty,
+                      "After a genuine load, delete-all must reach the widgets as empty")
+    }
+
     // MARK: - Helpers
 
     private func makeLocalRoom(id: String, name: String, isOn: Bool, bridgeID: String = "bridge-1") -> HueLocalRoom {
