@@ -1439,8 +1439,11 @@ final class UnifiedOrchestrator {
         for client in clients.values {
             guard let buttons = try? await client.fetchButtons() else { continue }
             for button in buttons {
-                map[button.id] = button.metadata?.control_id
-                    ?? map[button.id] ?? 1
+                // No fallback: a guessed control_id would fire tap tempo (id 1)
+                // and re-pin the clock on every press of an unmapped button.
+                if let controlID = button.metadata?.control_id {
+                    map[button.id] = controlID
+                }
             }
         }
         buttonControlIDs = map
@@ -1501,8 +1504,8 @@ final class UnifiedOrchestrator {
 
             // ── physical inputs (Round 3 G) ────────────────────────────────────
             case "button":
-                guard djModeEnabled, let buttonEvent = update.button?.event else { continue }
-                let controlID = buttonControlIDs[update.id] ?? 1
+                guard djModeEnabled, let buttonEvent = update.button?.event,
+                      let controlID = buttonControlIDs[update.id] else { continue }
                 executeControlAction(
                     controlEngine.handleButton(controlID: controlID, event: buttonEvent))
 

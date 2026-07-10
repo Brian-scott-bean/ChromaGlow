@@ -325,6 +325,31 @@ final class OrchestratorSSETests: XCTestCase {
         XCTAssertNil(events.first?.data.first?.status?.active)
     }
 
+    // MARK: - SSE-08 unmapped Tap-Dial button must not fire a guessed action
+
+    func testButtonSSE_unmappedButtonUUID_leavesBeatClockUntouched() throws {
+        let orchestrator = makeOrchestratorSSESUT(isOn: true, brightness: 80)
+        orchestrator.djModeEnabled = true
+        defer { orchestrator.djModeEnabled = false }
+
+        // Known state: unpinned. A guessed control_id 1 would tap() → pin.
+        BeatClock.shared.unpin()
+
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"button-unmapped-001","id_v1":null,"type":"button",
+          "button":{"button_report":{"event":"initial_press"}}
+        }],"id":"evt-b1","type":"update"}]
+        """
+        let events = try decodeSSEEvents(json)
+        for event in events {
+            _ = orchestrator.applySSEEvent(event, bridgeID: "bridge-1")
+        }
+
+        XCTAssertFalse(BeatClock.shared.isPinned)
+        XCTAssertNotEqual(BeatClock.shared.source, .tap)
+    }
+
     private func decodeSSEEvents(_ json: String) throws -> [SSEEvent] {
         let data = try XCTUnwrap(json.data(using: .utf8))
         return try UnifiedOrchestrator.sseDecoder.decode(
