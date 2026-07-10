@@ -112,6 +112,28 @@ final class StudioParamCatalogTests: XCTestCase {
         }
     }
 
+    // ── Composer deck sections ────────────────────────────────
+
+    /// The All view's section order: the user's work always leads, Holiday is
+    /// pinned second only while it is actually in season, `.all` never appears
+    /// (it is a filter, not a category), and nothing is dropped or duplicated.
+    func testComposerSectionOrderLeadsWithMyCreationsAndPinsSeasonalHoliday() {
+        let real = PresetCategory.allCases.filter { $0 != .all }
+
+        for inSeason in [true, false] {
+            let order = StudioViewModel.sectionOrder(holidayInSeason: inSeason)
+            XCTAssertEqual(order.first, .myCreations, "inSeason=\(inSeason)")
+            XCTAssertFalse(order.contains(.all), "'.all' is a filter, not a section")
+            XCTAssertEqual(Set(order), Set(real), "a category was dropped (inSeason=\(inSeason))")
+            XCTAssertEqual(order.count, real.count, "a category was duplicated (inSeason=\(inSeason))")
+        }
+
+        XCTAssertEqual(StudioViewModel.sectionOrder(holidayInSeason: true)[1], .holiday,
+                       "in season, Holiday sits right under the user's own work")
+        XCTAssertNotEqual(StudioViewModel.sectionOrder(holidayInSeason: false)[1], .holiday,
+                          "out of season, Holiday takes its normal chip-order place")
+    }
+
     // ── Tray metrics ──────────────────────────────────────────
 
     /// Tray height is derived from content now — more inline rows must never

@@ -1527,6 +1527,27 @@ final class StudioViewModel {
         }
     }
 
+    /// The "All" view, grouped into collapsible sections. Order: the user's own
+    /// creations first (their work beats our catalog), then Holiday when it is
+    /// actually in season, then the remaining categories in chip order. Empty
+    /// categories don't render a header.
+    func composerSections() -> [(category: PresetCategory, presets: [CompositionPreset])] {
+        Self.sectionOrder(holidayInSeason: hasSeasonalCompositionPreset).compactMap { category in
+            let presets = composerPresets(for: category)
+            return presets.isEmpty ? nil : (category, presets)
+        }
+    }
+
+    /// Pure section ordering for the All view (unit-tested).
+    static func sectionOrder(holidayInSeason: Bool) -> [PresetCategory] {
+        var order: [PresetCategory] = [.myCreations]
+        if holidayInSeason { order.append(.holiday) }
+        order += PresetCategory.allCases.filter {
+            $0 != .all && $0 != .myCreations && ($0 != .holiday || !holidayInSeason)
+        }
+        return order
+    }
+
     /// Any non-starter preset is in-season (for Holiday chip emphasis).
     var hasSeasonalCompositionPreset: Bool {
         composerDeckPresetsSorted.contains(where: \.isInSeason)
@@ -1707,7 +1728,8 @@ final class StudioViewModel {
         name rawName: String,
         icon: String,
         accentColorHex: String = "#FFB340",
-        preferredTransport: CompositionPreferredTransport?
+        preferredTransport: CompositionPreferredTransport?,
+        category: PresetCategory = .myCreations
     ) -> CompositionPreset? {
         guard let box = activeCompositionBox else { return nil }
         let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1719,7 +1741,8 @@ final class StudioViewModel {
             icon: safeIcon,
             accentColorHex: accentColorHex,
             isBuiltIn: false,
-            category: .myCreations,
+            // `.all` is a virtual filter, never a real category on a preset.
+            category: category == .all ? .myCreations : category,
             seasonMonths: nil,
             palette: box.palette,
             motion: box.motion,
@@ -1830,6 +1853,19 @@ final class StudioViewModel {
         } catch {
             statusMessage = "⚠ Couldn't save the scene — \(error.localizedDescription)"
         }
+    }
+
+    /// Re-file a saved preset under a different category chip. Works on any
+    /// preset, including built-ins — a reset (delete) still restores a
+    /// built-in's shipped category, since the catalog copy wins.
+    func setCategory(_ category: PresetCategory, for preset: CompositionPreset) {
+        guard category != .all,   // virtual filter, never a stored value
+              let idx = compositionStore.presets.firstIndex(where: { $0.id == preset.id }) else { return }
+        var updated = compositionStore.presets[idx]
+        guard updated.category != category else { return }
+        updated.category = category
+        updated.updatedAt = Date()
+        compositionStore.save(updated)
     }
 
     /// Persist which engine a preset asks for. `nil` means Auto: let

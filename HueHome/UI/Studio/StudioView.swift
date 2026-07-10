@@ -96,6 +96,13 @@ struct StudioView: View {
 
     // ── Composer (Deck 3) ──────────────────────────────────
     @State private var composerCategory: PresetCategory = .all
+    /// Collapsed section headers in the All view, persisted as CSV of
+    /// PresetCategory raw values (AppStorage can't hold a Set directly).
+    @AppStorage("composerCollapsedSections") private var collapsedComposerSectionsCSV = ""
+    private var collapsedComposerSections: Set<String> {
+        get { Set(collapsedComposerSectionsCSV.split(separator: ",").map(String.init)) }
+        nonmutating set { collapsedComposerSectionsCSV = newValue.sorted().joined(separator: ",") }
+    }
     @State private var renameCompositionTarget: CompositionPreset?
     @State private var renameCompositionText = ""
     // Round 3 (C): Perform surface. The VM is created ONCE at button tap —
@@ -110,6 +117,7 @@ struct StudioView: View {
     @State private var compositionSaveIcon = "sparkles"
     @State private var compositionSaveAccent = "#FFB340"
     @State private var compositionSaveTransport: CompositionSaveTransportOption = .entertainmentArea
+    @State private var compositionSaveCategory: PresetCategory = .myCreations
     @State private var isAIPromptExpanded = false
     @State private var aiPromptText = ""
 
@@ -918,45 +926,25 @@ struct StudioView: View {
                         .padding(.vertical, HueSpacing.lg)
                 }
 
-                LazyVGrid(columns: columns, spacing: HueSpacing.md) {
-                    ForEach(presets) { preset in
-                        let card = vm.studioCard(for: preset)
-                        ZStack(alignment: .topTrailing) {
-                            StudioCardView(
-                                card: card,
-                                isRunning: vm.runningCardID == card.id,
-                                roomSelected: vm.selectedRoom != nil,
-                                isVisible: visible,
-                                patternSignature: preset.motion.pattern
-                            ) {
-                                if vm.runningCardID == card.id {
-                                    if isMixerCollapsed {
-                                        expandMixer()
-                                        HapticManager.shared.selection()
-                                    } else {
-                                        Task { await vm.explicitStop(card) }
-                                    }
-                                } else {
-                                    isMixerCollapsed = false
-                                    applyCardWithTransportPrompt(card)
+                if composerCategory == .all {
+                    // 56 built-ins made one flat grid a wall. The All view
+                    // groups by category — the user's own work first — behind
+                    // collapsible headers whose state survives relaunch.
+                    ForEach(vm.composerSections(), id: \.category) { section in
+                        composerSectionHeader(category: section.category,
+                                              count: section.presets.count)
+                        if !collapsedComposerSections.contains(section.category.rawValue) {
+                            LazyVGrid(columns: columns, spacing: HueSpacing.md) {
+                                ForEach(section.presets) { preset in
+                                    composerPresetCell(preset: preset, visible: visible)
                                 }
                             }
-
-                            Menu {
-                                composerPresetOverflowActions(preset: preset, card: card)
-                            } label: {
-                                Image(systemName: "ellipsis.circle.fill")
-                                    .font(.system(size: 17, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.72))
-                                    .padding(8)
-                                    .background(Circle().fill(Color.black.opacity(0.38)))
-                            }
-                            .menuStyle(.button)
-                            .padding(6)
-                            .accessibilityLabel("Composition actions")
                         }
-                        .contextMenu {
-                            composerPresetOverflowActions(preset: preset, card: card)
+                    }
+                } else {
+                    LazyVGrid(columns: columns, spacing: HueSpacing.md) {
+                        ForEach(presets) { preset in
+                            composerPresetCell(preset: preset, visible: visible)
                         }
                     }
                 }
@@ -964,6 +952,82 @@ struct StudioView: View {
             .padding(.horizontal, HueSpacing.screenH)
             .padding(.vertical, isCompactStudio ? 6 : HueSpacing.sm)
         }
+    }
+
+    /// One preset card + its overflow menu — shared by the flat (filtered)
+    /// grid and the sectioned All view.
+    private func composerPresetCell(preset: CompositionPreset, visible: Bool) -> some View {
+        let card = vm.studioCard(for: preset)
+        return ZStack(alignment: .topTrailing) {
+            StudioCardView(
+                card: card,
+                isRunning: vm.runningCardID == card.id,
+                roomSelected: vm.selectedRoom != nil,
+                isVisible: visible,
+                patternSignature: preset.motion.pattern
+            ) {
+                if vm.runningCardID == card.id {
+                    if isMixerCollapsed {
+                        expandMixer()
+                        HapticManager.shared.selection()
+                    } else {
+                        Task { await vm.explicitStop(card) }
+                    }
+                } else {
+                    isMixerCollapsed = false
+                    applyCardWithTransportPrompt(card)
+                }
+            }
+
+            Menu {
+                composerPresetOverflowActions(preset: preset, card: card)
+            } label: {
+                Image(systemName: "ellipsis.circle.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .padding(8)
+                    .background(Circle().fill(Color.black.opacity(0.38)))
+            }
+            .menuStyle(.button)
+            .padding(6)
+            .accessibilityLabel("Composition actions")
+        }
+        .contextMenu {
+            composerPresetOverflowActions(preset: preset, card: card)
+        }
+    }
+
+    private func composerSectionHeader(category: PresetCategory, count: Int) -> some View {
+        let isCollapsed = collapsedComposerSections.contains(category.rawValue)
+        return Button {
+            withAnimation(HueAnimation.fast) {
+                if isCollapsed {
+                    collapsedComposerSections.remove(category.rawValue)
+                } else {
+                    collapsedComposerSections.insert(category.rawValue)
+                }
+            }
+            HapticManager.shared.selection()
+        } label: {
+            HStack(spacing: 6) {
+                Text(category.rawValue.uppercased())
+                    .font(HueFont.stageTag)
+                    .tracking(1.2)
+                    .foregroundStyle(.white.opacity(0.55))
+                Text("\(count)")
+                    .font(HueFont.stageTag)
+                    .foregroundStyle(.white.opacity(0.30))
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .rotationEffect(.degrees(isCollapsed ? -90 : 0))
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(category.rawValue), \(count) presets, \(isCollapsed ? "collapsed" : "expanded")")
     }
 
     // ── Deck switcher ────────────────────────────────────────
@@ -1175,6 +1239,23 @@ struct StudioView: View {
             Label("Preferred Engine…", systemImage: "bolt.badge.automatic")
         }
 
+        Menu {
+            ForEach(PresetCategory.allCases.filter { $0 != .all }) { category in
+                Button {
+                    vm.setCategory(category, for: preset)
+                    HapticManager.shared.selection()
+                } label: {
+                    if preset.category == category {
+                        Label(category.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(category.rawValue)
+                    }
+                }
+            }
+        } label: {
+            Label("Move to Category…", systemImage: "folder")
+        }
+
         Divider()
 
         Button {
@@ -1297,6 +1378,35 @@ struct StudioView: View {
                         }
                     }
                 }
+                Section("Category") {
+                    // Where the preset files on the Composer deck. Chips, not a
+                    // wheel — eight options should be one glance.
+                    let categories = PresetCategory.allCases.filter { $0 != .all }
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(categories) { category in
+                                let selected = category == compositionSaveCategory
+                                Button {
+                                    compositionSaveCategory = category
+                                    HapticManager.shared.selection()
+                                } label: {
+                                    Text(category.rawValue)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(selected ? .black : .white.opacity(0.75))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .background(
+                                            Capsule().fill(selected
+                                                           ? HuePalette.amber
+                                                           : Color.white.opacity(0.08))
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
                 Section("Transport") {
                     Picker("Target", selection: $compositionSaveTransport) {
                         ForEach(CompositionSaveTransportOption.allCases) { option in
@@ -1325,7 +1435,8 @@ struct StudioView: View {
                             name: compositionSaveName,
                             icon: compositionSaveIcon,
                             accentColorHex: compositionSaveAccent,
-                            preferredTransport: compositionSaveTransport.presetValue
+                            preferredTransport: compositionSaveTransport.presetValue,
+                            category: compositionSaveCategory
                         )
                         showCompositionSaveSheet = false
                         HapticManager.shared.medium()
