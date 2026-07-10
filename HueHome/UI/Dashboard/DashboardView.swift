@@ -57,6 +57,8 @@ struct DashboardView: View {
     @State private var currentHour:         Int      = Calendar.current.component(.hour, from: Date())
     @State private var allOffWorking:       Bool     = false
     @State private var activatingFavID:     String?  = nil  // tracks which fav scene pill is activating
+    /// Room/zone whose long-press color popup is showing (sheet item).
+    @State private var colorPopoverRoom:    RoomDisplayItem? = nil
 
 
     // ── Favorite Scenes (shared with RoomDetailView via @AppStorage) ────────────
@@ -144,6 +146,10 @@ struct DashboardView: View {
         }
         .sheet(isPresented: $showScheduleSheet) {
             UpcomingAutomationsSheet(automations: allUpcomingAutomations)
+        }
+        // Long-press a room/zone card → paint the room (color wheel + harmony).
+        .sheet(item: $colorPopoverRoom) { room in
+            RoomColorPopover(room: room)
         }
         .onReceive(clockTimer) { _ in
             // Skip the minute tick while Home is hidden; resync on return below.
@@ -235,7 +241,8 @@ struct DashboardView: View {
                             room: room,
                             onToggle: { desiredOn in orchestrator.setRoom(room, isOn: desiredOn) },
                             onBrightness: { newBrightness in orchestrator.setBrightness(newBrightness, for: room) },
-                            onNavigate: { orchestrator.signalNavigationStarted() }
+                            onNavigate: { orchestrator.signalNavigationStarted() },
+                            onLongPress: { colorPopoverRoom = room }
                         )
                         .equatable()
                         .transition(.asymmetric(
@@ -257,7 +264,8 @@ struct DashboardView: View {
                                     room: zone,
                                     onToggle: { desiredOn in orchestrator.setRoom(zone, isOn: desiredOn) },
                                     onBrightness: { newBrightness in orchestrator.setBrightness(newBrightness, for: zone) },
-                                    onNavigate: { orchestrator.signalNavigationStarted() }
+                                    onNavigate: { orchestrator.signalNavigationStarted() },
+                                    onLongPress: { colorPopoverRoom = zone }
                                 )
                                 .equatable()
                                 .transition(.asymmetric(
@@ -825,6 +833,7 @@ struct RoomCard: View {
     let onBrightness:     (Double)         -> Void   // called ONCE on drag end
     var onEllipsisTap:    (() -> Void)?    = nil  // nil = no ··· button shown
     var onNavigate:       (() -> Void)?    = nil  // fired when card body tap triggers navigation
+    var onLongPress:      (() -> Void)?    = nil  // hold the card → room color popup
 
     // ── Local optimistic state ────────────────────────────────────────────────
     // localIsOn flips INSTANTLY on tap — no dependency on the @Observable chain.
@@ -848,12 +857,14 @@ struct RoomCard: View {
          onToggle: @escaping (Bool) -> Void,
          onBrightness: @escaping (Double) -> Void,
          onEllipsisTap: (() -> Void)? = nil,
-         onNavigate: (() -> Void)? = nil) {
+         onNavigate: (() -> Void)? = nil,
+         onLongPress: (() -> Void)? = nil) {
         self.room             = room
         self.onToggle         = onToggle
         self.onBrightness     = onBrightness
         self.onEllipsisTap    = onEllipsisTap
         self.onNavigate       = onNavigate
+        self.onLongPress      = onLongPress
         _localIsOn         = State(initialValue: room.isOn)
         _localGlowColor    = State(initialValue: Self.resolveGlowColor(for: room))
     }
@@ -904,6 +915,17 @@ struct RoomCard: View {
         // Fire onNavigate simultaneously with the push so the orchestrator can
         // suppress SSE rebuilds for the 450 ms animation window.
         .simultaneousGesture(TapGesture().onEnded { _ in onNavigate?() })
+        // Hold the card → room color popup. Simultaneous so the NavigationLink
+        // tap keeps working; a completed hold wins because the finger never
+        // lifts into a tap. The power toggle sits in an overlay above this
+        // gesture's hit area, so it stays a plain tap.
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                guard let onLongPress else { return }
+                HapticManager.shared.medium()
+                onLongPress()
+            }
+        )
         .overlay(alignment: .topTrailing) {
             // Power toggle — hard-coded to .topTrailing
             Button {

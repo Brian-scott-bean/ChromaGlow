@@ -3914,6 +3914,66 @@ final class UnifiedOrchestrator {
         }
     }
 
+    /// The long-press color wash: paint a room (or zone) with one color, or a
+    /// harmony palette spread across its bulbs.
+    ///
+    /// `.none` is one grouped_light PUT — cheap, atomic, no per-light traffic.
+    /// A harmony rule needs per-light writes (the whole point is adjacent bulbs
+    /// wearing different anchors), so those go out in batches of 5 with 150ms
+    /// gaps — the same pacing sendPerLightBatched established for effects.
+    func applyColorWash(
+        to room: RoomDisplayItem,
+        rule: HarmonyRule,
+        rootHue: Double,
+        saturation: Double,
+        brightness: Double
+    ) async {
+        guard let bridgeID = room.bridgeID, let api = clients[bridgeID] else { return }
+
+        if rule == .none {
+            let xy = HueColorUtils.xyFrom(hue: rootHue, saturation: saturation, brightness: 1.0)
+            let clamped = HueColorUtils.clampXYToGamut(x: xy.x, y: xy.y, gamut: .c)
+            guard let glID = room.groupedLightID else { return }
+            try? await api.setGroupedLightEffect(
+                id: glID, on: true, brightness: brightness,
+                xy: (clamped.x, clamped.y), mirek: nil, duration: 400
+            )
+            return
+        }
+
+        guard let lights = try? await roomLights(for: room), !lights.isEmpty else { return }
+        let assignments = RoomColorWashPlanner.plan(
+            lights: lights, rule: rule,
+            rootHue: rootHue, saturation: saturation, brightness: brightness
+        )
+
+        var start = 0
+        while start < assignments.count {
+            let batch = assignments[start ..< min(start + 5, assignments.count)]
+            await withTaskGroup(of: Void.self) { group in
+                for assignment in batch {
+                    group.addTask {
+                        switch assignment.action {
+                        case .color(let x, let y, let bri):
+                            try? await api.setLightState(id: assignment.lightID, on: true, brightness: bri)
+                            try? await api.setLightColor(id: assignment.lightID, x: x, y: y)
+                        case .colorTemp(let mirek, let bri):
+                            try? await api.setLightState(id: assignment.lightID, on: true, brightness: bri)
+                            try? await api.setLightColorTemp(id: assignment.lightID, mirek: mirek)
+                        case .brightnessOnly(let bri):
+                            try? await api.setLightState(id: assignment.lightID, on: true, brightness: bri)
+                        }
+                    }
+                }
+            }
+            start += 5
+            if start < assignments.count {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
+        }
+        scheduleStateRefresh()
+    }
+
     /// Creates a new scene by snapshotting the current light states in the given room.
     /// Fetches all lights for the bridge, filters to this room's lights, and POSTs a scene.
     func createSceneFromRoom(name: String, room: RoomDisplayItem) async throws {
