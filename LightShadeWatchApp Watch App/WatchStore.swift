@@ -50,47 +50,28 @@ struct WatchScene: Identifiable, Codable {
 
 // MARK: - Preset
 
+/// Behavior (label/icon/brightness/mirek) reads from the shared LightingPreset
+/// catalog (compiled into this target); the chip colors are watch styling,
+/// tuned brighter for the small screen.
 enum WatchPreset: String, CaseIterable {
     case energize, read, relax, sleep
 
-    var label: String {
-        switch self {
-        case .energize: return "Energize"
-        case .read:     return "Read"
-        case .relax:    return "Relax"
-        case .sleep:    return "Sleep"
-        }
+    private var shared: LightingPreset {
+        // The catalog is the source of truth; the cases mirror its stable ids.
+        LightingPreset.find(rawValue) ?? .relax
     }
-    var icon: String {
-        switch self {
-        case .energize: return "bolt.fill"
-        case .read:     return "book.fill"
-        case .relax:    return "moon.stars.fill"
-        case .sleep:    return "zzz"
-        }
-    }
+
+    var label: String { shared.name }
+    var icon: String { shared.icon }
+    var brightness: Double { shared.brightness }
+    var mirek: Int { shared.mirek }
+
     var color: Color {
         switch self {
         case .energize: return Color(hue: 0.58, saturation: 0.8, brightness: 1.0)
         case .read:     return Color(hue: 0.12, saturation: 0.7, brightness: 1.0)
         case .relax:    return Color(hue: 0.09, saturation: 0.8, brightness: 0.95)
         case .sleep:    return Color(hue: 0.07, saturation: 0.6, brightness: 0.7)
-        }
-    }
-    var brightness: Double {
-        switch self {
-        case .energize: return 100
-        case .read:     return 75
-        case .relax:    return 40
-        case .sleep:    return 6
-        }
-    }
-    var mirek: Int {
-        switch self {
-        case .energize: return 156
-        case .read:     return 280
-        case .relax:    return 420
-        case .sleep:    return 490
         }
     }
 }
@@ -298,19 +279,36 @@ final class WatchStore: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Apply Preset (all rooms)
+    // MARK: - Apply Preset (all rooms, or one room)
 
+    /// Whole-home apply — the home screen's chips.
     func applyPreset(_ preset: WatchPreset) async {
+        for i in rooms.indices { rooms[i].isOn = true; rooms[i].brightness = preset.brightness }
+        for i in zones.indices { zones[i].isOn = true; zones[i].brightness = preset.brightness }
+        await sendPreset(preset, to: allGroups)
+    }
+
+    /// Room-scoped apply — the chips INSIDE a room detail. Pressing Energize
+    /// while looking at the Kitchen lights the Kitchen, not the whole house.
+    func applyPreset(_ preset: WatchPreset, to group: WatchRoom) async {
+        if let idx = rooms.firstIndex(where: { $0.id == group.id }) {
+            rooms[idx].isOn = true; rooms[idx].brightness = preset.brightness
+        }
+        if let idx = zones.firstIndex(where: { $0.id == group.id }) {
+            zones[idx].isOn = true; zones[idx].brightness = preset.brightness
+        }
+        await sendPreset(preset, to: [group])
+    }
+
+    private func sendPreset(_ preset: WatchPreset, to targets: [WatchRoom]) async {
         let body: [String: Any] = [
             "on":                ["on": true],
             "dimming":           ["brightness": preset.brightness],
             "color_temperature": ["mirek": preset.mirek],
             "dynamics":          ["duration": 800]
         ]
-        for i in rooms.indices { rooms[i].isOn = true; rooms[i].brightness = preset.brightness }
-        for i in zones.indices { zones[i].isOn = true; zones[i].brightness = preset.brightness }
         await withTaskGroup(of: Void.self) { group in
-            for item in allGroups {
+            for item in targets {
                 guard let glID = item.groupedLightId,
                       let creds = credentials(for: item.bridgeID) else { continue }
                 let gid = glID

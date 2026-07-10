@@ -154,7 +154,7 @@ struct RoomDetailView: View {
 
                     ForEach(WatchPreset.allCases, id: \.rawValue) { preset in
                         Button {
-                            Task { await store.applyPreset(preset) }
+                            Task { await store.applyPreset(preset, to: room) }
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: preset.icon)

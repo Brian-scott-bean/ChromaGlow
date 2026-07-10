@@ -537,6 +537,42 @@ final class RoomDetailViewModel {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Lighting presets (room-scoped)
+    // ──────────────────────────────────────────────
+
+    /// Apply Energize/Read/Relax/Sleep to THIS room only — one grouped_light
+    /// PUT, unlike the Dashboard bar's all-rooms loop. Same shared catalog, so
+    /// "Energize" here and "Energize" there mean the same brightness + mirek.
+    func applyPreset(_ preset: LightingPreset) {
+        beginMasterWriteWindow()
+        let previousOn = roomIsOn
+        let previousBrightness = roomBrightness
+        roomIsOn = true
+        roomBrightness = preset.brightness
+        lights = lights.map { var l = $0; l.isOn = true; l.brightness = preset.brightness; return l }
+        appendLog("✨ Preset '\(preset.name)' → '\(room.name)'")
+        showToast("\(preset.name) — \(room.name)")
+        if isDemoMode { return }
+        guard let api, let glID = room.groupedLightID else { return }
+        Task {
+            do {
+                try await api.setGroupedLightEffect(
+                    id: glID, on: true,
+                    brightness: preset.brightness,
+                    xy: nil, mirek: preset.mirek,
+                    duration: 800
+                )
+                appendLog("✅ Preset '\(preset.name)' applied to '\(room.name)'")
+            } catch {
+                appendLog("❌ Preset failed: \(error.localizedDescription)")
+                roomIsOn = previousOn
+                roomBrightness = previousBrightness
+                showToast("Couldn't reach bridge — room reverted")
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Automations (room-scoped)
     // ──────────────────────────────────────────────
 

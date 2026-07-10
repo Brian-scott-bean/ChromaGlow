@@ -200,29 +200,41 @@ struct ActivateSceneIntent: AppIntent {
 // MARK: - ApplyPresetIntent
 
 /// Tapping a preset chip (Energize / Read / Relax / Sleep) fires this intent.
-/// It applies the preset across every room AND zone simultaneously.
+/// With no `groupID` it applies across every room AND zone (the home-face and
+/// Control Center behavior, and what every already-configured widget encodes).
+/// A room-pinned face passes its pinned group so pressing Energize while
+/// looking at the Kitchen lights the Kitchen, not the whole house.
 struct ApplyPresetIntent: AppIntent {
     static var title: LocalizedStringResource = "Apply Preset"
-    static var description = IntentDescription("Apply a lighting preset to all rooms and zones.")
+    static var description = IntentDescription("Apply a lighting preset to all rooms and zones, or to one room.")
     static var openAppWhenRun: Bool = false
 
     @Parameter(title: "Preset ID") var presetID: String   // "energize" | "read" | "relax" | "sleep"
+    /// Optional room/zone scope. Nil (the default, and what any intent encoded
+    /// before this parameter existed decodes to) = whole home.
+    @Parameter(title: "Room ID") var groupID: String?
 
     init() { presetID = "relax" }
     init(presetID: String) { self.presetID = presetID }
+    init(presetID: String, groupID: String?) {
+        self.presetID = presetID
+        self.groupID = groupID
+    }
 
     func perform() async throws -> some IntentResult {
         let store = WidgetDataStore.shared
-        let (brightness, mirek) = Self.params(for: presetID)
+        guard let preset = LightingPreset.find(presetID) else { return .result() }
+        let targets = store.groups.filter { groupID == nil || $0.id == groupID }
+
         await withTaskGroup(of: Void.self) { group in
-            for item in store.groups {
+            for item in targets {
                 guard let glID = item.groupedLightId,
                       let creds = store.credentials(for: item.bridgeID) else { continue }
                 let capturedID = glID
                 let body: [String: Any] = [
                     "on":      ["on": true],
-                    "dimming": ["brightness": brightness],
-                    "color_temperature": ["mirek": mirek],
+                    "dimming": ["brightness": preset.brightness],
+                    "color_temperature": ["mirek": preset.mirek],
                     "dynamics": ["duration": 800]
                 ]
                 group.addTask {
@@ -234,16 +246,6 @@ struct ApplyPresetIntent: AppIntent {
         }
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
-    }
-
-    private static func params(for id: String) -> (brightness: Double, mirek: Int) {
-        switch PresetChoice(rawValue: id) {
-        case .energize: return (100, 156)
-        case .read:     return (75,  280)
-        case .relax:    return (40,  420)
-        case .sleep:    return (6,   490)
-        case nil:       return (60,  350)
-        }
     }
 }
 

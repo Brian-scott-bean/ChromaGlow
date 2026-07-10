@@ -417,12 +417,7 @@ struct DashboardView: View {
     // NOTE: LightPreset is file-level (see bottom of file) for access by TimeSuggestionBanner
     private typealias LightPreset = DashboardLightPreset
 
-    private let presets: [LightPreset] = [
-        LightPreset(id: "energize", name: "Energize", icon: "bolt.fill",       brightness: 100, mirek: 156, color: Color(hue: 0.58, saturation: 0.7,  brightness: 1.0)),
-        LightPreset(id: "read",     name: "Read",     icon: "book.fill",       brightness: 75,  mirek: 280, color: Color(hue: 0.12, saturation: 0.6,  brightness: 1.0)),
-        LightPreset(id: "relax",    name: "Relax",    icon: "moon.stars.fill", brightness: 40,  mirek: 420, color: Color(hue: 0.09, saturation: 0.8,  brightness: 0.9)),
-        LightPreset(id: "sleep",    name: "Sleep",    icon: "zzz",             brightness: 6,   mirek: 490, color: Color(hue: 0.07, saturation: 0.7,  brightness: 0.7)),
-    ]
+    private let presets: [LightPreset] = LightingPreset.all.map(LightPreset.init)
 
     private var presetsBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1154,6 +1149,17 @@ struct DashboardLightPreset: Identifiable {
     let brightness: Double
     let mirek:      Int
     let color:      Color
+
+    /// Behavior (id/name/icon/brightness/mirek) comes from the shared catalog;
+    /// only the chip tint is styling that lives at the surface.
+    init(_ preset: LightingPreset) {
+        id = preset.id
+        name = preset.name
+        icon = preset.icon
+        brightness = preset.brightness
+        mirek = preset.mirek
+        color = preset.chipColor
+    }
 }
 
 struct DashboardTimeSuggestion {

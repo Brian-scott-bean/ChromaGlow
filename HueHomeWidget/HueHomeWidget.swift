@@ -717,25 +717,33 @@ struct LargePageBar: View {
     }
 }
 
-// MARK: - Preset Strip (shared by Medium + Large)
+// MARK: - Preset Strip (shared by Medium + Large + focused room face)
 
 struct WidgetPresetStrip: View {
     let amber: Color
+    /// Nil on the multi-room faces (whole home); a room-pinned face passes its
+    /// pinned group so Energize lights that room, not the house.
+    var groupID: String? = nil
 
     private struct Preset {
         let id: String; let icon: String; let label: String; let color: Color
     }
-    private let presets: [Preset] = [
-        Preset(id: "energize", icon: "bolt.fill",       label: "Energize", color: Color(hue:0.58,saturation:0.7,brightness:1.0)),
-        Preset(id: "read",     icon: "book.fill",       label: "Read",     color: Color(hue:0.12,saturation:0.6,brightness:1.0)),
-        Preset(id: "relax",    icon: "moon.stars.fill", label: "Relax",    color: Color(hue:0.09,saturation:0.8,brightness:0.9)),
-        Preset(id: "sleep",    icon: "zzz",             label: "Sleep",    color: Color(hue:0.07,saturation:0.7,brightness:0.7)),
-    ]
+    // Behavior comes from the shared LightingPreset catalog (compiled into
+    // this target); the chip tints are widget styling.
+    private let presets: [Preset] = LightingPreset.all.map { p in
+        let color: Color = switch p.id {
+        case "energize": Color(hue: 0.58, saturation: 0.7, brightness: 1.0)
+        case "read":     Color(hue: 0.12, saturation: 0.6, brightness: 1.0)
+        case "relax":    Color(hue: 0.09, saturation: 0.8, brightness: 0.9)
+        default:         Color(hue: 0.07, saturation: 0.7, brightness: 0.7)
+        }
+        return Preset(id: p.id, icon: p.icon, label: p.name, color: color)
+    }
 
     var body: some View {
         HStack(spacing: 6) {
             ForEach(presets, id: \.id) { p in
-                Button(intent: ApplyPresetIntent(presetID: p.id)) {
+                Button(intent: ApplyPresetIntent(presetID: p.id, groupID: groupID)) {
                     HStack(spacing: 3) {
                         Image(systemName: p.icon)
                             .font(.system(size: 8, weight: .semibold))
@@ -944,6 +952,12 @@ struct FocusedMediumWidgetView: View {
             // Scene chips for this group
             if entry.showScenes, !entry.selectedScenes.isEmpty {
                 WidgetSceneStrip(scenes: entry.selectedScenes, groupID: room.id, amber: amber)
+            }
+
+            // Preset chips, scoped to the pinned room — Energize here lights
+            // THIS room, unlike the whole-home strip on the multi-room faces.
+            if entry.showPresets {
+                WidgetPresetStrip(amber: amber, groupID: room.id)
             }
 
             Spacer(minLength: 0)

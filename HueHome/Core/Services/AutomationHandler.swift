@@ -133,19 +133,17 @@ extension AppDelegate {
 
 // MARK: - Preset definitions (shared, used by orchestrator)
 
-/// Preset parameters mirroring DashboardView's presets array.
-/// Defined here so AutomationHandler can apply them without importing the View layer.
+/// Preset parameters, backed by the shared LightingPreset catalog so the
+/// automation path can never drift from what Dashboard/RoomDetail/widget/watch
+/// apply. Kept as its own type because automation payloads persist these ids.
 struct AutomationPreset {
     let id:         String
     let brightness: Double
     let mirek:      Int
 
-    static let all: [AutomationPreset] = [
-        AutomationPreset(id: "energize", brightness: 100, mirek: 156),
-        AutomationPreset(id: "read",     brightness: 75,  mirek: 280),
-        AutomationPreset(id: "relax",    brightness: 40,  mirek: 420),
-        AutomationPreset(id: "sleep",    brightness: 6,   mirek: 490),
-    ]
+    static let all: [AutomationPreset] = LightingPreset.all.map {
+        AutomationPreset(id: $0.id, brightness: $0.brightness, mirek: $0.mirek)
+    }
 
     static func find(_ id: String) -> AutomationPreset? {
         all.first { $0.id == id }

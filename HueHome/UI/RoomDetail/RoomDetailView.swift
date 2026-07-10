@@ -300,6 +300,10 @@ struct RoomDetailView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 20)
 
+                // ── PRESETS row (room-scoped — one grouped write, THIS room) ──
+                presetsRow
+                    .padding(.bottom, 24)
+
                 // ── SCENES section ──
                 if !vm.scenes.isEmpty || !vm.lights.isEmpty {
                     scenesStrip
@@ -499,6 +503,41 @@ struct RoomDetailView: View {
     }
 
     // ── Scene Strip ───────────────────────────────
+
+    // ──────────────────────────────────────────────
+    // MARK: - Presets row (room-scoped)
+    // ──────────────────────────────────────────────
+
+    /// The same four chips as the Dashboard bar, but scoped: Energize here
+    /// lights THIS room, not the whole home. Same shared catalog, same look.
+    private var presetsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(LightingPreset.all) { preset in
+                    Button {
+                        HapticManager.shared.light()
+                        vm.applyPreset(preset)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: preset.icon)
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(preset.name)
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(preset.chipColor)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(Capsule().fill(preset.chipColor.opacity(0.12)))
+                        .overlay(Capsule().strokeBorder(preset.chipColor.opacity(0.3), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(preset.name), this room only")
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
 
     private var scenesStrip: some View {
         VStack(alignment: .leading, spacing: 10) {
