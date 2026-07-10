@@ -107,6 +107,48 @@ struct GroupBrightnessIntent: AppIntent {
     }
 }
 
+// MARK: - GroupColorIntent
+
+struct GroupColorIntent: AppIntent {
+
+    static var title: LocalizedStringResource = "Set Light Color"
+    static var description = IntentDescription(
+        "Set a room's or zone's lights to a named color or white.",
+        categoryName: "Lights"
+    )
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Room or Zone")
+    var group: HueGroupEntity
+
+    @Parameter(title: "Color")
+    var color: NamedColorChoice
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard let creds = WidgetDataStore.shared.credentials(for: group.bridgeID) else {
+            throw IntentError.noBridgeConnection
+        }
+        guard let glId = group.groupedLightId else {
+            throw IntentError.noGroupedLight(group.name)
+        }
+        do {
+            switch SiriColorTable.payload(for: color) {
+            case .xy(let x, let y):
+                try await HueIntentAPIClient.setGroupedLightColor(
+                    id: glId, x: x, y: y, ip: creds.ip, token: creds.token
+                )
+            case .mirek(let mirek):
+                try await HueIntentAPIClient.setGroupedLightColorTemp(
+                    id: glId, mirek: mirek, ip: creds.ip, token: creds.token
+                )
+            }
+        } catch {
+            throw IntentError.bridgeUnreachable(group.name)
+        }
+        return .result(dialog: "\(group.name) is now \(color.spokenName).")
+    }
+}
+
 // MARK: - IntentError
 
 enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {

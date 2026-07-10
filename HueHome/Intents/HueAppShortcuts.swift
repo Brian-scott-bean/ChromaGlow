@@ -55,5 +55,17 @@ struct HueAppShortcuts: AppShortcutsProvider {
             shortTitle: "Set Brightness",
             systemImageName: "sun.max.fill"
         )
+
+        // ── 4. Set color (Siri prompts the room) ────────────────
+        AppShortcut(
+            intent: GroupColorIntent(),
+            phrases: [
+                "Make my lights \(\.$color) in \(.applicationName)",
+                "Set my lights to \(\.$color) in \(.applicationName)",
+                "Turn my lights \(\.$color) in \(.applicationName)",
+            ],
+            shortTitle: "Set Color",
+            systemImageName: "paintpalette.fill"
+        )
     }
 }
