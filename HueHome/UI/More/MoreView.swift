@@ -16,12 +16,6 @@ struct MoreView: View {
     @State private var showDevices       = false
     @State private var showEntertainmentAreas = false
     @State private var showShareInvite   = false
-    #if DEBUG
-    // TEMPORARY (Family Sharing Phase 2): dev-only entry so the two-phone
-    // mint→scan flow is testable before ProfilesAccessView lands (Phase 3
-    // wires "Generate Invite" per profile and this row disappears).
-    @State private var devMintSpec: GuestInviteSpec?
-    #endif
 
     // ── Accent colors (from design token system) ────────────
     private let purple = Color(hex: "#8C59FF")  // no token yet
@@ -55,11 +49,6 @@ struct MoreView: View {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
         }
         .sheet(isPresented: $showShareInvite) { ShareInviteSheet() }
-        #if DEBUG
-        .sheet(item: $devMintSpec) { spec in
-            GuestInviteMintSheet(spec: spec, onMinted: { _ in })
-        }
-        #endif
         // Round-2 Item 4: the ONLY other builder entry point (Studio's prompt)
         // is conditional on a spatial motion pattern + no existing area, and
         // the old Sync tab was removed in v0.15.0 — this is the app's
@@ -128,28 +117,16 @@ struct MoreView: View {
 
     private var peopleSection: some View {
         moreGroup(header: "PEOPLE") {
-            moreRow(icon: "person.2.fill", iconColor: HuePalette.amber,
-                    title: "Profiles & Access",
-                    subtitle: "Family and guest room control",
-                    badge: "Coming Soon") { }
+            NavigationLink(destination: ProfilesAccessView()) {
+                moreRowContent(icon: "person.2.fill", iconColor: HuePalette.amber,
+                               title: "Profiles & Access",
+                               subtitle: "Family and guest room control")
+            }
+            .buttonStyle(.plain)
             moreDivider
             moreRow(icon: "qrcode", iconColor: HuePalette.amber,
                     title: "Share Invite",
                     subtitle: "Grant access via QR code") { showShareInvite = true }
-            #if DEBUG
-            moreDivider
-            moreRow(icon: "hammer.fill", iconColor: HuePalette.amber,
-                    title: "Mint Guest Invite (dev)",
-                    subtitle: "All rooms, all features — Phase 3 replaces this") {
-                devMintSpec = GuestInviteSpec(
-                    profileID: "dev-guest-profile",
-                    profileName: "Guest",
-                    allowedGroupIDs: (orchestrator.allRooms + orchestrator.allZones).map(\.id),
-                    features: GuestFeature.all,
-                    isRevoked: false
-                )
-            }
-            #endif
         }
     }
 
