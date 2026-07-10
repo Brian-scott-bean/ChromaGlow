@@ -180,7 +180,16 @@ final class CompositionStore: @unchecked Sendable {
                 print("[CompositionStore] ⚠ \(wrapped.count - good.count) preset(s) failed to decode — keeping \(good.count), backing up the original file")
                 backUpCompositionsFile(fileURL)
             }
-            return (good.isEmpty ? builtInPresets : good, false)
+            guard !good.isEmpty else { return (builtInPresets, false) }
+
+            // The seed is create-only, so presets shipped after this file was
+            // written would never arrive. Reconcile in memory on every load —
+            // no new write path, nothing to race the seed (see BuiltInSeedMigrator).
+            let migration = BuiltInSeedMigrator.migrate(stored: good, builtIns: builtInPresets)
+            if migration.didChange {
+                print("[CompositionStore] Built-ins reconciled — added \(migration.added.count), refreshed \(migration.refreshed.count)")
+            }
+            return (migration.presets, false)
         } catch {
             // The file is not a decodable array at all. Preserve the bytes in a
             // timestamped .bak, run in-memory on defaults, and DO NOT persist —
