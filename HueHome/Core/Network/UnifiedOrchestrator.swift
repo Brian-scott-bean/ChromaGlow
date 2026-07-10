@@ -3272,6 +3272,38 @@ final class UnifiedOrchestrator {
         print("[Handoff] Studio teardown complete")
     }
 
+    /// Room-scoped teardown for ONE app-driven Studio effect (strobe, party,
+    /// …). App-driven effects are single-slot — `StudioViewModel.apply` stops
+    /// any other room's app-driven effect before starting, so the active loop
+    /// always belongs to the stopping room. The global `stopStudioMode()`
+    /// (kept verbatim for forgetAllBridges) additionally cancels EVERY room's
+    /// composition tasks, drops all entertainment configs, and wipes the whole
+    /// Now-Playing registry — which silently killed other rooms' running
+    /// compositions when one strobe was stopped. This variant touches only
+    /// the app-driven loop and its bridge's entertainment session, and only
+    /// when no composition owns that session.
+    func stopAppDrivenStudioEffect(roomID: String, bridgeID: String?) async {
+        print("[Handoff] App-driven stop requested for roomID=\(roomID)")
+        activeStudioTask?.cancel()
+        activeStudioTask = nil
+        studioGeneration += 1
+        await studioRestSender.clear()
+        // Small barrier so bridge transition buffers drain before a new owner starts.
+        try? await Task.sleep(for: .milliseconds(150))
+        activeParamBox = nil
+        // The loop may hold a DTLS session on its room's bridge. Stop it ONLY
+        // if no composition owns that bridge's session — an app-driven effect
+        // that fell back to REST can coexist with a composition streaming on
+        // the same bridge, and that stream must survive this stop.
+        if let bid = bridgeID,
+           compositionEntRoomByBridge[bid] == nil,
+           let entClient = studioEntClients[bid] {
+            await entClient.stopSession()
+            studioEntClients.removeValue(forKey: bid)
+        }
+        print("[Handoff] App-driven teardown complete for roomID=\(roomID)")
+    }
+
     // MARK: - Entertainment Setup Helpers
 
     /// Try to open an entertainment DTLS session for the given room.

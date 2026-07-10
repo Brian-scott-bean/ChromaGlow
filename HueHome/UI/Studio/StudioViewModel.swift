@@ -1344,7 +1344,10 @@ final class StudioViewModel {
             }
 
         case .appDriven:
-            await orchestrator.stopStudioMode()
+            // Room-scoped: the global stopStudioMode() tore down every other
+            // room's composition stream and the whole Now-Playing registry.
+            await orchestrator.stopAppDrivenStudioEffect(roomID: roomID,
+                                                         bridgeID: effect.room.bridgeID)
             try? await Task.sleep(for: .milliseconds(200))
 
         case .composition:

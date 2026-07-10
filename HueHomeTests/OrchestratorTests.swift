@@ -414,6 +414,24 @@ final class OrchestratorTests: XCTestCase {
         XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
     }
 
+    func testStopAppDrivenStudioEffect_leavesOtherRoomsAlone() async {
+        // Room B runs a composition (REST transport) with a Now-Playing entry;
+        // stopping Room A's app-driven effect must not touch either.
+        orchestrator.addActiveEffect(makeEntry(id: "room-A", name: "Strobe"))
+        orchestrator.addActiveEffect(makeEntry(id: "room-B", name: "Ocean Waves"))
+        orchestrator.compositionTransportByRoom["room-B"] = .rest
+
+        await orchestrator.stopAppDrivenStudioEffect(roomID: "room-A", bridgeID: nil)
+        // The entry removal for the stopping room happens in StudioViewModel's
+        // stopEffect chokepoint, mirrored here:
+        orchestrator.removeActiveEffect(roomID: "room-A")
+
+        XCTAssertEqual(orchestrator.activeEffectEntries.map(\.id), ["room-B"],
+                       "Scoped stop must not wipe the Now-Playing registry")
+        XCTAssertEqual(orchestrator.compositionTransportByRoom["room-B"], .rest,
+                       "Scoped stop must not clear another room's transport truth")
+    }
+
     // MARK: - Widget scene publish selection (launch-clobber guard)
 
     func testScenesForPublish_beforeFirstLoad_preservesStoredSnapshot() {
