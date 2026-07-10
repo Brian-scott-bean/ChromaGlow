@@ -30,23 +30,9 @@ enum DiscoveryPhase: Equatable {
     }
 }
 
-// MARK: - Hue Pairing Response Models
-
-private struct PairingResponse: Decodable {
-    let success: PairingSuccess?
-    let error: PairingErr?
-}
-
-private struct PairingSuccess: Decodable {
-    let username: String
-    let clientkey: String?
-}
-
-private struct PairingErr: Decodable {
-    let type: Int
-    let address: String
-    let description: String
-}
+// The Hue pairing response models and the identity-gated POST itself moved to
+// Core/Network/ApplicationKeyMinter.swift (Family Sharing Phase 2) so the
+// normal pairing flow and owner-side guest-key minting share one audited path.
 
 // MARK: - NUPnP Cloud Discovery Response
 
@@ -330,236 +316,77 @@ final class BridgeDiscoveryViewModel {
     }
 
     private func performPairingRequest(bridge: BridgeEndpoint) async {
-        // Newer bridges use HTTPS on port 443; older use HTTP on port 80.
-        let scheme = bridge.port == 443 ? "https" : "http"
-        guard let url = URL(string: "\(scheme)://\(bridge.host):\(bridge.port)/api") else {
-            handleError("Invalid bridge URL for host: \(bridge.host)")
-            return
-        }
+        // The identity-gated POST lives in ApplicationKeyMinter (shared with
+        // owner-side guest-key minting, Phase 2). The minter emits the exact
+        // log lines this flow always produced; the VM keeps what makes the
+        // flow a *pairing*: phase transitions, Keychain persistence, and the
+        // StartupTimeline mark.
+        let minter = ApplicationKeyMinter(
+            appendLog: { [weak self] in self?.appendLog($0) },
+            log: log
+        )
+        minter.sessionOverride = pairingSessionOverride
+        minter.pinAcquisitionOverride = pinAcquisitionOverride
 
-        var request = URLRequest(url: url, timeoutInterval: 10)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let result = await minter.mint(
+            endpoint: bridge,
+            devicetype: AppBrand.hueDeviceType,
+            generateClientKey: true,       // Needed for Entertainment API (Epic 4)
+            expectedIdentity: expectedIdentity
+        )
 
-        let body: [String: Any] = [
-            "devicetype": AppBrand.hueDeviceType,
-            "generateclientkey": true       // Needed for Entertainment API (Epic 4)
-        ]
+        switch result {
+        case .success(let minted):
+            pairedCanonicalBridgeID = minted.canonicalBridgeID
 
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        } catch {
-            handleError("JSON encode failure: \(error.localizedDescription)")
-            return
-        }
-
-        appendLog("📤 POST \(url.absoluteString)")
-        appendLog("   Body: \(String(data: request.httpBody!, encoding: .utf8) ?? "")")
-
-        // For HTTPS, use a TOFU-capture session that validates the bridge leaf
-        // (chain evaluation + 16-hex bridgeid CN) and records it for pinning
-        // (H-02/D-016). For legacy HTTP pairing the POST goes over .shared and
-        // the pin is acquired over HTTPS in verifyBridgeIdentityAndPin.
-        let session: URLSession
-        var trustDelegate: BridgePairingTrustDelegate?
-        var ownsSession = false
-        if let override = pairingSessionOverride {
-            session = override
-        } else if bridge.port == 443 {
-            let delegate = BridgePairingTrustDelegate()
-            trustDelegate = delegate
-            session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-            ownsSession = true
-            appendLog("🔐 HTTPS mode — pinned bridge trust (TOFU capture) enabled.")
-        } else {
-            session = .shared
-        }
-        // L-18: sessions created per pairing attempt must be invalidated or
-        // each retry permanently leaks a session + delegate.
-        defer { if ownsSession { session.finishTasksAndInvalidate() } }
-
-        do {
-            let (data, response) = try await session.data(for: request)
-
-            // Log raw HTTP status
-            if let http = response as? HTTPURLResponse {
-                appendLog("📥 HTTP \(http.statusCode) from Bridge.")
-                log.info("Pairing: HTTP \(http.statusCode, privacy: .public).")
-            }
-
-            // H-04: never log the raw pairing response — on success it contains
-            // the application key AND the entertainment client key verbatim.
-            appendLog("📥 Response received (\(data.count) bytes).")
-            log.info("Pairing: response received (\(data.count, privacy: .public) bytes).")
-
-            // Decode array response
-            let responses = try JSONDecoder().decode([PairingResponse].self, from: data)
-
-            guard let first = responses.first else {
-                handleError("Empty response array from Bridge.")
-                return
-            }
-
-            // Check for Bridge-level error (e.g. button not pressed)
-            if let err = first.error {
-                let desc: String
-                switch err.type {
-                case 101: desc = "Link button not pressed. Press the button on your Bridge, then tap Pair again."
-                case 7:   desc = "Invalid value in body — check devicetype string."
-                default:  desc = "Bridge error \(err.type): \(err.description)"
-                }
-                appendLog("⚠️  \(desc)")
-                log.warning("Pairing: Bridge error \(err.type): \(err.description).")
-                // Return to bridgeFound so user can retry
-                phase = .bridgeFound(bridge)
-                return
-            }
-
-            // Success path
-            if let success = first.success {
-                let token = success.username
-                let clientKey = success.clientkey ?? ""
-
-                // H-04: log only non-secret metadata — never the key material.
-                appendLog("✅ Paired! Application key received (\(token.count) chars).")
-                if !clientKey.isEmpty {
-                    appendLog("🔑 Entertainment client key received (\(clientKey.count) chars).")
-                }
-                log.info("Pairing: Success. Token length: \(token.count).")
-
-                // H-02/D-016: bind this pairing to the bridge's cryptographic
-                // identity BEFORE persisting anything. On failure, nothing is
-                // stored and the pairing is aborted.
-                guard await verifyBridgeIdentityAndPin(
-                    bridge: bridge,
-                    session: session,
-                    capture: trustDelegate?.capture
-                ) else {
-                    handleError("Could not verify this bridge's secure identity. Make sure you are on the same network as the bridge, then try pairing again.")
-                    return
-                }
-
-                // Invite flow only: the just-verified live identity must match
-                // the invite's expectation. Nothing has persisted app-side yet,
-                // so refusing here leaves no trace to clean up.
-                if let expected = expectedIdentity {
-                    let canonical = pairedCanonicalBridgeID ?? ""
-                    let livePin = BridgePinStore.shared
-                        .pin(forBridgeID: canonical)?.publicKeySHA256
-                    guard canonical == expected.bridgeID.uppercased(),
-                          livePin == expected.publicKeySHA256 else {
-                        appendLog("⛔️ Invite identity mismatch — refusing pairing.")
-                        handleError("This bridge doesn't match the invite. Make sure you're on the inviter's Wi-Fi and scanning their current QR, then try again.")
-                        return
-                    }
-                    appendLog("🪪 Invite identity confirmed — bridge matches the QR.")
-                }
-
-                // L-15: persist straight to per-bridge NAMESPACED Keychain
-                // slots keyed by a freshly minted BridgeRecord id. The legacy
-                // single-bridge slots (hue_api_token/hue_bridge_ip) are never
-                // written here anymore — a second pairing in the same session
-                // used to overwrite them and silently drop the first bridge's
-                // credentials on relaunch.
-                let recordID = UUID().uuidString
-                do {
-                    try KeychainManager.shared.saveCredentials(
-                        ip: bridge.host,
-                        token: token,
-                        clientKey: clientKey.isEmpty ? nil : clientKey,
-                        for: recordID
-                    )
-                } catch {
-                    handleError("Could not save the bridge credentials to the Keychain: \(error.localizedDescription)")
-                    return
-                }
-                pairedRecordID = recordID
-
-                appendLog("💾 Credentials saved to per-bridge Keychain slots.")
-                StartupTimeline.mark("pairing.success", bridge.host)
-                phase = .paired(ip: bridge.host, token: token)
-
-            } else {
-                handleError("Unexpected response structure — no success or error block.")
-            }
-
-        } catch let decodeError as DecodingError {
-            appendLog("❌ JSON decode error: \(decodeError)")
-            log.error("Pairing: Decode error — \(String(describing: decodeError)).")
-            handleError("Response decode failed. Check console for details.")
-        } catch {
-            appendLog("❌ Network error: \(error.localizedDescription)")
-            log.error("Pairing: Network error — \(error.localizedDescription).")
-            handleError(error.localizedDescription)
-        }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Bridge Identity Verification (D-016)
-    // ──────────────────────────────────────────────
-
-    /// Fetches `/api/0/config`, requires `bridgeid` == the captured leaf CN,
-    /// then pins the leaf. For HTTPS pairing the config GET rides the SAME
-    /// session, so BridgePairingTrustDelegate enforces same-leaf continuity
-    /// across both legs (mirrors Android D-014). For legacy HTTP pairing
-    /// (no TLS handshake, no capture) a fresh TOFU session acquires the pin —
-    /// the data plane is HTTPS-only, so a bridge without a valid HTTPS
-    /// identity cannot be used and pairing fails closed.
-    private func verifyBridgeIdentityAndPin(
-        bridge: BridgeEndpoint,
-        session: URLSession,
-        capture: PairingLeafCapture?
-    ) async -> Bool {
-        if let override = pinAcquisitionOverride {
-            return await override(bridge)
-        }
-        guard let capture else {
-            appendLog("🔒 Acquiring HTTPS identity pin for legacy-paired bridge…")
-            let pinned = await BridgePinAcquirer.acquirePin(host: bridge.host)
-            if !pinned {
-                appendLog("❌ Bridge does not present a valid HTTPS identity — cannot pair securely.")
-            } else {
-                // L-17: the acquired pin records the canonical bridgeid for
-                // this host — recover it so the record dedup can use it.
-                pairedCanonicalBridgeID = BridgePinStore.shared.loadPins()
-                    .first { $0.host == bridge.host }?.bridgeID
-            }
-            return pinned
-        }
-        guard let url = URL(string: "https://\(bridge.host)/api/0/config") else { return false }
-        // A transient hiccup here would otherwise discard a just-issued
-        // application key and force another link-button press — retry the
-        // cheap unauthenticated config GET a couple of times first.
-        var configBridgeID: String?
-        for attempt in 1...3 {
+            // L-15: persist straight to per-bridge NAMESPACED Keychain
+            // slots keyed by a freshly minted BridgeRecord id. The legacy
+            // single-bridge slots (hue_api_token/hue_bridge_ip) are never
+            // written here anymore — a second pairing in the same session
+            // used to overwrite them and silently drop the first bridge's
+            // credentials on relaunch.
+            let recordID = UUID().uuidString
             do {
-                let (data, _) = try await session.data(from: url)
-                guard let parsed = BridgeTrust.bridgeID(fromConfigResponse: data) else {
-                    appendLog("❌ Bridge config did not return a valid bridgeid.")
-                    return false
-                }
-                configBridgeID = parsed
-                break
+                try KeychainManager.shared.saveCredentials(
+                    ip: bridge.host,
+                    token: minted.token,
+                    clientKey: minted.clientKey,
+                    for: recordID
+                )
             } catch {
-                appendLog("⚠️ Bridge config fetch attempt \(attempt)/3 failed: \(error.localizedDescription)")
-                if attempt < 3 { try? await Task.sleep(nanoseconds: 700_000_000) }
+                handleError("Could not save the bridge credentials to the Keychain: \(error.localizedDescription)")
+                return
+            }
+            pairedRecordID = recordID
+
+            appendLog("💾 Credentials saved to per-bridge Keychain slots.")
+            StartupTimeline.mark("pairing.success", bridge.host)
+            phase = .paired(ip: bridge.host, token: minted.token)
+
+        case .failure(let error):
+            switch error {
+            case .bridgeRefused:
+                // Warning already logged by the minter — return to bridgeFound
+                // so the user can retry after pressing the link button.
+                phase = .bridgeFound(bridge)
+            case .invalidURL(let host):
+                handleError("Invalid bridge URL for host: \(host)")
+            case .bodyEncodeFailed(let message):
+                handleError("JSON encode failure: \(message)")
+            case .emptyResponse:
+                handleError("Empty response array from Bridge.")
+            case .unexpectedResponse:
+                handleError("Unexpected response structure — no success or error block.")
+            case .identityVerificationFailed:
+                handleError("Could not verify this bridge's secure identity. Make sure you are on the same network as the bridge, then try pairing again.")
+            case .expectedIdentityMismatch:
+                handleError("This bridge doesn't match the invite. Make sure you're on the inviter's Wi-Fi and scanning their current QR, then try again.")
+            case .decodeFailed:
+                handleError("Response decode failed. Check console for details.")
+            case .network(let message):
+                handleError(message)
             }
         }
-        guard let configBridgeID else {
-            appendLog("❌ Could not verify bridge identity — config fetch failed.")
-            return false
-        }
-        // Interactive pairing: the user just pressed the physical link button,
-        // so a self-signed legacy bridge may be pinned here (unattended: false).
-        guard BridgePinAcquirer.validateAndPersist(
-            capture: capture, configBridgeID: configBridgeID, host: bridge.host, unattended: false
-        ) else {
-            appendLog("❌ Bridge identity check failed — certificate does not match this bridge's known identity. If you replaced or factory-reset the bridge, remove it in Settings first, then pair again.")
-            return false
-        }
-        appendLog("🔒 Bridge TLS identity verified and pinned (\(configBridgeID)).")
-        pairedCanonicalBridgeID = configBridgeID
-        return true
     }
 
     // ──────────────────────────────────────────────

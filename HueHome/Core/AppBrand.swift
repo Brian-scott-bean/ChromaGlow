@@ -22,6 +22,15 @@ enum AppBrand {
     /// Format: "<appname>#<platform>" — Bridge stores this as the app identity.
     static let hueDeviceType = "chromaglow#ios"
 
+    /// The devicetype for a per-guest minted key (Family Sharing Phase 2).
+    /// Format: "chromaglow#g-<slug>-<4hex>" — the device segment must stay
+    /// ≤ 19 chars (Hue's limit); ApplicationKeyMinter.guestDeviceSegment
+    /// guarantees that. Distinct per profile so the bridge whitelist shows
+    /// who each key belongs to.
+    static func guestHueDeviceType(deviceSegment: String) -> String {
+        "chromaglow#\(deviceSegment)"
+    }
+
     // ── Internal (never change unless absolutely necessary) ──
     /// Bundle ID — changing this requires new provisioning profiles + App Store Connect entry.
     /// static let bundleID = "com.lightshade.app"  // reference only — set in Xcode target, not here
