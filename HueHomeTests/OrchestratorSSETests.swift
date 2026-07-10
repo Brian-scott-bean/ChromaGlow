@@ -283,6 +283,48 @@ final class OrchestratorSSETests: XCTestCase {
         )
     }
 
+    // MARK: - SSE-04 scene recall status (R5 live-update fix)
+
+    /// Scene events flip ACTIVE badges live — recalls from the official Hue
+    /// app or a wall switch used to leave stale badges until a manual reload.
+    func testSceneSSE_updatesActiveStateAndDeactivatesRoomMates() throws {
+        let orchestrator = makeOrchestratorSSESUT()
+        orchestrator.globalScenes = [
+            GlobalSceneItem(id: "b1#s1", bridgeSceneID: "s1", name: "Relax",
+                            roomID: "room-001", bridgeID: "bridge-1",
+                            isActive: true, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "b1#s2", bridgeSceneID: "s2", name: "Energize",
+                            roomID: "room-001", bridgeID: "bridge-1",
+                            isActive: false, isDynamic: false, speed: 0.5),
+        ]
+
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"s2","id_v1":null,"type":"scene",
+          "status":{"active":"static"},"owner":null
+        }],"id":"evt-9","type":"update"}]
+        """
+        _ = orchestrator.testApplySSEEventsAndRebuild(try decodeSSEEvents(json), bridgeID: "bridge-1")
+
+        XCTAssertTrue(orchestrator.globalScenes.first { $0.bridgeSceneID == "s2" }!.isActive)
+        XCTAssertFalse(orchestrator.globalScenes.first { $0.bridgeSceneID == "s1" }!.isActive,
+                       "room-mate must deactivate — one active scene per group")
+    }
+
+    /// Foreign "status" shapes (zigbee_connectivity sends a plain string)
+    /// must not break batch decoding.
+    func testSSEDecoder_toleratesStringStatusFromOtherResourceTypes() throws {
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[
+          {"id":"conn-1","id_v1":null,"type":"zigbee_connectivity","status":"connected","owner":null},
+          {"id":"gl-001","id_v1":null,"type":"grouped_light","on":{"on":false},"owner":null}
+        ],"id":"evt-10","type":"update"}]
+        """
+        let events = try decodeSSEEvents(json)
+        XCTAssertEqual(events.first?.data.count, 2)
+        XCTAssertNil(events.first?.data.first?.status?.active)
+    }
+
     private func decodeSSEEvents(_ json: String) throws -> [SSEEvent] {
         let data = try XCTUnwrap(json.data(using: .utf8))
         return try UnifiedOrchestrator.sseDecoder.decode(

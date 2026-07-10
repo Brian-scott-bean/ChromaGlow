@@ -27,23 +27,43 @@ struct SSEEnvelope: Decodable {
 /// Partial — only fields relevant to UI state are decoded; extras are silently ignored.
 struct SSEResourceUpdate: Decodable {
     let id: String                 // V2 resource UUID
-    let type: String               // "light" | "grouped_light" | "button" | "relative_rotary" | …
+    let type: String               // "light" | "grouped_light" | "scene" | "button" | …
     let on: SSEOnState?
     let dimming: SSEDimmingState?
     let color: SSEColorState?
     let colorTemp: SSEColorTempState?
+    // Scene recall status ("inactive" | "static" | "dynamic_palette") —
+    // additive (R5 live-update fix); firmware that omits it decodes to nil.
+    let status: SSESceneStatus?
     // Round 3 (G): physical-input events (Tap Dial, dimmer switches).
     let button: SSEButtonState?
     let relativeRotary: SSERotaryState?
 
     enum CodingKeys: String, CodingKey {
-        case id, type, on, dimming, color, button
+        case id, type, on, dimming, color, button, status
         case colorTemp = "color_temperature"
         case relativeRotary = "relative_rotary"
     }
 }
 
 struct SSEOnState: Decodable { let on: Bool }
+
+/// Scene recall status. Other resource types (zigbee_connectivity, …) reuse
+/// the "status" key as a plain STRING — a strict object decode would throw
+/// and drop the entire event batch, so this init tolerates any shape.
+struct SSESceneStatus: Decodable {
+    let active: String?   // "inactive" | "static" | "dynamic_palette"
+
+    private enum CodingKeys: String, CodingKey { case active }
+
+    init(from decoder: Decoder) throws {
+        if let container = try? decoder.container(keyedBy: CodingKeys.self) {
+            active = (try? container.decodeIfPresent(String.self, forKey: .active)) ?? nil
+        } else {
+            active = nil
+        }
+    }
+}
 struct SSEDimmingState: Decodable { let brightness: Double }
 struct SSEColorState: Decodable { let xy: SSECIExy }
 struct SSECIExy: Decodable { let x: Double; let y: Double }

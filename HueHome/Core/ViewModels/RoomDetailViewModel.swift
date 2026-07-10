@@ -915,6 +915,23 @@ final class RoomDetailViewModel {
             recomputeRoomAggregate()
         }
 
+        // Scene recall status → chip active states (never SSE-driven before:
+        // a recall from the Hue app or a switch left the chips stale).
+        var sceneArr = scenes
+        var scenesChanged = false
+        for update in updates where update.type == "scene" {
+            guard let active = update.status?.active,
+                  let idx = sceneArr.firstIndex(where: { $0.id == update.id }) else { continue }
+            let isActive = active != "inactive"
+            guard sceneArr[idx].isActive != isActive else { continue }
+            sceneArr[idx].isActive = isActive
+            if isActive {
+                for i in sceneArr.indices where i != idx { sceneArr[i].isActive = false }
+            }
+            scenesChanged = true
+        }
+        if scenesChanged { scenes = sceneArr }
+
         // grouped_light events for OUR group also refine the bar (grouped
         // writes from other apps, bridge-side scene recalls). The handler
         // used to filter these out entirely.

@@ -1514,6 +1514,31 @@ final class UnifiedOrchestrator {
                         steps: rotation.steps ?? 0,
                         now: CACurrentMediaTime()))
 
+            // ── scene (recall status — activation from ANY app/switch) ─────────
+            case "scene":
+                // Scene active state used to refresh only on loadAllScenes() +
+                // the optimistic tap; recalls from the official Hue app or a
+                // wall switch left stale ACTIVE badges until a manual refresh.
+                guard let active = update.status?.active else { continue }
+                if let idx = globalScenes.firstIndex(where: {
+                    $0.bridgeSceneID == update.id && $0.bridgeID == bridgeID
+                }) {
+                    let isActive = active != "inactive"
+                    guard globalScenes[idx].isActive != isActive else { continue }
+                    var scenes = globalScenes
+                    scenes[idx].isActive = isActive
+                    if isActive {
+                        // One active scene per group — mirror the optimistic
+                        // tap's room-mate deactivation.
+                        let roomID = scenes[idx].roomID
+                        for i in scenes.indices
+                        where i != idx && scenes[i].roomID == roomID && scenes[i].bridgeID == bridgeID {
+                            scenes[i].isActive = false
+                        }
+                    }
+                    globalScenes = scenes
+                }
+
             // ── grouped_light ──────────────────────────────────────────────────
             case "grouped_light":
                 if var rooms = roomsByBridge[bridgeID],
