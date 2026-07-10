@@ -243,10 +243,11 @@ final class UnifiedOrchestrator {
     // ── Active Effects (Now Playing) ─────────────────────────────────────────
     // Each room/zone can have an independently applied effect.
     // DashboardView reads this to build the Now Playing bar and per-room stop menu.
-    // The retired Effects surface wrote via the add/remove helpers below;
-    // orphaned readers (Now-Playing bar, Tap-Dial punchBurst) tracked in DEVLOG.
+    // StudioViewModel is the writer (it mirrors runningEffects here); stops from
+    // non-Studio surfaces route through requestNowPlayingStop so the owning
+    // engine loop is torn down with the entry, never just the entry alone.
 
-    /// All rooms that currently have an effect applied.
+    /// All rooms that currently have an effect applied. Most recent last.
     var activeEffectEntries: [ActiveEffectEntry] = []
 
     // Convenience computed properties kept for backward compatibility.
@@ -270,6 +271,22 @@ final class UnifiedOrchestrator {
     /// Removes all active effect entries (Stop All).
     func removeAllActiveEffects() {
         activeEffectEntries.removeAll()
+    }
+
+    /// Studio owns effect teardown (per-light no_effect cleanup, engine loops,
+    /// mailbox clears, settle delays) — a bare grouped-light PUT from another
+    /// surface would leave the loop running underneath. @ObservationIgnored:
+    /// installed once from StudioViewModel.configure, never read by views.
+    @ObservationIgnored var studioStopHandler: (@MainActor (String) async -> Void)?
+
+    /// Stop an effect from a non-Studio surface (Dashboard Now-Playing bar).
+    func requestNowPlayingStop(roomID: String) async {
+        if let studioStopHandler {
+            await studioStopHandler(roomID)
+        } else {
+            // Defensive: the handler exists whenever Studio started anything.
+            removeActiveEffect(roomID: roomID)
+        }
     }
 
     // MARK: - Internal
@@ -1460,8 +1477,8 @@ final class UnifiedOrchestrator {
             guard clock.bpm > 0 else { return }
             clock.setBPM(clock.bpm + delta)   // pins — exactly what a twist means
         case .punchBurst(let slot):
-            // Punch the room that's currently playing; idle app = no-op.
-            guard let entry = activeEffectEntries.first,
+            // Punch the most recently started room; idle app = no-op.
+            guard let entry = activeEffectEntries.last,
                   let room = allRooms.first(where: { $0.id == entry.id })
             else { return }
             // Fixed two-color pairs per pad slot (amber/white, red/blue, green/magenta).

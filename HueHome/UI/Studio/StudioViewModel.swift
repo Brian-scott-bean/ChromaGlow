@@ -583,10 +583,38 @@ final class StudioViewModel {
 
     func configure(orchestrator: UnifiedOrchestrator) {
         self.orchestrator = orchestrator
+        orchestrator.studioStopHandler = { [weak self] roomID in
+            await self?.stopFromNowPlaying(roomID: roomID)
+        }
         if selectedRoom == nil, let first = orchestrator.allRooms.first {
             selectedRoom = first
         }
         restoreLastUsedParams()
+    }
+
+    /// Mirror a running effect into the orchestrator's shared now-playing
+    /// registry (Dashboard bar, Tap-Dial punch target).
+    private func publishNowPlaying(room: RoomDisplayItem, card: StudioCard) {
+        orchestrator?.addActiveEffect(ActiveEffectEntry(
+            id: room.id,
+            roomName: room.name,
+            groupedLightID: room.groupedLightID,
+            effectID: card.id,
+            effectName: card.name,
+            effectIcon: card.icon,
+            isAppDriven: card.requiresForeground && card.compositionTier != .bridgeOptimized
+        ))
+    }
+
+    /// Stop routed from a non-Studio surface (Dashboard Now-Playing bar).
+    /// Explicit-stop semantics: same as the tray's Stop button, room goes off.
+    func stopFromNowPlaying(roomID: String) async {
+        isExplicitStop = true
+        await stopEffect(on: roomID)
+        // stopEffect's guard can bail (stale entry, missing grouped light) —
+        // the bar entry must still clear or Stop appears to do nothing.
+        orchestrator?.removeActiveEffect(roomID: roomID)
+        statusMessage = ""
     }
 
     /// Restore per-card last-used params (clamped by the store). Values set
@@ -1129,6 +1157,7 @@ final class StudioViewModel {
                 requestedTransport: nil, transportFallback: false,
                 v2CapableLightIDs: v2Capable
             )
+            publishNowPlaying(room: room, card: card)
             // Partial coverage is not a failure, but the user should hear it
             // from the status line rather than infer it from a badge.
             if let coverage, !coverage.isFull {
@@ -1160,6 +1189,7 @@ final class StudioViewModel {
                 lightIDs: newLightIDs, isEntertainment: isEnt,
                 requestedTransport: nil, transportFallback: false
             )
+            publishNowPlaying(room: room, card: card)
             let transport = isEnt ? "ENTERTAINMENT" : "REST"
             statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)]"
 
@@ -1247,6 +1277,7 @@ final class StudioViewModel {
                     requestedTransport: requestedTransport,
                     transportFallback: requestedTransport == .entertainmentArea && !isEnt
                 )
+                publishNowPlaying(room: room, card: card)
                 let transport = isEnt ? "ENTERTAINMENT" : "REST"
                 statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)]"
                 if requestedTransport == .entertainmentArea && !isEnt {
@@ -1260,6 +1291,7 @@ final class StudioViewModel {
                 lightIDs: newLightIDs, isEntertainment: false,
                 requestedTransport: nil, transportFallback: false
             )
+            publishNowPlaying(room: room, card: card)
             statusMessage = "🟢 \(card.name) → \(room.name) [REST_ONE_SHOT]"
         }
 
@@ -1309,6 +1341,7 @@ final class StudioViewModel {
         }
 
         runningEffects.removeValue(forKey: roomID)
+        orchestrator.removeActiveEffect(roomID: roomID)
     }
 
     /// Public stop — called from the card grid (tap running card to toggle off)
@@ -1791,15 +1824,17 @@ final class StudioViewModel {
         }
         for roomID in roomIDs {
             guard let effect = runningEffects[roomID] else { continue }
+            let freshCard = studioCard(for: fresh)
             runningEffects[roomID] = RunningEffect(
                 cardID: effect.cardID,
-                card: studioCard(for: fresh),
+                card: freshCard,
                 room: effect.room,
                 lightIDs: effect.lightIDs,
                 isEntertainment: effect.isEntertainment,
                 requestedTransport: effect.requestedTransport,
                 transportFallback: effect.transportFallback
             )
+            publishNowPlaying(room: effect.room, card: freshCard)
         }
     }
 

@@ -345,6 +345,59 @@ final class OrchestratorTests: XCTestCase {
         XCTAssertTrue(orchestrator.isDemoMode)
     }
 
+    // MARK: - Active-effect registry (Now Playing)
+
+    private func makeEntry(id: String, name: String = "Candle", appDriven: Bool = false) -> ActiveEffectEntry {
+        ActiveEffectEntry(
+            id: id, roomName: "Room \(id)", groupedLightID: "gl-\(id)",
+            effectID: "card-\(name)", effectName: name, effectIcon: "flame.fill",
+            isAppDriven: appDriven
+        )
+    }
+
+    func testAddActiveEffect_replacesSameRoomAndKeepsMostRecentLast() {
+        orchestrator.addActiveEffect(makeEntry(id: "room-1", name: "Candle"))
+        orchestrator.addActiveEffect(makeEntry(id: "room-2", name: "Fire"))
+        orchestrator.addActiveEffect(makeEntry(id: "room-1", name: "Sparkle"))
+
+        XCTAssertEqual(orchestrator.activeEffectEntries.count, 2)
+        XCTAssertEqual(orchestrator.activeEffectEntries.last?.id, "room-1")
+        XCTAssertEqual(orchestrator.activeEffectEntries.last?.effectName, "Sparkle")
+        // Convenience props follow the most recent entry.
+        XCTAssertEqual(orchestrator.activeEffectName, "Sparkle")
+    }
+
+    func testRemoveActiveEffect_removesOnlyThatRoom() {
+        orchestrator.addActiveEffect(makeEntry(id: "room-1"))
+        orchestrator.addActiveEffect(makeEntry(id: "room-2"))
+        orchestrator.removeActiveEffect(roomID: "room-1")
+
+        XCTAssertEqual(orchestrator.activeEffectEntries.map(\.id), ["room-2"])
+    }
+
+    func testRequestNowPlayingStop_routesThroughInstalledHandler() async {
+        orchestrator.addActiveEffect(makeEntry(id: "room-1"))
+        var stopped: [String] = []
+        orchestrator.studioStopHandler = { [weak orchestrator] roomID in
+            stopped.append(roomID)
+            orchestrator?.removeActiveEffect(roomID: roomID)
+        }
+
+        await orchestrator.requestNowPlayingStop(roomID: "room-1")
+
+        XCTAssertEqual(stopped, ["room-1"])
+        XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
+    }
+
+    func testRequestNowPlayingStop_withoutHandler_stillClearsTheEntry() async {
+        orchestrator.addActiveEffect(makeEntry(id: "room-1"))
+        orchestrator.studioStopHandler = nil
+
+        await orchestrator.requestNowPlayingStop(roomID: "room-1")
+
+        XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeLocalRoom(id: String, name: String, isOn: Bool, bridgeID: String = "bridge-1") -> HueLocalRoom {

@@ -286,7 +286,7 @@ struct DashboardView: View {
 
     private var nowPlayingBar: some View {
         let entries = orchestrator.activeEffectEntries
-        let first   = entries.first
+        let primary = entries.last   // most recent — matches activeEffectName/Icon
 
         return HStack(spacing: 12) {
             // Pulsing indicator dot
@@ -299,18 +299,18 @@ struct DashboardView: View {
                         .frame(width: 16)
                 )
 
-            if let icon = first?.effectIcon {
+            if let icon = primary?.effectIcon {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.8))
             }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(first?.effectName ?? "")
+                Text(primary?.effectName ?? "")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                if let roomName = first?.roomName {
+                if let roomName = primary?.roomName {
                     Text(entries.count > 1
                          ? "\(roomName) · \(entries.count - 1) more room\(entries.count > 2 ? "s" : "")"
                          : roomName)
@@ -337,7 +337,7 @@ struct DashboardView: View {
                 if entries.count > 1 {
                     showEffectsMenu = true
                 } else {
-                    stopEffect(entries.first)
+                    stopEffect(entries.last)
                 }
             } label: {
                 HStack(spacing: 4) {
@@ -373,47 +373,21 @@ struct DashboardView: View {
         }
     }
 
-    /// H-05/M-18 class: resolve the client (and its pacing gate) from the
-    /// effect's ROOM, never the nondeterministic first bridge.
-    private func targetForRoom(id roomID: String) -> (api: HueAPIClient, gate: BridgeCommandGate)? {
-        let bridgeID = orchestrator.allRooms.first(where: { $0.id == roomID })?.bridgeID
-        guard let api = orchestrator.hueClient(for: bridgeID) else { return nil }
-        return (api, orchestrator.commandGate(for: bridgeID))
-    }
-
     private func stopEffect(_ entry: ActiveEffectEntry?) {
         guard let entry else { return }
         HapticManager.shared.medium()
         Task {
-            guard let target = targetForRoom(id: entry.id) else { return }
-            // Stop the native bridge effect for this room only
-            if let glID = entry.groupedLightID {
-                await target.gate.send { try await target.api.setGroupedLight(id: glID, on: true) }
-            }
-            await MainActor.run {
-                orchestrator.removeActiveEffect(roomID: entry.id)
-            }
+            // Studio owns the teardown (engine loops, per-light cleanup) —
+            // a bare grouped-light PUT here would leave the loop running.
+            await orchestrator.requestNowPlayingStop(roomID: entry.id)
         }
     }
 
     private func stopAllEffects() {
         HapticManager.shared.medium()
         Task {
-            let entries = orchestrator.activeEffectEntries
-            let targets = entries.compactMap { entry -> (api: HueAPIClient, gate: BridgeCommandGate, glID: String)? in
-                guard let glID = entry.groupedLightID,
-                      let target = targetForRoom(id: entry.id) else { return nil }
-                return (target.api, target.gate, glID)
-            }
-            await withTaskGroup(of: Void.self) { group in
-                for target in targets {
-                    group.addTask {
-                        await target.gate.send { try await target.api.setGroupedLight(id: target.glID, on: true) }
-                    }
-                }
-            }
-            await MainActor.run {
-                orchestrator.removeAllActiveEffects()
+            for entry in orchestrator.activeEffectEntries {
+                await orchestrator.requestNowPlayingStop(roomID: entry.id)
             }
         }
     }
