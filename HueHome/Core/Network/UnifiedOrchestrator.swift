@@ -111,6 +111,11 @@ final class UnifiedOrchestrator {
     /// All state changes work locally; no network calls are made.
     var isDemoMode: Bool = false
 
+    /// Family Sharing: guest-state summary for the UI shell (banner, tab
+    /// gating). Recomputed whenever grants or clients change — views observe
+    /// this instead of running their own @Query over GuestAccessGrant.
+    private(set) var guestAccessInfo = GuestAccessInfo.none
+
     // ── All Day Scenes (Circadian / Solar) ────────────────────────────────────
     //
     // Goal: "All day" lighting without requiring continuous location access.
@@ -331,6 +336,14 @@ final class UnifiedOrchestrator {
 
     /// Zones per bridge — parallel to roomsByBridge.
     private var zonesByBridge: [String: [RoomDisplayItem]] = [:]
+
+    /// Family Sharing: guest-access grants keyed by BridgeRecord.id — value
+    /// snapshots loaded from SwiftData (never @Model objects). Applied by
+    /// applyGuestAccessFilter() inside the rebuilds; UI shells read the
+    /// derived guestAccessInfo instead.
+    /// @ObservationIgnored: infrastructure, no view reads the dictionary.
+    @ObservationIgnored
+    private var guestGrantsByBridge: [String: GuestGrantSnapshot] = [:]
 
     /// Raw lights per bridge — cached from the same fetch `loadAll` already runs so
     /// RoomDetail can render instantly instead of blocking on a fresh `fetchLights()`.
@@ -607,6 +620,10 @@ final class UnifiedOrchestrator {
         where !liveBridgeIDs.contains(staleID) && !bridges.contains(where: { $0.id == staleID }) {
             connectionStatus.removeValue(forKey: staleID)
         }
+        // Family Sharing: snapshot grants BEFORE the rebuilds below, so the
+        // first rebuild of the session is already filtered — a guest device
+        // must never flash forbidden rooms.
+        loadGuestGrants(from: modelContext)
         rebuildAllRooms()
         rebuildAllZones()
     }
@@ -623,6 +640,8 @@ final class UnifiedOrchestrator {
         clients[record.id] = client
         connectionStatus[record.id] = .connecting
         publishWidgetBridgeCredentials()
+        // A just-granted bridge coming online can flip the guest-only shell.
+        recomputeGuestAccessInfo()
         log.info("Added bridge \(record.id) (\(record.name)) to orchestrator")
     }
 
@@ -650,6 +669,10 @@ final class UnifiedOrchestrator {
         }
         keychain.deleteCredentials(for: id)
         publishWidgetBridgeCredentials()
+        // The grant snapshot for this bridge is dropped here; its SwiftData
+        // row is pruned on the next updateGuestGrants/configure pass.
+        guestGrantsByBridge.removeValue(forKey: id)
+        recomputeGuestAccessInfo()
         rebuildAllRooms()
         rebuildAllZones()
         log.info("Removed bridge \(id)")
@@ -709,20 +732,28 @@ final class UnifiedOrchestrator {
                     childResourceRefs: []
                 )
             }
-        guard !items.isEmpty else { return }
-        allRooms = items
+        // Family Sharing: the cache may hold pre-grant rows (or rows written
+        // before a newer, narrower invite was scanned) — filter before first
+        // paint. configure() has already loaded the grants (AppRootView calls
+        // configure → preloadCached in that order).
+        let visible = items.filter {
+            GuestAccessPolicy.allows(groupID: $0.id, bridgeID: $0.bridgeID,
+                                     grants: guestGrantsByBridge)
+        }
+        guard !visible.isEmpty else { return }
+        allRooms = visible
         // CRITICAL: also populate roomsByBridge so updateRoom() and applySSEEvent()
         // can find rooms during the startup window before loadAll() completes.
         // Without this, toggles and SSE events silently do nothing because both
         // functions iterate/lookup roomsByBridge which would otherwise be empty.
         var byBridge: [String: [RoomDisplayItem]] = [:]
-        for item in items {
+        for item in visible {
             if let bid = item.bridgeID {
                 byBridge[bid, default: []].append(item)
             }
         }
         roomsByBridge = byBridge
-        log.info("Preloaded \(items.count) rooms from SwiftData cache (\(byBridge.keys.count) bridge(s))")
+        log.info("Preloaded \(visible.count) rooms from SwiftData cache (\(byBridge.keys.count) bridge(s))")
     }
 
     func writeCache(to context: ModelContext) {
@@ -1220,6 +1251,10 @@ final class UnifiedOrchestrator {
         await withTaskGroup(of: String?.self) { group in
             for (bridgeID, roomItems) in roomsByBridge {
                 guard let client = clients[bridgeID] else { continue }
+                // Family Sharing: a granted bridge without the onOff feature
+                // is excluded from bulk power writes (All Off, automation
+                // fan-outs) — visible is not the same as controllable.
+                guard guestFeatures(for: bridgeID).canPower else { continue }
                 let gate = commandGate(for: bridgeID)
                 for room in roomItems {
                     guard let glID = room.groupedLightID else { continue }
@@ -1293,12 +1328,17 @@ final class UnifiedOrchestrator {
     func turnAllOff() async {
         // Optimistic update FIRST — cards flip instantly without waiting for network.
         // Each card's .onChange(of: room.isOn) syncs localIsOn when allRooms updates.
+        // Family Sharing: rooms on a bridge whose grant lacks onOff keep their
+        // state — gatedBulkWrite below skips those bridges, so flipping their
+        // cards would show an off that never happened.
         allRooms = allRooms.map { room in
+            guard guestFeatures(for: room.bridgeID).canPower else { return room }
             var r = room; r.isOn = false; return r
         }
         // Sync roomsByBridge cache so applySSEEvent sees consistent state
         for bridgeID in roomsByBridge.keys {
-            guard var rooms = roomsByBridge[bridgeID] else { continue }
+            guard guestFeatures(for: bridgeID).canPower,
+                  var rooms = roomsByBridge[bridgeID] else { continue }
             rooms = rooms.map { room in var r = room; r.isOn = false; return r }
             roomsByBridge[bridgeID] = rooms
         }
@@ -1774,6 +1814,111 @@ final class UnifiedOrchestrator {
         }
     }
 
+    // ──────────────────────────────────────────────
+    // MARK: - Guest Access (Family Sharing Phase 3)
+    // ──────────────────────────────────────────────
+
+    /// Reload grants from SwiftData and re-apply everywhere: rebuilds (rooms/
+    /// zones) and the scene list. Call after the invite accept flow writes a
+    /// grant (BEFORE addBridge, per the GuestAccessGrantStore ordering
+    /// contract) and after Bridge Manager deletes a bridge.
+    func updateGuestGrants(from modelContext: ModelContext) {
+        loadGuestGrants(from: modelContext)
+        rebuildAllRooms()
+        rebuildAllZones()
+        refilterGlobalScenes()
+    }
+
+    /// Snapshot grants without triggering rebuilds — configure() calls this
+    /// right before its own rebuilds so the FIRST rebuild is already
+    /// filtered (no flash of forbidden rooms on a guest device).
+    private func loadGuestGrants(from modelContext: ModelContext) {
+        // Prune grants whose bridge record is gone entirely (removed, not
+        // merely disabled) — a removed bridge must not leave phantom
+        // guest-only state behind.
+        let allRecordIDs = Set(
+            ((try? modelContext.fetch(FetchDescriptor<BridgeRecord>())) ?? []).map(\.id)
+        )
+        _ = try? GuestAccessGrantStore.pruneOrphans(
+            liveBridgeIDs: allRecordIDs, modelContext: modelContext
+        )
+        let grants = (try? GuestAccessGrantStore.allGrants(modelContext: modelContext)) ?? []
+        guestGrantsByBridge = Dictionary(uniqueKeysWithValues: grants.map {
+            ($0.bridgeRecordID, GuestGrantSnapshot(from: $0))
+        })
+        recomputeGuestAccessInfo()
+    }
+
+    /// The feature set the UI must honor for a bridge's content. Unrestricted
+    /// for demo mode, nil bridge ids, and the owner's own (un-granted) bridges.
+    func guestFeatures(for bridgeID: String?) -> GuestFeatureSet {
+        guard !isDemoMode else { return .unrestricted }
+        return GuestAccessPolicy.features(for: bridgeID, grants: guestGrantsByBridge)
+    }
+
+    private func recomputeGuestAccessInfo() {
+        let liveIDs = Array(clients.keys)
+        let hasAny = liveIDs.contains { guestGrantsByBridge[$0] != nil }
+        let info = GuestAccessInfo(
+            hasAnyGrant: !isDemoMode && hasAny,
+            isGuestOnly: !isDemoMode && GuestAccessPolicy.isGuestOnly(
+                liveBridgeIDs: liveIDs, grants: guestGrantsByBridge
+            ),
+            profileNames: Array(Set(
+                liveIDs.compactMap { guestGrantsByBridge[$0]?.profileName }
+            )).sorted()
+        )
+        if guestAccessInfo != info { guestAccessInfo = info }
+    }
+
+    /// THE choke point: prune disallowed groups from the per-bridge
+    /// dictionaries IN PLACE. Runs inside every rebuild, right after
+    /// pruneStaleBridgeSnapshots(), so every write site (loadAll merge,
+    /// preload, SSE) and every consumer (allRooms/allZones, updateRoom,
+    /// removeBridge's doomed-group list, the widget/watch/Siri publishers,
+    /// deep-link resolution) inherits the filter from one place. SSE only
+    /// mutates EXISTING entries, so a pruned room cannot be reintroduced
+    /// between rebuilds.
+    private func applyGuestAccessFilter() {
+        guard !isDemoMode, !guestGrantsByBridge.isEmpty else { return }
+        for (bridgeID, grant) in guestGrantsByBridge {
+            if let rooms = roomsByBridge[bridgeID] {
+                let filtered = GuestAccessPolicy.filterGroups(rooms, grant: grant)
+                if filtered.count != rooms.count { roomsByBridge[bridgeID] = filtered }
+            }
+            if let zones = zonesByBridge[bridgeID] {
+                let filtered = GuestAccessPolicy.filterGroups(zones, grant: grant)
+                if filtered.count != zones.count { zonesByBridge[bridgeID] = filtered }
+            }
+        }
+    }
+
+    /// Scenes populate independently of the room rebuilds (loadAllScenes),
+    /// so they get their own filter application — both there and when a
+    /// grant arrives mid-session.
+    private func refilterGlobalScenes() {
+        guard !isDemoMode, !guestGrantsByBridge.isEmpty, !globalScenes.isEmpty else { return }
+        let filtered = GuestAccessPolicy.filterScenes(globalScenes, grants: guestGrantsByBridge)
+        if filtered.count != globalScenes.count { globalScenes = filtered }
+    }
+
+    #if DEBUG
+    /// Test seams (mirror injectForTesting): set grants without SwiftData,
+    /// and inspect the pruned dictionary — the policy must hold for the
+    /// dictionaries, not just the merged arrays, because SSE lookups,
+    /// updateRoom, and removeBridge read them directly.
+    func testSetGuestGrants(_ grants: [String: GuestGrantSnapshot]) {
+        guestGrantsByBridge = grants
+        recomputeGuestAccessInfo()
+        rebuildAllRooms()
+        rebuildAllZones()
+        refilterGlobalScenes()
+    }
+
+    func testRoomsByBridge() -> [String: [RoomDisplayItem]] { roomsByBridge }
+    func testZonesByBridge() -> [String: [RoomDisplayItem]] { zonesByBridge }
+    #endif
+
     /// Coalesce SSE-driven rebuilds behind one trailing ~150 ms task. A resetting
     /// debounce could starve updates during a continuous ramp, so this is a throttle:
     /// the first event fixes the deadline; later events only mark more work pending.
@@ -1800,6 +1945,7 @@ final class UnifiedOrchestrator {
         }
 
         pruneStaleBridgeSnapshots()
+        applyGuestAccessFilter()
         allRooms = DashboardDisplayModelBuilder.makeRooms(from: roomsByBridge)
         scheduleWidgetWrite()
     }
@@ -1811,6 +1957,7 @@ final class UnifiedOrchestrator {
         }
 
         pruneStaleBridgeSnapshots()
+        applyGuestAccessFilter()
         allZones = DashboardDisplayModelBuilder.makeZones(from: zonesByBridge)
         scheduleWidgetWrite()
     }
@@ -3969,7 +4116,10 @@ final class UnifiedOrchestrator {
         // for scenes that are genuinely active (fire-and-forget), so we merge: if a scene
         // is already marked active locally OR the bridge says active, keep it active.
         let existingActive = Set(globalScenes.filter { $0.isActive }.map { $0.id })
-        globalScenes = result
+        // Family Sharing: scenes populate outside the room rebuilds, so the
+        // grant filter applies here too — widgets/watch/Siri read the
+        // published scene list and must inherit it.
+        globalScenes = GuestAccessPolicy.filterScenes(result, grants: guestGrantsByBridge)
             .map { item in
                 var s = item
                 if existingActive.contains(s.id) { s.isActive = true }

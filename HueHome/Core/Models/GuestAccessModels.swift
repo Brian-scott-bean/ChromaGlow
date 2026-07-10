@@ -127,6 +127,20 @@ struct GuestGrantSnapshot: Equatable, Sendable {
     }
 }
 
+/// Guest-state summary for the UI shell (banner, tab gating). The
+/// orchestrator recomputes this whenever grants or clients change; views
+/// observe it instead of running their own @Query over GuestAccessGrant.
+struct GuestAccessInfo: Equatable, Sendable {
+    /// At least one LIVE bridge is grant-limited → show the guest banner.
+    let hasAnyGrant: Bool
+    /// EVERY live bridge is grant-limited → hide Studio, no scene create.
+    let isGuestOnly: Bool
+    /// Distinct granted profile names, for the banner detail sheet.
+    let profileNames: [String]
+
+    static let none = GuestAccessInfo(hasAnyGrant: false, isGuestOnly: false, profileNames: [])
+}
+
 /// What the UI may show/do for one bridge. `.unrestricted` for the owner's
 /// own bridges (no grant), demo mode, and nil bridge ids (legacy paths).
 struct GuestFeatureSet: Equatable, Sendable {

@@ -46,6 +46,18 @@ enum GuestAccessPolicy {
         }
     }
 
+    /// Per-item form of filterGroups — for call sites that filter a flat,
+    /// mixed-bridge list (the SwiftData preload) rather than one bridge's
+    /// bucket. Same semantics: no grant → allowed; empty allowlist → denied.
+    static func allows(
+        groupID: String,
+        bridgeID: String?,
+        grants: [String: GuestGrantSnapshot]
+    ) -> Bool {
+        guard let bridgeID, let grant = grants[bridgeID] else { return true }
+        return grant.allowedGroupIDs.contains(groupID)
+    }
+
     /// The feature set the UI should honor for a bridge. Unrestricted when
     /// the bridge has no grant (owner's own) or the id is nil (legacy path
     /// — a grant is always keyed by a real BridgeRecord id, so nil cannot
