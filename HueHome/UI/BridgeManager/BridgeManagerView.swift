@@ -169,7 +169,8 @@ struct BridgeManagerView: View {
     // MARK: - Actions
 
     private func delete(_ bridge: BridgeRecord) {
-        orchestrator.removeBridge(id: bridge.id)
+        // Async: removeBridge now stops the bridge's running effects first.
+        Task { await orchestrator.removeBridge(id: bridge.id) }
         modelContext.delete(bridge)
         do {
             try modelContext.save()

@@ -626,12 +626,22 @@ final class UnifiedOrchestrator {
         log.info("Added bridge \(record.id) (\(record.name)) to orchestrator")
     }
 
-    /// Remove a bridge — cancels SSE, clears rooms, wipes credentials + TLS pin.
-    func removeBridge(id: String) {
+    /// Remove a bridge — stops its running effects, cancels SSE, clears
+    /// rooms AND zones, wipes credentials + TLS pin.
+    func removeBridge(id: String) async {
+        // Stop running effects on this bridge's groups BEFORE dropping the
+        // client, so teardown/no_effect PUTs can still reach the bridge.
+        // Previously these were orphaned: a dead Now-Playing entry pointed at
+        // a removed bridge while its render loop kept erroring against it.
+        let doomedGroups = ((roomsByBridge[id] ?? []) + (zonesByBridge[id] ?? [])).map(\.id)
+        await stopEffectsForRemovedGroups(doomedGroups)
         sseTasks[id]?.cancel()
         sseTasks.removeValue(forKey: id)
         clients.removeValue(forKey: id)
         roomsByBridge.removeValue(forKey: id)
+        // Zones were never cleared here — and pruneStaleBridgeSnapshots bails
+        // when the LAST bridge is removed, so its stale zones lingered forever.
+        zonesByBridge.removeValue(forKey: id)
         connectionStatus.removeValue(forKey: id)
         // D-016: drop the TLS pin with the credentials (also unblocks a future
         // re-pair if the bridge's certificate legitimately changed).
@@ -641,7 +651,22 @@ final class UnifiedOrchestrator {
         keychain.deleteCredentials(for: id)
         publishWidgetBridgeCredentials()
         rebuildAllRooms()
+        rebuildAllZones()
         log.info("Removed bridge \(id)")
+    }
+
+    /// Stop any running effects on rooms/zones that are about to disappear
+    /// (bridge removal, room/zone delete). Routes through the sanctioned
+    /// requestNowPlayingStop path so the owning engine loop, transport truth,
+    /// and Studio's mirror tear down together. turnOffLights: false — the
+    /// group is going away; a goodbye off-PUT is pointless (and unreachable
+    /// once a removed bridge's client is dropped).
+    /// (Internal, not private, so tests can drive it directly.)
+    func stopEffectsForRemovedGroups(_ groupIDs: [String]) async {
+        let doomed = Set(groupIDs)
+        for entry in activeEffectEntries where doomed.contains(entry.id) {
+            await requestNowPlayingStop(roomID: entry.id, turnOffLights: false)
+        }
     }
 
     private func publishWidgetBridgeCredentials() {
@@ -1064,14 +1089,19 @@ final class UnifiedOrchestrator {
             return
         }
         guard let client = clients[item.bridgeID ?? ""] else { return }
+        // A running effect on a doomed room would keep PUT-ing to a deleted
+        // group and leave a ghost Now-Playing entry.
+        await stopEffectsForRemovedGroups([item.id])
         // Optimistic removal
         withAnimation { allRooms.removeAll { $0.id == item.id } }
+        scheduleWidgetWrite()   // deleted groups otherwise linger in widgets
         do {
             try await client.deleteRoom(id: item.id)
             showToast("\(item.name) deleted")
         } catch {
             // Rollback — put it back (append; exact position isn't critical)
             withAnimation { allRooms.append(item) }
+            scheduleWidgetWrite()
             log.error("deleteRoom failed: \(error.localizedDescription)")
             showToast("Couldn't delete \(item.name)")
         }
@@ -1110,12 +1140,15 @@ final class UnifiedOrchestrator {
             return
         }
         guard let client = clients[item.bridgeID ?? ""] else { return }
+        await stopEffectsForRemovedGroups([item.id])
         withAnimation { allZones.removeAll { $0.id == item.id } }
+        scheduleWidgetWrite()
         do {
             try await client.deleteZone(id: item.id)
             showToast("\(item.name) deleted")
         } catch {
             withAnimation { allZones.append(item) }
+            scheduleWidgetWrite()
             log.error("deleteZone failed: \(error.localizedDescription)")
             showToast("Couldn't delete \(item.name)")
         }

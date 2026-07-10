@@ -414,6 +414,24 @@ final class OrchestratorTests: XCTestCase {
         XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
     }
 
+    func testStopEffectsForRemovedGroups_stopsOnlyDoomedRooms() async {
+        orchestrator.addActiveEffect(makeEntry(id: "room-1", name: "Strobe"))
+        orchestrator.addActiveEffect(makeEntry(id: "room-2", name: "Candle"))
+        var stopped: [(roomID: String, turnOffLights: Bool)] = []
+        orchestrator.studioStopHandler = { [weak orchestrator] roomID, turnOffLights in
+            stopped.append((roomID, turnOffLights))
+            orchestrator?.removeActiveEffect(roomID: roomID)
+        }
+
+        // room-ghost has no entry — must be ignored, not crash or over-stop.
+        await orchestrator.stopEffectsForRemovedGroups(["room-1", "room-ghost"])
+
+        XCTAssertEqual(stopped.map(\.roomID), ["room-1"])
+        XCTAssertEqual(stopped.map(\.turnOffLights), [false],
+                       "A doomed group keeps its lights as-is — no goodbye off-PUT")
+        XCTAssertEqual(orchestrator.activeEffectEntries.map(\.id), ["room-2"])
+    }
+
     func testStopAppDrivenStudioEffect_leavesOtherRoomsAlone() async {
         // Room B runs a composition (REST transport) with a Now-Playing entry;
         // stopping Room A's app-driven effect must not touch either.
