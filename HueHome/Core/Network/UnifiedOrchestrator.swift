@@ -588,6 +588,7 @@ final class UnifiedOrchestrator {
                 ip:         creds.ip,
                 token:      creds.token
             )
+            wireAuthorizationSignal(client)
             clients[bridge.id] = client
             connectionStatus[bridge.id] = .connecting
             widgetBridgeCreds[bridge.id] = WidgetBridgeCredentials(
@@ -637,6 +638,7 @@ final class UnifiedOrchestrator {
             ip:         creds.ip,
             token:      creds.token
         )
+        wireAuthorizationSignal(client)
         clients[record.id] = client
         connectionStatus[record.id] = .connecting
         publishWidgetBridgeCredentials()
@@ -1863,6 +1865,18 @@ final class UnifiedOrchestrator {
     func isGuestGrantedBridge(_ bridgeID: String?) -> Bool {
         guard !isDemoMode, let bridgeID else { return false }
         return guestGrantsByBridge[bridgeID] != nil
+    }
+
+    /// Route a client's explicit-unauthorized signal (401/403 on the pinned
+    /// data plane) to the monitor. MainTabView decides what it means:
+    /// cooperative wipe for a granted bridge, re-pair advice for an owned one.
+    private func wireAuthorizationSignal(_ client: BridgeAPIClient) {
+        let bridgeID = client.bridgeID
+        client.onExplicitUnauthorized = {
+            Task { @MainActor in
+                BridgeAuthorizationMonitor.shared.reportExplicitUnauthorized(bridgeID: bridgeID)
+            }
+        }
     }
 
     private func recomputeGuestAccessInfo() {

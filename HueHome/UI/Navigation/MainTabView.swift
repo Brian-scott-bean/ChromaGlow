@@ -5,6 +5,7 @@
 // iPad: NavigationSplitView (sidebar + detail).
 
 import SwiftUI
+import SwiftData
 import UIKit
 
 // MARK: - Tab Definition
@@ -57,6 +58,9 @@ struct MainTabView: View {
     @State private var inviteError: InvitePayloadError?
     /// Family Sharing: a Studio-bound deep link arrived on a guest-only shell.
     @State private var showGuestBlockedAlert = false
+    /// Family Sharing Phase 4: cooperative-wipe notice / owned-bridge advice.
+    @State private var authorizationNotice: String?
+    @Environment(\.modelContext) private var modelContext
 
     private struct InvitePresentation: Identifiable {
         let id = UUID()
@@ -145,6 +149,54 @@ struct MainTabView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Studio isn't part of shared access — creating and importing lighting compositions needs the home owner's own connection.")
+        }
+        // Family Sharing Phase 4: explicit bridge refusals (401/403 on the
+        // pinned data plane). Granted bridge → cooperative wipe; owned
+        // bridge → re-pair advice, never an auto-wipe.
+        .onChange(of: BridgeAuthorizationMonitor.shared.signalToken) { _, _ in
+            handleUnauthorizedBridges()
+        }
+        .alert("Bridge Access", isPresented: Binding(
+            get: { authorizationNotice != nil },
+            set: { if !$0 { authorizationNotice = nil } }
+        )) {
+            Button("OK", role: .cancel) { authorizationNotice = nil }
+        } message: {
+            Text(authorizationNotice ?? "")
+        }
+    }
+
+    // MARK: - Cooperative wipe (L-30 pattern)
+
+    private func handleUnauthorizedBridges() {
+        let monitor = BridgeAuthorizationMonitor.shared
+        for bridgeID in monitor.unauthorizedBridgeIDs {
+            monitor.clear(bridgeID: bridgeID)
+            // A stale signal for an already-removed bridge is ignored.
+            guard let name = orchestrator.bridgeName(for: bridgeID) else { continue }
+
+            if orchestrator.isGuestGrantedBridge(bridgeID) {
+                // Explicit refusal of a granted key = the owner revoked it.
+                // Wipe cooperatively: client, credentials, pin, record, grant.
+                Task {
+                    await orchestrator.removeBridge(id: bridgeID)
+                    if let record = try? modelContext.fetch(FetchDescriptor<BridgeRecord>(
+                        predicate: #Predicate { $0.id == bridgeID }
+                    )).first {
+                        modelContext.delete(record)
+                        try? modelContext.save()
+                    }
+                    try? GuestAccessGrantStore.deleteGrant(for: bridgeID, modelContext: modelContext)
+                    orchestrator.updateGuestGrants(from: modelContext)
+                    authorizationNotice =
+                        "Your invite to \(name) was revoked, so its key was removed from this phone."
+                }
+            } else {
+                // An OWNED credential hit an explicit refusal (factory reset,
+                // keys cleared). Never auto-wipe what the user paired — advise.
+                authorizationNotice =
+                    "\(name) refused this phone's key. If the bridge was factory-reset or its app keys were cleared, remove it in Bridge Manager and pair again."
+            }
         }
     }
 

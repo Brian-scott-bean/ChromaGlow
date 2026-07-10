@@ -57,6 +57,21 @@ class HueAPIClient: @unchecked Sendable {
     // MARK: Logger
     private let log = Logger(subsystem: "com.lightshade.app", category: "API")
 
+    // MARK: Explicit-unauthorized hook (Family Sharing, L-30 pattern)
+    /// Fired ONLY when the bridge itself answers with an authorization
+    /// refusal (HTTP 401/403) — the data plane rides pinned TLS, so the
+    /// signal cannot be forged by an on-path attacker. Never fired for
+    /// timeouts, connection failures, or 5xx (see
+    /// isExplicitUnauthorizedStatus). Set by the orchestrator with the
+    /// owning bridge id captured.
+    var onExplicitUnauthorized: (@Sendable () -> Void)?
+
+    /// The one rule for what counts as an explicit refusal — pure so the
+    /// never-wipe-on-transient-failure contract is unit-testable.
+    static func isExplicitUnauthorizedStatus(_ status: Int) -> Bool {
+        status == 401 || status == 403
+    }
+
     // MARK: URLSession (pinned bridge trust — H-01/D-016)
     // BridgePinnedTrustDelegate evaluates the chain and requires the pinned
     // bridge identity on every challenge; it never trust-alls.
@@ -671,6 +686,12 @@ class HueAPIClient: @unchecked Sendable {
         #endif
         log.info("API: HTTP \(http.statusCode, privacy: .public) ← \(resourcePath) (\(ms)ms)")
         guard (200...299).contains(http.statusCode) else {
+            // Family Sharing (L-30): an explicit authorization refusal from
+            // the pinned data plane is the ONLY wipe-grade signal. Other
+            // failures throw without firing it.
+            if Self.isExplicitUnauthorizedStatus(http.statusCode) {
+                onExplicitUnauthorized?()
+            }
             // Log the bridge's error body BEFORE throwing — it contains the exact reason.
             if let errorBody = String(data: data, encoding: .utf8) {
                 log.error("API: Bridge error body: \(errorBody)")
