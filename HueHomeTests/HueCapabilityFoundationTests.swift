@@ -352,7 +352,11 @@ final class HueCapabilityFoundationTests: XCTestCase {
         XCTAssertEqual(engine.handleButton(controlID: 1, event: "long_press"), .resyncDownbeat)
         XCTAssertEqual(engine.handleButton(controlID: 2, event: "initial_press"), .punchBurst(slot: 0))
         XCTAssertEqual(engine.handleButton(controlID: 4, event: "initial_press"), .punchBurst(slot: 2))
-        XCTAssertEqual(engine.handleButton(controlID: 2, event: "short_release"), .none)
+        // Pads mirror the on-screen hold-to-engage: lifting releases.
+        XCTAssertEqual(engine.handleButton(controlID: 2, event: "short_release"), .punchRelease)
+        XCTAssertEqual(engine.handleButton(controlID: 3, event: "long_release"), .punchRelease)
+        // Button 1 releases stay inert (tap tempo fires on press alone).
+        XCTAssertEqual(engine.handleButton(controlID: 1, event: "short_release"), .none)
         XCTAssertEqual(engine.handleButton(controlID: 9, event: "initial_press"), .none)
     }
 

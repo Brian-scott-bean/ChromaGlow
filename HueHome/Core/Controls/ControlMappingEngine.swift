@@ -15,6 +15,7 @@ enum ControlAction: Equatable {
     case resyncDownbeat
     case nudgeBPM(delta: Double)
     case punchBurst(slot: Int)      // 0…2 (buttons 2–4)
+    case punchRelease               // buttons 2–4 lift — pads are hold-to-engage
     case none
 }
 
@@ -45,12 +46,14 @@ struct ControlMappingEngine {
     // ── Buttons (Tap Dial: control_id 1…4) ──
 
     /// initial_press everywhere latency matters (tap tempo, punches);
-    /// long_press on button 1 re-anchors the downbeat.
+    /// long_press on button 1 re-anchors the downbeat. Pad releases mirror
+    /// the on-screen punch pads' hold-to-engage / lift-to-release.
     func handleButton(controlID: Int, event: String) -> ControlAction {
         switch (controlID, event) {
         case (1, "initial_press"): return .tapTempo
         case (1, "long_press"):    return .resyncDownbeat
         case (2...4, "initial_press"): return .punchBurst(slot: controlID - 2)
+        case (2...4, "short_release"), (2...4, "long_release"): return .punchRelease
         default: return .none
         }
     }

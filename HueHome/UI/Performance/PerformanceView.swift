@@ -215,10 +215,12 @@ final class PerformanceViewModel: Identifiable {
         HapticManager.shared.medium()
         // REST tier: the mixer overlay only lands at scheduler cadence, so
         // fire the bridge-native burst too — instant, self-terminating.
+        // STROBE must alternate two contrasting colors (white↔white was a
+        // static flash); BURST is the steady white push, like the overlay.
         if !isStreaming, pad != .blackout {
             let colors: (a: CGPoint, b: CGPoint) = pad == .strobe
-                ? (CGPoint(x: 0.3127, y: 0.3290), CGPoint(x: 0.3127, y: 0.3290))
-                : (CGPoint(x: 0.3127, y: 0.3290), CGPoint(x: 0.5500, y: 0.4100))
+                ? (CGPoint(x: 0.3127, y: 0.3290), CGPoint(x: 0.1500, y: 0.0600))
+                : (CGPoint(x: 0.3127, y: 0.3290), CGPoint(x: 0.3127, y: 0.3290))
             Task {
                 await SignalingService(orchestrator: orchestrator)
                     .punchBurst(room: room, a: colors.a, b: colors.b, durationMs: 1200)

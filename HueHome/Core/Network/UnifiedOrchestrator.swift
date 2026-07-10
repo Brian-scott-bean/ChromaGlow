@@ -1477,7 +1477,16 @@ final class UnifiedOrchestrator {
             guard clock.bpm > 0 else { return }
             clock.setBPM(clock.bpm + delta)   // pins — exactly what a twist means
         case .punchBurst(let slot):
-            // Punch the most recently started room; idle app = no-op.
+            // Perform open: the dial drives the on-screen pads — same room by
+            // construction (the mix is tied to that room's render loop), same
+            // semantics, same WCAG ≤3 Hz strobe clamp in applyPunch.
+            if let mix = activePerformanceMix {
+                let pads: [PerformanceMixBox.PunchPad] = [.strobe, .blackout, .whiteBurst]
+                mix.engagePunch(pads[max(0, min(pads.count - 1, slot))])
+                return
+            }
+            // Otherwise: bridge-native burst on the most recently started
+            // room; idle app = no-op.
             guard let entry = activeEffectEntries.last,
                   let room = allRooms.first(where: { $0.id == entry.id })
             else { return }
@@ -1492,6 +1501,8 @@ final class UnifiedOrchestrator {
                 await SignalingService(orchestrator: self)
                     .punchBurst(room: room, a: pair.a, b: pair.b, durationMs: 1500)
             }
+        case .punchRelease:
+            activePerformanceMix?.releasePunch(hostNow: CACurrentMediaTime())
         case .none:
             break
         }
