@@ -71,6 +71,7 @@
 		6C49273C1BAC7916D07A7045 /* RenameSceneSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B3EB07FD696F50186A8835 /* RenameSceneSheet.swift */; };
 		6CA660D29BB803FE431EA5A9 /* AutomationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9C1B531286D8743DE92175E /* AutomationScheduler.swift */; };
 		6CFE6DBC7CCD9FBEE095DD98 /* LightControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98DD9ECC2BC7B6BB5012428A /* LightControlView.swift */; };
+		6D190E9952B8F412C9C011FC /* ColorClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C015E15C9235F874A17ED1 /* ColorClipboard.swift */; };
 		6E36AB0D147E9462788961EC /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42D8A158EFAE9D6D53696D3E /* MainTabView.swift */; };
 		6F0FE079D7AA179677CDD222 /* RoomColorWashPlannerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D0167EBD1B1188E7F135FF /* RoomColorWashPlannerTests.swift */; };
 		705F9B0F725C2186A5B3C80B /* HueHomeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F0FFA8F2F2B85EFEB2FF25D /* HueHomeApp.swift */; };
@@ -79,6 +80,7 @@
 		73D4D0E7C3E0D0451914B46E /* HueZone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FF21DA93E891B1DDCFE009A /* HueZone.swift */; };
 		7AFCB8B820A30E0ECC0869C1 /* DevicesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 532AEB39DB4A570EDFB5EB43 /* DevicesViewModel.swift */; };
 		7B25822AB3254E33B91961AE /* SavedEffectPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AFC6DD83A8A43FEA3352BB6 /* SavedEffectPreset.swift */; };
+		7CD1EC8084851B4FD9398E44 /* ColorClipboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD76C95BBF8A135036401FF8 /* ColorClipboardTests.swift */; };
 		81A97C848EAA34AD15696908 /* EffectEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7ACCF18A91D92561912E10F /* EffectEngine.swift */; };
 		834EEE6D6EA013E62EA9F9DF /* HueAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42E682D174C75541F8F57CFC /* HueAPIClientTests.swift */; };
 		83D16D11D9A22B3D443CED94 /* HueTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E53201A81D93BB2967E3651 /* HueTokens.swift */; };
@@ -409,6 +411,7 @@
 		B1RPSHEC5402CA37A711CBB8 /* RoomPickerSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RoomPickerSheetView.swift; path = ./HueHome/UI/Studio/RoomPickerSheetView.swift; sourceTree = "<group>"; };
 		B1RRLXA1B2C3D4E5F6071829 /* RoomRolodexView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RoomRolodexView.swift; path = ./HueHome/UI/Studio/RoomRolodexView.swift; sourceTree = "<group>"; };
 		B28758DBF46CF8684667CA21 /* SceneUsageStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneUsageStore.swift; path = ./HueHome/Core/Models/SceneUsageStore.swift; sourceTree = "<group>"; };
+		B2C015E15C9235F874A17ED1 /* ColorClipboard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ColorClipboard.swift; path = ./HueHome/Core/Models/ColorClipboard.swift; sourceTree = "<group>"; };
 		B36D1A2F46186DA6FBBBCDDC /* EffectRoutingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EffectRoutingTests.swift; path = HueHomeTests/EffectRoutingTests.swift; sourceTree = "<group>"; };
 		B48BD4B2A1666C11CE73E4CF /* SceneCopyEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneCopyEngine.swift; path = ./HueHome/Core/Models/SceneCopyEngine.swift; sourceTree = "<group>"; };
 		B49C42A69FC79EABED9C77FC /* SceneColorBuilderView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneColorBuilderView.swift; path = HueHome/UI/SceneBuilder/SceneColorBuilderView.swift; sourceTree = "<group>"; };
@@ -530,6 +533,7 @@
 		F57BF74DE7F5F2F1B870513F /* DeviceDisplayItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Models/DeviceDisplayItem.swift; sourceTree = "<group>"; };
 		F66E4EFC9FC8D416C9EF24D4 /* ColorPadView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ColorPadView.swift; path = HueHome/UI/SceneBuilder/ColorPadView.swift; sourceTree = "<group>"; };
 		FD54587B049C752BA3C84CD5 /* HueRoom.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueRoom.swift; path = HueHome/Core/Models/HueRoom.swift; sourceTree = "<group>"; };
+		FD76C95BBF8A135036401FF8 /* ColorClipboardTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ColorClipboardTests.swift; path = ./HueHomeTests/ColorClipboardTests.swift; sourceTree = "<group>"; };
 		FFC3FFCBA8D30FA41568E4DF /* CompositionStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionStoreTests.swift; path = HueHomeTests/CompositionStoreTests.swift; sourceTree = "<group>"; };
 		RZBLD000000000000000002 /* RoomAndZoneDisplayModelBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomAndZoneDisplayModelBuilder.swift; path = HueHome/Core/Dashboard/RoomAndZoneDisplayModelBuilder.swift; sourceTree = "<group>"; };
 		RZBLD000000000000000003 /* RoomAndZoneDisplayModelBuilderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomAndZoneDisplayModelBuilderTests.swift; path = ./HueHomeTests/RoomAndZoneDisplayModelBuilderTests.swift; sourceTree = "<group>"; };
@@ -793,6 +797,7 @@
 				3E654DBE7E9915ECC497D13F /* LightingPreset.swift */,
 				BB78DD6E803F76A88BE41CC5 /* RoomColorWashPlanner.swift */,
 				4CFF8EAF856DCFE70BBFE746 /* PresetSurfaceClassifier.swift */,
+				B2C015E15C9235F874A17ED1 /* ColorClipboard.swift */,
 			);
 			name = Models;
 			sourceTree = "<group>";
@@ -1129,6 +1134,7 @@
 				FFC3FFCBA8D30FA41568E4DF /* CompositionStoreTests.swift */,
 				86D0167EBD1B1188E7F135FF /* RoomColorWashPlannerTests.swift */,
 				BCB467185E202C3283838BC2 /* PresetSurfaceClassifierTests.swift */,
+				FD76C95BBF8A135036401FF8 /* ColorClipboardTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1613,6 +1619,7 @@
 				2F5175FAF38BD799652DD6E6 /* RoomColorWashPlanner.swift in Sources */,
 				5F5A9E31424E22F1877CF67D /* RoomColorPopover.swift in Sources */,
 				0D07069625881719F806F33A /* PresetSurfaceClassifier.swift in Sources */,
+				6D190E9952B8F412C9C011FC /* ColorClipboard.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1670,6 +1677,7 @@
 				332A136E65B81144F370D47F /* CompositionStoreTests.swift in Sources */,
 				6F0FE079D7AA179677CDD222 /* RoomColorWashPlannerTests.swift in Sources */,
 				0971801CBBC7E4E988249AD9 /* PresetSurfaceClassifierTests.swift in Sources */,
+				7CD1EC8084851B4FD9398E44 /* ColorClipboardTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
