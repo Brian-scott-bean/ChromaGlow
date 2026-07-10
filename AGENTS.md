@@ -102,7 +102,11 @@ Current verified identity values:
 - Marketing version in project: `0.9.0`
 - Build number in project: `21` (bumped every device-test round; do not reuse a number)
 - App display name (main iOS target): `ChromaGlow`
-- Widget/watch target display names: still `LightShade` / `LightShadeWatch` (`INFOPLIST_KEY_CFBundleDisplayName`) — pending an explicitly assigned rename; do not rename casually.
+- Widget/watch target display names: **`ChromaGlow`** everywhere as of 2026-07-09 (Brian-assigned
+  rename): all six `INFOPLIST_KEY_CFBundleDisplayName` entries (widget ext, watch app, watch widget
+  ext × Debug/Release), plus the formerly "CastChroma" user-visible strings (watch nav title + sync
+  hint, widget faces + config names, intent titles, Siri error strings, notification fallback
+  title). Target names, folder names, and bundle IDs are deliberately unchanged.
 - iOS Keychain service identifier (`kSecAttrService`) **and** OSLog subsystem: `com.lightshade.app` — **LIVE, do NOT rename.** `KeychainManager.serviceName` uses this for every credential read/write; renaming it makes every existing user's stored app key + entertainment client key unreadable with no migration. (Audit L-35.)
 - App Store Connect ChromaGlow Apple ID recorded in docs: `6766251782`
 - Android namespace/applicationId (shipping tree): `com.chromaglow.app`

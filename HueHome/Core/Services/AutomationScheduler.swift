@@ -51,7 +51,7 @@ final class AutomationScheduler: @unchecked Sendable {
             let trigger      = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
 
             let content      = UNMutableNotificationContent()
-            content.title    = automation.name.isEmpty ? "CastChroma" : automation.name
+            content.title    = automation.name.isEmpty ? "ChromaGlow" : automation.name
             content.body     = "\(automation.action.displayName) is now active — tap to open the app"
             content.sound    = .default
             content.categoryIdentifier = Self.categoryID

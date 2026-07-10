@@ -17,7 +17,7 @@ struct ContentView: View {
                 Section {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("CastChroma")
+                            Text("ChromaGlow")
                                 .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(amber)
                             Text(store.rooms.isEmpty
@@ -80,7 +80,7 @@ struct ContentView: View {
                             Image(systemName: "iphone.and.arrow.forward")
                                 .font(.system(size: 28))
                                 .foregroundStyle(.secondary)
-                            Text("Open CastChroma on your iPhone to sync rooms")
+                            Text("Open ChromaGlow on your iPhone to sync rooms")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -110,7 +110,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .navigationTitle("CastChroma")
+            .navigationTitle("ChromaGlow")
             .navigationBarTitleDisplayMode(.inline)
         }
         .onAppear {

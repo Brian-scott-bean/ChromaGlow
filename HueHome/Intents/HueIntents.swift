@@ -1,8 +1,8 @@
 // ToggleRoomIntent.swift
 // CastChroma — Siri Shortcuts
 //
-// "Hey Siri, turn on Living Room in CastChroma"
-// "Hey Siri, turn off Kitchen in CastChroma"
+// "Hey Siri, turn on Living Room in ChromaGlow"
+// "Hey Siri, turn off Kitchen in ChromaGlow"
 
 import AppIntents
 
@@ -83,9 +83,9 @@ enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .noBridgeConnection:
-            return "CastChroma couldn't reach your bridge. Open the app and try again."
+            return "ChromaGlow couldn't reach your bridge. Open the app and try again."
         case .noGroupedLight(let name):
-            return "Couldn't find light controls for \(name). Open CastChroma to refresh."
+            return "Couldn't find light controls for \(name). Open ChromaGlow to refresh."
         }
     }
 }

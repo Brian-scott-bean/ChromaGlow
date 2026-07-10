@@ -36,7 +36,7 @@ struct WatchRoomEntityQuery: EntityQuery {
 // MARK: - Configuration Intent
 
 struct WatchConfigIntent: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource       = "CastChroma Watch"
+    static var title: LocalizedStringResource       = "ChromaGlow Watch"
     static var description = IntentDescription("Pin a room or show all lights at a glance.")
 
     @Parameter(title: "Room", optionsProvider: WatchRoomOptionsProvider())

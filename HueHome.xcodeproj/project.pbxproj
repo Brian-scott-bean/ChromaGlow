@@ -1977,7 +1977,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = HueHomeWidget/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = LightShade;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -2016,7 +2016,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = HueHomeWidget/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = LightShade;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -2055,7 +2055,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = LightShadeWatch/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = LightShadeWatch;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2095,7 +2095,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = LightShadeWatch/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = LightShadeWatch;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2135,7 +2135,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = LightShade;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "ChromaGlow uses your local network to control your Philips Hue lights.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.huehome.pro;
@@ -2176,7 +2176,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = LightShade;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "ChromaGlow uses your local network to control your Philips Hue lights.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.huehome.pro;
