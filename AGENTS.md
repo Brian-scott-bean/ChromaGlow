@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 22** — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-22 landed 2026-07-09: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty), and Studio Round 2 (room-scoped presets, ChromaGlow rename, composer categories, engine parity, room color popup, creation cross-surfacing). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
+ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 23** — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-23 landed 2026-07-09: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty), Studio Round 2 (room-scoped presets, ChromaGlow rename, composer categories, engine parity, room color popup, creation cross-surfacing), and the engine-coherence run (Now-Playing bar revived via one shared registry, Perform holds the mic demand, Tap-Dial/on-screen punch unified, per-room transport truth, bridgeOptimized one-shot guards). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
 
 ## Current Branch/Repo Facts
 
@@ -100,7 +100,7 @@ Current verified identity values:
 - iOS deployment target: iOS 17.0
 - watchOS deployment target: `26.4` (`WATCHOS_DEPLOYMENT_TARGET` in every watch build config — this resolves the earlier "verify watchOS target" follow-up)
 - Marketing version in project: `0.9.0`
-- Build number in project: `22` (bumped every device-test round; do not reuse a number)
+- Build number in project: `23` (bumped every device-test round; do not reuse a number)
 - App display name (main iOS target): `ChromaGlow`
 - Widget/watch target display names: **`ChromaGlow`** everywhere as of 2026-07-09 (Brian-assigned
   rename): all six `INFOPLIST_KEY_CFBundleDisplayName` entries (widget ext, watch app, watch widget
@@ -341,6 +341,32 @@ Studio Round 2 (2026-07-09, build 22) durable facts — full record in the DEVLO
   with 150ms gaps via `UnifiedOrchestrator.applyColorWash`.
 - **Display names are `ChromaGlow` everywhere user-visible** (see Product Identity). Target
   names, folder names, bundle IDs, and `com.lightshade.app` are unchanged on purpose.
+
+Engine-coherence run (2026-07-09, build 23) durable facts — full record in the DEVLOG build-23 entry:
+
+- **`activeEffectEntries` is fed by StudioViewModel** (every `runningEffects` write site calls
+  `publishNowPlaying`; removal at the `stopEffect(on:)` chokepoint). Non-Studio stops MUST go
+  through `UnifiedOrchestrator.requestNowPlayingStop` → `studioStopHandler`
+  (`@ObservationIgnored` — keep it that way) so the owning loop is torn down; never issue a
+  bare grouped-light PUT to "stop" an effect.
+- **`compositionTransportByRoom`** (`.entertainment/.rest/.bridgeStored`) is the per-room
+  transport truth — written ONLY at start/stop/failover, never per frame (observation
+  contract). The global `isBridgeStored` and Perform's `isStreaming` snapshot are gone;
+  read the dict.
+- **`activeCompositionBox` is a get-only computed** over the per-room
+  `activeCompositionBoxes[selectedRoom.id]`. Editor bindings mutate through the class
+  reference; the two ownership writes key on the APPLYING/STOPPING room id, not selection.
+- **Perform holds `AudioDemand.performance`** in `begin()/end()`; `anyCompositionNeedsMic()`
+  also counts a mic-reactive Perform deck-B cue.
+- **Tap-Dial punch routes to `activePerformanceMix` pads when Perform is open** (release on
+  lift via `punchRelease`), else a signaling burst on `activeEffectEntries.last`'s room.
+  Unmapped buttons no-op — never default a control_id.
+- **bridgeOptimized one-shots get NO live editor/Revert/Save/Perform** in the tray (no box, no
+  loop — matches `PresetSurfaceClassifier`: bridgeOptimized = scene). `SequencePlayer` bounds
+  its fade wait (fade + 2 s) and lands manually — required because only `renderMixed` clears
+  `mix.autoFade`.
+- **Dim Flashing Lights** is `MADimFlashingLightsEnabled()` (MediaAccessibility) — there is no
+  UIAccessibility equivalent; do not "simplify" it back to a constant.
 
 ## Android Current State
 

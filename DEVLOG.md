@@ -12,7 +12,26 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **22**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **23**).
+- **BUILD 23 (2026-07-09): ENGINE COHERENCE RUN 1 — NOW-PLAYING BAR REVIVED, PERFORM LISTENS,
+  PUNCH UNIFIED, PER-ROOM TRANSPORT TRUTH — AWAITING BRIAN'S ON-DEVICE CHECK.** Eight shippable
+  commits (rollback tag `checkpoint/coherence-run1-2026-07-09`), from the Studio/DJ/live-FX
+  coherence deep-dive: the Dashboard **Now-Playing bar renders for the first time** (Studio now
+  feeds the orchestrator's shared registry — `addActiveEffect` had ZERO callers — and Stop
+  routes through Studio's own teardown instead of a bare grouped-light PUT that left the loop
+  running); **opening Perform actually starts mic capture** (`AudioDemand.performance` was
+  declared but never set — the beat panel said "Listening…" over a dead mic; deck-B cues raise
+  demand too); **Tap-Dial pads = on-screen pads** while Perform is open (same room/semantics/
+  3 Hz clamp, release-on-lift), and the REST STROBE burst alternates (was white→white); **per-
+  room transport truth** (`compositionTransportByRoom` replaces the global `isBridgeStored` +
+  Perform's snapshotted `isStreaming` — badges flip live on DTLS→REST failover, no wrong-room
+  "BRIDGE" labels); the **mixer tray edits the room on screen** (per-room param boxes; stopping
+  one room no longer clears another's editor); **bridge-optimized one-shots** drop the dead
+  editor/Revert/Save/Perform buttons for an honest notice, and SequencePlayer bounds its fade
+  wait (no more forever-hang when no render loop consumes the mix); unmapped Tap-Dial buttons
+  no-op (no more phantom tap-tempo); the iOS **"Dim Flashing Lights" strobe cap works** (was
+  hardcoded `false`); coverage badges clear on room switch. Full checklist in the 2026-07-09
+  BUILD 23 entry below. Full suite green per commit.
 - **BUILD 22 (2026-07-09): STUDIO ROUND 2 — AUDIT FIXES, ROOM-SCOPED PRESETS, CHROMAGLOW RENAME,
   CATEGORIES, PARITY, ROOM COLOR POPUP, CROSS-SURFACING — AWAITING BRIAN'S ON-DEVICE CHECK.**
   Nine shippable commits (rollback tag `checkpoint/studio-round2-2026-07-09`): renamed-built-in
@@ -6924,3 +6943,100 @@ Same commands as build 21 (scheme `HueHome 1`, iPhone 15 / OS 17.0 sim). New sui
   only for its watch-tuned chip colors and its `String` raw values.
 - The widget `ApplyPresetIntent` dropped its unknown-id fallback (was: apply (60, 350)); an
   unknown preset id now no-ops.
+
+## 2026-07-09 - [Claude] BUILD 23 — Engine coherence run 1: the three engines become one system
+
+### Branch
+- `main` (8 commits, `51f7862..`; rollback tag `checkpoint/coherence-run1-2026-07-09` —
+  revert = `git reset --hard checkpoint/coherence-run1-2026-07-09`)
+
+### Did
+Source: the Studio/DJ/live-FX coherence deep-dive (three-agent exploration, plan
+`warm-booping-dream`). Verdict was "coherent core, thrown-together connective tissue" —
+this run fixed the connective tissue. One shippable commit per fix:
+
+1. **Tap-Dial unmapped buttons no-op** — `?? 1` fallback fired phantom tap-tempo (re-pinning
+   the clock) for any button whose control_id never resolved. SSE regression test.
+2. **Shared now-playing registry** — `UnifiedOrchestrator.activeEffectEntries` had a writer
+   API with ZERO callers; the Dashboard Now-Playing bar never rendered and Tap-Dial punch read
+   an empty list forever. `StudioViewModel` now publishes at all five `runningEffects` write
+   sites (+ rename re-publish) and removes at the `stopEffect` chokepoint. Dashboard Stop
+   routes through the new `requestNowPlayingStop` → `studioStopHandler` (@ObservationIgnored)
+   so the owning engine loop is torn down — the old path PUT `on:true` and left loops running.
+   4 registry tests in `OrchestratorTests`.
+3. **Per-room transport truth** — new `compositionTransportByRoom: [String: CompositionTransport]`
+   (`.entertainment/.rest/.bridgeStored`), written only at start/stop/failover. Replaces the
+   global `isBridgeStored` (wrong-room "BRIDGE ⚡" labels) and Perform's construction-time
+   `isStreaming` snapshot (stale "⚡ STREAMING" + wrong punch branch after mid-set DTLS→REST
+   failover). Tray badge/status + Perform header read live. Test in `MultiBridgeRoutingTests`.
+4. **Per-room composition boxes** — `activeCompositionBox` was a single slot: with two rooms
+   playing, the tray/Perform/revert edited whichever room applied LAST. Now a dict keyed by
+   room id + a selected-room computed; stopping one room can no longer clear another's editor.
+5. **Perform holds the mic demand** — `AudioDemand.performance` existed but was never set;
+   the Perform beat panel advertised "Listening for a beat…" over a mic that never started.
+   `begin()/end()` hold the refcounted demand; `anyCompositionNeedsMic()` also counts a
+   mic-reactive deck-B cue (it previously read silence until promoted).
+6. **Punch unification** — with Perform open, Tap-Dial buttons 2–4 engage the on-screen pads
+   (strobe/blackout/burst, same room by construction, WCAG ≤3 Hz clamp in `applyPunch`) and
+   release on lift (`punchRelease` mapping, `short_release`/`long_release`). Perform closed:
+   signaling burst on the most recently started room (`.last`, was `.first`). REST STROBE pad
+   alternates white↔deep blue (was white→white — a flash that could not flash); BURST is the
+   steady white push. Mapping tests in `HueCapabilityFoundationTests`.
+7. **bridgeOptimized one-shot guards** — one-shots have no live box and no render loop, yet
+   the tray offered the full layer editor + Revert + Save + Perform (all silent no-ops; the
+   Perform gate matches build-22's `PresetSurfaceClassifier` taxonomy: bridgeOptimized = scene).
+   Now an honest notice pointing at the Scenes-tab Studio shelf. `SequencePlayer` bounds its
+   fade wait (fade duration + 2 s grace, then lands manually) — a sequence can no longer hang
+   forever awaiting a fade no render loop will clear. Async test in `BeatMathTests`.
+8. **Honesty micro-pass** — iOS "Dim Flashing Lights" strobe 30% cap now real
+   (`MADimFlashingLightsEnabled()`, MediaAccessibility; was hardcoded `false`), coverage badges
+   clear on room switch instead of showing the previous room's counts, Perform's beat chip
+   requests only capabilities its panel renders, dead `stop(_:)`/`selectedCard` deleted.
+
+### Working
+- Full suite green after every commit (511 → 518 tests, iPhone 17 Pro sim). Build bumped to 23
+  (all 12 pbxproj entries).
+
+### Left
+- **Brian's on-device checklist (build 23):**
+  - [ ] Start any Studio effect → Dashboard shows the Now-Playing bar; its Stop actually kills
+        the loop (tray empties too); two rooms → dialog lists both, Stop All works.
+  - [ ] Open Perform on a NON-reactive composition, play 120–128 BPM music → BPM readout locks
+        within ~8 s (mic starts with the surface now); close Perform with no mic-reactive
+        composition running → orange dot goes away.
+  - [ ] DJ Mode + Perform open: dial buttons 2–4 punch the PERFORMING room with the on-screen
+        pad semantics; holding engages, lifting releases. Perform closed: burst on the most
+        recently started room.
+  - [ ] Streaming composition, then kill bridge Wi-Fi >30 s mid-Perform → header flips
+        ⚡ STREAMING → 🔌 REST live; STROBE pad then visibly alternates (REST burst).
+  - [ ] Two rooms running compositions: tray badge + editor follow the SELECTED room; stopping
+        room A leaves room B's editor intact; only a bridge-stored room says "BRIDGE ⚡".
+  - [ ] Apply a still (bridge-optimized) Composer preset → tray shows the one-shot notice, no
+        Perform/Save/Revert buttons; a sequence over it advances instead of hanging.
+  - [ ] Settings → Accessibility → Dim Flashing Lights ON → Studio strobe runs at ≤30% brightness.
+- Phase B (next run, needs decisions/pbxproj): extract live `RestSender` out of dead
+  `SyncModeEngine.swift` + delete the dead Sync engines; Automations↔Studio arbitration via the
+  now-populated registry; REST punch/scheduler contention; shared effect-identity table.
+- Phase C (UX unification): one transport vocabulary + one TransportBadge, collapse the 4
+  transport-selection surfaces, AUDIO status chip, Perform discoverability, card-art truth for
+  cosmos/enchant/sunbeam/underwater.
+
+### Validation
+- `xcodebuild test -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
+  full suite after each of the 8 commits + a final post-bump run; new tests:
+  `OrchestratorSSETests` (unmapped button), `OrchestratorTests` (registry ×4),
+  `MultiBridgeRoutingTests` (per-room transport), `BeatMathTests` (sequence fade deadline),
+  `HueCapabilityFoundationTests` (punchRelease mapping).
+
+### Gotchas
+- `studioStopHandler` MUST stay `@ObservationIgnored` (closure var on an @Observable class).
+- `compositionTransportByRoom` is written only at start/stop/failover — never per frame; keep
+  it that way or the Studio tab invalidates at frame rate (same contract as CompositionParamBox).
+- `activeCompositionBox` is now a get-only computed over `activeCompositionBoxes[selectedRoom.id]`;
+  the editor's optional-chained field writes still work because `CompositionParamBox` is a class.
+  The two ownership writes go straight to the dict — keyed by the APPLYING/STOPPING room, not
+  the selected one.
+- The Dim-Flashing-Lights API is `MADimFlashingLightsEnabled()` in **MediaAccessibility** —
+  there is no UIAccessibility equivalent (that wrong guess is why it was stubbed `false`).
+- Tap-Dial punch routing tests stop at the pure mapping layer; the orchestrator branch is
+  6 lines of glue — covered by build + the on-device checklist.
