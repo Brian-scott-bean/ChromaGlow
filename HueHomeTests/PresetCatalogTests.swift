@@ -43,6 +43,27 @@ final class PresetCatalogTests: XCTestCase {
         }
     }
 
+    /// BuiltInSeedMigrator matches shipped presets to stored ones by id, so a
+    /// built-in written with `UUID()` would get a fresh id on every launch: it
+    /// would be re-added forever and never refreshed. Ids must be hand-assigned
+    /// from the `0000000C-0001-0001-0001-...` scheme.
+    func testEveryPresetIDIsDeterministicNotRandom() {
+        let scheme = /^0000000[0-9A-F]-0001-0001-0001-[0-9A-F]{12}$/
+        for preset in catalog {
+            XCTAssertNotNil(
+                try? scheme.wholeMatch(in: preset.id.uuidString.uppercased()),
+                "\(preset.name) has id \(preset.id) — a random UUID breaks seed migration")
+        }
+    }
+
+    /// Every filter chip on the Composer deck must lead somewhere.
+    func testEveryCategoryChipHasPresetsBehindIt() {
+        for category in PresetCategory.allCases where category != .all && category != .myCreations {
+            let count = catalog.filter { $0.category == category }.count
+            XCTAssertGreaterThan(count, 0, "the '\(category.rawValue)' chip shows an empty deck")
+        }
+    }
+
     func testSeasonalPresetsDeclareRealMonths() {
         for preset in catalog {
             guard let months = preset.seasonMonths else { continue }

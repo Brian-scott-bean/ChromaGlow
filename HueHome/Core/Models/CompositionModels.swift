@@ -623,10 +623,19 @@ struct ReactionConfig: Codable, Equatable {
 
 // MARK: - PresetCategory
 
+/// Additive: a preset saved by a build that does not know a case decodes to
+/// `.myCreations` rather than being dropped (see CompositionPreset.init(from:)),
+/// so new categories are safe to append. `myCreations` stays last — the order
+/// here is the order of the Composer deck's filter chips.
 enum PresetCategory: String, Codable, CaseIterable, Identifiable {
     case all        = "All"
     case ambient    = "Ambient"
+    case nature     = "Nature"
+    case cosmic     = "Cosmic"
+    case cozy       = "Cozy"
+    case focus      = "Focus"
     case energetic  = "Energetic"
+    case cinematic  = "Cinematic"
     case holiday    = "Holiday"
     case myCreations = "My Creations"
 
