@@ -25,6 +25,17 @@ struct WatchRoomSnapshot: Codable, Identifiable {
     }
 }
 
+/// Shared scene model — field-compatible with WidgetSceneSnapshot (phone) and
+/// WatchScene (watch app), which both serialize to hue_widget_scenes_v1.
+/// The watch app mirrors the phone's WCSession scene push into the watch-side
+/// App Group under the same key, so the complication reads it locally.
+struct WatchSceneSnapshot: Codable, Identifiable {
+    let id:           String  // real Hue scene UUID
+    let name:         String
+    let ownerGroupID: String  // matches WatchRoomSnapshot.id of the owning room/zone
+    let bridgeID:     String
+}
+
 final class WatchWidgetStore {
     static let shared = WatchWidgetStore()
     private init() {}
@@ -48,6 +59,18 @@ final class WatchWidgetStore {
 
     /// Rooms followed by zones — for the pin-a-group picker and lookups.
     var groups: [WatchRoomSnapshot] { rooms + zones }
+
+    var scenes: [WatchSceneSnapshot] {
+        guard let data = ud?.data(forKey: "hue_widget_scenes_v1"),
+              let decoded = try? JSONDecoder().decode([WatchSceneSnapshot].self, from: data)
+        else { return [] }
+        return decoded
+    }
+
+    /// Scenes belonging to a specific room/zone.
+    func scenes(forGroup groupID: String) -> [WatchSceneSnapshot] {
+        scenes.filter { $0.ownerGroupID == groupID }
+    }
 
     // The complication is display-only: it never talks to the bridge, so it
     // holds no credentials (M-02/D-018 removed the App Group token mirror).

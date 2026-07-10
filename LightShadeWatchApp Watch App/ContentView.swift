@@ -9,6 +9,8 @@ struct ContentView: View {
     @StateObject private var store = WatchStore.shared
     @Environment(\.scenePhase) private var scenePhase
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+    /// Room/zone id a complication tap deep-linked to (lightshade://group/{id}).
+    @State private var deepLinkGroupID: String?
 
     var body: some View {
         NavigationStack {
@@ -112,6 +114,19 @@ struct ContentView: View {
             }
             .navigationTitle("ChromaGlow")
             .navigationBarTitleDisplayMode(.inline)
+            // Scenes-complication tap: push the room whose scenes it showed.
+            .navigationDestination(item: $deepLinkGroupID) { id in
+                if let room = store.allGroups.first(where: { $0.id == id }) {
+                    RoomDetailView(room: room)
+                }
+            }
+        }
+        .onOpenURL { url in
+            guard url.scheme == "lightshade", url.host == "group" else { return }
+            let id = url.lastPathComponent
+            guard !id.isEmpty, id != "/" else { return }
+            store.loadFromLocalCache()
+            deepLinkGroupID = id
         }
         .onAppear {
             store.loadFromLocalCache()

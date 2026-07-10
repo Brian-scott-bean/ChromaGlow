@@ -12,5 +12,6 @@ import SwiftUI
 struct LightShadeWatchBundle: WidgetBundle {
     var body: some Widget {
         LightShadeWatch()
+        LightShadeWatchScenes()
     }
 }

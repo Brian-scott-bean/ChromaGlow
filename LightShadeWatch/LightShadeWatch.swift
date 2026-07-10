@@ -281,6 +281,159 @@ struct LightShadeWatch: Widget {
     }
 }
 
+// MARK: - Scenes Widget (second kind — no migration of existing face configs)
+
+struct WatchSceneEntry: TimelineEntry {
+    let date:     Date
+    let isPaired: Bool
+    /// The room whose scenes are shown: the pinned room, else the first
+    /// group that has scenes at all.
+    let room:     WatchRoomSnapshot?
+    let scenes:   [WatchSceneSnapshot]
+}
+
+struct WatchSceneProvider: AppIntentTimelineProvider {
+
+    func placeholder(in context: Context) -> WatchSceneEntry {
+        WatchSceneEntry(date: .now, isPaired: true,
+                        room: previewSceneRoom, scenes: previewScenes)
+    }
+
+    func snapshot(for config: WatchConfigIntent, in context: Context) async -> WatchSceneEntry {
+        context.isPreview
+            ? WatchSceneEntry(date: .now, isPaired: true,
+                              room: previewSceneRoom, scenes: previewScenes)
+            : makeEntry(config: config)
+    }
+
+    func timeline(for config: WatchConfigIntent, in context: Context) async -> Timeline<WatchSceneEntry> {
+        let next = Calendar.current.date(byAdding: .minute, value: 15, to: .now)!
+        return Timeline(entries: [makeEntry(config: config)], policy: .after(next))
+    }
+
+    func recommendations() -> [AppIntentRecommendation<WatchConfigIntent>] {
+        [AppIntentRecommendation(intent: WatchConfigIntent(), description: "Scenes")]
+    }
+
+    private func makeEntry(config: WatchConfigIntent) -> WatchSceneEntry {
+        let store = WatchWidgetStore.shared
+        let room: WatchRoomSnapshot?
+        if let pinnedID = config.room?.id {
+            room = store.groups.first { $0.id == pinnedID }
+        } else {
+            // First group that actually has scenes — an empty face helps nobody.
+            room = store.groups.first { !store.scenes(forGroup: $0.id).isEmpty }
+                ?? store.rooms.first
+        }
+        return WatchSceneEntry(
+            date:     .now,
+            isPaired: store.isPaired,
+            room:     room,
+            scenes:   room.map { store.scenes(forGroup: $0.id) } ?? []
+        )
+    }
+
+    private var previewSceneRoom: WatchRoomSnapshot {
+        WatchRoomSnapshot(id: "1", name: "Living Room", archetype: "living_room",
+                          isOn: true, brightness: 85, lightCount: 3, groupedLightId: nil)
+    }
+    private var previewScenes: [WatchSceneSnapshot] {[
+        WatchSceneSnapshot(id: "s1", name: "Relax",    ownerGroupID: "1", bridgeID: "b"),
+        WatchSceneSnapshot(id: "s2", name: "Energize", ownerGroupID: "1", bridgeID: "b"),
+        WatchSceneSnapshot(id: "s3", name: "Nightlight", ownerGroupID: "1", bridgeID: "b"),
+    ]}
+}
+
+/// Display-only (watchOS accessory complications are non-interactive):
+/// a tap opens the watch app straight into the room, which lists and
+/// recalls these scenes.
+struct WatchSceneEntryView: View {
+    var entry: WatchSceneEntry
+    @Environment(\.widgetFamily) var family
+
+    var body: some View {
+        Group {
+            if family == .accessoryInline {
+                inline
+            } else {
+                rectangular
+            }
+        }
+        .widgetURL(deepLink)
+    }
+
+    private var deepLink: URL? {
+        guard let room = entry.room else { return nil }
+        return URL(string: "lightshade://group/\(room.id)")
+    }
+
+    private var inline: some View {
+        Label(
+            entry.room.map { "\($0.name) · \(entry.scenes.count) scene\(entry.scenes.count == 1 ? "" : "s")" }
+                ?? "No scenes yet",
+            systemImage: "theatermasks.fill"
+        )
+    }
+
+    @ViewBuilder
+    private var rectangular: some View {
+        if let room = entry.room, !entry.scenes.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Label(room.name, systemImage: "theatermasks.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .widgetAccentable()
+                    .lineLimit(1)
+                ForEach(entry.scenes.prefix(2)) { scene in
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.secondary)
+                        Text(scene.name)
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                    }
+                }
+                if entry.scenes.count > 2 {
+                    Text("+\(entry.scenes.count - 2) more · tap to open")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                Label("Scenes", systemImage: "theatermasks.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .widgetAccentable()
+                Text(entry.isPaired
+                     ? "No scenes synced yet — open ChromaGlow on your iPhone."
+                     : "Open ChromaGlow on your iPhone to sync.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct LightShadeWatchScenes: Widget {
+    let kind = "com.lightshade.app.WatchSceneWidget"
+
+    var body: some WidgetConfiguration {
+        AppIntentConfiguration(
+            kind: kind,
+            intent: WatchConfigIntent.self,
+            provider: WatchSceneProvider()
+        ) { entry in
+            WatchSceneEntryView(entry: entry)
+                .containerBackground(.fill.tertiary, for: .widget)
+        }
+        .configurationDisplayName("ChromaGlow Scenes")
+        .description("A room's scenes at a glance — tap to open and recall.")
+        .supportedFamilies([.accessoryRectangular, .accessoryInline])
+    }
+}
+
 // MARK: - Archetype Icons
 
 private func watchArchetypeIcon(_ archetype: String?) -> String {
