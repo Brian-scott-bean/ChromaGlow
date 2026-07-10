@@ -66,6 +66,38 @@ final class HueIntentEntityTests: XCTestCase {
         XCTAssertFalse(PowerState.off.isOn)
     }
 
+    // ── Preset scoping + parity ───────────────────────────
+
+    func testPresetTargetsNilScopeSelectsWholeHome() {
+        let groups = [snapshot(id: "a"), snapshot(id: "b", kind: "zone"), snapshot(id: "c")]
+        XCTAssertEqual(LightingPresetIntent.presetTargets(groups: groups, scopeID: nil).map(\.id),
+                       ["a", "b", "c"])
+    }
+
+    func testPresetTargetsScopedSelectsOneGroup() {
+        let groups = [snapshot(id: "a"), snapshot(id: "b")]
+        XCTAssertEqual(LightingPresetIntent.presetTargets(groups: groups, scopeID: "b").map(\.id),
+                       ["b"])
+    }
+
+    func testPresetTargetsUnknownScopeSelectsNothing() {
+        // The room was deleted after Siri resolved it — must not fan out home-wide.
+        let groups = [snapshot(id: "a")]
+        XCTAssertTrue(LightingPresetIntent.presetTargets(groups: groups, scopeID: "ghost").isEmpty)
+    }
+
+    func testEveryPresetOptionResolvesToALightingPreset() {
+        for option in PresetOption.allCases {
+            XCTAssertNotNil(LightingPreset.find(option.rawValue),
+                            "\(option.rawValue) has no LightingPreset — the rawValue contract broke")
+        }
+    }
+
+    func testWelcomeHomeMatchesWidgetContract() {
+        XCTAssertEqual(AllLightsIntent.welcomeHome.brightness, 80)
+        XCTAssertEqual(AllLightsIntent.welcomeHome.mirek, 350)
+    }
+
     // ── Scene entity mapping ──────────────────────────────
 
     func testSceneSnapshotMapsToEntity() {

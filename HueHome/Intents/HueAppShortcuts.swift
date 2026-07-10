@@ -79,5 +79,41 @@ struct HueAppShortcuts: AppShortcutsProvider {
             shortTitle: "Activate Scene",
             systemImageName: "theatermasks.fill"
         )
+
+        // ── 6. Lighting preset (whole home unless a room is given) ──
+        AppShortcut(
+            intent: LightingPresetIntent(),
+            phrases: [
+                "Set the lights to \(\.$preset) in \(.applicationName)",
+                "Apply \(\.$preset) in \(.applicationName)",
+                "\(\.$preset) my lights in \(.applicationName)",
+            ],
+            shortTitle: "Apply Preset",
+            systemImageName: "slider.horizontal.3"
+        )
+
+        // ── 7. All lights on/off ─────────────────────────────────
+        AppShortcut(
+            intent: AllLightsIntent(),
+            phrases: [
+                "Turn \(\.$power) all lights in \(.applicationName)",
+                "All lights \(\.$power) in \(.applicationName)",
+                "Turn \(\.$power) all the lights in \(.applicationName)",
+            ],
+            shortTitle: "All Lights",
+            systemImageName: "house.fill"
+        )
+
+        // ── 10. Stop effects (lights stay on) ────────────────────
+        AppShortcut(
+            intent: StopLightEffectsIntent(),
+            phrases: [
+                "Stop the lights in \(.applicationName)",
+                "Stop light effects in \(.applicationName)",
+                "Stop the light show in \(.applicationName)",
+            ],
+            shortTitle: "Stop Effects",
+            systemImageName: "stop.circle.fill"
+        )
     }
 }

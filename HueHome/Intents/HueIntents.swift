@@ -181,6 +181,193 @@ struct GroupColorIntent: AppIntent {
     }
 }
 
+// MARK: - PresetOption
+
+/// Energize/Read/Relax/Sleep as an AppEnum. rawValue == LightingPreset.id
+/// (the same contract the widget's PresetChoice keeps) — do not rename cases.
+enum PresetOption: String, AppEnum, CaseIterable {
+    case energize, read, relax, sleep
+
+    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Lighting Preset")
+    static var caseDisplayRepresentations: [PresetOption: DisplayRepresentation] = [
+        .energize: "Energize", .read: "Read", .relax: "Relax", .sleep: "Sleep",
+    ]
+}
+
+// MARK: - LightingPresetIntent
+
+struct LightingPresetIntent: AppIntent {
+
+    static var title: LocalizedStringResource = "Apply Lighting Preset"
+    static var description = IntentDescription(
+        "Apply Energize, Read, Relax, or Sleep to one room or the whole home.",
+        categoryName: "Lights"
+    )
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Preset")
+    var preset: PresetOption
+
+    /// Optional scope — nil means every room and zone.
+    @Parameter(title: "Room or Zone")
+    var group: HueGroupEntity?
+
+    /// Scope selection, pure for tests: nil scope = whole home; an unknown
+    /// scope id selects nothing (the entity was deleted since resolution).
+    static func presetTargets(
+        groups: [WidgetRoomSnapshot], scopeID: String?
+    ) -> [WidgetRoomSnapshot] {
+        guard let scopeID else { return groups }
+        return groups.filter { $0.id == scopeID }
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard let lighting = LightingPreset.find(preset.rawValue) else {
+            throw IntentError.unknownEntity("preset")
+        }
+        let store = WidgetDataStore.shared
+        let targets = Self.presetTargets(groups: store.groups, scopeID: group?.id)
+        guard !targets.isEmpty else {
+            throw group == nil ? IntentError.noBridgeConnection
+                               : IntentError.unknownEntity("room")
+        }
+
+        let outcomes = await Self.fanOut(to: targets, store: store) { glId, creds in
+            try await HueIntentAPIClient.applyPreset(lighting, to: glId, ip: creds.ip, token: creds.token)
+        }
+        let failed = outcomes.filter { !$0.ok }.map(\.name)
+        guard failed.count < outcomes.count else {
+            throw IntentError.bridgeUnreachable(group?.name ?? "your lights")
+        }
+        if !failed.isEmpty {
+            throw IntentError.partialFailure(lighting.name, failed)
+        }
+        if let group {
+            return .result(dialog: "\(lighting.name) applied to \(group.name).")
+        }
+        let count = outcomes.count
+        return .result(dialog: "\(lighting.name) applied to \(count) room\(count == 1 ? "" : "s").")
+    }
+}
+
+// MARK: - AllLightsIntent
+
+struct AllLightsIntent: AppIntent {
+
+    static var title: LocalizedStringResource = "All Lights"
+    static var description = IntentDescription(
+        "Turn every light on or off. On is a warm welcome-home, not a bare full blast.",
+        categoryName: "Lights"
+    )
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Power", default: .off)
+    var power: PowerState
+
+    init() {}
+
+    init(power: PowerState) {
+        self.power = power
+    }
+
+    /// The widget's SetAllLightsPowerIntent contract: ON = 80% @ mirek 350.
+    static let welcomeHome = LightingPreset(
+        id: "welcome-home", name: "Welcome home", icon: "house.fill",
+        brightness: 80, mirek: 350
+    )
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let store = WidgetDataStore.shared
+        guard !store.groups.isEmpty else { throw IntentError.noBridgeConnection }
+
+        let isOn = power.isOn
+        let outcomes = await Self.fanOut(to: store.groups, store: store) { glId, creds in
+            if isOn {
+                try await HueIntentAPIClient.applyPreset(Self.welcomeHome, to: glId, ip: creds.ip, token: creds.token)
+            } else {
+                try await HueIntentAPIClient.setGroupedLight(id: glId, on: false, ip: creds.ip, token: creds.token)
+            }
+        }
+        let failed = outcomes.filter { !$0.ok }.map(\.name)
+        guard failed.count < outcomes.count else {
+            throw IntentError.bridgeUnreachable("your lights")
+        }
+        if !failed.isEmpty {
+            throw IntentError.partialFailure("All lights \(power.rawValue)", failed)
+        }
+        return .result(dialog: "All lights are \(power.rawValue).")
+    }
+}
+
+// MARK: - StopLightEffectsIntent
+
+extension Notification.Name {
+    /// Posted by StopLightEffectsIntent. AppRootView answers by stopping
+    /// every running app-driven effect through the shared registry
+    /// (requestNowPlayingStop) — the sanctioned non-Studio stop path that
+    /// tears down the owning engine loop AND keeps Studio's mirror in sync.
+    static let siriStopAllEffects = Notification.Name("castchroma.siriStopAllEffects")
+}
+
+struct StopLightEffectsIntent: AppIntent {
+
+    static var title: LocalizedStringResource = "Stop Light Effects"
+    static var description = IntentDescription(
+        "Stop running light effects and scenes. Lights stay on at their current state.",
+        categoryName: "Lights"
+    )
+    static var openAppWhenRun: Bool = false
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        // App-driven work (compositions, strobe/party/…): only exists if the
+        // app process is alive and foregrounded — a background intent launch
+        // has nothing running, so this post is a harmless no-op there.
+        await MainActor.run {
+            NotificationCenter.default.post(name: .siriStopAllEffects, object: nil)
+        }
+
+        // Bridge-native effects (candle/fire/…) persist after app death by
+        // design — kill them from here. Per-group failures are tolerated:
+        // some firmware 400s no_effect when nothing is running.
+        let store = WidgetDataStore.shared
+        _ = await Self.fanOut(to: store.groups, store: store) { glId, creds in
+            try await HueIntentAPIClient.stopNativeEffects(id: glId, ip: creds.ip, token: creds.token)
+        }
+        return .result(dialog: "Stopped light effects.")
+    }
+}
+
+// MARK: - Fan-out helper
+
+extension AppIntent {
+    /// Concurrent write to many groups, collecting per-group outcomes for
+    /// honest partial-failure dialogs. Groups with no grouped light or no
+    /// credentials count as failures (named, never silent).
+    static func fanOut(
+        to targets: [WidgetRoomSnapshot],
+        store: WidgetDataStore,
+        _ write: @escaping @Sendable (String, WidgetBridgeCredentials) async throws -> Void
+    ) async -> [(name: String, ok: Bool)] {
+        await withTaskGroup(of: (String, Bool).self) { tasks in
+            for target in targets {
+                guard let glId = target.groupedLightId,
+                      let creds = store.credentials(for: target.bridgeID) else {
+                    tasks.addTask { (target.name, false) }
+                    continue
+                }
+                let name = target.name
+                tasks.addTask {
+                    do { try await write(glId, creds); return (name, true) }
+                    catch { return (name, false) }
+                }
+            }
+            var results: [(name: String, ok: Bool)] = []
+            for await result in tasks { results.append(result) }
+            return results
+        }
+    }
+}
+
 // MARK: - IntentError
 
 enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {

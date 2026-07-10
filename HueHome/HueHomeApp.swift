@@ -207,6 +207,18 @@ struct AppRootView: View {
                             Task { await orchestrator.applyAutomationPreset(id: presetID) }
                         }
                     }
+                    // ── Siri "stop the lights" (app alive) ───────────────────────────
+                    // Route through the shared registry so the owning engine
+                    // loop tears down and Studio's mirror stays in sync — a
+                    // bare stopStudioMode/stopCompositionMode here would leave
+                    // loops running (the b20f0ef bug class).
+                    .onReceive(NotificationCenter.default.publisher(for: .siriStopAllEffects)) { _ in
+                        Task {
+                            for entry in orchestrator.activeEffectEntries {
+                                await orchestrator.requestNowPlayingStop(roomID: entry.id)
+                            }
+                        }
+                    }
                     .onReceive(NotificationCenter.default.publisher(for: .hueBridgeUnpaired)) { _ in
                         orchestrator.stopSSE()
                         orchestrator.exitDemoMode()
