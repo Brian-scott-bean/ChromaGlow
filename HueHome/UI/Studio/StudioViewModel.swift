@@ -845,9 +845,16 @@ final class StudioViewModel {
             let xy = HueColorUtils.xyFrom(hue: Double(h), saturation: Double(s), brightness: Double(b))
             colorXY = CGPoint(x: xy.x, y: xy.y)
         }
-        guard speed != nil || colorXY != nil else { return v2Capable.map(\.id) }
+        // Warmth rides the same v2 apply — but only when the user actually
+        // set it, so untouched cards keep the firmware's default look.
+        var mirek: Int? = nil
+        if card.params.contains(where: { $0.id == "warmth" }),
+           let raw = paramValues[card.id]?["warmth"] {
+            mirek = Int(raw.rounded())
+        }
+        guard speed != nil || colorXY != nil || mirek != nil else { return v2Capable.map(\.id) }
 
-        let body = EffectsV2Body(effect: effectName, speed: speed, colorXY: colorXY)
+        let body = EffectsV2Body(effect: effectName, speed: speed, colorXY: colorXY, mirek: mirek)
         for light in v2Capable {
             _ = await gate.send(retry: false) {
                 try await api.setLightEffectV2(id: light.id, body: body)
@@ -1326,12 +1333,34 @@ final class StudioViewModel {
                 }
             case "warmth":
                 let mirek = Int(value.rounded())
-                await orchestrator.enqueueStudioRestWrite {
-                    try? await api.setGroupedLightEffect(
-                        id: groupedLightID, on: nil,
-                        brightness: nil, xy: nil, mirek: mirek,
-                        duration: transitionMs
-                    )
+                // R5: while a bridge-native effect runs on v2-capable lights,
+                // re-parameterize the EFFECT's color_temperature per-light —
+                // a grouped mirek PUT fights the running firmware effect.
+                // Mirrors the speed case below; grouped stays the v1 fallback.
+                if let effect = runningEffects[room.id],
+                   effect.cardID == cardID,
+                   case .bridgeNative(let effectName) = effect.card.strategy,
+                   !effect.v2CapableLightIDs.isEmpty {
+                    let gate = orchestrator.commandGate(for: room.bridgeID)
+                    let capable = effect.v2CapableLightIDs
+                    await orchestrator.enqueueStudioRestWrite {
+                        for id in capable {
+                            _ = await gate.send(retry: false) {
+                                try await api.setLightEffectV2(
+                                    id: id,
+                                    body: EffectsV2Body(effect: effectName, mirek: mirek)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    await orchestrator.enqueueStudioRestWrite {
+                        try? await api.setGroupedLightEffect(
+                            id: groupedLightID, on: nil,
+                            brightness: nil, xy: nil, mirek: mirek,
+                            duration: transitionMs
+                        )
+                    }
                 }
             case "transition":
                 // Stored locally — affects subsequent brightness/warmth/color sends.
@@ -1727,6 +1756,7 @@ final class StudioViewModel {
                 requiresForeground: false,
                 params: [
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "speed", label: "Flicker Rate", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 366, tier: .color, format: StudioParamFormat.kelvin),
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
@@ -1743,6 +1773,7 @@ final class StudioViewModel {
                 requiresForeground: false,
                 params: [
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "speed", label: "Flicker Rate", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 400, tier: .color, format: StudioParamFormat.kelvin),
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
@@ -1759,6 +1790,7 @@ final class StudioViewModel {
                 requiresForeground: false,
                 params: [
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
+                    StudioParam(id: "speed", label: "Twinkle Rate", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
                 ],

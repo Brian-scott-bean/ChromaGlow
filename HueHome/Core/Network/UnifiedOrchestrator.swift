@@ -3252,6 +3252,9 @@ final class UnifiedOrchestrator {
             let peakBri     = (p["brightness"]    ?? 90) / 100.0
             let minBri      = (p["min_brightness"] ?? 5) / 100.0
             let smoothness  = (p["smoothness"]    ?? 20) / 100.0
+            // "Flash Color" biases every palette flash toward the chosen
+            // tint (read live each cycle — no restart needed).
+            let tint = extractXY(from: paramBox.colors["color"])
 
             // Beat-locked: color index AND hold/fade position both derived
             // from the clock each frame — the palette steps exactly on cycle
@@ -3265,7 +3268,7 @@ final class UnifiedOrchestrator {
                 let phase = BeatMath.cyclePhase(at: now, snapshot: lock.snapshot,
                                                 beatsPerCycle: lock.beatsPerCycle,
                                                 phaseOffsetBeats: binding.phaseOffsetBeats)
-                let color = palette[((idx % palette.count) + palette.count) % palette.count]
+                let color = Self.partyTinted(palette[((idx % palette.count) + palette.count) % palette.count], tint: tint)
                 let hold = 1.0 - smoothness
                 let bri: Double
                 if phase < hold || smoothness <= 0 {
@@ -3285,7 +3288,7 @@ final class UnifiedOrchestrator {
             let fadeFrames = max(1, Int(smoothness * period / 0.02))
             let holdFrames = max(1, Int((1.0 - smoothness) * period / 0.02))
 
-            let color = palette[colorIndex % palette.count]
+            let color = Self.partyTinted(palette[colorIndex % palette.count], tint: tint)
             colorIndex += 1
 
             // Flash phase: hold at peak brightness
@@ -3323,6 +3326,7 @@ final class UnifiedOrchestrator {
             let bri = p["brightness"] ?? 90
             let smoothness = p["smoothness"] ?? 20
             let durationMs = Int(smoothness / 100.0 * 500)  // 0–500ms transition
+            let tint = extractXY(from: paramBox.colors["color"])
 
             // Beat-locked REST: derive the palette index from the cycle count
             // and step exactly on boundaries (floored to the 1 s REST cadence).
@@ -3339,10 +3343,11 @@ final class UnifiedOrchestrator {
                 colorIndex += 1
             }
 
+            let tinted = Self.partyTinted(color, tint: tint)
             await studioRestSender.enqueue {
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: true,
-                    brightness: bri, xy: (color.x, color.y), mirek: nil,
+                    brightness: bri, xy: (tinted.x, tinted.y), mirek: nil,
                     duration: durationMs
                 )
             }
@@ -3557,6 +3562,15 @@ final class UnifiedOrchestrator {
     // MARK: - Color Extraction Helper
 
     /// Extract CIE xy from a SwiftUI Color, or return nil for default handling.
+    /// Party "Flash Color": bias a palette flash toward the user's tint
+    /// (50% xy blend) — keeps the multi-color character while honoring the
+    /// picker, which was previously never read by the party loops.
+    nonisolated static func partyTinted(_ color: (x: Double, y: Double),
+                                        tint: (x: Double, y: Double)?) -> (x: Double, y: Double) {
+        guard let tint else { return color }
+        return ((color.x + tint.x) / 2, (color.y + tint.y) / 2)
+    }
+
     private func extractXY(from color: Color?) -> (x: Double, y: Double)? {
         guard let color else { return nil }
         let uiColor = UIColor(color)
