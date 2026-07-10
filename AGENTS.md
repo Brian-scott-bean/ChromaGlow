@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 21** — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-21 landed 2026-07-09: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, and the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
+ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 22** — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-22 landed 2026-07-09: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty), and Studio Round 2 (room-scoped presets, ChromaGlow rename, composer categories, engine parity, room color popup, creation cross-surfacing). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
 
 ## Current Branch/Repo Facts
 
@@ -100,7 +100,7 @@ Current verified identity values:
 - iOS deployment target: iOS 17.0
 - watchOS deployment target: `26.4` (`WATCHOS_DEPLOYMENT_TARGET` in every watch build config — this resolves the earlier "verify watchOS target" follow-up)
 - Marketing version in project: `0.9.0`
-- Build number in project: `21` (bumped every device-test round; do not reuse a number)
+- Build number in project: `22` (bumped every device-test round; do not reuse a number)
 - App display name (main iOS target): `ChromaGlow`
 - Widget/watch target display names: **`ChromaGlow`** everywhere as of 2026-07-09 (Brian-assigned
   rename): all six `INFOPLIST_KEY_CFBundleDisplayName` entries (widget ext, watch app, watch widget
@@ -309,6 +309,38 @@ Scenes-excellence run (2026-07-09, build 21) durable facts — full record in th
 - Mixer-tray header is three rows; heights are declared in
   `MixerTrayMetrics.headerBlockHeight(hasStatusLine:)`. `StageBadge` never wraps (`lineLimit` +
   `fixedSize`). New tray rows must pay for themselves there or they clip.
+
+Studio Round 2 (2026-07-09, build 22) durable facts — full record in the DEVLOG build-22 entry:
+
+- **`LightingPreset` (Core/Models, pure Foundation) is the ONLY definition of
+  Energize/Read/Relax/Sleep** and is compiled into the app, widget, AND watch-app targets.
+  Chip colors are per-surface styling; brightness/mirek are behavior and live here.
+  `AutomationPreset`, the widget intent, and `WatchPreset` all read from it.
+- **Preset scope rule:** whole-home on home surfaces (Dashboard bar, watch home, multi-room
+  widget faces, Control Center); room-scoped on in-room surfaces (iOS RoomDetail row, watch
+  room detail, the room-pinned `FocusedMediumWidgetView`). `ApplyPresetIntent.groupID` is
+  optional — nil (all pre-existing widgets) = whole home. Do not remove the default.
+- **`CompositionStore.delete()` keys built-in resets on preset id** (never name — rename keeps
+  `isBuiltIn`). A built-in absent from the shipped catalog deletes for real.
+- **The Scenes tab never holds a live CompositionStore.** It reads snapshots via
+  `CompositionStore.readPresets(from: CompositionStore.defaultFileURL)`; Studio's instance
+  remains the only mutable one.
+- **`PresetSurfaceClassifier`** (derived from layers, never stored): reaction != none → Live
+  deck; `capabilityTier == .bridgeOptimized` → scene (Scenes-tab shelf, bridge-exportable by
+  test); else → Effects deck. Reaction is checked FIRST — hybrid (reactive+static) is live.
+- **`HueSaturationPad` is StageKit's shared color pad** — gamut-clamps every sample. The
+  Composer's harmony writes + REST-burst pacing live at ITS call site, not in the pad.
+- **`StageSlider` readouts are tap-to-type** (parseDraft: leading number, suffix-tolerant,
+  clamped). The commit brackets `onEditingChanged(true/false)` like a drag — debounce call
+  sites rely on that. Keyboard is `.numbersAndPunctuation` (decimal pad has no Return).
+- **Thunderstorm's engine knobs are all params** (`strike_rate`, `flash_length`, `afterglow`,
+  `flash_color` + the old four); `testAppDrivenParamsMatchEngineReadKeys` is the allowlist in
+  both directions. REST honors ambient/flash colors now.
+- **`RoomColorWashPlanner`** (pure) is the long-press wash: HarmonyEngine anchors cycled
+  per-bulb, gamut-clamped, `SavedColor.application` degradation; sends batched 5-at-a-time
+  with 150ms gaps via `UnifiedOrchestrator.applyColorWash`.
+- **Display names are `ChromaGlow` everywhere user-visible** (see Product Identity). Target
+  names, folder names, bundle IDs, and `com.lightshade.app` are unchanged on purpose.
 
 ## Android Current State
 

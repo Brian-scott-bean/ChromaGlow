@@ -12,7 +12,18 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **21**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **22**).
+- **BUILD 22 (2026-07-09): STUDIO ROUND 2 — AUDIT FIXES, ROOM-SCOPED PRESETS, CHROMAGLOW RENAME,
+  CATEGORIES, PARITY, ROOM COLOR POPUP, CROSS-SURFACING — AWAITING BRIAN'S ON-DEVICE CHECK.**
+  Nine shippable commits (rollback tag `checkpoint/studio-round2-2026-07-09`): renamed-built-in
+  delete bug fixed (reset now keys on id), unsupported effects restore a dark room, one brand
+  (ChromaGlow) on watch/widget/Siri surfaces, Energize/Read/Relax/Sleep scope to the room you're
+  in (iOS RoomDetail row NEW, watch room detail fixed, room-pinned widget face), Composer deck
+  category sections + category on save, tap-to-type on every slider, engine cards get the
+  hue/sat pad + My Colors, thunderstorm's six hidden tunables became params (both engine paths),
+  long-press a room card → color wheel + harmony popup, and Composer creations now surface on
+  the deck (or Scenes shelf) matching what they are. Full checklist in the 2026-07-09 BUILD 22
+  entry below. Full suite green.
 - **BUILD 21 (2026-07-09): SCENES EXCELLENCE — QR SHARING, 56 BUILT-INS, ENGINE HONESTY —
   AWAITING BRIAN'S ON-DEVICE CHECK.** Eight shippable commits (rollback tag
   `checkpoint/scenes-excellence-2026-07-09`): three-row mixer-tray header (no more mid-word
@@ -6822,3 +6833,94 @@ New suites: `ScenePayloadCodecTests`, `SceneQRRendererTests`, `EntertainmentAvai
 - `KeychainSharingTests.testForgetAllClearsSharedCredentialSurface` failed **once** in a full run,
   then passed in isolation and in two consecutive full runs. Order-dependent Keychain state,
   pre-existing, not introduced or fixed here. Worth a look if it recurs.
+
+---
+
+## 2026-07-09 - [Claude] BUILD 22 — Studio Round 2: audit fixes, room scoping, rename, parity
+
+### Branch
+- `main` (9 commits). Rollback: `git reset --hard checkpoint/studio-round2-2026-07-09`
+  (tag @ `6285371`, build 21).
+
+### Did
+1. **`d601564` audit fixes.** CompositionStore.delete() reset built-ins by NAME — a renamed
+   built-in ("Fireside" → "My Fire") was neither reset nor removed, permanently stuck. Now keys
+   on id; a retired built-in (no catalog entry) actually deletes. Unsupported firmware effects
+   now restore a room we switched on back to off (only if WE lit it). Scanner drain guarded
+   against sheet-on-sheet; `acceptShareLink`'s no-openToken-bump documented as load-bearing.
+2. **`a04f434` one brand.** Watch app + widget installed as "LightShade"/"LightShadeWatch"; the
+   watch title, widget faces, gallery names, Siri failure strings, and notification fallback
+   said "CastChroma". All six pbxproj display names + ten string sites now say **ChromaGlow**.
+   Untouched: bundle IDs, target/folder names, keychain/OSLog `com.lightshade.app` (L-35).
+3. **`5c86ab0` room-scoped presets.** iOS RoomDetail gains the Energize/Read/Relax/Sleep row it
+   never had (ONE grouped_light PUT, optimistic + rollback). Watch room detail chips were
+   whole-home INSIDE a room — now scoped via `applyPreset(_:to:)`. Room-pinned widget face
+   (FocusedMediumWidgetView) gains a scoped preset strip; `ApplyPresetIntent.groupID` is
+   optional so every existing widget keeps working. The four presets are now ONE definition:
+   `LightingPreset` (pure Foundation, compiled into app+widget+watch); four hand-synced copies
+   deleted.
+4. **`eacd03d` Composer categories.** "All" groups into collapsible category sections (user's
+   creations first, seasonal Holiday pinned second; collapse state persists). Save sheet gains
+   a Category chip row; "Move to Category…" in every preset's overflow menu.
+5. **`85573c9` tap-to-type sliders.** Tap any StageSlider readout → numeric field, parser
+   accepts the formatted text as-is ("120 BPM", "64%", comma decimals), clamps to range,
+   rejects garbage. Commit brackets onEditingChanged like a drag so debounce paths fire.
+   One component, 21 call sites, zero call-site changes.
+6. **`48fe15b` engine parity + storm depth.** Composer's hue/sat pad extracted to StageKit
+   `HueSaturationPad` (gamut-clamped per sample); engine-card `.colorPicker` params get the pad
+   + My Colors in the param sheet (compact tray keeps swatches — height math holds).
+   Thunderstorm's hidden tunables became params: `flash_color`, `strike_rate`, `flash_length`,
+   `afterglow` — consumed by BOTH the 50fps DTLS loop and the REST fallback; REST finally
+   honors ambient/flash colors. Defaults reproduce the old storm exactly. Param-truth allowlist
+   extended.
+7. **`71daa46` room color popup.** Hold any room/zone card (~0.45s) → color wheel + brightness +
+   harmony chips (with live anchor preview) + My Colors. Single color = one grouped PUT;
+   harmony = per-light spread via pure `RoomColorWashPlanner` (HarmonyEngine anchors cycled,
+   gamut-clamped, SavedColor.application capability degradation, batches of 5 @ 150ms).
+8. **`6b21b60` cross-surfacing.** `PresetSurfaceClassifier` (derived, never stored): reactive →
+   Live deck, static-steady-silent → scene, else → Effects deck. Decks 0/1 gain "From Composer"
+   sections (full cards). Scenes tab gains a "Studio scenes" shelf — tap → pick a room → a REAL
+   bridge scene is created there (exporter recipe, STUDIO provenance badge).
+9. **`(this)` build 22 + docs.**
+
+### Working
+- Full suite green after every slice; final full run green. All four schemes build
+  (main app, widget ext, watch app, watch extension — the extension via its Slice-1 build;
+  the physical-watch destination was unreachable for later rebuilds, and no later slice
+  touched that target).
+
+### Left — Brian's on-device pass for build 22
+- Watch home screen + iPhone widget gallery say **ChromaGlow** (fresh install may be needed
+  for Springboard to drop cached names).
+- **Energize inside a room** changes only that room: iOS RoomDetail row, watch room detail,
+  room-pinned widget face. Dashboard bar + watch home + generic widget still whole-home.
+- Renamed-built-in regression: rename a built-in composition, delete it → it resets.
+- Run Cosmos on a white-only room that was OFF → warning AND the room goes back off.
+- Hold Living Room card → popup; try Single and a Triad spread; check a CT-only/dimmable bulb
+  joins at the right brightness.
+- Thunderstorm: change Flash Color / Strike Chance / Flash Length / Afterglow live, on both
+  streaming and REST (kill the entertainment area to force REST).
+- Tap a BPM readout, type 120 — exact value lands; garbage cancels.
+- Composer deck: sections collapse and persist; save sheet Category; Move to Category….
+- Deck 0/1 "From Composer" sections; Scenes tab "Studio scenes" shelf → add to a room →
+  the scene appears in that room with the STUDIO badge and runs from the bridge.
+
+### Validation
+Same commands as build 21 (scheme `HueHome 1`, iPhone 15 / OS 17.0 sim). New suites:
+`CompositionStoreTests`, `RoomColorWashPlannerTests`, `PresetSurfaceClassifierTests`; extended:
+`StudioEffectsV2Tests` (restore-off), `StageKitTests` (parseDraft), `StudioParamCatalogTests`
+(section order, thunderstorm allowlist).
+
+### Gotchas
+- **`.equatable()` on RoomCard excludes closures from ==** — the new onLongPress closure is
+  invisible to diffing, which is correct (it never changes identity) but means don't put
+  state-dependent values inside it.
+- **StageSlider's numeric field uses `.numbersAndPunctuation`, not `.decimalPad`** — the decimal
+  pad has no Return key, which would make tap-away the only commit.
+- **The Scenes tab reads compositions via `CompositionStore.readPresets(from:)` snapshots** —
+  deliberately NOT a second live store (Studio owns the only mutable one). Refresh happens per
+  tab activation; a save made in Studio appears on next visit.
+- `WatchPreset` now reads label/icon/brightness/mirek from `LightingPreset` — the enum survives
+  only for its watch-tuned chip colors and its `String` raw values.
+- The widget `ApplyPresetIntent` dropped its unknown-id fallback (was: apply (60, 350)); an
+  unknown preset id now no-ops.

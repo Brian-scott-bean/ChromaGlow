@@ -19,13 +19,13 @@ Important current facts (2026-07-09):
   scheme explicitly). Validate with:
   `xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`.
 - **`main` is the branch Brian installs from** (Xcode → physical iPhone). Keep it releasable;
-  fast-forward validated work to it. Current: `main`, 0.9.0 build 21 (see DEVLOG snapshot).
+  fast-forward validated work to it. Current: `main`, 0.9.0 build 22 (see DEVLOG snapshot).
 - Brian's conventions: `checkpoint/*` rollback tag before any multi-commit run; bump
   `CURRENT_PROJECT_VERSION` (all 12 pbxproj entries) each device-test round; one shippable
   commit per fix.
 - The freshest "where are we / what's next" is the DEVLOG "Current Status Snapshot" — as of now:
-  builds 18-21 await Brian's on-device verification (build 21 = scenes excellence: QR scene
-  sharing, 56 built-ins, seed migration, transport/effect honesty). The TEMP `⏱️PERF` prints
+  builds 18-22 await Brian's on-device verification (build 22 = Studio Round 2: room-scoped
+  presets, ChromaGlow rename, composer categories, engine parity, room color popup). The TEMP `⏱️PERF` prints
   (from build 9) still want removing in a cleanup commit.
 - Android exists under `android/`; demo MVP + pairing foundations are on `main`, Batch 4 live
   pairing awaits its physical link-button gate on `integration/parallel-batch-4`.
