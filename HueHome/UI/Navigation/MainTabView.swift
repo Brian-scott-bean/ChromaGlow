@@ -50,6 +50,14 @@ struct MainTabView: View {
     /// Home's navigation stack. Owned here so a widget deep link can push a room.
     /// `DashboardView` supplies the matching `.navigationDestination(for:)`.
     @State private var homePath: [RoomDisplayItem] = []
+    /// A home-join invite being presented (tapped link / scanned QR while paired).
+    @State private var presentedInvite: InvitePresentation?
+    @State private var inviteError: InvitePayloadError?
+
+    private struct InvitePresentation: Identifiable {
+        let id = UUID()
+        let payload: HomeJoinPayload
+    }
 
     var body: some View {
         Group {
@@ -66,12 +74,32 @@ struct MainTabView: View {
         .task { routePendingShare() }
         // Same cold-launch window for a Siri "start X in Y" — route on mount.
         .task { routePendingStudioAction() }
+        // …and for a home-join invite link.
+        .task { routePendingInvite() }
         // A widget / Lock-Screen tap deep-links here.
         .onChange(of: deepLink.openToken) { _, _ in consumeDeepLink() }
         // A cold launch from a widget arrives before `loadAll` has any rooms, so
         // the id can't resolve yet. Retry when the groups land.
         .onChange(of: orchestrator.allRooms.count) { _, _ in retryPendingDeepLink() }
         .onChange(of: orchestrator.allZones.count) { _, _ in retryPendingDeepLink() }
+        .sheet(item: $presentedInvite) { presentation in
+            JoinSharedHomeView(
+                payload: presentation.payload,
+                isAddingAdditional: true,
+                onBridgeAdded: { record in
+                    orchestrator.addBridge(record)
+                    Task { await orchestrator.loadAll() }
+                }
+            )
+        }
+        .alert("Can't Open Invite", isPresented: Binding(
+            get: { inviteError != nil },
+            set: { if !$0 { inviteError = nil } }
+        )) {
+            Button("OK", role: .cancel) { inviteError = nil }
+        } message: {
+            Text(inviteError?.localizedDescription ?? "")
+        }
     }
 
     // MARK: - Deep link
@@ -80,6 +108,7 @@ struct MainTabView: View {
     /// A plain `lightshade://dashboard` tap pops back to the dashboard root.
     /// A share link goes to Studio instead — see `routePendingShare`.
     private func consumeDeepLink() {
+        if routePendingInvite() { return }
         if routePendingShare() { return }
         if routePendingStudioAction() { return }
 
@@ -123,6 +152,24 @@ struct MainTabView: View {
         guard let id = deepLink.pendingGroupID, let room = resolveGroup(id) else { return }
         homePath = [room]
         deepLink.pendingGroupID = nil
+    }
+
+    /// Presents the join flow for a tapped/scanned home-join invite (or its
+    /// decode error). Drains the coordinator — the sheet owns the payload
+    /// from here. Returns true when it took the link.
+    @discardableResult
+    private func routePendingInvite() -> Bool {
+        if let payload = deepLink.pendingInvite {
+            deepLink.clearInvite()
+            presentedInvite = InvitePresentation(payload: payload)
+            return true
+        }
+        if let error = deepLink.pendingInviteError {
+            deepLink.clearInvite()
+            inviteError = error
+            return true
+        }
+        return false
     }
 
     private func resolveGroup(_ id: String) -> RoomDisplayItem? {

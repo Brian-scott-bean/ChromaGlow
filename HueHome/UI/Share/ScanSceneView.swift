@@ -14,8 +14,14 @@ import VisionKit
 
 struct ScanSceneView: View {
 
+    /// Surface strings — the invite flow reuses this scanner with its own
+    /// wording. Defaults preserve the scene-scanner call sites verbatim.
+    var title: String = "SCAN A SCENE"
+    var hint: String = "Point at a ChromaGlow scene QR code"
+
     /// Called once with the first recognised ChromaGlow share link. The caller
-    /// dismisses and presents the import preview.
+    /// dismisses and presents the import preview (or the join flow — wrong-kind
+    /// links surface as honest decode errors there, not silent non-matches).
     let onFound: (URL) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -30,7 +36,7 @@ struct ScanSceneView: View {
                 if Self.isSupported {
                     ScannerRepresentable(onFound: handle)
                         .ignoresSafeArea(edges: .bottom)
-                        .overlay(alignment: .bottom) { hint }
+                        .overlay(alignment: .bottom) { hintOverlay }
                 } else {
                     unsupported
                 }
@@ -38,7 +44,7 @@ struct ScanSceneView: View {
             .background(StagePalette.stage)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("SCAN A SCENE")
+                    Text(title)
                         .font(HueFont.stageTag)
                         .tracking(1.2)
                         .lineLimit(1)
@@ -64,8 +70,8 @@ struct ScanSceneView: View {
         dismiss()
     }
 
-    private var hint: some View {
-        Text("Point at a ChromaGlow scene QR code")
+    private var hintOverlay: some View {
+        Text(hint)
             .font(HueFont.stageStatus)
             .foregroundStyle(.white.opacity(0.9))
             .padding(.horizontal, 14)

@@ -77,6 +77,15 @@ struct BridgeSetupContent: View {
     @State private var showManualEntry = false
     @State private var showDebugLog    = false
     @State private var manualIP        = ""
+    // ── Share Invite (home-join) ──────────────────────────
+    @State private var showInviteScanner = false
+    @State private var presentedInvite: JoinInvitePresentation?
+    @State private var inviteError: InvitePayloadError?
+
+    private struct JoinInvitePresentation: Identifiable {
+        let id = UUID()
+        let payload: HomeJoinPayload
+    }
     /// The record created (or reused) for the CURRENT pairing — finalized the
     /// moment the phase reaches `.paired` (L-15: record + credentials are
     /// committed together, not deferred to a button tap the user may skip).
@@ -139,6 +148,34 @@ struct BridgeSetupContent: View {
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showManualEntry) { manualIPSheet }
+        // Drain on dismiss, not inside onFound — presenting the join sheet
+        // while the scanner is still dismissing drops it (Studio's pattern).
+        .sheet(isPresented: $showInviteScanner, onDismiss: drainPendingInvite) {
+            ScanSceneView(title: "SCAN AN INVITE",
+                          hint: "Point at a ChromaGlow invite QR code") { url in
+                DeepLinkCoordinator.shared.acceptInviteLink(url)
+            }
+        }
+        .sheet(item: $presentedInvite) { presentation in
+            JoinSharedHomeView(
+                payload: presentation.payload,
+                isAddingAdditional: isAddingAdditional,
+                onBridgeAdded: onBridgeAdded,
+                onFirstPairingComplete: onPaired
+            )
+        }
+        .alert("Can't Open Invite", isPresented: Binding(
+            get: { inviteError != nil },
+            set: { if !$0 { inviteError = nil } }
+        )) {
+            Button("OK", role: .cancel) { inviteError = nil }
+        } message: {
+            Text(inviteError?.localizedDescription ?? "")
+        }
+        // An invite LINK tapped while unpaired lands before MainTabView
+        // exists — this screen is what's on stage, so it drains too.
+        .task { drainPendingInvite() }
+        .onChange(of: DeepLinkCoordinator.shared.openToken) { _, _ in drainPendingInvite() }
         .onAppear {
             StartupTimeline.mark("setup.appear")
             pulsing = true
@@ -266,6 +303,11 @@ struct BridgeSetupContent: View {
                 // Manual fallback
                 secondaryButton("Enter IP Manually", icon: "keyboard") {
                     showManualEntry = true
+                }
+
+                // Someone else's bridge — scan their home-join invite QR.
+                secondaryButton("Join a Shared Home", icon: "qrcode.viewfinder") {
+                    showInviteScanner = true
                 }
 
                 // Demo
@@ -733,6 +775,19 @@ struct BridgeSetupContent: View {
             pairedRecord = registration.record
         } catch {
             vm.phase = .error("Pairing succeeded but the bridge could not be saved — please try pairing again.\n(\(error.localizedDescription))")
+        }
+    }
+
+    // MARK: - Share Invite drain
+
+    private func drainPendingInvite() {
+        let coordinator = DeepLinkCoordinator.shared
+        if let payload = coordinator.pendingInvite {
+            coordinator.clearInvite()
+            presentedInvite = JoinInvitePresentation(payload: payload)
+        } else if let error = coordinator.pendingInviteError {
+            coordinator.clearInvite()
+            inviteError = error
         }
     }
 

@@ -79,6 +79,13 @@ final class BridgeDiscoveryViewModel {
     /// verification (L-17 dedup key). nil when the test seam bypassed
     /// verification or the legacy pin path could not recover it.
     private(set) var pairedCanonicalBridgeID: String?
+    /// Invite trust rule (home-join QR): when set, a successful pairing must
+    /// ALSO match this identity — canonical bridgeid AND the live-captured
+    /// leaf-key pin. The QR's pin is verified-against, never ingested: a
+    /// wrong or tampered invite can only cause a refusal here, it can never
+    /// inject trust. Checked after verifyBridgeIdentityAndPin, BEFORE any
+    /// credential persists.
+    var expectedIdentity: (bridgeID: String, publicKeySHA256: String)?
     /// Human-readable label shown in the scanning UI — updates as fallback methods are tried.
     var scanningLabel: String = "Searching your Wi-Fi..."
     /// Host+port-deduplicated bridges available for explicit selection during scanning.
@@ -430,6 +437,22 @@ final class BridgeDiscoveryViewModel {
                 ) else {
                     handleError("Could not verify this bridge's secure identity. Make sure you are on the same network as the bridge, then try pairing again.")
                     return
+                }
+
+                // Invite flow only: the just-verified live identity must match
+                // the invite's expectation. Nothing has persisted app-side yet,
+                // so refusing here leaves no trace to clean up.
+                if let expected = expectedIdentity {
+                    let canonical = pairedCanonicalBridgeID ?? ""
+                    let livePin = BridgePinStore.shared
+                        .pin(forBridgeID: canonical)?.publicKeySHA256
+                    guard canonical == expected.bridgeID.uppercased(),
+                          livePin == expected.publicKeySHA256 else {
+                        appendLog("⛔️ Invite identity mismatch — refusing pairing.")
+                        handleError("This bridge doesn't match the invite. Make sure you're on the inviter's Wi-Fi and scanning their current QR, then try again.")
+                        return
+                    }
+                    appendLog("🪪 Invite identity confirmed — bridge matches the QR.")
                 }
 
                 // L-15: persist straight to per-bridge NAMESPACED Keychain

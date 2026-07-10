@@ -15,6 +15,7 @@ struct MoreView: View {
     @State private var showAutomations   = false
     @State private var showDevices       = false
     @State private var showEntertainmentAreas = false
+    @State private var showShareInvite   = false
 
     // ── Accent colors (from design token system) ────────────
     private let purple = Color(hex: "#8C59FF")  // no token yet
@@ -47,6 +48,7 @@ struct MoreView: View {
         .sheet(isPresented: $showSettings) {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
         }
+        .sheet(isPresented: $showShareInvite) { ShareInviteSheet() }
         // Round-2 Item 4: the ONLY other builder entry point (Studio's prompt)
         // is conditional on a spatial motion pattern + no existing area, and
         // the old Sync tab was removed in v0.15.0 — this is the app's
@@ -122,8 +124,7 @@ struct MoreView: View {
             moreDivider
             moreRow(icon: "qrcode", iconColor: HuePalette.amber,
                     title: "Share Invite",
-                    subtitle: "Grant access via QR code",
-                    badge: "Coming Soon") { }
+                    subtitle: "Grant access via QR code") { showShareInvite = true }
         }
     }
 

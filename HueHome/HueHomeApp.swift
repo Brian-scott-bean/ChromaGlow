@@ -123,6 +123,12 @@ final class DeepLinkCoordinator {
     var pendingSharedScene: SharedScene?
     /// Why the last share link could not be opened. Shown, then cleared.
     var pendingShareError: ScenePayloadError?
+    /// A decoded home-join invite awaiting its join flow (MainTabView when
+    /// paired; BridgeSetup during onboarding). Decode-only, like scenes —
+    /// the accept (pairing + registrar) lives in JoinSharedHomeView.
+    var pendingInvite: HomeJoinPayload?
+    /// Why the last invite link could not be opened. Shown, then cleared.
+    var pendingInviteError: InvitePayloadError?
     /// A Siri "start this in that room" awaiting Studio's drain.
     var pendingStudioAction: PendingStudioAction?
     /// Bumped on every deep link so observers can react even to a repeated target.
@@ -138,7 +144,14 @@ final class DeepLinkCoordinator {
         guard url.scheme == "lightshade" else { return }
 
         if ScenePayloadCodec.isShareLink(url) {
-            acceptShareLink(url)
+            // One URL host, many kinds (the envelope's design): probe the
+            // kind so an invite never lands in Studio's scene-import flow.
+            if let kind = try? ScenePayloadCodec.probeKind(url).kind,
+               kind == InvitePayloadCodec.homeJoinKind {
+                acceptInviteLink(url)
+            } else {
+                acceptShareLink(url)
+            }
             openToken &+= 1
             return
         }
@@ -177,6 +190,29 @@ final class DeepLinkCoordinator {
     func clearShare() {
         pendingSharedScene = nil
         pendingShareError = nil
+    }
+
+    /// Decode-only, mirroring acceptShareLink (and its token rule: the in-app
+    /// scanner calls this while its sheet is presented, so no token bump here
+    /// — external URLs get theirs from handle(_:)). The accept/save is the
+    /// join flow's: pairing + BridgePairingRegistrar, never the coordinator.
+    func acceptInviteLink(_ url: URL) {
+        pendingGroupID = nil
+        do {
+            pendingInvite = try InvitePayloadCodec.decode(url)
+            pendingInviteError = nil
+        } catch let error as InvitePayloadError {
+            pendingInvite = nil
+            pendingInviteError = error
+        } catch {
+            pendingInvite = nil
+            pendingInviteError = .malformedPayload
+        }
+    }
+
+    func clearInvite() {
+        pendingInvite = nil
+        pendingInviteError = nil
     }
 }
 
