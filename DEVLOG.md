@@ -12,7 +12,46 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **25**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **26**).
+- **BUILD 26 (2026-07-10): FAMILY SHARING COMPLETE — INVITE PHASES 2–4 IN ONE ROUND —
+  AWAITING BRIAN'S ON-DEVICE CHECK.** Twelve shippable commits (`f3eac6b..`, rollback tag
+  `checkpoint/family-sharing-2026-07-10`), implementing all of
+  `docs/ios/profiles-access-share-invite-design-2026-07.md`. **Phase 2 (per-guest keys):**
+  `ApplicationKeyMinter` extracted verbatim from the pairing POST (the untouched
+  SecretLogScrubTests H-04 pair is the preservation proof); second envelope kind `"invite"`
+  carries {bid, host, port, name, pinPK, token, allowedGroups, features, expiresAt} —
+  structurally NO clientkey field; the owner mints per bridge in `GuestInviteMintSheet`
+  (devicetype `chromaglow#g-<slug>-<4hex>`, `generateclientkey:false`, one link-button press,
+  display-only QR — NO ShareLink — 15-min countdown, "New Code" re-encodes the STORED key);
+  the guest joins with NO button press (`GuestInviteAcceptor`: expiry ±5 min grace →
+  no-downgrade guard (an owned full credential is never replaced; a granted record updates in
+  place = the re-scan update path) → live TOFU + `/api/0/config` cross-check → pin gate
+  (verified-against, never ingested, never overwrites a differing stored pin) → token
+  liveness probe (explicit type-1/401/403 = revoked-before-accept; transport failure persists
+  NOTHING) → registrar dedup → grant write BEFORE addBridge/loadAll, so first paint is
+  filtered). **Phase 3 (profiles + enforcement):** additive SwiftData `GuestProfile` +
+  `GuestAccessGrant`; "Profiles & Access" is LIVE (More → PEOPLE): create profiles, pick
+  rooms/zones per bridge (`RoomAccessPicker`), feature toggles with honest one-liners,
+  Generate Invite per profile; enforcement lives at ONE choke point —
+  `applyGuestAccessFilter()` prunes `roomsByBridge`/`zonesByBridge` inside the rebuilds so
+  dashboard, widgets, watch, Siri entities, and deep links inherit for free (scenes have
+  their own filter at `loadAllScenes`; SSE mutates existing entries only, so pruned rooms
+  can't resurrect); guest shell = dashboard banner with the §5 honesty copy, Studio tab
+  hidden guest-only (swipe indexes into visibleTabs), per-bridge feature gates
+  (onOff/brightness+color/scene-recall; create/delete/rename/copy/move never on granted
+  bridges, orchestrator backstops refuse with a toast), fail-closed zero-rooms empty state.
+  **Phase 4 (revocation honesty):** the whitelist hardware spike SHIPPED as a runtime probe —
+  Profiles & Access → "Keys on your bridges" → `BridgeKeysView` (`fetchWhitelist()` nil =
+  firmware omits it; "Try Remove" = best-effort DELETE trusted only via verify-by-re-read;
+  H-03 masking added for whitelist elements incl. the PRE-EXISTING raw-path pre-logs in
+  HueV1Client's four verbs); owner "Revoke Access" = best-effort bridge delete + ALWAYS the
+  local key wipe + `revokedAt` (mint sheet refuses revoked specs); guest-side cooperative
+  wipe fires ONLY on an explicit 401/403 over pinned TLS (L-30 — 0/404/408/429/5xx/timeouts
+  pinned as never-wipe by test), owned bridges get re-pair advice, never an auto-wipe. Also:
+  KeychainManagerTests no longer leaks the legacy keychain slots (pre-existing cross-test
+  pollution surfaced by clone redistribution). Full suite green per commit (667 tests; two
+  consecutive green runs at the end). On-device checklist in the 2026-07-10 BUILD 26 entry
+  below.
 - **BUILD 25 (2026-07-10): WIDGET-SCENES FIX, AUDIT FIXES, WATCH SCENES FACE, SHARE INVITE
   PHASE 1 — AWAITING BRIAN'S ON-DEVICE CHECK.** Twelve shippable commits (`d5f0ade..`,
   rollback tag `checkpoint/scenes-stop-invite-2026-07-10`), from the full builds-18–24
@@ -7323,3 +7362,108 @@ this run fixed the connective tissue. One shippable commit per fix:
   BEFORE any Keychain write, and never put a token/clientkey in a share payload (Phase 2's
   token QR has its own rules: display-only, time-boxed, no ShareLink).
 - `struct`s can't nest in generic functions (fanOut's Job is a typealias'd tuple for that reason).
+
+---
+
+## 2026-07-10 - [Claude] Build 26 — Family Sharing complete: Invite Phases 2–4 in one round
+
+### What shipped (12 commits, `f3eac6b..`, tag `checkpoint/family-sharing-2026-07-10`)
+
+1. `f3eac6b` refactor(pairing): `ApplicationKeyMinter` extracted verbatim from
+   `performPairingRequest` — parameterized devicetype + generateclientkey; the VM keeps
+   phase/Keychain/StartupTimeline. Preservation proof: SecretLogScrubTests H-04 pair passes
+   UNCHANGED. Guest slug: `g-<slug≤12>-<4hex>` ≤ 19 chars.
+2. `0110d08` feat(invite): `kind:"invite"` codec — token-bearing per-guest payload with
+   expiry (TTL 15 min, accept grace ±5 min); refusals both directions; old builds refuse
+   gracefully via `unsupportedKind`; size gates vs SceneQRRenderer thresholds.
+3. `c30c79d` feat(profiles): `GuestProfile`/`GuestAccessGrant` (ADDITIVE SwiftData — Build-21
+   upgrade is a lightweight migration), `GuestAccessGrantStore` (upsert = the re-scan update
+   path; orphan pruning keys on ALL records so a disabled bridge keeps its grant),
+   `GuestAccessPolicy` (nil grant passthrough; EMPTY ALLOWLIST FAILS CLOSED; scene filter =
+   "scenes" feature AND allowed room; isGuestOnly truth table incl. mixed role).
+4. `75921f6` fix(tests): KeychainManagerTests snapshot/restores the legacy slots it writes
+   (pre-existing pollution that failed KeychainSharingTests when clones redistributed).
+5. `deead8c` feat(profiles): THE choke point — `applyGuestAccessFilter()` inside
+   rebuildAllRooms/rebuildAllZones (after `pruneStaleBridgeSnapshots`), prunes the per-bridge
+   DICTIONARIES in place; `preloadCached` filters the SwiftData cache window; `loadAllScenes`
+   filters scenes; `guestFeatures(for:)` + `guestAccessInfo` (observable) drive the UI;
+   `gatedBulkWrite`/turnAllOff skip no-onOff bridges. configure() loads grants BEFORE its
+   rebuilds — no flash of forbidden rooms, ever.
+6. `436e3ea` feat(invite): owner minting — `GuestKeyStore`
+   (`hue_invite_<profileID>_<bridgeRecordID>_token`, additive, sweep refuses foreign
+   prefixes), `GuestInviteMintSheet` (per-bridge link-button mint; ≥1 allowed group or no key
+   at all; QR display-only + photograph warning + countdown; regenerate reuses stored keys —
+   no re-mint, no new whitelist entry; revoked specs refused). SecretLogScrub: mint logs
+   carry no token and no `lightshade://` blob.
+7. `8341432` feat(invite): guest accept — `GuestInviteAcceptor` engine + view + routing
+   (`pendingGuestInvite`, kind dispatch in handle(), BridgeSetup scanner takes both kinds).
+   Ordering contract: identity → Keychain → registrar → grant upsert → updateGuestGrants →
+   addBridge → loadAll.
+8. `1382e27` feat(profiles): Profiles & Access UI live (profile CRUD, room picker with
+   stale-id hygiene, Generate Invite wiring, honest delete copy; DEBUG More row removed).
+9. `a25e9a0` feat(profiles): guest experience — GuestAccessBanner + detail sheet (§5 copy
+   verbatim), visibleTabs (Studio hidden guest-only; swipe/prewarm/deep-link guards),
+   RoomCard/RoomDetail/CompactLightCard feature gates, guestLightSummary fallback, Scenes
+   context-menu + create gating, Bridge Manager delete reruns updateGuestGrants.
+10. `4205b09` feat(revocation): whitelist read/delete + H-03 — `maskWhitelistElement` in
+    redactedPath + the four verb pre-logs + sanitizedForLog; `WhitelistEntry` textual forms
+    pinned to displayID; delete outcome mapped ONLY from verify-by-re-read (pure, tested);
+    `BridgeKeysView` = the shipped hardware spike.
+11. `7599be2` feat(revocation): owner revoke — bridge delete best-effort, LOCAL WIPE ALWAYS,
+    revokedAt set, report decides which §4 truth the dialog speaks.
+12. `b39ea7c` feat(revocation): guest cooperative wipe — `onExplicitUnauthorized` at
+    execute()'s status guard (401/403 only, pure rule pinned by tests),
+    `BridgeAuthorizationMonitor` (storm-collapsing), MainTabView wipes granted bridges with
+    a notice; owned bridges get re-pair advice only.
+
+### Brian's on-device checklist (build 26)
+
+1. **Two-phone invite (the headline):** phone A: More → Profiles & Access → New Profile
+   (pick rooms + features) → Generate Invite → press link button → Mint → QR appears with
+   countdown. Phone B: camera-scan (or onboarding "Join a Shared Home") → "You're in as
+   ⟨name⟩" → Connect (NO button press) → dashboard shows ONLY the allowed rooms.
+2. Phone B surfaces: widgets gallery + Control Center + watch + Siri ("turn on ⟨hidden
+   room⟩ in ChromaGlow" must fail to resolve) show only allowed rooms; tab bar has no
+   Studio when guest-only; swipe order correct; banner opens the honesty sheet.
+3. Feature gates: a profile with onOff-only → phone B room cards show power but no
+   brightness slider; light detail is the power-only summary page.
+4. Re-scan update path: change the profile's rooms on phone A → Generate Invite → "New
+   Code" → phone B re-scans → room list updates (no duplicate bridge in Bridge Manager).
+5. Expired QR: wait out the countdown (or regenerate and use the OLD code) → phone B gets
+   the honest expiry copy.
+6. **The hardware spike:** More → Profiles & Access → "Keys on your bridges" → your bridge.
+   RECORD IN DEVLOG which state fires: key list visible? "Try Remove" on the guest's
+   disposable key → deletedVerified or the official-app fallback copy?
+7. Revoke round-trip: phone A Revoke Access → if the spike showed deletes WORK, phone B's
+   next command should 403 → automatic wipe + "your invite was revoked" notice; if deletes
+   are refused, phone B keeps working and phone A saw the honest dialog.
+8. Owned-bridge safety: on phone A (owner), nothing changed — no banner, Studio present,
+   all rooms visible, scenes create/delete intact, Share Invite (home-join) still works.
+9. Build-21-schema upgrade check if a TestFlight device is handy: install over the old
+   build → opens clean (additive migration).
+10. Demo mode: unaffected by everything above.
+
+### Validation
+- `xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS
+  Simulator,name=iPhone 17 Pro'` green per commit; final state validated with two
+  consecutive green runs (667 tests).
+- Invite LINK flows are Simulator-testable via `xcrun simctl openurl booted
+  "lightshade://share?d=…"`; live QR scanning and the whitelist probe need physical devices.
+
+### Gotchas / durable decisions
+- The token invite QR is SECRET-BEARING: display-only, never ShareLink, never logged
+  (SecretLogScrubTests gates both). The home-join QR remains zero-secret and shareable.
+- `GuestInviteAcceptor` deliberately does NOT reuse `validateAndPersist(unattended:)` — no
+  link button was pressed; the QR pinPK equality is the presence-equivalent. The
+  never-overwrite-a-differing-pin rule is reproduced verbatim. Only LIVE captures persist.
+- The choke point must stay INSIDE the rebuilds (and prune the DICTIONARIES, not just
+  allRooms/allZones) — SSE lookups, updateRoom, and removeBridge read the dicts directly.
+- Grant BEFORE addBridge in any future accept path — the first rebuild after integration
+  must already be filtered.
+- Guest keys mint with `generateclientkey:false`; `SharedBridgeInviteGrant` has no clientkey
+  field — keep the leak structurally impossible.
+- Whitelist elements are OTHER APPS' KEYS (H-03): anything that prints one must route
+  through maskWhitelistElement / displayID. The four HueV1Client verb pre-logs used to log
+  raw paths — fixed; don't reintroduce.
+- Cooperative wipe: explicit 401/403 over pinned TLS ONLY. Never infer from timeouts/5xx.
+  Owned (non-granted) credentials are never auto-wiped.

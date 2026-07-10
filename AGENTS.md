@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 25** — build 25 (2026-07-10) = the widget-scenes publish fix, the builds-18–24 audit-fix round (Siri stop keeps lights on, room-scoped app-driven stop, stop-before-remove, move keeps favorites, whole-home pacing, SSE stale-mirek), the watch-face "ChromaGlow Scenes" widget, and Share Invite Phase 1 (zero-secret home-join QR); — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-24 landed 2026-07-09/10: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty), Studio Round 2 (room-scoped presets, ChromaGlow rename, composer categories, engine parity, room color popup, creation cross-surfacing), the engine-coherence run (Now-Playing bar revived via one shared registry, Perform holds the mic demand, Tap-Dial/on-screen punch unified, per-room transport truth, bridgeOptimized one-shot guards), and build 24: light-card color copy/paste (context menu + sticky paint mode) plus the FIRST working Siri integration (the Intents folder was never in a target; now 10 App Shortcuts incl. zones, named colors, scenes, presets, open-app composition/effect starts, hybrid stop). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
+ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 26** — build 26 (2026-07-10) = FAMILY SHARING COMPLETE: Invite Phases 2–4 in one round (per-guest minted keys + token-bearing display-only invite QR, Profiles & Access UI + one-choke-point guest enforcement inherited by widgets/watch/Siri, revocation honesty with the whitelist spike shipped as a runtime probe + explicit-signal cooperative wipe); build 25 (2026-07-10) = the widget-scenes publish fix, the builds-18–24 audit-fix round (Siri stop keeps lights on, room-scoped app-driven stop, stop-before-remove, move keeps favorites, whole-home pacing, SSE stale-mirek), the watch-face "ChromaGlow Scenes" widget, and Share Invite Phase 1 (zero-secret home-join QR); — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-24 landed 2026-07-09/10: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty), Studio Round 2 (room-scoped presets, ChromaGlow rename, composer categories, engine parity, room color popup, creation cross-surfacing), the engine-coherence run (Now-Playing bar revived via one shared registry, Perform holds the mic demand, Tap-Dial/on-screen punch unified, per-room transport truth, bridgeOptimized one-shot guards), and build 24: light-card color copy/paste (context menu + sticky paint mode) plus the FIRST working Siri integration (the Intents folder was never in a target; now 10 App Shortcuts incl. zones, named colors, scenes, presets, open-app composition/effect starts, hybrid stop). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
 
 ## Current Branch/Repo Facts
 
@@ -447,9 +447,31 @@ DEVLOG build-25 entry:
   NEVER ingested), checked before any Keychain write. DeepLinkCoordinator's `pendingInvite`
   is decode-only. New files register via `add_invite_files.rb`. Watch face scenes =
   second widget kind `com.lightshade.app.WatchSceneWidget` (display-only; `.widgetURL`
-  `lightshade://group/{id}` → watch app RoomDetailView). Phases 2–4 (per-guest keys,
-  profiles/enforcement, revocation + whitelist hardware spike):
-  `docs/ios/profiles-access-share-invite-design-2026-07.md`.
+  `lightshade://group/{id}` → watch app RoomDetailView).
+- **FAMILY SHARING IS COMPLETE (build 26, 2026-07-10): Invite Phases 2–4 shipped** per
+  `docs/ios/profiles-access-share-invite-design-2026-07.md`. Durable rules:
+  (1) THIRD envelope kind `"invite"` is SECRET-BEARING (per-guest token) — display-only QR,
+  NO ShareLink, never logged; guest keys mint via the shared `ApplicationKeyMinter`
+  (`chromaglow#g-<slug>`, `generateclientkey:false`); `SharedBridgeInviteGrant` has no
+  clientkey field by construction. (2) `GuestInviteAcceptor` joins with no link button:
+  expiry (±5 min grace) → no-downgrade guard (owned full credentials are NEVER replaced;
+  granted records update in place — re-scan IS the update path) → live TOFU + config
+  cross-check → pin gate (QR pinPK verified-against, only LIVE captures persist, a differing
+  stored pin always refuses) → explicit-signal token probe → registrar; grant upsert comes
+  BEFORE addBridge/loadAll so the first rebuild is filtered. (3) Enforcement lives at ONE
+  choke point: `applyGuestAccessFilter()` inside rebuildAllRooms/Zones prunes the per-bridge
+  DICTIONARIES (widgets/watch/Siri/deep links inherit; SSE can't resurrect pruned rooms);
+  scenes filter at `loadAllScenes`; `guestFeatures(for:)`/`guestAccessInfo` drive UI gates
+  (Studio hidden guest-only; create/delete never on granted bridges — orchestrator backstops
+  refuse with a toast); EMPTY ALLOWLIST FAILS CLOSED. (4) Revocation is honest: the
+  whitelist hardware spike shipped as `BridgeKeysView` (runtime probe; delete trusted only
+  via verify-by-re-read; whitelist elements are OTHER APPS' KEYS — H-03 masking in
+  redactedPath/pre-logs/sanitizedForLog/WhitelistEntry.description); owner revoke = bridge
+  best-effort + LOCAL WIPE ALWAYS + `revokedAt`; guest cooperative wipe fires ONLY on
+  explicit 401/403 over pinned TLS (L-30) — owned bridges get re-pair advice, never
+  auto-wipe. New models `GuestProfile`/`GuestAccessGrant` are ADDITIVE SwiftData; Keychain
+  accounts `hue_invite_<profileID>_<bridgeRecordID>_token` are additive. Registration
+  scripts: `add_guest_invite_files.rb`, `add_profiles_files.rb`, `add_revocation_files.rb`.
 
 ## Android Current State
 

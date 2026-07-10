@@ -19,15 +19,16 @@ Important current facts (2026-07-10):
   scheme explicitly). Validate with:
   `xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`.
 - **`main` is the branch Brian installs from** (Xcode → physical iPhone). Keep it releasable;
-  fast-forward validated work to it. Current: `main`, 0.9.0 build 24 (see DEVLOG snapshot).
+  fast-forward validated work to it. Current: `main`, 0.9.0 build 26 (see DEVLOG snapshot).
 - Brian's conventions: `checkpoint/*` rollback tag before any multi-commit run; bump
   `CURRENT_PROJECT_VERSION` (all 12 pbxproj entries) each device-test round; one shippable
   commit per fix.
 - The freshest "where are we / what's next" is the DEVLOG "Current Status Snapshot" — as of now:
-  builds 18-24 await Brian's on-device verification (build 24 = light-card color copy/paste +
-  the first working Siri integration: 10 App Shortcuts, zones, colors, scenes, presets,
-  open-app composition/effect starts, hybrid stop). The TEMP `⏱️PERF` prints
-  (from build 9) still want removing in a cleanup commit.
+  builds 18-26 await Brian's on-device verification (build 26 = FAMILY SHARING COMPLETE:
+  per-guest keys, Profiles & Access + guest enforcement, revocation honesty — two-phone
+  checklist in the BUILD 26 entry; build 25 = widget-scenes fix + Share Invite Phase 1;
+  build 24 = light-card color copy/paste + the first working Siri integration). The TEMP
+  `⏱️PERF` prints (from build 9) still want removing in a cleanup commit.
 - Android exists under `android/`; demo MVP + pairing foundations are on `main`, Batch 4 live
   pairing awaits its physical link-button gate on `integration/parallel-batch-4`.
 - Parallel multi-agent work follows the "Parallel Agent Pipeline" section in `AGENTS.md`; the lane registry and shared Claude⇄Codex Decision Log live in `docs/coordination/parallel-agent-pipeline.md`.
