@@ -1728,6 +1728,19 @@ final class StudioViewModel {
         _ = compositionStore.duplicate(preset)
     }
 
+    /// Persist which engine a preset asks for. `nil` means Auto: let
+    /// `preferredEntertainmentForCompositionTier` decide at apply time.
+    /// Takes effect on the next apply — a running effect is switched from the
+    /// mixer tray's transport badge instead.
+    func setPreferredTransport(_ transport: CompositionPreferredTransport?, for preset: CompositionPreset) {
+        guard let idx = compositionStore.presets.firstIndex(where: { $0.id == preset.id }) else { return }
+        var updated = compositionStore.presets[idx]
+        guard updated.preferredTransport != transport else { return }
+        updated.preferredTransport = transport
+        updated.updatedAt = Date()
+        compositionStore.save(updated)
+    }
+
     func deleteCompositionPreset(_ preset: CompositionPreset) async {
         let card = studioCard(for: preset)
         if runningCardID == card.id {

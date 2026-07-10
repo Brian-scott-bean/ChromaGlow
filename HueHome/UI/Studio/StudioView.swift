@@ -19,6 +19,33 @@ import CoreGraphics
 // MARK: - StudioView
 
 struct StudioView: View {
+    /// The engine a saved preset asks for. `auto` (a nil `preferredTransport`)
+    /// lets the tier decide — which is what every preset did before this menu
+    /// existed, so nil stays the default and needs no decode migration.
+    private enum TransportPreference: String, CaseIterable, Identifiable {
+        case auto
+        case entertainmentArea
+        case roomOnly
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .auto:              return "Auto (match the scene)"
+            case .entertainmentArea: return "Entertainment Area — streamed"
+            case .roomOnly:          return "Room Only — REST"
+            }
+        }
+
+        var presetValue: CompositionPreferredTransport? {
+            switch self {
+            case .auto:              return nil
+            case .entertainmentArea: return .entertainmentArea
+            case .roomOnly:          return .roomOnly
+            }
+        }
+    }
+
     private enum CompositionSaveTransportOption: String, CaseIterable, Identifiable {
         case entertainmentArea
         case roomOnly
@@ -262,6 +289,12 @@ struct StudioView: View {
         // stale fetches on rapid rolodex scrubs (R4 Effects port).
         .task(id: vm.selectedRoom?.id) {
             await vm.refreshCoverage()
+        }
+        // Warms the entertainment-config cache so the transport menu can say
+        // "no entertainment area" instead of hedging. One GET per bridge; the
+        // orchestrator skips bridges it has already asked about.
+        .task(id: vm.selectedRoom?.bridgeID) {
+            await orchestrator.refreshEntertainmentConfigs(for: vm.selectedRoom)
         }
         .onChange(of: vm.runningCardID) { _, newValue in
             if newValue == nil {
@@ -1068,6 +1101,10 @@ struct StudioView: View {
             Label("Apply to Current Room", systemImage: "play.fill")
         }
 
+        // Menus build their content when opened, so the synchronous Keychain
+        // read inside `entertainmentAvailability` costs nothing per frame.
+        let availability = orchestrator.entertainmentAvailability(for: vm.selectedRoom)
+
         Menu {
             Button {
                 applyCompositionQuick(card, mode: .streaming)
@@ -1075,6 +1112,8 @@ struct StudioView: View {
             } label: {
                 Label("Entertainment Area (Streaming)", systemImage: "bolt.fill")
             }
+            .disabled(!availability.canStream)
+
             Button {
                 applyCompositionQuick(card, mode: .roomREST)
                 HapticManager.shared.light()
@@ -1087,8 +1126,32 @@ struct StudioView: View {
             } label: {
                 Label("Match Saved Preset", systemImage: "bookmark.fill")
             }
+
+            // Say why the option above is greyed out, rather than letting the
+            // user tap it and watch the effect quietly demote to REST.
+            if let reason = availability.reason {
+                Section(reason) { EmptyView() }
+            }
         } label: {
             Label("Apply with Transport…", systemImage: "arrow.triangle.branch")
+        }
+
+        Menu {
+            ForEach(TransportPreference.allCases) { option in
+                Button {
+                    vm.setPreferredTransport(option.presetValue, for: preset)
+                    HapticManager.shared.selection()
+                } label: {
+                    if preset.preferredTransport == option.presetValue {
+                        Label(option.title, systemImage: "checkmark")
+                    } else {
+                        Text(option.title)
+                    }
+                }
+                .disabled(option == .entertainmentArea && !availability.canStream)
+            }
+        } label: {
+            Label("Preferred Engine…", systemImage: "bolt.badge.automatic")
         }
 
         Divider()

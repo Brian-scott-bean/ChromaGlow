@@ -2021,11 +2021,84 @@ final class UnifiedOrchestrator {
     /// StudioView reads the config for the currently selected room's bridge.
     var entertainmentConfigsByBridge: [String: EntertainmentConfig] = [:]
 
+    /// Bridges whose entertainment configs we have actually asked about.
+    /// Assigning nil into `entertainmentConfigsByBridge` *removes* the key, so
+    /// the dictionary alone cannot tell "this bridge has no area" apart from
+    /// "we never looked" — and the difference decides whether the UI may say no.
+    var entertainmentConfigsFetchedBridges: Set<String> = []
+
     /// Convenience: returns the entertainment config for the given room's bridge.
     /// Replaces the old single-slot `activeEntertainmentConfig`.
     func activeEntertainmentConfig(for room: RoomDisplayItem?) -> EntertainmentConfig? {
         guard let bridgeID = room?.bridgeID else { return nil }
         return entertainmentConfigsByBridge[bridgeID]
+    }
+
+    // MARK: - Entertainment availability
+    //
+    // Until now the only way to discover that a room could not stream was to
+    // start an effect and watch it silently demote to REST. The transport menu
+    // offered "Entertainment Area" whether or not the bridge could honour it.
+    // These let the UI say so up front, and say *why*.
+
+    enum EntertainmentAvailability: Equatable {
+        case available(areaName: String)
+        /// The bridge was paired without an entertainment client key. Nothing
+        /// to do about it in-app: it needs a re-pair.
+        case noClientKey
+        /// The bridge has no entertainment area defined. The user can make one.
+        case noArea
+        case noBridge
+        /// We have not asked the bridge yet. Offer streaming rather than
+        /// wrongly disabling it — `startCompositionMode` still falls back.
+        case unknown
+
+        /// Whether the transport option should be offered as usable.
+        var canStream: Bool {
+            switch self {
+            case .available, .unknown: return true
+            case .noClientKey, .noArea, .noBridge: return false
+            }
+        }
+
+        /// Why streaming is unavailable, in a sentence a user can act on.
+        var reason: String? {
+            switch self {
+            case .available, .unknown:
+                return nil
+            case .noClientKey:
+                return "This bridge was paired without streaming access. Re-pair it in Settings to enable Entertainment."
+            case .noArea:
+                return "This bridge has no entertainment area yet."
+            case .noBridge:
+                return "This room isn't on a reachable bridge."
+            }
+        }
+    }
+
+    /// Synchronous — safe to call while a menu is being built. Reads the
+    /// Keychain and the config cache; never touches the network.
+    func entertainmentAvailability(for room: RoomDisplayItem?) -> EntertainmentAvailability {
+        guard let bridgeID = room?.bridgeID, hueClient(for: bridgeID) != nil else { return .noBridge }
+        guard KeychainManager.shared.loadClientKey(for: bridgeID) != nil else { return .noClientKey }
+
+        if let config = entertainmentConfigsByBridge[bridgeID] {
+            return .available(areaName: config.name)
+        }
+        return entertainmentConfigsFetchedBridges.contains(bridgeID) ? .noArea : .unknown
+    }
+
+    /// Warms the config cache for a room's bridge so `entertainmentAvailability`
+    /// can stop answering `.unknown`. Cheap and idempotent: one GET per bridge.
+    func refreshEntertainmentConfigs(for room: RoomDisplayItem?) async {
+        guard let bridgeID = room?.bridgeID,
+              !entertainmentConfigsFetchedBridges.contains(bridgeID),
+              KeychainManager.shared.loadClientKey(for: bridgeID) != nil
+        else { return }
+
+        let config = await findEntertainmentConfig(bridgeID: bridgeID)
+        entertainmentConfigsFetchedBridges.insert(bridgeID)
+        if let config { entertainmentConfigsByBridge[bridgeID] = config }
     }
 
     /// Live param reference — StudioViewModel updates this dict, engine loops read it.
@@ -2196,7 +2269,13 @@ final class UnifiedOrchestrator {
         // Both REST and DTLS paths benefit from spatial positions.
         let entConfig = await findEntertainmentConfig(bridgeID: room.bridgeID)
         let capturedBridgeID = room.bridgeID ?? ""
-        await MainActor.run { entertainmentConfigsByBridge[capturedBridgeID] = entConfig }
+        await MainActor.run {
+            // A nil assignment removes the key, so record separately that we
+            // asked — that is what lets the transport menu say "no area"
+            // instead of hedging.
+            entertainmentConfigsByBridge[capturedBridgeID] = entConfig
+            entertainmentConfigsFetchedBridges.insert(capturedBridgeID)
+        }
 
         // Resolve individual light IDs early — needed for REST spatial positions
         // AND for per-light REST mode later.
@@ -2533,6 +2612,9 @@ final class UnifiedOrchestrator {
         compositionEntTasks.removeValue(forKey: bridgeID)   // this task; loop already ended
         compositionEntRoomByBridge.removeValue(forKey: bridgeID)
         entertainmentConfigsByBridge.removeValue(forKey: bridgeID)
+        // Session teardown, not "this bridge has no area" — forget that we
+        // asked, so availability reverts to .unknown rather than .noArea.
+        entertainmentConfigsFetchedBridges.remove(bridgeID)
         if let entClient = studioEntClients[bridgeID] {
             await entClient.stopSession()   // no-op post-teardown (configID cleared)
             studioEntClients.removeValue(forKey: bridgeID)
@@ -2599,6 +2681,7 @@ final class UnifiedOrchestrator {
             compositionEntTasks.removeValue(forKey: bid)
             compositionEntRoomByBridge.removeValue(forKey: bid)
             entertainmentConfigsByBridge.removeValue(forKey: bid)
+            entertainmentConfigsFetchedBridges.remove(bid)   // see failCompositionEntertainmentToREST
             if let entClient = studioEntClients[bid] {
                 await entClient.stopSession()
                 studioEntClients.removeValue(forKey: bid)
@@ -3091,6 +3174,7 @@ final class UnifiedOrchestrator {
         compositionEntRoomByBridge.removeAll()
         compositionEntParamBoxes.removeAll()
         entertainmentConfigsByBridge.removeAll()
+        entertainmentConfigsFetchedBridges.removeAll()
 
         // Also notify any mic engines
         NotificationCenter.default.post(name: .studioStopAll, object: nil)

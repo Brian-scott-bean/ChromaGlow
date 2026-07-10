@@ -226,16 +226,25 @@ struct MixerTrayView: View {
                                            style: effect.isEntertainment ? .amber : .muted)
                             } else if case .composition = card.strategy {
                                 Menu {
+                                    // Built on open, so the Keychain read in
+                                    // `entertainmentAvailability` is not per-frame.
+                                    let availability = orchestrator.entertainmentAvailability(for: effect.room)
+
                                     Button {
                                         onTransportSwitch(effect, true)
                                     } label: {
                                         Label("Entertainment Area (Streaming)", systemImage: "bolt.fill")
                                     }
+                                    .disabled(!availability.canStream)
 
                                     Button {
                                         onTransportSwitch(effect, false)
                                     } label: {
                                         Label("Room Only (REST)", systemImage: "iphone")
+                                    }
+
+                                    if let reason = availability.reason {
+                                        Section(reason) { EmptyView() }
                                     }
                                 } label: {
                                     HStack(spacing: 4) {

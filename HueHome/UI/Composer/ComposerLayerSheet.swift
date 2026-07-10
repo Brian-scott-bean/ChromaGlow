@@ -697,6 +697,9 @@ struct ComposerAdvancedControls: View {
             EntertainmentConfigBuilderView { newConfig in
                 let bid = vm.selectedRoom?.bridgeID ?? ""
                 orchestrator.entertainmentConfigsByBridge[bid] = newConfig
+                // The bridge now definitively has an area — availability should
+                // flip to .available without another round trip.
+                orchestrator.entertainmentConfigsFetchedBridges.insert(bid)
                 recomputeSpatialPositions(angle: max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0))
             }
             .environment(orchestrator)
