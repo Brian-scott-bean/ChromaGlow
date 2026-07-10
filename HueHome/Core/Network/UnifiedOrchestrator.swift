@@ -2241,6 +2241,11 @@ final class UnifiedOrchestrator {
         if compositionRuntimes.values.contains(where: { $0.paramBox.reaction.requiresMic }) {
             return true
         }
+        // A mic-reactive preset cued on Perform's deck B isn't a runtime box
+        // yet — it must still raise demand or it reads silence until promoted.
+        if let mix = activePerformanceMix, mix.deckB?.reaction.requiresMic == true {
+            return true
+        }
         return compositionEntParamBoxes.values.contains { $0.reaction.requiresMic }
     }
 

@@ -68,6 +68,11 @@ final class PerformanceViewModel: Identifiable {
 
     func begin() {
         orchestrator.activePerformanceMix = mix
+        // The Perform surface IS the audio demand: its beat panel advertises
+        // "Listening for a beat…", and auto-fade/strobe need a tempo even
+        // over a non-reactive composition. Refcounted — a mic-reactive
+        // composition keeps capture alive after end() via its own demand.
+        Task { await AudioAnalysisEngine.shared.setDemand(.performance, active: true) }
         UIApplication.shared.isIdleTimerDisabled = true
         // 10 Hz poll: mirrors mixer-owned state into observable UI state and
         // runs promote-and-advance when an auto-fade lands.
@@ -97,6 +102,7 @@ final class PerformanceViewModel: Identifiable {
         }
         mix.crossfade = 0
         orchestrator.activePerformanceMix = nil
+        Task { await AudioAnalysisEngine.shared.setDemand(.performance, active: false) }
     }
 
     // ── Decks & queue ──
