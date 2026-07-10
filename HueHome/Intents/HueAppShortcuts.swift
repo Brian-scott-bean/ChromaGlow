@@ -67,5 +67,17 @@ struct HueAppShortcuts: AppShortcutsProvider {
             shortTitle: "Set Color",
             systemImageName: "paintpalette.fill"
         )
+
+        // ── 5. Activate scene ────────────────────────────────────
+        AppShortcut(
+            intent: RecallSceneIntent(),
+            phrases: [
+                "Activate \(\.$scene) in \(.applicationName)",
+                "Start the scene \(\.$scene) in \(.applicationName)",
+                "Set the scene \(\.$scene) in \(.applicationName)",
+            ],
+            shortTitle: "Activate Scene",
+            systemImageName: "theatermasks.fill"
+        )
     }
 }

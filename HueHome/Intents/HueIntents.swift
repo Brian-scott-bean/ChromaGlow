@@ -107,6 +107,38 @@ struct GroupBrightnessIntent: AppIntent {
     }
 }
 
+// MARK: - RecallSceneIntent
+
+struct RecallSceneIntent: AppIntent {
+
+    static var title: LocalizedStringResource = "Activate Scene"
+    static var description = IntentDescription(
+        "Activate one of your Hue scenes.",
+        categoryName: "Lights"
+    )
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Scene")
+    var scene: HueSceneEntity
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard let creds = WidgetDataStore.shared.credentials(for: scene.bridgeID) else {
+            throw IntentError.noBridgeConnection
+        }
+        do {
+            try await HueIntentAPIClient.recallScene(
+                id: scene.id, ip: creds.ip, token: creds.token
+            )
+        } catch {
+            throw IntentError.bridgeUnreachable(scene.name)
+        }
+        let room = WidgetDataStore.shared.groups
+            .first { $0.id == scene.ownerGroupID }?.name
+        let location = room.map { " in \($0)" } ?? ""
+        return .result(dialog: "\(scene.name) is on\(location).")
+    }
+}
+
 // MARK: - GroupColorIntent
 
 struct GroupColorIntent: AppIntent {

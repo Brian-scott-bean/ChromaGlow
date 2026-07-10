@@ -65,4 +65,16 @@ final class HueIntentEntityTests: XCTestCase {
         XCTAssertTrue(PowerState.on.isOn)
         XCTAssertFalse(PowerState.off.isOn)
     }
+
+    // ── Scene entity mapping ──────────────────────────────
+
+    func testSceneSnapshotMapsToEntity() {
+        let entity = HueSceneEntity(snapshot: WidgetSceneSnapshot(
+            id: "scene-1", name: "Relax", ownerGroupID: "group-1", bridgeID: "BRIDGE01"
+        ))
+        XCTAssertEqual(entity.id, "scene-1")
+        XCTAssertEqual(entity.name, "Relax")
+        XCTAssertEqual(entity.ownerGroupID, "group-1")
+        XCTAssertEqual(entity.bridgeID, "BRIDGE01")
+    }
 }

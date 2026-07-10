@@ -22,6 +22,7 @@
 		0E7CD3AA335189BAFEFFB105 /* CompositionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B06F0F76E068D42895691A4 /* CompositionEngine.swift */; };
 		0F0F1315A550084CFC7AED04 /* CopySceneSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63C8F3767D9E9548F65D6205 /* CopySceneSheet.swift */; };
 		0F8D8B4B41E74D916DC37F4F /* ImportSceneSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53E5462DF42B214508BF5FC2 /* ImportSceneSheet.swift */; };
+		11A5A977125FBBFDE02DBD76 /* HueSceneEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05C9A90CE5077C985B897851 /* HueSceneEntity.swift */; };
 		11EB57C1B4BFB393DD2B9551 /* RoomAggregate.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC761ABE4571F73DEEDF91B5 /* RoomAggregate.swift */; };
 		165A93C9D3A27F1DC6FA735A /* SceneQRRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52220E1EF597845B5B7ED8E0 /* SceneQRRendererTests.swift */; };
 		17B38DAEE68E25F798E2F817 /* SceneDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23CB308132549DB8EABD0A0 /* SceneDisplayItem.swift */; };
@@ -331,6 +332,7 @@
 
 /* Begin PBXFileReference section */
 		013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAPIClient.swift; path = ./HueHome/Core/Network/BridgeAPIClient.swift; sourceTree = "<group>"; };
+		05C9A90CE5077C985B897851 /* HueSceneEntity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueSceneEntity.swift; path = ./HueHome/Intents/HueSceneEntity.swift; sourceTree = "<group>"; };
 		0AE302747F21A3DDFB547CD1 /* KeychainManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeychainManager.swift; path = HueHome/Core/Keychain/KeychainManager.swift; sourceTree = "<group>"; };
 		0AFC6DD83A8A43FEA3352BB6 /* SavedEffectPreset.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SavedEffectPreset.swift; path = HueHome/Core/Effects/SavedEffectPreset.swift; sourceTree = "<group>"; };
 		0B6C9A9397CEEFF6E1ECE8C8 /* SceneEditBar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/RoomDetail/SceneEditBar.swift; sourceTree = "<group>"; };
@@ -1217,6 +1219,7 @@
 				A1C8D43ABEA2DF3F97E70CAA /* HueAppShortcuts.swift */,
 				850FF1B3391225414ACFB723 /* HueIntentAPIClient.swift */,
 				A763D664C9CF60BD06958931 /* SiriColorTable.swift */,
+				05C9A90CE5077C985B897851 /* HueSceneEntity.swift */,
 			);
 			name = Intents;
 			sourceTree = "<group>";
@@ -1657,6 +1660,7 @@
 				4A5A77F11CC0A8194C72E055 /* HueAppShortcuts.swift in Sources */,
 				D34F7F1AC57538EA745C8E61 /* HueIntentAPIClient.swift in Sources */,
 				B501133EE858445B640E2BDE /* SiriColorTable.swift in Sources */,
+				11A5A977125FBBFDE02DBD76 /* HueSceneEntity.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
