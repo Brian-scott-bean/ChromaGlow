@@ -377,16 +377,32 @@ final class OrchestratorTests: XCTestCase {
 
     func testRequestNowPlayingStop_routesThroughInstalledHandler() async {
         orchestrator.addActiveEffect(makeEntry(id: "room-1"))
-        var stopped: [String] = []
-        orchestrator.studioStopHandler = { [weak orchestrator] roomID in
-            stopped.append(roomID)
+        var stopped: [(roomID: String, turnOffLights: Bool)] = []
+        orchestrator.studioStopHandler = { [weak orchestrator] roomID, turnOffLights in
+            stopped.append((roomID, turnOffLights))
             orchestrator?.removeActiveEffect(roomID: roomID)
         }
 
         await orchestrator.requestNowPlayingStop(roomID: "room-1")
 
-        XCTAssertEqual(stopped, ["room-1"])
+        XCTAssertEqual(stopped.map(\.roomID), ["room-1"])
+        // Default is explicit-stop semantics — the Dashboard Stop contract.
+        XCTAssertEqual(stopped.map(\.turnOffLights), [true])
         XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
+    }
+
+    func testRequestNowPlayingStop_threadsKeepLightsOnThrough() async {
+        orchestrator.addActiveEffect(makeEntry(id: "room-1"))
+        var received: [Bool] = []
+        orchestrator.studioStopHandler = { [weak orchestrator] roomID, turnOffLights in
+            received.append(turnOffLights)
+            orchestrator?.removeActiveEffect(roomID: roomID)
+        }
+
+        // Siri's "stop the lights" path: effects end, lights stay on.
+        await orchestrator.requestNowPlayingStop(roomID: "room-1", turnOffLights: false)
+
+        XCTAssertEqual(received, [false])
     }
 
     func testRequestNowPlayingStop_withoutHandler_stillClearsTheEntry() async {

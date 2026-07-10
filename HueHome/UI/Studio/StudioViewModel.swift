@@ -592,8 +592,8 @@ final class StudioViewModel {
 
     func configure(orchestrator: UnifiedOrchestrator) {
         self.orchestrator = orchestrator
-        orchestrator.studioStopHandler = { [weak self] roomID in
-            await self?.stopFromNowPlaying(roomID: roomID)
+        orchestrator.studioStopHandler = { [weak self] roomID, turnOffLights in
+            await self?.stopFromNowPlaying(roomID: roomID, turnOffLights: turnOffLights)
         }
         if selectedRoom == nil, let first = orchestrator.allRooms.first {
             selectedRoom = first
@@ -615,10 +615,11 @@ final class StudioViewModel {
         ))
     }
 
-    /// Stop routed from a non-Studio surface (Dashboard Now-Playing bar).
-    /// Explicit-stop semantics: same as the tray's Stop button, room goes off.
-    func stopFromNowPlaying(roomID: String) async {
-        isExplicitStop = true
+    /// Stop routed from a non-Studio surface (Dashboard Now-Playing bar, Siri).
+    /// `turnOffLights: true` = the tray Stop button's semantics, room goes off.
+    /// `false` = tear the effect down but leave lights at their current state.
+    func stopFromNowPlaying(roomID: String, turnOffLights: Bool = true) async {
+        isExplicitStop = turnOffLights
         await stopEffect(on: roomID)
         // stopEffect's guard can bail (stale entry, missing grouped light) —
         // the bar entry must still clear or Stop appears to do nothing.

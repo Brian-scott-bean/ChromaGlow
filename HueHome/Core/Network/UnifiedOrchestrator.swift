@@ -285,12 +285,16 @@ final class UnifiedOrchestrator {
     /// mailbox clears, settle delays) — a bare grouped-light PUT from another
     /// surface would leave the loop running underneath. @ObservationIgnored:
     /// installed once from StudioViewModel.configure, never read by views.
-    @ObservationIgnored var studioStopHandler: (@MainActor (String) async -> Void)?
+    @ObservationIgnored var studioStopHandler: (@MainActor (String, Bool) async -> Void)?
 
-    /// Stop an effect from a non-Studio surface (Dashboard Now-Playing bar).
-    func requestNowPlayingStop(roomID: String) async {
+    /// Stop an effect from a non-Studio surface (Dashboard Now-Playing bar,
+    /// Siri). `turnOffLights: true` is explicit-stop semantics — the room
+    /// goes off, matching the Dashboard Stop button. `false` ends the effect
+    /// but leaves lights at their current state (Siri's "stop the lights"
+    /// promises exactly that). Still the ONLY sanctioned non-Studio stop path.
+    func requestNowPlayingStop(roomID: String, turnOffLights: Bool = true) async {
         if let studioStopHandler {
-            await studioStopHandler(roomID)
+            await studioStopHandler(roomID, turnOffLights)
         } else {
             // Defensive: the handler exists whenever Studio started anything.
             removeActiveEffect(roomID: roomID)

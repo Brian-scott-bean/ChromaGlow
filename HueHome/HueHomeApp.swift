@@ -238,7 +238,10 @@ struct AppRootView: View {
                     .onReceive(NotificationCenter.default.publisher(for: .siriStopAllEffects)) { _ in
                         Task {
                             for entry in orchestrator.activeEffectEntries {
-                                await orchestrator.requestNowPlayingStop(roomID: entry.id)
+                                // turnOffLights: false — the Siri shortcut promises
+                                // "lights stay on at their current state".
+                                await orchestrator.requestNowPlayingStop(roomID: entry.id,
+                                                                         turnOffLights: false)
                             }
                         }
                     }
