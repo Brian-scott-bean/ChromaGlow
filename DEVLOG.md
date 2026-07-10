@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-07-09)
+## Current Status Snapshot (updated 2026-07-10)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
@@ -12,7 +12,36 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **24**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **25**).
+- **BUILD 25 (2026-07-10): WIDGET-SCENES FIX, AUDIT FIXES, WATCH SCENES FACE, SHARE INVITE
+  PHASE 1 — AWAITING BRIAN'S ON-DEVICE CHECK.** Twelve shippable commits (`d5f0ade..`,
+  rollback tag `checkpoint/scenes-stop-invite-2026-07-10`), from the full builds-18–24
+  audit + the "scenes vanished from widgets" report. **The headline bug:** on every launch
+  `scheduleWidgetWrite` published `globalScenes == []` (scenes load lazily AFTER the
+  publish) and clobbered the stored snapshot — blanking the phone widget scene strip, the
+  Control Center scene control, the watch app's scene rows, and Siri scene donations;
+  scene mutations never republished either. Fixed with a preserve-until-first-load rule
+  (`scenesForPublish`), republish from `loadAllScenes` + delete/rename, and a detached
+  one-time scene fetch after `loadAll` (cold-start path untouched). **Audit fixes:** Siri
+  "stop the lights" now actually leaves lights ON (`requestNowPlayingStop(roomID:turnOffLights:)`
+  — Dashboard Stop keeps its off); stopping one room's strobe no longer tears down every
+  room's composition + the whole Now-Playing bar (`stopAppDrivenStudioEffect`, room-scoped);
+  removeBridge/deleteRoom/deleteZone stop running effects first (+ removeBridge finally
+  clears zones — stale zones lingered forever after removing the last bridge); moving a
+  scene carries its ★ favorite + usage history (and undo carries them back); Siri whole-home
+  fan-outs dedupe zones-vs-rooms and pace per bridge (150ms gaps); SSE color-only updates
+  invalidate stale mirek (Copy Color no longer grabs warm white after an outside-app color
+  change); StudioView's Siri-drain wiring extracted off the type-checker-ceiling body;
+  welcome-home single-sourced in `LightingPreset`. **NEW: watch face scenes widget**
+  ("ChromaGlow Scenes", second kind — display-only, tap deep-links the watch app to the
+  room via `lightshade://group/{id}`). **NEW: Share Invite Phase 1** (More → Share Invite is
+  live): a ZERO-SECRET "home-join" QR — carries bridge identity + expected TLS pin, never a
+  key; guest scans (or taps the link), presses the link button once, pairs through the
+  existing audited flow with a new `expectedIdentity` refusal check (QR pins are
+  verified-against, never ingested). Onboarding gains "Join a Shared Home". Full design for
+  Phases 2–4 (per-guest keys, profiles, revocation honesty):
+  `docs/ios/profiles-access-share-invite-design-2026-07.md`. Full suite green per commit
+  (two consecutive runs at end). On-device checklist in the 2026-07-10 BUILD 25 entry below.
 - **BUILD 24 (2026-07-10): COPY/PASTE COLOR + FULL SIRI INTEGRATION — AWAITING BRIAN'S
   ON-DEVICE CHECK.** Thirteen shippable commits (rollback tag
   `checkpoint/copycolor-siri-2026-07-09`). **Light cards:** long-press → context menu (Copy
@@ -7175,3 +7204,122 @@ this run fixed the connective tissue. One shippable commit per fix:
   spoken inline. On/off therefore ships as TWO shortcuts prefilled with a `PowerState` enum.
 - Saturated yellow xy sits ON the gamut-C red–green edge: clamp-identity tests need 1e-9
   tolerance, not exactness (re-projecting an edge point drifts one ulp).
+
+---
+
+## 2026-07-10 - [Claude] Build 25: widget-scenes fix, builds-18–24 audit fixes, watch scenes face, Share Invite Phase 1
+
+### Branch
+- `main` (rollback tag `checkpoint/scenes-stop-invite-2026-07-10`; revert with
+  `git reset --hard checkpoint/scenes-stop-invite-2026-07-10`)
+
+### Did
+- **Root-caused "scenes vanished from every widget"** (`d5f0ade`): the ONLY widget/watch
+  publisher (`scheduleWidgetWrite`, fired from room/zone rebuilds) serialized `globalScenes`
+  unconditionally — empty at launch because scenes load lazily after `loadAll` settles (the
+  prewarm gate reorder made the empty write always land first), and `WidgetDataStore.write` +
+  `WatchSessionManager.push` clobber stored data with `[]`. Scene mutations never republished.
+  Fix: pure `scenesForPublish(hasLoaded:live:stored:)` preserves the stored snapshot until the
+  first real scene load (post-load, empty propagates — delete-all stays honest); `loadAllScenes`
+  republishes (+ reentrancy guard, demo parity); delete/rename republish; `loadAll` kicks ONE
+  detached scene fetch per cold session; `forgetAllBridges` resets the flag. Bonus: Siri scene
+  donations now refresh on launch + rename.
+- **Siri stop honesty** (`ccc245f`): `requestNowPlayingStop(roomID:turnOffLights: Bool = true)`
+  — still the only non-Studio stop path; Siri passes `false` so "Lights stay on at their
+  current state" is finally true; Dashboard Stop unchanged (default true).
+- **Room-scoped app-driven stop** (`ed5f47f`): `stopAppDrivenStudioEffect(roomID:bridgeID:)`
+  replaces the global `stopStudioMode()` in `stopEffect`'s `.appDriven` branch — stops the
+  single-slot loop + its bridge's ent session ONLY when no composition owns it. Stopping a
+  Kitchen strobe no longer kills a Living Room composition + the whole Now-Playing registry.
+  `stopStudioMode()` byte-identical for `forgetAllBridges`.
+- **Stop-before-remove** (`4bb1572`): `removeBridge`/`deleteRoom`/`deleteZone` route doomed
+  groups through `requestNowPlayingStop(turnOffLights:false)` BEFORE dropping clients; fixed
+  removeBridge never clearing `zonesByBridge`/rebuilding zones (stale zones lived forever after
+  removing the last bridge — `pruneStaleBridgeSnapshots` bails on empty clients); deletes now
+  `scheduleWidgetWrite` so widgets drop the group immediately.
+- **Move keeps ★ + history** (`f13dbbc`): `FavoriteSceneCSV.replacing` (in-place, order-
+  preserving, deduping) + `SceneUsageStore.transfer/remove`; CopySceneSheet completion
+  transfers on move, undo transfers BACK onto the recreated original (via
+  `createSceneReturningID`) or scrubs; delete alert scrubs usage too.
+- **Siri whole-home pacing** (`2001137`): `dedupedWholeHomeTargets` (rooms preferred; zones
+  only for zone-only setups — documented trade-off: room-less zone lights are skipped) and
+  `fanOut` now paces per bridge (sequential, 150ms gaps; bridges concurrent). Scoped commands
+  unchanged.
+- **Stale-mirek fix where it actually lives** (`57f039e`): NOT ColorClipboard (audit framing
+  corrected — LightDisplayItem never carried mirek_valid) — the two SSE-apply sites kept old
+  mirek on color-only events. `applySSEUpdates` nils it; `HueLight.applying` emits
+  mirek:nil/mirek_valid:false with schema preserved. Fixes Copy Color capturing warm white
+  after an official-app color change; also repairs `updateScene`'s CT fallback.
+- **StudioView pressure relief** (`e686f92`): the three drain modifiers → one
+  `StudioDrainWiring` ViewModifier (same file), behavior-identical; body sheds two modifiers.
+- **Polish** (`99c9f2e`): `LightingPreset.welcomeHome` single source (Siri + widget Control);
+  WidgetDataStore header now tells the truth; 10-shortcut cap documented at entry 10;
+  donation-funnel no-rate-limit rationale documented at the onPersist install.
+- **Watch face scenes** (`89ab403`): new second widget kind
+  `com.lightshade.app.WatchSceneWidget` ("ChromaGlow Scenes", rectangular + inline) reading the
+  watch-side mirror of `hue_widget_scenes_v1`; display-only (accessory complications are
+  non-interactive) with `.widgetURL(lightshade://group/{roomID})` → watch app `onOpenURL` →
+  existing watch RoomDetailView (which recalls scenes). No existing face-config migration.
+- **Share Invite Phase 1** (`99fc6c0`): zero-secret "home-join" QR. `InvitePayloadCodec`
+  (new `kind` on the existing versioned envelope; refuse-unknown both directions;
+  `ScenePayloadCodec.probeKind` routes one URL host to many kinds). Owner: `ShareInviteSheet`
+  from More (QR + ShareLink — NO secrets ride it; pre-D-016 records listed as "re-pair to
+  share"). Guest: `JoinSharedHomeView` → per-bridge `BridgeSetupContent` seeded via the
+  manual-IP seam + NEW `BridgeDiscoveryViewModel.expectedIdentity` (live-captured identity
+  must match the invite BEFORE anything persists; QR pins verified-against, never ingested).
+  Onboarding idle screen gains "Join a Shared Home" (scanner); tapped invite links route via
+  `DeepLinkCoordinator.pendingInvite` (decode-only — the coordinator still never saves) to
+  MainTabView (paired) or BridgeSetup (unpaired). Registered via `add_invite_files.rb`.
+  Phases 2–4 designed in `docs/ios/profiles-access-share-invite-design-2026-07.md`
+  ("Profiles & Access" stub stays Coming Soon).
+- Build bump 24 → 25 (all 12 pbxproj entries); DEVLOG + AGENTS updated.
+
+### Working
+- Full suite green per commit; two consecutive green runs at round end. Watch targets
+  verified compiling via the "LightShadeWatchApp Watch App" scheme (generic/watchOS).
+- New tests: scenesForPublish selection (3), requestNowPlayingStop arity/threading (2 upd
+  + 1 new), scoped-stop survival, stop-for-removed-groups, FavoriteSceneCSV.replacing (3),
+  SceneUsageStore transfer/remove (4), whole-home dedupe (3), SSE stale-mirek (2),
+  welcome-home single-source (upd), InvitePayloadCodecTests (11, incl. CIDetector QR
+  round-trip and no-secrets-in-JSON).
+
+### Left
+- **Brian's on-device checklist (build 25):**
+  1. Cold-launch with a scenes widget + watch face → scenes visible, never blank (kill+relaunch ×2).
+  2. Rename/delete a scene → widget + "Activate ⟨scene⟩ in ChromaGlow" update in ~1s; delete
+     ALL scenes in a room → that room's widget scenes honestly empty.
+  3. Siri "stop the lights in ChromaGlow" while a composition runs → effect stops, lights STAY ON;
+     Dashboard Stop → room goes off.
+  4. Composition in Room A + strobe in Room B → stop the strobe from the bar → A keeps running,
+     its entry + transport badge intact.
+  5. Delete a room (and separately a bridge) mid-effect → bar entry clears, no ghost loop.
+  6. Favorite a scene → Move to another room → ★ survives; Undo → ★ follows back.
+  7. Whole-home "set the lights to Relax in ChromaGlow" → every room changes, none dropped.
+  8. From the official Hue app paint a CT-mode light a color → ChromaGlow Copy Color captures
+     the color (not warm white).
+  9. Siri "Start Ocean Waves in the Bedroom in ChromaGlow" cold launch still drains; QR scene
+     import still works (drain-wiring refactor regression check).
+  10. Add the "ChromaGlow Scenes" complication → shows the pinned room's scenes; tap opens the
+      watch app to that room.
+  11. Share Invite (needs both phones): More → Share Invite on phone A → scan on phone B
+      (camera or in-app "Join a Shared Home") → link-button step → paired to the correct
+      bridge → dashboard. Link-tap variant: send the invite link in Messages and tap it.
+- Invite Phases 2–4: per-guest minted keys, Profiles & Access UI + app-side enforcement,
+  revocation (OPEN WITH the whitelist hardware spike on Brian's bridge) — see the design doc.
+- Pre-existing: TEMP ⏱️PERF prints cleanup still gated on Brian's device verification;
+  `.studioStopAll` notification is dead (posted, zero observers) — fold into that cleanup.
+
+### Validation
+- `xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'` green per commit (logs in session scratchpad); final state validated twice consecutively.
+- Invite link handling is Simulator-testable: `xcrun simctl openurl booted "lightshade://share?d=…"`. Live QR scanning needs a physical device (VisionKit).
+
+### Gotchas
+- `scenesForPublish` preserve-rule: do NOT "simplify" to an unconditional write — the launch
+  publish fires before scenes load and empties every scene surface (this round's headline bug).
+- `stopStudioMode()` is now forgetAllBridges-only. Any new stop path must be room-scoped or
+  route through `requestNowPlayingStop`.
+- `fanOut` is deliberately sequential-per-bridge; don't "optimize" it back to a flat task group.
+- The invite QR's `pinPK` is an expectation, never ingested — keep `expectedIdentity` checks
+  BEFORE any Keychain write, and never put a token/clientkey in a share payload (Phase 2's
+  token QR has its own rules: display-only, time-boxed, no ShareLink).
+- `struct`s can't nest in generic functions (fanOut's Job is a typealias'd tuple for that reason).

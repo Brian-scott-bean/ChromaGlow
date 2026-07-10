@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 24** — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-24 landed 2026-07-09/10: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty), Studio Round 2 (room-scoped presets, ChromaGlow rename, composer categories, engine parity, room color popup, creation cross-surfacing), the engine-coherence run (Now-Playing bar revived via one shared registry, Perform holds the mic demand, Tap-Dial/on-screen punch unified, per-room transport truth, bridgeOptimized one-shot guards), and build 24: light-card color copy/paste (context menu + sticky paint mode) plus the FIRST working Siri integration (the Intents folder was never in a target; now 10 App Shortcuts incl. zones, named colors, scenes, presets, open-app composition/effect starts, hybrid stop). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
+ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 25** — build 25 (2026-07-10) = the widget-scenes publish fix, the builds-18–24 audit-fix round (Siri stop keeps lights on, room-scoped app-driven stop, stop-before-remove, move keeps favorites, whole-home pacing, SSE stale-mirek), the watch-face "ChromaGlow Scenes" widget, and Share Invite Phase 1 (zero-secret home-join QR); — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-24 landed 2026-07-09/10: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty), Studio Round 2 (room-scoped presets, ChromaGlow rename, composer categories, engine parity, room color popup, creation cross-surfacing), the engine-coherence run (Now-Playing bar revived via one shared registry, Perform holds the mic demand, Tap-Dial/on-screen punch unified, per-room transport truth, bridgeOptimized one-shot guards), and build 24: light-card color copy/paste (context menu + sticky paint mode) plus the FIRST working Siri integration (the Intents folder was never in a target; now 10 App Shortcuts incl. zones, named colors, scenes, presets, open-app composition/effect starts, hybrid stop). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
 
 ## Current Branch/Repo Facts
 
@@ -100,7 +100,7 @@ Current verified identity values:
 - iOS deployment target: iOS 17.0
 - watchOS deployment target: `26.4` (`WATCHOS_DEPLOYMENT_TARGET` in every watch build config — this resolves the earlier "verify watchOS target" follow-up)
 - Marketing version in project: `0.9.0`
-- Build number in project: `23` (bumped every device-test round; do not reuse a number)
+- Build number in project: `25` (bumped every device-test round; do not reuse a number)
 - App display name (main iOS target): `ChromaGlow`
 - Widget/watch target display names: **`ChromaGlow`** everywhere as of 2026-07-09 (Brian-assigned
   rename): all six `INFOPLIST_KEY_CFBundleDisplayName` entries (widget ext, watch app, watch widget
@@ -346,9 +346,11 @@ Engine-coherence run (2026-07-09, build 23) durable facts — full record in the
 
 - **`activeEffectEntries` is fed by StudioViewModel** (every `runningEffects` write site calls
   `publishNowPlaying`; removal at the `stopEffect(on:)` chokepoint). Non-Studio stops MUST go
-  through `UnifiedOrchestrator.requestNowPlayingStop` → `studioStopHandler`
+  through `UnifiedOrchestrator.requestNowPlayingStop(roomID:turnOffLights:)` → `studioStopHandler`
   (`@ObservationIgnored` — keep it that way) so the owning loop is torn down; never issue a
-  bare grouped-light PUT to "stop" an effect.
+  bare grouped-light PUT to "stop" an effect. `turnOffLights` (build 25): default `true` =
+  Dashboard Stop's explicit-off; `false` = end the effect, leave lights as-is (Siri's promise,
+  and the stop-before-remove path).
 - **`compositionTransportByRoom`** (`.entertainment/.rest/.bridgeStored`) is the per-room
   transport truth — written ONLY at start/stop/failover, never per frame (observation
   contract). The global `isBridgeStored` and Perform's `isStreaming` snapshot are gone;
@@ -408,6 +410,46 @@ DEVLOG build-24 entry:
   copy mirek, else xy, dimmable-only → nil (Copy/Save hide). **Paint mode is sticky**:
   `applySavedColor` no longer disarms — exits are the header "Painting · Done" pill, re-tapping
   the armed swatch, or leaving the room. Paint mode and select mode are mutually exclusive.
+
+Scenes/stop/invite coherence run (2026-07-10, build 25) durable facts — full record in the
+DEVLOG build-25 entry:
+
+- **Widget/watch scene publishing preserves-until-first-load.** `scheduleWidgetWrite` selects
+  scenes via pure `UnifiedOrchestrator.scenesForPublish(hasLoaded:live:stored:)`: until
+  `hasLoadedScenesOnce`, the STORED snapshot is republished (launch publishes fire from
+  room/zone rebuilds before scenes load — an unconditional write blanks every scene surface);
+  after a real load, live truth wins INCLUDING empty. `loadAllScenes` + delete/rename
+  republish; `loadAll` kicks one detached scene fetch per cold session. Do not "simplify" this.
+- **`requestNowPlayingStop(roomID:turnOffLights: Bool = true)`** — still the ONLY non-Studio
+  stop path. `stopStudioMode()` has exactly one caller (forgetAllBridges); the `.appDriven`
+  stop is room-scoped `stopAppDrivenStudioEffect(roomID:bridgeID:)` (stops that bridge's ent
+  session only when `compositionEntRoomByBridge[bid] == nil`). removeBridge/deleteRoom/
+  deleteZone stop doomed groups FIRST (turnOffLights: false), and removeBridge clears
+  `zonesByBridge` + rebuilds zones.
+- **Siri whole-home intents dedupe + pace:** `dedupedWholeHomeTargets` (rooms preferred, zones
+  only for zone-only setups — a room-less zone light is deliberately skipped) and `fanOut`
+  runs bridges concurrently but each bridge's groups sequentially with 150ms gaps. Don't
+  flatten it back into one task group.
+- **A color-only SSE event invalidates mirek** in BOTH apply sites (`applySSEUpdates`,
+  `HueLight.applying` — schema preserved, `mirek_valid:false`). Non-nil mirek == CT mode is
+  the load-bearing signal for ColorClipboard and updateScene's CT fallback.
+- **Scene move carries identity-keyed state:** favorites CSV + SceneUsageStore transfer to the
+  new `bridgeSceneID` on move (`FavoriteSceneCSV.replacing`, `SceneUsageStore.transfer`), and
+  undo transfers them back onto the recreated original. Any future store keyed on raw
+  `bridgeSceneID` must join this transfer.
+- **StudioView drain wiring lives in `StudioDrainWiring`** (same-file ViewModifier) — the body
+  is still at the type-checker ceiling; extend the modifier, never the body chain.
+- **Share Invite Phase 1 is LIVE (zero secrets).** `lightshade://share` now carries a second
+  kind, `home-join` (`InvitePayloadCodec`; route by `ScenePayloadCodec.probeKind` — never let
+  an invite land in Studio's scene import). The QR carries `{bid, host, port, name, pinPK}`
+  per bridge and NEVER a token/clientkey; `BridgeDiscoveryViewModel.expectedIdentity` refuses
+  a pairing whose live-captured identity doesn't match the invite (pins are verified-against,
+  NEVER ingested), checked before any Keychain write. DeepLinkCoordinator's `pendingInvite`
+  is decode-only. New files register via `add_invite_files.rb`. Watch face scenes =
+  second widget kind `com.lightshade.app.WatchSceneWidget` (display-only; `.widgetURL`
+  `lightshade://group/{id}` → watch app RoomDetailView). Phases 2–4 (per-guest keys,
+  profiles/enforcement, revocation + whitelist hardware spike):
+  `docs/ios/profiles-access-share-invite-design-2026-07.md`.
 
 ## Android Current State
 
