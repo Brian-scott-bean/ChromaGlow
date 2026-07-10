@@ -32,6 +32,8 @@ struct HueHomeApp: App {
             EnergySnapshot.self,
             AppSettings.self,
             AppAutomation.self,   // user-created scheduled automations
+            GuestProfile.self,     // Family Sharing: owner-side profiles (additive)
+            GuestAccessGrant.self, // Family Sharing: guest-side grants (additive)
         ])
 
         // SwiftData's store already lives in the App Group container: Core
