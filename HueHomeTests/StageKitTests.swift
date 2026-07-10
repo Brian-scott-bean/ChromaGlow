@@ -14,6 +14,37 @@ final class StageKitTests: XCTestCase {
     private let allPatterns = MotionConfig.Pattern.allCases
     private let indices = Array(0..<StageStripMath.segmentCount)
 
+    // ── StageSlider tap-to-type parsing ───────────────────────
+    //
+    // The typed value drives real bridge writes, so parsing has to be strict
+    // about garbage and forgiving about the unit suffixes our own format
+    // closures add — the field opens pre-filled with "120 BPM" or "64%", and
+    // the user should be able to edit that text in place.
+
+    func testDraftParsingAcceptsPlainNumbersAndClamps() {
+        let range: ClosedRange<Double> = 20...240
+        XCTAssertEqual(StageSlider.parseDraft("120", range: range), 120)
+        XCTAssertEqual(StageSlider.parseDraft("999", range: range), 240, "above range clamps to max")
+        XCTAssertEqual(StageSlider.parseDraft("3", range: range), 20, "below range clamps to min")
+        XCTAssertEqual(StageSlider.parseDraft("12.5", range: 0...100), 12.5)
+        XCTAssertEqual(StageSlider.parseDraft("-5", range: -10...10), -5, "negatives are real values")
+    }
+
+    func testDraftParsingIgnoresTheFormatSuffix() {
+        XCTAssertEqual(StageSlider.parseDraft("64%", range: 0...100), 64)
+        XCTAssertEqual(StageSlider.parseDraft("120 BPM", range: 20...240), 120)
+        XCTAssertEqual(StageSlider.parseDraft("2700K", range: 2000...6500), 2700)
+        XCTAssertEqual(StageSlider.parseDraft("  42  ", range: 0...100), 42)
+        XCTAssertEqual(StageSlider.parseDraft("12,5", range: 0...100), 12.5,
+                       "comma decimal separators are people too")
+    }
+
+    func testDraftParsingRejectsGarbageRatherThanGuessing() {
+        for garbage in ["", "fast", "%", "-", ".", "BPM 120"] {
+            XCTAssertNil(StageSlider.parseDraft(garbage, range: 0...100), garbage)
+        }
+    }
+
     // ── Bounds ────────────────────────────────────────────────
 
     func testOpacityStaysInUnitIntervalForAllPatternsAndTimes() {

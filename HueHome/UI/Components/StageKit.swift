@@ -94,12 +94,22 @@ struct StageCard<Content: View>: View {
 
 /// Labeled slider row: title left, mono value right, amber tint.
 /// Generalizes the Composer's original `compositionSlider`.
+///
+/// The value readout is tappable: it flips into a numeric TextField so an
+/// exact number can be typed — 120 BPM means 120, not "somewhere around
+/// there". Commit clamps to `range` and drives the same binding a drag does
+/// (including the `onEditingChanged` bracket, so debounce/burst call sites
+/// treat a typed value exactly like a drag). A non-number cancels.
 struct StageSlider: View {
     let title: String
     @Binding var value: Double
     let range: ClosedRange<Double>
     var format: (Double) -> String = { "\(Int($0.rounded()))" }
     var onEditingChanged: ((Bool) -> Void)? = nil
+
+    @State private var isTyping = false
+    @State private var draft = ""
+    @FocusState private var draftFocused: Bool
 
     init(title: String,
          value: Binding<Double>,
@@ -113,6 +123,24 @@ struct StageSlider: View {
         self.onEditingChanged = onEditingChanged
     }
 
+    /// Parse a typed value and clamp it into range. Accepts a leading number
+    /// and ignores whatever unit suffix the format added ("64%", "120 BPM",
+    /// "2700K") so a user can edit the readout text as-is. Nil = not a number.
+    static func parseDraft(_ text: String, range: ClosedRange<Double>) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        // Take the leading numeric run: digits, one decimal separator, optional minus.
+        var numeric = ""
+        var seenDot = false
+        for (i, ch) in trimmed.enumerated() {
+            if ch.isNumber { numeric.append(ch) }
+            else if (ch == "." || ch == ",") && !seenDot { numeric.append("."); seenDot = true }
+            else if ch == "-" && i == 0 { numeric.append(ch) }
+            else { break }
+        }
+        guard let parsed = Double(numeric) else { return nil }
+        return min(range.upperBound, max(range.lowerBound, parsed))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -120,15 +148,51 @@ struct StageSlider: View {
                     .font(HueFont.stageControl)
                     .foregroundStyle(.white.opacity(0.60))
                 Spacer()
-                Text(format(value))
-                    .font(HueFont.stageValue)
-                    .foregroundStyle(.white.opacity(0.40))
+                if isTyping {
+                    TextField("", text: $draft)
+                        .font(HueFont.stageValue)
+                        .foregroundStyle(HuePalette.amber)
+                        .keyboardType(.numbersAndPunctuation)   // has a Return key; .decimalPad has no commit
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 76)
+                        .focused($draftFocused)
+                        .onSubmit(commitDraft)
+                        .onChange(of: draftFocused) { _, focused in
+                            if !focused { commitDraft() }   // tap-away commits too
+                        }
+                        .submitLabel(.done)
+                } else {
+                    Button {
+                        draft = format(value)
+                        isTyping = true
+                        draftFocused = true
+                        HapticManager.shared.selection()
+                    } label: {
+                        Text(format(value))
+                            .font(HueFont.stageValue)
+                            .foregroundStyle(.white.opacity(0.40))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(title) value \(format(value)), tap to type an exact value")
+                }
             }
             Slider(value: $value, in: range) { editing in
                 onEditingChanged?(editing)
             }
             .tint(HuePalette.amber)
         }
+    }
+
+    private func commitDraft() {
+        guard isTyping else { return }
+        isTyping = false
+        draftFocused = false
+        guard let parsed = Self.parseDraft(draft, range: range) else { return }
+        // Bracket like a drag so debounced/burst call sites fire their commit.
+        onEditingChanged?(true)
+        value = parsed
+        onEditingChanged?(false)
     }
 }
 
