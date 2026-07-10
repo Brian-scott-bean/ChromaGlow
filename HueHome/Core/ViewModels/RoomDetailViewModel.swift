@@ -30,6 +30,29 @@ final class RoomDetailViewModel {
     var roomBrightness: Double = 100
     var roomIsOn: Bool = false
 
+    /// Suppresses SSE/aggregate overwrites of optimistic master writes for a
+    /// short window (mirrors the orchestrator's pendingActionDeadlines) so
+    /// the bar doesn't bounce while a toggleRoom/setRoomBrightness echo is
+    /// still in flight.
+    private var pendingMasterWriteDeadline: Date? = nil
+    private var masterWritePending: Bool {
+        guard let deadline = pendingMasterWriteDeadline else { return false }
+        return deadline > Date()
+    }
+    private func beginMasterWriteWindow() {
+        pendingMasterWriteDeadline = Date().addingTimeInterval(1.5)
+    }
+
+    /// Re-derive the master bar from the (complete) member-light list. Runs
+    /// after every light mutation — optimistic taps AND SSE — so turning
+    /// lights off one by one flips the bar with the last light, live.
+    private func recomputeRoomAggregate() {
+        guard !masterWritePending, !lights.isEmpty else { return }
+        let state = RoomAggregate.derive(from: lights, fallbackBrightness: roomBrightness)
+        if roomIsOn != state.isOn { roomIsOn = state.isOn }
+        if abs(roomBrightness - state.brightness) >= 1 { roomBrightness = state.brightness }
+    }
+
     // MARK: Multi-select state (lights)
     /// True while the user is in light-selection mode.
     var isSelecting: Bool = false
@@ -187,6 +210,9 @@ final class RoomDetailViewModel {
         var arr = lights
         mutation(&arr[idx])
         lights = arr    // full assignment — guaranteed @Observable notification
+        // Every per-light mutation (tap, brightness, rollback) re-derives the
+        // master bar — the central seam for the stale-aggregate fix.
+        recomputeRoomAggregate()
     }
 
     // ──────────────────────────────────────────────
@@ -467,6 +493,7 @@ final class RoomDetailViewModel {
 
     /// Toggle all lights in the room on or off.
     func toggleRoom(on: Bool) {
+        beginMasterWriteWindow()
         roomIsOn = on
         // Optimistically update all light cards so they reflect the toggle immediately
         lights = lights.map { var l = $0; l.isOn = on; return l }
@@ -488,6 +515,7 @@ final class RoomDetailViewModel {
     }
 
     func setRoomBrightness(_ brightness: Double) {
+        beginMasterWriteWindow()
         let clamped = min(100, max(1, brightness))
         let previous = roomBrightness
         roomBrightness = clamped
@@ -852,7 +880,8 @@ final class RoomDetailViewModel {
     /// Applies SSE light-state updates as a single full-array swap.
     /// Batch all mutations into one new array then assign once —
     /// guarantees exactly one @Observable notification per SSE event.
-    private func applySSEUpdates(_ updates: [SSEResourceUpdate]) {
+    /// (Internal, not private, so tests can drive the live-update path.)
+    func applySSEUpdates(_ updates: [SSEResourceUpdate]) {
         var arr = lights
         var changed = false
         for update in updates where update.type == "light" {
@@ -879,7 +908,29 @@ final class RoomDetailViewModel {
             }
         }
         // Single full-array assignment — one @Observable notification for entire batch
-        if changed { lights = arr }
+        if changed {
+            lights = arr
+            // The master bar derives from the complete member list — this is
+            // the fix for "all lights off individually, bar stays lit".
+            recomputeRoomAggregate()
+        }
+
+        // grouped_light events for OUR group also refine the bar (grouped
+        // writes from other apps, bridge-side scene recalls). The handler
+        // used to filter these out entirely.
+        for update in updates where update.type == "grouped_light" {
+            guard update.id == room.groupedLightID, !masterWritePending else { continue }
+            if let dimming = update.dimming {
+                roomBrightness = min(100, max(1, dimming.brightness))
+            }
+            if let on = update.on {
+                // Trust lights for the ON direction (grouped_light can lag
+                // after scene recalls); OFF from the bridge only wins when
+                // no member light disagrees.
+                let anyLightOn = arr.contains { $0.isOn }
+                roomIsOn = on.on || anyLightOn
+            }
+        }
     }
 
     // ──────────────────────────────────────────────
