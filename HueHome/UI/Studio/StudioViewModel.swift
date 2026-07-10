@@ -574,9 +574,19 @@ final class StudioViewModel {
     /// Stable card id for `+ Create` (not `comp_{uuid}`).
     static let composerStarterCardID = "composer_starter"
 
-    /// Live composition param box — the render loop reads this each frame.
-    /// UI writes to it on slider drag for instant light response.
-    var activeCompositionBox: CompositionParamBox?
+    /// Live composition param boxes, keyed by room id — the render loops
+    /// read these each frame. UI writes on slider drag for instant response.
+    private var activeCompositionBoxes: [String: CompositionParamBox] = [:]
+
+    /// The editable box for the CURRENTLY SELECTED room. A single slot here
+    /// meant the tray edited whatever room applied LAST, not the room on
+    /// screen, whenever two rooms ran compositions at once. Get-only is
+    /// enough: every editor binding mutates fields through the class
+    /// reference; the two ownership writes go straight to the dict.
+    var activeCompositionBox: CompositionParamBox? {
+        guard let room = selectedRoom else { return nil }
+        return activeCompositionBoxes[room.id]
+    }
 
     // ── Status ────────────────────────────────────────────────
     var statusMessage: String = ""
@@ -1240,7 +1250,7 @@ final class StudioViewModel {
                 await micHeadStart
                 activeCompositionGamut = await gamutTask
                 let box = CompositionParamBox(preset: preset)
-                activeCompositionBox = box
+                activeCompositionBoxes[room.id] = box
                 // Restore persisted harmony rule for re-edit
                 if let savedRule = preset.palette.harmonyRule,
                    let rule = HarmonyRule(rawValue: savedRule) {
@@ -1331,7 +1341,9 @@ final class StudioViewModel {
 
         case .composition:
             await orchestrator.stopCompositionMode(roomID: roomID)
-            activeCompositionBox = nil
+            // Keyed by the STOPPING room — the old single-slot nil-out
+            // clobbered the selected room's editor when another room stopped.
+            activeCompositionBoxes.removeValue(forKey: roomID)
             if isExplicitStop {
                 // Ensure composition cards (including bridge one-shot tier)
                 // fully release control and don't appear "stuck on".
