@@ -75,6 +75,12 @@ struct HueHomeApp: App {
         // "Start <composition>" phrases track the library. Wired here (not
         // in CompositionStore) so unit tests with injected stores never
         // trigger system donation calls.
+        //
+        // Two donation funnels by design, NO extra rate limit: this one fires
+        // only on explicit preset saves, and scheduleWidgetWrite's donation
+        // already rides its 500ms debounce. A throttle here risks eating the
+        // trailing donation after a rename — the exact freshness bug 282fbef
+        // fixed.
         CompositionStore.onPersist = {
             HueAppShortcuts.updateAppShortcutParameters()
         }

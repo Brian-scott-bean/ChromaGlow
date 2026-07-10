@@ -1,12 +1,16 @@
 // WidgetDataStore.swift
-// CastChroma — Epic 5 / Widget
+// ChromaGlow — shared widget data layer
 //
-// Shared data layer between the main app and the widget extension.
-// Uses App Group UserDefaults (group.com.huehome.pro) so both processes
+// Shared data layer between the main app and the widget/watch extensions.
+// Uses App Group UserDefaults (group.com.huehome.pro) so the processes
 // can read and write without XPC or file-coordination overhead.
 //
-// WRITE path: DashboardViewModel → after every loadAll() success.
-// READ path:  HueWidgetProvider.getTimeline() → build timeline entry.
+// WRITE path: UnifiedOrchestrator.scheduleWidgetWrite() — debounced 500ms,
+//   fired by room/zone rebuilds AND scene loads/mutations. Scenes are
+//   preserved-until-first-load: the launch publish must not clobber the
+//   stored snapshot with the not-yet-loaded empty array.
+// READ path:  HueWidgetProvider (timeline), SceneAppEntity/HueGroupEntity
+//   queries, Control Center controls, and the Siri intent layer.
 //
 // Also contains the lightweight WidgetAPIClient used by the widget
 // to fetch a fresh grouped_light state in a single network call.

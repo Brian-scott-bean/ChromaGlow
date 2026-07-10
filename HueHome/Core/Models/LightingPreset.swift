@@ -31,6 +31,15 @@ struct LightingPreset: Identifiable, Equatable, Sendable {
     static let relax    = LightingPreset(id: "relax",    name: "Relax",    icon: "moon.stars.fill", brightness: 40,  mirek: 420)
     static let sleep    = LightingPreset(id: "sleep",    name: "Sleep",    icon: "zzz",             brightness: 6,   mirek: 490)
 
+    /// The "all lights ON" contract shared by the widget's All-Lights Control
+    /// and Siri's AllLightsIntent: bright enough to be useful, warm enough not
+    /// to be harsh. Deliberately NOT in `all` — it is a behavior contract,
+    /// not a user-facing preset chip.
+    static let welcomeHome = LightingPreset(
+        id: "welcome-home", name: "Welcome home", icon: "house.fill",
+        brightness: 80, mirek: 350
+    )
+
     static let all: [LightingPreset] = [.energize, .read, .relax, .sleep]
 
     static func find(_ id: String) -> LightingPreset? {

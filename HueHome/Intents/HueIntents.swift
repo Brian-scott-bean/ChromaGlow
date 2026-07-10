@@ -272,11 +272,9 @@ struct AllLightsIntent: AppIntent {
         self.power = power
     }
 
-    /// The widget's SetAllLightsPowerIntent contract: ON = 80% @ mirek 350.
-    static let welcomeHome = LightingPreset(
-        id: "welcome-home", name: "Welcome home", icon: "house.fill",
-        brightness: 80, mirek: 350
-    )
+    /// Single source: LightingPreset.welcomeHome (shared with the widget's
+    /// SetAllLightsPowerIntent so the two "all lights on" surfaces can't drift).
+    static let welcomeHome = LightingPreset.welcomeHome
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let store = WidgetDataStore.shared

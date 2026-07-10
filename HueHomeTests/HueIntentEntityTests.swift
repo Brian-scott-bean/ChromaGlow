@@ -115,8 +115,12 @@ final class HueIntentEntityTests: XCTestCase {
     }
 
     func testWelcomeHomeMatchesWidgetContract() {
-        XCTAssertEqual(AllLightsIntent.welcomeHome.brightness, 80)
-        XCTAssertEqual(AllLightsIntent.welcomeHome.mirek, 350)
+        XCTAssertEqual(AllLightsIntent.welcomeHome, LightingPreset.welcomeHome,
+                       "single source — Siri and the widget's All-Lights Control share it")
+        XCTAssertEqual(LightingPreset.welcomeHome.brightness, 80)
+        XCTAssertEqual(LightingPreset.welcomeHome.mirek, 350)
+        XCTAssertFalse(LightingPreset.all.contains(LightingPreset.welcomeHome),
+                       "welcome-home is a behavior contract, not a preset chip")
     }
 
     // ── Scene entity mapping ──────────────────────────────

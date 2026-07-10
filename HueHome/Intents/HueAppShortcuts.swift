@@ -129,6 +129,9 @@ struct HueAppShortcuts: AppShortcutsProvider {
         )
 
         // ── 10. Stop effects (lights stay on) ────────────────────
+        // ⚠️ THE 10-SHORTCUT HARD CAP IS FULLY ALLOCATED. An 11th entry
+        // silently fails at metadata processing — a new Siri-phrased intent
+        // must EVICT one of these ten.
         AppShortcut(
             intent: StopLightEffectsIntent(),
             phrases: [

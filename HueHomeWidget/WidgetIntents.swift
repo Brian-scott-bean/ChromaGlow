@@ -370,18 +370,17 @@ struct SetAllLightsPowerIntent: SetValueIntent {
     /// Parameter name fixed by the SetValueIntent protocol.
     @Parameter(title: "On") var value: Bool
 
-    /// Bright enough to be useful, warm enough not to be harsh.
-    private static let onBrightness: Double = 80
-    private static let onMirek: Int = 350
-
     init() { value = false }
 
     func perform() async throws -> some IntentResult {
         let store = WidgetDataStore.shared
+        // Single source: LightingPreset.welcomeHome — shared with Siri's
+        // AllLightsIntent so the two "all lights on" surfaces can't drift.
+        let welcome = LightingPreset.welcomeHome
         let body: [String: Any] = value
             ? ["on":                ["on": true],
-               "dimming":           ["brightness": Self.onBrightness],
-               "color_temperature": ["mirek": Self.onMirek],
+               "dimming":           ["brightness": welcome.brightness],
+               "color_temperature": ["mirek": welcome.mirek],
                "dynamics":          ["duration": 800]]
             : ["on": ["on": false]]
 
@@ -397,7 +396,7 @@ struct SetAllLightsPowerIntent: SetValueIntent {
                 }
             }
         }
-        store.markAllGroups(on: value, brightness: value ? Self.onBrightness : nil)
+        store.markAllGroups(on: value, brightness: value ? welcome.brightness : nil)
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }
