@@ -36,7 +36,7 @@ Git is the transport between agents. Do not rely on uncommitted scratch files as
 
 ## Current One-Line State
 
-ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 19** — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged, 2026-07-09 card-parity + Composer-live-update fixes (build 18) and the Scenes overhaul (grouped IA, saved colors, scene copy/move — build 19) landed; both await Brian's on-device verification, see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
+ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 0.9.0 build 21** — hardening P0+P1 complete, Rounds 3-4 shipped, perf passes merged; builds 18-21 landed 2026-07-09: card-parity + Composer-live-update fixes, the Scenes overhaul, the adjustment-settings revamp, and the scenes-excellence run (QR scene sharing, 56 built-ins, seed migration, transport/effect honesty). All await Brian's on-device verification — see the DEVLOG snapshot) with a native Android Kotlin/Jetpack Compose MVP underway (demo flow + tested pairing foundations on `main`; Batch 4 live pairing integrated on `integration/parallel-batch-4`, physical link-button gate pending before promotion).
 
 ## Current Branch/Repo Facts
 
@@ -100,7 +100,7 @@ Current verified identity values:
 - iOS deployment target: iOS 17.0
 - watchOS deployment target: `26.4` (`WATCHOS_DEPLOYMENT_TARGET` in every watch build config — this resolves the earlier "verify watchOS target" follow-up)
 - Marketing version in project: `0.9.0`
-- Build number in project: `9` (bumped every device-test round; do not reuse a number)
+- Build number in project: `21` (bumped every device-test round; do not reuse a number)
 - App display name (main iOS target): `ChromaGlow`
 - Widget/watch target display names: still `LightShade` / `LightShadeWatch` (`INFOPLIST_KEY_CFBundleDisplayName`) — pending an explicitly assigned rename; do not rename casually.
 - iOS Keychain service identifier (`kSecAttrService`) **and** OSLog subsystem: `com.lightshade.app` — **LIVE, do NOT rename.** `KeychainManager.serviceName` uses this for every credential read/write; renaming it makes every existing user's stored app key + entertainment client key unreadable with no migration. (Audit L-35.)
@@ -266,6 +266,45 @@ Scenes overhaul (2026-07-09) durable facts — full record in the DEVLOG build-1
   `com.lightshade.scene-ref` (declared in `HueHome/Info.plist`).
 - New-file pbxproj registration for this feature set: `add_scenes_overhaul_files.rb`
   (idempotent, xcodeproj gem).
+
+Scenes-excellence run (2026-07-09, build 21) durable facts — full record in the DEVLOG build-21 entry:
+
+- **Scene sharing is local-first and has no backend.** `ScenePayloadCodec` encodes a preset's
+  *design* (not its identity or provenance) into `lightshade://share?d=<base64url(zlib(json))>`;
+  the envelope is versioned and refuses an unknown `v` rather than misdecoding. `DeepLinkCoordinator`
+  decodes but NEVER saves — Studio owns the only `CompositionStore`, so the import preview and the
+  save happen in `StudioView`. New files registered by `add_scene_sharing_files.rb`.
+- **Test QR pixels with `CIDetector`, not Vision.** VisionKit (the in-app scanner, `ScanSceneView`)
+  needs a neural inference context that does not exist in the Simulator — it throws
+  "Could not create inference context" for every image, valid or not.
+- **`BuiltInSeedMigrator` keys on preset id** and reconciles the library in memory on every load
+  (adds new built-ins, refreshes ones the user never edited via `updatedAt <= createdAt`, never
+  touches user data). It deliberately adds **no write path** — persisting during load would race
+  the create-only seed (M-13). Built-in ids MUST follow the hand-assigned
+  `0000000X-0001-0001-0001-...` scheme; a `UUID()` breaks migration silently.
+- **`PresetCatalogTests` is the quality bar** for the 56 built-ins: gamut-C membership (exact, no
+  tolerance), field ranges, legal renders at 1/5/20 lights, no low-speed jumping, motion that
+  differs across lights, and a 3Hz photosensitivity limit (WCAG 2.3.1).
+- **Gamut C is not a superset of A and B** (A's green primary is more saturated). C is the target
+  because it is the modern colour bulb and `activeCompositionGamut` defaults to `.c`.
+- **`scatter` + `.temperature` renders every light identically** — scatter varies only phase (weight
+  is a constant 1.0) and `color(at:)` ignores phase in temperature mode. Same trap for any
+  phase-only pattern over a phase-blind palette.
+- **`BridgeDynamicSceneExporter` (pure, tested) owns palette → CLIP-v2-scene mapping.** Sample via
+  `PaletteConfig.color(at:)`, never `color1`/`color2` directly. The live upload path is
+  `CreateSceneRequest.dynamicScene` (palette + speed + auto_dynamic); `uploadV2DynamicScene` was
+  dead + wrong and is deleted.
+- **`UnifiedOrchestrator.entertainmentAvailability(for:)`** is synchronous and three-valued.
+  `entertainmentConfigsFetchedBridges` exists because a nil assignment removes a dictionary key,
+  so the config cache alone cannot distinguish "no area" from "never asked". `.unknown` must keep
+  offering streaming — a false "unavailable" is worse than a fallback the user never sees.
+- **`EffectCapabilityResolver.routing`** decides `.run` / `.unsupported` / `.runUnverified` for
+  firmware effects. A room reporting NO capabilities at all is `.runUnverified`, not `.unsupported`
+  (a decode gap must not turn Deck 0 off). Deck 0's cards live in `StudioViewModel` (speed `0...100`,
+  `"base_color"`), NOT in `EffectLibrary` (`HueEffect.params` is the automations surface).
+- Mixer-tray header is three rows; heights are declared in
+  `MixerTrayMetrics.headerBlockHeight(hasStatusLine:)`. `StageBadge` never wraps (`lineLimit` +
+  `fixedSize`). New tray rows must pay for themselves there or they clip.
 
 ## Android Current State
 

@@ -12,7 +12,17 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **20**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **21**).
+- **BUILD 21 (2026-07-09): SCENES EXCELLENCE — QR SHARING, 56 BUILT-INS, ENGINE HONESTY —
+  AWAITING BRIAN'S ON-DEVICE CHECK.** Eight shippable commits (rollback tag
+  `checkpoint/scenes-excellence-2026-07-09`): three-row mixer-tray header (no more mid-word
+  wrapping), rolodex compacted 194pt → ~134pt, **QR/link scene sharing** (`lightshade://share`,
+  no backend), transport menu now refuses what the bridge can't do, bridge-native dynamic-scene
+  export promoted to a first-class engine **and fixed** (spectrum/temperature exported the wrong
+  colours), six built-in scenes had out-of-gamut stops, **+36 new built-ins across five new
+  categories (20 → 56)**, `BuiltInSeedMigrator` so new presets reach existing installs, and a
+  firmware effect that no light can run no longer reports success. Full checklist in the
+  2026-07-09 BUILD 21 entry below. Full suite green (two consecutive runs).
 - **BUILD 20 (2026-07-09): ADJUSTMENT-SETTINGS REVAMP + LIVE-UPDATE FIXES — AWAITING BRIAN'S
   ON-DEVICE CHECK.** Twelve shippable commits (rollback `checkpoint/pre-adjustrevamp-2026-07-09`):
   DJ-stage mixer tray (flat surface, Perform header grammar, derived heights), composer
@@ -6702,3 +6712,113 @@ Not investigated or fixed in IOS-BUG-001B branch.
 - No Kotlin, Swift, tests, manifest, Gradle, dependency, or runtime changes
 - No network probe performed
 - No commit or push in this pass
+
+---
+
+## 2026-07-09 - [Claude] BUILD 21 — Scenes excellence: QR sharing, 56 built-ins, engine honesty
+
+### Branch
+- `main` (8 commits). Rollback: `git reset --hard checkpoint/scenes-excellence-2026-07-09`
+  (tag @ `c971704`, build 20).
+
+### Did
+Eight independently shippable commits, in order:
+
+1. **`ea88643` three-row tray header.** The mixer-tray header was one HStack holding an icon,
+   name+room, up to five badges (one a full sentence), and up to four 34pt action circles —
+   ~170pt incompressible on a 360pt phone. Nothing had a `lineLimit` anywhere in the header, so
+   every `Text` absorbed the squeeze and wrapped character-by-character. Now: row 1 identity +
+   actions (name scales, never truncates), row 2 a horizontally scrolling badge lane, row 3 the
+   transport sentence at full width. `StageBadge` refuses to wrap app-wide; `StageSheetScaffold`'s
+   principal title scales to fit. `MixerTrayMetrics.headerBlockHeight(hasStatusLine:)` pays for
+   the rows; the status line is *reserved*, not measured, so a transport switch doesn't resize
+   the tray.
+2. **`eae40a8` rolodex compaction.** `stageHeight` 148→96 (exactly 3 × 32pt detents), lens 42→36.
+   Zone A: 194pt → ~134pt. `cardGrid` is already `maxHeight: .infinity` so it absorbs the gain.
+3. **`db7bf4c` QR + link scene sharing.** `lightshade://share?d=<base64url(zlib(json))>` carries
+   the whole scene — no backend, no account. A preset encodes to ~600B (a version-18 symbol).
+   Versioned envelope refuses a v2 payload rather than misdecoding it. Identity and provenance
+   (`id`, `createdAt`, `isBuiltIn`, `aiPrompt`) stay home, so importing a shared "Ocean Drift"
+   can't overwrite the recipient's built-in. `DeepLinkCoordinator` decodes but never saves;
+   Studio owns the only `CompositionStore`, so the confirm + save happen there.
+4. **`b453825` transport menu honesty.** `UnifiedOrchestrator.entertainmentAvailability(for:)` —
+   synchronous, no network — disables the streaming option with a reason instead of letting the
+   effect silently demote to REST. Three-valued: a nil dict assignment removes the key, so
+   `entertainmentConfigsFetchedBridges` records what we *asked*, and `.unknown` still offers
+   streaming. Also "Preferred Engine…" on a saved preset (was save-time only).
+5. **`8426331` bridge-native dynamic scenes.** The export read `palette.color1/color2` directly —
+   wrong in spectrum mode (colours come from the hue wheel) and temperature mode (from mirek).
+   New pure `BridgeDynamicSceneExporter` samples through `PaletteConfig.color(at:)`. Promoted to
+   "Save to Bridge…" on any saved preset. Deleted `uploadV2DynamicScene` +
+   `V2DynamicSceneManifest` (~105 lines, zero callers, built a scene with no `palette` block and
+   recalled it as `dynamic_palette` — nothing to cycle).
+6. **`358c3e9` six built-ins showed impossible colours.** Ocean Drift / Storm Chase / 4th of July /
+   Hanukkah shared an out-of-gamut deep blue; Valentine's Glow a pink; St. Patrick's a green that
+   is nearly gamut *A*'s primary. New `PresetCatalogTests` is the bar, including a 3Hz
+   photosensitivity limit (WCAG 2.3.1).
+7. **`e4aee25` `BuiltInSeedMigrator`.** The seed is create-only (M-13), so new presets — and the
+   gamut fixes above — would never reach an existing install. Reconciles in memory on every load.
+8. **`2d3502d` +36 built-ins (20 → 56)** across nature / cosmic / cozy / focus / cinematic, plus
+   five energetic. Every stop computed sRGB → CIE xy → projected into gamut C.
+9. **`602ee94` firmware-effect honesty.** Cosmos on a room of white-only bulbs sent PUTs, got 400s,
+   discarded them, and printed "🟢 Cosmos → Kitchen" over a dark room.
+   `EffectCapabilityResolver.routing` now answers `.run` / `.unsupported` / `.runUnverified`.
+
+### Working
+- Full suite green, twice in a row, on `iPhone 15 / OS 17.0`.
+- Device build (`generic/platform=iOS`) green. Build bumped to **21** (all 12 pbxproj entries).
+
+### Left
+- **Brian's on-device pass for build 21.** Specifically:
+  - Mixer tray with a long scene name ("Winter Wonderland") in a long-named room, bridge-stored
+    banner visible, at accessibility Dynamic Type. Nothing should wrap mid-word.
+  - Studio deck should feel taller (rolodex gave back ~60pt).
+  - **Share…** on a composition → QR renders → scan it from a second phone (or paste the link)
+    → import preview → "Add to My Scenes". The in-app scanner needs a real device (VisionKit's
+    DataScanner does not exist in the Simulator).
+  - **Save to Bridge…** on a gradient preset, then close the app: the lights should keep cycling.
+    Then try it on a *spectrum* preset — the colours should now match what the Composer shows.
+  - Transport menu on a bridge without an entertainment area: "Entertainment Area (Streaming)"
+    should be greyed with a reason, not silently fall back.
+  - Deck 0: run Cosmos on a room of white-only bulbs → expect "⚠ No lights in X can run Cosmos",
+    not a green success.
+  - Composer deck: 56 presets, 10 category chips. Existing installs should gain the 36 new ones
+    (the migrator runs on load) without losing anything the user edited.
+- The TEMP `⏱️PERF` prints (RoomDetailView + `loadAll`) are still pending removal from build 9.
+
+### Validation
+```
+xcodebuild -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'generic/platform=iOS' build
+xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" \
+  -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0'
+```
+New suites: `ScenePayloadCodecTests`, `SceneQRRendererTests`, `EntertainmentAvailabilityTests`,
+`BridgeDynamicSceneExporterTests`, `PresetCatalogTests`, `BuiltInSeedMigratorTests`,
+`EffectRoutingTests`. New files registered via `add_scene_sharing_files.rb` (idempotent).
+
+### Gotchas
+- **`SceneQRRendererTests` decodes with `CIDetector`, not Vision.** VisionKit — what the in-app
+  scanner uses on device — needs a neural inference context that does not exist in the Simulator.
+  It throws `"Could not create inference context"` for *every* image, valid or not, so it cannot
+  serve as a test oracle. This cost an hour; don't rediscover it.
+- **Gamut C is NOT a superset of A and B.** A's green primary (0.2151, 0.7106) is more saturated
+  than C's (0.170, 0.700). C is the target because it's the modern colour bulb and what the
+  Composer previews with (`activeCompositionGamut` defaults to `.c`), not because it contains
+  them. St. Patrick's green was authored against gamut A.
+- **A `scatter` pattern over a `temperature` palette renders every light identically.** Scatter
+  varies only phase (its weight is a constant `1.0`) and `PaletteConfig.color(at:)` ignores phase
+  in temperature mode. Two of the new presets were written that way and had to be given gradients.
+  `PresetCatalogTests.testMovingPresetsSpreadAcrossLights` catches this class.
+- **Deck 0's cards are defined in `StudioViewModel`, not `EffectLibrary`.** Auditing
+  `HueEffect.params` (speed `1...10`, key `"color"`) and concluding the v2 sender is wrong is a
+  trap — the real `StudioParam`s are speed `0...100` and `"base_color"`, which is exactly what
+  `applyStudioEffectV2Parameters` reads. `EffectLibrary` remains live via automations.
+- **`BuiltInSeedMigrator` matches on preset id.** A built-in written with `UUID()` would get a
+  fresh id every launch: re-added forever, never refreshed. `PresetCatalogTests` now enforces the
+  hand-assigned `0000000X-0001-0001-0001-...` scheme.
+- The migrator adds **no write path**. Persisting during load would race the create-only seed and
+  `ensureLoadedForMutation`'s sync load, and re-earning M-13's guarantees isn't worth it. The
+  merged library is what the UI reads; the file catches up on the next ordinary save.
+- `KeychainSharingTests.testForgetAllClearsSharedCredentialSurface` failed **once** in a full run,
+  then passed in isolation and in two consecutive full runs. Order-dependent Keychain state,
+  pre-existing, not introduced or fixed here. Worth a look if it recurs.
