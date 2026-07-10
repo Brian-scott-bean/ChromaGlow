@@ -88,16 +88,32 @@ struct HueHomeApp: App {
 // switches to Home, and pushes `pendingGroupID`'s room detail — clearing the id once
 // consumed. On a cold launch the id outlives the first frame: no group resolves until
 // `loadAll` returns, so MainTabView retries when the rooms/zones arrive.
+//
+// Shared scenes arrive as `lightshade://share?d=<blob>` (see ScenePayloadCodec).
+// They are decoded here but never saved here — `pendingSharedScene` is a
+// proposal that MainTabView shows the user, who accepts or declines. A link that
+// cannot be decoded surfaces as `pendingShareError` rather than vanishing.
 
 @Observable
 final class DeepLinkCoordinator {
     /// The room/zone id from the tapped widget (nil for a plain dashboard open).
     var pendingGroupID: String?
+    /// A scene decoded from a share link, awaiting the user's confirmation.
+    var pendingSharedScene: SharedScene?
+    /// Why the last share link could not be opened. Shown, then cleared.
+    var pendingShareError: ScenePayloadError?
     /// Bumped on every deep link so observers can react even to a repeated target.
     var openToken: Int = 0
 
     func handle(_ url: URL) {
         guard url.scheme == "lightshade" else { return }
+
+        if ScenePayloadCodec.isShareLink(url) {
+            acceptShareLink(url)
+            openToken &+= 1
+            return
+        }
+
         switch url.host {
         case "room", "zone":
             pendingGroupID = url.pathComponents.first(where: { $0 != "/" })
@@ -105,6 +121,26 @@ final class DeepLinkCoordinator {
             pendingGroupID = nil
         }
         openToken &+= 1
+    }
+
+    /// Also the entry point for a QR scanned in-app, which produces the same URL.
+    func acceptShareLink(_ url: URL) {
+        pendingGroupID = nil
+        do {
+            pendingSharedScene = try ScenePayloadCodec.decode(url)
+            pendingShareError = nil
+        } catch let error as ScenePayloadError {
+            pendingSharedScene = nil
+            pendingShareError = error
+        } catch {
+            pendingSharedScene = nil
+            pendingShareError = .malformedPayload
+        }
+    }
+
+    func clearShare() {
+        pendingSharedScene = nil
+        pendingShareError = nil
     }
 }
 

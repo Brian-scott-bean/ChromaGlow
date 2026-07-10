@@ -60,6 +60,10 @@ struct MainTabView: View {
             }
         }
         .task { await prewarmDeferredTabs() }
+        // Cold launch from a share link: `onOpenURL` fired (and bumped
+        // openToken) before this view existed, so the onChange below never
+        // sees it. Route once on mount if a scene is already waiting.
+        .task { routePendingShare() }
         // A widget / Lock-Screen tap deep-links here.
         .onChange(of: deepLink.openToken) { _, _ in consumeDeepLink() }
         // A cold launch from a widget arrives before `loadAll` has any rooms, so
@@ -72,7 +76,10 @@ struct MainTabView: View {
 
     /// Surfaces Home and, when the widget named a room/zone, pushes its detail.
     /// A plain `lightshade://dashboard` tap pops back to the dashboard root.
+    /// A share link goes to Studio instead — see `routePendingShare`.
     private func consumeDeepLink() {
+        if routePendingShare() { return }
+
         realizedTabs.insert(.home)
         withAnimation(HueAnimation.toggle) { selectedTab = .home }
 
@@ -83,6 +90,19 @@ struct MainTabView: View {
         guard let room = resolveGroup(id) else { return }   // retried on load
         homePath = [room]
         deepLink.pendingGroupID = nil
+    }
+
+    /// Surfaces Studio when a share link decoded into a scene (or an error).
+    /// Realizing the tab is what makes StudioView's `.task` drain it — Studio
+    /// owns the only CompositionStore, so the import must happen there.
+    /// Returns true when it took the link.
+    @discardableResult
+    private func routePendingShare() -> Bool {
+        guard deepLink.pendingSharedScene != nil || deepLink.pendingShareError != nil
+        else { return false }
+        realizedTabs.insert(.studio)
+        withAnimation(HueAnimation.toggle) { selectedTab = .studio }
+        return true
     }
 
     private func retryPendingDeepLink() {

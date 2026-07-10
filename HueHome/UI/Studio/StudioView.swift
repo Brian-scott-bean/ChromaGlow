@@ -56,6 +56,7 @@ struct StudioView: View {
 
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Environment(DeepLinkCoordinator.self) private var deepLink
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var vm = StudioViewModel()
 
@@ -96,6 +97,25 @@ struct StudioView: View {
     @State private var transportSwitchInFlightRoomIDs: Set<String> = []
     @State private var compositionDeleteTarget: CompositionPreset?
     @FocusState private var aiPromptFocused: Bool
+
+    // ── Sharing (QR) ──────────────────────────────────────────
+    // Studio owns the only CompositionStore, so a scene arriving from a share
+    // link or a scanned QR is imported here — never in the deep-link handler,
+    // which decodes but does not save.
+    @State private var shareTarget: CompositionPreset?
+    @State private var showSceneScanner = false
+    @State private var importRequest: ImportRequest?
+    @State private var importFailure: ImportFailure?
+
+    /// `.sheet(item:)` needs identity; a SharedScene has none by design.
+    private struct ImportRequest: Identifiable {
+        let id = UUID()
+        let scene: SharedScene
+    }
+    private struct ImportFailure: Identifiable {
+        let id = UUID()
+        let error: ScenePayloadError
+    }
 
 
     // ── Performance ───────────────────────────────────────
@@ -291,6 +311,28 @@ struct StudioView: View {
         .sheet(isPresented: $showCompositionSaveSheet) {
             compositionSaveSheet
         }
+        .sheet(item: $shareTarget) { preset in
+            ShareSceneSheet(preset: preset)
+        }
+        // Drain on dismiss, not inside `onFound`: presenting the import sheet
+        // while the scanner is still dismissing drops it on the floor.
+        .sheet(isPresented: $showSceneScanner, onDismiss: consumePendingShare) {
+            ScanSceneView { url in deepLink.acceptShareLink(url) }
+        }
+        .sheet(item: $importRequest) { request in
+            ImportSceneSheet(scene: request.scene, store: vm.compositionStore) { preset in
+                // Land on the deck that now holds it, filtered so it is visible.
+                currentDeck = 2
+                composerCategory = preset.category
+            }
+        }
+        .sheet(item: $importFailure) { failure in
+            ImportSceneFailureSheet(error: failure.error)
+        }
+        // A share link or a scanned QR decodes in DeepLinkCoordinator; Studio
+        // owns the store, so the confirmation and the save happen here.
+        .onChange(of: deepLink.openToken) { _, _ in consumePendingShare() }
+        .task { consumePendingShare() }
         .confirmationDialog(
             "Choose Composer Transport",
             isPresented: $showCompositionTransportPrompt,
@@ -527,13 +569,30 @@ struct StudioView: View {
     // ── Deck 3: Composer ─────────────────────────────────────
 
     private var composerCategoryChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(PresetCategory.allCases) { category in
-                    composerCategoryChip(category)
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(PresetCategory.allCases) { category in
+                        composerCategoryChip(category)
+                    }
                 }
+                .padding(.vertical, 2)
             }
-            .padding(.vertical, 2)
+
+            // Receiving end of Share…: point the camera at someone else's QR.
+            Button {
+                showSceneScanner = true
+                HapticManager.shared.light()
+            } label: {
+                Image(systemName: "qrcode.viewfinder")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HuePalette.amber)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(HuePalette.amber.opacity(0.14)))
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .accessibilityLabel("Scan a shared scene")
         }
     }
 
@@ -936,6 +995,23 @@ struct StudioView: View {
         pendingCompositionRoom = nil
     }
 
+    // ──────────────────────────────────────────────
+    // MARK: - Shared scene import
+    // ──────────────────────────────────────────────
+
+    /// Drains whatever the deep-link handler decoded. Runs on `.task` too, so a
+    /// cold launch from a share link — which lands before Studio is realized —
+    /// still finds its scene waiting.
+    private func consumePendingShare() {
+        if let scene = deepLink.pendingSharedScene {
+            importRequest = ImportRequest(scene: scene)
+            deepLink.clearShare()
+        } else if let error = deepLink.pendingShareError {
+            importFailure = ImportFailure(error: error)
+            deepLink.clearShare()
+        }
+    }
+
     private func switchRunningCompositionTransport(_ effect: RunningEffect, preferEntertainment: Bool) {
         guard case .composition = effect.card.strategy else { return }
         let roomID = effect.room.id
@@ -1030,6 +1106,13 @@ struct StudioView: View {
             HapticManager.shared.light()
         } label: {
             Label("Duplicate", systemImage: "doc.on.doc")
+        }
+
+        Button {
+            shareTarget = preset
+            HapticManager.shared.light()
+        } label: {
+            Label("Share…", systemImage: "qrcode")
         }
 
         Divider()
