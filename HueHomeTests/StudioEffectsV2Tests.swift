@@ -42,6 +42,17 @@ private final class StudioSpyClient: BridgeAPIClient, @unchecked Sendable {
         _groupedStateIDs.append(id)
     }
 
+    private var _groupedPowerWrites: [(id: String, on: Bool)] = []
+    /// Bare on/off writes (the `.unsupported` restore path uses these).
+    var groupedPowerWrites: [(id: String, on: Bool)] {
+        lock.lock(); defer { lock.unlock() }; return _groupedPowerWrites
+    }
+
+    override func setGroupedLight(id: String, on: Bool) async throws {
+        lock.lock(); defer { lock.unlock() }
+        _groupedPowerWrites.append((id: id, on: on))
+    }
+
     override func setLightNativeEffect(id: String, effect: String) async throws {
         lock.lock(); defer { lock.unlock() }
         _v1Effects.append("\(id):\(effect)")
@@ -87,13 +98,13 @@ final class StudioEffectsV2Tests: XCTestCase {
     }
 
     // Zone-style refs (rtype "light") resolve with zero inventory calls.
-    private static func zoneRoom(lightRIDs: [String]) -> RoomDisplayItem {
+    private static func zoneRoom(lightRIDs: [String], isOn: Bool = true) -> RoomDisplayItem {
         RoomDisplayItem(
             kind: .zone,
             id: "room-a",
             name: "Test Zone",
             archetype: nil,
-            isOn: true,
+            isOn: isOn,
             brightness: 70,
             groupedLightID: "gl-a",
             lightCount: lightRIDs.count,
@@ -173,6 +184,31 @@ final class StudioEffectsV2Tests: XCTestCase {
         XCTAssertEqual(vm.effectCoverage["cosmos"]?.isEmpty, true)
         XCTAssertTrue(vm.statusMessage.contains("No lights"),
                       "expected an explanation, got: \(vm.statusMessage)")
+    }
+
+    /// Step 1 switches the group on before capability is known. When the
+    /// verdict is "nobody can run this", that group-on is the only thing that
+    /// changed — a dark room ends up lit with a warning and no stop button.
+    /// Undo it, but only if WE lit it.
+    func testUnsupportedEffectRestoresARoomWeSwitchedOn() async throws {
+        spy.lightsFixture = [try light("L1", v2Effects: [], v1Effects: ["candle"])]
+        vm.selectedRoom = Self.zoneRoom(lightRIDs: ["L1"], isOn: false)   // dark room
+
+        await vm.apply(try cosmosCard(), roomOverride: nil, preferEntertainmentOverride: nil)
+
+        let offWrites = spy.groupedPowerWrites.filter { $0.id == "gl-a" && !$0.on }
+        XCTAssertEqual(offWrites.count, 1, "the group we lit must be switched back off")
+    }
+
+    /// A room that was already on stays on — we only undo what we did.
+    func testUnsupportedEffectLeavesAnAlreadyOnRoomAlone() async throws {
+        spy.lightsFixture = [try light("L1", v2Effects: [], v1Effects: ["candle"])]
+        vm.selectedRoom = Self.zoneRoom(lightRIDs: ["L1"], isOn: true)
+
+        await vm.apply(try cosmosCard(), roomOverride: nil, preferEntertainmentOverride: nil)
+
+        XCTAssertTrue(spy.groupedPowerWrites.filter { !$0.on }.isEmpty,
+                      "an already-on room must not be switched off")
     }
 
     // ── 3. live speed slider lands per-light v2 while running ──

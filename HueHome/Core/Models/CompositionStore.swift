@@ -58,9 +58,20 @@ final class CompositionStore: @unchecked Sendable {
     func delete(_ preset: CompositionPreset) {
         ensureLoadedForMutation()
         if preset.isBuiltIn {
-            // Built-in presets reset to default instead of deleting
-            if let original = Self.builtInPresets.first(where: { $0.name == preset.name }) {
+            // Built-in presets reset to default instead of deleting. Keyed on
+            // id, NOT name: built-ins can be renamed (rename keeps isBuiltIn),
+            // and a name lookup on "My Fire" finds nothing — the preset would
+            // be neither reset nor removed, permanently stuck, while the
+            // confirm dialog had just promised a reset. Ids are stable by the
+            // deterministic-UUID scheme PresetCatalogTests enforces.
+            if let original = Self.builtInPresets.first(where: { $0.id == preset.id }) {
                 save(original)
+            } else {
+                // A built-in we no longer ship (retired from the catalog but
+                // kept in the user's library by the seed migrator). There is
+                // no default to reset to, so honor the delete.
+                presets.removeAll { $0.id == preset.id }
+                persist()
             }
             return
         }

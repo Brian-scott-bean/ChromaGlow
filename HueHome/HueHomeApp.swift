@@ -124,6 +124,13 @@ final class DeepLinkCoordinator {
     }
 
     /// Also the entry point for a QR scanned in-app, which produces the same URL.
+    ///
+    /// LOAD-BEARING: this deliberately does NOT bump `openToken`. The in-app
+    /// scanner calls it while its own sheet is still presented; if the token
+    /// changed, StudioView's `.onChange(of: openToken)` would try to present
+    /// the import sheet on top of the scanner and SwiftUI would drop it. The
+    /// scanner drains via its `onDismiss` instead. External URLs get their
+    /// token bump from `handle(_:)`, which wraps this.
     func acceptShareLink(_ url: URL) {
         pendingGroupID = nil
         do {

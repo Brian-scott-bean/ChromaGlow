@@ -1053,6 +1053,10 @@ struct StudioView: View {
     /// cold launch from a share link — which lands before Studio is realized —
     /// still finds its scene waiting.
     private func consumePendingShare() {
+        // Never present the import sheet while the scanner sheet is still up —
+        // SwiftUI drops a second sheet on the floor and the scan is lost. The
+        // scanner's own onDismiss re-drains, so deferring here loses nothing.
+        guard !showSceneScanner else { return }
         if let scene = deepLink.pendingSharedScene {
             importRequest = ImportRequest(scene: scene)
             deepLink.clearShare()

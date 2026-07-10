@@ -1052,6 +1052,11 @@ final class StudioViewModel {
 
         switch card.strategy {
         case .bridgeNative(let effectName):
+            // If the routing verdict below comes back "no light can run this",
+            // the group-on we are about to send is the only thing that changed —
+            // remember whether we did it to a dark room so we can undo it.
+            let roomWasOff = !room.isOn
+
             // Step 1: Turn on group with brightness (1 grouped_light PUT).
             print("[Studio] 📡 Group ON + bri=\(brightness) → \(room.name)")
             try? await api.setGroupedLightState(
@@ -1099,6 +1104,13 @@ final class StudioViewModel {
             case .unsupported:
                 effectCoverage[card.id] = EffectCapabilityResolver.coverage(
                     for: effectName, lights: roomLights)
+                // Nothing is running, so leave nothing behind: Step 1 switched
+                // the group on, and abandoning that leaves a dark room lit with
+                // "⚠ no lights can run…" and no stop affordance. Only undo what
+                // we did — a room that was already on stays on.
+                if roomWasOff {
+                    try? await api.setGroupedLight(id: groupedLightID, on: false)
+                }
                 statusMessage = "⚠ No lights in \(room.name) can run \(card.name)"
                 HapticManager.shared.light()
                 return   // nothing is running; do not register an effect
