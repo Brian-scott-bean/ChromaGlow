@@ -109,4 +109,19 @@ final class SceneProvenanceStoreTests: XCTestCase {
         XCTAssertFalse(FavoriteSceneCSV.contains("ab,c", id: "a"))
         XCTAssertEqual(FavoriteSceneCSV.removing("a,b,a", id: "a"), "b")
     }
+
+    func testReplacingSwapsInPlacePreservingOrder() {
+        // A moved scene's ★ follows the new bridge scene id, same pill slot.
+        XCTAssertEqual(FavoriteSceneCSV.replacing("a,b,c", old: "b", new: "b2"), "a,b2,c")
+    }
+
+    func testReplacingIsNoopWhenOldAbsent() {
+        XCTAssertEqual(FavoriteSceneCSV.replacing("a,c", old: "ghost", new: "g2"), "a,c")
+        XCTAssertEqual(FavoriteSceneCSV.replacing("", old: "x", new: "y"), "")
+    }
+
+    func testReplacingDedupesWhenNewAlreadyPresent() {
+        // Never two pills for the same scene.
+        XCTAssertEqual(FavoriteSceneCSV.replacing("a,b,c", old: "b", new: "c"), "a,c")
+    }
 }

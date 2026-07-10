@@ -57,6 +57,31 @@ final class SceneUsageStore {
         usageBySceneID[bridgeSceneID]?.count ?? 0
     }
 
+    /// Carry usage history across a scene-id change (a move mints a new
+    /// bridge scene UUID). On collision keep the larger count and the most
+    /// recent date. No-op when `from` has no entry.
+    func transfer(from oldID: String, to newID: String) {
+        guard oldID != newID,
+              let moved = usageBySceneID.removeValue(forKey: oldID) else { return }
+        if let existing = usageBySceneID[newID] {
+            usageBySceneID[newID] = Usage(
+                count: max(existing.count, moved.count),
+                lastUsedAt: max(existing.lastUsedAt, moved.lastUsedAt)
+            )
+        } else {
+            usageBySceneID[newID] = moved
+        }
+        persist()
+    }
+
+    /// Drop a deleted scene's history immediately (delete-alert hygiene —
+    /// stale entries would age out via the cap anyway, but there's no reason
+    /// to keep them once the scene is knowingly gone).
+    func remove(bridgeSceneID: String) {
+        guard usageBySceneID.removeValue(forKey: bridgeSceneID) != nil else { return }
+        persist()
+    }
+
     private func pruneIfNeeded() {
         guard usageBySceneID.count > Self.maxEntries else { return }
         let keep = usageBySceneID

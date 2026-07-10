@@ -189,6 +189,20 @@ struct ScenesTabView: View {
                 mode: ctx.mode,
                 preselectedTargetID: ctx.preselectedTargetID
             ) { undo in
+                if undo.mode == .move {
+                    // The move minted a new bridge scene id — carry the ★ and
+                    // the usage history across, or the scene silently loses
+                    // both (favorites/usage key on RAW bridgeSceneID).
+                    favoriteSceneIDsRaw = FavoriteSceneCSV.replacing(
+                        favoriteSceneIDsRaw,
+                        old: undo.sourceScene.bridgeSceneID,
+                        new: undo.newSceneID
+                    )
+                    SceneUsageStore.shared.transfer(
+                        from: undo.sourceScene.bridgeSceneID,
+                        to: undo.newSceneID
+                    )
+                }
                 showCopyUndo(undo)
             }
         }
@@ -215,11 +229,12 @@ struct ScenesTabView: View {
         .alert("Delete Scene", isPresented: $showDeleteAlert, presenting: sceneToDelete) { scene in
             Button("Delete \"\(scene.name)\"", role: .destructive) {
                 orchestrator.deleteGlobalScene(scene)
-                // Hygiene: a deleted scene leaves no provenance badge key or
-                // dangling favorite behind.
+                // Hygiene: a deleted scene leaves no provenance badge key,
+                // dangling favorite, or usage history behind.
                 provenance.remove(key: scene.id)
                 favoriteSceneIDsRaw = FavoriteSceneCSV.removing(favoriteSceneIDsRaw,
                                                                 id: scene.bridgeSceneID)
+                SceneUsageStore.shared.remove(bridgeSceneID: scene.bridgeSceneID)
                 sceneToDelete  = nil
                 showDeleteAlert = false
             }
@@ -667,11 +682,25 @@ struct ScenesTabView: View {
                 try? await targetClient.deleteScene(id: undo.newSceneID)
             }
             SceneProvenanceStore.shared.remove(key: "\(undo.targetBridgeID):\(undo.newSceneID)")
-            if undo.mode == .move,
-               let sourceClient = orchestrator.hueClient(for: undo.sourceScene.bridgeID) {
-                try? await sourceClient.createScene(
-                    SceneCopyEngine.recreateRequest(detail: undo.sourceDetail)
-                )
+            if undo.mode == .move {
+                // The ★/usage moved onto the (just-deleted) move target — follow
+                // them back onto the recreated original, or scrub if the
+                // re-POST failed (never leave a favorite on a dead id).
+                var recreatedID: String?
+                if let sourceClient = orchestrator.hueClient(for: undo.sourceScene.bridgeID) {
+                    recreatedID = try? await sourceClient.createSceneReturningID(
+                        SceneCopyEngine.recreateRequest(detail: undo.sourceDetail)
+                    )
+                }
+                if let recreatedID {
+                    favoriteSceneIDsRaw = FavoriteSceneCSV.replacing(
+                        favoriteSceneIDsRaw, old: undo.newSceneID, new: recreatedID)
+                    SceneUsageStore.shared.transfer(from: undo.newSceneID, to: recreatedID)
+                } else {
+                    favoriteSceneIDsRaw = FavoriteSceneCSV.removing(
+                        favoriteSceneIDsRaw, id: undo.newSceneID)
+                    SceneUsageStore.shared.remove(bridgeSceneID: undo.newSceneID)
+                }
             }
             await orchestrator.loadAllScenes()
         }

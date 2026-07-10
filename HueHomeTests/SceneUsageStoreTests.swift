@@ -60,4 +60,54 @@ final class SceneUsageStoreTests: XCTestCase {
                        "the least-recently-used entry is the one dropped")
         XCTAssertEqual(store.useCount(bridgeSceneID: "scene-500"), 1)
     }
+
+    func testTransferMovesHistoryToNewID() {
+        let store = SceneUsageStore(defaults: defaults)
+        let t = Date(timeIntervalSince1970: 5_000)
+        store.recordActivation(bridgeSceneID: "old-id", at: t)
+        store.recordActivation(bridgeSceneID: "old-id", at: t)
+
+        store.transfer(from: "old-id", to: "new-id")
+
+        XCTAssertEqual(store.useCount(bridgeSceneID: "new-id"), 2)
+        XCTAssertEqual(store.lastUsed(bridgeSceneID: "new-id"), t)
+        XCTAssertEqual(store.useCount(bridgeSceneID: "old-id"), 0, "old id must not linger")
+
+        // Persisted, not just in-memory.
+        let reloaded = SceneUsageStore(defaults: defaults)
+        XCTAssertEqual(reloaded.useCount(bridgeSceneID: "new-id"), 2)
+    }
+
+    func testTransferCollisionKeepsMaxCountAndLatestDate() {
+        let store = SceneUsageStore(defaults: defaults)
+        let early = Date(timeIntervalSince1970: 1_000)
+        let late  = Date(timeIntervalSince1970: 9_000)
+        store.recordActivation(bridgeSceneID: "a", at: late)
+        (0..<3).forEach { _ in store.recordActivation(bridgeSceneID: "b", at: early) }
+
+        store.transfer(from: "b", to: "a")
+
+        XCTAssertEqual(store.useCount(bridgeSceneID: "a"), 3)
+        XCTAssertEqual(store.lastUsed(bridgeSceneID: "a"), late)
+    }
+
+    func testTransferFromUnknownIDIsNoop() {
+        let store = SceneUsageStore(defaults: defaults)
+        store.recordActivation(bridgeSceneID: "existing")
+
+        store.transfer(from: "ghost", to: "existing")
+
+        XCTAssertEqual(store.useCount(bridgeSceneID: "existing"), 1)
+    }
+
+    func testRemoveDeletesEntryPersistently() {
+        let store = SceneUsageStore(defaults: defaults)
+        store.recordActivation(bridgeSceneID: "doomed")
+
+        store.remove(bridgeSceneID: "doomed")
+
+        XCTAssertEqual(store.useCount(bridgeSceneID: "doomed"), 0)
+        let reloaded = SceneUsageStore(defaults: defaults)
+        XCTAssertEqual(reloaded.useCount(bridgeSceneID: "doomed"), 0)
+    }
 }

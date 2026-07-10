@@ -81,4 +81,19 @@ enum FavoriteSceneCSV {
     static func removing(_ raw: String, id: String) -> String {
         ids(from: raw).filter { $0 != id }.joined(separator: ",")
     }
+
+    /// In-place id swap preserving order — a moved scene mints a new bridge
+    /// scene UUID and its ★ must follow it, in the same pill position.
+    /// No-op when `old` is absent; when `new` is already present the old
+    /// entry is simply dropped (dedupe, never a double pill).
+    static func replacing(_ raw: String, old: String, new: String) -> String {
+        var list = ids(from: raw)
+        guard let idx = list.firstIndex(of: old) else { return raw }
+        if list.contains(new) {
+            list.remove(at: idx)
+        } else {
+            list[idx] = new
+        }
+        return list.joined(separator: ",")
+    }
 }
