@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-07-08)
+## Current Status Snapshot (updated 2026-07-09)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
@@ -12,7 +12,19 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **19**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **20**).
+- **BUILD 20 (2026-07-09): ADJUSTMENT-SETTINGS REVAMP + LIVE-UPDATE FIXES — AWAITING BRIAN'S
+  ON-DEVICE CHECK.** Twelve shippable commits (rollback `checkpoint/pre-adjustrevamp-2026-07-09`):
+  DJ-stage mixer tray (flat surface, Perform header grammar, derived heights), composer
+  progressive disclosure per COMPOSER_SPEC (essentials inline, `ComposerLayerSheet` advanced,
+  drag-up = all inline), param truth pass (dead thunderstorm Brightness / party+prism Saturation /
+  ambient Color removed; Kelvin/Hz readouts; transition→chips), gap fixes (composer Warmth /
+  Smoothing / spectrum Saturation sliders), engine upgrades (candle/fire/sparkle speed — VERIFY
+  FIRMWARE HONORS IT; per-light warmth via `EffectsV2Body(mirek:)`; party Flash Color tint),
+  per-card last-used persistence (`StudioParamStore`) + Reset/Revert, save-sheet accent colors,
+  **room/zone master-bar live fix** (`RoomAggregate` + grouped_light SSE consumption + echo
+  guard), **scene ACTIVE badges live via scene SSE**, Scenes grid↔full-bar toolbar toggle.
+  Full checklist in the 2026-07-09 BUILD 20 entry below. Full suite green.
 - **BUILD 19 (2026-07-09): SCENES OVERHAUL — AWAITING BRIAN'S ON-DEVICE CHECK.** Seven
   shippable commits (same rollback tag as build 18): grouped-by-room collapsible Scenes tab
   with ★ Favorites shelf + sort menu (Group by Room / A–Z / Recently Used / Most Used, backed
@@ -174,6 +186,89 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-09 - [Claude] BUILD 20: adjustment-settings revamp + live-update fixes + scenes layout
+
+**Scope (Brian, Ultraplan-refined):** complete revamp of the adjustment settings for all four
+Studio card families (Effects Deck 0, Live Deck 1, Composer cards + "+ Create") styled on the
+DJ Perform grammar; customization audit (add what matters, remove what doesn't, everything must
+work); room/zone master-bar live-update bug; all-cards liveness audit; Scenes grid↔bar option.
+Decisions: full package (incl. device-gated engine upgrades), flat DJ-stage tray, remember+reset.
+
+**Rollback:** `git reset --hard checkpoint/pre-adjustrevamp-2026-07-09`. Twelve commits
+(09daf7b…e499d20 + this one), full suite green per commit, build 19→20 (all 12 entries).
+
+### What shipped
+1. **StageKit primitives** — StageToggleRow, StageColorSwatchRow (44pt targets), StageMoreButton,
+   StageSheetScaffold (unified sheet chrome, background interaction at medium so lights stay
+   visible), StageSlider `onEditingChanged`, StageSwatchMath; HueFont stage tokens
+   (text-style-relative → Dynamic Type works).
+2. **Param controls rebuilt** (`StudioParamControls.swift`, extracted from StudioView): row-local
+   @State sliders (resolves the old Phase-3 perf note), color swatches wired to `sendColorParam`
+   — **fixed dead wire: swatch taps never re-tinted running bridge-native effects** (zero UI
+   callers before), segmented chip renderer, Hz/Kelvin formatters.
+3. **Param truth pass** (audit-verified against engine loops): REMOVED dead controls —
+   thunderstorm Brightness (never read; `flash_intensity` promoted to essential "Flash
+   Brightness"), party + prism Saturation, ambient Color picker (engine is CT-only). Transition
+   0–6000ms sliders → INSTANT/SMOOTH/SLOW chips (value only glides later PUTs). Honest renames
+   (Fade Floor, Ambient Level) + ENT-only hints on strobe speed/flash_color/duty_cycle.
+4. **Mixer tray = flat DJ stage** — StagePalette.surface + hairline (no `.ultraThinMaterial`
+   blur over the animating grid), Perform header (34pt circles, mono tags, StageBadges), color
+   row promoted into the compact tray, `MixerTrayMetrics` derived heights (390/420 constants dead),
+   drag-up shows ADVANCED inline.
+5. **Composer progressive disclosure** (COMPOSER_SPEC finally implemented) — 3–5 essentials per
+   layer tab; `ComposerLayerSheet` behind "+N more" (direction cluster moved wholesale);
+   engine-honest gating (static/steady/mic-vs-beat no-ops hidden); contextual Heads/Density
+   labels; ChipPickerRow everywhere. Gap fixes: **Warmth slider in temperature mode** (pad was a
+   dead surface there), **Smoothing slider** (mic), **spectrum Saturation slider**.
+6. **Remember + reset** — `StudioParamStore` (UserDefaults JSON, clamp-on-load, unknown ids
+   dropped); Reset-to-Defaults in the sheet; composer Revert-to-saved (undo button, saved
+   presets only); save-sheet accent-color swatches (user cards no longer all `#FFB340`).
+7. **Engine upgrades (DEVICE-GATED)** — candle/fire Flicker Rate + sparkle Twinkle Rate
+   (generic v2 plumbing; 400s harmless on non-supporting firmware); warmth re-parameterizes the
+   RUNNING effect per-light (`EffectsV2Body(mirek:)` — grouped PUT used to fight the effect);
+   party Flash Color finally read (50% xy palette tint, live).
+8. **Master-bar live fix (rooms AND zones)** — root cause: `roomIsOn/roomBrightness` snapshot;
+   SSE handler never recomputed the aggregate and dropped grouped_light events. Now:
+   `RoomAggregate.derive` at the `mutateLight` seam + after SSE batches; own-group grouped_light
+   consumed (OFF bridge-authoritative unless a member disagrees); 1.5s master-write echo guard.
+9. **Scene ACTIVE badges live** — new `scene` SSE case (status.active) updates `globalScenes` +
+   RoomDetail chips, deactivating room-mates; shape-tolerant status decode (zigbee_connectivity
+   sends a string — strict decode would drop whole batches).
+10. **Scenes layout toggle** — `castchroma.sceneWideCards` toolbar button, 2-up grid ↔ full bars
+    (one `gridColumns` lever; SceneMoodCard is already a bar internally).
+
+New files (registered via `add_adjustrevamp_files.rb`, idempotent): StudioParamControls,
+ComposerLayerSheet, StudioParamStore, RoomAggregate + four test files. New test suites:
+StudioParamCatalogTests, ComposerControlCatalogTests, StudioParamStoreTests, RoomAggregateTests,
+plus scene-SSE tests in OrchestratorSSETests. Legacy `EffectLibrary` (Automations) untouched;
+CompositionEngine/Mixer/transports/BeatClock/RestSender untouched; Perform typography deferred.
+
+### On-device checklist (build 20)
+1. Deck 0 cards: brightness ≤~200ms; speed re-params while running; **candle/fire/sparkle new
+   rate sliders — verify firmware actually honors them** (if not: drop those params, one-line
+   revert); base-color swatch re-tints the RUNNING effect (new); warmth slides smoothly during
+   candle/fire with no restart flicker; Kelvin readouts sane; Smoothness chips glide later PUTs.
+2. Strobe ≤3Hz at max (Hz readout matches flash rate); ENT-only hints appear only over REST.
+3. Thunderstorm: Flash Brightness visibly scales strikes; no dead sliders on Deck 1.
+4. Party: Flash Color tints the palette live; Smoothness (essential) changes hold/fade feel.
+5. Composer: essentials per tab; "+N more" sheet (Motion → dial/mini-map, drag lerps lights);
+   drag tray up → ADVANCED inline; temperature mode = Warmth slider, no pad; Smoothing audibly
+   lags mic; static/steady gating; beat quick-toggle still auto-scrolls to beat panel.
+6. "+ Create" opens the same editor; save sheet: accent swatches land on the saved card.
+7. Relaunch: Deck 0/1 sliders reopen at last-used values; Reset restores defaults live;
+   composer Revert (undo button) snaps back to the saved preset.
+8. **Master bar:** turn every light off one-by-one → bar flips with the LAST light, no
+   leave/return; one on → bar on; per-light brightness moves the average; official-Hue-app
+   toggle follows; master slider drag doesn't fight SSE; toggle-then-watch: no bounce-back.
+   Repeat once in a ZONE.
+9. **Scenes:** activate a scene from the official Hue app → ACTIVE badge flips here (scene SSE);
+   in-app tap still deactivates room-mates. Layout toggle: grid ↔ full bars across grouped/
+   favorites/search + skeleton; persists relaunch; drag-scene-to-room copy works in both.
+10. Tray drag up/half/collapse + Live Controls pill; pad/dial drags don't move the tray;
+    Dynamic Type XL: tray scrolls, nothing clipped; tab away/back pauses strips.
 
 ---
 
