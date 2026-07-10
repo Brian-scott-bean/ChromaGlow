@@ -455,9 +455,29 @@ struct RoomDetailView: View {
     }
 
     /// Long-press menu on a light card. Copy/Save hide (rather than no-op)
-    /// on dimmable-only lights, where there is no color to capture.
+    /// on dimmable-only lights, where there is no color to capture; Paste
+    /// hides until something has been copied.
     @ViewBuilder
     private func lightContextMenu(for light: LightDisplayItem) -> some View {
+        if let captured = ColorClipboard.capture(from: light) {
+            Button {
+                // Copy arms paint mode immediately — tap lights to paste.
+                // The clipboard itself is app-wide, so the menu Paste also
+                // works in any other room until something else is copied.
+                ColorClipboard.shared.copy(captured)
+                armPaintMode(with: captured)
+                HapticManager.shared.light()
+            } label: {
+                Label("Copy Color", systemImage: "eyedropper")
+            }
+        }
+        if let copied = ColorClipboard.shared.copied {
+            Button {
+                applySavedColor(copied, to: light)   // one-off, no arming
+            } label: {
+                Label("Paste Color", systemImage: "paintbrush.fill")
+            }
+        }
         if let captured = ColorClipboard.capture(from: light) {
             Button {
                 SavedColorStore.shared.add(captured)
