@@ -3529,24 +3529,33 @@ final class UnifiedOrchestrator {
                 guard !Task.isCancelled else { return }
             }
 
-            // Lightning strike — random chance based on frequency
-            let strikeChance = 0.3 + frequency * 0.6  // 30%–90%
+            // Lightning strike — the storm's knobs, all params now (they were
+            // literals; the defaults reproduce the old storm exactly):
+            //   strike_rate  50 → chance 0.3 + 0.5·0.6 = 0.6, the old curve
+            //   flash_length  3 → frames random 2…5, the old range
+            //   afterglow     1 → frames random 1…2, the old range
+            //   flash_color unset → D65 white, the old flash
+            let strikeRate = (p["strike_rate"] ?? 50) / 100.0
+            let strikeChance = 0.3 + strikeRate * 0.6  // 30%–90%
             guard Double.random(in: 0...1) < strikeChance else { continue }
 
-            // Lightning flash: 2-5 rapid bright frames (white)
-            let flashFrames = Int.random(in: 2...5)
+            let flashXY = extractXY(from: paramBox.colors["flash_color"]) ?? (x: 0.3127, y: 0.3290)
+
+            // Lightning flash: rapid bright frames with organic length jitter.
+            let flashLength = Int(p["flash_length"] ?? 3)
+            let flashFrames = Int.random(in: max(1, flashLength - 1)...(flashLength + 2))
             for _ in 0..<flashFrames {
                 guard !Task.isCancelled else { return }
-                // White flash
-                await entClient.sendUniform(channelIDs: channelIDs, x: 0.3127, y: 0.3290, brightness: flashIntensity)
+                await entClient.sendUniform(channelIDs: channelIDs, x: flashXY.x, y: flashXY.y, brightness: flashIntensity)
                 try? await Task.sleep(nanoseconds: frameInterval)
             }
 
-            // Quick afterglow (1-2 frames at half intensity)
-            let afterglow = Int.random(in: 1...2)
+            // Afterglow at 40% intensity; 0 disables it outright.
+            let afterglowBase = Int(p["afterglow"] ?? 1)
+            let afterglow = afterglowBase == 0 ? 0 : Int.random(in: afterglowBase...(afterglowBase + 1))
             for _ in 0..<afterglow {
                 guard !Task.isCancelled else { return }
-                await entClient.sendUniform(channelIDs: channelIDs, x: 0.3127, y: 0.3290, brightness: flashIntensity * 0.4)
+                await entClient.sendUniform(channelIDs: channelIDs, x: flashXY.x, y: flashXY.y, brightness: flashIntensity * 0.4)
                 try? await Task.sleep(nanoseconds: frameInterval)
             }
         }
@@ -3563,12 +3572,17 @@ final class UnifiedOrchestrator {
             let frequency      = (p["frequency"]       ?? 50) / 100.0
             let flashIntensity = p["flash_intensity"]   ?? 90
             let minBri         = max(1, p["min_brightness"] ?? 5)
+            // The REST storm used to ignore both colors — the DTLS path tinted
+            // and REST silently didn't. Nil (user never picked one) still sends
+            // no xy, preserving the old look for untouched cards.
+            let ambientXY = extractXY(from: paramBox.colors["ambient_color"])
+            let flashXY   = extractXY(from: paramBox.colors["flash_color"])
 
             // Ambient dim
             await studioRestSender.enqueue {
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: true,
-                    brightness: minBri, xy: nil, mirek: nil,
+                    brightness: minBri, xy: ambientXY, mirek: nil,
                     duration: 400
                 )
             }
@@ -3587,14 +3601,16 @@ final class UnifiedOrchestrator {
                 if Task.isCancelled { break }
             }
 
-            // Random lightning
-            let strikeChance = 0.3 + frequency * 0.5
+            // Random lightning — strike_rate default 50 reproduces the old
+            // frequency-driven chance exactly (0.3 + 0.5·0.5).
+            let strikeRate = (p["strike_rate"] ?? 50) / 100.0
+            let strikeChance = 0.3 + strikeRate * 0.5
             guard Double.random(in: 0...1) < strikeChance else { continue }
 
             await studioRestSender.enqueue {
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: true,
-                    brightness: flashIntensity, xy: nil, mirek: nil,
+                    brightness: flashIntensity, xy: flashXY, mirek: nil,
                     duration: 0  // instant flash
                 )
             }

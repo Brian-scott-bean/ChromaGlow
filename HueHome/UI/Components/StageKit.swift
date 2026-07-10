@@ -196,6 +196,130 @@ struct StageSlider: View {
     }
 }
 
+// MARK: - Hue + Saturation Pad
+
+/// The Composer's 2D color pad, extracted so every adjustment surface can use
+/// it: hue runs left→right, saturation bottom→top, one finger, no modes.
+/// Every emitted color is already clamped into the given bulb gamut — the
+/// caller receives what the light will actually show, plus the clamped
+/// hue/sat so its readout matches the thumb.
+///
+/// The pad owns its transient drag state (live thumb, haptic throttle);
+/// `onChanged` fires per drag sample and `onDragStateChanged` brackets the
+/// gesture so call sites can start/stop REST burst pacing.
+struct HueSaturationPad: View {
+    var title: String = "Hue + Saturation"
+    /// Canonical values (0…1) shown when not dragging — derive them from the
+    /// model so the thumb snaps to wherever the color really is.
+    let hue: Double
+    let saturation: Double
+    let gamut: HueColorUtils.Gamut
+    var height: CGFloat = 156
+    /// Gamut-clamped (hue, saturation, xy) for each drag sample.
+    let onChanged: (_ hue: Double, _ saturation: Double, _ xy: (x: Double, y: Double)) -> Void
+    var onDragStateChanged: ((Bool) -> Void)? = nil
+
+    @State private var isDragging = false
+    @State private var liveHue: Double = 0
+    @State private var liveSaturation: Double = 1
+    @State private var lastHapticAt: CFAbsoluteTime = 0
+
+    var body: some View {
+        let displayHue = isDragging ? liveHue : hue
+        let displaySat = isDragging ? liveSaturation : saturation
+        let thumbColor = Color(hue: displayHue, saturation: displaySat, brightness: 1.0)
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(HueFont.stageControl)
+                    .foregroundStyle(.white.opacity(0.60))
+                Spacer()
+                Circle()
+                    .fill(thumbColor)
+                    .frame(width: 12, height: 12)
+                    .overlay(Circle().strokeBorder(.white.opacity(0.7), lineWidth: 1))
+                Text("\(Int((displayHue * 360).rounded()))° • \(Int((displaySat * 100).rounded()))%")
+                    .font(HueFont.stageValue)
+                    .foregroundStyle(.white.opacity(0.42))
+            }
+
+            GeometryReader { geo in
+                let w = max(1, geo.size.width)
+                let h = max(1, geo.size.height)
+                let thumbX = CGFloat(displayHue) * w
+                let thumbY = (1.0 - CGFloat(displaySat)) * h
+
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(
+                            LinearGradient(
+                                colors: [.red, .orange, .yellow, .green, .cyan, .blue, .purple, .red],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(
+                            LinearGradient(
+                                colors: [.white, .white.opacity(0.0)],
+                                startPoint: .bottom,
+                                endPoint: .top
+                            )
+                        )
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+
+                    Circle()
+                        .fill(thumbColor)
+                        .frame(width: 22, height: 22)
+                        .overlay(Circle().strokeBorder(Color.white, lineWidth: 2))
+                        .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
+                        .position(x: thumbX, y: thumbY)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { gesture in
+                            let clampedX = min(max(gesture.location.x, 0), w)
+                            let clampedY = min(max(gesture.location.y, 0), h)
+                            let rawHue = Double(clampedX / w)
+                            let rawSat = min(1.0, max(0.0, Double(1.0 - (clampedY / h))))
+
+                            if !isDragging {
+                                isDragging = true
+                                onDragStateChanged?(true)
+                            }
+
+                            let now = CFAbsoluteTimeGetCurrent()
+                            if now - lastHapticAt >= 0.08 {
+                                HapticManager.shared.selection()
+                                lastHapticAt = now
+                            }
+
+                            // Round-trip through xy + the bulb gamut so the thumb
+                            // never sits on a color the light cannot show.
+                            let xy = HueColorUtils.xyFrom(hue: rawHue, saturation: rawSat, brightness: 1.0)
+                            let clampedXY = HueColorUtils.clampXYToGamut(x: xy.x, y: xy.y, gamut: gamut)
+                            let clampedHSB = HueColorUtils.hsb(fromX: clampedXY.x, y: clampedXY.y, brightness: 100)
+
+                            liveHue = clampedHSB.h
+                            liveSaturation = clampedHSB.s
+                            onChanged(clampedHSB.h, clampedHSB.s, (clampedXY.x, clampedXY.y))
+                        }
+                        .onEnded { _ in
+                            isDragging = false
+                            lastHapticAt = 0
+                            onDragStateChanged?(false)
+                            HapticManager.shared.selection()
+                        }
+                )
+            }
+            .frame(height: height)
+        }
+    }
+}
+
 // MARK: - Stage Badge
 
 /// Small status pill: LIVE / ENT AREA / coverage counts.

@@ -89,6 +89,10 @@ struct StudioParamRow: View {
     let param: StudioParam
     let cardID: String
     @Bindable var vm: StudioViewModel
+    /// True in the param sheet: color params grow the full hue/sat pad and the
+    /// saved-colors strip (composer grammar). The compact tray stays swatches-
+    /// only so MixerTrayMetrics' derived height keeps holding.
+    var expandedColor: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -124,20 +128,72 @@ struct StudioParamRow: View {
         }
     }
 
+    @ViewBuilder
     private func colorPickerRow(param: StudioParam) -> some View {
         // sendColorParam persists via setParamColor AND live-tints running
         // bridge-native effects per-light — the old row only persisted,
         // leaving base_color dead while an effect ran.
-        StageColorSwatchRow(
-            title: param.label,
-            swatches: StudioViewModel.presetColors,
-            selected: vm.paramColor(for: cardID, paramID: param.id),
-            onSelect: { color in
-                withAnimation(HueAnimation.fast) {
-                    vm.sendColorParam(cardID: cardID, paramID: param.id, color: color)
+        VStack(alignment: .leading, spacing: 10) {
+            StageColorSwatchRow(
+                title: param.label,
+                swatches: StudioViewModel.presetColors,
+                selected: vm.paramColor(for: cardID, paramID: param.id),
+                onSelect: { color in
+                    withAnimation(HueAnimation.fast) {
+                        vm.sendColorParam(cardID: cardID, paramID: param.id, color: color)
+                    }
+                }
+            )
+
+            // Composer-grammar upgrade (sheet only — the compact tray keeps the
+            // seven-swatch strip so MixerTrayMetrics' derived height holds):
+            // the full hue/sat pad, plus the user's saved "My Colors".
+            if expandedColor {
+                HueSaturationPad(
+                    title: "Fine Tune",
+                    hue: currentHueSat(for: param).hue,
+                    saturation: currentHueSat(for: param).saturation,
+                    gamut: .c,
+                    height: 120,
+                    onChanged: { hue, sat, _ in
+                        vm.sendColorParam(
+                            cardID: cardID, paramID: param.id,
+                            color: Color(hue: hue, saturation: sat, brightness: 1.0)
+                        )
+                    }
+                )
+
+                if !SavedColorStore.shared.colors.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("MY COLORS")
+                            .font(HueFont.stageTag)
+                            .tracking(1.2)
+                            .foregroundStyle(.white.opacity(0.45))
+                        SavedColorStrip { saved in
+                            // Mirek-only swatches carry no xy; skip rather than guess.
+                            guard let x = saved.x, let y = saved.y else { return }
+                            let hsb = HueColorUtils.hsb(fromX: x, y: y, brightness: 100)
+                            vm.sendColorParam(
+                                cardID: cardID, paramID: param.id,
+                                color: Color(hue: hsb.h, saturation: hsb.s, brightness: 1.0)
+                            )
+                            HapticManager.shared.selection()
+                        }
+                        .padding(.horizontal, -16)   // strip has its own margins
+                    }
                 }
             }
-        )
+        }
+    }
+
+    /// The pad's canonical position for a color param — where the stored color
+    /// actually sits, so the thumb doesn't lie.
+    private func currentHueSat(for param: StudioParam) -> (hue: Double, saturation: Double) {
+        guard let color = vm.paramColor(for: cardID, paramID: param.id) else { return (0, 1) }
+        let ui = UIColor(color)
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0
+        ui.getHue(&h, saturation: &s, brightness: &b, alpha: nil)
+        return (Double(h), Double(s))
     }
 
     private func toggleRow(param: StudioParam) -> some View {
@@ -299,7 +355,7 @@ struct StudioParamSheet: View {
         StageCard(title: title) {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(params) { param in
-                    StudioParamRow(param: param, cardID: card.id, vm: vm)
+                    StudioParamRow(param: param, cardID: card.id, vm: vm, expandedColor: true)
                 }
             }
         }

@@ -61,10 +61,6 @@ struct CompositionEditorPanel: View {
     @Binding var activeHarmonyRule: HarmonyRule
     @Binding var editingSwatch: SwatchEditItem?
 
-    @State private var isHuePadDragging = false
-    @State private var huePadLiveHue: Double = 0
-    @State private var huePadLiveSaturation: Double = 1
-    @State private var lastHuePadHapticAt: CFAbsoluteTime = 0
     @State private var showLayerSheet = false
 
     var body: some View {
@@ -477,6 +473,9 @@ struct CompositionEditorPanel: View {
         box.triggerRESTBurst()
     }
 
+    /// The pad itself is the shared StageKit `HueSaturationPad`; what stays
+    /// here is what makes it the COMPOSER's pad — writing the live palette
+    /// (harmony-aware) and pacing the REST burst per drag sample.
     private var hueSaturationPad: some View {
         let canonicalHSB: (h: Double, s: Double) = {
             guard let c = vm.activeCompositionBox?.palette.color1 else { return (0.0, 1.0) }
@@ -488,128 +487,42 @@ struct CompositionEditorPanel: View {
             let hsb = HueColorUtils.hsb(fromX: clampedXY.x, y: clampedXY.y, brightness: 100)
             return (h: hsb.h, s: hsb.s)
         }()
-        let currentHue: Double = canonicalHSB.h
-        let currentSat: Double = canonicalHSB.s
-        let displayHue = isHuePadDragging ? huePadLiveHue : currentHue
-        let displaySat = isHuePadDragging ? huePadLiveSaturation : currentSat
-        let thumbColor = Color(hue: displayHue, saturation: displaySat, brightness: 1.0)
 
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Hue + Saturation")
-                    .font(HueFont.stageControl)
-                    .foregroundStyle(.white.opacity(0.60))
-                Spacer()
-                Circle()
-                    .fill(thumbColor)
-                    .frame(width: 12, height: 12)
-                    .overlay(Circle().strokeBorder(.white.opacity(0.7), lineWidth: 1))
-                Text("\(Int((displayHue * 360).rounded()))° • \(Int((displaySat * 100).rounded()))%")
-                    .font(HueFont.stageValue)
-                    .foregroundStyle(.white.opacity(0.42))
-            }
-
-            GeometryReader { geo in
-                let w = max(1, geo.size.width)
-                let h = max(1, geo.size.height)
-                let thumbX = CGFloat(displayHue) * w
-                let thumbY = (1.0 - CGFloat(displaySat)) * h
-
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    .red, .orange, .yellow, .green, .cyan, .blue, .purple, .red
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    .white, .white.opacity(0.0)
-                                ],
-                                startPoint: .bottom,
-                                endPoint: .top
-                            )
-                        )
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
-
-                    Circle()
-                        .fill(thumbColor)
-                        .frame(width: 22, height: 22)
-                        .overlay(Circle().strokeBorder(Color.white, lineWidth: 2))
-                        .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
-                        .position(x: thumbX, y: thumbY)
+        return HueSaturationPad(
+            hue: canonicalHSB.h,
+            saturation: canonicalHSB.s,
+            gamut: vm.activeCompositionGamut,
+            height: isCompactStudio ? 118 : 156,
+            onChanged: { hue, sat, xy in
+                // Per-sample: keep the REST mailbox in burst pacing while the
+                // finger moves (repeated calls extend the burst window).
+                vm.activeCompositionBox?.triggerRESTBurst()
+                if activeHarmonyRule != .none {
+                    let paletteColors = HarmonyEngine.palette(
+                        rule: activeHarmonyRule,
+                        rootHue: hue,
+                        saturation: sat,
+                        brightness: 1.0,
+                        count: 3
+                    )
+                    let gamut = vm.activeCompositionGamut
+                    vm.activeCompositionBox?.palette.color1 = HueColorUtils.codableColor(from: paletteColors[0], gamut: gamut)
+                    vm.activeCompositionBox?.palette.color2 = HueColorUtils.codableColor(from: paletteColors[1], gamut: gamut)
+                    if paletteColors.count >= 3 {
+                        vm.activeCompositionBox?.palette.color3 = HueColorUtils.codableColor(from: paletteColors[2], gamut: gamut)
+                    } else {
+                        vm.activeCompositionBox?.palette.color3 = nil
+                    }
+                } else {
+                    vm.activeCompositionBox?.palette.color1 = CodableColor(x: xy.x, y: xy.y)
                 }
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { gesture in
-                            let clampedX = min(max(gesture.location.x, 0), w)
-                            let clampedY = min(max(gesture.location.y, 0), h)
-                            let hue = Double(clampedX / w)
-                            let sat = Double(1.0 - (clampedY / h))
-                            let clampedSat = min(1.0, max(0.0, sat))
-                            isHuePadDragging = true
-                            vm.activeCompositionBox?.isColorPadInteracting = true
-                            vm.activeCompositionBox?.triggerRESTBurst()
-                            huePadLiveHue = hue
-                            huePadLiveSaturation = clampedSat
-                            let now = CFAbsoluteTimeGetCurrent()
-                            if now - lastHuePadHapticAt >= 0.08 {
-                                HapticManager.shared.selection()
-                                lastHuePadHapticAt = now
-                            }
-                            let xy = HueColorUtils.xyFrom(hue: hue, saturation: clampedSat, brightness: 1.0)
-                            let clampedXY = HueColorUtils.clampXYToGamut(
-                                x: xy.x,
-                                y: xy.y,
-                                gamut: vm.activeCompositionGamut
-                            )
-                            let clampedHSB = HueColorUtils.hsb(
-                                fromX: clampedXY.x,
-                                y: clampedXY.y,
-                                brightness: 100
-                            )
-                            huePadLiveHue = clampedHSB.h
-                            huePadLiveSaturation = clampedHSB.s
-                            if activeHarmonyRule != .none {
-                                let paletteColors = HarmonyEngine.palette(
-                                    rule: activeHarmonyRule,
-                                    rootHue: clampedHSB.h,
-                                    saturation: clampedHSB.s,
-                                    brightness: 1.0,
-                                    count: 3
-                                )
-                                let gamut = vm.activeCompositionGamut
-                                vm.activeCompositionBox?.palette.color1 = HueColorUtils.codableColor(from: paletteColors[0], gamut: gamut)
-                                vm.activeCompositionBox?.palette.color2 = HueColorUtils.codableColor(from: paletteColors[1], gamut: gamut)
-                                if paletteColors.count >= 3 {
-                                    vm.activeCompositionBox?.palette.color3 = HueColorUtils.codableColor(from: paletteColors[2], gamut: gamut)
-                                } else {
-                                    vm.activeCompositionBox?.palette.color3 = nil
-                                }
-                            } else {
-                                vm.activeCompositionBox?.palette.color1 = CodableColor(x: clampedXY.x, y: clampedXY.y)
-                            }
-                            vm.activeCompositionBox?.palette.saturation = clampedHSB.s * 100
-                        }
-                        .onEnded { _ in
-                            isHuePadDragging = false
-                            vm.activeCompositionBox?.isColorPadInteracting = false
-                            vm.activeCompositionBox?.triggerRESTBurst()
-                            lastHuePadHapticAt = 0
-                            HapticManager.shared.selection()
-                        }
-                )
+                vm.activeCompositionBox?.palette.saturation = sat * 100
+            },
+            onDragStateChanged: { dragging in
+                vm.activeCompositionBox?.isColorPadInteracting = dragging
+                if !dragging { vm.activeCompositionBox?.triggerRESTBurst() }
             }
-            .frame(height: isCompactStudio ? 118 : 156)
-        }
+        )
     }
 
     /// One icon per motion pattern — the pill's visual signature.

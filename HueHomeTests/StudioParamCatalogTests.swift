@@ -66,7 +66,11 @@ final class StudioParamCatalogTests: XCTestCase {
             "party": ["speed", "brightness", "min_brightness", "smoothness",
                       "color"],  // "color" wired as palette tint (C10, same round)
             "strobe": ["speed", "brightness", "min_brightness", "duty_cycle", "flash_color"],
-            "thunderstorm": ["frequency", "flash_intensity", "min_brightness", "ambient_color"],
+            // R2 slice 5: the storm's remaining literals became params —
+            // strike chance, flash frame count, afterglow, and the flash tint
+            // (both engine paths; REST also honors ambient_color now).
+            "thunderstorm": ["frequency", "flash_intensity", "min_brightness", "ambient_color",
+                             "flash_color", "strike_rate", "flash_length", "afterglow"],
             "ambient": ["speed", "brightness", "warmth", "smoothness", "min_brightness"],
         ]
         for card in vm.liveModeCards {
