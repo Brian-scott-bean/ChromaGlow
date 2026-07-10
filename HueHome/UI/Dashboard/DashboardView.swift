@@ -200,11 +200,17 @@ struct DashboardView: View {
         if orchestrator.allRooms.isEmpty {
             if orchestrator.isLoading {
                 shimmerView
+            } else if orchestrator.guestAccessInfo.hasAnyGrant {
+                // Zero allowed rooms is the fail-closed grant outcome, not
+                // a connection problem — say so honestly.
+                GuestZeroRoomsState()
             } else {
                 emptyState
             }
         } else {
             VStack(alignment: .leading, spacing: Self.sectionSpacing) {
+                GuestAccessBanner()
+
                 summaryHeader
 
                 if let suggestion = timeSuggestion {
@@ -242,7 +248,8 @@ struct DashboardView: View {
                             onToggle: { desiredOn in orchestrator.setRoom(room, isOn: desiredOn) },
                             onBrightness: { newBrightness in orchestrator.setBrightness(newBrightness, for: room) },
                             onNavigate: { orchestrator.signalNavigationStarted() },
-                            onLongPress: { colorPopoverRoom = room }
+                            onLongPress: { colorPopoverRoom = room },
+                            features: orchestrator.guestFeatures(for: room.bridgeID)
                         )
                         .equatable()
                         .transition(.asymmetric(
@@ -265,7 +272,8 @@ struct DashboardView: View {
                                     onToggle: { desiredOn in orchestrator.setRoom(zone, isOn: desiredOn) },
                                     onBrightness: { newBrightness in orchestrator.setBrightness(newBrightness, for: zone) },
                                     onNavigate: { orchestrator.signalNavigationStarted() },
-                                    onLongPress: { colorPopoverRoom = zone }
+                                    onLongPress: { colorPopoverRoom = zone },
+                                    features: orchestrator.guestFeatures(for: zone.bridgeID)
                                 )
                                 .equatable()
                                 .transition(.asymmetric(
@@ -808,6 +816,10 @@ struct RoomCard: View {
     var onEllipsisTap:    (() -> Void)?    = nil  // nil = no ··· button shown
     var onNavigate:       (() -> Void)?    = nil  // fired when card body tap triggers navigation
     var onLongPress:      (() -> Void)?    = nil  // hold the card → room color popup
+    /// Family Sharing: which controls this card may offer. Unrestricted for
+    /// the owner's own bridges; a grant without onOff hides the power
+    /// toggle, without brightness hides the slider (card stays status-only).
+    var features: GuestFeatureSet = .unrestricted
 
     // ── Local optimistic state ────────────────────────────────────────────────
     // localIsOn flips INSTANTLY on tap — no dependency on the @Observable chain.
@@ -832,13 +844,15 @@ struct RoomCard: View {
          onBrightness: @escaping (Double) -> Void,
          onEllipsisTap: (() -> Void)? = nil,
          onNavigate: (() -> Void)? = nil,
-         onLongPress: (() -> Void)? = nil) {
+         onLongPress: (() -> Void)? = nil,
+         features: GuestFeatureSet = .unrestricted) {
         self.room             = room
         self.onToggle         = onToggle
         self.onBrightness     = onBrightness
         self.onEllipsisTap    = onEllipsisTap
         self.onNavigate       = onNavigate
         self.onLongPress      = onLongPress
+        self.features         = features
         _localIsOn         = State(initialValue: room.isOn)
         _localGlowColor    = State(initialValue: Self.resolveGlowColor(for: room))
     }
@@ -859,7 +873,7 @@ struct RoomCard: View {
         NavigationLink(value: room) {
             VStack(alignment: .leading, spacing: 0) {
                 headerContent
-                if localIsOn {
+                if localIsOn && features.canAdjust {
                     BrightnessRow(
                         brightness: room.brightness,
                         glowColor: localGlowColor,
@@ -901,24 +915,27 @@ struct RoomCard: View {
             }
         )
         .overlay(alignment: .topTrailing) {
-            // Power toggle — hard-coded to .topTrailing
-            Button {
-                HapticManager.shared.light()
-                localIsOn.toggle()
-                onToggle(localIsOn)
-            } label: {
-                Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
-                    .font(.system(size: 20))
-                    .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
-                    .symbolEffect(.bounce, value: localIsOn)
+            // Power toggle — hard-coded to .topTrailing. Hidden when the
+            // guest grant lacks onOff (the card is status-only then).
+            if features.canPower {
+                Button {
+                    HapticManager.shared.light()
+                    localIsOn.toggle()
+                    onToggle(localIsOn)
+                } label: {
+                    Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
+                        .font(.system(size: 20))
+                        .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
+                        .symbolEffect(.bounce, value: localIsOn)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 8)
+                .padding(.trailing, 6)
+                .accessibilityLabel(Text("Turn \(room.name) \(localIsOn ? "off" : "on")"))
+                .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
             }
-            .buttonStyle(.plain)
-            .padding(.top, 8)
-            .padding(.trailing, 6)
-            .accessibilityLabel(Text("Turn \(room.name) \(localIsOn ? "off" : "on")"))
-            .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
         }
         // ··· button — bottom-trailing, only shown if callback provided
         .overlay(alignment: .bottomTrailing) {
@@ -999,7 +1016,7 @@ extension RoomCard: Equatable {
     // stored let of RoomDisplayItem (all-value-type, nonisolated ==), so the
     // comparison needs no main-actor state.
     nonisolated static func == (lhs: RoomCard, rhs: RoomCard) -> Bool {
-        lhs.room == rhs.room
+        lhs.room == rhs.room && lhs.features == rhs.features
     }
 }
 

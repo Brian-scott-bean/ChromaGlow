@@ -1856,6 +1856,15 @@ final class UnifiedOrchestrator {
         return GuestAccessPolicy.features(for: bridgeID, grants: guestGrantsByBridge)
     }
 
+    /// True when this bridge came from a token invite (a grant exists) —
+    /// the surfaces that must always be denied on granted bridges
+    /// regardless of features (scene create/delete/rename/copy/move,
+    /// automations, scene multi-select editing) key on this.
+    func isGuestGrantedBridge(_ bridgeID: String?) -> Bool {
+        guard !isDemoMode, let bridgeID else { return false }
+        return guestGrantsByBridge[bridgeID] != nil
+    }
+
     private func recomputeGuestAccessInfo() {
         let liveIDs = Array(clients.keys)
         let hasAny = liveIDs.contains { guestGrantsByBridge[$0] != nil }
@@ -4180,6 +4189,13 @@ final class UnifiedOrchestrator {
 
     /// Optimistically removes the scene from globalScenes, then fires the bridge DELETE.
     func deleteGlobalScene(_ scene: GlobalSceneItem) {
+        // Defense in depth (Family Sharing): the UI hides destructive scene
+        // actions on granted bridges — this backstop keeps any missed
+        // surface honest.
+        guard !isGuestGrantedBridge(scene.bridgeID) else {
+            toastMessage = "Not available with guest access"
+            return
+        }
         globalScenes.removeAll { $0.id == scene.id }
         scheduleWidgetWrite()
         guard let client = clients[scene.bridgeID] else { return }
@@ -4188,6 +4204,10 @@ final class UnifiedOrchestrator {
 
     /// Optimistically renames the scene in globalScenes, then persists to the bridge.
     func renameGlobalScene(_ scene: GlobalSceneItem, to newName: String) async {
+        guard !isGuestGrantedBridge(scene.bridgeID) else {
+            toastMessage = "Not available with guest access"
+            return
+        }
         // Update locally first so the UI responds instantly
         if let idx = globalScenes.firstIndex(where: { $0.id == scene.id }) {
             var updated = globalScenes
@@ -4327,6 +4347,12 @@ final class UnifiedOrchestrator {
               let client   = clients[bridgeID] else {
             throw HueAPIError.missingCredentials
         }
+        // Defense in depth (Family Sharing): guests never create scenes on
+        // granted bridges — the UI hides the entry points; this backstops it.
+        guard !isGuestGrantedBridge(bridgeID) else {
+            toastMessage = "Not available with guest access"
+            throw HueAPIError.missingCredentials
+        }
         let sceneLights = try await roomLights(for: room)
 
         let req = CreateSceneRequest.fromHueLights(
@@ -4365,6 +4391,13 @@ final class UnifiedOrchestrator {
         guard !isDemoMode else { throw HueAPIError.missingCredentials }
         guard let targetBridgeID = targetRoom.bridgeID,
               let targetClient   = clients[targetBridgeID] else {
+            throw HueAPIError.missingCredentials
+        }
+        // Defense in depth (Family Sharing): no scene creation on a granted
+        // target, no deletion from a granted source.
+        guard !isGuestGrantedBridge(targetBridgeID),
+              !(deleteOriginal && isGuestGrantedBridge(source.bridgeID)) else {
+            toastMessage = "Not available with guest access"
             throw HueAPIError.missingCredentials
         }
 

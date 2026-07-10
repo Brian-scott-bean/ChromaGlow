@@ -611,30 +611,34 @@ struct ScenesTabView: View {
                 Label(isFavorite(scene) ? "Unfavorite" : "Favorite",
                       systemImage: isFavorite(scene) ? "star.slash" : "star")
             }
-            Button {
-                renameText    = scene.name
-                sceneToRename = scene
-            } label: {
-                Label("Rename", systemImage: "pencil")
-            }
-            if !orchestrator.isDemoMode {
+            // Mutating actions never appear for a granted bridge's scenes —
+            // guests recall, favorites stay local-only (design §5).
+            if !orchestrator.isGuestGrantedBridge(scene.bridgeID) {
                 Button {
-                    copySheetContext = CopySheetContext(scene: scene, mode: .copy)
+                    renameText    = scene.name
+                    sceneToRename = scene
                 } label: {
-                    Label("Copy to Room…", systemImage: "doc.on.doc")
+                    Label("Rename", systemImage: "pencil")
                 }
-                Button {
-                    copySheetContext = CopySheetContext(scene: scene, mode: .move)
+                if !orchestrator.isDemoMode {
+                    Button {
+                        copySheetContext = CopySheetContext(scene: scene, mode: .copy)
+                    } label: {
+                        Label("Copy to Room…", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        copySheetContext = CopySheetContext(scene: scene, mode: .move)
+                    } label: {
+                        Label("Move to Room…", systemImage: "arrow.turn.up.right")
+                    }
+                }
+                Divider()
+                Button(role: .destructive) {
+                    sceneToDelete  = scene
+                    showDeleteAlert = true
                 } label: {
-                    Label("Move to Room…", systemImage: "arrow.turn.up.right")
+                    Label("Delete Scene", systemImage: "trash")
                 }
-            }
-            Divider()
-            Button(role: .destructive) {
-                sceneToDelete  = scene
-                showDeleteAlert = true
-            } label: {
-                Label("Delete Scene", systemImage: "trash")
             }
         }
         // Drag the card onto a room section (grouped mode) or filter chip
@@ -785,24 +789,27 @@ struct ScenesTabView: View {
         ToolbarItem(placement: .navigationBarLeading) {
             // Unified creation entry (R4): capture the room's current look,
             // or build per-light colors — both existing flows, one door.
-            Menu {
-                Button {
-                    showCreateScene = true
-                    HapticManager.shared.light()
+            // Guest-only devices have no bridge they may create scenes on.
+            if !orchestrator.guestAccessInfo.isGuestOnly {
+                Menu {
+                    Button {
+                        showCreateScene = true
+                        HapticManager.shared.light()
+                    } label: {
+                        Label("Capture Room Look", systemImage: "camera.viewfinder")
+                    }
+                    Button {
+                        showBuildScene = true
+                        HapticManager.shared.light()
+                    } label: {
+                        Label("Build Colors…", systemImage: "paintpalette")
+                    }
                 } label: {
-                    Label("Capture Room Look", systemImage: "camera.viewfinder")
+                    Image(systemName: "plus")
+                        .foregroundStyle(.white.opacity(0.8))
                 }
-                Button {
-                    showBuildScene = true
-                    HapticManager.shared.light()
-                } label: {
-                    Label("Build Colors…", systemImage: "paintpalette")
-                }
-            } label: {
-                Image(systemName: "plus")
-                    .foregroundStyle(.white.opacity(0.8))
+                .accessibilityLabel("New scene")
             }
-            .accessibilityLabel("New scene")
         }
         ToolbarItem(placement: .navigationBarTrailing) {
             // Grid ↔ full-bar density toggle (Dashboard useWideCards precedent).

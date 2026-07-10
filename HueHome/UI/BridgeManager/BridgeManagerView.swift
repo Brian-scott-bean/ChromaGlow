@@ -179,6 +179,9 @@ struct BridgeManagerView: View {
             print("[BridgeManagerView] modelContext.save() failed: \(error)")
             #endif
         }
+        // Family Sharing: prune any guest grant that referenced this bridge
+        // so the shell (banner, tab gating) reflects reality immediately.
+        orchestrator.updateGuestGrants(from: modelContext)
     }
 
     private func reorder(from source: IndexSet, to destination: Int) {

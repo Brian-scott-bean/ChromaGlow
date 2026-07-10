@@ -52,6 +52,14 @@ struct RoomDetailView: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.dismiss)               private var dismiss
 
+    // ── Family Sharing gates ──────────────────────────────────────────────────
+    /// What a guest grant allows on this room's bridge (.unrestricted for
+    /// the owner's own bridges and demo mode).
+    private var guestFeatures: GuestFeatureSet { orchestrator.guestFeatures(for: room.bridgeID) }
+    /// Granted bridges never offer creation/edit surfaces (scenes,
+    /// automations) regardless of features.
+    private var isGrantedBridge: Bool { orchestrator.isGuestGrantedBridge(room.bridgeID) }
+
     init(room: RoomDisplayItem) {
         self.room = room
         // vm is placeholder — will be replaced with correct client in .onAppear
@@ -91,7 +99,8 @@ struct RoomDetailView: View {
             }
 
             // SceneEditBar — slides up when scenes are selected.
-            if vm.isSelectingScenes {
+            // Never on a granted bridge: guests can't edit scenes.
+            if vm.isSelectingScenes && !isGrantedBridge {
                 VStack {
                     Spacer()
                     SceneEditBar(vm: vm) { scene in
@@ -301,17 +310,20 @@ struct RoomDetailView: View {
                     .padding(.bottom, 20)
 
                 // ── PRESETS row (room-scoped — one grouped write, THIS room) ──
-                presetsRow
-                    .padding(.bottom, 24)
+                // Presets recolor + re-dim the room: adjust-level access.
+                if guestFeatures.canAdjust {
+                    presetsRow
+                        .padding(.bottom, 24)
+                }
 
                 // ── SCENES section ──
-                if !vm.scenes.isEmpty || !vm.lights.isEmpty {
+                if (!vm.scenes.isEmpty || !vm.lights.isEmpty) && guestFeatures.canRecallScenes {
                     scenesStrip
                         .padding(.bottom, 24)
                 }
 
                 // ── MY COLORS section (saved palette → tap a light to apply) ──
-                if !SavedColorStore.shared.colors.isEmpty {
+                if !SavedColorStore.shared.colors.isEmpty && guestFeatures.canAdjust {
                     myColorsSection
                         .padding(.bottom, 24)
                 }
@@ -321,7 +333,8 @@ struct RoomDetailView: View {
                     .padding(.bottom, 24)
 
                 // ── AUTOMATIONS section (room-scoped) ──
-                if !vm.automations.isEmpty {
+                // Automations write bridge schedules — owner surface only.
+                if !vm.automations.isEmpty && !isGrantedBridge {
                     automationsSection
                         .padding(.bottom, 32)
                 }
@@ -329,20 +342,27 @@ struct RoomDetailView: View {
         }       // ScrollView
         .navigationDestination(for: LightDisplayItem.self) { light in
             if let binding = vm.lightBinding(for: light) {
-                LightControlView(
-                    light: binding,
-                    onToggle:     { desiredOn in vm.setLight(binding.wrappedValue, isOn: desiredOn) },
-                    onBrightness: { vm.setBrightness($0, for: binding.wrappedValue) },
-                    onColor:      { x, y in vm.setColor(x: x, y: y, for: binding.wrappedValue) },
-                    onColorTemp:  { vm.setColorTemp(mirek: $0, for: binding.wrappedValue) },
-                    onIdentify:   {
-                        let lightID = binding.wrappedValue.id
-                        Task {
-                            await SignalingService(orchestrator: orchestrator)
-                                .identifyLight(id: lightID, bridgeID: room.bridgeID)
+                if guestFeatures.canAdjust {
+                    LightControlView(
+                        light: binding,
+                        onToggle:     { desiredOn in vm.setLight(binding.wrappedValue, isOn: desiredOn) },
+                        onBrightness: { vm.setBrightness($0, for: binding.wrappedValue) },
+                        onColor:      { x, y in vm.setColor(x: x, y: y, for: binding.wrappedValue) },
+                        onColorTemp:  { vm.setColorTemp(mirek: $0, for: binding.wrappedValue) },
+                        onIdentify:   {
+                            let lightID = binding.wrappedValue.id
+                            Task {
+                                await SignalingService(orchestrator: orchestrator)
+                                    .identifyLight(id: lightID, bridgeID: room.bridgeID)
+                            }
                         }
-                    }
-                )
+                    )
+                } else {
+                    // Guest without the brightness grant: the full control
+                    // surface (sliders, color wheel) would be dishonest —
+                    // show status and, when granted, power only.
+                    guestLightSummary(binding.wrappedValue)
+                }
             }
         }
         .refreshable {
@@ -351,6 +371,59 @@ struct RoomDetailView: View {
             await vm.loadAutomations()
         }
         .scrollIndicators(.hidden)
+    }
+
+    // ── Guest light summary (adjust not granted) ──
+
+    private func guestLightSummary(_ light: LightDisplayItem) -> some View {
+        VStack(spacing: HueSpacing.lg) {
+            ZStack {
+                Circle()
+                    .fill(light.isOn
+                          ? LightCard.resolveGlowColor(for: light).opacity(0.2)
+                          : Color.white.opacity(0.07))
+                    .frame(width: 88, height: 88)
+                Image(systemName: archetypeIcon(for: light.archetype))
+                    .font(.system(size: 36, weight: .medium))
+                    .foregroundStyle(light.isOn
+                                     ? LightCard.resolveGlowColor(for: light)
+                                     : .white.opacity(0.4))
+            }
+            Text(light.name)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.white)
+            Text(light.isOn ? "On · \(Int(light.brightness))%" : "Off")
+                .font(HueFont.stageStatus)
+                .foregroundStyle(.white.opacity(0.5))
+
+            if guestFeatures.canPower {
+                Button {
+                    HapticManager.shared.medium()
+                    vm.setLight(light, isOn: !light.isOn)
+                } label: {
+                    Label(light.isOn ? "Turn Off" : "Turn On",
+                          systemImage: "power")
+                        .font(HueFont.stageChip)
+                        .frame(maxWidth: 220)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: HueRadius.lg)
+                                .fill(HuePalette.amber.opacity(0.15))
+                        )
+                }
+                .buttonStyle(.plain)
+                .tint(HuePalette.amber)
+            }
+
+            Text("Brightness and color aren't part of your shared access.")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.35))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RoomDetailAmbientBackground())
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     // ── My Colors Section (saved palette) ─────────
@@ -528,8 +601,9 @@ struct RoomDetailView: View {
                     // Paint mode: swaps in for the Select button (same row,
                     // same height — zero layout shift).
                     paintModePill(for: armed)
-                } else {
-                    // Select / Done button for multi-select mode
+                } else if !isGrantedBridge {
+                    // Select / Done button for multi-select mode. Multi-select
+                    // exists to bulk-edit and save scenes — owner surface.
                     Button(vm.isSelecting ? "Done" : "Select") {
                         if vm.isSelecting { vm.exitSelectMode() } else { vm.enterSelectMode() }
                     }
@@ -550,7 +624,8 @@ struct RoomDetailView: View {
                             isSelecting:    vm.isSelecting,
                             isSelected:     isSelected,
                             onToggle:       { desiredOn in vm.setLight(light, isOn: desiredOn) },
-                            onToggleSelect: { vm.toggleSelection(id: light.id) }
+                            onToggleSelect: { vm.toggleSelection(id: light.id) },
+                            showsPowerToggle: guestFeatures.canPower
                         )
                         // Armed-swatch apply target: while a My Colors swatch
                         // is armed, a tap anywhere on the card applies it
@@ -798,23 +873,25 @@ struct RoomDetailView: View {
                         .foregroundStyle(.white.opacity(0.45))
                 }
                 Spacer()
-                // Room-level power button
-                Button {
-                    HapticManager.shared.medium()
-                    vm.toggleRoom(on: !vm.roomIsOn)
-                } label: {
-                    Image(systemName: vm.roomIsOn ? "power.circle.fill" : "power.circle")
-                        .font(.system(size: 28))
-                        .foregroundStyle(vm.roomIsOn
-                                         ? dominantGlow
-                                         : .white.opacity(0.35))
-                        .symbolEffect(.bounce, value: vm.roomIsOn)
+                // Room-level power button — hidden without the onOff grant.
+                if guestFeatures.canPower {
+                    Button {
+                        HapticManager.shared.medium()
+                        vm.toggleRoom(on: !vm.roomIsOn)
+                    } label: {
+                        Image(systemName: vm.roomIsOn ? "power.circle.fill" : "power.circle")
+                            .font(.system(size: 28))
+                            .foregroundStyle(vm.roomIsOn
+                                             ? dominantGlow
+                                             : .white.opacity(0.35))
+                            .symbolEffect(.bounce, value: vm.roomIsOn)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
 
-            // Room-level brightness slider
-            if vm.roomIsOn {
+            // Room-level brightness slider — hidden without the brightness grant.
+            if vm.roomIsOn && guestFeatures.canAdjust {
                 BrightnessRow(
                     brightness: vm.roomBrightness,
                     glowColor: dominantGlow,
@@ -1179,6 +1256,9 @@ struct CompactLightCard: View {
     let isSelected:     Bool
     let onToggle:       (Bool)   -> Void
     let onToggleSelect: ()       -> Void
+    /// Family Sharing: false hides the per-light power button (a guest
+    /// grant without onOff renders the card status-only).
+    let showsPowerToggle: Bool
 
     @State private var localIsOn: Bool
 
@@ -1187,13 +1267,15 @@ struct CompactLightCard: View {
         isSelecting:    Bool             = false,
         isSelected:     Bool             = false,
         onToggle:       @escaping (Bool)   -> Void,
-        onToggleSelect: @escaping ()       -> Void = {}
+        onToggleSelect: @escaping ()       -> Void = {},
+        showsPowerToggle: Bool           = true
     ) {
         self.light          = light
         self.isSelecting    = isSelecting
         self.isSelected     = isSelected
         self.onToggle       = onToggle
         self.onToggleSelect = onToggleSelect
+        self.showsPowerToggle = showsPowerToggle
         _localIsOn          = State(initialValue: light.isOn)
     }
 
@@ -1225,19 +1307,21 @@ struct CompactLightCard: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(localIsOn ? glowColor.opacity(0.8) : .white.opacity(0.40))
 
-            Button {
-                HapticManager.shared.light()
-                localIsOn.toggle()
-                onToggle(localIsOn)
-            } label: {
-                Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
-                    .font(.system(size: 20))
-                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
-                    .symbolEffect(.bounce, value: localIsOn)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
+            if showsPowerToggle {
+                Button {
+                    HapticManager.shared.light()
+                    localIsOn.toggle()
+                    onToggle(localIsOn)
+                } label: {
+                    Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
+                        .font(.system(size: 20))
+                        .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
+                        .symbolEffect(.bounce, value: localIsOn)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .frame(width: 110)
         .padding(.vertical, 14)

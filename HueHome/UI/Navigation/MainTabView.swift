@@ -55,6 +55,8 @@ struct MainTabView: View {
     /// A token-bearing guest invite being presented (Phase 2).
     @State private var presentedGuestInvite: GuestInvitePresentation?
     @State private var inviteError: InvitePayloadError?
+    /// Family Sharing: a Studio-bound deep link arrived on a guest-only shell.
+    @State private var showGuestBlockedAlert = false
 
     private struct InvitePresentation: Identifiable {
         let id = UUID()
@@ -66,12 +68,31 @@ struct MainTabView: View {
         let payload: GuestInvitePayload
     }
 
+    /// Family Sharing: a guest-only device (every live bridge grant-limited)
+    /// has no Studio — its engines need per-light writes and entertainment
+    /// streaming that a guest key deliberately can't stream (no clientkey),
+    /// and its creations couldn't be saved to anything the guest owns.
+    /// Mixed-role devices (own bridge + a granted one) keep the full shell.
+    private var visibleTabs: [HueTab] {
+        guard orchestrator.guestAccessInfo.isGuestOnly, !orchestrator.isDemoMode else {
+            return HueTab.allCases
+        }
+        return HueTab.allCases.filter { $0 != .studio }
+    }
+
     var body: some View {
         Group {
             if sizeClass == .regular {
                 iPadLayout
             } else {
                 iPhoneLayout
+            }
+        }
+        // If the selected tab disappears (grant arrives mid-session), land
+        // on Home rather than a hidden surface.
+        .onChange(of: orchestrator.guestAccessInfo) { _, _ in
+            if !visibleTabs.contains(selectedTab) {
+                withAnimation(HueAnimation.toggle) { selectedTab = .home }
             }
         }
         .task { await prewarmDeferredTabs() }
@@ -120,6 +141,11 @@ struct MainTabView: View {
         } message: {
             Text(inviteError?.localizedDescription ?? "")
         }
+        .alert("Not available with guest access", isPresented: $showGuestBlockedAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Studio isn't part of shared access — creating and importing lighting compositions needs the home owner's own connection.")
+        }
     }
 
     // MARK: - Deep link
@@ -152,6 +178,13 @@ struct MainTabView: View {
     private func routePendingShare() -> Bool {
         guard deepLink.pendingSharedScene != nil || deepLink.pendingShareError != nil
         else { return false }
+        // Guest-only shell has no Studio to import into — say so instead of
+        // force-selecting a hidden tab.
+        guard visibleTabs.contains(.studio) else {
+            deepLink.clearShare()
+            showGuestBlockedAlert = true
+            return true
+        }
         realizedTabs.insert(.studio)
         withAnimation(HueAnimation.toggle) { selectedTab = .studio }
         return true
@@ -163,6 +196,11 @@ struct MainTabView: View {
     @discardableResult
     private func routePendingStudioAction() -> Bool {
         guard deepLink.pendingStudioAction != nil else { return false }
+        guard visibleTabs.contains(.studio) else {
+            deepLink.pendingStudioAction = nil
+            showGuestBlockedAlert = true
+            return true
+        }
         realizedTabs.insert(.studio)
         withAnimation(HueAnimation.toggle) { selectedTab = .studio }
         return true
@@ -225,8 +263,10 @@ struct MainTabView: View {
         )
         try? await Task.sleep(for: .milliseconds(250))          // settle gap: cache write / widget publish
         guard !Task.isCancelled else { return }
-        realizedTabs.insert(.studio)
-        StartupTimeline.mark("prewarm.studio")
+        if visibleTabs.contains(.studio) {
+            realizedTabs.insert(.studio)
+            StartupTimeline.mark("prewarm.studio")
+        }
         await Task.yield()
         try? await Task.sleep(for: .milliseconds(200))
         realizedTabs.insert(.scenes)
@@ -249,7 +289,7 @@ struct MainTabView: View {
 
             // Opacity-based switcher — preserves NavigationStack state per tab
             // and eliminates the TabView swipe-between-tabs gesture entirely.
-            ForEach(HueTab.allCases, id: \.self) { tab in
+            ForEach(visibleTabs, id: \.self) { tab in
                 tabContent(for: tab)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     // HueTabBar is a custom floating capsule in the ZStack;
@@ -263,7 +303,8 @@ struct MainTabView: View {
                     // Pause off-screen tabs' animation clocks (kept mounted for state).
                     .environment(\.isTabActive, selectedTab == tab)
             }
-            HueTabBar(selectedTab: $selectedTab, realizedTabs: $realizedTabs, navRegistry: navRegistry)
+            HueTabBar(tabs: visibleTabs, selectedTab: $selectedTab,
+                      realizedTabs: $realizedTabs, navRegistry: navRegistry)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .gesture(tabSwipeGesture)
@@ -290,8 +331,14 @@ struct MainTabView: View {
                 // Require a decisive, predominantly horizontal swipe.
                 guard abs(dx) > abs(dy) * 1.3,
                       abs(dx) > 60 || abs(predictedX) > 120 else { return }
-                let target = selectedTab.rawValue + (dx < 0 ? 1 : -1)
-                guard let next = HueTab(rawValue: target), next != selectedTab else { return }
+                // Index into visibleTabs, not rawValue arithmetic — a hidden
+                // Studio tab must not be a swipe stop (guest-only shell).
+                let tabs = visibleTabs
+                guard let current = tabs.firstIndex(of: selectedTab) else { return }
+                let target = current + (dx < 0 ? 1 : -1)
+                guard tabs.indices.contains(target) else { return }
+                let next = tabs[target]
+                guard next != selectedTab else { return }
                 realizedTabs.insert(next)
                 withAnimation(HueAnimation.toggle) { selectedTab = next }
                 HapticManager.shared.light()
@@ -303,7 +350,7 @@ struct MainTabView: View {
     private var iPadLayout: some View {
         NavigationSplitView {
             List {
-                ForEach(HueTab.allCases, id: \.self) { tab in
+                ForEach(visibleTabs, id: \.self) { tab in
                     Button {
                         realizedTabs.insert(tab)
                         selectedTab = tab
@@ -394,6 +441,10 @@ struct MainTabView: View {
 
 struct HueTabBar: View {
     @Environment(\.colorScheme) var colorScheme
+    /// The tabs to render — MainTabView passes visibleTabs (guest-only
+    /// devices drop Studio). Defaulted so previews/other callers keep the
+    /// full set.
+    var tabs: [HueTab] = HueTab.allCases
     @Binding var selectedTab: HueTab
     @Binding var realizedTabs: Set<HueTab>
     let navRegistry: TabNavRegistry
@@ -401,7 +452,7 @@ struct HueTabBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(HueTab.allCases, id: \.self) { tab in
+            ForEach(tabs, id: \.self) { tab in
                 HueTabItem(
                     tab: tab,
                     isSelected: selectedTab == tab,
