@@ -1212,7 +1212,7 @@ struct AccessoryRectangularView: View {
             // tap target. Real control lives in the Controls (bottom corners).
             let display = entry.rooms.sorted { $0.isOn && !$1.isOn }.prefix(3)
             VStack(alignment: .leading, spacing: 2) {
-                Label("HueHome • \(entry.onCount) on", systemImage: "lightbulb.fill")
+                Label("ChromaGlow • \(entry.onCount) on", systemImage: "lightbulb.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .widgetAccentable()
                 ForEach(display) { room in
