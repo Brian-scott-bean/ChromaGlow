@@ -113,11 +113,11 @@ jobs:
           watch_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${WATCH_PLIST}")"
           watch_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${WATCH_PLIST}")"
 
-          if [[ "${widget_version}" != "0.9.0" || "${widget_build}" != "${CI_BUILD_NUMBER}" ]]; then
+          if [[ "${widget_version}" != "1.0.0" || "${widget_build}" != "${CI_BUILD_NUMBER}" ]]; then
             echo "error: widget bundle mismatch (version=${widget_version}, build=${widget_build})" >&2
             exit 1
           fi
-          if [[ "${watch_version}" != "0.9.0" || "${watch_build}" != "${CI_BUILD_NUMBER}" ]]; then
+          if [[ "${watch_version}" != "1.0.0" || "${watch_build}" != "${CI_BUILD_NUMBER}" ]]; then
             echo "error: watch app bundle mismatch (version=${watch_version}, build=${watch_build})" >&2
             exit 1
           fi
@@ -133,7 +133,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           CHROMAGLOW_BUILT_APP_PLIST="${{ steps.locate.outputs.main_plist }}" \
-          CHROMAGLOW_EXPECTED_MARKETING_VERSION="0.9.0" \
+          CHROMAGLOW_EXPECTED_MARKETING_VERSION="1.0.0" \
           CHROMAGLOW_EXPECTED_BUILD_NUMBER="${CI_BUILD_NUMBER}" \
           CHROMAGLOW_EXPECTED_COMMIT="${GITHUB_SHA}" \
           CHROMAGLOW_EXPECTED_BRANCH="${GITHUB_REF_NAME}" \
