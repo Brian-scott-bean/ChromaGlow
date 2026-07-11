@@ -7582,3 +7582,8 @@ Durable facts:
   both parked in the runbook appendix.
 - App-name risk register (accepted): Apple's Logic Pro has a "ChromaGlow" plug-in feature;
   Big Star Lights sells a "Chromaglow Controller" (lighting hardware). Keep first-use evidence.
+- **StudioView.body no longer type-checks on Xcode 26.3** ("unable to type-check this
+  expression in reasonable time") — surfaced on the FIRST CI compile since build 19 (nothing
+  was pushed during builds 20–26). Local/shipping Xcode 26.4 handles it; the provenance
+  workflow now prefers `Xcode_26.4.app` (falls back 26.3) and is green. The body remains at
+  the ceiling: the next Studio change should extract a subview rather than add anything to it.
