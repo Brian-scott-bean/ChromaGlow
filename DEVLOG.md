@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-07-10)
+## Current Status Snapshot (updated 2026-07-11)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
@@ -12,7 +12,24 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **0.9.0**, build **26**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **27**).
+- **BUILD 27 (2026-07-11): APP-STORE-PREP RUN — READY FOR BRIAN'S ASC PASS.** Ten shippable
+  commits (rollback tag `checkpoint/appstore-prep-2026-07-11`): trademark/naming fixes ("Hue
+  Home" Siri alt-name removed, Lock-Screen widget label "HueHome"→"ChromaGlow"), Signify
+  non-affiliation disclaimer (More + Settings footers + hosted privacy policy), one-time
+  photosensitivity notice on first Studio entry (via StudioDrainWiring — body untouched),
+  31 raw Composer/Handoff/Studio prints DEBUG-gated behind a `debugLog` autoclosure helper,
+  the TEMP ⏱️PERF loadAll/room-open diagnostics finally removed (the `__seed` fast path kept),
+  two empty placeholder appiconsets deleted, explicit `CODE_SIGN_STYLE=Automatic` on the main
+  target, **1.0.0 (27)** across all 12+12 pbxproj entries + the provenance-CI assertions,
+  hosted privacy/support pages reconciled (camera+location coverage added, beta wording out,
+  renamed-repo links). NEW: `docs/ios/app-store-submission-runbook.md` — Brian's step-by-step
+  ASC guide (age rating, privacy label = Data Not Collected, DSA trader options, metadata
+  drafts, screenshot specs incl. iPad+watch, review notes + demo-video draft, risk register).
+  **⚠️ False positive on record:** widget/watch Resources phases are EMPTY BY DESIGN
+  (objectVersion-70 synchronized folder groups) — privacy manifests + watch AppIcon verified
+  present in built Release products; do NOT add explicit Resources-phase entries (duplicate
+  membership breaks the build). Suite green per commit (667/667).
 - **BUILD 26 (2026-07-10): FAMILY SHARING COMPLETE — INVITE PHASES 2–4 IN ONE ROUND —
   AWAITING BRIAN'S ON-DEVICE CHECK.** Twelve shippable commits (`f3eac6b..`, rollback tag
   `checkpoint/family-sharing-2026-07-10`), implementing all of
@@ -7500,3 +7517,68 @@ Durable facts:
 - KNOWN, DELIBERATELY UNFIXED: the historic TEST-target warning pile (NSLock-in-async in
   ~8 test files, main-actor setUp field access in ~6, HueDataModelsTests' own #Predicate)
   — predates build 24, never appears in device builds. Its cleanup is a separate round.
+
+## 2026-07-11 - [Claude] BUILD 27: App-Store-prep run — trademark fixes, compliance notices, 1.0.0, submission runbook
+
+### Branch
+- `main` (rollback tag `checkpoint/appstore-prep-2026-07-11`)
+
+### Did
+- Researched Apple's current (July 2026) submission requirements + audited the whole tree
+  (3 explore passes + a design pass). Full findings + Brian's manual steps consolidated in
+  **`docs/ios/app-store-submission-runbook.md`** (NEW).
+- Trademark/naming: removed the "Hue Home" `INAlternativeAppName` (Info.plist); Lock-Screen
+  widget label "HueHome • N on" → "ChromaGlow • N on" (last user-visible "HueHome").
+- Signify developer-terms compliance: non-affiliation disclaimer in MoreView's app section +
+  SettingsView's buildMetadataFooter + the hosted privacy policy; one-time photosensitivity
+  notice on first Studio entry (added inside `StudioDrainWiring` — StudioView.body untouched
+  at the type-checker ceiling), mentions the 3 flashes/sec cap + Dim Flashing Lights.
+- Logging hygiene: 31 raw `print("[Composer]…"/"[Handoff]…"/"[Studio]…")` sites in
+  UnifiedOrchestrator now route through a fileprivate `debugLog(_: @autoclosure)` whose body
+  is `#if DEBUG` — Release consoles no longer see room names. The four already-gated
+  `[Composer][REST]`/Telemetry prints were left as-is.
+- Removed the TEMP ⏱️PERF diagnostics (loadAll.begin/fetch-done/total + room-open.begin/
+  loaded and their `__loadStart`/`__diagStart` locals). KEPT: the `__seed` fast path in
+  RoomDetailView.task, StartupTimeline itself, and the `loadAll.bridge-fetch.ok/FAIL` +
+  `cache.write.done` marks (FAIL carries the Local Network permission-denial signature).
+- Deleted the two empty placeholder AppIcon sets (widget + watch widget ext); explicit
+  `CODE_SIGN_STYLE = Automatic` on the main target; bumped **1.0.0 build 27** (12+12 pbxproj
+  entries) with the `ios-build-provenance.yml` assertions updated in the same commit;
+  refreshed AGENTS.md/CLAUDE.md version facts.
+- Hosted pages (GitHub Pages, this repo `main:/docs`): privacy policy now covers camera + 
+  location (it only covered mic + local network — reviewers cross-check against permission
+  prompts), notes discovery.meethue.com, adds the Signify disclaimer; support page de-beta'd,
+  stale "Sync tab" copy fixed, links point at the renamed ChromaGlow repo.
+
+### Working
+- Two consecutive full-suite runs green at the final tree (667/667 each; per-commit gates
+  green throughout — see Validation).
+- Release-config build verified: app/widget/watch Info.plists all report 1.0.0 (27); all
+  four bundles carry PrivacyInfo.xcprivacy; watch Assets.car contains AppIcon; the debugLog
+  autoclosure never executes in Release (only a dead 12-byte "[Composer] " constant-pool
+  fragment survives — no runtime output).
+
+### Left
+- Brian's ASC pass per the runbook: age rating questionnaire, privacy label (Data Not
+  Collected), DSA trader status, metadata + screenshots (iPhone 6.9" + iPad 13" + watch),
+  iPad QA smoke, archive/upload build 27, review notes + demo video, submit.
+- Builds 18–26 on-device verification items still pending (two-phone family-sharing
+  checklist etc.) — fold into the build-27 TestFlight smoke.
+
+### Validation
+- `xcodebuild test … -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
+  green after the photosensitivity commit, after the PERF removal, and twice consecutively at
+  the end (xcresulttool-verified 667/667 each time). Per-commit generic-platform build gates
+  green. Release build with `CODE_SIGNING_ALLOWED=NO` green.
+
+### Gotchas
+- **FALSE POSITIVE, do not "re-fix":** the widget/watch/watch-app targets have EMPTY
+  Resources build phases in project.pbxproj — that is objectVersion-70
+  `PBXFileSystemSynchronizedRootGroup` behavior (membership computed at build time). Their
+  privacy manifests and asset catalogs DO ship (verified in built products). Adding explicit
+  Resources-phase entries creates duplicate membership → "Multiple commands produce…" failures.
+- The dead `isPro` field on the SwiftData `AppSettings` model was deliberately left (schema
+  migration risk); `INFOPLIST_KEY_NSHumanReadableCopyright` is empty on extension targets —
+  both parked in the runbook appendix.
+- App-name risk register (accepted): Apple's Logic Pro has a "ChromaGlow" plug-in feature;
+  Big Star Lights sells a "Chromaglow Controller" (lighting hardware). Keep first-use evidence.
