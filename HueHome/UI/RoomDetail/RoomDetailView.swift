@@ -224,12 +224,7 @@ struct RoomDetailView: View {
             Button("Cancel", role: .cancel) {}
         }
         .task {
-            let __diagStart = Date()
             let __seed = orchestrator.cachedLightItems(for: room)
-            StartupTimeline.mark(
-                "room-open.begin",
-                "'\(room.name)' seed=\(__seed.count) refs=\(room.childResourceRefs.count) → \(__seed.isEmpty ? "SPINNER (fast-path SKIPPED)" : "INSTANT (fast-path engaged)")"
-            )
             // Re-build vm with the right bridge client now that orchestrator is available.
             // This replaces the placeholder vm created in init() with one that has correct credentials.
             vm = RoomDetailViewModel(
@@ -261,10 +256,6 @@ struct RoomDetailView: View {
             }
             // Load room-level state after lights are loaded (needs light data for cross-check)
             await vm.loadRoomState()
-            StartupTimeline.mark(
-                "room-open.loaded",
-                "'\(room.name)' all loads finished in \(Int(Date().timeIntervalSince(__diagStart) * 1000))ms (lights=\(vm.lights.count))"
-            )
         }
         .preferredColorScheme(.dark)
         .overlay(alignment: .top) {
