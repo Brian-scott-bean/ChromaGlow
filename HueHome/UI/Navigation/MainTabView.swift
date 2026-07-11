@@ -180,9 +180,10 @@ struct MainTabView: View {
                 // Wipe cooperatively: client, credentials, pin, record, grant.
                 Task {
                     await orchestrator.removeBridge(id: bridgeID)
-                    if let record = try? modelContext.fetch(FetchDescriptor<BridgeRecord>(
-                        predicate: #Predicate { $0.id == bridgeID }
-                    )).first {
+                    // Fetch-all + filter: a handful of records, and #Predicate
+                    // trips the KeyPath-Sendable strict-concurrency warning.
+                    if let record = ((try? modelContext.fetch(FetchDescriptor<BridgeRecord>())) ?? [])
+                        .first(where: { $0.id == bridgeID }) {
                         modelContext.delete(record)
                         try? modelContext.save()
                     }

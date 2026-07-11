@@ -17,9 +17,12 @@ import XCTest
 /// body (URLSession moves httpBody into httpBodyStream — read it back).
 final class BodyCapturingStubURLProtocol: URLProtocol {
 
-    static var stubs: [String: (data: Data, statusCode: Int)] = [:]
-    static var capturedBodies: [Data] = []
-    static var capturedURLs: [URL] = []
+    // nonisolated(unsafe): test-only state, written by the URL-loading
+    // system's single loader thread and read after the request completes —
+    // never concurrently. Documents the contract instead of warning.
+    nonisolated(unsafe) static var stubs: [String: (data: Data, statusCode: Int)] = [:]
+    nonisolated(unsafe) static var capturedBodies: [Data] = []
+    nonisolated(unsafe) static var capturedURLs: [URL] = []
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }

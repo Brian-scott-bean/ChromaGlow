@@ -210,11 +210,11 @@ enum GuestAccessGrantStore {
     }
 
     static func grant(for bridgeRecordID: String, modelContext: ModelContext) throws -> GuestAccessGrant? {
-        var descriptor = FetchDescriptor<GuestAccessGrant>(
-            predicate: #Predicate { $0.bridgeRecordID == bridgeRecordID }
-        )
-        descriptor.fetchLimit = 1
-        return try modelContext.fetch(descriptor).first
+        // Fetch-all + filter (the BridgePairingRegistrar idiom): grants number
+        // a handful at most, and #Predicate's macro expansion trips the
+        // KeyPath-Sendable strict-concurrency warning on this toolchain.
+        try modelContext.fetch(FetchDescriptor<GuestAccessGrant>())
+            .first { $0.bridgeRecordID == bridgeRecordID }
     }
 
     static func allGrants(modelContext: ModelContext) throws -> [GuestAccessGrant] {

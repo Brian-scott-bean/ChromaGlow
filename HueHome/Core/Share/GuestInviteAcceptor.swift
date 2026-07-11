@@ -244,10 +244,9 @@ final class GuestInviteAcceptor {
     // ──────────────────────────────────────────────
 
     private static func existingRecord(bid: String, modelContext: ModelContext) -> BridgeRecord? {
-        var descriptor = FetchDescriptor<BridgeRecord>(
-            predicate: #Predicate { $0.bridgeIdentifier == bid }
-        )
-        descriptor.fetchLimit = 1
-        return (try? modelContext.fetch(descriptor))?.first
+        // Fetch-all + filter (the BridgePairingRegistrar idiom) — a handful
+        // of records, and #Predicate trips the KeyPath-Sendable warning.
+        ((try? modelContext.fetch(FetchDescriptor<BridgeRecord>())) ?? [])
+            .first { $0.bridgeIdentifier == bid }
     }
 }

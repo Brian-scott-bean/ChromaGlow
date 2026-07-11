@@ -163,7 +163,9 @@ struct GuestInviteAcceptView: View {
             // Ordering contract: grant BEFORE addBridge/loadAll, so the
             // first rebuild after integration is already filtered.
             acceptor.onGrantEstablished = { seed in
-                try? GuestAccessGrantStore.upsert(
+                // `_ =`: @discardableResult doesn't survive try?'s optional
+                // wrapping — without it the compiler flags an unused result.
+                _ = try? GuestAccessGrantStore.upsert(
                     bridgeRecordID: seed.bridgeRecordID,
                     allowedGroupIDs: seed.allowedGroupIDs,
                     features: seed.features,
@@ -208,8 +210,9 @@ struct GuestInviteAcceptView: View {
     }
 
     private func fetchRecord(id: String) -> BridgeRecord? {
-        var descriptor = FetchDescriptor<BridgeRecord>(predicate: #Predicate { $0.id == id })
-        descriptor.fetchLimit = 1
-        return (try? modelContext.fetch(descriptor))?.first
+        // Fetch-all + filter: a handful of records, and #Predicate trips the
+        // KeyPath-Sendable strict-concurrency warning on this toolchain.
+        ((try? modelContext.fetch(FetchDescriptor<BridgeRecord>())) ?? [])
+            .first { $0.id == id }
     }
 }
