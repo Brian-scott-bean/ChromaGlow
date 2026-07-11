@@ -77,7 +77,10 @@ struct StudioParam: Identifiable {
     let defaultValue: Double
     let tier: ParamTier
     /// Optional human-readable value formatter (Hz, Kelvin, %). Nil → plain Int.
-    var format: ((Double) -> String)? = nil
+    /// @Sendable: pure value formatters only — this is what makes StudioParam
+    /// (and therefore StudioCard) Sendable, which StudioCardView's
+    /// nonisolated == relies on.
+    var format: (@Sendable (Double) -> String)? = nil
     /// Param only reaches the lights over the Entertainment (DTLS) transport —
     /// the REST fallback loop ignores it. Rows render a hint while on REST.
     var entOnly: Bool = false
@@ -93,13 +96,13 @@ struct StudioParam: Identifiable {
 /// Shared value formatters and chip option sets for the param catalogs.
 enum StudioParamFormat {
     /// Mirek (153–500) shown as Kelvin, rounded to 100K.
-    static let kelvin: (Double) -> String = { mirek in
+    static let kelvin: @Sendable (Double) -> String = { mirek in
         let k = 1_000_000 / max(mirek, 1)
         return "\(Int((k / 100).rounded()) * 100)K"
     }
     /// Engine speed 0–100 shown as flash rate. Mirrors the strobe/party
     /// loops' mapping (0.5–3.0 Hz, WCAG ≤3 flashes/sec).
-    static let flashHz: (Double) -> String = { value in
+    static let flashHz: @Sendable (Double) -> String = { value in
         String(format: "%.1f Hz", 0.5 + (min(max(value, 0), 100) / 100.0) * 2.5)
     }
     /// Transition smoothness as three meaningful presets (ms). The old
@@ -568,7 +571,9 @@ final class StudioViewModel {
     ]
 
     /// Template preset for "+ Create" — kept in the store for `apply()` lookup, hidden from Deck 3 grid.
-    static let composerStarterDraftPresetID = UUID(uuidString: "00000000-0000-0000-0000-00000000C0DA")!
+    // nonisolated: a Sendable constant read from nonisolated contexts too
+    // (CompositionEntityQuery.eligible, ScenesTabView's detached refresh).
+    nonisolated static let composerStarterDraftPresetID = UUID(uuidString: "00000000-0000-0000-0000-00000000C0DA")!
 
     /// Stable card id for `+ Create` (not `comp_{uuid}`).
     static let composerStarterCardID = "composer_starter"

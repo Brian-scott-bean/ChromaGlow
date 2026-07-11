@@ -12,8 +12,8 @@ import AppIntents
 // MARK: - HueGroupEntity
 
 struct HueGroupEntity: AppEntity {
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Room or Zone")
-    static var defaultQuery = HueGroupEntityQuery()
+    static var typeDisplayRepresentation: TypeDisplayRepresentation { TypeDisplayRepresentation(name: "Room or Zone") }
+    static var defaultQuery: HueGroupEntityQuery { HueGroupEntityQuery() }
 
     var id:             String
     var name:           String

@@ -113,10 +113,14 @@ struct HueHomeApp: App {
 // cannot be decoded surfaces as `pendingShareError` rather than vanishing.
 
 @Observable
+@MainActor
 final class DeepLinkCoordinator {
     /// One instance app-wide. Open-app Siri intents run in-process AFTER the
     /// app foregrounds, so they hand Studio their action through this shared
-    /// coordinator rather than a URL round-trip.
+    /// coordinator rather than a URL round-trip. @MainActor: every consumer
+    /// (onOpenURL, view bodies, and both Siri perform()s, which are already
+    /// @MainActor) runs on the main actor — the annotation makes the shared
+    /// mutable state provably single-threaded.
     static let shared = DeepLinkCoordinator()
 
     /// The room/zone id from the tapped widget (nil for a plain dashboard open).

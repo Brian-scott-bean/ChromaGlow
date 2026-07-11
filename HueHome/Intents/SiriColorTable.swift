@@ -23,9 +23,9 @@ enum NamedColorChoice: String, AppEnum, CaseIterable {
     // Whites (mirek)
     case daylight, coolWhite, neutralWhite, softWhite, warmWhite
 
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Color")
+    static var typeDisplayRepresentation: TypeDisplayRepresentation { TypeDisplayRepresentation(name: "Color") }
 
-    static var caseDisplayRepresentations: [NamedColorChoice: DisplayRepresentation] = [
+    static var caseDisplayRepresentations: [NamedColorChoice: DisplayRepresentation] { [
         .red: "Red", .crimson: "Crimson", .salmon: "Salmon",
         .orange: "Orange", .peach: "Peach", .amber: "Amber",
         .gold: "Gold", .yellow: "Yellow",
@@ -36,7 +36,7 @@ enum NamedColorChoice: String, AppEnum, CaseIterable {
         .daylight: "Daylight", .coolWhite: "Cool White",
         .neutralWhite: "Neutral White", .softWhite: "Soft White",
         .warmWhite: "Warm White",
-    ]
+    ] }
 
     /// Name as spoken back in the result dialog.
     var spokenName: String {

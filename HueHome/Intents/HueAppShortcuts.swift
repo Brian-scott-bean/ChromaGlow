@@ -16,7 +16,7 @@ import AppIntents
 
 struct HueAppShortcuts: AppShortcutsProvider {
 
-    static var shortcutTileColor: ShortcutTileColor = .yellow
+    static var shortcutTileColor: ShortcutTileColor { .yellow }
 
     static var appShortcuts: [AppShortcut] {
 

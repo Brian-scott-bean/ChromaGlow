@@ -23,8 +23,8 @@ enum PendingStudioAction: Equatable {
 // MARK: - CompositionEntity
 
 struct CompositionEntity: AppEntity {
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Composer Scene")
-    static var defaultQuery = CompositionEntityQuery()
+    static var typeDisplayRepresentation: TypeDisplayRepresentation { TypeDisplayRepresentation(name: "Composer Scene") }
+    static var defaultQuery: CompositionEntityQuery { CompositionEntityQuery() }
 
     var id: String        // CompositionPreset.id.uuidString
     var name: String
@@ -86,16 +86,16 @@ enum StudioEffectChoice: String, AppEnum, CaseIterable {
     case cosmos, enchant, sunbeam, underwater, colorloop
     case party, strobe, thunderstorm, ambient
 
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Studio Effect")
+    static var typeDisplayRepresentation: TypeDisplayRepresentation { TypeDisplayRepresentation(name: "Studio Effect") }
 
-    static var caseDisplayRepresentations: [StudioEffectChoice: DisplayRepresentation] = [
+    static var caseDisplayRepresentations: [StudioEffectChoice: DisplayRepresentation] { [
         .candle: "Candle", .fire: "Fire", .sparkle: "Sparkle",
         .prism: "Prism", .opal: "Opal", .glisten: "Glisten",
         .cosmos: "Cosmos", .enchant: "Enchant", .sunbeam: "Sunbeam",
         .underwater: "Underwater", .colorloop: "Color Loop",
         .party: "Party", .strobe: "Strobe",
         .thunderstorm: "Thunderstorm", .ambient: "Ambient",
-    ]
+    ] }
 
     /// Name as spoken back in the result dialog (matches the card name).
     var displayName: String {
@@ -110,12 +110,12 @@ enum StudioEffectChoice: String, AppEnum, CaseIterable {
 
 struct StartStudioEffectIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Start Studio Effect"
-    static var description = IntentDescription(
+    static var title: LocalizedStringResource { "Start Studio Effect" }
+    static var description: IntentDescription { IntentDescription(
         "Open ChromaGlow and start a Studio effect in a room.",
         categoryName: "Studio"
-    )
-    static var openAppWhenRun: Bool = true
+    ) }
+    static var openAppWhenRun: Bool { true }
 
     @Parameter(title: "Effect")
     var effect: StudioEffectChoice
@@ -136,12 +136,12 @@ struct StartStudioEffectIntent: AppIntent {
 
 struct StartCompositionIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Start Composer Scene"
-    static var description = IntentDescription(
+    static var title: LocalizedStringResource { "Start Composer Scene" }
+    static var description: IntentDescription { IntentDescription(
         "Open ChromaGlow and start a Composer scene in a room. Live scenes run while the app is open.",
         categoryName: "Studio"
-    )
-    static var openAppWhenRun: Bool = true
+    ) }
+    static var openAppWhenRun: Bool { true }
 
     @Parameter(title: "Composer Scene")
     var composition: CompositionEntity

@@ -21,11 +21,11 @@ enum PowerState: String, AppEnum {
     case on
     case off
 
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Power")
-    static var caseDisplayRepresentations: [PowerState: DisplayRepresentation] = [
+    static var typeDisplayRepresentation: TypeDisplayRepresentation { TypeDisplayRepresentation(name: "Power") }
+    static var caseDisplayRepresentations: [PowerState: DisplayRepresentation] { [
         .on:  "On",
         .off: "Off",
-    ]
+    ] }
 
     var isOn: Bool { self == .on }
 }
@@ -34,12 +34,12 @@ enum PowerState: String, AppEnum {
 
 struct GroupPowerIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Turn Lights On or Off"
-    static var description = IntentDescription(
+    static var title: LocalizedStringResource { "Turn Lights On or Off" }
+    static var description: IntentDescription { IntentDescription(
         "Turn a room's or zone's lights on or off.",
         categoryName: "Lights"
-    )
-    static var openAppWhenRun: Bool = false
+    ) }
+    static var openAppWhenRun: Bool { false }
 
     @Parameter(title: "Room or Zone")
     var group: HueGroupEntity
@@ -75,12 +75,12 @@ struct GroupPowerIntent: AppIntent {
 
 struct GroupBrightnessIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Set Brightness"
-    static var description = IntentDescription(
+    static var title: LocalizedStringResource { "Set Brightness" }
+    static var description: IntentDescription { IntentDescription(
         "Set the brightness of a room's or zone's lights.",
         categoryName: "Lights"
-    )
-    static var openAppWhenRun: Bool = false
+    ) }
+    static var openAppWhenRun: Bool { false }
 
     @Parameter(title: "Room or Zone")
     var group: HueGroupEntity
@@ -111,12 +111,12 @@ struct GroupBrightnessIntent: AppIntent {
 
 struct RecallSceneIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Activate Scene"
-    static var description = IntentDescription(
+    static var title: LocalizedStringResource { "Activate Scene" }
+    static var description: IntentDescription { IntentDescription(
         "Activate one of your Hue scenes.",
         categoryName: "Lights"
-    )
-    static var openAppWhenRun: Bool = false
+    ) }
+    static var openAppWhenRun: Bool { false }
 
     @Parameter(title: "Scene")
     var scene: HueSceneEntity
@@ -143,12 +143,12 @@ struct RecallSceneIntent: AppIntent {
 
 struct GroupColorIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Set Light Color"
-    static var description = IntentDescription(
+    static var title: LocalizedStringResource { "Set Light Color" }
+    static var description: IntentDescription { IntentDescription(
         "Set a room's or zone's lights to a named color or white.",
         categoryName: "Lights"
-    )
-    static var openAppWhenRun: Bool = false
+    ) }
+    static var openAppWhenRun: Bool { false }
 
     @Parameter(title: "Room or Zone")
     var group: HueGroupEntity
@@ -188,22 +188,22 @@ struct GroupColorIntent: AppIntent {
 enum PresetOption: String, AppEnum, CaseIterable {
     case energize, read, relax, sleep
 
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Lighting Preset")
-    static var caseDisplayRepresentations: [PresetOption: DisplayRepresentation] = [
+    static var typeDisplayRepresentation: TypeDisplayRepresentation { TypeDisplayRepresentation(name: "Lighting Preset") }
+    static var caseDisplayRepresentations: [PresetOption: DisplayRepresentation] { [
         .energize: "Energize", .read: "Read", .relax: "Relax", .sleep: "Sleep",
-    ]
+    ] }
 }
 
 // MARK: - LightingPresetIntent
 
 struct LightingPresetIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Apply Lighting Preset"
-    static var description = IntentDescription(
+    static var title: LocalizedStringResource { "Apply Lighting Preset" }
+    static var description: IntentDescription { IntentDescription(
         "Apply Energize, Read, Relax, or Sleep to one room or the whole home.",
         categoryName: "Lights"
-    )
-    static var openAppWhenRun: Bool = false
+    ) }
+    static var openAppWhenRun: Bool { false }
 
     @Parameter(title: "Preset")
     var preset: PresetOption
@@ -256,12 +256,12 @@ struct LightingPresetIntent: AppIntent {
 
 struct AllLightsIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "All Lights"
-    static var description = IntentDescription(
+    static var title: LocalizedStringResource { "All Lights" }
+    static var description: IntentDescription { IntentDescription(
         "Turn every light on or off. On is a warm welcome-home, not a bare full blast.",
         categoryName: "Lights"
-    )
-    static var openAppWhenRun: Bool = false
+    ) }
+    static var openAppWhenRun: Bool { false }
 
     @Parameter(title: "Power", default: .off)
     var power: PowerState
@@ -312,12 +312,12 @@ extension Notification.Name {
 
 struct StopLightEffectsIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Stop Light Effects"
-    static var description = IntentDescription(
+    static var title: LocalizedStringResource { "Stop Light Effects" }
+    static var description: IntentDescription { IntentDescription(
         "Stop running light effects and scenes. Lights stay on at their current state.",
         categoryName: "Lights"
-    )
-    static var openAppWhenRun: Bool = false
+    ) }
+    static var openAppWhenRun: Bool { false }
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         // App-driven work (compositions, strobe/party/…): only exists if the

@@ -13,8 +13,8 @@ import AppIntents
 // MARK: - HueSceneEntity
 
 struct HueSceneEntity: AppEntity {
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Scene")
-    static var defaultQuery = HueSceneEntityQuery()
+    static var typeDisplayRepresentation: TypeDisplayRepresentation { TypeDisplayRepresentation(name: "Scene") }
+    static var defaultQuery: HueSceneEntityQuery { HueSceneEntityQuery() }
 
     /// The real Hue scene UUID — also the recall target.
     var id: String
