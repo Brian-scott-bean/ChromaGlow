@@ -1791,6 +1791,13 @@ private struct StudioDrainWiring: ViewModifier {
     let drainShare: () -> Void
     let drainStudioAction: () -> Void
 
+    // One-time photosensitivity notice on first Studio entry (Signify developer
+    // terms: inform users of possible adverse effects of light effects before use).
+    // Every flash-capable path — deck cards, Perform, Siri open-app starts — runs
+    // through Studio; other surfaces carry static presets/scenes only.
+    @AppStorage("hasSeenPhotosensitivityNotice") private var hasSeenPhotosensitivityNotice = false
+    @State private var showPhotosensitivityNotice = false
+
     func body(content: Content) -> some View {
         content
             .onChange(of: openToken) { _, _ in
@@ -1799,5 +1806,11 @@ private struct StudioDrainWiring: ViewModifier {
             }
             .task { drainShare() }
             .task(id: retryKey) { drainStudioAction() }
+            .onAppear { if !hasSeenPhotosensitivityNotice { showPhotosensitivityNotice = true } }
+            .alert("Photosensitivity Notice", isPresented: $showPhotosensitivityNotice) {
+                Button("OK") { hasSeenPhotosensitivityNotice = true }
+            } message: {
+                Text("Some light effects use flashing and rapidly changing colors that may affect people who are sensitive to flashing lights. Effects are limited to 3 flashes per second, and the system Dim Flashing Lights setting is honored.")
+            }
     }
 }
