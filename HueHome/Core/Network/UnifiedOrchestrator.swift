@@ -2551,7 +2551,7 @@ final class UnifiedOrchestrator {
         } else {
             compositionGamut = await resolveCompositionGamut(for: room, api: api)
         }
-        print(
+        debugLog(
             "[Composer] ▶ Start composition room='\(room.name)' id=\(roomID) gen=\(nextGeneration) groupedLightID=\(groupedLightID) preferEntertainment=\(preferEntertainment)"
         )
 
@@ -2570,7 +2570,7 @@ final class UnifiedOrchestrator {
         // Resolve individual light IDs early — needed for REST spatial positions
         // AND for per-light REST mode later.
         let compositionLightIDs = await resolveCompositionLightIDs(for: room, api: api)
-        print("[Composer] 🔍 Resolved \(compositionLightIDs.count) individual lights for per-light REST")
+        debugLog("[Composer] 🔍 Resolved \(compositionLightIDs.count) individual lights for per-light REST")
 
         if let entConfig {
             // Auto-detect principal angle when user hasn't set one
@@ -2603,7 +2603,7 @@ final class UnifiedOrchestrator {
             )
             paramBox.radialPositions = restGeometry.radial
             paramBox.angularPositions = restGeometry.angular
-            print("[Composer] 📐 Spatial positions computed: \(paramBox.spatialPositions.count) lights, angle=\(String(format: "%.0f", paramBox.motion.motionAngle))°")
+            debugLog("[Composer] 📐 Spatial positions computed: \(paramBox.spatialPositions.count) lights, angle=\(String(format: "%.0f", paramBox.motion.motionAngle))°")
         }
 
         // Prefer entertainment transport for dynamic compositions when possible.
@@ -2655,7 +2655,7 @@ final class UnifiedOrchestrator {
                         )
                     }
                     await refreshCompositionMicDemand()
-                    print("[Composer] ⚡ Entertainment transport active for room='\(room.name)' bridge='\(bridgeID)'")
+                    debugLog("[Composer] ⚡ Entertainment transport active for room='\(room.name)' bridge='\(bridgeID)'")
                     return
                 }
             }
@@ -2677,7 +2677,7 @@ final class UnifiedOrchestrator {
 
                 // Clean up any existing bridge animation for this room first
                 for oldManifest in bridgeAnimationStore.allManifests() where oldManifest.roomID == roomID {
-                    print("[Composer] Cleaning up previous bridge animation for \(oldManifest.presetName)")
+                    debugLog("[Composer] Cleaning up previous bridge animation for \(oldManifest.presetName)")
                     await bridgeAnimationEngine.stop(manifest: oldManifest, v1Client: v1Client)
                     bridgeAnimationStore.remove(presetID: oldManifest.presetID, roomID: roomID)
                 }
@@ -2685,7 +2685,7 @@ final class UnifiedOrchestrator {
                 // Purge any orphaned CG_ resources from previous test runs
                 await bridgeAnimationEngine.purgeAllChromaGlowResources(v1Client: v1Client)
 
-                print("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
+                debugLog("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
                 // M-04: the engine maps v2 UUIDs → v1 numeric ids via id_v1
                 // identity, so it needs the v2 light objects. One retry — a
                 // transient fetch failure here would silently demote the
@@ -2696,7 +2696,7 @@ final class UnifiedOrchestrator {
                     v2Lights = (try? await api.fetchLights()) ?? []
                 }
                 if v2Lights.isEmpty {
-                    print("[Composer] ⚠ Could not fetch lights for id_v1 mapping — running app-driven (stops when the app closes)")
+                    debugLog("[Composer] ⚠ Could not fetch lights for id_v1 mapping — running app-driven (stops when the app closes)")
                 }
                 let manifest = try await bridgeAnimationEngine.upload(
                     preset: preset,
@@ -2708,8 +2708,8 @@ final class UnifiedOrchestrator {
                 )
                 bridgeAnimationStore.save(manifest)
                 compositionTransportByRoom[roomID] = .bridgeStored
-                print("[Composer] ⚡ Bridge-stored animation active! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s/step")
-                print("[Composer] ⚡ Close the app — lights will keep going!")
+                debugLog("[Composer] ⚡ Bridge-stored animation active! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s/step")
+                debugLog("[Composer] ⚡ Close the app — lights will keep going!")
 
                 // ── Immediate prime frame ──
                 // The first bridge rule won't fire until the schedule ticks (up to cycleTotalSeconds away).
@@ -2730,14 +2730,14 @@ final class UnifiedOrchestrator {
                             mirek: nil,
                             duration: 500
                         )
-                        print("[Composer][BridgePrime] ✅ room='\(room.name)' bri=\(String(format: "%.1f", primeBri))")
+                        debugLog("[Composer][BridgePrime] ✅ room='\(room.name)' bri=\(String(format: "%.1f", primeBri))")
                     } catch {
-                        print("[Composer][BridgePrime] ⚠ Prime frame failed (bridge animation still active): \(error.localizedDescription)")
+                        debugLog("[Composer][BridgePrime] ⚠ Prime frame failed (bridge animation still active): \(error.localizedDescription)")
                     }
                 }
                 return  // Don't start app-driven scheduler
             } catch {
-                print("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
+                debugLog("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
                 // Fall through to the REST path, which records `.rest` below.
             }
         }
@@ -2754,7 +2754,7 @@ final class UnifiedOrchestrator {
                 lights: allLights.filter { idSet.contains($0.id) }
             )
             if let map = compositionGradientMap {
-                print("[Composer][Gradient] 🌈 \(map.entries.filter(\.isGradient).count) strip(s) → \(map.totalChannels) channels")
+                debugLog("[Composer][Gradient] 🌈 \(map.entries.filter(\.isGradient).count) strip(s) → \(map.totalChannels) channels")
             }
         }
 
@@ -2806,11 +2806,11 @@ final class UnifiedOrchestrator {
                     mirek: nil,
                     duration: 140
                 )
-                print(
+                debugLog(
                     "[Composer][Prime] ✅ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) bri=\(String(format: "%.1f", bri)) xy=(\(String(format: "%.4f", xy.x)),\(String(format: "%.4f", xy.y)))"
                 )
             } catch {
-                print("[Composer][Prime] ❌ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) error=\(error)")
+                debugLog("[Composer][Prime] ❌ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) error=\(error)")
             }
             if var runtime = compositionRuntimes[roomID] {
                 runtime.lastSentX = xy.x
@@ -2824,7 +2824,7 @@ final class UnifiedOrchestrator {
 
         ensureCompositionSchedulerRunning()
         await refreshCompositionMicDemand()
-        print("[Composer] 📡 Scheduled room='\(room.name)' on global composition ticker")
+        debugLog("[Composer] 📡 Scheduled room='\(room.name)' on global composition ticker")
     }
 
     /// Composition render loop via Entertainment API — per-light colors at 25fps.
@@ -2896,7 +2896,7 @@ final class UnifiedOrchestrator {
         // Ownership check (generation-equivalent): stopCompositionMode or a
         // replacement start already cleaned this key — never resurrect.
         guard compositionEntRoomByBridge[bridgeID] == roomID else { return }
-        print("[Composer] ⚠ Entertainment session lost for room=\(roomID) — failing over to REST")
+        debugLog("[Composer] ⚠ Entertainment session lost for room=\(roomID) — failing over to REST")
         // Re-entry below records `.rest`; if its guard bails instead, the room
         // correctly reads "not running" rather than a phantom `.entertainment`.
         compositionTransportByRoom.removeValue(forKey: roomID)
@@ -2940,7 +2940,7 @@ final class UnifiedOrchestrator {
     }
 
     func stopCompositionMode(roomID: String) async {
-        print("[Handoff] Composer stop requested for roomID=\(roomID)")
+        debugLog("[Handoff] Composer stop requested for roomID=\(roomID)")
         compositionGenerations[roomID] = (compositionGenerations[roomID] ?? 0) + 1
 
         // ─── Stop bridge-stored animation if active ───
@@ -2955,16 +2955,16 @@ final class UnifiedOrchestrator {
                 // The manifest's bridge is no longer registered — no client can
                 // ever clean it up, so drop the manifest instead of leaking it.
                 // (Bridge-side CG_ leftovers age out via the purge path.)
-                print("[Handoff] ⚠ No registered client for bridge \(manifest.bridgeIP) — dropping manifest without bridge cleanup")
+                debugLog("[Handoff] ⚠ No registered client for bridge \(manifest.bridgeIP) — dropping manifest without bridge cleanup")
             }
             bridgeAnimationStore.remove(presetID: manifest.presetID, roomID: roomID)
         }
         compositionTransportByRoom.removeValue(forKey: roomID)
-        print("[Handoff] Clearing studio REST sender mailbox for roomID=\(roomID)")
+        debugLog("[Handoff] Clearing studio REST sender mailbox for roomID=\(roomID)")
         await studioRestSender.clear()
         // Give Hue bridge firmware a brief settle window before any new owner starts writing.
         try? await Task.sleep(for: .milliseconds(150))
-        print("[Handoff] REST mailbox cleared + settle delay complete for roomID=\(roomID)")
+        debugLog("[Handoff] REST mailbox cleared + settle delay complete for roomID=\(roomID)")
         // Stop entertainment session for this room's bridge (if any)
         let stopBridgeID = compositionEntRoomByBridge.first(where: { $0.value == roomID })?.key
         if let bid = stopBridgeID {
@@ -2996,7 +2996,7 @@ final class UnifiedOrchestrator {
         // composition ran, its SSE echoes were suppressed (appDrivenGroupIDs), so
         // the card is frozen at its pre-composition color until a refresh lands.
         scheduleStateRefresh()
-        print("[Handoff] Composer teardown complete for roomID=\(roomID)")
+        debugLog("[Handoff] Composer teardown complete for roomID=\(roomID)")
     }
 
     private func runCompositionScheduler() async {
@@ -3414,7 +3414,7 @@ final class UnifiedOrchestrator {
             }
         }
 
-        print("[Composer] 🗺️ Resolved \(result.count) light positions from entertainment config")
+        debugLog("[Composer] 🗺️ Resolved \(result.count) light positions from entertainment config")
         return result
     }
 
@@ -3443,18 +3443,18 @@ final class UnifiedOrchestrator {
     }
 
     func stopStudioMode() async {
-        print("[Handoff] Studio stop requested")
+        debugLog("[Handoff] Studio stop requested")
         // Cancel the running loop task (strobe, etc.)
         activeStudioTask?.cancel()
         activeStudioTask = nil
         studioGeneration += 1
-        print("[Handoff] Clearing studio REST sender mailbox")
+        debugLog("[Handoff] Clearing studio REST sender mailbox")
         await studioRestSender.clear()
         // Small barrier so bridge transition buffers drain before a new startup sequence.
         try? await Task.sleep(for: .milliseconds(150))
-        print("[Handoff] REST mailbox cleared + settle delay complete")
+        debugLog("[Handoff] REST mailbox cleared + settle delay complete")
         activeParamBox = nil
-        print("[Studio] ⏹ stopStudioMode() canceled active engine loop")
+        debugLog("[Studio] ⏹ stopStudioMode() canceled active engine loop")
 
         // Stop all entertainment sessions (all bridges)
         for (bid, entClient) in studioEntClients {
@@ -3472,7 +3472,7 @@ final class UnifiedOrchestrator {
         // Also notify any mic engines
         NotificationCenter.default.post(name: .studioStopAll, object: nil)
         activeEffectEntries.removeAll()
-        print("[Handoff] Studio teardown complete")
+        debugLog("[Handoff] Studio teardown complete")
     }
 
     /// Room-scoped teardown for ONE app-driven Studio effect (strobe, party,
@@ -3486,7 +3486,7 @@ final class UnifiedOrchestrator {
     /// the app-driven loop and its bridge's entertainment session, and only
     /// when no composition owns that session.
     func stopAppDrivenStudioEffect(roomID: String, bridgeID: String?) async {
-        print("[Handoff] App-driven stop requested for roomID=\(roomID)")
+        debugLog("[Handoff] App-driven stop requested for roomID=\(roomID)")
         activeStudioTask?.cancel()
         activeStudioTask = nil
         studioGeneration += 1
@@ -3504,7 +3504,7 @@ final class UnifiedOrchestrator {
             await entClient.stopSession()
             studioEntClients.removeValue(forKey: bid)
         }
-        print("[Handoff] App-driven teardown complete for roomID=\(roomID)")
+        debugLog("[Handoff] App-driven teardown complete for roomID=\(roomID)")
     }
 
     // MARK: - Entertainment Setup Helpers
@@ -3532,7 +3532,7 @@ final class UnifiedOrchestrator {
             studioEntClients[bid] = entClient
             return entClient
         } catch {
-            print("[Studio] Entertainment start failed: \(error.localizedDescription) — falling back to REST")
+            debugLog("[Studio] Entertainment start failed: \(error.localizedDescription) — falling back to REST")
             return nil
         }
     }
@@ -4682,4 +4682,13 @@ extension UnifiedOrchestrator {
 struct SSEEvent: Decodable {
     let type: String
     let data: [SSEResourceUpdate]
+}
+
+/// DEBUG-only console diagnostics (house convention — prints are #if DEBUG,
+/// see StartupTimeline). Release builds compile the call away, keeping room
+/// names and bridge detail out of the release console.
+fileprivate func debugLog(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    print(message())
+    #endif
 }
