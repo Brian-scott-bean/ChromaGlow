@@ -418,6 +418,8 @@ struct SettingsView: View {
             if metadata.isDirty == true {
                 Text("Working tree modified")
             }
+            Text("ChromaGlow is an independent app and is not affiliated with, endorsed by, or a product of Signify (Philips Hue). Philips Hue is a trademark of Signify Holding.")
+                .padding(.top, 2)
         }
         .font(.caption2)
         .foregroundStyle(.white.opacity(0.35))

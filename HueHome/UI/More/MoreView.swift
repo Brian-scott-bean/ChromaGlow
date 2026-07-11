@@ -168,6 +168,9 @@ struct MoreView: View {
                     Text("Version \(appVersion) · Build \(buildNumber)")
                         .font(.system(size: 10))
                         .foregroundStyle(.white.opacity(0.40))
+                    Text("ChromaGlow is an independent app and is not affiliated with, endorsed by, or a product of Signify (Philips Hue). Philips Hue is a trademark of Signify Holding.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.35))
                 }
                 Spacer()
             }
