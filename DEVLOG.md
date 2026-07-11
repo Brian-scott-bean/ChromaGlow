@@ -7467,3 +7467,36 @@ this run fixed the connective tissue. One shippable commit per fix:
   raw paths — fixed; don't reintroduce.
 - Cooperative wipe: explicit 401/403 over pinned TLS ONLY. Never infer from timeouts/5xx.
   Owned (non-granted) credentials are never auto-wiped.
+
+---
+
+## 2026-07-10 - [Claude] Strict-concurrency warning cleanup (Brian's Xcode issue list)
+
+Brian's post-build-26 Xcode build surfaced ~55 app-target "…this is an error in the Swift 6
+language mode" warnings. Two commits, both suite-green (667), zero-warning clean build
+restored across app+widget+watch (`xcodebuild clean build` → 0 warnings):
+
+1. `067a71f` — the five the family-sharing round ADDED: four `#Predicate` fetches became
+   fetch-all + `first(where:)` (the macro trips a KeyPath-Sendable warning on this
+   toolchain; rows number a handful; matches the registrar idiom), one `_ = try?` (a
+   @discardableResult doesn't survive try?'s optional wrapping), plus
+   `nonisolated(unsafe)` on the new test stub statics.
+2. `65cab4b` — everything that arrived with build 24 when `HueHome/Intents/` first joined
+   the target: 42 stored `static var` AppIntents properties → computed (identical values);
+   `StudioParam.format` + `StudioParamFormat.kelvin/.flashHz` → `@Sendable` (one root cause
+   — this makes StudioCard Sendable, legalizing StudioCardView's nonisolated `==`);
+   `composerStarterDraftPresetID` → `nonisolated static let`; **`DeepLinkCoordinator` is
+   now `@MainActor`** (all consumers — onOpenURL, view bodies, both Siri perform()s —
+   were already main-actor).
+
+Durable facts:
+- `#Predicate` is currently OFF the menu in app code — its macro expansion warns under
+  strict concurrency. Use fetch-all + filter for the small tables; revisit when the
+  toolchain fixes KeyPath Sendable-ness.
+- AppIntents statics are COMPUTED properties in this repo. New intents must follow or the
+  zero-warning build breaks.
+- Any new DeepLinkCoordinator caller must be main-actor (it is @MainActor now); intents
+  keep `@MainActor func perform()`.
+- KNOWN, DELIBERATELY UNFIXED: the historic TEST-target warning pile (NSLock-in-async in
+  ~8 test files, main-actor setUp field access in ~6, HueDataModelsTests' own #Predicate)
+  — predates build 24, never appears in device builds. Its cleanup is a separate round.
