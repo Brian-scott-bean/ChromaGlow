@@ -33,6 +33,7 @@
 		1C125FE7B5ABB02BCD14BFED /* HueTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 304818D054AC8B4EFCF2AC92 /* HueTypography.swift */; };
 		1D1F35F3AE6A058CA4531C47 /* BuiltInSeedMigrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30E64A04DE93C811A35E71C7 /* BuiltInSeedMigrator.swift */; };
 		1D6BAC76260A96A94D2AD9DA /* GuestKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86DA48447294AC666236E3AA /* GuestKeyStore.swift */; };
+		1E4B46AFFE9EE9EC594846DF /* WelcomeTourView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90BE598B62D8D3B9F7763B07 /* WelcomeTourView.swift */; };
 		1FD2286501631D63C82AF0A6 /* HueIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C6BDE0E26194364C91E3D6F /* HueIntents.swift */; };
 		20D48BFFBA68E425B8A696F6 /* SyncEngineProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43985F768FFF71B61A396C41 /* SyncEngineProtocol.swift */; };
 		25A0C7076C0B0342D9B3DA5D /* RoomDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 902129FD7D8F8D92935465A5 /* RoomDetailViewModel.swift */; };
@@ -235,6 +236,7 @@
 		CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0CANVAS00000000000002 /* StudioCardCanvas.swift */; };
 		CC3456DD789AEEFF00112233 /* AmbientEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD4567EE89ABFF001122334 /* AmbientEngine.swift */; };
 		CD1BB6B919DAFADD498EBDD0 /* GuestKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7820F4F2BD3F6510DA6C4164 /* GuestKeyStoreTests.swift */; };
+		CE1FB868D687A707F62F4F4D /* TutorialIllustrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D5FB0B94877644269D4D186 /* TutorialIllustrationView.swift */; };
 		D006AE528963A62C466F4A32 /* BridgeAuthorizationMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB3E083137EEAAE96C95073C /* BridgeAuthorizationMonitorTests.swift */; };
 		D1B8F5410D05D4831B237F16 /* DevicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5454484EA8B91B91C949F06F /* DevicesView.swift */; };
 		D20946D4288104E57A94FFD2 /* SavedColorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2386EBB36B78EB6A3160432 /* SavedColorStore.swift */; };
@@ -378,6 +380,7 @@
 		1503A7C27BEF5B41FABF3E38 /* GuestInviteAcceptorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteAcceptorTests.swift; path = ./HueHomeTests/GuestInviteAcceptorTests.swift; sourceTree = "<group>"; };
 		1819E1C21C24411637B24FFA /* GuestInviteAcceptor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteAcceptor.swift; path = ./HueHome/Core/Share/GuestInviteAcceptor.swift; sourceTree = "<group>"; };
 		1AA4CC7E83E29A5E252517C9 /* GuestInviteSpec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteSpec.swift; path = ./HueHome/Core/Share/GuestInviteSpec.swift; sourceTree = "<group>"; };
+		1D5FB0B94877644269D4D186 /* TutorialIllustrationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TutorialIllustrationView.swift; path = ./HueHome/UI/Tutorial/TutorialIllustrationView.swift; sourceTree = "<group>"; };
 		1DB2272228C12BF09711E036 /* RoomAggregateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomAggregateTests.swift; path = ./HueHomeTests/RoomAggregateTests.swift; sourceTree = "<group>"; };
 		1E394B8CB521A7239F42E2C2 /* HueAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueAPIClient.swift; path = HueHome/Core/Network/HueAPIClient.swift; sourceTree = "<group>"; };
 		206B58A9E34CFAA4FC9F602A /* ScenePayloadCodecTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScenePayloadCodecTests.swift; path = ./HueHomeTests/ScenePayloadCodecTests.swift; sourceTree = "<group>"; };
@@ -456,6 +459,7 @@
 		89DFB13E07B2B45F2C43EA9B /* BridgeDiscoveryViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeDiscoveryViewModel.swift; path = HueHome/Core/ViewModels/BridgeDiscoveryViewModel.swift; sourceTree = "<group>"; };
 		8B4A8E4979A464BDD6CA98DC /* ShareInviteSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShareInviteSheet.swift; path = ./HueHome/UI/Invite/ShareInviteSheet.swift; sourceTree = "<group>"; };
 		902129FD7D8F8D92935465A5 /* RoomDetailViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomDetailViewModel.swift; path = HueHome/Core/ViewModels/RoomDetailViewModel.swift; sourceTree = "<group>"; };
+		90BE598B62D8D3B9F7763B07 /* WelcomeTourView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WelcomeTourView.swift; path = ./HueHome/UI/Tutorial/WelcomeTourView.swift; sourceTree = "<group>"; };
 		92662E9280D48307551834BA /* CreateGlobalSceneView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CreateGlobalSceneView.swift; path = ./HueHome/UI/Scenes/CreateGlobalSceneView.swift; sourceTree = "<group>"; };
 		934A3C25869139CAEED528C7 /* EntertainmentAvailabilityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentAvailabilityTests.swift; path = HueHomeTests/EntertainmentAvailabilityTests.swift; sourceTree = "<group>"; };
 		973E4888B569F710B4DBD1EA /* GuestAccessPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestAccessPolicy.swift; path = ./HueHome/Core/Dashboard/GuestAccessPolicy.swift; sourceTree = "<group>"; };
@@ -972,6 +976,15 @@
 			name = Components;
 			sourceTree = "<group>";
 		};
+		766A7BFA8A57FF34E568C580 /* Tutorial */ = {
+			isa = PBXGroup;
+			children = (
+				90BE598B62D8D3B9F7763B07 /* WelcomeTourView.swift */,
+				1D5FB0B94877644269D4D186 /* TutorialIllustrationView.swift */,
+			);
+			name = Tutorial;
+			sourceTree = "<group>";
+		};
 		78DE435CEDAD64AC61A4BD95 /* Devices */ = {
 			isa = PBXGroup;
 			children = (
@@ -1168,6 +1181,7 @@
 				19ADB0F1FA48C34EE679A0D8 /* Share */,
 				296CE67079914FB3F0B32469 /* Invite */,
 				9025C9A1CF37D9E302FDB3BF /* Profiles */,
+				766A7BFA8A57FF34E568C580 /* Tutorial */,
 			);
 			name = UI;
 			sourceTree = "<group>";
@@ -1796,6 +1810,8 @@
 				4607C7C58A45E30B2455277B /* GuestRevocationService.swift in Sources */,
 				BB4BCD87D361FE7451392958 /* BridgeAuthorizationMonitor.swift in Sources */,
 				B3540A41371967DA83A303A4 /* TutorialCatalog.swift in Sources */,
+				1E4B46AFFE9EE9EC594846DF /* WelcomeTourView.swift in Sources */,
+				CE1FB868D687A707F62F4F4D /* TutorialIllustrationView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

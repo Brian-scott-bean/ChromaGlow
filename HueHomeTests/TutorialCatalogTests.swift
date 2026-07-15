@@ -124,6 +124,41 @@ final class TutorialCatalogTests: XCTestCase {
         XCTAssertEqual(TutorialCatalog.pages(includeStudioSuite: true), pages)
     }
 
+    // MARK: - Motion math (the illustrations are pure functions of time)
+
+    func testTourMotionMathIsBoundedForAllInputs() {
+        let times: [Double] = [-7.3, -1, 0, 0.4, 1.9, 12.5, 1_000.25, 8e8]
+        for t in times {
+            for period in [0.75, 2.0, 6.0, 12.0] {
+                let w = TourMotionMath.wrap(t, period: period)
+                XCTAssertTrue(w >= 0 && w < 1, "wrap(\(t), \(period)) = \(w) out of [0,1)")
+                let p = TourMotionMath.pulse(t, period: period)
+                XCTAssertTrue(p >= 0 && p <= 1, "pulse(\(t), \(period)) = \(p) out of [0,1]")
+                let h = TourMotionMath.hop(t, count: 4, period: period)
+                XCTAssertTrue((0..<4).contains(h), "hop(\(t)) = \(h) out of range")
+            }
+            let e = TourMotionMath.ease(t)
+            XCTAssertTrue(e >= 0 && e <= 1, "ease(\(t)) = \(e) out of [0,1]")
+        }
+        // Degenerate inputs must not trap.
+        XCTAssertEqual(TourMotionMath.wrap(5, period: 0), 0)
+        XCTAssertEqual(TourMotionMath.pulse(5, period: 0), 0)
+        XCTAssertEqual(TourMotionMath.hop(5, count: 0, period: 1), 0)
+    }
+
+    func testTourMotionMathIsPeriodic() {
+        for t in [0.0, 1.3, 7.77] {
+            XCTAssertEqual(TourMotionMath.wrap(t, period: 3), TourMotionMath.wrap(t + 3, period: 3),
+                           accuracy: 1e-9)
+            XCTAssertEqual(TourMotionMath.pulse(t, period: 3), TourMotionMath.pulse(t + 3, period: 3),
+                           accuracy: 1e-9)
+        }
+        // segment covers its slice monotonically: 0 before, 1 after.
+        XCTAssertEqual(TourMotionMath.segment(0.0, from: 0.2, to: 0.6), 0)
+        XCTAssertEqual(TourMotionMath.segment(1.0, from: 0.2, to: 0.6), 1)
+        XCTAssertEqual(TourMotionMath.segment(0.4, from: 0.2, to: 0.6), 0.5, accuracy: 1e-9)
+    }
+
     // MARK: - Auto-present gate
 
     func testAutoPresentGateTruthTable() {

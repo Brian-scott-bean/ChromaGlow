@@ -60,6 +60,12 @@ enum HueFont {
     static let stageChip    = Font.system(.caption).weight(.semibold)
     /// Full-sentence status lines under a tray header ("Running on bridge…").
     static let stageStatus  = Font.system(.caption2).weight(.medium)
+
+    // MARK: Tour (Welcome Tour — text-style-relative so Dynamic Type scales)
+    /// Tour page titles.
+    static let tourTitle = Font.system(.title2).weight(.bold)
+    /// Tour page body copy.
+    static let tourBody  = Font.system(.subheadline)
 }
 
 // MARK: - Typography ViewModifiers
