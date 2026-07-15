@@ -145,6 +145,14 @@ final class DeepLinkCoordinator {
     /// Bumped on every deep link so observers can react even to a repeated target.
     var openToken: Int = 0
 
+    /// True when a cold-start deep link is waiting for a route — the Welcome
+    /// Tour must not present on top of a widget/Siri/invite launch.
+    var hasPendingRoute: Bool {
+        pendingGroupID != nil || pendingSharedScene != nil || pendingShareError != nil
+            || pendingInvite != nil || pendingGuestInvite != nil
+            || pendingInviteError != nil || pendingStudioAction != nil
+    }
+
     /// Entry point for the open-app Siri intents (StartComposition/Effect).
     func requestStudioAction(_ action: PendingStudioAction) {
         pendingStudioAction = action
@@ -277,6 +285,7 @@ struct AppRootView: View {
         Group {
             if isPaired || isDemoMode {
                 MainTabView()
+                    .modifier(WelcomeTourWiring())
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .task {
                         if isDemoMode {

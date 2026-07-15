@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0109A55DDB81018DA32D1E41 /* WelcomeTourWiring.swift in Sources */ = {isa = PBXBuildFile; fileRef = E233E41BAAFEA981BAC5EF3E /* WelcomeTourWiring.swift */; };
 		02675208BF32B81876B29E75 /* SyncModeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */; };
 		04ACBC6271BAB0AACAB757C8 /* GuestAccessModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C98C1882D62720B3B58BD1 /* GuestAccessModels.swift */; };
 		04DEE771A7499DCB48E4F81A /* WidgetDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */; };
@@ -604,6 +605,7 @@
 		E1B00001AAAA000000000001 /* HueV1Client.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueV1Client.swift; path = HueHome/Core/Network/HueV1Client.swift; sourceTree = "<group>"; };
 		E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationEngine.swift; path = HueHome/Core/Network/BridgeAnimationEngine.swift; sourceTree = "<group>"; };
 		E1B00001AAAA000000000003 /* BridgeAnimationStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAnimationStore.swift; path = HueHome/Core/Persistence/BridgeAnimationStore.swift; sourceTree = "<group>"; };
+		E233E41BAAFEA981BAC5EF3E /* WelcomeTourWiring.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WelcomeTourWiring.swift; path = ./HueHome/UI/Tutorial/WelcomeTourWiring.swift; sourceTree = "<group>"; };
 		E2BA60597F6D11E201025E1F /* OrchestratorGuestAccessTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OrchestratorGuestAccessTests.swift; path = ./HueHomeTests/OrchestratorGuestAccessTests.swift; sourceTree = "<group>"; };
 		E7ACCF18A91D92561912E10F /* EffectEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Effects/EffectEngine.swift; sourceTree = "<group>"; };
 		E83AFD376842F3C78B89CB40 /* ShareSceneSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShareSceneSheet.swift; path = ./HueHome/UI/Share/ShareSceneSheet.swift; sourceTree = "<group>"; };
@@ -981,6 +983,7 @@
 			children = (
 				90BE598B62D8D3B9F7763B07 /* WelcomeTourView.swift */,
 				1D5FB0B94877644269D4D186 /* TutorialIllustrationView.swift */,
+				E233E41BAAFEA981BAC5EF3E /* WelcomeTourWiring.swift */,
 			);
 			name = Tutorial;
 			sourceTree = "<group>";
@@ -1812,6 +1815,7 @@
 				B3540A41371967DA83A303A4 /* TutorialCatalog.swift in Sources */,
 				1E4B46AFFE9EE9EC594846DF /* WelcomeTourView.swift in Sources */,
 				CE1FB868D687A707F62F4F4D /* TutorialIllustrationView.swift in Sources */,
+				0109A55DDB81018DA32D1E41 /* WelcomeTourWiring.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
