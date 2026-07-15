@@ -1797,6 +1797,12 @@ private struct StudioDrainWiring: ViewModifier {
     // through Studio; other surfaces carry static presets/scenes only.
     @AppStorage("hasSeenPhotosensitivityNotice") private var hasSeenPhotosensitivityNotice = false
     @State private var showPhotosensitivityNotice = false
+    // Gate on tab visibility: prewarmDeferredTabs realizes Studio while it is
+    // opacity-hidden, and an alert fired from a hidden tab is silently dropped
+    // by UIKit — worse, the dangling presentation swallows the NEXT
+    // presentation app-wide (found via the Welcome Tour cover). Fire only when
+    // the tab is actually on screen.
+    @Environment(\.isTabActive) private var isTabActive
 
     func body(content: Content) -> some View {
         content
@@ -1806,7 +1812,10 @@ private struct StudioDrainWiring: ViewModifier {
             }
             .task { drainShare() }
             .task(id: retryKey) { drainStudioAction() }
-            .onAppear { if !hasSeenPhotosensitivityNotice { showPhotosensitivityNotice = true } }
+            .onAppear { if isTabActive && !hasSeenPhotosensitivityNotice { showPhotosensitivityNotice = true } }
+            .onChange(of: isTabActive) { _, active in
+                if active && !hasSeenPhotosensitivityNotice { showPhotosensitivityNotice = true }
+            }
             .alert("Photosensitivity Notice", isPresented: $showPhotosensitivityNotice) {
                 Button("OK") { hasSeenPhotosensitivityNotice = true }
             } message: {
