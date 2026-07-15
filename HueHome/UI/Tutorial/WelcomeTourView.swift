@@ -118,7 +118,7 @@ struct WelcomeTourView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Button {
                 withAnimation(HueAnimation.adaptive(HueAnimation.toggle, reduceMotion: reduceMotion)) {
                     pageIndex = max(0, pageIndex - 1)
@@ -134,6 +134,7 @@ struct WelcomeTourView: View {
             .accessibilityLabel("Previous page")
             .opacity(pageIndex == 0 ? 0 : 1)
             .disabled(pageIndex == 0)
+            .accessibilityHidden(pageIndex == 0)
 
             Spacer()
             pageDots
@@ -166,11 +167,13 @@ struct WelcomeTourView: View {
     }
 
     private var pageDots: some View {
-        HStack(spacing: 6) {
+        // Compact metrics: 12 dots + Back + Next must fit a 375pt phone
+        // without ever squeezing the Next label (which is fixedSize).
+        HStack(spacing: 5) {
             ForEach(pages.indices, id: \.self) { i in
                 Capsule()
-                    .fill(i == pageIndex ? accent : Color.white.opacity(0.22))
-                    .frame(width: i == pageIndex ? 18 : 6, height: 6)
+                    .fill(i == pageIndex ? accent : Color.white.opacity(0.30))
+                    .frame(width: i == pageIndex ? 14 : 5, height: 5)
             }
         }
         .animation(HueAnimation.adaptive(HueAnimation.toggle, reduceMotion: reduceMotion), value: pageIndex)

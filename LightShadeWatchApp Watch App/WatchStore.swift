@@ -596,8 +596,7 @@ func watchRoomIcon(_ archetype: String?) -> String {
 }
 
 /// DEBUG-only console diagnostics (house convention — see UnifiedOrchestrator).
-/// Release builds compile the call away, keeping room and composition names
-/// out of the release console.
+/// Release builds compile the call away.
 fileprivate func debugLog(_ message: @autoclosure () -> String) {
     #if DEBUG
     print(message())

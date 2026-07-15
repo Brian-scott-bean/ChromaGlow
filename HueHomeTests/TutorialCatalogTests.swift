@@ -24,6 +24,16 @@ final class TutorialCatalogTests: XCTestCase {
         XCTAssertEqual(pages.last?.audience, .everyone)
     }
 
+    func testPageOrderIsThePedagogicalArc() {
+        // The tour teaches in tab order, basics before power features, with
+        // the owner-only Studio suite contiguous. A shuffle is a regression.
+        XCTAssertEqual(pages.map(\.id), [
+            "tour.welcome", "tour.rooms", "tour.moods", "tour.roomDetail",
+            "tour.scenes", "tour.studio", "tour.composer", "tour.perform",
+            "tour.automations", "tour.family", "tour.everywhere", "tour.wrap",
+        ])
+    }
+
     func testEveryPageHasAUniqueStableID() {
         let ids = pages.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count, "duplicate page ids")
@@ -58,7 +68,7 @@ final class TutorialCatalogTests: XCTestCase {
                 XCTAssertLessThanOrEqual(footnote.count, 160, "\(page.id): footnote too long")
             }
 
-            for text in [page.title, page.body, page.footnote].compactMap({ $0 }) {
+            for text in [page.eyebrow, page.title, page.body, page.footnote].compactMap({ $0 }) {
                 XCTAssertEqual(text, text.trimmingCharacters(in: .whitespacesAndNewlines),
                                "\(page.id): stray leading/trailing whitespace")
             }
@@ -74,10 +84,15 @@ final class TutorialCatalogTests: XCTestCase {
         }
     }
 
-    func testAccentHexParses() {
+    func testAccentsAreTheFourIdentityHexes() {
+        // Amber = HuePalette.amber; purple/teal/blue = MoreView's section
+        // accents. Off-brand or typo'd hexes fail here, not on device.
+        let identity: Set<String> = ["#FFC107", "#8C59FF", "#40D9BF", "#668AFF"]
         for page in pages {
             XCTAssertNotNil(page.accentHex.range(of: "^#[0-9A-Fa-f]{6}$", options: .regularExpression),
                             "\(page.id): accent '\(page.accentHex)' is not #RRGGBB")
+            XCTAssertTrue(identity.contains(page.accentHex),
+                          "\(page.id): accent '\(page.accentHex)' is not an identity color")
         }
     }
 
@@ -86,13 +101,31 @@ final class TutorialCatalogTests: XCTestCase {
     func testTrademarkDiscipline() {
         // The only permitted trademark use is the hardware name "Hue Tap Dial"
         // (nominative, matching the build-27 App-Store trademark pass).
+        // Case-insensitive: eyebrows are FORCED uppercase, so "HUE ..." is the
+        // natural leak form there and a case-sensitive check would miss it.
         for page in pages {
             for text in [page.eyebrow, page.title, page.body, page.footnote].compactMap({ $0 }) {
-                let stripped = text.replacingOccurrences(of: "Hue Tap Dial", with: "")
-                XCTAssertFalse(stripped.contains("Hue"),
+                let stripped = text
+                    .replacingOccurrences(of: "Hue Tap Dial", with: "", options: .caseInsensitive)
+                    .lowercased()
+                XCTAssertFalse(stripped.contains("hue"),
                                "\(page.id): bare 'Hue' outside 'Hue Tap Dial' in: \(text)")
-                XCTAssertFalse(stripped.contains("Philips"),
+                XCTAssertFalse(stripped.contains("philips"),
                                "\(page.id): 'Philips' must not appear in tour copy: \(text)")
+            }
+        }
+    }
+
+    func testGuestVisibleCopyNeverMentionsTheStudioSuite() {
+        // The audience filter drops the owner-only PAGES; this pins the finer
+        // rule that no guest-visible page's copy references those features.
+        for page in pages where page.audience == .everyone {
+            for text in [page.eyebrow, page.title, page.body, page.footnote].compactMap({ $0 }) {
+                let lower = text.lowercased()
+                for banned in ["studio", "composer", "perform"] {
+                    XCTAssertFalse(lower.contains(banned),
+                                   "\(page.id): guest-visible copy mentions '\(banned)': \(text)")
+                }
             }
         }
     }
@@ -139,11 +172,28 @@ final class TutorialCatalogTests: XCTestCase {
             }
             let e = TourMotionMath.ease(t)
             XCTAssertTrue(e >= 0 && e <= 1, "ease(\(t)) = \(e) out of [0,1]")
+            for (from, to) in [(0.2, 0.6), (0.5, 0.5), (0.8, 0.2), (0.0, 1.0)] {
+                let s = TourMotionMath.segment(t, from: from, to: to)
+                XCTAssertTrue(s >= 0 && s <= 1, "segment(\(t), \(from), \(to)) = \(s) out of [0,1]")
+            }
         }
         // Degenerate inputs must not trap.
         XCTAssertEqual(TourMotionMath.wrap(5, period: 0), 0)
         XCTAssertEqual(TourMotionMath.pulse(5, period: 0), 0)
         XCTAssertEqual(TourMotionMath.hop(5, count: 0, period: 1), 0)
+        // Zero-width and inverted slices degrade to a step at `to`.
+        XCTAssertEqual(TourMotionMath.segment(0.4, from: 0.5, to: 0.5), 0)
+        XCTAssertEqual(TourMotionMath.segment(0.6, from: 0.5, to: 0.5), 1)
+        XCTAssertEqual(TourMotionMath.segment(0.1, from: 0.8, to: 0.2), 0)
+        XCTAssertEqual(TourMotionMath.segment(0.9, from: 0.8, to: 0.2), 1)
+    }
+
+    func testTourNeverCyclesFasterThanTheFlashCap() {
+        // tour.wrap's SHIPPED copy promises "under three flashes per second";
+        // every illustration cycle is >= this named floor. 1/0.75s ≈ 1.33Hz,
+        // comfortably under the WCAG/App-Store 3Hz line.
+        XCTAssertGreaterThanOrEqual(TourMotionMath.fastestAllowedPeriod, 1.0 / 3.0)
+        XCTAssertEqual(TourMotionMath.fastestAllowedPeriod, 0.75, accuracy: 1e-9)
     }
 
     func testTourMotionMathIsPeriodic() {

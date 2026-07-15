@@ -12,7 +12,7 @@ struct MoreView: View {
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var showSettings      = false
-    @State private var showWelcomeTour   = false
+    @State private var replayTour: TourPresentation?
     @State private var showAutomations   = false
     @State private var showDevices       = false
     @State private var showEntertainmentAreas = false
@@ -50,10 +50,9 @@ struct MoreView: View {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
         }
         .sheet(isPresented: $showShareInvite) { ShareInviteSheet() }
-        .fullScreenCover(isPresented: $showWelcomeTour) {
-            WelcomeTourView(pages: TutorialCatalog.pages(includeStudioSuite:
-                !(orchestrator.guestAccessInfo.isGuestOnly && !orchestrator.isDemoMode))) {
-                showWelcomeTour = false
+        .fullScreenCover(item: $replayTour) { presentation in
+            WelcomeTourView(pages: presentation.pages) {
+                replayTour = nil
             }
         }
         // Round-2 Item 4: the ONLY other builder entry point (Studio's prompt)
@@ -195,7 +194,11 @@ struct MoreView: View {
             moreRow(icon: "play.circle.fill", iconColor: teal,
                     title: "Replay the Tour",
                     subtitle: "A two-minute tour of everything") {
-                showWelcomeTour = true
+                // item-based cover (build-14 precedent): the pages snapshot
+                // rides the presentation, so a mid-tour grant change can't
+                // reshuffle the deck under the reader's thumb.
+                replayTour = TourPresentation(id: 1, pages: TutorialCatalog.pages(
+                    includeStudioSuite: !(orchestrator.guestAccessInfo.isGuestOnly && !orchestrator.isDemoMode)))
             }
 
             moreDivider

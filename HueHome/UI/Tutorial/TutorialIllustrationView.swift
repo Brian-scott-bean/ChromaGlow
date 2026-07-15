@@ -16,6 +16,12 @@ import SwiftUI
 /// Pure motion helpers for the tour compositions. Kept math-only (no SwiftUI
 /// types) so TutorialCatalogTests can pin their bounds and periodicity.
 enum TourMotionMath {
+    /// The shortest cycle any tour composition may use. tour.wrap's shipped
+    /// copy promises "under three flashes per second" — this named floor
+    /// (1/0.75s ≈ 1.33Hz) is pinned by TutorialCatalogTests so a future
+    /// speed-up can't silently break an App-Store-facing claim.
+    static let fastestAllowedPeriod: Double = 0.75
+
     /// 0→1 sawtooth with the given period.
     static func wrap(_ time: Double, period: Double) -> Double {
         guard period > 0 else { return 0 }
@@ -60,8 +66,9 @@ struct TutorialIllustrationView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The instant shown when Reduce Motion is on — picked so every
-    /// composition looks deliberate as a still.
-    private static let frozenTime: Double = 1.9
+    /// composition looks deliberate as a still (rooms lit mid-scrub, all
+    /// composer layers assembled, the scenes card landed, a grant ticked).
+    private static let frozenTime: Double = 4.6
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !isActive || reduceMotion)) { timeline in
@@ -549,11 +556,11 @@ private struct PerformArt: View {
     let t: Double
 
     var body: some View {
-        // Crossfader glides A↔B on a 6s sine; pads pulse round-robin on a
-        // 0.75s grid (≤1.33Hz, never two at once).
+        // Crossfader glides A↔B on a 6s sine; pads pulse round-robin on the
+        // flash-cap grid (≤1.33Hz, never two at once).
         let x = TourMotionMath.pulse(t, period: 6.0)   // 0 = deck A, 1 = deck B
-        let pad = TourMotionMath.hop(t, count: 4, period: 0.75)
-        let padGlow = TourMotionMath.pulse(t, period: 0.75)
+        let pad = TourMotionMath.hop(t, count: 4, period: TourMotionMath.fastestAllowedPeriod)
+        let padGlow = TourMotionMath.pulse(t, period: TourMotionMath.fastestAllowedPeriod)
 
         VStack(spacing: 14) {
             HStack(spacing: 14) {
