@@ -19,11 +19,13 @@ Important current facts (2026-07-10):
   scheme explicitly). Validate with:
   `xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`.
 - **`main` is the branch Brian installs from** (Xcode → physical iPhone). Keep it releasable;
-  fast-forward validated work to it. Current: `main`, 1.0.0 build 27 (see DEVLOG snapshot).
+  fast-forward validated work to it. Current: `main`, 1.0.0 build 28 (see DEVLOG snapshot).
 - Brian's conventions: `checkpoint/*` rollback tag before any multi-commit run; bump
   `CURRENT_PROJECT_VERSION` (all 12 pbxproj entries) each device-test round; one shippable
   commit per fix.
 - The freshest "where are we / what's next" is the DEVLOG "Current Status Snapshot" — as of now:
+  build 28 (2026-07-15) = the final audit + Welcome Tour run (35 more Release prints gated,
+  12-page replayable first-launch tour, the hidden-tab photosensitivity-alert fix, cleanups);
   build 27 (2026-07-11) = the App-Store-prep run (trademark/naming fixes, Signify disclaimer,
   photosensitivity notice, debug-print gating, 1.0.0 bump; submission runbook at
   `docs/ios/app-store-submission-runbook.md`); builds 18-26 still await Brian's on-device
