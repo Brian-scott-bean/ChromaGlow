@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-07-11)
+## Current Status Snapshot (updated 2026-07-15)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
@@ -12,7 +12,21 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **27**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **28**).
+- **BUILD 28 (2026-07-15): FINAL AUDIT + WELCOME TOUR — AWAITING BRIAN'S ON-DEVICE CHECK.**
+  Fifteen shippable commits (rollback tag `checkpoint/tour-audit-2026-07-15`): the audit's one
+  real gap closed (35 MORE ungated Release prints — StudioViewModel 28 / CompositionStore 6 /
+  watch WatchStore 1 — behind per-file `debugLog`; sweep now zero across all 4 targets), the
+  **12-page replayable Welcome Tour** (auto-presents once on first arrival post-pairing/join/
+  demo; guests see 9 pages; replay in More → APP; zero image assets — live StageKit/SF-Symbol
+  illustrations ≤1.33Hz, Reduce-Motion stills, Dynamic Type + VoiceOver; catalog locked by 16
+  `TutorialCatalogTests`), and a REAL pre-existing bug fix found by Simulator smoke: **the
+  build-27 photosensitivity notice never actually appeared on fresh installs** (fired from the
+  prewarm-hidden Studio tab, silently dropped by UIKit AND poisoning the next presentation —
+  now gated on `\.isTabActive`). Also: orphan duplicate `HueHome/PrivacyInfo.xcprivacy` deleted
+  (the ROOT file is the live manifest), stray watch entitlements deleted, copyright strings set,
+  Xcode pbxproj normalization accepted. Suite 683/683 green per commit. Full entry + Brian's
+  on-device checklist below (the 2026-07-15 BUILD 28 entry).
 - **BUILD 27 (2026-07-11): APP-STORE-PREP RUN — READY FOR BRIAN'S ASC PASS.** Ten shippable
   commits (rollback tag `checkpoint/appstore-prep-2026-07-11`): trademark/naming fixes ("Hue
   Home" Siri alt-name removed, Lock-Screen widget label "HueHome"→"ChromaGlow"), Signify
@@ -331,6 +345,117 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-15 - [Claude] BUILD 28: final App-Store audit + the Welcome Tour
+
+**Scope (Brian):** "complete audit — make sure it's App Store ready" + "a full tutorial for the
+first time someone logs in, replayable, pristine, showcasing everything."
+
+**Rollback:** `git reset --hard checkpoint/tour-audit-2026-07-15` (tag pushed with this run).
+Fifteen commits, suite green per commit (667→683 tests), build 27→28 (all 12 entries).
+
+### Audit verdict — the app IS App-Store ready; one real code gap found and closed
+- **Verified DONE (no action):** usage strings cover every capability the code actually uses
+  (camera/mic/local-network/Bonjour/location — nothing else used); privacy manifests in all 4
+  bundles, and a required-reason-API sweep over all four source roots returned ZERO hits beyond
+  the declared UserDefaults/CA92.1 (grep in this entry's Validation); entitlements correct; icons
+  + launch screen valid; zero TODO/trademark/test-IP leakage; no dev UI reachable in Release; TLS
+  pinning wired on all 4 surfaces (`BridgePinnedTrustDelegate` in HueAPIClient/HueSSEService/
+  HueIntentAPIClient/WidgetIntents/WatchStore); `SecretLogScrubTests` present; ⏱️PERF gone.
+- **The gap:** 35 ungated `print()` still shipped in Release — the build-27 run gated
+  UnifiedOrchestrator's 31 sites but missed **StudioViewModel (28**, incl. `[AI]` sites gated
+  only by `canImport(FoundationModels)`, one printing the raw model response**)**,
+  **CompositionStore (6)**, **watch WatchStore (1)**. All now behind per-file `fileprivate
+  debugLog(@autoclosure)` (the house pattern). An awk sweep (below) proves zero ungated prints
+  outside `#if DEBUG` across all four targets.
+- **Cleanups:** stray unreferenced `LightShadeWatchApp.entitlements` deleted; orphan duplicate
+  `HueHome/PrivacyInfo.xcprivacy` deleted — **the LIVE app manifest is the repo-root
+  `PrivacyInfo.xcprivacy`** (pbxproj Resources phase), do not "clean" the root one;
+  `NSHumanReadableCopyright = "© 2026 Brian Bean"` on the 4 extension/watch configs; accepted
+  Xcode 26's pbxproj comment/format normalization as its own commit.
+- Remaining submission work is **Brian's manual ASC Part B only** (metadata, screenshots, demo
+  video, archive/upload — runbook).
+
+### NEW: the Welcome Tour (first-launch tutorial, replayable)
+- **12 swipeable full-screen pages** in the StageKit dark-stage look: Welcome → Rooms → Moods →
+  Room detail (copy/paste color, Paint, My Colors) → Scenes → Studio → Composer → Perform →
+  Automations → Family sharing → Siri/widgets/watch → privacy/photosensitivity wrap. Guests see
+  9 (the Studio suite drops, mirroring `visibleTabs`). Copy is trademark-clean by test.
+- **Zero image assets:** every illustration is live SwiftUI (SF Symbols + StageKit, incl. real
+  `PatternStripView`s), a pure function of wall time via one TimelineView (15fps, paused
+  off-page); Reduce Motion renders a curated frozen frame (t=4.6s); nothing cycles faster than
+  `TourMotionMath.fastestAllowedPeriod` (0.75s ≈ 1.33Hz — pinned by test against the 3-flash
+  promise in the wrap page's copy).
+- **Auto-presents once** on first arrival in the main shell (post-pairing, post-join, or demo):
+  `WelcomeTourWiring` on `MainTabView` in AppRootView (StudioDrainWiring pattern);
+  `@AppStorage("castchroma.hasSeenWelcomeTour")` set ONLY by Skip/Done (kill mid-tour = shows
+  again); a cold-start deep link (`DeepLinkCoordinator.hasPendingRoute || openToken != 0`)
+  suppresses WITHOUT marking seen; presentation waits for loadAll settle (3s cap, demo-exempt)
+  so the guest filter snapshots truthfully. **Replay:** More → APP → "Replay the Tour".
+- **Files:** `HueHome/Core/Models/TutorialCatalog.swift` (pure catalog — copy/order/audience,
+  locked by `TutorialCatalogTests`, 16 tests), `HueHome/UI/Tutorial/{WelcomeTourView,
+  TutorialIllustrationView,WelcomeTourWiring}.swift`, registered via `add_tutorial_files.rb`
+  (idempotent); + `HueFont.tourTitle/.tourBody` (Dynamic Type), MoreView replay row,
+  `DeepLinkCoordinator.hasPendingRoute`.
+
+### Bugs found & fixed by end-to-end Simulator smoke (fresh install → Explore Demo → tour)
+1. **The build-27 photosensitivity notice NEVER actually appeared on fresh installs.**
+   `prewarmDeferredTabs` realizes StudioView opacity-hidden; StudioDrainWiring's `.onAppear`
+   fired the alert from the hidden tab; UIKit silently dropped it — and the dangling
+   presentation swallowed the NEXT presentation app-wide (it ate the tour cover; that's how it
+   was caught). Fix: gate on `\.isTabActive` (fire on appear only if visible, else on the first
+   flip). Verified: alert now presents on first VISIBLE Studio entry, once.
+2. **`fullScreenCover(isPresented:)` + separate page state built an EMPTY tour** (the build-14
+   Perform black-page bug, same fix): now `fullScreenCover(item: TourPresentation)` so the page
+   snapshot rides the presentation; the wiring also verifies the cover actually appeared and
+   re-requests once if a racing presentation swallowed it.
+3. **Next button wrapped to "Ne/xt"** when the 12-dot row squeezed it (Brian's catch):
+   `lineLimit(1) + fixedSize` + compact dot metrics (fits 375pt).
+
+### Review pass (multi-agent, adversarial verify)
+12 confirmed findings; all closed except two that were this run's own remaining steps (bump,
+this entry). Highlights: trademark test made case-insensitive (uppercase eyebrows made "HUE …"
+invisible to it); exact page order pinned; guest-visible copy may never mention
+Studio/Composer/Perform (test); accents pinned to the four identity hexes; `TourMotionMath.segment`
+joined the hostile-input bounds tests; page-1 back chevron hidden from VoiceOver; inactive-dot
+contrast raised; MoreView replay switched to the item-based cover. Known accepted edge: if
+loadAll hasn't settled after the 3s cap, a guest-keyed shell could briefly be classified as
+owner and see the 3 Studio pages once — harmless copy, deliberate trade against delaying the
+tour indefinitely.
+
+### Validation
+- Suite green per commit via xcresult (`xcrun xcresulttool get test-results summary`), 667 →
+  **683 tests** (16 TutorialCatalogTests + 2 motion-math + review additions); two consecutive
+  green runs at the final tree.
+- No-ungated-prints sweep (awk over `#if DEBUG` depth, all 4 source roots): empty.
+- Required-reason sweep: `grep -rnE 'creationDate|modificationDate|fileModificationDate|contentModificationDateKey|creationDateKey|getattrlist|fstat\(|lstat\(|systemUptime|mach_absolute_time|volumeAvailableCapacity|systemFreeSize'` → zero hits.
+- Simulator end-to-end (iPhone 17 Pro, fresh installs): tour auto-presents post-demo-entry with
+  all 12 pages animating; Done persists the flag (container plist verified) and never re-shows;
+  Skip works; replay row works; photosensitivity alert appears on first visible Studio entry;
+  deep-link/cold-start suppression logic exercised via DEBUG prints.
+
+### Left for Brian (build 28 on-device QA)
+1. Fresh install → pair → tour auto-appears after the dashboard paints; swipe all 12; Done.
+2. Reinstall → "Explore Demo" → same, then Studio tab → photosensitivity notice appears once.
+3. Skip on page 2 → relaunch → no tour. Kill mid-tour → relaunch → tour returns.
+4. More → Replay the Tour; guest phone (family-sharing invite) shows 9 pages, no Studio suite.
+5. Widget/Siri cold launch → NO tour over the deep link; next normal launch → tour.
+6. Reduce Motion, Dynamic Type XXL, VoiceOver page-turn announcements, iPad cover.
+7. Then the runbook Part B (ASC metadata/screenshots/demo video/upload) — unchanged.
+
+### Gotchas
+- The root `/PrivacyInfo.xcprivacy` is the app's LIVE manifest; the `HueHome/`-folder copy was
+  the orphan. Deleting the wrong one strips the manifest from the bundle (ITMS-91053).
+- Alerts/covers fired from opacity-hidden tabs are silently dropped by UIKit AND poison the
+  next presentation — gate any new auto-presenting surface on `\.isTabActive` (or verify+retry
+  like `WelcomeTourWiring`).
+- `simctl spawn defaults write` hits a device-domain plist that SURVIVES app uninstall and is
+  not the app container's plist — verify app prefs via
+  `xcrun simctl get_app_container … data` + `plutil -p …/Library/Preferences/com.huehome.pro.plist`.
+- StudioView.body remains untouched (type-checker ceiling) — the alert fix lives entirely in
+  `StudioDrainWiring`, the sanctioned extension point.
 
 ---
 

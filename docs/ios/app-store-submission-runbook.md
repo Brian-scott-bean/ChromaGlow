@@ -20,8 +20,8 @@ Everything in **Part A** was already done in the `checkpoint/appstore-prep-2026-
 | Nothing user-visible leads with "Hue" (alt app name + widget label fixed) | ✓ prep run |
 | Signify non-affiliation disclaimer (More + Settings + privacy policy) | ✓ prep run |
 | One-time photosensitivity notice on first Studio entry | ✓ prep run |
-| Release builds print no Composer/PERF console diagnostics | ✓ prep run |
-| Version 1.0.0 (build 27) | ✓ prep run |
+| Release builds print no Composer/PERF console diagnostics | ✓ prep run + build-28 audit (35 more sites gated: StudioViewModel/CompositionStore/WatchStore; sweep clean across all 4 targets) |
+| Version 1.0.0 (build 28) | ✓ prep run; bumped to 28 in the build-28 audit + Welcome Tour round |
 | Privacy policy + support pages current (camera/location added, beta wording removed) | ✓ prep run |
 
 **⚠️ False-positive warning for future agents:** the widget/watch targets have EMPTY Resources
@@ -134,13 +134,13 @@ screenshot them.
 ### B5. Build & upload (~30 min)
 
 1. In Xcode: select the **"HueHome 1"** scheme → destination **Any iOS Device (arm64)**.
-2. Product → **Archive** (Release config; version should read 1.0.0 (27)).
+2. Product → **Archive** (Release config; version should read 1.0.0 (28)).
 3. Organizer → Distribute App → **App Store Connect** → Upload (automatic signing; team
    `2H9J347H3T`). Provisioning auto-creates as before (`-allowProvisioningUpdates` precedent).
-4. Wait for processing (~15 min), then in ASC → TestFlight, install build 27 on your phone and
+4. Wait for processing (~15 min), then in ASC → TestFlight, install build 28 on your phone and
    watch; smoke the two-phone family-sharing checklist and the build-24–26 on-device items
    still pending from the DEVLOG.
-5. In the ASC version page, select build 27.
+5. In the ASC version page, select build 28.
 
 ### B6. Review notes + demo video (the make-or-break item)
 
@@ -153,7 +153,8 @@ App Review → App Review Information:
   >
   > REVIEWING WITHOUT HUE HARDWARE: on first launch tap **"Explore Demo"** — the full app
   > (rooms, scenes, Studio effects, widgets data, watch app) runs against built-in simulated
-  > bridges. No permissions are required in demo mode.
+  > bridges. No permissions are required in demo mode. A one-time 12-page Welcome Tour
+  > appears on first entry (Skip or swipe through; replayable from More → "Replay the Tour").
   >
   > On real hardware: local-network + Bonjour permission is requested at bridge discovery;
   > microphone only when starting a music-reactive preset (audio is analyzed on-device,
@@ -195,7 +196,5 @@ App Review → App Review Information:
 - Stale `ChromaGlow.xcodeproj/` husk (no pbxproj) + stray `ChromaGlow/UI/` folder + historical
   `generate_xcodeproj.rb`/`fix_assets_path.rb` scripts at repo root.
 - `run_tests.sh` stale `SCHEME="HueHome"` (pass `-scheme "HueHome 1"` manually).
-- Empty `INFOPLIST_KEY_NSHumanReadableCopyright` on extension/watch targets ("© 2026 Brian
-  Bean" would be nice).
 - Dead `isPro` field on the SwiftData `AppSettings` model (schema-migration implications —
   remove only with a deliberate migration).
