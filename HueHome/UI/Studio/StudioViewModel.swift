@@ -276,7 +276,7 @@ private struct AICompositionGenerator {
 #if canImport(FoundationModels)
         if #available(iOS 26.0, *) {
             guard case .available = SystemLanguageModel.default.availability else {
-                print("[AI] FoundationModels unavailable; using local fallback draft.")
+                debugLog("[AI] FoundationModels unavailable; using local fallback draft.")
                 return fallbackDraft(from: prompt, providerModel: "fallback/local_unavailable")
             }
             let session = LanguageModelSession(instructions: """
@@ -320,12 +320,12 @@ private struct AICompositionGenerator {
                 }
                 return clamped(decoded, prompt: prompt, providerModel: "FoundationModels/SystemLanguageModel.default")
             } catch {
-                print("[AI] FoundationModels generation failed; using local fallback draft. Error: \(error)")
+                debugLog("[AI] FoundationModels generation failed; using local fallback draft. Error: \(error)")
                 return fallbackDraft(from: prompt, providerModel: "fallback/local_generation_error")
             }
         }
 #endif
-        print("[AI] FoundationModels unsupported in this build; using local fallback draft.")
+        debugLog("[AI] FoundationModels unsupported in this build; using local fallback draft.")
         return fallbackDraft(from: prompt, providerModel: "fallback/local_unsupported")
     }
 
@@ -820,7 +820,7 @@ final class StudioViewModel {
         let hasDirectLightRefs = refs.contains { $0.rtype == "light" }
         if hasDirectLightRefs {
             let ids = refs.filter { $0.rtype == "light" }.map { $0.rid }
-            print("[Studio] 🔍 Resolved \(ids.count) lights from zone refs (no API call)")
+            debugLog("[Studio] 🔍 Resolved \(ids.count) lights from zone refs (no API call)")
             return ids
         }
 
@@ -839,7 +839,7 @@ final class StudioViewModel {
                 return deviceIDs.contains(ownerRID)
             }
             .map { $0.id }
-        print("[Studio] 🔍 Resolved \(roomLightIDs.count) lights from \(deviceIDs.count) device refs")
+        debugLog("[Studio] 🔍 Resolved \(roomLightIDs.count) lights from \(deviceIDs.count) device refs")
         return roomLightIDs
     }
 
@@ -1007,31 +1007,31 @@ final class StudioViewModel {
     /// Apply using a captured room snapshot to avoid room-selection races
     /// when taps and room-swipes happen close together.
     func apply(_ card: StudioCard, roomOverride: RoomDisplayItem?, preferEntertainmentOverride: Bool?) async {
-        print("[Studio] apply '\(card.name)' — selectedRoom: \(selectedRoom?.name ?? "nil")")
+        debugLog("[Studio] apply '\(card.name)' — selectedRoom: \(selectedRoom?.name ?? "nil")")
         guard let room = roomOverride ?? selectedRoom else {
             statusMessage = "⚠ Select a room first"
-            print("[Studio] ❌ No room selected")
+            debugLog("[Studio] ❌ No room selected")
             return
         }
         guard let groupedLightID = room.groupedLightID else {
             statusMessage = "⚠ Room '\(room.name)' has no grouped light"
-            print("[Studio] ❌ Room '\(room.name)' has no groupedLightID")
+            debugLog("[Studio] ❌ Room '\(room.name)' has no groupedLightID")
             return
         }
         guard let orchestrator else {
-            print("[Studio] ❌ orchestrator is nil")
+            debugLog("[Studio] ❌ orchestrator is nil")
             return
         }
         guard let api = orchestrator.hueClient(for: room.bridgeID) else {
-            print("[Studio] ❌ hueClient(for: \(room.bridgeID ?? "nil")) returned nil")
+            debugLog("[Studio] ❌ hueClient(for: \(room.bridgeID ?? "nil")) returned nil")
             return
         }
-        print("[Studio] ✅ All guards passed — groupedLightID: \(groupedLightID), bridgeID: \(room.bridgeID ?? "nil"), strategy: \(card.strategy)")
+        debugLog("[Studio] ✅ All guards passed — groupedLightID: \(groupedLightID), bridgeID: \(room.bridgeID ?? "nil"), strategy: \(card.strategy)")
 
         // ── Stop any effect already running on THIS room ─────────────
         if let existing = runningEffects[room.id] {
             let existingCard = existing.card
-            print("[Studio] Replacing '\(existingCard.name)' on \(room.name)")
+            debugLog("[Studio] Replacing '\(existingCard.name)' on \(room.name)")
             isExplicitStop = false
             await stopEffect(on: room.id)
 
@@ -1062,7 +1062,7 @@ final class StudioViewModel {
                     }
                 }()
                 guard effectUsesStudioEngine else { continue }
-                print("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (single Studio engine loop)")
+                debugLog("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (single Studio engine loop)")
                 isExplicitStop = false
                 await stopEffect(on: roomID)
             }
@@ -1071,7 +1071,7 @@ final class StudioViewModel {
         // ── If new card is entertainment-scoped, stop any existing entertainment effect ──
         if card.isEntertainmentScoped {
             for (roomID, effect) in runningEffects where effect.isEntertainment {
-                print("[Studio] Stopping entertainment '\(effect.card.name)' on \(effect.room.name) (only one DTLS session allowed)")
+                debugLog("[Studio] Stopping entertainment '\(effect.card.name)' on \(effect.room.name) (only one DTLS session allowed)")
                 isExplicitStop = false
                 await stopEffect(on: roomID)
             }
@@ -1089,15 +1089,15 @@ final class StudioViewModel {
             for (roomID, effect) in runningEffects {
                 let overlap = Set(effect.lightIDs).intersection(newLightSet)
                 if !overlap.isEmpty {
-                    print("[Handoff] Light overlap detected: \(overlap.count) lights shared with \(effect.room.name) — awaiting teardown barrier")
+                    debugLog("[Handoff] Light overlap detected: \(overlap.count) lights shared with \(effect.room.name) — awaiting teardown barrier")
                     isExplicitStop = false
                     await stopEffect(on: roomID)
-                    print("[Handoff] Overlap teardown barrier complete for \(effect.room.name)")
+                    debugLog("[Handoff] Overlap teardown barrier complete for \(effect.room.name)")
                 }
             }
         }
 
-        print("[Handoff] Startup barrier clear for '\(card.name)' on \(room.name); beginning startup sequence")
+        debugLog("[Handoff] Startup barrier clear for '\(card.name)' on \(room.name); beginning startup sequence")
 
         let brightness = paramValue(for: card.id, paramID: "brightness", default: 70)
 
@@ -1109,7 +1109,7 @@ final class StudioViewModel {
             let roomWasOff = !room.isOn
 
             // Step 1: Turn on group with brightness (1 grouped_light PUT).
-            print("[Studio] 📡 Group ON + bri=\(brightness) → \(room.name)")
+            debugLog("[Studio] 📡 Group ON + bri=\(brightness) → \(room.name)")
             try? await api.setGroupedLightState(
                 id: groupedLightID, on: true, brightness: brightness
             )
@@ -1126,7 +1126,7 @@ final class StudioViewModel {
             // `bridgeLights` is usually nil, so resolving capability up front
             // would put a fetchLights() between the tap and the first bulb.
             // Incapable lights answer the PUT with a 400 and change nothing.
-            print("[Studio] 📡 Per-light effect=\(effectName) to \(lightIDs.count) lights in \(room.name)")
+            debugLog("[Studio] 📡 Per-light effect=\(effectName) to \(lightIDs.count) lights in \(room.name)")
             await sendPerLightBatched(lightIDs: lightIDs, api: api) { id in
                 try? await api.setLightNativeEffect(id: id, effect: effectName)
             }
@@ -1251,7 +1251,7 @@ final class StudioViewModel {
                         duration: 500
                     )
                 }
-                print("[Composer] ⚡ bridgeOptimized one-shot applied for '\(preset.name)' on \(room.name)")
+                debugLog("[Composer] ⚡ bridgeOptimized one-shot applied for '\(preset.name)' on \(room.name)")
             } else {
                 // Overlap mic startup with gamut fetch so voice-derived levels exist sooner (Sync-style responsiveness).
                 async let gamutTask = resolveDominantGamut(for: room, api: api, cachedLights: bridgeLights)
@@ -1306,7 +1306,7 @@ final class StudioViewModel {
                 if requestedTransport == .entertainmentArea && !isEnt {
                     statusMessage = "⚠ Streaming unavailable, running \(room.name) in Room (REST)"
                 }
-                print("[Studio] Active effects: \(runningEffects.count) rooms")
+                debugLog("[Studio] Active effects: \(runningEffects.count) rooms")
                 return
             }
             runningEffects[room.id] = RunningEffect(
@@ -1318,7 +1318,7 @@ final class StudioViewModel {
             statusMessage = "🟢 \(card.name) → \(room.name) [REST_ONE_SHOT]"
         }
 
-        print("[Studio] Active effects: \(runningEffects.count) rooms")
+        debugLog("[Studio] Active effects: \(runningEffects.count) rooms")
     }
 
     /// Stop the effect running on a specific room.
@@ -1328,19 +1328,19 @@ final class StudioViewModel {
               let api = orchestrator.hueClient(for: effect.room.bridgeID),
               let groupedLightID = effect.room.groupedLightID else { return }
 
-        print("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (glID: \(groupedLightID)) explicit=\(isExplicitStop)")
+        debugLog("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (glID: \(groupedLightID)) explicit=\(isExplicitStop)")
 
         switch effect.card.strategy {
         case .bridgeNative:
             // Clean up per-light effects (the ONLY way to clear them)
             if !effect.lightIDs.isEmpty {
-                print("[Handoff] Clearing per-light no_effect on \(effect.lightIDs.count) lights for \(effect.room.name)")
+                debugLog("[Handoff] Clearing per-light no_effect on \(effect.lightIDs.count) lights for \(effect.room.name)")
                 await sendPerLightBatched(lightIDs: effect.lightIDs, api: api) { id in
                     try? await api.setLightNativeEffect(id: id, effect: "no_effect")
                 }
                 // Allow bridge-side effect transition buffers to settle before a new owner starts.
                 try? await Task.sleep(for: .milliseconds(150))
-                print("[Handoff] Per-light no_effect cleanup + settle delay complete for \(effect.room.name)")
+                debugLog("[Handoff] Per-light no_effect cleanup + settle delay complete for \(effect.room.name)")
             }
 
             if isExplicitStop {
@@ -1749,11 +1749,9 @@ final class StudioViewModel {
             let draft = try await aiGenerator.generateDraft(from: prompt)
             let now = Date()
             let safeIcon = sanitizedSymbolName(draft.icon)
-            #if DEBUG
             if safeIcon != draft.icon {
-                print("[AI] Invalid SF Symbol '\(draft.icon)' from model. Falling back to '\(safeIcon)'.")
+                debugLog("[AI] Invalid SF Symbol '\(draft.icon)' from model. Falling back to '\(safeIcon)'.")
             }
-            #endif
             let preset = CompositionPreset(
                 id: UUID(),
                 name: draft.name,
@@ -1776,10 +1774,10 @@ final class StudioViewModel {
             return preset
         } catch {
             if case let AICompositionGeneratorError.decodeFailure(raw: raw, details: details) = error {
-                print("[AI] Decode failure details: \(details)")
-                print("[AI] Raw model response JSON candidate: \(raw)")
+                debugLog("[AI] Decode failure details: \(details)")
+                debugLog("[AI] Raw model response JSON candidate: \(raw)")
             } else {
-                print("[AI] Generation failure: \(error)")
+                debugLog("[AI] Generation failure: \(error)")
             }
             let message = (error as? LocalizedError)?.errorDescription ?? "Couldn’t generate composition. Try a different prompt."
             aiGenerationErrorMessage = message
@@ -2229,3 +2227,12 @@ final class StudioViewModel {
     }
 }
 
+
+/// DEBUG-only console diagnostics (house convention — see UnifiedOrchestrator).
+/// Release builds compile the call away, keeping room and composition names
+/// out of the release console.
+fileprivate func debugLog(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    print(message())
+    #endif
+}

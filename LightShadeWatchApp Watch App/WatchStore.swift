@@ -567,7 +567,7 @@ extension WatchStore: WCSessionDelegate {
     nonisolated func session(_ session: WCSession,
                              activationDidCompleteWith activationState: WCSessionActivationState,
                              error: Error?) {
-        if let error { print("WatchStore WCSession: activation error — \(error)") }
+        if let error { debugLog("WatchStore WCSession: activation error — \(error)") }
         // Replay any context delivered while the app was not running
         let ctx = session.receivedApplicationContext
         if !ctx.isEmpty {
@@ -593,4 +593,13 @@ func watchRoomIcon(_ archetype: String?) -> String {
     case "studio", "music":         return "music.note"
     default:                        return "lightbulb.fill"
     }
+}
+
+/// DEBUG-only console diagnostics (house convention — see UnifiedOrchestrator).
+/// Release builds compile the call away, keeping room and composition names
+/// out of the release console.
+fileprivate func debugLog(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    print(message())
+    #endif
 }

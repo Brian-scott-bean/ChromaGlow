@@ -200,7 +200,7 @@ final class CompositionStore: @unchecked Sendable {
             let wrapped = try JSONDecoder().decode([FailableDecodable<CompositionPreset>].self, from: data)
             let good = wrapped.compactMap(\.value)
             if good.count < wrapped.count {
-                print("[CompositionStore] ⚠ \(wrapped.count - good.count) preset(s) failed to decode — keeping \(good.count), backing up the original file")
+                debugLog("[CompositionStore] ⚠ \(wrapped.count - good.count) preset(s) failed to decode — keeping \(good.count), backing up the original file")
                 backUpCompositionsFile(fileURL)
             }
             guard !good.isEmpty else { return (builtInPresets, false) }
@@ -210,14 +210,14 @@ final class CompositionStore: @unchecked Sendable {
             // no new write path, nothing to race the seed (see BuiltInSeedMigrator).
             let migration = BuiltInSeedMigrator.migrate(stored: good, builtIns: builtInPresets)
             if migration.didChange {
-                print("[CompositionStore] Built-ins reconciled — added \(migration.added.count), refreshed \(migration.refreshed.count)")
+                debugLog("[CompositionStore] Built-ins reconciled — added \(migration.added.count), refreshed \(migration.refreshed.count)")
             }
             return (migration.presets, false)
         } catch {
             // The file is not a decodable array at all. Preserve the bytes in a
             // timestamped .bak, run in-memory on defaults, and DO NOT persist —
             // overwriting the source on a read failure is how the library used to vanish.
-            print("[CompositionStore] Failed to load: \(error). Backing up file and running on defaults (source NOT overwritten).")
+            debugLog("[CompositionStore] Failed to load: \(error). Backing up file and running on defaults (source NOT overwritten).")
             backUpCompositionsFile(fileURL)
             return (builtInPresets, false)
         }
@@ -233,9 +233,9 @@ final class CompositionStore: @unchecked Sendable {
             .appendingPathComponent("compositions-\(formatter.string(from: Date())).bak")
         do {
             try FileManager.default.copyItem(at: fileURL, to: backupURL)
-            print("[CompositionStore] Backed up compositions.json → \(backupURL.lastPathComponent)")
+            debugLog("[CompositionStore] Backed up compositions.json → \(backupURL.lastPathComponent)")
         } catch {
-            print("[CompositionStore] ⚠ Backup failed: \(error)")
+            debugLog("[CompositionStore] ⚠ Backup failed: \(error)")
         }
     }
 
@@ -245,7 +245,7 @@ final class CompositionStore: @unchecked Sendable {
             try data.write(to: fileURL, options: .atomic)
             Self.onPersist?()
         } catch {
-            print("[CompositionStore] Failed to save: \(error)")
+            debugLog("[CompositionStore] Failed to save: \(error)")
         }
     }
 
@@ -1080,4 +1080,13 @@ final class CompositionStore: @unchecked Sendable {
         ]
     }()
     // swiftlint:enable function_body_length
+}
+
+/// DEBUG-only console diagnostics (house convention — see UnifiedOrchestrator).
+/// Release builds compile the call away, keeping room and composition names
+/// out of the release console.
+fileprivate func debugLog(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    print(message())
+    #endif
 }
