@@ -151,6 +151,8 @@ struct WelcomeTourView: View {
             } label: {
                 Text(isLastPage ? "Done" : "Next")
                     .font(HueFont.stageName)
+                    .lineLimit(1)
+                    .fixedSize()   // never let the dots row squeeze this into a wrap
                     .foregroundStyle(.black)
                     .padding(.horizontal, 26)
                     .frame(height: 44)
