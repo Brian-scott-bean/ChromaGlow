@@ -12,6 +12,7 @@ struct MoreView: View {
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var showSettings      = false
+    @State private var showWelcomeTour   = false
     @State private var showAutomations   = false
     @State private var showDevices       = false
     @State private var showEntertainmentAreas = false
@@ -49,6 +50,12 @@ struct MoreView: View {
             NavigationStack { SettingsView(onForget: { showSettings = false }) }
         }
         .sheet(isPresented: $showShareInvite) { ShareInviteSheet() }
+        .fullScreenCover(isPresented: $showWelcomeTour) {
+            WelcomeTourView(pages: TutorialCatalog.pages(includeStudioSuite:
+                !(orchestrator.guestAccessInfo.isGuestOnly && !orchestrator.isDemoMode))) {
+                showWelcomeTour = false
+            }
+        }
         // Round-2 Item 4: the ONLY other builder entry point (Studio's prompt)
         // is conditional on a spatial motion pattern + no existing area, and
         // the old Sync tab was removed in v0.15.0 — this is the app's
@@ -181,6 +188,14 @@ struct MoreView: View {
                     title: "Settings",
                     subtitle: "Bridge, API, and developer options") {
                 showSettings = true
+            }
+
+            moreDivider
+
+            moreRow(icon: "play.circle.fill", iconColor: teal,
+                    title: "Replay the Tour",
+                    subtitle: "A two-minute tour of everything") {
+                showWelcomeTour = true
             }
 
             moreDivider
