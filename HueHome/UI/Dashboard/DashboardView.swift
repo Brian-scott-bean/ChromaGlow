@@ -926,7 +926,7 @@ struct RoomCard: View {
                     Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
                         .font(.system(size: 20))
                         .foregroundStyle(localIsOn ? localGlowColor : .white.opacity(0.35))
-                        .frame(width: 40, height: 40)
+                        .frame(width: HueHit.min, height: HueHit.min)
                         .contentShape(Rectangle())
                         .symbolEffect(.bounce, value: localIsOn)
                 }
@@ -947,7 +947,7 @@ struct RoomCard: View {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.4))
-                        .frame(width: 36, height: 36)
+                        .frame(width: HueHit.min, height: HueHit.min)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

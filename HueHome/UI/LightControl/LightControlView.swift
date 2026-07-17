@@ -311,6 +311,7 @@ struct LightControlView: View {
                         .frame(width: 40, height: 40)
                     }
                     .buttonStyle(.plain)
+                    .stageTapTarget(visual: 40)
                     .accessibilityLabel(swatch.name)
                 }
             }

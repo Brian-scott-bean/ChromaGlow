@@ -67,6 +67,7 @@ struct SavedColorStrip: View {
             .frame(width: 40, height: 40)
         }
         .buttonStyle(.plain)
+        .stageTapTarget(visual: 40)
         .accessibilityLabel("Save current color")
     }
 
@@ -92,6 +93,7 @@ struct SavedColorStrip: View {
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isArmed)
         }
         .buttonStyle(.plain)
+        .stageTapTarget(visual: 40)
         // Drag a swatch straight onto a light card (RoomDetail's cards are
         // dropDestinations). Tap-to-apply stays as the accessible path.
         .draggable(saved)

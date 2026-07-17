@@ -1308,7 +1308,7 @@ struct CompactLightCard: View {
                         .font(.system(size: 20))
                         .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
                         .symbolEffect(.bounce, value: localIsOn)
-                        .frame(width: 32, height: 32)
+                        .frame(width: HueHit.min, height: HueHit.min)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

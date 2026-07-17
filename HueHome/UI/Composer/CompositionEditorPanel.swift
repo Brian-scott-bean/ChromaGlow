@@ -370,7 +370,9 @@ struct CompositionEditorPanel: View {
     // ──────────────────────────────────────────────
 
     private var harmonySwatchPreview: some View {
-        HStack(spacing: 12) {
+        // Spacing 0: each swatch sits centered in its own 44pt hit frame, so
+        // the hit boxes tile edge-to-edge without overlapping.
+        HStack(spacing: 0) {
             ForEach(0..<3, id: \.self) { index in
                 let color = harmonySwatchColor(at: index)
                 let isEditing = editingSwatch?.id == index
@@ -379,6 +381,8 @@ struct CompositionEditorPanel: View {
                     .frame(width: 28, height: 28)
                     .overlay(Circle().strokeBorder(.white.opacity(isEditing ? 0.9 : 0.5), lineWidth: isEditing ? 2.5 : 1.5))
                     .shadow(color: color.opacity(isEditing ? 0.7 : 0.4), radius: isEditing ? 8 : 4)
+                    .frame(width: HueHit.min, height: HueHit.min)
+                    .contentShape(Rectangle())
                     .onTapGesture {
                         editingSwatch = (editingSwatch?.id == index) ? nil : SwatchEditItem(id: index)
                         HapticManager.shared.selection()

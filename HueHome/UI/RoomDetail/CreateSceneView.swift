@@ -125,6 +125,8 @@ struct CreateSceneView: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.white.opacity(0.35))
+                                .frame(width: HueHit.min, height: HueHit.min)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
