@@ -373,6 +373,12 @@ struct ScenesTabView: View {
                                     Text(preset.name)
                                         .font(.system(size: 13, weight: .semibold))
                                         .lineLimit(1)
+                                    // Static real-palette swatch strip — no
+                                    // clock in a horizontal scroller.
+                                    LookPreviewStrip(spec: LookPreviewSpec(preset: preset),
+                                                     animated: false,
+                                                     height: 6)
+                                        .frame(width: 40)
                                     Image(systemName: "plus.circle.fill")
                                         .font(.system(size: 11))
                                         .opacity(0.6)

@@ -69,13 +69,17 @@ struct SceneMoodCard: View {
                         }
                     }
 
-                    // Live pattern signature on running dynamic scenes —
-                    // decorative wave, same convention as engine cards.
-                    if scene.isDynamic && scene.isActive {
-                        PatternStripView(pattern: .wave, accent: scene.accentColor)
-                            .padding(.top, 4)
-                            .frame(maxWidth: 120)
-                    }
+                    // Signature strip on every scene: static scenes get a
+                    // still color bar; dynamic scenes animate at their REAL
+                    // recall speed while active (0-1 bridge speed → 0-100).
+                    LookPreviewStrip(
+                        spec: LookPreviewSpec(pattern: .wave,
+                                              accent: scene.accentColor,
+                                              speed: min(100, max(0, scene.speed * 100))),
+                        animated: scene.isDynamic && scene.isActive
+                    )
+                    .padding(.top, 4)
+                    .frame(maxWidth: 120)
                 }
 
                 Spacer()

@@ -232,6 +232,21 @@ struct AutomationsView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.35))
+
+                // Static signature strip for dynamic effects (Automations is
+                // a calm surface — no animation by design). Mood/gradual
+                // effects have no signature and show none.
+                if case .effect(let effectID) = automation.action,
+                   let pattern = StudioCardCanvas.signaturePattern(forCardID: effectID) {
+                    PatternStripView(
+                        pattern: pattern,
+                        accent: EffectLibrary.all.first(where: { $0.id == effectID })?.accentColor ?? amber,
+                        animated: false
+                    )
+                    .padding(.top, 3)
+                    .frame(maxWidth: 110)
+                    .opacity(automation.isEnabled ? 1 : 0.4)
+                }
             }
 
             Spacer()
