@@ -12,7 +12,7 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **31**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **32**).
 - **WORLD-CLASS POLISH PROGRAM IN FLIGHT (2026-07-17, Brian-approved):** six rollback-safe
   rounds → builds 29–33 (A visible UX: tour-overlap/keyboard/44pt · B previews-everywhere +
   envelope/mic visuals · C terminology/one-transport-vocabulary · D new-effects pack incl.
@@ -37,8 +37,14 @@
   (Warmth, Brightness Shape, ADVANCED settings, sample home, …), and a jargon regression guard
   (hardening_guards.sh Guard 6 + a vocabulary unit test) which also surfaced + fixed two
   pre-existing guard failures (stale M-03 manifest path, one H-03-class log line) (rollback:
-  `checkpoint/terminology-C`). Full entries + device checklists below. Full program record in
-  the 2026-07-17 ROUND 0 entry.
+  `checkpoint/terminology-C`).
+  **ROUND D SHIPPED = BUILD 32 (2026-07-17):** the lava-lamp-class organic pack — 10 new
+  built-ins (56→66): Lava Lamp, Retro Lava, Aurora Curtain, Ocean Storm, Fireflies, Candle
+  Cathedral, Neon Rain, Deep Space Drift, Jellyfish, Zen Garden — all palettes are
+  catalog-proven gamut-C points/convex blends, all passed the full PresetCatalogTests bar;
+  BuiltInSeedMigrator delivers them to existing installs without touching user edits
+  (rollback: `checkpoint/effects-D`). Full entries + device checklists below. Full program
+  record in the 2026-07-17 ROUND 0 entry.
 - **BUILD 28 (2026-07-15): FINAL AUDIT + WELCOME TOUR — AWAITING BRIAN'S ON-DEVICE CHECK.**
   Fifteen shippable commits (rollback tag `checkpoint/tour-audit-2026-07-15`): the audit's one
   real gap closed (35 MORE ungated Release prints — StudioViewModel 28 / CompositionStore 6 /
@@ -371,6 +377,57 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-17 - [Claude] BUILD 32 — POLISH ROUND D: the lava-lamp pack — 10 new built-in looks (56→66)
+
+### Branch
+- `main` (rollback tag: `checkpoint/effects-D`, pushed)
+
+### Did
+- **feat(composer): 10 new built-ins, id block `00000009-0001-0001-0001-…`** (block A stays
+  reserved for the Sequence Builder's future templates): **Lava Lamp** (the signature ask —
+  molten red/orange/magma-magenta, pulseCenter at speed 8, swell envelope: the slow blob
+  morph no catalog entry had), **Retro Lava** (70s amber/olive scatter), **Aurora Curtain**
+  (green/violet/teal wave with heavy stagger — drapes), **Ocean Storm** (deep blue/teal/white-
+  crest comet + flicker), **Fireflies** (near-dark warm-green twinkle, min brightness 4),
+  **Candle Cathedral** (many-point amber/ember scatter + flicker), **Neon Rain** (cyan/magenta
+  cascade, 90bpm pulse = 1.5Hz, well under the 3Hz bar), **Deep Space Drift** (indigo/teal/
+  purple spiral), **Jellyfish** (bioluminescent teal/violet pulseCenter swell), **Zen Garden**
+  (sage/sand static gradient + slow breathe). Category spread: Ambient +2, Nature +3, Cozy +1,
+  Energetic +1, Cosmic +1, Cinematic +1, Focus +1.
+- **Pruned from the plan's draft:** "Sunrise Alarm" (redundant with the existing Sunrise Wake).
+- **Gamut discipline:** every xy is a catalog-proven gamut-C point or a CONVEX BLEND of two
+  (triangle interiors are convex), so exact gamut-membership holds by construction.
+- **The quality bar did its job twice:** first run failed `testEveryFieldIsInsideItsSliderRange`
+  — three presets breathed below the envelope slider's 20-BPM floor (18/16/12) — clamped to 20.
+  All 15 PresetCatalogTests then green (gamut, 3Hz flash sweep, motion-differs-across-lights at
+  1/5/20 lights, no low-speed jumping, uniqueness).
+- BuiltInSeedMigrator reaches existing installs by id (adds newcomers, never touches user
+  edits) — no migration code needed, by design.
+
+### Working
+- Full suite green twice at round end (see Validation).
+
+### Left
+- Round E next (build 33, `checkpoint/hardening-E`): security hardening round 3.
+- **Brian's Round D on-device checks:** Composer deck shows 66 presets (the b21 checklist item
+  said 56 — superseded); run Lava Lamp on a real room side-by-side vs Opal and Enchant — it
+  must read as slow drifting blobs, clearly distinct; Fireflies in a dark room (near-dark
+  background with warm green sparkles); Aurora Curtain vs Northern Lights (curtain has the
+  hanging-drape stagger); each new look's name matches its feel; existing user-edited presets
+  untouched after the update.
+
+### Validation
+- PresetCatalogTests 15/15 + full suite via xcresulttool; build 32 across all 12 pbxproj
+  entries; AGENTS.md durable-fact line updated (56→66).
+
+### Gotchas
+- The envelope BPM slider floor is 20 — a built-in may not ship values the editor can't
+  reproduce (`testEveryFieldIsInsideItsSliderRange` enforces; my 18/16/12 drafts failed it).
+- Id block `0000000A-…` remains RESERVED for Sequence Builder templates (design doc §7) — the
+  next preset pack continues in block 9 (`…-000000000011`+) or opens block B.
 
 ---
 

@@ -286,9 +286,11 @@ Scenes-excellence run (2026-07-09, build 21) durable facts — full record in th
   touches user data). It deliberately adds **no write path** — persisting during load would race
   the create-only seed (M-13). Built-in ids MUST follow the hand-assigned
   `0000000X-0001-0001-0001-...` scheme; a `UUID()` breaks migration silently.
-- **`PresetCatalogTests` is the quality bar** for the 56 built-ins: gamut-C membership (exact, no
-  tolerance), field ranges, legal renders at 1/5/20 lights, no low-speed jumping, motion that
-  differs across lights, and a 3Hz photosensitivity limit (WCAG 2.3.1).
+- **`PresetCatalogTests` is the quality bar** for the built-ins (66 as of build 32 — the
+  2026-07-17 lava-lamp pack added 10 in id block 9; block `0000000A-…` is reserved for Sequence
+  Builder templates): gamut-C membership (exact, no tolerance), field ranges, legal renders at
+  1/5/20 lights, no low-speed jumping, motion that differs across lights, and a 3Hz
+  photosensitivity limit (WCAG 2.3.1).
 - **Gamut C is not a superset of A and B** (A's green primary is more saturated). C is the target
   because it is the modern colour bulb and `activeCompositionGamut` defaults to `.c`.
 - **`scatter` + `.temperature` renders every light identically** — scatter varies only phase (weight
