@@ -245,7 +245,7 @@ struct SettingsView: View {
     // ──────────────────────────────────────────────
 
     private var developerSection: some View {
-        settingsGroup(header: "DEVELOPER") {
+        settingsGroup(header: "ADVANCED") {
             Button {
                 if orchestrator.isDemoMode {
                     NotificationCenter.default.post(name: .hueDemoExited, object: nil)
@@ -295,7 +295,7 @@ struct SettingsView: View {
                         Text("Clean Bridge Resources")
                             .font(.subheadline)
                             .foregroundStyle(.white)
-                        Text(cleanBridgeResult ?? "Remove orphaned CG_ animation data from bridge")
+                        Text(cleanBridgeResult ?? "Tidy up leftover ChromaGlow animation data on your bridge")
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.45))
                     }
@@ -322,7 +322,7 @@ struct SettingsView: View {
             settingsRow(
                 icon: "key.fill",
                 iconColor: Color(red: 0.5, green: 0.7, blue: 1.0),
-                title: "API Token",
+                title: "Bridge Connection Key",
                 value: tokenPreview
             )
         }
@@ -380,12 +380,12 @@ struct SettingsView: View {
             Divider().background(Color.white.opacity(0.08))
 
             HStack {
-                Text("Philips Hue V2 API")
+                Text("Connection")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.45))
                 Spacer()
-                Text("clip/v2")
-                    .font(.system(.caption, design: .monospaced))
+                Text("Philips Hue Bridge")
+                    .font(.caption)
                     .foregroundStyle(.white.opacity(0.30))
             }
 

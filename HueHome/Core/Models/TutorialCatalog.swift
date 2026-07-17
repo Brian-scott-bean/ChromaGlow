@@ -168,7 +168,7 @@ enum TutorialCatalog {
             eyebrow: "GOOD TO KNOW",
             title: "Yours, and only yours",
             body: "Everything runs on your own network — no cloud, no account, no data collected. Light effects stay under three flashes per second and honor your system's Dim Flashing Lights setting.",
-            footnote: "Replay this tour anytime from More. Want a safe sandbox? Demo Mode mocks a whole home.",
+            footnote: "Replay this tour anytime from More. Want a safe place to explore? Demo Mode sets up a whole sample home.",
             audience: .everyone,
             illustration: .wrap,
             accentHex: amber

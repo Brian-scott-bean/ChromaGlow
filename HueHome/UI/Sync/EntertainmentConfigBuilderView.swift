@@ -338,7 +338,7 @@ struct EntertainmentConfigBuilderView: View {
                 Image(systemName: "info.circle")
                     .font(.system(size: 13))
                     .foregroundStyle(amber.opacity(0.6))
-                Text("Entertainment areas enable ultra-low-latency streaming for music sync. Lights in the area will be controlled directly via the bridge's Entertainment API.")
+                Text("Entertainment areas let lights respond instantly for music sync. Lights in the area are controlled directly by your Hue Bridge.")
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.4))
             }

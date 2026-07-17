@@ -328,7 +328,7 @@ struct BeatPanelView: View {
             )
             if binding.wrappedValue.isActive {
                 HStack {
-                    Text("Phase")
+                    Text("Timing offset")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.white.opacity(0.6))
                     Slider(

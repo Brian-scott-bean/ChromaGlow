@@ -30,7 +30,7 @@ enum CompositionLayerTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .palette: return "Palette"
         case .motion: return "Motion"
-        case .envelope: return "Envelope"
+        case .envelope: return "Brightness"
         case .reaction: return "React"
         }
     }
@@ -550,7 +550,7 @@ struct CompositionEditorPanel: View {
     private static let sourceLabels: [String: String] = [
         "none": "None", "mic_amplitude": "Mic", "mic_bass": "Bass",
         "mic_mid": "Mid", "mic_treble": "Treble", "tap_tempo": "Tap",
-        "beat": "Beat", "onset": "Onset",
+        "beat": "Beat", "onset": "Hits",
     ]
 
     private static let sourceIcons: [String: String] = [
@@ -629,7 +629,7 @@ struct CompositionEditorPanel: View {
     }
 
     private var compositionEnvelopeControls: some View {
-        StageCard(icon: "waveform.path.ecg", title: "Envelope", subtitle: "Brightness shape over time.") {
+        StageCard(icon: "waveform.path.ecg", title: "Brightness Shape", subtitle: "How brightness moves over time.") {
             VStack(spacing: HueSpacing.sm) {
 
             // The configured curve, live — what these controls actually do.

@@ -137,7 +137,7 @@ struct ProfilesAccessView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("ChromaGlow will try to delete their key from each bridge and always forgets it on this phone (their invite can't be re-issued). If a bridge's firmware refuses, their existing access can only be fully revoked from the official Philips Hue app.")
+            Text("ChromaGlow will try to delete their key from each bridge and always forgets it on this phone (their invite can't be re-issued). If a bridge refuses, their existing access can only be fully revoked from the official Philips Hue app.")
         }
         .alert("Revocation", isPresented: Binding(
             get: { revokeOutcomeMessage != nil },
@@ -371,7 +371,7 @@ struct ProfilesAccessView: View {
                 "\(profile.name)'s key was deleted from the bridge itself — they're fully signed out."
         } else {
             revokeOutcomeMessage =
-                "\(profile.name)'s key was removed from this phone and can't be re-issued. At least one bridge's firmware refused the delete — their existing access there can only be fully revoked from the official Philips Hue app (or by resetting app keys)."
+                "\(profile.name)'s key was removed from this phone and can't be re-issued. At least one bridge refused the delete — their existing access there can only be fully revoked from the official Philips Hue app (or by resetting app keys)."
         }
     }
 }

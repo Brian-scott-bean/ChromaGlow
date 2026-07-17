@@ -356,7 +356,7 @@ struct BridgeSetupContent: View {
             VStack(spacing: 8) {
                 discoveryStepRow(
                     icon: "wifi",
-                    label: "Wi-Fi scan (mDNS)",
+                    label: "Scanning your Wi-Fi",
                     active: vm.scanningLabel.contains("Wi")
                 )
                 discoveryStepRow(

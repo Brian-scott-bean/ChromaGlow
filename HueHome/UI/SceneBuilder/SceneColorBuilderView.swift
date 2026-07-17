@@ -484,7 +484,7 @@ struct SceneColorBuilderView: View {
     private var colorTempSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             let kelvin = HueColorUtils.kelvin(from: currentMirek)
-            Text("COLOR TEMPERATURE · \(kelvin)K")
+            Text("WARMTH · \(kelvin)K")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.45))
 

@@ -157,7 +157,7 @@ struct LightControlView: View {
                         .foregroundStyle(light.isOn ? glowColor : .white.opacity(0.55))
                     HStack(spacing: 4) {
                         if light.supportsColor    { capBadge("Color") }
-                        if light.supportsColorTemp { capBadge("Color Temp") }
+                        if light.supportsColorTemp { capBadge("Warmth") }
                         if !light.supportsColor && !light.supportsColorTemp {
                             capBadge("Brightness")
                         }
@@ -327,7 +327,7 @@ struct LightControlView: View {
         VStack(alignment: .leading, spacing: 12) {
             // liveMirek is updated only by onCommit — not during drag.
             let kelvin = HueColorUtils.kelvin(from: liveMirek)
-            sectionLabel("Color Temperature · \(kelvin)K")
+            sectionLabel("Warmth · \(kelvin)K")
             GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
                 VStack(spacing: 12) {
                     ColorTempSlider(

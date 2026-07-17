@@ -510,7 +510,7 @@ struct PerformanceView: View {
                                 }
                             }
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            Menu("XF \(step.crossfadeBeats)♩") {
+                            Menu("Fade \(step.crossfadeBeats)♩") {
                                 ForEach([0, 2, 4, 8, 16], id: \.self) { beats in
                                     Button(beats == 0 ? "Hard cut" : "\(beats) beats") {
                                         step.crossfadeBeats = beats
@@ -533,7 +533,7 @@ struct PerformanceView: View {
                     }
                     .listRowBackground(Color.white.opacity(0.05))
                 } footer: {
-                    Text("Steps are self-contained snapshots — the current step plays on deck A, the next cues on deck B, and fades land on the beat grid.")
+                    Text("Steps are self-contained snapshots — the current step plays on deck A, the next cues on deck B, and fades land right on the beat.")
                 }
 
                 Section {

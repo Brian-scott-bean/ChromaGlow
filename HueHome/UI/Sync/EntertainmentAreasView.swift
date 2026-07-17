@@ -102,7 +102,7 @@ struct EntertainmentAreasView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { target in
-            Text("\"\(target.config.name)\" will be removed from the bridge. Lights keep working — only the low-latency zone is deleted.")
+            Text("\"\(target.config.name)\" will be removed from the bridge. Lights keep working — only the light zone is deleted.")
         }
     }
 
@@ -202,7 +202,7 @@ struct EntertainmentAreasView: View {
             Text("No Entertainment Areas")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.white)
-            Text("Entertainment areas are low-latency light zones used by Studio's directional motion and music sync.")
+            Text("Entertainment areas are special light zones that respond instantly — Studio's directional motion and music sync use them.")
                 .font(.system(size: 13))
                 .foregroundStyle(.white.opacity(0.5))
                 .multilineTextAlignment(.center)

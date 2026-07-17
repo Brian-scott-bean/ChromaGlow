@@ -247,7 +247,7 @@ struct CopySceneSheet: View {
             if !action.on {
                 StageBadge(text: "OFF", style: .muted)
             } else if action.downgrade == .ctApproximation {
-                StageBadge(text: "CT APPROX", style: .muted)
+                StageBadge(text: "WARMTH APPROX", style: .muted)
             } else if action.downgrade == .brightnessOnly {
                 StageBadge(text: "BRIGHTNESS ONLY", style: .muted)
             }

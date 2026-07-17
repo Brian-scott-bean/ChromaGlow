@@ -99,14 +99,14 @@ struct MoreView: View {
             }
             moreDivider
             moreRow(icon: "sensor.fill", iconColor: teal,
-                    title: "Devices & Firmware",
+                    title: "Devices & Updates",
                     subtitle: "\(orchestrator.totalLightCount) lights and sensors") {
                 showDevices = true
             }
             moreDivider
             moreRow(icon: "dot.radiowaves.left.and.right", iconColor: HuePalette.amber,
                     title: "Entertainment Areas",
-                    subtitle: "View, create, and edit low-latency light zones") {
+                    subtitle: "View, create, and edit instant-response light zones") {
                 showEntertainmentAreas = true
             }
             moreDivider
@@ -114,7 +114,7 @@ struct MoreView: View {
                 moreRowContent(
                     icon: "dial.medium.fill", iconColor: blue,
                     title: "Physical Controls",
-                    subtitle: "Tap Dial DJ Mode — tempo and punches by hand"
+                    subtitle: "Tap Dial DJ Mode — set the beat by hand"
                 )
             }
             .buttonStyle(.plain)
@@ -185,7 +185,7 @@ struct MoreView: View {
 
             moreRow(icon: "gear", iconColor: .white.opacity(0.5),
                     title: "Settings",
-                    subtitle: "Bridge, API, and developer options") {
+                    subtitle: "Bridge and app options") {
                 showSettings = true
             }
 
@@ -215,7 +215,7 @@ struct MoreView: View {
                     icon: orchestrator.isDemoMode ? "sparkles.slash" : "sparkles",
                     iconColor: orchestrator.isDemoMode ? .orange : HuePalette.amber,
                     title: orchestrator.isDemoMode ? "Exit Demo Mode" : "Demo Mode",
-                    subtitle: orchestrator.isDemoMode ? "Resume real bridge" : "Explore with mock data",
+                    subtitle: orchestrator.isDemoMode ? "Resume real bridge" : "Explore a sample home",
                     badge: orchestrator.isDemoMode ? "LIVE" : nil,
                     badgeColor: .orange
                 )

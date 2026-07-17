@@ -90,8 +90,8 @@ struct BridgeKeysView: View {
     // ──────────────────────────────────────────────
 
     private var unsupportedCard: some View {
-        StageCard(icon: "lock.shield", title: "Not exposed by this firmware") {
-            Text("This bridge's firmware doesn't expose its key list locally. Keys can be viewed and revoked from the official Philips Hue app (or by resetting app keys on the bridge).")
+        StageCard(icon: "lock.shield", title: "Not available on this bridge") {
+            Text("This bridge's software doesn't share its key list locally. Keys can be viewed and revoked from the official Philips Hue app (or by resetting app keys on the bridge).")
                 .font(HueFont.stageStatus)
                 .foregroundStyle(StagePalette.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -174,7 +174,7 @@ struct BridgeKeysView: View {
             case .deletedVerified:
                 outcomeMessage = "The key was deleted from the bridge itself — whoever held it is fully signed out."
             case .unsupportedByFirmware, .stillPresent:
-                outcomeMessage = "This bridge's firmware refused the removal. Removing a guest in ChromaGlow deletes their key from this phone and blocks re-inviting. Their existing bridge access can only be fully revoked from the official Philips Hue app (or by resetting app keys)."
+                outcomeMessage = "This bridge refused the removal. Removing a guest in ChromaGlow deletes their key from this phone and blocks re-inviting. Their existing bridge access can only be fully revoked from the official Philips Hue app (or by resetting app keys)."
             }
             await load()
         } catch {

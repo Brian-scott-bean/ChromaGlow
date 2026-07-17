@@ -33,7 +33,7 @@ struct ImportSceneSheet: View {
 
                     factRow("Palette", value: Self.humanized(scene.palette.mode.rawValue))
                     factRow("Motion", value: Self.humanized(scene.motion.pattern.rawValue))
-                    factRow("Envelope", value: Self.humanized(scene.envelope.shape.rawValue))
+                    factRow("Brightness Shape", value: Self.humanized(scene.envelope.shape.rawValue))
                     if scene.reaction.source != .none {
                         factRow("Reacts to", value: Self.humanized(scene.reaction.source.rawValue))
                     }
