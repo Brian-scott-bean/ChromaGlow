@@ -12,7 +12,7 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **30**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **31**).
 - **WORLD-CLASS POLISH PROGRAM IN FLIGHT (2026-07-17, Brian-approved):** six rollback-safe
   rounds → builds 29–33 (A visible UX: tour-overlap/keyboard/44pt · B previews-everywhere +
   envelope/mic visuals · C terminology/one-transport-vocabulary · D new-effects pack incl.
@@ -31,8 +31,14 @@
   per-effect signature motion, scene cards show real recall-speed strips with TRUE bridge palette
   colors (tolerant list decode), shelf chips + automation rows get static strips, the Brightness
   Shape finally has a live waveform (EnvelopeStripView + curve chips) and mic sources a live
-  level meter with threshold tick (rollback: `checkpoint/ux-polish-B`). Full entries + device
-  checklists below. Full program record in the 2026-07-17 ROUND 0 entry.
+  level meter with threshold tick (rollback: `checkpoint/ux-polish-B`).
+  **ROUND C SHIPPED = BUILD 31 (2026-07-17):** one TransportVocabulary (REST/transport jargon
+  gone from every user surface — executes the deferred Phase C), the grandma copy pass
+  (Warmth, Brightness Shape, ADVANCED settings, sample home, …), and a jargon regression guard
+  (hardening_guards.sh Guard 6 + a vocabulary unit test) which also surfaced + fixed two
+  pre-existing guard failures (stale M-03 manifest path, one H-03-class log line) (rollback:
+  `checkpoint/terminology-C`). Full entries + device checklists below. Full program record in
+  the 2026-07-17 ROUND 0 entry.
 - **BUILD 28 (2026-07-15): FINAL AUDIT + WELCOME TOUR — AWAITING BRIAN'S ON-DEVICE CHECK.**
   Fifteen shippable commits (rollback tag `checkpoint/tour-audit-2026-07-15`): the audit's one
   real gap closed (35 MORE ungated Release prints — StudioViewModel 28 / CompositionStore 6 /
@@ -365,6 +371,66 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-17 - [Claude] BUILD 31 — POLISH ROUND C: terminology — one transport vocabulary, grandma copy pass
+
+### Branch
+- `main` (rollback tag: `checkpoint/terminology-C`, pushed)
+
+### Did
+Three shippable commits, suite green per commit (702→703 tests):
+1. **feat(studio) TransportVocabulary** — new
+   `HueHome/UI/Components/TransportVocabulary.swift` is THE single source of play-mode words;
+   the four transport-wording surfaces (mixer badge + menu + status sentences, save-sheet
+   picker + footer, first-run dialog, preset overflow menus) and StudioViewModel toasts all
+   read it — executes the deferred build-23 Phase C. Renames: "REST"→"Room mode"/"Room Only";
+   raw `[REST_ONE_SHOT]`/`[ENTERTAINMENT]` toast tags→human copy; "Transport"→"Play mode";
+   "ENT AREA" badge→"AREA"; "Runtime-only REST is rate-capped"→"Playing in Room mode — updates
+   a little slower"; tier badges "Hybrid"/"App Driven"→"Phone + Bridge"/"Plays from phone";
+   "grouped light" toast→"room control". KEPT: Entertainment Area (official Hue vocabulary).
+2. **fix(copy) grandma pass** — Envelope→"Brightness Shape" (tab "Brightness"), Onset→"Hits",
+   Color Temp/CT→"Warmth" everywhere, Settings DEVELOPER→ADVANCED with humanized rows ("API
+   Token"→"Bridge Connection Key"; clip/v2 row→"Connection: Philips Hue Bridge") — DELIBERATE
+   DEVIATION from the plan's #if DEBUG idea: the section holds the demo toggle + the
+   clean-bridge recovery tool, so it stays user-reachable, renamed and de-jargoned instead;
+   "Devices & Firmware"→"Devices & Updates"; firmware→"bridge software"/plain phrasing;
+   low-latency copy plainized; "mock data"/"sandbox"→"sample home"; "Wi-Fi scan
+   (mDNS)"→"Scanning your Wi-Fi"; Beat "Phase"→"Timing offset"; Perform "XF"→"Fade", "beat
+   grid"→"right on the beat". Perform's DJ deck theme + photosensitivity/privacy notices
+   untouched by design.
+3. **test(copy) jargon regression guard** — `Scripts/hardening_guards.sh` Guard 6 greps the
+   display-string surfaces for banned fixed literals (REST variants, ENT AREA, rate-capped,
+   mock data, low-latency, mDNS, CT APPROX, …); `testTransportVocabularyStaysJargonFree` runs
+   the same contract over the vocabulary in every suite run. Guard 6 immediately caught two
+   leftovers (StageKit preview badge + Settings demo subtitle — fixed), and running the full
+   script surfaced two PRE-EXISTING failures on main: the M-03 guard still expected the
+   pre-build-28 `HueHome/PrivacyInfo.xcprivacy` path (guard updated to the live ROOT
+   manifest), and a post-P1 `HueAPIClient` error log line carried `privacy: .public` alongside
+   `error.localizedDescription` (H-03 class — split into a public method/path line + a private
+   detail line).
+
+### Working
+- 703/703 green twice at round end; `./Scripts/hardening_guards.sh` fully green again.
+
+### Left
+- Round D next (build 32, `checkpoint/effects-D`): the new-effects pack incl. Lava Lamp.
+- **Brian's Round C on-device checks:** read every changed surface cold — mixer badge/menu/
+  status, apply toasts, save sheet, first-run play-mode dialog, Settings (ADVANCED group),
+  More rows, light editor "Warmth", Composer "Brightness Shape" tab + "Hits" chip, key/revoke
+  dialogs — would a first-time user understand every label? Same words for the same concept
+  everywhere?
+
+### Validation
+- Suite per commit via xcresulttool (703/703 at close); guards script green; build 31 across
+  all 12 pbxproj entries.
+
+### Gotchas
+- TransportVocabulary is now the ONLY place play-mode words live — new surfaces must read it
+  (Guard 6 + the unit test enforce).
+- The H-03 guard rule is line-level: `.public` may never share a line with error text/URL/name
+  identifiers — split log statements instead of annotating around it.
 
 ---
 
