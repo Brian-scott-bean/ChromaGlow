@@ -13,11 +13,40 @@ struct HueScene: Decodable, Identifiable {
     let status: SceneStatus?        // current activation state (may be absent on older firmware)
     let speed: Double?              // transition speed 0.0–1.0
     let type: String?               // "static" | "dynamic" (CLIP v2 resource type field)
+    /// Scene-level palette from the LIST payload, used for true-color
+    /// previews. Decode-TOLERANT by construction — scene listing must never
+    /// depend on palette (or any optional field) decoding; only id/metadata/
+    /// group can fail an element.
+    let palette: ScenePaletteDetail?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, metadata, group, status, speed, type, palette
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id       = try c.decode(String.self, forKey: .id)
+        metadata = try c.decode(SceneMetadata.self, forKey: .metadata)
+        group    = try c.decode(SceneGroup.self, forKey: .group)
+        status   = try? c.decode(SceneStatus.self, forKey: .status)
+        speed    = try? c.decode(Double.self, forKey: .speed)
+        type     = try? c.decode(String.self, forKey: .type)
+        palette  = try? c.decode(ScenePaletteDetail.self, forKey: .palette)
+    }
 
     /// True when this is a Hue dynamic palette scene (colours auto-cycle).
     /// Falls back to checking status.active for older firmware that omits `type`.
     var isDynamic: Bool {
         type == "dynamic" || status?.active == "dynamic_palette"
+    }
+
+    /// Up to 3 palette color points for previews ([] when absent/foreign).
+    var paletteXY: [SceneXY] {
+        guard let entries = palette?.color else { return [] }
+        return entries.prefix(3).compactMap { entry in
+            guard let xy = entry.color?.xy else { return nil }
+            return SceneXY(x: xy.x, y: xy.y)
+        }
     }
 }
 

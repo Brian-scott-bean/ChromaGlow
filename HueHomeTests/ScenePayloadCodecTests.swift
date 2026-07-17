@@ -187,3 +187,51 @@ final class ScenePayloadCodecTests: XCTestCase {
         XCTAssertEqual(try ScenePayloadCodec.decompress(squeezed), raw)
     }
 }
+
+// MARK: - Scene list palette decode (true-color previews)
+
+/// The scene LIST decode gained a tolerant `palette` field for true-color
+/// previews. The load-bearing rule stands: listing must never depend on
+/// palette (or any optional field) decoding — only id/metadata/group can
+/// fail an element.
+final class HueScenePaletteDecodeTests: XCTestCase {
+
+    private func decodeScene(_ json: String) throws -> HueScene {
+        try JSONDecoder().decode(HueScene.self, from: Data(json.utf8))
+    }
+
+    func testGarbagePaletteNeverBreaksSceneDecoding() throws {
+        let json = """
+        {"id":"s1","metadata":{"name":"Calm"},"group":{"rid":"r1","rtype":"room"},
+         "palette": {"color": "THIS SHOULD BE AN ARRAY"}}
+        """
+        let scene = try decodeScene(json)
+        XCTAssertEqual(scene.id, "s1")
+        XCTAssertNil(scene.palette)
+        XCTAssertTrue(scene.paletteXY.isEmpty)
+    }
+
+    func testWellFormedPaletteExtractsUpToThreePoints() throws {
+        let json = """
+        {"id":"s2","metadata":{"name":"Sunset"},"group":{"rid":"r1","rtype":"room"},
+         "speed":0.7,
+         "palette":{"color":[
+            {"color":{"xy":{"x":0.55,"y":0.39}},"dimming":{"brightness":80}},
+            {"color":{"xy":{"x":0.64,"y":0.33}},"dimming":{"brightness":60}},
+            {"color":{"xy":{"x":0.31,"y":0.32}},"dimming":{"brightness":40}},
+            {"color":{"xy":{"x":0.20,"y":0.20}},"dimming":{"brightness":20}}
+         ]}}
+        """
+        let scene = try decodeScene(json)
+        let xy = scene.paletteXY
+        XCTAssertEqual(xy.count, 3, "previews cap at 3 points")
+        XCTAssertEqual(xy[0].x, 0.55, accuracy: 0.0001)
+        XCTAssertEqual(xy[2].y, 0.32, accuracy: 0.0001)
+        XCTAssertEqual(scene.speed ?? 0, 0.7, accuracy: 0.0001)
+    }
+
+    func testMissingRequiredFieldStillFailsTheElement() {
+        let json = #"{"metadata":{"name":"NoID"},"group":{"rid":"r","rtype":"room"}}"#
+        XCTAssertThrowsError(try decodeScene(json))
+    }
+}

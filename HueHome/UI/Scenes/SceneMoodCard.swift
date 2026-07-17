@@ -72,10 +72,10 @@ struct SceneMoodCard: View {
                     // Signature strip on every scene: static scenes get a
                     // still color bar; dynamic scenes animate at their REAL
                     // recall speed while active (0-1 bridge speed → 0-100).
+                    // True palette colors when the bridge supplied them,
+                    // name-derived accent otherwise.
                     LookPreviewStrip(
-                        spec: LookPreviewSpec(pattern: .wave,
-                                              accent: scene.accentColor,
-                                              speed: min(100, max(0, scene.speed * 100))),
+                        spec: lookSpec,
                         animated: scene.isDynamic && scene.isActive
                     )
                     .padding(.top, 4)
@@ -152,6 +152,27 @@ struct SceneMoodCard: View {
         if isFavorite { parts.append("favorite") }
         if isStudio { parts.append("created in Studio") }
         return parts.joined(separator: ", ")
+    }
+
+    /// Real bridge palette when supplied (≥2 points), else the name-derived
+    /// accent tint. Speed rides the actual 0-1 recall speed either way.
+    private var lookSpec: LookPreviewSpec {
+        let speed = min(100, max(0, scene.speed * 100))
+        let xy = scene.paletteXY
+        guard xy.count >= 2 else {
+            return LookPreviewSpec(pattern: .wave, accent: scene.accentColor, speed: speed)
+        }
+        var palette = PaletteConfig(
+            mode: .gradient,
+            color1: CodableColor(x: xy[0].x, y: xy[0].y),
+            color2: CodableColor(x: xy[1].x, y: xy[1].y)
+        )
+        if xy.count >= 3 {
+            palette.color3 = CodableColor(x: xy[2].x, y: xy[2].y)
+        }
+        return LookPreviewSpec(palette: palette, pattern: .wave, speed: speed,
+                               envelope: EnvelopeConfig(shape: .steady),
+                               accent: scene.accentColor)
     }
 }
 

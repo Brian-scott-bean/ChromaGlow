@@ -97,6 +97,12 @@ struct SceneDisplayItem: Identifiable, Hashable {
 // id = "\(bridgeID):\(bridgeSceneID)" — globally unique.
 // ══════════════════════════════════════════════════════════
 
+/// One palette color point (CIE xy) for scene previews.
+struct SceneXY: Hashable {
+    let x: Double
+    let y: Double
+}
+
 struct GlobalSceneItem: Identifiable, Hashable {
     let id:            String   // globally unique composite key
     let bridgeSceneID: String   // real Hue scene UUID (used for API calls)
@@ -107,6 +113,9 @@ struct GlobalSceneItem: Identifiable, Hashable {
     var isActive:   Bool
     var isDynamic:  Bool        // true = Hue dynamic palette scene (colours auto-cycle)
     var speed:      Double      // recall dynamics.speed 0.0–1.0; default 0.5
+    /// Up to 3 real palette points for true-color previews ([] = unknown;
+    /// deliberately excluded from ==/hash — id+isActive stays the identity).
+    var paletteXY: [SceneXY] = []
 
     // Reuse per-room colour + icon logic
     var accentColor: Color { SceneDisplayItem.color(for: name) }

@@ -4120,7 +4120,8 @@ final class UnifiedOrchestrator {
                             isActive:      scene.status?.active == "active"
                                         || scene.status?.active == "dynamic_palette",
                             isDynamic:     scene.isDynamic,
-                            speed:         scene.speed ?? 0.5
+                            speed:         scene.speed ?? 0.5,
+                            paletteXY:     scene.paletteXY
                         )
                     }
                 }
@@ -4229,7 +4230,8 @@ final class UnifiedOrchestrator {
                 bridgeID:      scene.bridgeID,
                 isActive:      scene.isActive,
                 isDynamic:     scene.isDynamic,
-                speed:         scene.speed
+                speed:         scene.speed,
+                paletteXY:     scene.paletteXY
             )
             globalScenes = updated
             scheduleWidgetWrite()
