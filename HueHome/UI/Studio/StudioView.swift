@@ -664,6 +664,7 @@ struct StudioView: View {
                 .padding(.bottom, HueSpacing.sm)
             }
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 
     // ── Deck 3: Composer ─────────────────────────────────────
@@ -776,7 +777,9 @@ struct StudioView: View {
 
                         TextField("Describe the vibe (e.g. ocean calm with soft pulse)", text: $aiPromptText, axis: .vertical)
                             .focused($aiPromptFocused)
-                            .lineLimit(1...2)
+                            // Fixed height: a growing field re-lays-out the whole
+                            // deck grid under it on every wrap.
+                            .lineLimit(2, reservesSpace: true)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.white)
                             .textInputAutocapitalization(.sentences)
@@ -998,6 +1001,7 @@ struct StudioView: View {
             .padding(.horizontal, HueSpacing.screenH)
             .padding(.vertical, isCompactStudio ? 6 : HueSpacing.sm)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 
     /// One preset card + its overflow menu — shared by the flat (filtered)

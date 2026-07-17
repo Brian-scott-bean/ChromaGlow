@@ -343,6 +343,7 @@ struct MixerTrayView: View {
                                 .padding(.bottom, HueSpacing.md)
                             }
                             .scrollBounceBehavior(.basedOnSize)
+                            .scrollDismissesKeyboard(.interactively)
                             .frame(height: scrollGeo.size.height)
                             // Auto-anchor: enabling a beat source scrolls the
                             // beat controls into view — no hunting.
@@ -391,6 +392,7 @@ struct MixerTrayView: View {
                                 .padding(.bottom, HueSpacing.md)
                             }
                             .scrollBounceBehavior(.basedOnSize)
+                            .scrollDismissesKeyboard(.interactively)
                             .frame(height: scrollGeo.size.height)
                         }
                     }

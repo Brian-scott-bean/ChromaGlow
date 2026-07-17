@@ -307,6 +307,7 @@ struct ScenesTabView: View {
             }
         }
         .scrollIndicators(.hidden)
+        .scrollDismissesKeyboard(.interactively)
         .refreshable {
             await orchestrator.loadAllScenes()
         }
