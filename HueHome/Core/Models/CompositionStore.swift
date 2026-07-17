@@ -258,7 +258,7 @@ final class CompositionStore: @unchecked Sendable {
         }
     }
 
-    // MARK: - Built-in Presets (56)
+    // MARK: - Built-in Presets (66)
 
     // swiftlint:disable function_body_length
     static let builtInPresets: [CompositionPreset] = {
@@ -1059,9 +1059,170 @@ final class CompositionStore: @unchecked Sendable {
             createdAt: now, updatedAt: now
         )
 
+        // ── 2026-07 pack (block 9) — the lava-lamp-class organic looks.
+        // Every xy below is a catalog-proven gamut-C point or a convex blend
+        // of two of them (a triangle's interior is convex), so the exact
+        // gamut-membership bar holds by construction.
+
+        let lavaLamp = CompositionPreset(
+            id: UUID(uuidString: "00000009-0001-0001-0001-000000000001")!,
+            name: "Lava Lamp", icon: "drop.fill",
+            accentColorHex: "#FF5E3A", isBuiltIn: true,
+            category: .ambient, seasonMonths: nil,
+            palette: PaletteConfig(mode: .gradient,
+                color1: CodableColor(x: 0.6400, y: 0.3300),   // deep red
+                color2: CodableColor(x: 0.5950, y: 0.3600),   // molten orange (red↔amber)
+                color3: CodableColor(x: 0.4800, y: 0.2400)),  // magma magenta (red↔purple)
+            motion: MotionConfig(pattern: .pulseCenter, speed: 8, spread: 55, offset: 35),
+            envelope: EnvelopeConfig(shape: .swell, bpm: 20, depth: 35, attack: 60, decay: 40,
+                                     minBrightness: 25, maxBrightness: 90),
+            reaction: ReactionConfig(),
+            createdAt: now, updatedAt: now
+        )
+
+        let retroLava = CompositionPreset(
+            id: UUID(uuidString: "00000009-0001-0001-0001-000000000002")!,
+            name: "Retro Lava", icon: "circle.hexagongrid.fill",
+            accentColorHex: "#FF9500", isBuiltIn: true,
+            category: .ambient, seasonMonths: nil,
+            palette: PaletteConfig(mode: .gradient,
+                color1: CodableColor(x: 0.5500, y: 0.3900),   // amber
+                color2: CodableColor(x: 0.3600, y: 0.5450)),  // 70s olive-green (amber↔green)
+            motion: MotionConfig(pattern: .scatter, speed: 10, spread: 60),
+            envelope: EnvelopeConfig(shape: .swell, bpm: 24, depth: 30, attack: 55, decay: 45,
+                                     minBrightness: 22, maxBrightness: 88),
+            reaction: ReactionConfig(),
+            createdAt: now, updatedAt: now
+        )
+
+        let auroraCurtain = CompositionPreset(
+            id: UUID(uuidString: "00000009-0001-0001-0001-000000000003")!,
+            name: "Aurora Curtain", icon: "wind",
+            accentColorHex: "#64D2A0", isBuiltIn: true,
+            category: .nature, seasonMonths: nil,
+            palette: PaletteConfig(mode: .gradient,
+                color1: CodableColor(x: 0.1700, y: 0.7000),   // aurora green
+                color2: CodableColor(x: 0.2375, y: 0.1063),   // violet (purple↔deep blue)
+                color3: CodableColor(x: 0.1600, y: 0.2300)),  // teal
+            motion: MotionConfig(pattern: .wave, speed: 12, spread: 70, offset: 60),
+            envelope: EnvelopeConfig(shape: .breathe, bpm: 20, depth: 25,
+                                     minBrightness: 20, maxBrightness: 92),
+            reaction: ReactionConfig(),
+            createdAt: now, updatedAt: now
+        )
+
+        let oceanStorm = CompositionPreset(
+            id: UUID(uuidString: "00000009-0001-0001-0001-000000000004")!,
+            name: "Ocean Storm", icon: "cloud.bolt.rain.fill",
+            accentColorHex: "#4A90D9", isBuiltIn: true,
+            category: .nature, seasonMonths: nil,
+            palette: PaletteConfig(mode: .gradient,
+                color1: CodableColor(x: 0.1549, y: 0.0626),   // deep blue
+                color2: CodableColor(x: 0.1600, y: 0.2300),   // teal
+                color3: CodableColor(x: 0.3127, y: 0.3290)),  // white crest (D65)
+            motion: MotionConfig(pattern: .comet, speed: 45, spread: 55),
+            envelope: EnvelopeConfig(shape: .flicker, bpm: 30, depth: 45,
+                                     minBrightness: 15, maxBrightness: 95),
+            reaction: ReactionConfig(),
+            createdAt: now, updatedAt: now
+        )
+
+        let fireflies = CompositionPreset(
+            id: UUID(uuidString: "00000009-0001-0001-0001-000000000005")!,
+            name: "Fireflies", icon: "sparkles",
+            accentColorHex: "#B8E986", isBuiltIn: true,
+            category: .nature, seasonMonths: nil,
+            palette: PaletteConfig(mode: .gradient,
+                color1: CodableColor(x: 0.3600, y: 0.5450),   // warm firefly green
+                color2: CodableColor(x: 0.1700, y: 0.7000)),  // deep green
+            motion: MotionConfig(pattern: .twinkle, speed: 30, spread: 25, offset: 55),
+            envelope: EnvelopeConfig(shape: .flicker, bpm: 30, depth: 55,
+                                     minBrightness: 4, maxBrightness: 70),
+            reaction: ReactionConfig(),
+            createdAt: now, updatedAt: now
+        )
+
+        let candleCathedral = CompositionPreset(
+            id: UUID(uuidString: "00000009-0001-0001-0001-000000000006")!,
+            name: "Candle Cathedral", icon: "flame.fill",
+            accentColorHex: "#FFB84D", isBuiltIn: true,
+            category: .cozy, seasonMonths: nil,
+            palette: PaletteConfig(mode: .gradient,
+                color1: CodableColor(x: 0.5500, y: 0.3900),   // amber
+                color2: CodableColor(x: 0.6100, y: 0.3500)),  // ember (amber↔red)
+            motion: MotionConfig(pattern: .scatter, speed: 18, spread: 40),
+            envelope: EnvelopeConfig(shape: .flicker, bpm: 30, depth: 45,
+                                     minBrightness: 12, maxBrightness: 85),
+            reaction: ReactionConfig(),
+            createdAt: now, updatedAt: now
+        )
+
+        let neonRain = CompositionPreset(
+            id: UUID(uuidString: "00000009-0001-0001-0001-000000000007")!,
+            name: "Neon Rain", icon: "cloud.rain.fill",
+            accentColorHex: "#C86BFF", isBuiltIn: true,
+            category: .energetic, seasonMonths: nil,
+            palette: PaletteConfig(mode: .gradient,
+                color1: CodableColor(x: 0.1575, y: 0.1463),   // neon cyan (teal↔blue)
+                color2: CodableColor(x: 0.4800, y: 0.2400)),  // neon magenta (red↔purple)
+            motion: MotionConfig(pattern: .cascade, speed: 55, spread: 45, offset: 70),
+            envelope: EnvelopeConfig(shape: .pulse, bpm: 90, depth: 45, dutyCycle: 55,
+                                     minBrightness: 18, maxBrightness: 95),
+            reaction: ReactionConfig(),
+            createdAt: now, updatedAt: now
+        )
+
+        let deepSpaceDrift = CompositionPreset(
+            id: UUID(uuidString: "00000009-0001-0001-0001-000000000008")!,
+            name: "Deep Space Drift", icon: "moon.stars.fill",
+            accentColorHex: "#7B68EE", isBuiltIn: true,
+            category: .cosmic, seasonMonths: nil,
+            palette: PaletteConfig(mode: .gradient,
+                color1: CodableColor(x: 0.2375, y: 0.1063),   // indigo
+                color2: CodableColor(x: 0.1600, y: 0.2300),   // teal
+                color3: CodableColor(x: 0.3200, y: 0.1500)),  // purple
+            motion: MotionConfig(pattern: .spiral, speed: 9, spread: 65),
+            envelope: EnvelopeConfig(shape: .breathe, bpm: 20, depth: 22,
+                                     minBrightness: 18, maxBrightness: 80),
+            reaction: ReactionConfig(),
+            createdAt: now, updatedAt: now
+        )
+
+        let jellyfish = CompositionPreset(
+            id: UUID(uuidString: "00000009-0001-0001-0001-000000000009")!,
+            name: "Jellyfish", icon: "water.waves",
+            accentColorHex: "#40C9FF", isBuiltIn: true,
+            category: .cinematic, seasonMonths: nil,
+            palette: PaletteConfig(mode: .gradient,
+                color1: CodableColor(x: 0.1600, y: 0.2300),   // teal
+                color2: CodableColor(x: 0.2375, y: 0.1063),   // violet
+                color3: CodableColor(x: 0.1650, y: 0.4650)),  // biolum green (teal↔green)
+            motion: MotionConfig(pattern: .pulseCenter, speed: 16, spread: 60),
+            envelope: EnvelopeConfig(shape: .swell, bpm: 26, depth: 40, attack: 30, decay: 70,
+                                     minBrightness: 10, maxBrightness: 85),
+            reaction: ReactionConfig(),
+            createdAt: now, updatedAt: now
+        )
+
+        let zenGarden = CompositionPreset(
+            id: UUID(uuidString: "00000009-0001-0001-0001-000000000010")!,
+            name: "Zen Garden", icon: "leaf.fill",
+            accentColorHex: "#A8C8A0", isBuiltIn: true,
+            category: .focus, seasonMonths: nil,
+            palette: PaletteConfig(mode: .gradient,
+                color1: CodableColor(x: 0.4170, y: 0.4985),   // sage (amber↔green)
+                color2: CodableColor(x: 0.4300, y: 0.3600)),  // warm sand (amber↔white)
+            motion: MotionConfig(pattern: .static, speed: 20),
+            envelope: EnvelopeConfig(shape: .breathe, bpm: 20, depth: 18,
+                                     minBrightness: 30, maxBrightness: 85),
+            reaction: ReactionConfig(),
+            createdAt: now, updatedAt: now
+        )
+
         return [
             // Ambient
             sunsetCascade, oceanDrift, northernLights, cozyEvening, heartbeat,
+            lavaLamp, retroLava,
             // Energetic
             bassDrop, clubMode, stormChase,
             // Holiday
@@ -1071,21 +1232,22 @@ final class CompositionStore: @unchecked Sendable {
             // Nature
             savannaSunset, tropicalTwilight, springBlossom, forestCanopy,
             oceanDepths, mistyMorning, thunderhead, desertDusk,
+            auroraCurtain, oceanStorm, fireflies,
             // Cosmic
             galaxy, starlight, meteorShower, bloodMoon,
-            bluePlanet, nebulaDrift,
+            bluePlanet, nebulaDrift, deepSpaceDrift,
             // Cozy
             fireside, candlelitDinner, goldenHour, amberEvening,
-            readingNook, rainyCafe,
+            readingNook, rainyCafe, candleCathedral,
             // Focus
             deepFocus, energize, unwind, meditation,
-            sunriseWake, nightEase,
+            sunriseWake, nightEase, zenGarden,
             // Energetic
             neonNights, discoInferno, festivalSunset, synthwave,
-            arcade,
+            arcade, neonRain,
             // Cinematic
             filmNoir, sciFiCorridor, hauntedManor, enchantedForest,
-            deepSeaDive,
+            deepSeaDive, jellyfish,
         ]
     }()
     // swiftlint:enable function_body_length
