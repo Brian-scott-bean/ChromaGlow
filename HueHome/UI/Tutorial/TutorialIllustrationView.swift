@@ -381,6 +381,9 @@ private struct ScenesArt: View {
                             .frame(height: 8)
                             .clipShape(Capsule())
                     }
+                    // Both columns reserve an empty row-2 slot sized by a hidden copy of the
+                    // traveler, so it always lands in a gap and never covers a real card.
+                    travelerCard.hidden()
                     sceneCard(name: "Ocean Drift", starred: false) {
                         PatternStripView(pattern: .wave, accent: Color(hex: "#40C9FF"), animated: live)
                     }
@@ -392,21 +395,25 @@ private struct ScenesArt: View {
                             .frame(height: 8)
                             .clipShape(Capsule())
                     }
-                    Color.clear.frame(width: 116, height: 54)
+                    travelerCard.hidden()
                 }
             }
             .overlay(alignment: .topLeading) {
-                sceneCard(name: "Neon Nights", starred: false) {
-                    LinearGradient(colors: [accent, Color(hex: "#668AFF")],
-                                   startPoint: .leading, endPoint: .trailing)
-                        .frame(height: 8)
-                        .clipShape(Capsule())
-                }
-                .offset(x: 132 * slide, y: 64)
-                .shadow(color: .black.opacity(0.3 * TourMotionMath.pulse(slide, period: 2)), radius: 8)
+                travelerCard
+                    .offset(x: 132 * slide, y: 52)
+                    .shadow(color: .black.opacity(0.3 * TourMotionMath.pulse(slide, period: 2)), radius: 8)
             }
         }
         .frame(width: 264)
+    }
+
+    private var travelerCard: some View {
+        sceneCard(name: "Neon Nights", starred: false) {
+            LinearGradient(colors: [accent, Color(hex: "#668AFF")],
+                           startPoint: .leading, endPoint: .trailing)
+                .frame(height: 8)
+                .clipShape(Capsule())
+        }
     }
 
     @ViewBuilder
