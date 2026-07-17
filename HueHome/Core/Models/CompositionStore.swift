@@ -229,8 +229,17 @@ final class CompositionStore: @unchecked Sendable {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        let backupURL = fileURL.deletingLastPathComponent()
-            .appendingPathComponent("compositions-\(formatter.string(from: Date())).bak")
+        let dir  = fileURL.deletingLastPathComponent()
+        let base = "compositions-\(formatter.string(from: Date()))"
+        // copyItem THROWS if the destination exists, and the name is only
+        // second-granular — two recovery events in one second silently lost
+        // the second backup. Uniquify instead.
+        var backupURL = dir.appendingPathComponent("\(base).bak")
+        var n = 2
+        while FileManager.default.fileExists(atPath: backupURL.path) {
+            backupURL = dir.appendingPathComponent("\(base)-\(n).bak")
+            n += 1
+        }
         do {
             try FileManager.default.copyItem(at: fileURL, to: backupURL)
             debugLog("[CompositionStore] Backed up compositions.json → \(backupURL.lastPathComponent)")
