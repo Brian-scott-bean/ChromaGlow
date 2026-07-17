@@ -31,9 +31,9 @@ struct StudioView: View {
 
         var title: String {
             switch self {
-            case .auto:              return "Auto (match the scene)"
-            case .entertainmentArea: return "Entertainment Area — streamed"
-            case .roomOnly:          return "Room Only — REST"
+            case .auto:              return TransportVocabulary.autoTitle
+            case .entertainmentArea: return TransportVocabulary.streamingTitle
+            case .roomOnly:          return TransportVocabulary.roomOnlyTitle
             }
         }
 
@@ -60,8 +60,8 @@ struct StudioView: View {
 
         var subtitle: String {
             switch self {
-            case .entertainmentArea: return "Streaming"
-            case .roomOnly: return "REST"
+            case .entertainmentArea: return TransportVocabulary.streamingSubtitle
+            case .roomOnly: return TransportVocabulary.roomModeSubtitle
             }
         }
 
@@ -75,8 +75,8 @@ struct StudioView: View {
         /// Short titles for segmented controls on narrow widths.
         var segmentTitle: String {
             switch self {
-            case .entertainmentArea: return "Streaming"
-            case .roomOnly: return "REST"
+            case .entertainmentArea: return TransportVocabulary.streamingSegment
+            case .roomOnly: return TransportVocabulary.roomSegment
             }
         }
     }
@@ -398,14 +398,14 @@ struct StudioView: View {
             drainStudioAction: consumePendingStudioAction
         ))
         .confirmationDialog(
-            "Choose Composer Transport",
+            TransportVocabulary.choosePlayTitle,
             isPresented: $showCompositionTransportPrompt,
             titleVisibility: .visible
         ) {
             // First choice is remembered (two-tap rule: this dialog should
             // only ever be answered once). The transport badge on the
             // running deck switches it live any time after.
-            Button("Entertainment Area (Streaming)") {
+            Button(TransportVocabulary.streamingMenuLabel) {
                 vm.compositionTransportPreference = .entertainmentArea
                 vm.isCompositionTransportPromptEnabled = false
                 guard let card = pendingCompositionCard else { return }
@@ -413,7 +413,7 @@ struct StudioView: View {
                 Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true) }
                 clearPendingCompositionTransportPrompt()
             }
-            Button("Room Only (REST)") {
+            Button(TransportVocabulary.roomOnlyMenuLabel) {
                 vm.compositionTransportPreference = .roomOnly
                 vm.isCompositionTransportPromptEnabled = false
                 guard let card = pendingCompositionCard else { return }
@@ -425,7 +425,7 @@ struct StudioView: View {
                 clearPendingCompositionTransportPrompt()
             }
         } message: {
-            Text("Entertainment is smoother but controls the whole entertainment area; Room Only keeps scope local with REST pacing. Your choice is remembered — switch anytime from the transport badge on the running deck.")
+            Text(TransportVocabulary.choosePlayMessage)
         }
         .confirmationDialog(
             "Delete composition?",
@@ -1318,7 +1318,7 @@ struct StudioView: View {
                 applyCompositionQuick(card, mode: .roomREST)
                 HapticManager.shared.light()
             } label: {
-                Label("Room Only (REST)", systemImage: "iphone")
+                Label(TransportVocabulary.roomOnlyMenuLabel, systemImage: "iphone")
             }
             Button {
                 applyCompositionQuick(card, mode: .matchSavedPreset)
@@ -1333,7 +1333,7 @@ struct StudioView: View {
                 Section(reason) { EmptyView() }
             }
         } label: {
-            Label("Apply with Transport…", systemImage: "arrow.triangle.branch")
+            Label(TransportVocabulary.applyWithMenu, systemImage: "arrow.triangle.branch")
         }
 
         Menu {
@@ -1351,7 +1351,7 @@ struct StudioView: View {
                 .disabled(option == .entertainmentArea && !availability.canStream)
             }
         } label: {
-            Label("Preferred Engine…", systemImage: "bolt.badge.automatic")
+            Label(TransportVocabulary.preferredMenu, systemImage: "bolt.badge.automatic")
         }
 
         Menu {
@@ -1522,7 +1522,7 @@ struct StudioView: View {
                         .padding(.vertical, 2)
                     }
                 }
-                Section("Transport") {
+                Section(TransportVocabulary.playModeSection) {
                     Picker("Target", selection: $compositionSaveTransport) {
                         ForEach(CompositionSaveTransportOption.allCases) { option in
                             Text(option.segmentTitle).tag(option)
@@ -1530,7 +1530,7 @@ struct StudioView: View {
                     }
                     .pickerStyle(.segmented)
 
-                    Text("Streaming uses the entertainment area when available. REST stays on this room’s grouped light.")
+                    Text(TransportVocabulary.saveSheetFooter)
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.55))
                 }
@@ -1776,11 +1776,11 @@ private func compactTierBadge(_ tier: CompositionTier) -> some View {
         icon = "bolt.fill"
         tint = HuePalette.amber
     case .hybrid:
-        title = "Hybrid"
+        title = "Phone + Bridge"
         icon = "arrow.triangle.merge"
         tint = HuePalette.amber
     case .runtimeOnly:
-        title = "App Driven"
+        title = "Plays from phone"
         icon = "iphone"
         tint = Color.white.opacity(0.78)
     }

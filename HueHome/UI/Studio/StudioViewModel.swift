@@ -1014,7 +1014,7 @@ final class StudioViewModel {
             return
         }
         guard let groupedLightID = room.groupedLightID else {
-            statusMessage = "⚠ Room '\(room.name)' has no grouped light"
+            statusMessage = "⚠ Room '\(room.name)' has no room control"
             debugLog("[Studio] ❌ Room '\(room.name)' has no groupedLightID")
             return
         }
@@ -1213,8 +1213,9 @@ final class StudioViewModel {
                 requestedTransport: nil, transportFallback: false
             )
             publishNowPlaying(room: room, card: card)
-            let transport = isEnt ? "ENTERTAINMENT" : "REST"
-            statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)]"
+            let transport = isEnt ? TransportVocabulary.toastStreaming
+                                  : TransportVocabulary.toastRoomMode
+            statusMessage = "🟢 \(card.name) → \(room.name) · \(transport)"
 
         case .composition(let presetID):
             guard let preset = compositionStore.presets.first(where: { $0.id == presetID }) else {
@@ -1301,10 +1302,11 @@ final class StudioViewModel {
                     transportFallback: requestedTransport == .entertainmentArea && !isEnt
                 )
                 publishNowPlaying(room: room, card: card)
-                let transport = isEnt ? "ENTERTAINMENT" : "REST"
-                statusMessage = "🟢 \(card.name) → \(room.name) [\(transport)]"
+                let transport = isEnt ? TransportVocabulary.toastStreaming
+                                      : TransportVocabulary.toastRoomMode
+                statusMessage = "🟢 \(card.name) → \(room.name) · \(transport)"
                 if requestedTransport == .entertainmentArea && !isEnt {
-                    statusMessage = "⚠ Streaming unavailable, running \(room.name) in Room (REST)"
+                    statusMessage = "⚠ Streaming isn't available — playing \(room.name) in Room mode"
                 }
                 debugLog("[Studio] Active effects: \(runningEffects.count) rooms")
                 return
@@ -1315,7 +1317,7 @@ final class StudioViewModel {
                 requestedTransport: nil, transportFallback: false
             )
             publishNowPlaying(room: room, card: card)
-            statusMessage = "🟢 \(card.name) → \(room.name) [REST_ONE_SHOT]"
+            statusMessage = "🟢 \(card.name) → \(room.name) · \(TransportVocabulary.toastOneShot)"
         }
 
         debugLog("[Studio] Active effects: \(runningEffects.count) rooms")

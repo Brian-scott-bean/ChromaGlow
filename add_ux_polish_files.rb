@@ -52,6 +52,8 @@ APP_FILES = {
   # Round B — previews + envelope/mic visualization
   'HueHome/UI/Components/LookPreview.swift'        => ['HueHome', 'UI', 'Components'],
   'HueHome/UI/Components/EnvelopeStripView.swift'  => ['HueHome', 'UI', 'Components'],
+  # Round C — one transport vocabulary
+  'HueHome/UI/Components/TransportVocabulary.swift' => ['HueHome', 'UI', 'Components'],
 }
 
 TEST_FILES = {

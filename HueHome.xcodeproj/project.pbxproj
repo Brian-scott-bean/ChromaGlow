@@ -236,6 +236,7 @@
 		C0DEC0DE0201000000000001 /* MainThreadWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0201000000000000 /* MainThreadWatchdog.swift */; };
 		C1F360D81291713EACE0C1FD /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27B5C4A4767211516073798 /* SettingsView.swift */; };
 		C47CF29F24AA56854A38162C /* CreateGlobalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92662E9280D48307551834BA /* CreateGlobalSceneView.swift */; };
+		C5D93FFD211A2A6CAB0CF38A /* TransportVocabulary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19BE9C1668BB96CB3AF94716 /* TransportVocabulary.swift */; };
 		C6D8E1256E9325A4EDEA1610 /* LightingPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E654DBE7E9915ECC497D13F /* LightingPreset.swift */; };
 		C9FD3C95694034D599E442F8 /* KeychainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AE302747F21A3DDFB547CD1 /* KeychainManager.swift */; };
 		CB70C04CB7E8C3323F671045 /* BridgeAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */; };
@@ -388,6 +389,7 @@
 		1503A7C27BEF5B41FABF3E38 /* GuestInviteAcceptorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteAcceptorTests.swift; path = ./HueHomeTests/GuestInviteAcceptorTests.swift; sourceTree = "<group>"; };
 		153817FECE5A8809EC68A1E0 /* LookPreviewMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LookPreviewMathTests.swift; path = ./HueHomeTests/LookPreviewMathTests.swift; sourceTree = "<group>"; };
 		1819E1C21C24411637B24FFA /* GuestInviteAcceptor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteAcceptor.swift; path = ./HueHome/Core/Share/GuestInviteAcceptor.swift; sourceTree = "<group>"; };
+		19BE9C1668BB96CB3AF94716 /* TransportVocabulary.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TransportVocabulary.swift; path = ./HueHome/UI/Components/TransportVocabulary.swift; sourceTree = "<group>"; };
 		1AA4CC7E83E29A5E252517C9 /* GuestInviteSpec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteSpec.swift; path = ./HueHome/Core/Share/GuestInviteSpec.swift; sourceTree = "<group>"; };
 		1D5FB0B94877644269D4D186 /* TutorialIllustrationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TutorialIllustrationView.swift; path = ./HueHome/UI/Tutorial/TutorialIllustrationView.swift; sourceTree = "<group>"; };
 		1DB2272228C12BF09711E036 /* RoomAggregateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomAggregateTests.swift; path = ./HueHomeTests/RoomAggregateTests.swift; sourceTree = "<group>"; };
@@ -991,6 +993,7 @@
 				F5D26F0405375B0BD1898A56 /* KeyboardState.swift */,
 				7B72C845E850934EF911770D /* LookPreview.swift */,
 				36E702855DB278EE57B3C179 /* EnvelopeStripView.swift */,
+				19BE9C1668BB96CB3AF94716 /* TransportVocabulary.swift */,
 			);
 			name = Components;
 			sourceTree = "<group>";
@@ -1840,6 +1843,7 @@
 				D4EFE1FF25265F094DE83FF2 /* KeyboardState.swift in Sources */,
 				8E8081E3E2C4BAA4EBCB1DB3 /* LookPreview.swift in Sources */,
 				8770392218BBB43FA2844D20 /* EnvelopeStripView.swift in Sources */,
+				C5D93FFD211A2A6CAB0CF38A /* TransportVocabulary.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

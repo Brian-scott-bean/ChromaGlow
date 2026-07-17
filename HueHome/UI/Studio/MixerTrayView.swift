@@ -231,7 +231,9 @@ struct MixerTrayView: View {
 
                             // Scope / transport badge for Studio engine cards
                             if case .appDriven = card.strategy {
-                                StageBadge(text: effect.isEntertainment ? "ENT AREA" : "ROOM",
+                                StageBadge(text: effect.isEntertainment
+                                               ? TransportVocabulary.badgeStreaming
+                                               : TransportVocabulary.badgeRoom,
                                            style: effect.isEntertainment ? .amber : .muted)
                             } else if case .composition = card.strategy {
                                 Menu {
@@ -242,14 +244,14 @@ struct MixerTrayView: View {
                                     Button {
                                         onTransportSwitch(effect, true)
                                     } label: {
-                                        Label("Entertainment Area (Streaming)", systemImage: "bolt.fill")
+                                        Label(TransportVocabulary.streamingMenuLabel, systemImage: "bolt.fill")
                                     }
                                     .disabled(!availability.canStream)
 
                                     Button {
                                         onTransportSwitch(effect, false)
                                     } label: {
-                                        Label("Room Only (REST)", systemImage: "iphone")
+                                        Label(TransportVocabulary.roomOnlyMenuLabel, systemImage: "iphone")
                                     }
 
                                     if let reason = availability.reason {
@@ -505,10 +507,8 @@ struct MixerTrayView: View {
     }
 
     private func runtimeOnlyCadenceText() -> String {
-        guard let cadence = vm.activeRESTCadenceForSelectedRoom else {
-            return "Runtime-only REST is rate-capped"
-        }
-        return "Runtime-only REST is rate-capped (Live: ~\(String(format: "%.1f", cadence))s)"
+        TransportVocabulary.roomModeCadenceStatus(
+            liveSeconds: vm.activeRESTCadenceForSelectedRoom)
     }
 
     /// The one-sentence transport status under the header, or nil when the
@@ -521,11 +521,11 @@ struct MixerTrayView: View {
         guard case .composition = card.strategy else { return nil }
 
         if orchestrator.compositionTransportByRoom[effect.room.id] == .bridgeStored {
-            return ("Running on bridge — close the app, lights keep going",
+            return (TransportVocabulary.bridgeStoredStatus,
                     HuePalette.amber.opacity(0.9))
         }
         if effect.transportFallback {
-            return ("Streaming unavailable on this bridge/session, using REST",
+            return (TransportVocabulary.fallbackStatus,
                     HuePalette.amber.opacity(0.75))
         }
         if !effect.isEntertainment, card.compositionTier == .runtimeOnly {
@@ -534,16 +534,18 @@ struct MixerTrayView: View {
         return nil
     }
 
-    /// The badge names the transport in the same grammar engine cards use
-    /// ("ENT AREA" / "ROOM"). It stays short because the nuance — why we fell
-    /// back, what bridge-stored means — lives in `transportStatus`'s sentence
-    /// directly beneath it, where there is room to say it properly.
+    /// The badge names the play mode in the same grammar engine cards use
+    /// (TransportVocabulary badges). It stays short because the nuance — why
+    /// we fell back, what bridge-stored means — lives in `transportStatus`'s
+    /// sentence directly beneath it, where there is room to say it properly.
     private func composerTransportBadgeText(for effect: RunningEffect) -> String {
         // Bridge-stored animations run on the bridge hardware itself
         if orchestrator.compositionTransportByRoom[effect.room.id] == .bridgeStored {
-            return "BRIDGE ⚡"
+            return TransportVocabulary.badgeBridge
         }
-        return composerIsStreaming(effect) ? "ENT AREA" : "ROOM · REST"
+        return composerIsStreaming(effect)
+            ? TransportVocabulary.badgeStreaming
+            : TransportVocabulary.badgeRoom
     }
 
     /// Live transport for a composition card — the orchestrator's per-room
