@@ -264,7 +264,7 @@ struct SettingsView: View {
                             .foregroundStyle(orchestrator.isDemoMode ? .orange : .white)
                         Text(orchestrator.isDemoMode
                              ? "Resume real bridge connection"
-                             : "Explore the app with mock data")
+                             : "Explore the app with a sample home")
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.45))
                     }

@@ -322,7 +322,7 @@ struct HueSaturationPad: View {
 
 // MARK: - Stage Badge
 
-/// Small status pill: LIVE / ENT AREA / coverage counts.
+/// Small status pill: LIVE / AREA / coverage counts.
 struct StageBadge: View {
     enum Style {
         case live
@@ -661,7 +661,7 @@ struct PatternStripView: View {
             StageCard(icon: "bolt.fill", title: "React") {
                 HStack {
                     StageBadge(text: "LIVE", style: .live)
-                    StageBadge(text: "ENT AREA", style: .amber)
+                    StageBadge(text: "AREA", style: .amber)
                     StageBadge(text: "4 OF 6 LIGHTS", style: .muted)
                 }
             }

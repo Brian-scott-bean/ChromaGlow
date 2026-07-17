@@ -676,7 +676,8 @@ class HueAPIClient: @unchecked Sendable {
             #if DEBUG
             print("🌐 \(method) \(resourcePath) FAIL code=\(code) \(ms)ms — \(error.localizedDescription)")
             #endif
-            log.error("API: \(method, privacy: .public) \(resourcePath, privacy: .public) FAILED code=\(code) after \(ms)ms: \(error.localizedDescription, privacy: .public)")
+            log.error("API: \(method, privacy: .public) \(resourcePath, privacy: .public) FAILED code=\(code) after \(ms)ms")
+            log.error("API failure detail: \(error.localizedDescription)")
             throw error
         }
         guard let http = response as? HTTPURLResponse else { return data }

@@ -17,6 +17,48 @@ final class HueTokensTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(HueHit.min, 44)
     }
 
+    /// The Round-C terminology contract: TransportVocabulary is the single
+    /// source of play-mode words, and none of them may be developer jargon.
+    /// (Scripts/hardening_guards.sh Guard 6 covers the view files; this
+    /// covers the vocabulary itself in every suite run.)
+    func testTransportVocabularyStaysJargonFree() {
+        let banned = ["REST", "Transport", "transport", "ENT AREA",
+                      "grouped light", "DTLS", "SSE", "rate-capped"]
+        let strings: [String] = [
+            TransportVocabulary.streamingMenuLabel,
+            TransportVocabulary.roomOnlyMenuLabel,
+            TransportVocabulary.autoTitle,
+            TransportVocabulary.streamingTitle,
+            TransportVocabulary.roomOnlyTitle,
+            TransportVocabulary.streamingSubtitle,
+            TransportVocabulary.roomModeSubtitle,
+            TransportVocabulary.streamingSegment,
+            TransportVocabulary.roomSegment,
+            TransportVocabulary.badgeStreaming,
+            TransportVocabulary.badgeRoom,
+            TransportVocabulary.badgeBridge,
+            TransportVocabulary.playModeSection,
+            TransportVocabulary.choosePlayTitle,
+            TransportVocabulary.choosePlayMessage,
+            TransportVocabulary.saveSheetFooter,
+            TransportVocabulary.applyWithMenu,
+            TransportVocabulary.preferredMenu,
+            TransportVocabulary.bridgeStoredStatus,
+            TransportVocabulary.fallbackStatus,
+            TransportVocabulary.roomModeCadenceStatus(liveSeconds: nil),
+            TransportVocabulary.roomModeCadenceStatus(liveSeconds: 1.2),
+            TransportVocabulary.toastStreaming,
+            TransportVocabulary.toastRoomMode,
+            TransportVocabulary.toastOneShot,
+        ]
+        for s in strings {
+            for b in banned {
+                XCTAssertFalse(s.contains(b),
+                               "vocabulary string \"\(s)\" contains banned word \"\(b)\"")
+            }
+        }
+    }
+
     // MARK: - Color Hex Init
 
     func testHexInitSixDigit() {

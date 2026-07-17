@@ -40,8 +40,10 @@ fail() {
 # target uses a classic group and needs the explicit pbxproj Resources entry.
 # ──────────────────────────────────────────────────────────────
 
+# The main app's manifest lives at the repo ROOT since build 28 (the orphan
+# duplicate at HueHome/ was deleted; the root file is the live one).
 PRIVACY_BUNDLE_DIRS=(
-    "HueHome"
+    "."
     "HueHomeWidget"
     "LightShadeWatch"
     "LightShadeWatchApp Watch App"
@@ -149,6 +151,38 @@ primary_hits=$(grep -rn "primaryAPIClient" "${SWIFT_DIRS[@]}" --include='*.swift
 if [[ -n "$primary_hits" ]]; then
     fail "M-07/H-05/M-18" $'primaryAPIClient used outside its declaration (wrong-bridge class):\n'"$primary_hits"
 fi
+
+# ──────────────────────────────────────────────────────────────
+# Guard 6 (Round C terminology): banned user-facing jargon.
+#
+# The 2026-07 terminology sweep removed developer words from every display
+# string (one TransportVocabulary source). These fixed literals can only
+# reappear as display text — if one returns, the sweep is regressing.
+# ──────────────────────────────────────────────────────────────
+
+JARGON_PATTERNS=(
+    '(REST)'
+    '[REST'
+    'REST_ONE_SHOT'
+    'ENT AREA'
+    'Runtime-only REST'
+    'rate-capped'
+    'mock data'
+    'low-latency'
+    'ultra-low-latency'
+    'Wi-Fi scan (mDNS)'
+    'Devices & Firmware'
+    'CT APPROX'
+    'has no grouped light'
+    '"Onset"'
+)
+
+for pattern in "${JARGON_PATTERNS[@]}"; do
+    hits=$(grep -RFl -- "$pattern" HueHome/UI HueHome/Core/Models/TutorialCatalog.swift 2>/dev/null || true)
+    if [[ -n "$hits" ]]; then
+        fail "terminology" $'banned user-facing jargon "'"$pattern"$'" found in:\n'"$hits"
+    fi
+done
 
 # ──────────────────────────────────────────────────────────────
 
