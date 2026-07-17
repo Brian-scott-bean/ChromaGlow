@@ -12,7 +12,7 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **32**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **33**).
 - **WORLD-CLASS POLISH PROGRAM IN FLIGHT (2026-07-17, Brian-approved):** six rollback-safe
   rounds → builds 29–33 (A visible UX: tour-overlap/keyboard/44pt · B previews-everywhere +
   envelope/mic visuals · C terminology/one-transport-vocabulary · D new-effects pack incl.
@@ -43,7 +43,13 @@
   Cathedral, Neon Rain, Deep Space Drift, Jellyfish, Zen Garden — all palettes are
   catalog-proven gamut-C points/convex blends, all passed the full PresetCatalogTests bar;
   BuiltInSeedMigrator delivers them to existing installs without touching user edits
-  (rollback: `checkpoint/effects-D`). Full entries + device checklists below. Full program
+  (rollback: `checkpoint/effects-D`).
+  **ROUND E SHIPPED = BUILD 33 (2026-07-17) — PROGRAM COMPLETE:** hardening Round 3 — nine
+  verified-open P2 findings fixed (L-01/07/08/10/24/25/26/45/46/52), the audit's Round-3
+  ledger recorded (fixed-since / moot / still-open-with-reasons, audit doc §8), and the
+  builds-18–28 new surfaces swept clean under existing scrub coverage (rollback:
+  `checkpoint/hardening-E`). All six program rounds (0, A–E) are on `main` and pushed; device
+  QA runs from `docs/ios/master-on-device-checklist.md` + each round's adds. Full program
   record in the 2026-07-17 ROUND 0 entry.
 - **BUILD 28 (2026-07-15): FINAL AUDIT + WELCOME TOUR — AWAITING BRIAN'S ON-DEVICE CHECK.**
   Fifteen shippable commits (rollback tag `checkpoint/tour-audit-2026-07-15`): the audit's one
@@ -377,6 +383,54 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-17 - [Claude] BUILD 33 — POLISH ROUND E: hardening round 3 — verify-and-close + new-surface sweep
+
+### Branch
+- `main` (rollback tag: `checkpoint/hardening-E`, pushed)
+
+### Did
+- **Triage against CURRENT main first, fixes second** — the audit doc gains §8 "Round 3":
+  every remaining open finding re-verified (builds 9→32 moved a lot of code) and ledgered as
+  FIXED-THIS-ROUND / FIXED-SINCE / MOOT / STILL-OPEN-with-reasons.
+- **fix(hardening): nine verified-open P2 findings closed** — L-01 (deadline natural expiry —
+  stale-SSE flicker window), L-07 (backoff ceiling was a no-op), L-08 (tautological generation
+  guards deleted + documented), L-10 (log caps ×2 view models), L-24 (per-render SwiftData
+  fetch → @Query), L-25 (kelvin mirek-0 trap), L-26 (glByID uniquing), L-45/L-46 (GamingEngine
+  locking), L-52 (32-char name caps ×2 builders).
+- **Fixed-since verified:** L-18 died with the D-016 pairing rework; EffectLoops has backoff
+  (M-14 class); the Effects-tab deletion mooted H-05/M-15..17/L-41/42/44/54.
+- **Still-open is deliberate and homed** (§8.4): L-02/L-28 need response fixtures; pairing-flow
+  items (L-14..17) belong in a dedicated round with the physical-bridge checklist; L-13
+  (HueSSEService deletion) is a cleanup commit with pbxproj + AGENTS list corrections; Android
+  items ride Batch-4/D-020.
+- **New-surface sweep CLEAN** (§8.5): invite QR (secret-bearing kind 3), guest key mint,
+  whitelist masking, share codecs — zero token-logging hits; already pinned by
+  SecretLogScrubTests (incl. the build-26 guest-mint test) + WhitelistRedactionTests + Guard 2.
+- Decision-Log note appended (pipeline doc Open Questions).
+
+### Working
+- 703/703 green twice at round end; `./Scripts/hardening_guards.sh` green.
+
+### Left
+- **THE PROGRAM IS COMPLETE** (Rounds 0 + A–E = builds 29–33, all pushed). Remaining owners:
+  Brian's device pass (`docs/ios/master-on-device-checklist.md` + each round's adds), the ASC
+  runbook, the sequencer design-doc questions (§11), the build-26 whitelist-probe RECORD, and
+  the Android Batch-4/D-020 loop with Codex. Deferred engineering backlog: audit §8.4 items,
+  Baylee Phase B, Elmo's test-target warnings, Sequence Builder Phases 1–3 on Brian's go.
+
+### Validation
+- Suite per commit via xcresulttool; guards script green; build 33 across all 12 pbxproj
+  entries.
+
+### Gotchas
+- L-08's guards were load-bearing-LOOKING but inert — staleness is (and was) entirely
+  `RestSender.clear()`; don't reintroduce snapshot-vs-snapshot generation guards in enqueue
+  closures.
+- The L-01 deadlines now always run their full 1.5s — any future tuning must keep the SSE
+  suppression window ≥ the PUT round-trip or the flicker returns.
 
 ---
 

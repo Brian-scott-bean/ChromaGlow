@@ -791,6 +791,11 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   hardening-P1 run; status-synced 2026-07-17 — see the dated turns on each entry). Only
   **D-020 (canonical Android tree + CI hardening-presence gate) remains PROPOSED/open** — decide
   with Codex alongside the Batch-4 physical gate.
+- 2026-07-17 [Claude]: iOS hardening **Round 3** executed in the polish program's build 33
+  (`docs/audit/hardening-audit-2026-07-01.md` §8): nine verified-open P2 findings fixed, the
+  fixed-since/moot/still-open ledger recorded, and the builds-18–28 new surfaces (invite/guest
+  keys/whitelist) grep-swept clean under existing scrub-test coverage. Still-open items carry
+  named reasons and future-round homes (§8.4); Android items remain with Batch-4/D-020.
 - Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-021+).
 
 ---

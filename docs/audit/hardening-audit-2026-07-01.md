@@ -483,3 +483,67 @@ Round-2 findings do **not** introduce a new P0 category — the top security ite
 - **P2 additions:** the audio races L-45/L-46 (benign, self-healing — tighten `GamingEngine` locking); the crash-safety guards L-54 (K-unit divisor) and L-41 (clamp preset params on restore); the Android robustness items L-38 (zone-id crash), L-39 (NSD flood cap), L-40 (name sanitization), L-55 (stop discovery on demo entry); and the scene/automation write-path polish L-47..L-53. Info nits I-01 (leading-zero IPv4) and I-13 (`allowBackup=false`/exclude rules) fold into the Batch-4-before-merge Android list.
 
 *End of Round 2 addendum.*
+
+---
+
+## 8. Round 3 — polish-program verification & closure (2026-07-17, build 33)
+
+**Auditor:** Claude · **Method:** every remaining open finding re-verified against current
+`main` (builds 9→32 moved a lot of code); statuses below reflect what is TRUE on main today.
+Fixes shipped in the build-33 hardening round (`checkpoint/hardening-E`).
+
+### 8.1 FIXED THIS ROUND (build 33)
+
+| ID | Fix |
+|---|---|
+| L-01 | setRoom/setBrightness no longer release `pendingActionDeadlines` at PUT completion — the 1.5s deadline expires naturally, closing the stale-SSE flicker window. |
+| L-07 | REST error backoff ceiling raised 0.15→0.5 (was `min(0.15, …)` — a no-op that could never engage). |
+| L-08 | The tautological enqueue-time generation guards (3 sites) deleted and documented: `RestSender.clear()` (latest-wins) is the sole staleness mechanism, as it always effectively was. |
+| L-10 | `logLines` FIFO-capped at 150 in AutomationsViewModel + DevicesViewModel (ran unbounded in Release). |
+| L-24 | Dashboard `nextAutomation` derives from the existing `@Query` instead of a fresh no-predicate SwiftData fetch per body pass. |
+| L-25 | `HueColorUtils.kelvin(from:)` zero-guard — out-of-spec `mirek == 0` no longer hard-traps. |
+| L-26 | Dashboard `glByID` uses `uniquingKeysWith` — a bridge-duplicated grouped-light id no longer traps the rebuild. |
+| L-45/L-46 | `GamingEngine`: the `_rollingAvg` read-modify-write and spike computation moved under the existing `os_unfair_lock`; `_activeSensitivity` now publishes through the same lock. TSan-clean by construction. |
+| L-52 | 32-char CLIP v2 name cap added to CreateSceneView + CreateGlobalSceneView (the two builders that lacked it). |
+
+### 8.2 FIXED SINCE THE AUDIT (verified on main, no work needed)
+
+- **L-18** — the D-016 pinned-trust pairing rework removed the per-attempt delegate-retaining
+  URLSession pattern from `BridgeDiscoveryViewModel` (no `URLSession(` construction remains).
+- **M-14 class** — `EffectLoops.setAll` now carries failure backoff (`failureBackoffNs`) from
+  the P1 run.
+- **L-19..L-23, L-27, L-30, L-09, M-04..M-18, H-01..H-04, M-01..M-03** — closed by the
+  hardening-P1 run (see §5/§7.2 and AGENTS.md).
+- **Round-C bonus (build 31):** a post-P1 `HueAPIClient` error log line violating the H-03
+  line rule was caught by the guards script and split; the stale M-03 guard path was corrected
+  to the root manifest.
+
+### 8.3 MOOT (surface deleted in Round 4, 2026-07-06)
+
+H-05, M-15, M-16, M-17, L-41, L-42, L-44, L-54 — the old Effects tab
+(EffectsViewModel/EffectsView/EffectControlsView) and Sync tab surfaces no longer exist.
+
+### 8.4 STILL OPEN (deliberate, with reasons)
+
+| ID | Why deferred |
+|---|---|
+| L-02/L-28 | Surfacing 2xx `errors[]` touches every decode path and needs response-shape fixtures; deserves its own focused pass, not a rushed multi-file change. |
+| L-03/L-05/L-06 | Concurrency polish on shared clients/continuations — small real-world impact, medium regression risk in the orchestrator hot path; batch with the next engine round. |
+| L-04, L-11..L-12 | v1 capacity check + DTLS open-failure rollback — bundle with the next entertainment-transport round. |
+| L-13 | `HueSSEService` deletion needs pbxproj removal + an AGENTS capability-list correction; scheduled as a cleanup commit, not a hardening risk (zero call sites). |
+| L-14..L-17 | Pairing-flow robustness (resolve-connection cancel, legacy-slot atomicity, manual-IP validation, bridgeid dedup) — pairing is the most audited, most fragile flow; changes belong in a dedicated round with the physical-bridge checklist. |
+| L-29, L-43, L-47..L-51, L-53 | Verified still present; low severity, self-healing or edge-only; queued for the next maintenance round. |
+| L-31..L-40, L-55, M-19/D-020, I-01, I-13 | Android — lives with the Batch-4 promotion + D-020 decision (Brian + Codex loop). |
+
+### 8.5 New-surface sweep (builds 18–28 additions) — CLEAN
+
+The invite/guest-key/whitelist/share surfaces added since this audit were grep-swept for
+token/secret logging: **zero hits**. Existing coverage already pins the surfaces:
+`SecretLogScrubTests.testGuestMintLogLinesNeverContainSecretsOrInviteURLs` (the token-bearing
+invite QR + mint path), `testPairingLogLinesNeverContainSecrets`,
+`testPairingErrorLogLinesContainNoSecrets`, `WhitelistRedactionTests` (H-03 masking incl.
+other apps' keys), and the global Guard 2 line rule in `Scripts/hardening_guards.sh`. The
+build-28 print sweep left zero raw Release prints across all four targets. No new tests were
+needed — recorded here so the next round doesn't re-derive it.
+
+*End of Round 3 addendum.*
