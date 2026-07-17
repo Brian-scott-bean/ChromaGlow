@@ -77,6 +77,7 @@ struct BridgeSetupContent: View {
     @State private var showManualEntry = false
     @State private var showDebugLog    = false
     @State private var manualIP        = ""
+    @FocusState private var manualIPFocused: Bool
     // ── Share Invite (home-join + guest invite) ───────────
     @State private var showInviteScanner = false
     @State private var presentedInvite: JoinInvitePresentation?
@@ -682,20 +683,24 @@ struct BridgeSetupContent: View {
                     }
 
                     TextField("192.168.1.100", text: $manualIP)
-                        .keyboardType(.decimalPad)
+                        // numbersAndPunctuation, not decimalPad — the pad has no
+                        // Return key, stranding the user (StageSlider precedent).
+                        .keyboardType(.numbersAndPunctuation)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($manualIPFocused)
+                        .submitLabel(.go)
+                        .onSubmit { connectManualIP() }
                         .font(.system(size: 17, design: .monospaced))
                         .foregroundStyle(.white)
                         .padding(14)
                         .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.08)))
                         .overlay(RoundedRectangle(cornerRadius: 12)
                             .strokeBorder(.white.opacity(0.15), lineWidth: 1))
+                        .onAppear { manualIPFocused = true }
 
                     Button {
-                        let ip = manualIP.trimmingCharacters(in: .whitespaces)
-                        guard !ip.isEmpty else { return }
-                        let bridge = BridgeEndpoint(name: "Hue Bridge", host: ip, port: 443)
-                        showManualEntry = false
-                        vm.phase = .bridgeFound(bridge)
+                        connectManualIP()
                     } label: {
                         Text("Connect")
                             .font(.system(size: 16, weight: .semibold))
@@ -720,6 +725,15 @@ struct BridgeSetupContent: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    /// Shared by the Connect button and the keyboard's Go key.
+    private func connectManualIP() {
+        let ip = manualIP.trimmingCharacters(in: .whitespaces)
+        guard !ip.isEmpty else { return }
+        let bridge = BridgeEndpoint(name: "Hue Bridge", host: ip, port: 443)
+        showManualEntry = false
+        vm.phase = .bridgeFound(bridge)
     }
 
     // MARK: - Debug Log (DEBUG only)

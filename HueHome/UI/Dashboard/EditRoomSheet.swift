@@ -77,6 +77,7 @@ struct EditRoomSheet: View {
     @State private var name:              String
     @State private var selectedArchetype: String
     @State private var isSaving:          Bool = false
+    @FocusState private var nameFocused:  Bool
 
     @Environment(\.dismiss) private var dismiss
 
@@ -130,6 +131,7 @@ struct EditRoomSheet: View {
                                         .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
                                 )
                                 .padding(.horizontal, 20)
+                                .focused($nameFocused)
                                 .submitLabel(.done)
                                 .onSubmit { saveIfValid() }
                         }
