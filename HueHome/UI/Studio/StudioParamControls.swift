@@ -15,23 +15,23 @@ import SwiftUI
 /// compact tray, which overflow to the "+N more" reveal, and the
 /// content-derived tray height (replaces the old hardcoded 390/420).
 enum MixerTrayMetrics {
-    static let grabBarHeight: CGFloat = 28
-    /// Row 1 of the tray header: 34pt icon/action circles plus padding.
-    static let headerHeight: CGFloat = 60
+    static let grabBarHeight: CGFloat = 36
+    /// Row 1 of the tray header: 40pt icon/action circles plus padding.
+    static let headerHeight: CGFloat = 66
     /// Row 2: the horizontally scrolling badge lane (LIVE, coverage, beat,
     /// transport, room count). Fixed so the tray height never depends on how
     /// many badges happen to be showing.
-    static let badgeLaneHeight: CGFloat = 24
+    static let badgeLaneHeight: CGFloat = 28
     /// Row 3: the transport status sentence. Reserved for composition cards
     /// so the tray does not resize when the sentence appears or clears.
     static let statusLineHeight: CGFloat = 26
     static let sliderRowHeight: CGFloat = 56
     static let moreRowHeight: CGFloat = 44
     static let verticalPadding: CGFloat = 16
-    /// Raised by one badge-lane row (24 + 4 spacing) when the header went from
-    /// one row to three, so compact devices keep the inline slider count they
-    /// had before.
-    static let compactHeightCap: CGFloat = 388
+    /// Raised with the three-row header (and again for the 44pt-hit-target
+    /// pass: +8 grab, +6 header, +4 badge lane) so compact devices keep the
+    /// inline slider count they had before. MixerTrayMetricsTests pins this.
+    static let compactHeightCap: CGFloat = 406
 
     /// Total height of the three-row tray header: identity+actions, badge
     /// lane, and — for composition cards — the transport status sentence.

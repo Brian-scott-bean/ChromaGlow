@@ -54,17 +54,17 @@ struct MixerTrayView: View {
                     .fill(Color.white.opacity(0.28))
                     .frame(width: 36, height: 4)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 28)
-                    .contentShape(Rectangle())
+                    .frame(height: MixerTrayMetrics.grabBarHeight)
+                    .contentShape(Rectangle().inset(by: -4))
                     .onTapGesture {
                         onCollapse()
                         HapticManager.shared.light()
                     }
 
-                // ── Header (Perform grammar: 34pt circles, mono tags, bold name) ──
+                // ── Header (Perform grammar: 40pt circles, mono tags, bold name) ──
                 //
                 // Three rows, because one row cannot hold this much. Up to four
-                // 34pt action circles plus an icon are ~170pt of incompressible
+                // 40pt action circles plus an icon are ~200pt of incompressible
                 // width; on a 360pt phone that left the name and the transport
                 // status sentence a few points each, and they wrapped mid-word.
                 // Row 1 is identity + actions, row 2 is a scrollable badge lane
@@ -78,7 +78,7 @@ struct MixerTrayView: View {
                         ZStack {
                             Circle()
                                 .fill(card.accentColor.opacity(0.20))
-                                .frame(width: 34, height: 34)
+                                .frame(width: 40, height: 40)
                             Image(systemName: card.icon)
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(card.accentColor)
@@ -116,10 +116,11 @@ struct MixerTrayView: View {
                                 Image(systemName: "arrow.uturn.backward")
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.white.opacity(0.75))
-                                    .frame(width: 34, height: 34)
+                                    .frame(width: 40, height: 40)
                                     .background(Circle().fill(Color.white.opacity(0.08)))
                             }
                             .buttonStyle(.plain)
+                            .stageTapTarget(visual: 40)
                             .fixedSize()
                             .accessibilityLabel("Revert to saved")
                         }
@@ -155,10 +156,11 @@ struct MixerTrayView: View {
                                 Image(systemName: "slider.vertical.3")
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(Color.black.opacity(0.85))
-                                    .frame(width: 34, height: 34)
+                                    .frame(width: 40, height: 40)
                                     .background(Circle().fill(HuePalette.amber))
                             }
                             .buttonStyle(.plain)
+                            .stageTapTarget(visual: 40)
                             .fixedSize()
                             .accessibilityLabel("Perform")
 
@@ -169,13 +171,14 @@ struct MixerTrayView: View {
                                 Image(systemName: "square.and.arrow.down")
                                     .font(.system(size: 12))
                                     .foregroundStyle(HuePalette.amber)
-                                    .frame(width: 34, height: 34)
+                                    .frame(width: 40, height: 40)
                                     .background(
                                         Circle()
                                             .fill(HuePalette.amber.opacity(0.15))
                                     )
                             }
                             .buttonStyle(.plain)
+                            .stageTapTarget(visual: 40)
                             .fixedSize()
                             .accessibilityLabel("Save composition")
                         }
@@ -188,13 +191,14 @@ struct MixerTrayView: View {
                             Image(systemName: "stop.fill")
                                 .font(.system(size: 12))
                                 .foregroundStyle(HuePalette.Noir.destructive)
-                                .frame(width: 34, height: 34)
+                                .frame(width: 40, height: 40)
                                 .background(
                                     Circle()
                                         .fill(HuePalette.Noir.destructive.opacity(0.15))
                                 )
                         }
                         .buttonStyle(.plain)
+                        .stageTapTarget(visual: 40)
                         .fixedSize()
                         .accessibilityLabel("Stop \(card.name)")
                     }
@@ -263,7 +267,7 @@ struct MixerTrayView: View {
                                     }
                                     .foregroundStyle(composerIsStreaming(effect) ? HuePalette.amber : .white.opacity(0.75))
                                     .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
+                                    .padding(.vertical, 5)
                                     .background(
                                         Capsule().fill(
                                             composerIsStreaming(effect)
@@ -272,6 +276,7 @@ struct MixerTrayView: View {
                                         )
                                     )
                                     .fixedSize()
+                                    .stageTapTarget(visual: 26)
                                 }
                                 .buttonStyle(.plain)
                             }

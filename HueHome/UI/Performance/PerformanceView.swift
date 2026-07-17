@@ -292,11 +292,12 @@ struct PerformanceView: View {
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(viewModel.isSequencePlaying
                                      ? Color.black.opacity(0.85) : .white.opacity(0.7))
-                    .frame(width: 34, height: 34)
+                    .frame(width: 40, height: 40)
                     .background(Circle().fill(viewModel.isSequencePlaying
                                               ? AnyShapeStyle(HuePalette.amber)
                                               : AnyShapeStyle(.white.opacity(0.08))))
             }
+            .stageTapTarget(visual: 40)
             .accessibilityLabel("Step sequencer")
             Button {
                 dismiss()
@@ -304,9 +305,10 @@ struct PerformanceView: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: 34, height: 34)
+                    .frame(width: 40, height: 40)
                     .background(Circle().fill(.white.opacity(0.08)))
             }
+            .stageTapTarget(visual: 40)
             .accessibilityLabel("Close Perform")
         }
     }
