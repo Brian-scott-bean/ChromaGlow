@@ -601,9 +601,10 @@ struct StudioView: View {
                         isRunning: vm.runningCardID == card.id,
                         roomSelected: vm.selectedRoom != nil,
                         isVisible: visible,
-                        // Decorative signature for engine cards — they have no
-                        // MotionConfig; bounce reads as generic activity.
-                        patternSignature: .bounce,
+                        // Each engine card's signature motion (the map lives
+                        // beside the canvas art switch it must stay in sync
+                        // with); bounce only for unmapped cards.
+                        patternSignature: StudioCardCanvas.signaturePattern(forCardID: card.id) ?? .bounce,
                         coverageLabel: {
                             guard deckIndex == 0,
                                   case .bridgeNative = card.strategy,
@@ -733,6 +734,12 @@ struct StudioView: View {
         ZStack {
             RoundedRectangle(cornerRadius: HueRadius.xl)
                 .fill(Color.white.opacity(0.06))
+
+            // Faint live preview of the starter look behind the hero content.
+            LookPreviewCanvas(spec: .starter, isVisible: visible)
+                .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
+                .opacity(0.5)
+                .allowsHitTesting(false)
 
             // Wall-clock-driven border sweep (3s/rev) — pausable, unlike the old
             // repeatForever CoreAnimation drive that kept a 60fps angular-gradient
@@ -1016,7 +1023,8 @@ struct StudioView: View {
                 isRunning: vm.runningCardID == card.id,
                 roomSelected: vm.selectedRoom != nil,
                 isVisible: visible,
-                patternSignature: preset.motion.pattern
+                patternSignature: preset.motion.pattern,
+                previewSpec: LookPreviewSpec(preset: preset)
             ) {
                 if vm.runningCardID == card.id {
                     if isMixerCollapsed {
@@ -1578,7 +1586,7 @@ struct StudioCardView: View, Equatable {
     // nonisolated: compares only Sendable stored values (String/Bool/enum);
     // the onTap closure is deliberately excluded from equality.
     nonisolated static func == (lhs: StudioCardView, rhs: StudioCardView) -> Bool {
-        lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected && lhs.isVisible == rhs.isVisible && lhs.patternSignature == rhs.patternSignature && lhs.coverageLabel == rhs.coverageLabel
+        lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected && lhs.isVisible == rhs.isVisible && lhs.patternSignature == rhs.patternSignature && lhs.coverageLabel == rhs.coverageLabel && lhs.previewSpec == rhs.previewSpec
     }
 
     let card: StudioCard
@@ -1586,6 +1594,9 @@ struct StudioCardView: View, Equatable {
     let roomSelected: Bool
     let isVisible: Bool
     var patternSignature: MotionConfig.Pattern? = nil
+    /// Real-look preview (composer presets): replaces the id-keyed canvas art
+    /// and shows the at-rest palette/motion strip.
+    var previewSpec: LookPreviewSpec? = nil
     /// "N OF M LIGHTS" / "NOT SUPPORTED" firmware-effect coverage (Deck 0).
     var coverageLabel: String? = nil
     let onTap: () -> Void
@@ -1612,12 +1623,20 @@ struct StudioCardView: View, Equatable {
                     )
 
                 // ── Living Canvas animation ─────────────────────
-                StudioCardCanvas(
-                    cardID: card.id,
-                    accentColor: accentColor,
-                    isRunning: isRunning,
-                    isVisible: isVisible
-                )
+                Group {
+                    if let previewSpec {
+                        LookPreviewCanvas(spec: previewSpec,
+                                          isRunning: isRunning,
+                                          isVisible: isVisible)
+                    } else {
+                        StudioCardCanvas(
+                            cardID: card.id,
+                            accentColor: accentColor,
+                            isRunning: isRunning,
+                            isVisible: isVisible
+                        )
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
                 .allowsHitTesting(false)
 
@@ -1685,9 +1704,17 @@ struct StudioCardView: View, Equatable {
                         .padding(.top, 5)
                     }
 
-                    // Live pattern signature while the card runs.
-                    if isRunning, let patternSignature {
-                        PatternStripView(pattern: patternSignature, accent: accentColor)
+                    // Signature strip — the real look at rest AND running.
+                    // Composer cards show their true palette/motion; engine
+                    // cards show their accent-tinted signature pattern.
+                    if let previewSpec {
+                        LookPreviewStrip(spec: previewSpec,
+                                         animated: isVisible)
+                            .padding(.top, 6)
+                    } else if let patternSignature {
+                        PatternStripView(pattern: patternSignature,
+                                         accent: accentColor,
+                                         animated: isVisible)
                             .padding(.top, 6)
                     }
 

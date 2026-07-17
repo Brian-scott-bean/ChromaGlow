@@ -29,6 +29,22 @@ struct StudioCardCanvas: View {
         Double(cardID.hashValue & 0xFFFF) / 65535.0
     }
 
+    /// The at-rest signature motion for each engine card — what this effect's
+    /// movement FEELS like, shown on the card's strip. Co-located with the
+    /// id-keyed artwork switch below so "what this card looks like" stays in
+    /// one file; a new deck card should add a case to both.
+    static func signaturePattern(forCardID id: String) -> MotionConfig.Pattern? {
+        switch id {
+        case "candle", "sparkle", "cosmos":                       return .twinkle
+        case "fire", "party":                                     return .scatter
+        case "prism", "colorloop":                                return .cascade
+        case "opal", "underwater", "enchant", "ambient", "sunbeam": return .wave
+        case "glisten":                                           return .pulseCenter
+        case "strobe", "thunderstorm":                            return .chase
+        default:                                                  return nil
+        }
+    }
+
     var body: some View {
         if isVisible && isTabActive && !KeyboardState.shared.isKeyboardUp {
             // Animate: running = full fps, idle = 4fps (subtle, saves GPU)
