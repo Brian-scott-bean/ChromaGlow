@@ -717,6 +717,9 @@ struct CompositionEditorPanel: View {
             // Sensitivity shapes the MIC drive only — beat/onset sources use
             // punchDecay (in the beat panel) for their feel.
             if ComposerControlCatalog.isMicSource(vm.activeCompositionBox?.reaction.source ?? .none) {
+                // Live level meter (polls the analysis engine, never starts
+                // the mic) with the noise-gate threshold ticked on the bar.
+                MicLevelMeterView(threshold: vm.activeCompositionBox?.reaction.threshold)
                 StageSlider(
                     title: "Sensitivity",
                     value: Binding(

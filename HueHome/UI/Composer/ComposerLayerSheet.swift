@@ -418,6 +418,7 @@ struct ComposerAdvancedControls: View {
         let source = vm.activeCompositionBox?.reaction.source ?? .none
 
         if ComposerControlCatalog.isMicSource(source) {
+            MicLevelMeterView(threshold: vm.activeCompositionBox?.reaction.threshold)
             // The engine has consumed smoothing (one-pole response lag) all
             // along — this is its first slider.
             StageSlider(
