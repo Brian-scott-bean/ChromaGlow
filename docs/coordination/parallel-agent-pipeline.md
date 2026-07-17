@@ -632,7 +632,7 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   and do not merge Batch 4 to `main` without physical evidence, Codex review, and explicit human go-ahead.
 
 ### D-016 — iOS bridge TLS pinning + bridgeid-CN identity (converge with Android)
-- Status: PROPOSED
+- Status: IMPLEMENTED on `main` (2026-07 hardening-P1 run; audit H-01/H-02/M-01 closed)
 - 2026-07-01 [Claude]: The 2026-07-01 hardening audit (`docs/audit/hardening-audit-2026-07-01.md`,
   H-01/H-02/M-01/H-06) found iOS uses trust-all TLS on every bridge surface — the REST/SSE delegate
   evaluates the server cert then discards the result and unconditionally returns `.useCredential`, and
@@ -680,18 +680,30 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
   6. **Alternative considered:** bridgeid-CN-only after CA validation (strict Android parity, no
      pin). Rejected for iOS because legacy self-signed bridges (no CA chain) are still in the
      installed base; the leaf pin covers them, and the CA+CN path is kept as the rotation fallback.
+- 2026-07-17 [Claude]: STATUS SYNC (factual, D-010 precedent). The design above shipped in the
+  2026-07 hardening-P1 run and was fast-forwarded to `main` @ `6e8a34a` (build 9) — AGENTS.md
+  "Current High-Priority Follow-Ups" records "bridge TLS pinning D-016 (H-01/H-02/M-01)" as
+  COMPLETE and merged; `BridgeTrustEvaluatorTests` guards the evaluator. Builds 9→28 have run on
+  it since. Marking IMPLEMENTED to close the doc drift (the L-34 class); no code change implied.
 
 ### D-017 — No secrets in logs (iOS) + a CI/lint guard
-- Status: PROPOSED
+- Status: IMPLEMENTED on `main` (2026-07 hardening-P1 run; H-03/H-04/L-09 closed, guards live)
 - 2026-07-01 [Claude]: Audit H-03/H-04/L-09. The iOS v1 client embeds the app key in the URL path and
   logs the full URL at `privacy: .public` in release; pairing logs the raw response (application key +
   entertainment client key). Proposal: log only method/resource/status and lengths; drop
   `privacy: .public` from anything derived from a URL/IP/token/user-content name; never interpolate a
   token/clientKey into any log sink in any build. Add a CI/lint rule banning `privacy: .public` on
   interpolations containing a URL, IP, token, or name, and a post-pairing log-scrape test.
+- 2026-07-17 [Claude]: STATUS SYNC (factual). Shipped in the 2026-07 hardening-P1 run ("secret log
+  scrub H-03/H-04/L-09" — AGENTS.md, merged to `main`), guarded by `SecretLogScrubTests` +
+  `WhitelistRedactionTests` and `Scripts/hardening_guards.sh` (see D-018 turn, Guard 4); extended
+  by the build-26 whitelist H-03 masking, the build-27 debug-print gating (31 prints), and the
+  build-28 sweep (35 more, zero raw Release prints across all 4 targets). Marking IMPLEMENTED.
+  The polish program's build-33 hardening round will extend the scrub tests to the new
+  invite/guest-key surfaces.
 
 ### D-018 — Replace App Group / watch plaintext token with a Keychain access group (iOS)
-- Status: IMPLEMENTED (P1 Group 1, local branch `ios-ref/hardening-p1-2026-07`; on-device gate pending)
+- Status: IMPLEMENTED on `main` (fast-forwarded 2026-07-07 @ `6e8a34a`; on-device upgrade gate lives in Brian's device backlog)
 - 2026-07-01 [Claude]: Audit M-02/L-30. A plaintext copy of the bridge token lives in
   `group.com.huehome.pro` UserDefaults and in watch `UserDefaults.standard`, weaker than the Keychain
   copy and recoverable from an unencrypted backup or filesystem access. Proposal: share credentials via
@@ -731,15 +743,26 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
     mirrors scrubbed). Guard 4 added to `Scripts/hardening_guards.sh` (no UserDefaults token writes).
   - Pending: human on-device gate — existing pairing survives upgrade, widget+watch still control,
     forget-all leaves no secret at rest (§6 checkpoint in the P1 launch prompt).
+- 2026-07-17 [Claude]: STATUS SYNC (factual). The P1 branch was fast-forwarded to `main` @
+  `6e8a34a` on 2026-07-07 (AGENTS.md); builds 9→28 run on it. The on-device upgrade gate remains
+  folded into Brian's device backlog — now item L (`[TestFlight]` upgrade check) +
+  widget/watch/forget-all items in `docs/ios/master-on-device-checklist.md`.
 
 ### D-019 — Per-bundle privacy manifests for the widget + watch targets (iOS)
-- Status: PROPOSED
+- Status: IMPLEMENTED on `main` (2026-07 hardening-P1 run; audit M-03 closed)
 - 2026-07-01 [Claude]: Audit M-03. The widget and watch bundles use the required-reason UserDefaults
   API but ship without their own `PrivacyInfo.xcprivacy` (manifests are per-bundle, not inherited),
   which trips **ITMS-91053** at App Store upload — a release blocker. Proposal: add a
   `PrivacyInfo.xcprivacy` (UserDefaults reason CA92.1) to the widget extension, watch app, and watch
   extension targets and wire each into its Resources phase; add a CI check that every shippable bundle
   contains a privacy manifest.
+- 2026-07-17 [Claude]: STATUS SYNC (factual). Per-bundle manifests shipped in the hardening-P1 run
+  ("per-bundle privacy manifests (M-03)" — AGENTS.md, merged to `main`). Two later corrections on
+  record: the widget/watch Resources phases are EMPTY BY DESIGN (objectVersion-70 synchronized
+  folder groups — manifests verified present in built Release products; do NOT add explicit
+  Resources entries, duplicate membership breaks the build; build-27 false-positive note), and
+  build 28 deleted the orphan duplicate `HueHome/PrivacyInfo.xcprivacy` (the ROOT file is the
+  live manifest). Marking IMPLEMENTED.
 
 ### D-020 — Canonical Android source tree + Android CI hardening-presence gate
 - Status: PROPOSED
@@ -764,10 +787,10 @@ Correction prompt: `docs/coordination/prompts/parallel-batch-2-corrections.md`.
 - **No planning blocker:** Batch 4 is **executed/integrated** on `integration/parallel-batch-4` @
   `040fed7` (automated gate green). Remaining before promotion to `main`: re-run the human-assisted
   physical bridge checkpoint with the correct worktree APK, Codex review, and explicit human go-ahead.
-- **Hardening-audit follow-ups (D-016–D-020, all PROPOSED):** raised 2026-07-01 from
-  `docs/audit/hardening-audit-2026-07-01.md`. iOS TLS pinning (D-016), no-secrets-in-logs guard (D-017),
-  Keychain access group (D-018), per-bundle privacy manifests (D-019), and the canonical Android tree +
-  CI gate (D-020). Awaiting discussion/acceptance.
+- **Hardening-audit follow-ups:** D-016/D-017/D-018/D-019 are **IMPLEMENTED on `main`** (2026-07
+  hardening-P1 run; status-synced 2026-07-17 — see the dated turns on each entry). Only
+  **D-020 (canonical Android tree + CI hardening-presence gate) remains PROPOSED/open** — decide
+  with Codex alongside the Batch-4 physical gate.
 - Codex or Claude: raise any additional question or proposal as a new Decision Log entry (D-021+).
 
 ---

@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-07-15)
+## Current Status Snapshot (updated 2026-07-17)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
@@ -13,6 +13,14 @@
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
   (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **28**).
+- **WORLD-CLASS POLISH PROGRAM IN FLIGHT (2026-07-17, Brian-approved):** six rollback-safe
+  rounds → builds 29–33 (A visible UX: tour-overlap/keyboard/44pt · B previews-everywhere +
+  envelope/mic visuals · C terminology/one-transport-vocabulary · D new-effects pack incl.
+  Lava Lamp · E security round 3). Round 0 shipped: **`docs/ios/master-on-device-checklist.md`**
+  (THE consolidated builds-18–28 + agent-backlog test pass — start here for device QA),
+  **`docs/ios/sequence-builder-design-2026-07.md`** (design-only spec, §11 open questions for
+  Brian), Decision-Log D-016..D-019 status-synced (implemented; D-020 still open). Full program
+  record in the 2026-07-17 entry below.
 - **BUILD 28 (2026-07-15): FINAL AUDIT + WELCOME TOUR — AWAITING BRIAN'S ON-DEVICE CHECK.**
   Fifteen shippable commits (rollback tag `checkpoint/tour-audit-2026-07-15`): the audit's one
   real gap closed (35 MORE ungated Release prints — StudioViewModel 28 / CompositionStore 6 /
@@ -345,6 +353,62 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-17 - [Claude] POLISH PROGRAM ROUND 0: master test checklist, Sequence Builder design, Decision-Log sync
+
+### Branch
+- `main` (docs-only round; no build bump)
+
+### Did
+- **Program kickoff.** Brian approved the six-round "world-class polish program" (plan file:
+  `~/.claude/plans/ok-do-the-best-luminous-hinton.md`): Round 0 docs (this entry), then builds
+  29–33 = A visible UX (tour ScenesArt overlap fix, KeyboardState editing-pauses-the-stage,
+  44pt tap-target normalization incl. the 34×34 mixer transport cluster), B previews everywhere
+  (data-driven LookPreview for all 56 composer cards/scenes/shelf/automations + EnvelopeStripView
+  + mic level meter), C terminology sweep (ONE transport vocabulary + TransportBadge — executes
+  the deferred build-23 Phase C — plus the grandma glossary: REST→Room mode, Envelope→Brightness
+  Shape, CT→Warmth, Settings DEVELOPER behind #if DEBUG, etc.), D new-effects pack (~11 built-ins
+  incl. the missing lava-lamp class), E security hardening round 3 (verify-and-close remaining
+  audit P2/Round-2 items + fresh leak sweep over the builds-18–28 surfaces).
+- **`docs/ios/master-on-device-checklist.md`** — the consolidated "discography": builds 18–28
+  on-device checklists merged into one de-duplicated, surface-ordered pass (supersession-aware:
+  b18§1-5→b20§8; b24 Siri stop→b25 semantics; b25§11→b26 two-phone flow), + the parked-agent
+  "Left" register (Adam/Charles/Baylee/Darwin/Elmo/Frank/Helena), the build-26 whitelist-probe
+  RECORD item, and Brian-manual program items (ASC runbook, Android Batch-4 physical gate).
+- **`docs/ios/sequence-builder-design-2026-07.md`** — the design-only Sequence Builder spec
+  Brian asked for ("interested what you come up with"). Core decision: NO second sequence
+  system — graduate the existing hidden `CompositionSequence`/`SequencePlayer`/
+  `PerformanceMixBox` stack (additive model fields, per-light SequenceTransitionMath at the
+  renderMixed chokepoint, wall-clock holds). Filmstrip editor with drag-to-scrub-on-real-lights,
+  spatial sweep transitions (competitors can't — they have no light positions), hold styles
+  mapped onto existing envelope/motion shapes, 4-tier transport honesty ladder (bridge-stored
+  2–8-step compile via BridgeAnimationEngine ≙ iConnectHue's ceiling; unlimited app-driven +
+  streamed above it), 13 templates (First Light = Brian's script verbatim; Lava Lamp), pure
+  SequenceSafety 3Hz audit. §11 = open questions for Brian.
+- **Decision-Log status sync** (`docs/coordination/parallel-agent-pipeline.md`): D-016/D-017/
+  D-018/D-019 marked IMPLEMENTED on `main` with dated evidence turns (the shipped hardening-P1
+  run; prior turns untouched); the stale "all PROPOSED" Open-Questions bullet corrected; D-020
+  (canonical Android tree + CI gate) left open for the Brian+Codex loop.
+
+### Working
+- n/a (docs only).
+
+### Left
+- Round A next (build 29, checkpoint/ux-polish-A): 7 commits per the approved plan.
+- Brian: run the master checklist top-to-bottom when convenient; answer the sequencer §11
+  questions; ASC runbook pass; record the build-26 whitelist-probe outcome.
+
+### Validation
+- Docs-only; no build run. Decision statuses verified against AGENTS.md "Current High-Priority
+  Follow-Ups" + the build-27/28 DEVLOG records before syncing.
+
+### Gotchas
+- The checklist's DEVLOG line refs are as-of-2026-07-17; they drift as entries are added — the
+  per-build entry headings are the stable anchors.
+- Pipeline-doc decision statuses had drifted from reality (the audit's own L-34 class). Synced
+  via appended dated turns only — no prior agent turns rewritten, per the doc's rules.
 
 ---
 
