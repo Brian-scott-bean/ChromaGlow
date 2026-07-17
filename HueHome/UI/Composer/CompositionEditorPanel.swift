@@ -632,6 +632,9 @@ struct CompositionEditorPanel: View {
         StageCard(icon: "waveform.path.ecg", title: "Envelope", subtitle: "Brightness shape over time.") {
             VStack(spacing: HueSpacing.sm) {
 
+            // The configured curve, live — what these controls actually do.
+            EnvelopeStripView(envelope: vm.activeCompositionBox?.envelope ?? EnvelopeConfig())
+
             VStack(alignment: .leading, spacing: 4) {
                 Text("Shape")
                     .font(HueFont.stageControl)
@@ -639,7 +642,8 @@ struct CompositionEditorPanel: View {
                 ChipPickerRow(
                     items: EnvelopeConfig.Shape.allCases.map { shape in
                         ChipPickerRow<EnvelopeConfig.Shape>.Item(
-                            value: shape, label: shape.rawValue.capitalized)
+                            value: shape, label: shape.rawValue.capitalized,
+                            curveSamples: EnvelopeStripMath.thumbnail(for: shape))
                     },
                     selection: Binding(
                         get: { vm.activeCompositionBox?.envelope.shape ?? .breathe },

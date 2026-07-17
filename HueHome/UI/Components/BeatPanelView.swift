@@ -94,6 +94,9 @@ struct ChipPickerRow<Value: Hashable>: View {
         let value: Value
         let label: String
         var icon: String? = nil
+        /// Tiny static waveform icon (16 normalized samples) — takes
+        /// precedence over `icon`. Used by the Brightness Shape chips.
+        var curveSamples: [Double]? = nil
     }
 
     let items: [Item]
@@ -110,7 +113,13 @@ struct ChipPickerRow<Value: Hashable>: View {
                         HapticManager.shared.selection()
                     } label: {
                         HStack(spacing: 4) {
-                            if let icon = item.icon {
+                            if let curve = item.curveSamples {
+                                CurveIconShape(samples: curve)
+                                    .stroke(style: StrokeStyle(lineWidth: 1.5,
+                                                               lineCap: .round,
+                                                               lineJoin: .round))
+                                    .frame(width: 18, height: 12)
+                            } else if let icon = item.icon {
                                 Image(systemName: icon).font(.system(size: 10, weight: .semibold))
                             }
                             Text(item.label)
@@ -131,6 +140,22 @@ struct ChipPickerRow<Value: Hashable>: View {
             }
             .padding(.vertical, 1)
         }
+    }
+}
+
+/// Static polyline of normalized 0…1 samples — the chip-scale waveform.
+private struct CurveIconShape: Shape {
+    let samples: [Double]
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        guard samples.count > 1 else { return p }
+        for (i, v) in samples.enumerated() {
+            let x = rect.minX + rect.width * CGFloat(i) / CGFloat(samples.count - 1)
+            let y = rect.maxY - rect.height * CGFloat(min(1, max(0, v)))
+            if i == 0 { p.move(to: CGPoint(x: x, y: y)) }
+            else { p.addLine(to: CGPoint(x: x, y: y)) }
+        }
+        return p
     }
 }
 

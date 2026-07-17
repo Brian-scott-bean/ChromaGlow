@@ -358,6 +358,9 @@ struct ComposerAdvancedControls: View {
     private var envelopeAdvanced: some View {
         let shape = vm.activeCompositionBox?.envelope.shape ?? .breathe
 
+        // The configured curve, live — these sliders reshape it in place.
+        EnvelopeStripView(envelope: vm.activeCompositionBox?.envelope ?? EnvelopeConfig())
+
         // Shape-specific controls (the engine has always consumed these).
         if shape == .swell {
             StageSlider(
