@@ -117,6 +117,14 @@ struct CreateSceneView: View {
                         .focused($nameFocused)
                         .submitLabel(.done)
                         .onSubmit { if canSave { Task { await save() } } }
+                        // CLIP v2 caps metadata.name at 32 — a longer name
+                        // 400s with a generic error (audit L-52; the sibling
+                        // builders already truncate).
+                        .onChange(of: sceneName) { _, newValue in
+                            if newValue.count > 32 {
+                                sceneName = String(newValue.prefix(32))
+                            }
+                        }
 
                     if !sceneName.isEmpty {
                         Button {

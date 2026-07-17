@@ -13,7 +13,10 @@ enum RoomAndZoneDisplayModelBuilder {
         roomLightMap: [String: String],
         zoneLightMap: [String: String]
     ) {
-        let glByID = Dictionary(uniqueKeysWithValues: groupedLights.map { ($0.id, $0) })
+        // Keys come straight from the bridge; a duplicated id must not trap
+        // the dashboard rebuild (audit L-26).
+        let glByID = Dictionary(groupedLights.map { ($0.id, $0) },
+                                uniquingKeysWith: { first, _ in first })
 
         var roomItems: [RoomDisplayItem] = []
         var roomLightMap: [String: String] = [:]

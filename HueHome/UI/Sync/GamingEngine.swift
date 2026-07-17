@@ -110,13 +110,13 @@ final class GamingEngine: SyncEngine {
         vDSP_rmsqv(&frameData, 1, &rms, vDSP_Length(n))
         let level = min(rms * 12.0, 1.0)
 
-        // Slow EMA baseline on audio thread (~43fps, alpha=0.03 ≈ 1s rise)
+        // Baseline EMA + spike detection under the SAME lock reset()/tick()
+        // use — the unlocked read-modify-write raced them (audit L-45/L-46).
+        os_unfair_lock_lock(&_lock)
+        // Slow EMA baseline (~43fps, alpha=0.03 ≈ 1s rise)
         _rollingAvg = _rollingAvg * 0.97 + level * 0.03
-
         // Spike: current level > baseline × user sensitivity threshold
         let isSpike = level > (_rollingAvg * _activeSensitivity) && level > 0.06
-
-        os_unfair_lock_lock(&_lock)
         _pendingLevel = level
         if isSpike { _pendingSpike = true }   // latch — don't clear a spike between ticks
         os_unfair_lock_unlock(&_lock)
@@ -142,10 +142,9 @@ final class GamingEngine: SyncEngine {
     // MARK: - Tick (called from SyncModeEngine.sendLightUpdate ~6fps)
 
     func tick() {
-        // Sync sensitivity to audio thread (safe: benign race, updates within 16ms)
-        _activeSensitivity = Float(sensitivity)
-
         os_unfair_lock_lock(&_lock)
+        // Publish sensitivity to the audio thread under the lock (L-46).
+        _activeSensitivity = Float(sensitivity)
         let level    = _pendingLevel
         let isSpike  = _pendingSpike
         _pendingLevel = -1

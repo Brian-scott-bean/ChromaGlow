@@ -1048,7 +1048,9 @@ final class UnifiedOrchestrator {
                 log.error("setRoom failed for \(item.id): \(error.localizedDescription)")
                 showToast("Couldn't reach bridge — \(item.name) reverted")
             }
-            pendingActionDeadlines.removeValue(forKey: glID)   // release guard
+            // The 1.5s deadline expires on its own. Releasing it at PUT
+            // completion re-opened the window for a stale grouped_light SSE
+            // echo to flicker the card back (audit L-01).
         }
     }
 
@@ -1075,7 +1077,7 @@ final class UnifiedOrchestrator {
                 updateRoom(item.id, isOn: item.isOn, brightness: item.brightness)
                 log.error("Brightness failed for room \(item.id): \(error.localizedDescription)")
             }
-            pendingActionDeadlines.removeValue(forKey: glID)   // release guard
+            // Deadline expires naturally — see setRoom (audit L-01).
         }
     }
 
@@ -3093,8 +3095,6 @@ final class UnifiedOrchestrator {
 
             // Capture values for the closure
             let capturedAPI = runtime.api
-            let capturedGen = runtime.generation
-            let latestGen = compositionGenerations[roomID] ?? -1
             let capturedGamut = runtime.gamut
 
             if usePerLight, let map = runtime.gradientMap {
@@ -3106,7 +3106,10 @@ final class UnifiedOrchestrator {
                 let capturedFrames = frames
 
                 await studioRestSender.enqueue {
-                    guard capturedGen == latestGen else { return }
+                    // Staleness is handled solely by RestSender.clear()
+                    // (latest-wins): the old generation guard here compared
+                    // two enqueue-time snapshots — a tautology that could
+                    // never detect a later bump (audit L-08).
 
                     let batchSize = 5
                     let entries = capturedMap.entries
@@ -3163,7 +3166,10 @@ final class UnifiedOrchestrator {
                 let capturedFrames = frames
 
                 await studioRestSender.enqueue {
-                    guard capturedGen == latestGen else { return }
+                    // Staleness is handled solely by RestSender.clear()
+                    // (latest-wins): the old generation guard here compared
+                    // two enqueue-time snapshots — a tautology that could
+                    // never detect a later bump (audit L-08).
 
                     // Send each light its unique color — batched with
                     // concurrent sends (bridge handles ~10/sec individual)
@@ -3207,7 +3213,10 @@ final class UnifiedOrchestrator {
                 let capturedXY = firstXY
 
                 await studioRestSender.enqueue {
-                    guard capturedGen == latestGen else { return }
+                    // Staleness is handled solely by RestSender.clear()
+                    // (latest-wins): the old generation guard here compared
+                    // two enqueue-time snapshots — a tautology that could
+                    // never detect a later bump (audit L-08).
                     try? await capturedAPI.setGroupedLightEffect(
                         id: capturedGLID, on: true,
                         brightness: capturedBri,

@@ -603,7 +603,9 @@ final class SyncModeEngine {
                         guard let self, self.generation == capturedGen else { return }
                         self.consecutiveErrors += 1
                         if self.consecutiveErrors >= 3 {
-                            self.restInterval = min(0.15, self.restInterval + 0.025)
+                            // Ceiling above the 0.150 start interval or the
+                            // backoff can never engage (audit L-07).
+                            self.restInterval = min(0.5, self.restInterval + 0.025)
                         }
                     }
                 }

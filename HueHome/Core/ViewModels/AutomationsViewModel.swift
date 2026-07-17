@@ -157,6 +157,9 @@ final class AutomationsViewModel {
         let ts   = DateFormatter.logTime.string(from: Date())
         let line = "[\(ts)] \(message)"
         logLines.append(line)
+        // FIFO cap (RoomDetailViewModel's discipline) — this ran unbounded
+        // in Release for the whole session (audit L-10).
+        if logLines.count > 150 { logLines.removeFirst(logLines.count - 150) }
 #if DEBUG
         print(line)
 #endif

@@ -609,9 +609,9 @@ struct DashboardView: View {
     }
 
     private var nextAutomation: (automation: AppAutomation, date: Date)? {
-        let descriptor = FetchDescriptor<AppAutomation>()
-        guard let allAutomations = try? modelContext.fetch(descriptor) else { return nil }
-        let automations = allAutomations.filter(\.isEnabled)
+        // Derive from the live @Query — the old no-predicate SwiftData fetch
+        // ran on every body pass under SSE-driven churn (audit L-24).
+        let automations = appAutomations.filter(\.isEnabled)
         guard !automations.isEmpty else { return nil }
 
         let now      = Date()

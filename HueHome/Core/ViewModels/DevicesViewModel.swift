@@ -137,6 +137,8 @@ final class DevicesViewModel {
         let ts   = DateFormatter.logTime.string(from: Date())
         let line = "[\(ts)] \(message)"
         logLines.append(line)
+        // FIFO cap — unbounded in Release before (audit L-10).
+        if logLines.count > 150 { logLines.removeFirst(logLines.count - 150) }
 #if DEBUG
         print(line)
 #endif

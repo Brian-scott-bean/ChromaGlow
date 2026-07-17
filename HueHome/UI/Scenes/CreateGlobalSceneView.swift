@@ -63,6 +63,12 @@ struct CreateGlobalSceneView: View {
                                 .foregroundStyle(.white)
                                 .tint(glowColor)
                                 .padding(.vertical, 2)
+                                // 32-char CLIP v2 name cap (audit L-52).
+                                .onChange(of: sceneName) { _, newValue in
+                                    if newValue.count > 32 {
+                                        sceneName = String(newValue.prefix(32))
+                                    }
+                                }
                         }
 
                         // ── Room Picker ────────────────────────────────────

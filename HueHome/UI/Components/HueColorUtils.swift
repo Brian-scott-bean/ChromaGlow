@@ -131,7 +131,9 @@ enum HueColorUtils {
     // ──────────────────────────────────────────────
 
     /// Convert mirek to Kelvin.
-    static func kelvin(from mirek: Int) -> Int { 1_000_000 / mirek }
+    // Guarded: bridge JSON is the caller's usual source and an out-of-spec
+    // mirek of 0 would hard-trap the divide (audit L-25).
+    static func kelvin(from mirek: Int) -> Int { mirek > 0 ? 1_000_000 / mirek : 0 }
 
     /// Approximate the correlated color temperature of a CIE xy point as
     /// mirek (McCamy 1992). Used when a color scene action lands on a
