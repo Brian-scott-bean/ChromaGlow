@@ -12,7 +12,7 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **29**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **30**).
 - **WORLD-CLASS POLISH PROGRAM IN FLIGHT (2026-07-17, Brian-approved):** six rollback-safe
   rounds → builds 29–33 (A visible UX: tour-overlap/keyboard/44pt · B previews-everywhere +
   envelope/mic visuals · C terminology/one-transport-vocabulary · D new-effects pack incl.
@@ -24,8 +24,15 @@
   editing-pauses-the-stage, scroll-to-dismiss + fixed AI-prompt height, form focus/keyboard
   types, 44pt tap targets class-wide (chips, mixer transport 40pt circles + repaid metrics,
   dashboard/room/swatch scatter), plus a latent same-second backup-name data-loss fix in
-  CompositionStore (rollback: `checkpoint/ux-polish-A`). Full entry + Round A device checklist
-  below. Full program record in the 2026-07-17 ROUND 0 entry.
+  CompositionStore (rollback: `checkpoint/ux-polish-A`).
+  **ROUND B SHIPPED = BUILD 30 (2026-07-17):** previews everywhere — all 56 Composer cards (+
+  user creations) render their REAL palette/motion at rest via the new data-driven LookPreview
+  (spec/math/strip/canvas, preview-only ≤1.33Hz photosensitivity floor), engine deck cards show
+  per-effect signature motion, scene cards show real recall-speed strips with TRUE bridge palette
+  colors (tolerant list decode), shelf chips + automation rows get static strips, the Brightness
+  Shape finally has a live waveform (EnvelopeStripView + curve chips) and mic sources a live
+  level meter with threshold tick (rollback: `checkpoint/ux-polish-B`). Full entries + device
+  checklists below. Full program record in the 2026-07-17 ROUND 0 entry.
 - **BUILD 28 (2026-07-15): FINAL AUDIT + WELCOME TOUR — AWAITING BRIAN'S ON-DEVICE CHECK.**
   Fifteen shippable commits (rollback tag `checkpoint/tour-audit-2026-07-15`): the audit's one
   real gap closed (35 MORE ungated Release prints — StudioViewModel 28 / CompositionStore 6 /
@@ -358,6 +365,80 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-17 - [Claude] BUILD 30 — POLISH ROUND B: previews everywhere + envelope/mic visualization
+
+### Branch
+- `main` (rollback tag: `checkpoint/ux-polish-B`, pushed)
+
+### Did
+Six shippable commits, suite green per commit (688→702 tests):
+1. **feat(preview) LookPreview** — `HueHome/UI/Components/LookPreview.swift`: LookPreviewSpec
+   (Equatable value of real palette/pattern/speed/envelope; init(preset:), accent-only init,
+   .starter), pure LookPreviewMath sampling through the ACTUAL engine configs
+   (PaletteConfig.color(at:) / MotionConfig.sample / EnvelopeConfig.value) with a PREVIEW-ONLY
+   0.75s period floor ≈ ≤1.33Hz (twinkle floored 8× harder — its sparkle cadence is period/8
+   and escaped the plain clamp; caught by the new flash-cap test), LookPreviewStrip (12fps
+   multi-color strip) + LookPreviewCanvas (drifting-blob card background, idle 4fps). All pause
+   on Reduce Motion / isTabActive / KeyboardState. LookPreviewMathTests: bounds across every
+   pattern×shape×extremes, 60fps 8s flash-count sweep, clamp behavior, static fallback.
+2. **feat(studio)** — StudioCardView gains optional previewSpec: all Composer preset cards
+   (flat grid + "From Composer" shelves) render their real look at rest (canvas + always-on
+   strip); "+ Create" hero gets a faint starter canvas; engine deck cards trade generic .bounce
+   for a per-effect signature map (`StudioCardCanvas.signaturePattern(forCardID:)`, co-located
+   with the artwork switch) shown at rest too.
+3. **feat(scenes)** — every scene card shows a signature strip (still bar for static scenes;
+   active dynamic scenes animate at their REAL 0-1 recall speed); Studio scenes-shelf chips get
+   static real-palette mini strips; automation rows with dynamic effects get static signature
+   strips (calm surface — static by design).
+4. **feat(composer) EnvelopeStripView** — the six brightness-shape curves are visible at last:
+   live waveform of the user's configured shape/BPM/depth/attack/decay/duty with sweeping
+   playhead, mounted in the editor + layer sheet; ChipPickerRow.Item gains curveSamples (18×12
+   canonical per-shape thumbnails on the chips). EnvelopeStripMathTests.
+5. **feat(composer) MicLevelMeterView** — live level+bass/mid/treble bars polling the
+   lock-guarded AudioAnalysisEngine.latestFeatures(); NEVER calls setDemand (honest "MIC
+   LISTENS WHEN THE LOOK RUNS" idle state); reaction.threshold drawn as a tick on the level bar.
+6. **feat(scenes) true-color previews** — HueScene's list decode gains a TOLERANT `palette`
+   field (custom init(from:): only id/metadata/group can fail an element — the load-bearing
+   listing rule now enforced by HueScenePaletteDecodeTests incl. a garbage-palette fixture);
+   ≤3 xy points thread through GlobalSceneItem.paletteXY (defaulted; ==/hash untouched) into
+   SceneMoodCard's strip.
+
+### Working
+- 702/702 green twice at round end.
+
+### Left
+- Round C next (build 31, `checkpoint/terminology-C`): one transport vocabulary + grandma copy
+  pass + jargon regression guard per the program plan.
+- **Brian's Round B on-device checks:**
+  1. Composer deck at rest: all 56 cards visibly drift/breathe their OWN colors; strips show
+     real motion; scroll stays smooth; hidden tabs still pause (perf contract).
+  2. Deck 0/1: each card's strip motion matches its personality (candle twinkles, prism
+     cascades, strobe chases); canvases unchanged.
+  3. Scenes tab: static scenes show still color bars (true palette colors on dynamic scenes
+     where the bridge supplies them); an ACTIVE dynamic scene's strip speed matches its recall
+     speed (compare a slow vs fast dynamic scene).
+  4. Composer → Envelope: the waveform matches what lights do; dragging BPM/Depth/Attack/Decay/
+     Duty reshapes it live; each shape chip shows its curve icon.
+  5. Composer → React with a mic source: meter bars move with sound while a mic-reactive look
+     runs; threshold tick moves with the slider; idle state reads honestly when nothing runs.
+  6. Reduce Motion: everything stills (curves stay visible as static).
+  7. Typing anywhere: previews freeze while the keyboard is up (Round A contract extended).
+
+### Validation
+- Suite per commit via xcresulttool (702/702 at close); build 30 across all 12 pbxproj entries.
+
+### Gotchas
+- LookPreview's flash clamp is PREVIEW-ONLY — engine timing untouched. Twinkle needed an 8×
+  period floor (sparkle cadence = period/8, 0.15s floor); any new pattern with sub-period
+  events needs the same review (the flash-cap test will catch it).
+- HueScene now decodes via custom init(from:): status/speed/type/palette are all tolerant
+  (`try?`) — only id/metadata/group fail an element. Do not "simplify" back to synthesized
+  Decodable; the garbage-palette test pins this.
+- Scene move/copy paths that rebuild GlobalSceneItem show [] paletteXY until the next scene
+  load (defaulted field) — cosmetic, self-heals on refresh.
 
 ---
 
