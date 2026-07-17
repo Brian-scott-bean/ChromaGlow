@@ -12,15 +12,20 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **28**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **29**).
 - **WORLD-CLASS POLISH PROGRAM IN FLIGHT (2026-07-17, Brian-approved):** six rollback-safe
   rounds → builds 29–33 (A visible UX: tour-overlap/keyboard/44pt · B previews-everywhere +
   envelope/mic visuals · C terminology/one-transport-vocabulary · D new-effects pack incl.
   Lava Lamp · E security round 3). Round 0 shipped: **`docs/ios/master-on-device-checklist.md`**
   (THE consolidated builds-18–28 + agent-backlog test pass — start here for device QA),
   **`docs/ios/sequence-builder-design-2026-07.md`** (design-only spec, §11 open questions for
-  Brian), Decision-Log D-016..D-019 status-synced (implemented; D-020 still open). Full program
-  record in the 2026-07-17 entry below.
+  Brian), Decision-Log D-016..D-019 status-synced (implemented; D-020 still open).
+  **ROUND A SHIPPED = BUILD 29 (2026-07-17):** tour library-of-looks overlap fixed, KeyboardState
+  editing-pauses-the-stage, scroll-to-dismiss + fixed AI-prompt height, form focus/keyboard
+  types, 44pt tap targets class-wide (chips, mixer transport 40pt circles + repaid metrics,
+  dashboard/room/swatch scatter), plus a latent same-second backup-name data-loss fix in
+  CompositionStore (rollback: `checkpoint/ux-polish-A`). Full entry + Round A device checklist
+  below. Full program record in the 2026-07-17 ROUND 0 entry.
 - **BUILD 28 (2026-07-15): FINAL AUDIT + WELCOME TOUR — AWAITING BRIAN'S ON-DEVICE CHECK.**
   Fifteen shippable commits (rollback tag `checkpoint/tour-audit-2026-07-15`): the audit's one
   real gap closed (35 MORE ungated Release prints — StudioViewModel 28 / CompositionStore 6 /
@@ -353,6 +358,78 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-07-17 - [Claude] BUILD 29 — POLISH ROUND A: tour overlap, keyboard smoothness, 44pt tap targets
+
+### Branch
+- `main` (rollback tag: `checkpoint/ux-polish-A`, pushed)
+
+### Did
+Eight shippable commits, suite green per commit (683→688 tests):
+1. **fix(tour)** — the "A library of looks" ScenesArt overlap: both columns now reserve a row-2
+   landing slot sized by a hidden copy of the traveling card (slot height can never drift);
+   overlay y 64→52. TourMotionMath untouched.
+2. **feat(perf) KeyboardState** — new `@MainActor @Observable` singleton driven by UIKit keyboard
+   notifications (willShow = the pre-rise jank window; didHide clears). Zero per-field wiring.
+   Consumers: `PatternStripView.isLive`, `StudioCardCanvas`'s animate gate, `BeatPanelView`'s
+   bar meter (+ gained the missing `isTabActive` pause), and the composer hero border — its
+   60fps `repeatForever` angular-gradient drive DIRECTLY behind the AI-prompt TextField is now
+   a pausable 20fps wall-clock TimelineView honoring Reduce Motion. New idempotent
+   `add_ux_polish_files.rb` registers Round A+B files. `KeyboardStateTests` added.
+3. **fix(studio) keyboard mechanics** — `.scrollDismissesKeyboard(.interactively)` on the deck
+   grid, composer grid, BOTH mixer editor ScrollViews, and Scenes content; AI prompt
+   `.lineLimit(2, reservesSpace: true)` (a growing field re-laid-out the deck grid per wrap).
+4. **fix(forms)** — EditRoomSheet @FocusState; manual bridge IP off `.decimalPad` (no Return
+   key) → `.numbersAndPunctuation` + Go/onSubmit sharing Connect + autofocus.
+5. **feat(a11y) HueHit + stageTapTarget** — `HueHit.min = 44` token + modifier; `ChipPickerRow`
+   44pt min hit height in ONE edit covering all call sites (the primary Composer selectors were
+   ~25pt); composer layer tabs, harmony-rule pills, Studio category chips same. Floor pinned in
+   HueTokensTests.
+6. **fix(mixer)** — transport cluster 34→40pt visuals / 44pt hits (Revert/Perform/Save/Stop +
+   icon), grab bar 28→36 (44 effective), badge-lane menu real padding + expanded hit;
+   `MixerTrayMetrics` repaid (grabBar 36 / header 66 / badgeLane 28 / compact cap 406) and the
+   rows-pay-for-themselves contract is now `MixerTrayMetricsTests`, not a comment. Perform's
+   header circles mirrored.
+7. **fix(a11y) scatter** — harmony swatches 28pt-in-44pt hit frames (+ real contentShape),
+   RoomDetail light power 32→44, Dashboard power 40→44 + ellipsis 36→44, saved-color/
+   light-control swatches expanded hits, clear-x buttons 44pt.
+8. **fix(store) BONUS (found by the suite)** — `backUpCompositionsFile` used second-granular
+   names with `copyItem` (throws if destination exists): two recovery events in one second
+   silently lost the second backup. Real (narrow) production data-loss window; names now
+   uniquify `-N`. Surfaced as a NonDestructivePersistence failure when adding tests shifted
+   clone redistribution — the same latency class as the build-26 KeychainManagerTests find.
+
+### Working
+- 688/688 green twice at round end (per-commit runs + the final build-29 validation).
+
+### Left
+- Round B next (build 30, `checkpoint/ux-polish-B`): LookPreview everywhere + EnvelopeStripView
+  + mic meter per the program plan.
+- **Brian's Round A on-device checks (append to the master checklist pass):**
+  1. Tour page 3: the traveling card lands in an empty slot at BOTH ends — never covers a card.
+  2. Studio: tap a mixer readout (BPM etc.) and the AI prompt — keyboard rises smoothly, deck
+     canvases/strips FREEZE while typing, resume on dismiss; scroll dismisses the keyboard.
+  3. Scenes search: type fast — no shimmer/jank behind the keyboard.
+  4. Mixer transport buttons + composer chips + harmony swatches: comfortably thumbable; grab
+     bar easier to hit; nothing clips in the tray (compact phone + Dynamic Type XL).
+  5. Manual bridge IP: keyboard has a Go key that connects; field autofocuses.
+  6. Rename a room: field is focused on open; Done saves.
+
+### Validation
+- `xcodebuild test` scheme "HueHome 1", iPhone 17 Pro sim, per commit; results verified via
+  xcresulttool on each .xcresult (688/688 at close). Build number 29 across all 12 pbxproj
+  entries; BuildMetadataTests uses a fixture (no edit needed); provenance CI derives the build
+  number dynamically.
+
+### Gotchas
+- One mid-round process slip: a commit was chained onto a verification in a single call and
+  landed against a red suite (the NonDestructivePersistence flake). The failing test exposed a
+  REAL product bug (fixed as commit 8) and verification/commit are now strictly separate calls
+  — exactly what the "verify suite before committing" rule exists for.
+- `stageTapTarget(visual:)`'s negative-inset contentShape relies on the parent not clipping
+  hit-tests — true for the HStack/overlay hosts it's applied in; verify when reusing elsewhere.
 
 ---
 
