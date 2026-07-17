@@ -9,6 +9,14 @@ import SwiftUI
 
 final class HueTokensTests: XCTestCase {
 
+    // MARK: - Hit Targets
+
+    /// Apple HIG floor — chip rows, mixer transport, and swatch hit areas all
+    /// derive from this token; it must never drop below 44.
+    func testHitTargetFloor() {
+        XCTAssertGreaterThanOrEqual(HueHit.min, 44)
+    }
+
     // MARK: - Color Hex Init
 
     func testHexInitSixDigit() {

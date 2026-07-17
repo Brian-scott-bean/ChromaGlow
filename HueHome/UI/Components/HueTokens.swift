@@ -167,6 +167,31 @@ enum HueRadius {
     static let pill: CGFloat = 999  // toggles, pill buttons
 }
 
+// MARK: - Hit-Target Tokens
+
+/// Minimum comfortable tap target (Apple HIG 44pt). Visuals may stay smaller;
+/// hit areas must not.
+enum HueHit {
+    static let min: CGFloat = 44
+}
+
+extension View {
+    /// Guarantees a ≥`hit`pt tap area. Default form grows the layout frame to
+    /// the target (use where the row can afford the space). Pass `visual:`
+    /// when the control's frame must stay smaller — the hit shape is inset
+    /// outward around it instead, without moving layout. The negative-inset
+    /// form relies on the parent not clipping hit-tests (true for the HStack/
+    /// overlay hosts it's applied in — verify when using elsewhere).
+    @ViewBuilder
+    func stageTapTarget(visual: CGFloat? = nil, hit: CGFloat = HueHit.min) -> some View {
+        if let visual, visual < hit {
+            self.contentShape(Rectangle().inset(by: -((hit - visual) / 2)))
+        } else {
+            self.frame(minWidth: hit, minHeight: hit).contentShape(Rectangle())
+        }
+    }
+}
+
 // MARK: - Shadow Tokens (light mode only — dark uses glow)
 
 struct HueShadow {

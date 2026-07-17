@@ -723,6 +723,8 @@ struct StudioView: View {
                             lineWidth: holidayHot ? (selected ? 1.5 : 1.0) : 1
                         )
                 )
+                .frame(minHeight: HueHit.min)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

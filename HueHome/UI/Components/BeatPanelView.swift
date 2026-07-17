@@ -120,6 +120,10 @@ struct ChipPickerRow<Value: Hashable>: View {
                         .padding(.vertical, 6)
                         .background(Capsule().fill(selected ? HuePalette.amber : .white.opacity(0.08)))
                         .foregroundStyle(selected ? Color.black.opacity(0.85) : .white.opacity(0.65))
+                        // The visual capsule stays ~25pt; the tap area must not.
+                        // One edit here covers every ChipPickerRow call site.
+                        .frame(minHeight: HueHit.min)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(selected ? .isSelected : [])

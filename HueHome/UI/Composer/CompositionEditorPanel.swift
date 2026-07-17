@@ -104,6 +104,8 @@ struct CompositionEditorPanel: View {
                                     Capsule()
                                         .strokeBorder(selected ? HuePalette.amber.opacity(0.55) : Color.white.opacity(0.10), lineWidth: 1)
                                 )
+                                .frame(minHeight: HueHit.min)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -343,6 +345,8 @@ struct CompositionEditorPanel: View {
             .overlay(
                 Capsule().strokeBorder(isSelected ? .clear : .white.opacity(0.08), lineWidth: 1)
             )
+            .frame(minHeight: HueHit.min)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(harmonyAccessibilityName(for: rule))
