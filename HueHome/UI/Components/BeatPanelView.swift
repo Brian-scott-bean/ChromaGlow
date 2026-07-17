@@ -145,6 +145,10 @@ struct BeatPanelView: View {
 
     private var clock: BeatClock { BeatClock.shared }
 
+    // The bar meter otherwise keeps ticking at 20fps behind other tabs and
+    // under a raised keyboard.
+    @Environment(\.isTabActive) private var isTabActive
+
     var body: some View {
         VStack(alignment: .leading, spacing: HueSpacing.md) {
             if capabilities.contains(.transport) { transportRow }
@@ -199,8 +203,11 @@ struct BeatPanelView: View {
     // ── Bar meter: dots that fill as the bar advances ──
     private var barMeterRow: some View {
         // Reading clock.bpm here also registers observation, so the meter resumes
-        // when a tempo starts (e.g. Tap inside the panel).
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: clock.bpm <= 0)) { _ in
+        // when a tempo starts (e.g. Tap inside the panel); same for KeyboardState.
+        TimelineView(.animation(
+            minimumInterval: 1.0 / 20.0,
+            paused: clock.bpm <= 0 || !isTabActive || KeyboardState.shared.isKeyboardUp
+        )) { _ in
             let snap = BeatClock.snapshot()
             let beats = max(1, snap.beatsPerBar)
             let now = CACurrentMediaTime()

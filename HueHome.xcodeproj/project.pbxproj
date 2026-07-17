@@ -11,6 +11,7 @@
 		02675208BF32B81876B29E75 /* SyncModeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59334124482A23FFBD48D5D1 /* SyncModeEngine.swift */; };
 		04ACBC6271BAB0AACAB757C8 /* GuestAccessModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C98C1882D62720B3B58BD1 /* GuestAccessModels.swift */; };
 		04DEE771A7499DCB48E4F81A /* WidgetDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4135A3D41C4DF0EE0E2A5E76 /* WidgetDataStore.swift */; };
+		05D69CAA5B1133F180C36C09 /* KeyboardStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA006EA9647721B1A2448921 /* KeyboardStateTests.swift */; };
 		06FADE8E35C87CCC9AB5CECB /* LightDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4092578BDBB64A4C0FE7E197 /* LightDisplayItem.swift */; };
 		0741A4AC65594A6698A54C81 /* HueGroupEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 555AB61503BFE201ED78FC27 /* HueGroupEntity.swift */; };
 		0971801CBBC7E4E988249AD9 /* PresetSurfaceClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCB467185E202C3283838BC2 /* PresetSurfaceClassifierTests.swift */; };
@@ -243,6 +244,7 @@
 		D20946D4288104E57A94FFD2 /* SavedColorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2386EBB36B78EB6A3160432 /* SavedColorStore.swift */; };
 		D34F7F1AC57538EA745C8E61 /* HueIntentAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850FF1B3391225414ACFB723 /* HueIntentAPIClient.swift */; };
 		D3E30CFDAD4AAA4B6383F9F9 /* ComposerControlCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75C0F12B8786D40CB3EA99D1 /* ComposerControlCatalogTests.swift */; };
+		D4EFE1FF25265F094DE83FF2 /* KeyboardState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D26F0405375B0BD1898A56 /* KeyboardState.swift */; };
 		D7FFE3F62496D310600CA4EA /* GuestRevocationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54726B6BE2C734CF18C8C2B8 /* GuestRevocationServiceTests.swift */; };
 		D9348A47ECA726BD65E659DD /* KeychainManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5675A53CA2175A97EE572F /* KeychainManagerTests.swift */; };
 		DADBEE459E4F759FCCB8AEBD /* VisualizerEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED8A9CCC66F8D45BBAA79E9A /* VisualizerEngine.swift */; };
@@ -497,6 +499,7 @@
 		B4DCC9F664B9558F01B87EC2 /* TutorialCatalogTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TutorialCatalogTests.swift; path = ./HueHomeTests/TutorialCatalogTests.swift; sourceTree = "<group>"; };
 		B8E9735F4D59CFD34BFAF1A1 /* TutorialCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TutorialCatalog.swift; path = ./HueHome/Core/Models/TutorialCatalog.swift; sourceTree = "<group>"; };
 		B983F6E356486FF116DE5D82 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		BA006EA9647721B1A2448921 /* KeyboardStateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeyboardStateTests.swift; path = ./HueHomeTests/KeyboardStateTests.swift; sourceTree = "<group>"; };
 		BB1111111111111111111111 /* HueToastView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Components/HueToastView.swift; sourceTree = SOURCE_ROOT; };
 		BB2345CC6789DDEE00FF0022 /* GamingEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/UI/Sync/GamingEngine.swift; sourceTree = "<group>"; };
 		BB78DD6E803F76A88BE41CC5 /* RoomColorWashPlanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomColorWashPlanner.swift; path = HueHome/Core/Models/RoomColorWashPlanner.swift; sourceTree = "<group>"; };
@@ -619,6 +622,7 @@
 		F4E1000200000000 /* EntertainmentConfigManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentConfigManager.swift; path = HueHome/Core/Network/EntertainmentConfigManager.swift; sourceTree = "<group>"; };
 		F4E1000300000000 /* EntertainmentConfigBuilderView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EntertainmentConfigBuilderView.swift; path = HueHome/UI/Sync/EntertainmentConfigBuilderView.swift; sourceTree = "<group>"; };
 		F57BF74DE7F5F2F1B870513F /* DeviceDisplayItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Models/DeviceDisplayItem.swift; sourceTree = "<group>"; };
+		F5D26F0405375B0BD1898A56 /* KeyboardState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeyboardState.swift; path = ./HueHome/UI/Components/KeyboardState.swift; sourceTree = "<group>"; };
 		F66E4EFC9FC8D416C9EF24D4 /* ColorPadView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ColorPadView.swift; path = HueHome/UI/SceneBuilder/ColorPadView.swift; sourceTree = "<group>"; };
 		FB3E083137EEAAE96C95073C /* BridgeAuthorizationMonitorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAuthorizationMonitorTests.swift; path = ./HueHomeTests/BridgeAuthorizationMonitorTests.swift; sourceTree = "<group>"; };
 		FC7C9A9BD84EA9BC7850B0EC /* InvitePayloadCodecTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InvitePayloadCodecTests.swift; path = ./HueHomeTests/InvitePayloadCodecTests.swift; sourceTree = "<group>"; };
@@ -974,6 +978,7 @@
 				DDB148CB7314645E8098A866 /* SavedColorStrip.swift */,
 				8058B9C9232869AF1CC77BB8 /* LightingPreset+UI.swift */,
 				47B7FF7BBDB9A7FACD17098D /* GuestAccessBanner.swift */,
+				F5D26F0405375B0BD1898A56 /* KeyboardState.swift */,
 			);
 			name = Components;
 			sourceTree = "<group>";
@@ -1287,6 +1292,7 @@
 				54726B6BE2C734CF18C8C2B8 /* GuestRevocationServiceTests.swift */,
 				FB3E083137EEAAE96C95073C /* BridgeAuthorizationMonitorTests.swift */,
 				B4DCC9F664B9558F01B87EC2 /* TutorialCatalogTests.swift */,
+				BA006EA9647721B1A2448921 /* KeyboardStateTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1816,6 +1822,7 @@
 				1E4B46AFFE9EE9EC594846DF /* WelcomeTourView.swift in Sources */,
 				CE1FB868D687A707F62F4F4D /* TutorialIllustrationView.swift in Sources */,
 				0109A55DDB81018DA32D1E41 /* WelcomeTourWiring.swift in Sources */,
+				D4EFE1FF25265F094DE83FF2 /* KeyboardState.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1890,6 +1897,7 @@
 				D7FFE3F62496D310600CA4EA /* GuestRevocationServiceTests.swift in Sources */,
 				D006AE528963A62C466F4A32 /* BridgeAuthorizationMonitorTests.swift in Sources */,
 				36B93214B2D44C90C82B282A /* TutorialCatalogTests.swift in Sources */,
+				05D69CAA5B1133F180C36C09 /* KeyboardStateTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

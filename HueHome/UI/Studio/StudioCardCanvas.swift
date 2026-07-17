@@ -30,14 +30,14 @@ struct StudioCardCanvas: View {
     }
 
     var body: some View {
-        if isVisible && isTabActive {
+        if isVisible && isTabActive && !KeyboardState.shared.isKeyboardUp {
             // Animate: running = full fps, idle = 4fps (subtle, saves GPU)
             TimelineView(.animation(minimumInterval: isRunning ? nil : 0.25)) { timeline in
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 canvasContent(time: time)
             }
         } else {
-            // Off-screen: single static frame, no timer overhead
+            // Off-screen or keyboard up: single static frame, no timer overhead
             canvasContent(time: 0)
         }
     }

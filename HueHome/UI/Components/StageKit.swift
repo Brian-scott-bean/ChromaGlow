@@ -625,8 +625,11 @@ struct PatternStripView: View {
     }
 
     // Also paused when the host tab is off-screen — these strips would otherwise
-    // redraw at 12fps per card behind the visible tab.
-    private var isLive: Bool { animated && !reduceMotion && isTabActive }
+    // redraw at 12fps per card behind the visible tab — and while the keyboard
+    // is up, so typing never competes with strip redraws for frame time.
+    private var isLive: Bool {
+        animated && !reduceMotion && isTabActive && !KeyboardState.shared.isKeyboardUp
+    }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !isLive)) { timeline in

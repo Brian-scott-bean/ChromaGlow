@@ -110,7 +110,7 @@ struct StudioView: View {
     // body re-evaluation while presented. Assigning it also *presents* the
     // cover (`item:`); dismissal nils it back out.
     @State private var performVM: PerformanceViewModel? = nil
-    @State private var composerCreateBorderPhase: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var activeCompositionTab: CompositionLayerTab = .palette
     @State private var showCompositionSaveSheet = false
     @State private var compositionSaveName = ""
@@ -731,20 +731,30 @@ struct StudioView: View {
             RoundedRectangle(cornerRadius: HueRadius.xl)
                 .fill(Color.white.opacity(0.06))
 
-            RoundedRectangle(cornerRadius: HueRadius.xl)
-                .strokeBorder(
-                    AngularGradient(
-                        colors: [
-                            HuePalette.amber,
-                            Color(hex: "#8C59FF"),
-                            HuePalette.amber.opacity(0.35),
-                            HuePalette.amber
-                        ],
-                        center: .center,
-                        angle: .degrees(composerCreateBorderPhase * 360)
-                    ),
-                    lineWidth: 2
-                )
+            // Wall-clock-driven border sweep (3s/rev) — pausable, unlike the old
+            // repeatForever CoreAnimation drive that kept a 60fps angular-gradient
+            // animation running directly behind the AI-prompt TextField.
+            TimelineView(.animation(
+                minimumInterval: 1.0 / 20.0,
+                paused: !visible || reduceMotion || KeyboardState.shared.isKeyboardUp
+            )) { timeline in
+                let phase = (timeline.date.timeIntervalSinceReferenceDate / 3.0)
+                    .truncatingRemainder(dividingBy: 1.0)
+                RoundedRectangle(cornerRadius: HueRadius.xl)
+                    .strokeBorder(
+                        AngularGradient(
+                            colors: [
+                                HuePalette.amber,
+                                Color(hex: "#8C59FF"),
+                                HuePalette.amber.opacity(0.35),
+                                HuePalette.amber
+                            ],
+                            center: .center,
+                            angle: .degrees(phase * 360)
+                        ),
+                        lineWidth: 2
+                    )
+            }
 
             Group {
                 if isAIPromptExpanded {
@@ -903,12 +913,6 @@ struct StudioView: View {
         .frame(minHeight: isAIPromptExpanded ? 146 : 76)
         .animation(HueAnimation.fast, value: isAIPromptExpanded)
         .opacity(visible ? 1 : 0.999)
-        .onAppear {
-            composerCreateBorderPhase = 0
-            withAnimation(.linear(duration: 3.0).repeatForever(autoreverses: false)) {
-                composerCreateBorderPhase = 1
-            }
-        }
     }
 
     private func composerGrid(deckIndex: Int) -> some View {
