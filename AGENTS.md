@@ -499,10 +499,26 @@ Music integration (2026-07-21, builds 34–38) durable facts — design source o
   `spotify_refresh_token`, redirect `chromaglow://spotify-callback` must match the dashboard
   verbatim), `MockMusicSource` (demo/Simulator path).
 - **Tempo:** `TrackTempoResolver` order = source hint → forever-cache (Application Support,
-  `.atomic`-only — never pair with `.withoutOverwriting`) → providers (TIDAL by ISRC — `bpm`
-  verified in the live v2 spec; GetSongBPM two-step) → live `TempoEstimator`. Providers are
-  keyless-inactive via `TempoProviderKeys` empty strings; lookups gated by user toggle
-  `music.tempoLookupEnabled` (absent = ON) and send ONLY track identifiers.
+  `.atomic`-only — never pair with `.withoutOverwriting`) → GetSongBPM (two-step, base URL
+  `api.getsong.co` — the documented api.getsongbpm.com host is legacy, test-pinned) → live
+  `TempoEstimator`. Keyless-inactive via `TempoProviderKeys`; gated by user toggle
+  `music.tempoLookupEnabled` (absent = ON); lookups send ONLY track identifiers. GetSongBPM's
+  REQUIRED attribution backlink lives in More → APP ("Song Tempo Data") + the hosted support
+  page — removing either risks account suspension. **TIDAL was REMOVED (R7, 2026-07-21) on
+  verified Developer Terms v3.0 grounds** (no indefinite metadata storage, cross-service/
+  visual-sync/analysis need written approval, non-commercial-only) — do NOT reintroduce a
+  TIDAL provider without a signed agreement.
+- **R7 clock/demand rules (external-review remediation):** while a service drive holds the
+  clock, confident mic estimates apply PHASE-ONLY ≤30ms corrections in `BeatClock.ingest`
+  (sidecar BPMs carry no phase — the mic is the only true anchor; never demanded, assists when
+  already running); a drive whose source dies self-heals after 10s. Mic demand uses
+  `ReactionConfig.needsMicNow(serviceDriven:)` at all four demand sites — `.beat` needs no mic
+  while `BeatClock.shared.isServiceDriven`; the static `requiresMic` keeps its meaning
+  (`canRunOnBridge` depends on it). Spotify's "no visual-media sync" policy clause is real and
+  has no dev-mode carve-out — the dev-flag posture is Brian's accepted personal risk; never
+  expose Spotify publicly without a sanctioned path. Apple 4.5.2(ii) permits artwork use "in
+  connection with music playback" — "Use album colors" stays; disclose in v1.1 review notes.
+  **The 1.0 ASC submission archives from the build-33 commit `0318516`** — music is v1.1-only.
 - **Palettes:** `ArtworkPaletteExtractor` samples in an EXPLICIT sRGB context (P3 art converts to
   what `HueColorUtils.linearise()` assumes — `CGColor(red:)` is GENERIC RGB, a known trap),
   nearest-neighbor, deterministic k-means, gamut-C clamped via the single

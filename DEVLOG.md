@@ -386,6 +386,70 @@
 
 ---
 
+## 2026-07-21 - [Claude] Support page: GetSongBPM attribution backlink (docs only)
+
+### Branch
+- `main` (single docs commit, no app code touched)
+
+### Did
+- Added the visible "Tempo data provided by GetSongBPM" attribution to the GitHub Pages
+  support page (`docs/index.html`), directly above the Privacy Policy link — satisfies
+  GetSongBPM's required backlink for the tempo API used by `GetSongBPMProvider` (MUSIC R3).
+- Backlink URL for the GetSongBPM form: `https://brian-scott-bean.github.io/ChromaGlow/`
+  (Pages serves `main` `/docs`; confirmed via the Pages API — HTTPS enforced, public).
+
+### Validation
+- HTML validity checked after the edit; no iOS build/test impact (no Swift/pbxproj changes).
+
+### Gotchas
+- The support page is `docs/index.html`, NOT a root-level `index.html` — Pages build source
+  is `main` + `/docs` (legacy build type).
+
+---
+
+## 2026-07-21 - [Claude] MUSIC R7 — external-review remediation: phase honesty, mic-demand split, TIDAL removed (build 39)
+
+### Branch
+- `main` (rollback tag: `checkpoint/music-R7`, pushed)
+
+### Did
+Brian received an external review of the music DESIGN DOC (written against `3f9b51a` — unaware
+builds 34–38 shipped). Verdicts against the ACTUAL code, all verified:
+
+| Review point | Verdict | Action |
+| --- | --- | --- |
+| #1 BPM+position ≠ beat phase | VALID | `7b66859` mic phase-assist: while serviceHold, confident mic estimates apply PHASE-ONLY ≤30ms corrections (tempo/source/confidence stay the service's; mic never demanded, assists when already running) + 10s stale-drive self-heal |
+| #2 TIDAL terms | CONFIRMED worse than claimed (v3.0: NO indefinite metadata storage, cross-service/visual-sync/analysis need written approval, NON-COMMERCIAL only) | `6a70820` provider deleted; do-not-reintroduce note in TempoProviders.swift |
+| #3 Spotify policy > quota | VALID fact ("Do not synchronize any sound recordings with any visual media", no dev-mode carve-out; enforcement review gated at extended-quota) | Brian decided: KEEP dev-flagged (Release-inert; personal dashboard risk accepted) |
+| #4 Apple artwork rights | PARTIALLY — 4.5.2(ii) verbatim permits artwork "in connection with music playback"; only marketing/advertising needs authorization | Brian decided: KEEP "Use album colors"; disclose in v1.1 App Review notes |
+| #5 BeatClock authority missing | STALE — quoted pre-R1 code; serviceHold + 14 tests already enforce pin > service > audio | Only residue adopted: the self-heal above |
+| #6 `.beat` wrongly holds mic | VALID | `ebe31cf` demand split: requiresMicFeatures vs needsMicNow(serviceDriven:) at all 4 demand sites; per-frame refresh flips within a frame; canRunOnBridge untouched |
+| #7 coordinator out of orchestrator | ALREADY BUILT THAT WAY | none |
+
+Also from the terms research: **GetSongBPM base URL corrected to `api.getsong.co`** (test-pinned;
+the documented host is legacy) and the REQUIRED attribution backlink added (More → APP "Song
+Tempo Data — Powered by GetSongBPM.com"; also put it in the ASC description). Auto-Detect copy:
+"locks" → "matches". Terms extracts saved in the session scratchpad; quotes in the commit
+messages.
+
+### Working
+- Suite **789/789** (+8 new, −5 TIDAL); guards green; build 39.
+
+### Left
+- **Brian's device gate is now build 39** (same combined checklist as the build-36/37/38 entries)
+  PLUS: no mic prompt when a `.beat` look runs under Apple Music/Auto-Detect-driven clock; beat
+  feel tightens when a mic layer runs alongside.
+- **1.0 ASC submission: archive from the build-33 commit `0318516`** — music never touches that
+  review. v1.1 = builds 34–39 + label updates (tempo lookups + Spotify linking) per runbook.
+- Brian to-dos: TIDAL signup is DEAD (skip it); GetSongBPM signup uses the `ios-app://` App-ID
+  format; MusicKit+ShazamKit checkboxes; Spotify dashboard (kept, dev-only).
+
+### Gotchas
+- TIDAL's docs are a client-rendered SPA — the terms live in the site's JS bundles
+  (`developer.tidal.com/assets/developer-terms-3_0-*.js`); WebFetch of the page shows nothing.
+- The review's BeatClock quote was from pre-build-34 code — always check WHICH commit an external
+  review read before acting on its code claims.
+
 ## 2026-07-21 - [Claude] MUSIC R5+R6 — Spotify (dev-flag) + program close-out (build 38) — ALL BUILD ROUNDS COMPLETE, ONE DEVICE GATE LEFT
 
 ### Branch
