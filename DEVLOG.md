@@ -386,6 +386,55 @@
 
 ---
 
+## 2026-07-21 - [Claude] Music integration deep-dive: design doc for Apple Music / Spotify / Pandora / ShazamKit (docs only)
+
+### Branch
+- `main` (docs-only commit; no version bump, no checkpoint tag)
+
+### Did
+- **NEW: `docs/ios/music-integration-design-2026-07.md`** — the v1.1 "Sync + Now Playing" blueprint
+  (scope confirmed with Brian: lights react to whatever's playing + track/artwork UI + transport
+  where allowed; iOS-first; design-only while build 33 awaits device QA/ASC). Based on three
+  research sweeps (codebase recon + July-2026 API landscape for Spotify/Pandora and Apple
+  Music/adjacent services).
+- **Answered Brian's "we had Spotify before" question: no Spotify code ever existed** — working
+  tree, full git history on all branches (pickaxe), and the `~/Desktop/Projects/_archive/`
+  ChromaGlow docs all show it was only a DEVDOC roadmap TODO ("WHAT source selector (Mic /
+  Spotify)"); only Mic shipped. Greenfield.
+- **Key research verdicts baked into the doc:** Apple Music/MusicKit is Phase 1 (deepest sanctioned
+  path; no BPM field — ISRC joins to tempo sidecars); ShazamKit is Phase 2 and the universal/
+  Pandora answer (`predictedCurrentMatchOffset` = position in ANY audible track); Spotify is
+  Phase 3 behind a dev flag (Feb-2026 policy: 5 allowlisted users; extended quota needs a business
+  with 250k MAU; audio-analysis endpoints dead for new apps since 2024-11-27 — Hue's own Spotify
+  sync is a Signify partnership); Pandora has NO public API at all (partner-gated) — mic + Shazam
+  serve it honestly. Tempo sidecars: TIDAL bpm/key by ISRC (verify against live spec), GetSongBPM,
+  Deezer gray-zone fallback, shipped `TempoEstimator` as offline floor.
+- **Architecture:** a new metadata layer (`MusicSource` protocol → `MusicSessionCoordinator`) over
+  the existing signal layer — one new `BeatClock` `DriveSource.service` case makes all 66 looks
+  track-locked via the existing `ReactionConfig` `.beat`/`.onset` sources with ~zero renderer
+  change; artwork → gamut-C `PaletteConfig` extraction reuses the `SiriColorTable` clamp idiom.
+
+### Working
+- Docs-only; no build/suite run (narrowest validation per AGENTS.md). App code untouched.
+
+### Left
+- Brian's §9 open questions in the doc: Spotify dev-flag posture, Now Playing strip placement,
+  tempo-lookup consent default, TIDAL developer registration, ASC App-Service toggles
+  (MusicKit/ShazamKit) at phase starts.
+- First implementation task when v1.1 opens: verify TIDAL `bpm` in the live `openapi.tidal.com/v2`
+  spec (gates the sidecar's top provider), then Phase 1 per doc §6.
+
+### Validation
+- Read-only research + two markdown files; `git status` clean apart from the two docs.
+
+### Gotchas
+- iOS cannot read other apps' now-playing (MediaRemote is private → rejection; re-confirmed
+  Dec 2025 by Apple DTS) — never plan a "what's playing in Pandora" feature around it.
+- Spotify's Nov-2024 audio-analysis shutdown is permanent for new apps; any beat-grid plan must
+  bring its own tempo source.
+- ShazamKit needs a physical device (no Simulator inference) — same test-trap class as the
+  VisionKit/CIDetector rule.
+
 ## 2026-07-17 - [Claude] BUILD 33 — POLISH ROUND E: hardening round 3 — verify-and-close + new-surface sweep
 
 ### Branch
