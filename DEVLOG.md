@@ -386,6 +386,43 @@
 
 ---
 
+## 2026-07-21 - [Claude] MUSIC R5+R6 — Spotify (dev-flag) + program close-out (build 38) — ALL BUILD ROUNDS COMPLETE, ONE DEVICE GATE LEFT
+
+### Branch
+- `main` (rollback tag: `checkpoint/music-R5`, pushed)
+
+### Did
+- **R5 feature commit `d67cd9c`:** `SpotifyAuthService` (PKCE, RFC-7636 vector-tested, verifier
+  never in a URL, ASWebAuthenticationSession on `chromaglow://spotify-callback`, tokens in
+  Keychain accounts `spotify_access_token`/`spotify_refresh_token`, refresh→interactive
+  fallback), `SpotifyAPIClient` (currently-playing 200/204/one-401-retry, ~600px artwork, ISRC;
+  Premium-tolerant transport), `SpotifySource` (3s foreground poll, 204=idle vs error=keep-state).
+  Picker row requires DEBUG flag AND a clientID — **Release ships without Spotify by
+  construction.** Suite **786/786** (10 new); guards green.
+- **R6 close-out:** AGENTS.md gains the "Music integration durable facts" block (two-layer
+  contract, BeatClock priority, source specs, tempo chain, palette rules, UI mounts, privacy-label
+  note); build 38. Marketing stays 1.0.0 until the v1.1 submission (provenance-CI rule).
+- **Program totals (builds 34–38, one day):** 5 rounds, 10 feature/test commits, 20 new Swift
+  files, 83 new tests (703 → 786), zero UnifiedOrchestrator lines, one StudioView line.
+
+### Left — THE ONE REMAINING GATE (Brian, build 38 on device)
+1. Portal: MusicKit + ShazamKit checkboxes on `com.huehome.pro`.
+2. Keys → `TempoProviderKeys.swift` (TIDAL id/secret, GetSongBPM); Spotify dashboard app
+   (Premium, allowlist self, redirect URI `chromaglow://spotify-callback` VERBATIM) → clientID
+   into `SpotifyKeys.swift`. Hand keys to Claude to paste+commit if preferred.
+3. Combined device pass: R3 Apple Music checklist (build-36 entry) + R4 Auto-Detect/Pandora
+   checklist (build-37 entry) + Spotify: picker row appears (Debug install) → login sheet →
+   allowlisted account → bar follows Spotify ≤5s → transport works (Premium).
+4. v1.1 submission prep (LATER, on Brian's go): marketing 1.0.0→1.1.0 + the three
+   `ios-build-provenance.yml` assertions in ONE commit; ASC privacy-label + hosted-policy update
+   for tempo lookups + Spotify linking (runbook §label).
+
+### Gotchas
+- `@MainActor` classes are implicitly Sendable — no boxing needed to hand `SpotifyAuthService`
+  into a `@Sendable` token closure.
+- `try? await client.currentlyPlaying()` double-optional conflates 204-idle with network error —
+  the source uses do/catch so transient errors KEEP state and only an explicit 204 clears the bar.
+
 ## 2026-07-21 - [Claude] MUSIC R4 — Shazam Auto-Detect: the universal/Pandora source (build 37) — GATE C JOINS GATE B
 
 ### Branch

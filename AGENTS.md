@@ -475,6 +475,50 @@ DEVLOG build-25 entry:
   accounts `hue_invite_<profileID>_<bridgeRecordID>_token` are additive. Registration
   scripts: `add_guest_invite_files.rb`, `add_profiles_files.rb`, `add_revocation_files.rb`.
 
+Music integration (2026-07-21, builds 34–38) durable facts — design source of truth is
+`docs/ios/music-integration-design-2026-07.md`; per-round detail in the five DEVLOG MUSIC entries:
+
+- **Two-layer contract:** the signal layer (AudioAnalysisEngine/BeatClock) never learns about
+  music services; the metadata layer (`HueHome/Core/Music/`) drives it only through
+  `BeatClock.driveFromTrack/endServiceDrive`. `CompositionEngine.render` is UNCHANGED — all 66+
+  looks become track-locked via the existing `.beat`/`.onset` reactions.
+- **`MusicSessionCoordinator.shared`** is `.environment`-injected (DeepLinkCoordinator pattern);
+  UnifiedOrchestrator gained ZERO music lines. `lastPosition` is `@ObservationIgnored` and a 1Hz
+  position tick MUST NOT fire observation (pinned by `MusicSourceContractTests`).
+- **BeatClock priority (pinned):** tap/manual pin > `.service` (track drive) > `.audio` (mic).
+  `serviceHold` blocks `ingest()` entirely (including its confidence write) while a track drives;
+  `unpin()` returns to `.service` mid-session; `endServiceDrive` falls back to `.audio` keeping
+  the last tempo. Out-of-range service BPMs are REJECTED, not clamped. `DriveSource.displayName`
+  ("Music") is the only user-visible word for `.service`.
+- **Sources:** `AppleMusicSource` (SystemMusicPlayer mirror — no background-audio mode; poll gated
+  by the pinned `shouldPoll` table), `ShazamSource` (SHSession fed by
+  `AudioAnalysisEngine.addBufferTap`, holds `AudioDemand.shazamID`; `predictedCurrentMatchOffset`
+  is the position; `ShazamMissPolicy` 6 misses before clearing), `SpotifySource` (DEV-FLAGGED:
+  `FeatureFlags.spotifySource` is DEBUG-only AND needs `SpotifyKeys.clientID` — Release ships
+  without Spotify by construction; PKCE, tokens in Keychain accounts `spotify_access_token`/
+  `spotify_refresh_token`, redirect `chromaglow://spotify-callback` must match the dashboard
+  verbatim), `MockMusicSource` (demo/Simulator path).
+- **Tempo:** `TrackTempoResolver` order = source hint → forever-cache (Application Support,
+  `.atomic`-only — never pair with `.withoutOverwriting`) → providers (TIDAL by ISRC — `bpm`
+  verified in the live v2 spec; GetSongBPM two-step) → live `TempoEstimator`. Providers are
+  keyless-inactive via `TempoProviderKeys` empty strings; lookups gated by user toggle
+  `music.tempoLookupEnabled` (absent = ON) and send ONLY track identifiers.
+- **Palettes:** `ArtworkPaletteExtractor` samples in an EXPLICIT sRGB context (P3 art converts to
+  what `HueColorUtils.linearise()` assumes — `CGColor(red:)` is GENERIC RGB, a known trap),
+  nearest-neighbor, deterministic k-means, gamut-C clamped via the single
+  `HueColorUtils.xyFrom(red:green:blue:)` conversion source. "Use album colors" writes ONLY via
+  `vm.activeCompositionBox` + `triggerRESTBurst` (the harmony-onChange idiom).
+- **UI:** Studio mounts via ONE `.modifier(StudioMusicWiring(vm:))` line (body is at the
+  type-checker ceiling — extend the modifier; a ternary-optional-closure inside its inset already
+  tripped the cliff once, split into computed properties). Dashboard's music strip is a SIBLING of
+  the effects now-playing bar — never merge their state. `MusicSourceCatalog` is the pure
+  row-availability truth (no dead rows). `MusicUISnapshotTests` renders review PNGs into the
+  xcresult; `BeatStatusChip` reads `BeatClock.shared` — fixtures must drive the shared clock.
+- **Registration:** new music files ride `add_music_files.rb`. Privacy-label note: tempo lookups
+  (ISRC to TIDAL/GetSongBPM) + Spotify linking must be reflected in the ASC label + hosted policy
+  before the v1.1 submission (runbook §label). Marketing version stays 1.0.0 until then —
+  `ios-build-provenance.yml` hard-asserts it in three places (bump both in ONE commit).
+
 ## Android Current State
 
 Android is a working Kotlin/Compose **demo MVP on `main` @ `f3380a7`**; both parallel-pipeline pilot
