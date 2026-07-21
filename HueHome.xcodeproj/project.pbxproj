@@ -48,6 +48,7 @@
 		2CBD48F48BAACBC512C084BA /* DeviceDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F57BF74DE7F5F2F1B870513F /* DeviceDisplayItem.swift */; };
 		2F5175FAF38BD799652DD6E6 /* RoomColorWashPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB78DD6E803F76A88BE41CC5 /* RoomColorWashPlanner.swift */; };
 		2FC4E27E26AFBFE89185A286 /* ApplicationKeyMinter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F6F9DF77264770C0649F75D /* ApplicationKeyMinter.swift */; };
+		2FDDDBE2B65FEBF187247919 /* SpotifyAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C1E511CE3DE5979BAFE33A9 /* SpotifyAPIClient.swift */; };
 		30FA38B7726B382D54F58DB7 /* CompositionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8090A732A95BB7D22AD00660 /* CompositionModels.swift */; };
 		31E9759C889B45ECBED683D2 /* MusicSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18E86D4E790F6F9F80A6D404 /* MusicSource.swift */; };
 		332A136E65B81144F370D47F /* CompositionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC3FFCBA8D30FA41568E4DF /* CompositionStoreTests.swift */; };
@@ -133,6 +134,7 @@
 		908536D8EF4210E3E2D75D3F /* MusicUISnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10DDCF04E66CB7F1A2A96513 /* MusicUISnapshotTests.swift */; };
 		9104ED28E648C70654A53BC6 /* NowPlayingBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 450C00831509B188AC9710FD /* NowPlayingBar.swift */; };
 		91A44ACA5E6CD5A45629A2B4 /* CreateAutomationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FA271B19432BA4813305C8A /* CreateAutomationView.swift */; };
+		93402B91C1F931EA48EE4CF0 /* SpotifyAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */; };
 		951658093BEEBEC42FBEB22C /* HarmonyEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 864AC7B556935239B283510D /* HarmonyEngine.swift */; };
 		98241981FA9EF6CA7A3E7A97 /* BridgeSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67D63CB3391ED01349572D57 /* BridgeSetupView.swift */; };
 		98370CEBD9A64016AAC08FA2 /* MockMusicSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A48446A2F5B16431E585E443 /* MockMusicSource.swift */; };
@@ -148,6 +150,7 @@
 		A91D0D5834FFB0EC82B65CA2 /* ProfilesAccessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A567F3B8EE7A0AF00E29DAF0 /* ProfilesAccessView.swift */; };
 		A95DF050FC3DEB539D31A007 /* AutomationHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C70C1F68EEBD0C03E0A62BD /* AutomationHandler.swift */; };
 		A962B474DA2EF6034928154A /* StudioParamStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBD73B2ED375BB08875A8E1E /* StudioParamStoreTests.swift */; };
+		AA02264459933E2791FC556C /* SpotifySource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 518DAB81C6B02AE1FF0936E8 /* SpotifySource.swift */; };
 		AA1234BB5678CCDD00EEFF11 /* GamingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2345CC6789DDEE00FF0022 /* GamingEngine.swift */; };
 		AA2222222222222222222222 /* RoomDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1111111111111111111111 /* RoomDisplayItem.swift */; };
 		AB000BRAND002 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000BRAND001 /* AppBrand.swift */; };
@@ -169,6 +172,7 @@
 		B8EC85BF69B1476F2C0BD268 /* AutomationsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2A9BD5B62E32B243BDEB862 /* AutomationsViewModel.swift */; };
 		B9A948C04440A35D3DA0DAAD /* HueIntentClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B31F4A5BF485E6C53B932ED1 /* HueIntentClientTests.swift */; };
 		BA588C6800DFA058C86F8455 /* RoomAggregateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DB2272228C12BF09711E036 /* RoomAggregateTests.swift */; };
+		BA658D5EC002025F8C4C0836 /* SpotifyAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BC8AF8B82AAE9ABEC09FE9D /* SpotifyAuthService.swift */; };
 		BB2222222222222222222222 /* HueToastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1111111111111111111111 /* HueToastView.swift */; };
 		BB4BCD87D361FE7451392958 /* BridgeAuthorizationMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6609C15561D9E6C1AC9B53F /* BridgeAuthorizationMonitor.swift */; };
 		BB580EB55B2297B55762B180 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A605D920B86B15037E86EE5F /* DashboardView.swift */; };
@@ -415,6 +419,7 @@
 		19CB967FDFFBAE70C0495AA8 /* FeatureFlags.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FeatureFlags.swift; path = ./HueHome/Core/FeatureFlags.swift; sourceTree = "<group>"; };
 		19E099CC03304635FF840FA6 /* ArtworkPaletteExtractor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ArtworkPaletteExtractor.swift; path = ./HueHome/Core/Music/ArtworkPaletteExtractor.swift; sourceTree = "<group>"; };
 		1AA4CC7E83E29A5E252517C9 /* GuestInviteSpec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteSpec.swift; path = ./HueHome/Core/Share/GuestInviteSpec.swift; sourceTree = "<group>"; };
+		1C1E511CE3DE5979BAFE33A9 /* SpotifyAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyAPIClient.swift; path = ./HueHome/Core/Music/SpotifyAPIClient.swift; sourceTree = "<group>"; };
 		1D5FB0B94877644269D4D186 /* TutorialIllustrationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TutorialIllustrationView.swift; path = ./HueHome/UI/Tutorial/TutorialIllustrationView.swift; sourceTree = "<group>"; };
 		1DB2272228C12BF09711E036 /* RoomAggregateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomAggregateTests.swift; path = ./HueHomeTests/RoomAggregateTests.swift; sourceTree = "<group>"; };
 		1E394B8CB521A7239F42E2C2 /* HueAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueAPIClient.swift; path = HueHome/Core/Network/HueAPIClient.swift; sourceTree = "<group>"; };
@@ -448,11 +453,13 @@
 		47B7FF7BBDB9A7FACD17098D /* GuestAccessBanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestAccessBanner.swift; path = ./HueHome/UI/Components/GuestAccessBanner.swift; sourceTree = "<group>"; };
 		47D8011899F8FB42484555C0 /* RoomColorPopover.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomColorPopover.swift; path = HueHome/UI/Dashboard/RoomColorPopover.swift; sourceTree = "<group>"; };
 		4B321A968D6401B73050E25C /* TrackTempoResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TrackTempoResolver.swift; path = ./HueHome/Core/Music/TrackTempoResolver.swift; sourceTree = "<group>"; };
+		4BC8AF8B82AAE9ABEC09FE9D /* SpotifyAuthService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyAuthService.swift; path = ./HueHome/Core/Music/SpotifyAuthService.swift; sourceTree = "<group>"; };
 		4CFF8EAF856DCFE70BBFE746 /* PresetSurfaceClassifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PresetSurfaceClassifier.swift; path = HueHome/Core/Models/PresetSurfaceClassifier.swift; sourceTree = "<group>"; };
 		4E53201A81D93BB2967E3651 /* HueTokens.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueTokens.swift; path = ./HueHome/UI/Components/HueTokens.swift; sourceTree = "<group>"; };
 		4F267BE6A95CAC48A0AD9063 /* StudioIntents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioIntents.swift; path = ./HueHome/Intents/StudioIntents.swift; sourceTree = "<group>"; };
 		4F6F9DF77264770C0649F75D /* ApplicationKeyMinter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ApplicationKeyMinter.swift; path = ./HueHome/Core/Network/ApplicationKeyMinter.swift; sourceTree = "<group>"; };
 		4FB72B6AA166AE2318281F06 /* HueEffect.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Effects/HueEffect.swift; sourceTree = "<group>"; };
+		518DAB81C6B02AE1FF0936E8 /* SpotifySource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifySource.swift; path = ./HueHome/Core/Music/SpotifySource.swift; sourceTree = "<group>"; };
 		52220E1EF597845B5B7ED8E0 /* SceneQRRendererTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneQRRendererTests.swift; path = ./HueHomeTests/SceneQRRendererTests.swift; sourceTree = "<group>"; };
 		532AEB39DB4A570EDFB5EB43 /* DevicesViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/ViewModels/DevicesViewModel.swift; sourceTree = "<group>"; };
 		53E5462DF42B214508BF5FC2 /* ImportSceneSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImportSceneSheet.swift; path = ./HueHome/UI/Share/ImportSceneSheet.swift; sourceTree = "<group>"; };
@@ -497,6 +504,7 @@
 		8090A732A95BB7D22AD00660 /* CompositionModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionModels.swift; path = HueHome/Core/Models/CompositionModels.swift; sourceTree = "<group>"; };
 		8223FA80DC0EC19E9CE6C831 /* StudioView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioView.swift; path = ./HueHome/UI/Studio/StudioView.swift; sourceTree = "<group>"; };
 		825FE84E577223087FB6A47F /* InvitePayloadCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InvitePayloadCodec.swift; path = ./HueHome/Core/Share/InvitePayloadCodec.swift; sourceTree = "<group>"; };
+		82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyAuthTests.swift; path = ./HueHomeTests/SpotifyAuthTests.swift; sourceTree = "<group>"; };
 		8408ED226D19F7C1E2884F2A /* AppleMusicSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppleMusicSource.swift; path = ./HueHome/Core/Music/AppleMusicSource.swift; sourceTree = "<group>"; };
 		850FF1B3391225414ACFB723 /* HueIntentAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueIntentAPIClient.swift; path = ./HueHome/Intents/HueIntentAPIClient.swift; sourceTree = "<group>"; };
 		864AC7B556935239B283510D /* HarmonyEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HarmonyEngine.swift; path = HueHome/UI/SceneBuilder/HarmonyEngine.swift; sourceTree = "<group>"; };
@@ -1021,6 +1029,9 @@
 				8408ED226D19F7C1E2884F2A /* AppleMusicSource.swift */,
 				79CB619727FAB73BB5417A2E /* TempoProviders.swift */,
 				37B2C5FC7CA1E6C50AE7BE19 /* ShazamSource.swift */,
+				4BC8AF8B82AAE9ABEC09FE9D /* SpotifyAuthService.swift */,
+				1C1E511CE3DE5979BAFE33A9 /* SpotifyAPIClient.swift */,
+				518DAB81C6B02AE1FF0936E8 /* SpotifySource.swift */,
 			);
 			name = Music;
 			sourceTree = "<group>";
@@ -1385,6 +1396,7 @@
 				C36DDAEBF5B11FA1CDF0E2E3 /* AppleMusicMappingTests.swift */,
 				1F100D68A69CAEBF2A70DFED /* TempoProviderTests.swift */,
 				C0EA7D31963C88AF14FFD401 /* ShazamPolicyTests.swift */,
+				82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1931,6 +1943,9 @@
 				64BAE6DC9F52C1C97F8F0436 /* AppleMusicSource.swift in Sources */,
 				A3656E52A0873CDFE7372F4F /* TempoProviders.swift in Sources */,
 				287626243A6C1B97793C5DBA /* ShazamSource.swift in Sources */,
+				BA658D5EC002025F8C4C0836 /* SpotifyAuthService.swift in Sources */,
+				2FDDDBE2B65FEBF187247919 /* SpotifyAPIClient.swift in Sources */,
+				AA02264459933E2791FC556C /* SpotifySource.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2018,6 +2033,7 @@
 				F4E53A7CFA06753812998AC5 /* AppleMusicMappingTests.swift in Sources */,
 				59A2FCBE6ED2D9B705DD3561 /* TempoProviderTests.swift in Sources */,
 				4D6A92C35CE3146DFFDADE81 /* ShazamPolicyTests.swift in Sources */,
+				93402B91C1F931EA48EE4CF0 /* SpotifyAuthTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

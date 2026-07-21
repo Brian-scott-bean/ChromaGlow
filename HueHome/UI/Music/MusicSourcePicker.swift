@@ -113,7 +113,7 @@ struct MusicSourcePicker: View {
             isDemoMode: orchestrator.isDemoMode,
             isSimulator: isSimulator,
             appleMusicAvailable: true,    // R3: SystemMusicPlayer mirror
-            spotifyAvailable: false       // R5 flips this (FeatureFlags.spotifySource)
+            spotifyAvailable: FeatureFlags.spotifySource && !SpotifyKeys.clientID.isEmpty
         )
     }
 
@@ -265,7 +265,17 @@ struct MusicSourcePicker: View {
                 }
             }
         case .spotify:
-            break   // row absent until R5 wires the source
+            Task {
+                do {
+                    try await music.activate(SpotifySource())
+                    dismiss()
+                } catch {
+                    activationAlert = ActivationAlert(
+                        title: "Spotify Link Needed",
+                        message: "Finish the Spotify login to follow what you play. Heads-up: Spotify only allows accounts on this app's developer allowlist for now."
+                    )
+                }
+            }
         }
     }
 }
