@@ -25,26 +25,27 @@ final class MusicSourcePickerModelTests: XCTestCase {
         XCTAssertEqual(kinds(demo: true, sim: true, appleMusic: true, spotify: true).first, .mic)
     }
 
-    func testDeviceRealHomeShowsOnlyMic() {
-        XCTAssertEqual(kinds(), [.mic],
-                       "no dead rows: sources appear only when they can actually play")
+    func testDeviceRealHomeShowsMicAndAutoDetect() {
+        XCTAssertEqual(kinds(), [.mic, .shazam],
+                       "no dead rows: streaming sources appear only when they can actually play; mic + auto-detect always can")
     }
 
     func testSampleTrackRequiresDemoModeOrSimulator() {
-        XCTAssertEqual(kinds(demo: true), [.mic, .demo])
-        XCTAssertEqual(kinds(sim: true), [.mic, .demo])
+        XCTAssertEqual(kinds(demo: true), [.mic, .shazam, .demo])
+        XCTAssertEqual(kinds(sim: true), [.mic, .shazam, .demo])
         XCTAssertFalse(kinds().contains(.demo))
     }
 
     func testAppleMusicAndSpotifyGateOnAvailability() {
-        XCTAssertEqual(kinds(appleMusic: true), [.mic, .appleMusic])
-        XCTAssertEqual(kinds(appleMusic: true, spotify: true), [.mic, .appleMusic, .spotify])
+        XCTAssertEqual(kinds(appleMusic: true), [.mic, .shazam, .appleMusic])
+        XCTAssertEqual(kinds(appleMusic: true, spotify: true),
+                       [.mic, .shazam, .appleMusic, .spotify])
         XCTAssertFalse(kinds(spotify: false).contains(.spotify))
     }
 
     func testFullMatrixOrderIsStable() {
         XCTAssertEqual(kinds(demo: true, appleMusic: true, spotify: true),
-                       [.mic, .demo, .appleMusic, .spotify])
+                       [.mic, .shazam, .demo, .appleMusic, .spotify])
     }
 
     // MARK: DriveSource user-facing names

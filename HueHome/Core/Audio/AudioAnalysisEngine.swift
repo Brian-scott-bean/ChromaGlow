@@ -36,6 +36,7 @@ final class AudioAnalysisEngine {
         case composerReaction
         case syncMode
         case performance
+        case shazamID   // ShazamSource's continuous song identification
     }
 
     private let log = Logger(subsystem: "com.lightshade.app", category: "AudioEngine")

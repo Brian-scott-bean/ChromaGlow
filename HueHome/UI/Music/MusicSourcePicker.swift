@@ -13,6 +13,7 @@ import SwiftUI
 struct MusicSourceOption: Identifiable, Equatable {
     enum Kind: Equatable {
         case mic
+        case shazam
         case demo
         case appleMusic
         case spotify
@@ -41,7 +42,13 @@ enum MusicSourceCatalog {
                 title: "Microphone",
                 subtitle: "Listens in the room — works with anything playing out loud",
                 icon: "mic.fill"
-            )
+            ),
+            MusicSourceOption(
+                kind: .shazam,
+                title: "Auto-Detect Song",
+                subtitle: "Names whatever's playing nearby and locks the lights to its beat",
+                icon: "waveform.and.magnifyingglass"
+            ),
         ]
         if isDemoMode || isSimulator {
             rows.append(MusicSourceOption(
@@ -71,7 +78,7 @@ enum MusicSourceCatalog {
     }
 
     static let pandoraFootnote =
-        "Pandora doesn't let apps connect directly — pick Microphone and ChromaGlow listens along instead."
+        "Pandora doesn't let apps connect directly — pick Auto-Detect Song and ChromaGlow listens along instead."
 
     static let tempoLookupTitle = "Look up song tempo"
     static let tempoLookupFootnote =
@@ -85,7 +92,13 @@ struct MusicSourcePicker: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.dismiss) private var dismiss
     @AppStorage(TrackTempoResolver.lookupEnabledKey) private var tempoLookupEnabled = true
-    @State private var showAuthDeniedAlert = false
+
+    struct ActivationAlert: Identifiable {
+        let title: String
+        let message: String
+        var id: String { title }
+    }
+    @State private var activationAlert: ActivationAlert?
 
     private var isSimulator: Bool {
         #if targetEnvironment(simulator)
@@ -109,7 +122,8 @@ struct MusicSourcePicker: View {
         case .demo: .demo
         case .appleMusic: .appleMusic
         case .spotify: .spotify
-        case .shazamDetected, nil: .mic
+        case .shazamDetected: .shazam
+        case nil: .mic
         }
     }
 
@@ -158,15 +172,17 @@ struct MusicSourcePicker: View {
                         .foregroundStyle(HuePalette.amber)
                 }
             }
-            .alert("Apple Music Access Needed", isPresented: $showAuthDeniedAlert) {
-                Button("Open Settings") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                }
-                Button("Not Now", role: .cancel) {}
-            } message: {
-                Text("Allow ChromaGlow to see what's playing in Apple Music. Nothing is played or changed without you.")
+            .alert(item: $activationAlert) { alert in
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    primaryButton: .default(Text("Open Settings")) {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    },
+                    secondaryButton: .cancel(Text("Not Now"))
+                )
             }
         }
         .presentationDetents([.medium, .large])
@@ -229,10 +245,23 @@ struct MusicSourcePicker: View {
                 do {
                     try await music.activate(AppleMusicSource())
                     dismiss()
-                } catch MusicSourceError.authorizationDenied {
-                    showAuthDeniedAlert = true
                 } catch {
-                    showAuthDeniedAlert = true
+                    activationAlert = ActivationAlert(
+                        title: "Apple Music Access Needed",
+                        message: "Allow ChromaGlow to see what's playing in Apple Music. Nothing is played or changed without you."
+                    )
+                }
+            }
+        case .shazam:
+            Task {
+                do {
+                    try await music.activate(ShazamSource())
+                    dismiss()
+                } catch {
+                    activationAlert = ActivationAlert(
+                        title: "Microphone Access Needed",
+                        message: "Auto-Detect listens for the song playing nearby. Audio is analyzed on this phone and never recorded."
+                    )
                 }
             }
         case .spotify:
