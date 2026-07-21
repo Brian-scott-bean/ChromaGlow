@@ -386,6 +386,49 @@
 
 ---
 
+## 2026-07-21 - [Claude] MUSIC R3 — Apple Music (MusicKit) + live TIDAL/GetSongBPM tempo providers (build 36) — GATE B OPEN
+
+### Branch
+- `main` (rollback tag: `checkpoint/music-R3`, pushed). Gate A passed (design approved as-is;
+  Brian doing the account batch in parallel).
+
+### Did
+- **R3 feature commit `7e5b938`:** `Core/Music/AppleMusicSource.swift` (SystemMusicPlayer mirror:
+  Combine sinks, pure `AppleMusicEntrySnapshot` seam, 1Hz poll gated by the pinned
+  `shouldPoll(isPlaying:isBackgrounded:)` table, MusicAuthorization flow → typed denied error →
+  picker alert with Settings deep link); `NSAppleMusicUsageDescription` in `HueHome/Info.plist`;
+  picker's Apple Music row live. `Core/Music/TempoProviders.swift`: TIDAL (client-credentials
+  token cached, `filter[isrc]` per the verified spec, optional-bpm tolerant, ISRC-only) +
+  GetSongBPM (two-step, object-shaped-no-result tolerant) — **both keyless-inactive**
+  (`TempoProviderKeys` empty strings committed; `liveProviders()` drops them until keys land) —
+  wired as the coordinator's default resolver chain. 14 new fixture tests; suite **771/771**;
+  guards green.
+
+### Working
+- Everything Simulator-testable is green. Live Apple Music + lookups need Brian's device.
+
+### Left — GATE B (Brian, in order)
+1. **MusicKit checkbox** on App ID `com.huehome.pro` (Certificates → Identifiers → App Services)
+   — BEFORE installing build 36 on the phone, or authorization fails.
+2. **Paste keys** into `Core/Music/TempoProviderKeys` (TIDAL client ID/secret, GetSongBPM key)
+   when the signups are done — or hand them to Claude to paste + commit.
+3. **On-device pass** (Apple Music sub active): picker → Apple Music → authorize → play a song in
+   Music → bar shows track+artwork ≤2s → BPM badge (lookup with keys / mic estimate without) →
+   run a `.beat`-reactive look → beat-locks → seek in Music → re-locks without a visible light
+   jump → pause → look keeps running at last tempo → transport buttons control Music → tap album
+   thumb → running look repaints with album colors → Dashboard shows the compact strip.
+4. R4 (Shazam auto-detect) needs the **ShazamKit checkbox** — can be ticked in the same portal visit.
+
+### Validation
+- Full suite via xcresulttool; hardening_guards; build 36 across all 12 pbxproj entries.
+
+### Gotchas
+- `TrackTempoResolver` is @MainActor so extension statics inherit isolation — `liveProviders()`
+  is explicitly `nonisolated` (constructs Sendable providers, touches no state).
+- TIDAL rate limits are UNPUBLISHED — providers throw on any non-200 (incl. 429) and the
+  resolver falls through; no retry loop by design. Community practice ~500ms spacing; the
+  per-track-change single lookup + forever-cache stays far under any plausible limit.
+
 ## 2026-07-21 - [Claude] MUSIC R2 — Now Playing UI: Studio bar, Dashboard strip, source picker (build 35) — GATE A OPEN
 
 ### Branch
