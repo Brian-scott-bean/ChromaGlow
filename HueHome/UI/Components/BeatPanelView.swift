@@ -196,7 +196,7 @@ struct BeatPanelView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(HuePalette.amber)
             Text(clock.bpm > 0
-                 ? String(format: "%.1f BPM · %@", clock.bpm, clock.source.rawValue.capitalized)
+                 ? String(format: "%.1f BPM · %@", clock.bpm, clock.source.displayName)
                  : "Listening for a beat…")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.7))

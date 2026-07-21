@@ -69,6 +69,18 @@ final class BeatClock {
 
     enum DriveSource: String {
         case none, tap, manual, audio, service
+
+        /// User-facing word — "service" is developer vocabulary; the drive
+        /// fed by a music source reads as "Music" everywhere visible.
+        var displayName: String {
+            switch self {
+            case .none: "None"
+            case .tap: "Tap"
+            case .manual: "Manual"
+            case .audio: "Audio"
+            case .service: "Music"
+            }
+        }
     }
 
     // Observable state (UI reads these).

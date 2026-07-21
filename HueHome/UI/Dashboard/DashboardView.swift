@@ -18,6 +18,7 @@ import SwiftData
 struct DashboardView: View {
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Environment(MusicSessionCoordinator.self) private var music
     @State private var showLog           = false
     @State private var showEffectsMenu   = false   // multi-effect stop dropdown
     @State private var showScheduleSheet = false   // upcoming automations dropdown
@@ -238,6 +239,13 @@ struct DashboardView: View {
 
                 if orchestrator.activeEffectName != nil {
                     nowPlayingBar
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                // Music session strip — sibling of the effects bar above
+                // (the effect registry and the music session never merge).
+                if music.hasSession {
+                    MusicNowPlayingBar(style: .compact)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
 

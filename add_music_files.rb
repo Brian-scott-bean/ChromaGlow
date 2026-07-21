@@ -75,6 +75,7 @@ TEST_FILES = {
   'HueHomeTests/ArtworkPaletteTests.swift'           => ['HueHomeTests'],
   'HueHomeTests/MusicSourceContractTests.swift'      => ['HueHomeTests'],
   'HueHomeTests/MusicSourcePickerModelTests.swift'   => ['HueHomeTests'],
+  'HueHomeTests/MusicUISnapshotTests.swift'          => ['HueHomeTests'],
   'HueHomeTests/AppleMusicMappingTests.swift'        => ['HueHomeTests'],
 }
 

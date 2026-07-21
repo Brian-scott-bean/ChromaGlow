@@ -71,6 +71,7 @@ struct HueHomeApp: App {
     // MARK: Stage 2A — UnifiedOrchestrator (shared across entire app)
     @State private var orchestrator = UnifiedOrchestrator()
     @State private var deepLink = DeepLinkCoordinator.shared
+    @State private var music = MusicSessionCoordinator.shared
 
     init() {
         // Compositions saved/renamed/deleted → re-donate so Siri's
@@ -93,6 +94,7 @@ struct HueHomeApp: App {
             AppRootView()
                 .environment(orchestrator)
                 .environment(deepLink)
+                .environment(music)
                 .onOpenURL { url in deepLink.handle(url) }
         }
         .modelContainer(modelContainer)

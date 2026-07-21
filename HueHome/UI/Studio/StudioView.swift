@@ -397,6 +397,7 @@ struct StudioView: View {
             drainShare: consumePendingShare,
             drainStudioAction: consumePendingStudioAction
         ))
+        .modifier(StudioMusicWiring(vm: vm))
         .confirmationDialog(
             TransportVocabulary.choosePlayTitle,
             isPresented: $showCompositionTransportPrompt,
