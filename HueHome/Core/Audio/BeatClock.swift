@@ -104,9 +104,19 @@ final class BeatClock {
 
     private var beatEpoch: Double = 0
     /// True while a music-service metadata drive owns the clock (a track is
-    /// playing with a known BPM). Audio ingest may not steal the clock —
-    /// or the confidence display — while held. Not observed by any view.
+    /// playing with a known BPM). Audio ingest may not steal the tempo —
+    /// or the confidence display — while held; it MAY nudge phase (see
+    /// ingest: a sidecar BPM carries no phase, the mic is the only true
+    /// phase anchor). Not observed by any view.
     private var serviceHold = false
+    /// Host time of the last driveFromTrack — a drive whose source died
+    /// without endServiceDrive() self-heals after serviceDriveTimeout.
+    private var lastServiceDriveAt: Double = 0
+    private static let serviceDriveTimeout = 10.0
+
+    /// Read by the mic-demand evaluator: a `.beat` reaction needs no
+    /// microphone while a music service drives the clock.
+    var isServiceDriven: Bool { serviceHold }
 
     // ── Lock-guarded static mirror for render loops ──
     nonisolated private static let mirrorLock = NSLock()
@@ -200,6 +210,7 @@ final class BeatClock {
     func clear() {
         bpm = 0; confidence = 0; source = .none; isPinned = false
         tapTimes = []; beatEpoch = 0; serviceHold = false
+        lastServiceDriveAt = 0
         publishMirror()
     }
 
@@ -218,6 +229,7 @@ final class BeatClock {
         guard !isPinned else { return }
         guard position.isPlaying, newBPM >= 20, newBPM <= 300 else { return }
         serviceHold = true
+        lastServiceDriveAt = now
 
         let interval = 60.0 / newBPM
         let positionSec = Double(position.positionMs) / 1000.0 + (now - position.capturedAt)
@@ -262,11 +274,31 @@ final class BeatClock {
     // MARK: - Audio drive (~2 Hz from the tempo pass)
 
     /// Feed an audio tempo estimate. Ignored while pinned (except that the
-    /// confidence display still updates so the UI can show what audio hears)
-    /// and ignored entirely while a service drive holds the clock — the
-    /// track's known BPM outranks what the microphone guesses.
+    /// confidence display still updates so the UI can show what audio hears).
+    /// While a service drive holds the clock, the track's known BPM outranks
+    /// what the microphone guesses — but the mic's observed beat is the only
+    /// true PHASE anchor (a sidecar BPM carries none), so a confident
+    /// estimate still applies a gentle phase-only correction. The mic is
+    /// never demanded for this; it assists only when already running.
     func ingest(estimate: TempoEstimate, endTime: Double) {
-        guard !serviceHold else { return }
+        if serviceHold {
+            if endTime - lastServiceDriveAt > Self.serviceDriveTimeout {
+                // Self-heal: the driving source died without endServiceDrive.
+                serviceHold = false
+                if source == .service { source = bpm > 0 ? .audio : .none }
+                // Fall through — audio-follow resumes normally below.
+            } else {
+                guard estimate.confidence >= Self.minAudioConfidence, bpm > 0 else { return }
+                let interval = 60.0 / bpm
+                let audioLastBeat = endTime - estimate.lastBeatOffset
+                let snap = BeatSnapshot(bpm: bpm, beatEpoch: beatEpoch, beatsPerBar: beatsPerBar)
+                var error = snap.beatPhase(at: audioLastBeat) * interval
+                if error > interval / 2 { error -= interval }
+                beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
+                publishMirror()
+                return   // tempo, source, and confidence stay the service's
+            }
+        }
         confidence = estimate.confidence
         guard !isPinned else { return }
         guard estimate.confidence >= Self.minAudioConfidence, estimate.bpm > 0 else { return }

@@ -156,6 +156,50 @@ final class BeatClockServiceDriveTests: XCTestCase {
         XCTAssertEqual(clock.source, .audio)
     }
 
+    // MARK: - Mic phase-assist (R7: sidecar BPM carries no phase)
+
+    func testMicPhaseAssistNudgesPhaseOnlyWhileServiceHolds() {
+        let clock = BeatClock()
+        clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)  // epoch 100
+        // Mic hears the actual beat 100 ms later than our grid claims.
+        clock.ingest(estimate: TempoEstimate(bpm: 100, confidence: 0.9, lastBeatOffset: 0),
+                     endTime: 101.1)
+        XCTAssertEqual(clock.bpm, 120, "the track's known BPM must never yield to the mic guess")
+        XCTAssertEqual(clock.source, .service)
+        XCTAssertEqual(clock.confidence, 1.0, "confidence display stays the service's")
+        XCTAssertEqual(BeatClock.snapshot().beatEpoch, 100.03, accuracy: 1e-9,
+                       "phase converges toward the mic anchor at the 30 ms cap")
+    }
+
+    func testPhaseAssistIgnoresLowConfidenceEstimates() {
+        let clock = BeatClock()
+        clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)
+        clock.ingest(estimate: TempoEstimate(bpm: 100, confidence: 0.3, lastBeatOffset: 0),
+                     endTime: 101.1)
+        XCTAssertEqual(BeatClock.snapshot().beatEpoch, 100.0, accuracy: 1e-9)
+    }
+
+    func testStaleServiceDriveSelfHeals() {
+        let clock = BeatClock()
+        clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)
+        // The source died without endServiceDrive; 11 s later the mic pass
+        // must be able to reclaim the clock.
+        clock.ingest(estimate: TempoEstimate(bpm: 97, confidence: 0.9, lastBeatOffset: 0),
+                     endTime: 111)
+        XCTAssertEqual(clock.bpm, 97, accuracy: 0.01, "stale hold must release")
+        XCTAssertEqual(clock.source, .audio)
+        XCTAssertFalse(clock.isServiceDriven)
+    }
+
+    func testServiceHoldSurvivesWithinTimeout() {
+        let clock = BeatClock()
+        clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)
+        clock.ingest(estimate: TempoEstimate(bpm: 97, confidence: 0.9, lastBeatOffset: 0),
+                     endTime: 105)
+        XCTAssertEqual(clock.bpm, 120)
+        XCTAssertTrue(clock.isServiceDriven)
+    }
+
     // MARK: - Contract stability
 
     func testDriveSourceRawValuesAreStable() {
