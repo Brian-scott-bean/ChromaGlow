@@ -386,6 +386,41 @@
 
 ---
 
+## 2026-07-21 - [Claude] MUSIC R4 — Shazam Auto-Detect: the universal/Pandora source (build 37) — GATE C JOINS GATE B
+
+### Branch
+- `main` (rollback tag: `checkpoint/music-R4`, pushed)
+
+### Did
+- **R4 feature commit `35e3be2`:** `Core/Music/ShazamSource.swift` — continuous SHSession
+  identification fed from `AudioAnalysisEngine.addBufferTap` (engine stays the single
+  AVAudioSession owner; additive `AudioDemand.shazamID`). `predictedCurrentMatchOffset` → the
+  in-track `PlaybackPosition`, so ANY audible source (Pandora included) gets a beat-locked grid;
+  ISRC rides along for the tempo sidecar. Pure seams pinned: `ShazamMatchSnapshot` mapping and
+  `ShazamMissPolicy` (6 consecutive no-matches before the bar clears). Picker: always-on
+  "Auto-Detect Song" row, generalized activation alerts, Pandora footer updated.
+- Suite **776/776** (5 new); guards green; build 37.
+
+### Working
+- Everything Simulator-testable green. Shazam matching itself is device-only (no Simulator
+  inference — VisionKit/CIDetector trap class).
+
+### Left — GATES B+C are ONE device pass now (Brian, build 37)
+1. Portal (one visit): **MusicKit + ShazamKit checkboxes** on `com.huehome.pro`.
+2. Keys into `TempoProviderKeys` (TIDAL id/secret, GetSongBPM) — or hand to Claude.
+3. Device pass: the R3 Apple Music checklist (build-36 DEVLOG entry) PLUS: picker → Auto-Detect
+   Song → mic grant → play Pandora on a speaker → track named ≤10s → beat-locked look → pause
+   music → bar survives brief gaps, clears after ~30s of silence → mic indicator visible while
+   auto-detect runs (expected, honest).
+4. R5 (Spotify, dev-flag) next: Brian's dashboard app (Premium; allowlist self; redirect URI
+   comes with R5).
+
+### Gotchas
+- ShazamKit delegate callbacks are nonisolated — all state hops to MainActor via Task; the
+  audio-thread tap calls ONLY the documented-thread-safe `matchStreamingBuffer`.
+- `SHSession` isn't Sendable — the tap captures it through an `@unchecked Sendable` box; keep
+  the tap body to that single call.
+
 ## 2026-07-21 - [Claude] MUSIC R3 — Apple Music (MusicKit) + live TIDAL/GetSongBPM tempo providers (build 36) — GATE B OPEN
 
 ### Branch
