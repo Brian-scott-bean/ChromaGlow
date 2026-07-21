@@ -386,6 +386,66 @@
 
 ---
 
+## 2026-07-21 - [Claude] MUSIC R1 — core music layer: MusicSource, BeatClock service drive, tempo resolver, artwork palettes (build 34)
+
+### Branch
+- `main` (rollback tag: `checkpoint/music-R1`, pushed — revert = `git reset --hard checkpoint/music-R1`)
+
+### Did
+- **The full music-integration R1 core layer** per the approved build plan (design doc
+  `docs/ios/music-integration-design-2026-07.md`), five shippable commits, suite green per commit:
+  - **C1 `38382bf`** — `Core/Music/MusicSource.swift` (protocol + `NowPlayingTrack`/
+    `PlaybackPosition` in the CACurrentMediaTime timebase + capabilities/transport),
+    `Core/FeatureFlags.swift` (first flag surface; `spotifySource` DEBUG-only), and
+    `MockMusicSource` (3 demo tracks, 96/120/128 BPM hints, generated gradient artwork — the
+    Simulator/demo path). `add_music_files.rb` registers the whole R1–R5 train (idempotent).
+  - **C2 `4243ff7`** — **BeatClock `DriveSource.service`** + `driveFromTrack` /
+    `endServiceDrive`: grid anchored at track t=0, stale samples extrapolated, ≤30ms gentle
+    corrections, >120ms error (seek) re-anchors outright. Priority pinned by 14 tests:
+    tap/manual pin > service > audio; `serviceHold` blocks the ~2Hz mic tempo pass (AND its
+    confidence-display write) while a track drives; `unpin()` returns to `.service` mid-session;
+    session end falls back to audio-follow keeping the last tempo. Out-of-range BPM rejected.
+  - **C3 `623f801`** — `TrackTempoResolver`: hint → cache → providers → live TempoEstimator.
+    Providers gated by `music.tempoLookupEnabled` (absent = ON, Brian-approved); queries carry
+    only ISRC/catalog-ID/title|artist; Application Support JSON cache (tolerant decode,
+    `.atomic`-only, 500-entry oldest-out).
+  - **C4 `4fe7c99`** — `ArtworkPaletteExtractor` (deterministic fixed-seed k-means, 32×32
+    nearest-neighbor sampling, gamut-C clamp) + additive `HueColorUtils.xyFrom(red:green:blue:)`
+    (single D65 source; HSB path now routes through it) + `MusicSessionCoordinator`
+    (DeepLinkCoordinator pattern; **zero UnifiedOrchestrator lines**; generation-counter
+    stale-drop; `lastPosition` `@ObservationIgnored`).
+  - **C5 `692182a`** — coordinator contract tests incl. both observation directions (position
+    tick fires NOTHING; track change fires).
+- **TIDAL `bpm` VERIFIED in the live v2 OpenAPI spec** (spec 1.10.69): `Tracks_Attributes.bpm`
+  (float, optional) + `key`/`keyScale`, ISRC lookup via `GET /tracks?filter[isrc]=`, THIRD_PARTY
+  self-serve tier, client-credentials for catalog reads. R3's top provider is real. Rate limits
+  unpublished — implement 429 backoff.
+
+### Working
+- Suite **746/746** (43 new tests across 5 files); app + test targets build clean; no new warnings.
+
+### Left
+- **R2 (next): Now Playing UI** — `MusicNowPlayingBar` + picker (StageKit), Studio mount via
+  one `.modifier(StudioMusicWiring(vm:))` line, Dashboard compact strip (Brian chose both),
+  `DriveSource.displayName` ("Music") for BeatPanelView/BeatStatusChip, Settings tempo-lookup
+  toggle. Ends at **GATE A**: Brian's screenshot sign-off + account batch (TIDAL keys,
+  GetSongBPM, MusicKit checkbox, Apple Music sub, Spotify dashboard app).
+- R3 Apple Music (MusicKit) → R4 Shazam → R5 Spotify (dev-flag) per plan.
+
+### Validation
+- Full suite via xcresulttool per commit (703→746); `ruby add_music_files.rb` idempotent-verified;
+  build 34 across all 12 pbxproj entries (CI overrides build numbers — marketing stays 1.0.0).
+
+### Gotchas
+- **`CGColor(red:g:b:alpha:)` builds GENERIC RGB, not sRGB** — filling a context with it shifts
+  components on conversion (blue's xy moved 0.03). Tests draw with `CGColor(srgbRed:...)`; the
+  extractor's sampling context pins EXPLICIT sRGB so P3 artwork converts to what
+  `HueColorUtils.linearise()` assumes. Same trap class as any future color sampling.
+- `xcodebuild … generic/platform=iOS build` does NOT compile the test target — a test-file
+  compile error only surfaces in the `test` action (cost one suite cycle in C5).
+- MockMusicSource's `stop()` fires `onUpdate?(nil, nil)` — the coordinator nils the callback
+  BEFORE calling stop() in `deactivate()`; keep that order.
+
 ## 2026-07-21 - [Claude] Music integration deep-dive: design doc for Apple Music / Spotify / Pandora / ShazamKit (docs only)
 
 ### Branch
