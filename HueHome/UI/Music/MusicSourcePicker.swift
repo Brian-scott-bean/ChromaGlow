@@ -46,7 +46,7 @@ enum MusicSourceCatalog {
             MusicSourceOption(
                 kind: .shazam,
                 title: "Auto-Detect Song",
-                subtitle: "Names whatever's playing nearby and locks the lights to its beat",
+                subtitle: "Names whatever's playing nearby and matches the lights to its beat",
                 icon: "waveform.and.magnifyingglass"
             ),
         ]

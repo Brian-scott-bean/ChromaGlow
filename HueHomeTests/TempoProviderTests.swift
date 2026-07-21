@@ -1,9 +1,10 @@
 // TempoProviderTests.swift
 // HueHome Pro — Unit Tests
 //
-// TIDAL + GetSongBPM providers (music integration R3) on fixture
-// transports: request shapes, token caching, JSON:API / two-step decode,
-// no-result tolerance, and keyless deactivation. No network ever.
+// GetSongBPM provider (music integration R3, revised R7 — TIDAL removed on
+// verified terms grounds) on fixture transports: request shapes, the
+// corrected api.getsong.co host, two-step decode, no-result tolerance, and
+// keyless deactivation. No network ever.
 
 import XCTest
 @testable import HueHome
@@ -36,82 +37,6 @@ private final class FixtureTransport: @unchecked Sendable {
     }
 }
 
-// MARK: - TIDAL
-
-final class TIDALTempoProviderTests: XCTestCase {
-
-    private let tokenBody = #"{"access_token": "tok123", "expires_in": 3600}"#
-    private let tracksBody = #"{"data": [{"attributes": {"bpm": 122.0, "isrc": "QM123"}}]}"#
-
-    private func makeProvider(_ fixture: FixtureTransport) -> TIDALTempoProvider {
-        TIDALTempoProvider(clientID: "id", clientSecret: "secret",
-                           countryCode: "US", transport: fixture.transport)!
-    }
-
-    func testKeylessInitReturnsNil() {
-        XCTAssertNil(TIDALTempoProvider(clientID: "", clientSecret: "", transport: { _ in
-            throw TempoProviderError.badResponse
-        }))
-    }
-
-    func testISRCLookupReturnsBPM() async throws {
-        let fixture = FixtureTransport()
-        fixture.route("auth.tidal.com", body: tokenBody)
-        fixture.route("openapi.tidal.com/v2/tracks", body: tracksBody)
-        let bpm = try await makeProvider(fixture)
-            .tempo(for: TempoQuery(track: NowPlayingTrack(service: .appleMusic, title: "T",
-                                                          artist: "A", isrc: "QM123")))
-        XCTAssertEqual(bpm, 122.0)
-        // Auth used basic credentials; the lookup carried the bearer + ISRC filter.
-        XCTAssertEqual(fixture.requests.count, 2)
-        XCTAssertEqual(fixture.requests[1].value(forHTTPHeaderField: "Authorization"), "Bearer tok123")
-        XCTAssertTrue(fixture.requests[1].url!.absoluteString.contains("filter%5Bisrc%5D=QM123"))
-    }
-
-    func testTokenIsCachedAcrossLookups() async throws {
-        let fixture = FixtureTransport()
-        fixture.route("auth.tidal.com", body: tokenBody)
-        fixture.route("openapi.tidal.com/v2/tracks", body: tracksBody)
-        let provider = makeProvider(fixture)
-        let query = TempoQuery(track: NowPlayingTrack(service: .appleMusic, title: "T",
-                                                      artist: "A", isrc: "QM123"))
-        _ = try await provider.tempo(for: query)
-        _ = try await provider.tempo(for: query)
-        let authCalls = fixture.requests.filter { $0.url!.absoluteString.contains("auth.tidal.com") }
-        XCTAssertEqual(authCalls.count, 1, "a valid token must be reused")
-    }
-
-    func testNoISRCSkipsWithoutNetwork() async throws {
-        let fixture = FixtureTransport()
-        let bpm = try await makeProvider(fixture)
-            .tempo(for: TempoQuery(track: NowPlayingTrack(service: .demo, title: "T", artist: "A")))
-        XCTAssertNil(bpm)
-        XCTAssertTrue(fixture.requests.isEmpty, "TIDAL is an ISRC join — no ISRC, no request")
-    }
-
-    func testMissingBPMFieldYieldsNil() async throws {
-        let fixture = FixtureTransport()
-        fixture.route("auth.tidal.com", body: tokenBody)
-        fixture.route("openapi.tidal.com/v2/tracks", body: #"{"data": [{"attributes": {}}]}"#)
-        let bpm = try await makeProvider(fixture)
-            .tempo(for: TempoQuery(track: NowPlayingTrack(service: .appleMusic, title: "T",
-                                                          artist: "A", isrc: "QM123")))
-        XCTAssertNil(bpm, "bpm is optional per the live spec — absent must mean nil, not a throw")
-    }
-
-    func testHTTPErrorThrowsSoResolverFallsThrough() async {
-        let fixture = FixtureTransport()
-        fixture.route("auth.tidal.com", body: tokenBody)
-        fixture.route("openapi.tidal.com/v2/tracks", status: 429, body: "{}")
-        do {
-            _ = try await makeProvider(fixture)
-                .tempo(for: TempoQuery(track: NowPlayingTrack(service: .appleMusic, title: "T",
-                                                              artist: "A", isrc: "QM123")))
-            XCTFail("429 must throw")
-        } catch { /* expected: resolver moves to the next provider */ }
-    }
-}
-
 // MARK: - GetSongBPM
 
 final class GetSongBPMProviderTests: XCTestCase {
@@ -122,7 +47,7 @@ final class GetSongBPMProviderTests: XCTestCase {
         }))
     }
 
-    func testTwoStepLookupReturnsTempo() async throws {
+    func testTwoStepLookupReturnsTempoFromCorrectHost() async throws {
         let fixture = FixtureTransport()
         fixture.route("/search/", body: #"{"search": [{"id": "song99"}]}"#)
         fixture.route("/song/", body: #"{"song": {"tempo": "118"}}"#)
@@ -132,6 +57,10 @@ final class GetSongBPMProviderTests: XCTestCase {
                                                    artist: "Ava Lane")))
         XCTAssertEqual(bpm, 118)
         XCTAssertEqual(fixture.requests.count, 2)
+        // R7: the docs' api.getsongbpm.com host is wrong — api.getsong.co is live.
+        for request in fixture.requests {
+            XCTAssertEqual(request.url?.host, "api.getsong.co")
+        }
         XCTAssertTrue(fixture.requests[1].url!.absoluteString.contains("id=song99"))
     }
 
@@ -155,6 +84,17 @@ final class GetSongBPMProviderTests: XCTestCase {
             for: TempoQuery(track: NowPlayingTrack(service: .demo, title: "X", artist: "Y")))
         XCTAssertNil(bpm)
     }
+
+    func testHTTPErrorThrowsSoResolverFallsThrough() async {
+        let fixture = FixtureTransport()
+        fixture.route("/search/", status: 429, body: "{}")
+        let provider = GetSongBPMProvider(apiKey: "key", transport: fixture.transport)!
+        do {
+            _ = try await provider.tempo(
+                for: TempoQuery(track: NowPlayingTrack(service: .demo, title: "X", artist: "Y")))
+            XCTFail("429 must throw")
+        } catch { /* expected: resolver falls to the live estimate */ }
+    }
 }
 
 // MARK: - Assembly
@@ -163,11 +103,11 @@ final class TempoProviderAssemblyTests: XCTestCase {
     func testKeylessBuildShipsNoLiveProviders() {
         // With TempoProviderKeys empty (the committed state), the chain is
         // empty and the resolver runs hint/cache/live-estimate only.
-        if TempoProviderKeys.tidalClientID.isEmpty && TempoProviderKeys.getSongBPMKey.isEmpty {
+        if TempoProviderKeys.getSongBPMKey.isEmpty {
             XCTAssertTrue(TrackTempoResolver.liveProviders().isEmpty)
         } else {
             XCTAssertFalse(TrackTempoResolver.liveProviders().isEmpty,
-                           "keys are present — providers must activate")
+                           "key present — the provider must activate")
         }
     }
 }

@@ -203,6 +203,18 @@ struct MoreView: View {
 
             moreDivider
 
+            // GetSongBPM attribution — REQUIRED by their API terms (free
+            // key in exchange for a backlink; account suspended without it).
+            moreRow(icon: "metronome.fill", iconColor: HuePalette.amber,
+                    title: "Song Tempo Data",
+                    subtitle: "Powered by GetSongBPM.com") {
+                if let url = URL(string: "https://getsongbpm.com") {
+                    UIApplication.shared.open(url)
+                }
+            }
+
+            moreDivider
+
             // Demo mode toggle
             Button {
                 if orchestrator.isDemoMode {
