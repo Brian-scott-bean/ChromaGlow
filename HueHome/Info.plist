@@ -55,6 +55,8 @@
 	<string>ChromaGlow needs local network access to discover your Philips Hue Bridge via mDNS.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>ChromaGlow uses your camera to scan QR codes that other people share, so you can add their scenes. The camera feed is processed on-device and never recorded or sent anywhere.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>ChromaGlow reads what&#39;s playing in Apple Music so your lights can follow the beat and match the album&#39;s colors.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ChromaGlow uses your microphone to make your lights react to music and sound in real time. Audio is processed on-device and never recorded or sent anywhere.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

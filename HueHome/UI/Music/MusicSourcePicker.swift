@@ -85,6 +85,7 @@ struct MusicSourcePicker: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.dismiss) private var dismiss
     @AppStorage(TrackTempoResolver.lookupEnabledKey) private var tempoLookupEnabled = true
+    @State private var showAuthDeniedAlert = false
 
     private var isSimulator: Bool {
         #if targetEnvironment(simulator)
@@ -98,7 +99,7 @@ struct MusicSourcePicker: View {
         MusicSourceCatalog.options(
             isDemoMode: orchestrator.isDemoMode,
             isSimulator: isSimulator,
-            appleMusicAvailable: false,   // R3 flips this
+            appleMusicAvailable: true,    // R3: SystemMusicPlayer mirror
             spotifyAvailable: false       // R5 flips this (FeatureFlags.spotifySource)
         )
     }
@@ -157,6 +158,16 @@ struct MusicSourcePicker: View {
                         .foregroundStyle(HuePalette.amber)
                 }
             }
+            .alert("Apple Music Access Needed", isPresented: $showAuthDeniedAlert) {
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+                Button("Not Now", role: .cancel) {}
+            } message: {
+                Text("Allow ChromaGlow to see what's playing in Apple Music. Nothing is played or changed without you.")
+            }
         }
         .presentationDetents([.medium, .large])
     }
@@ -209,11 +220,23 @@ struct MusicSourcePicker: View {
         switch kind {
         case .mic:
             music.deactivate()   // mic reactivity is the shipped default path
+            dismiss()
         case .demo:
             Task { try? await music.activate(MockMusicSource()) }
-        case .appleMusic, .spotify:
-            break   // rows absent until R3/R5 wire their sources
+            dismiss()
+        case .appleMusic:
+            Task {
+                do {
+                    try await music.activate(AppleMusicSource())
+                    dismiss()
+                } catch MusicSourceError.authorizationDenied {
+                    showAuthDeniedAlert = true
+                } catch {
+                    showAuthDeniedAlert = true
+                }
+            }
+        case .spotify:
+            break   // row absent until R5 wires the source
         }
-        dismiss()
     }
 }

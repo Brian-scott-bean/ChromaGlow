@@ -51,7 +51,7 @@ final class MusicSessionCoordinator {
         fetchArtwork: ((URL) async -> CGImage?)? = nil
     ) {
         self.clock = clock ?? BeatClock.shared
-        self.resolver = resolver ?? TrackTempoResolver()
+        self.resolver = resolver ?? TrackTempoResolver(providers: TrackTempoResolver.liveProviders())
         self.fetchArtwork = fetchArtwork ?? { url in
             guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
             return UIImage(data: data)?.cgImage
