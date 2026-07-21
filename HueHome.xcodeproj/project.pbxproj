@@ -283,6 +283,7 @@
 		F4E1000211111111 /* EntertainmentConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000200000000 /* EntertainmentConfigManager.swift */; };
 		F4E1000311111111 /* EntertainmentConfigBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000300000000 /* EntertainmentConfigBuilderView.swift */; };
 		F76C25A7507754502EAA43F1 /* GuestProfileEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B6660DD4E01C5236B17B0E0 /* GuestProfileEditorView.swift */; };
+		FCDEBFD9B7F0424A792BD6E5 /* BeatClockServiceDriveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 650A2BEE57CD50BA8DBF6324 /* BeatClockServiceDriveTests.swift */; };
 		FFD15D82F204C6955D0943F9 /* ShareSceneSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E83AFD376842F3C78B89CB40 /* ShareSceneSheet.swift */; };
 		FFF8215FC86B7529C8791696 /* SceneCopyEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B48BD4B2A1666C11CE73E4CF /* SceneCopyEngine.swift */; };
 		RZBLD000000000000000001 /* RoomAndZoneDisplayModelBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = RZBLD000000000000000002 /* RoomAndZoneDisplayModelBuilder.swift */; };
@@ -443,6 +444,7 @@
 		6135738C5F72FCC699CF515B /* HueIntentEntityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueIntentEntityTests.swift; path = ./HueHomeTests/HueIntentEntityTests.swift; sourceTree = "<group>"; };
 		6278B21D6E2592BB36A4CB8F /* BridgeDiscoveryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeDiscoveryService.swift; path = HueHome/Core/Network/BridgeDiscoveryService.swift; sourceTree = "<group>"; };
 		63C8F3767D9E9548F65D6205 /* CopySceneSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CopySceneSheet.swift; path = ./HueHome/UI/Scenes/CopySceneSheet.swift; sourceTree = "<group>"; };
+		650A2BEE57CD50BA8DBF6324 /* BeatClockServiceDriveTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BeatClockServiceDriveTests.swift; path = ./HueHomeTests/BeatClockServiceDriveTests.swift; sourceTree = "<group>"; };
 		654315C307638F717F3A2F27 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = Info.plist; path = HueHome/Info.plist; sourceTree = "<group>"; };
 		6602A00BA2C47CCF1AFD9A36 /* SceneSpeedSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneSpeedSheet.swift; path = ./HueHome/UI/Scenes/SceneSpeedSheet.swift; sourceTree = "<group>"; };
 		670FEFEE74C0B600A9C343C7 /* BuiltInSeedMigratorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BuiltInSeedMigratorTests.swift; path = HueHomeTests/BuiltInSeedMigratorTests.swift; sourceTree = "<group>"; };
@@ -1326,6 +1328,7 @@
 				B9CD090560037F9452A7006A /* MixerTrayMetricsTests.swift */,
 				153817FECE5A8809EC68A1E0 /* LookPreviewMathTests.swift */,
 				C9343FED45732450003B8E7C /* EnvelopeStripMathTests.swift */,
+				650A2BEE57CD50BA8DBF6324 /* BeatClockServiceDriveTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1942,6 +1945,7 @@
 				1E525AB9DFCDE756E06B4C2F /* MixerTrayMetricsTests.swift in Sources */,
 				A7BD1376D851530EABD6F2BB /* LookPreviewMathTests.swift in Sources */,
 				D5D2094308ED23792E8C9A30 /* EnvelopeStripMathTests.swift in Sources */,
+				FCDEBFD9B7F0424A792BD6E5 /* BeatClockServiceDriveTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

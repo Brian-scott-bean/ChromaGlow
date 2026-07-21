@@ -68,7 +68,7 @@ final class BeatClock {
     static let shared = BeatClock()
 
     enum DriveSource: String {
-        case none, tap, manual, audio
+        case none, tap, manual, audio, service
     }
 
     // Observable state (UI reads these).
@@ -86,8 +86,15 @@ final class BeatClock {
     private static let maxPhaseCorrection = 0.030
     /// Audio estimates below this confidence never drive the clock.
     private static let minAudioConfidence = 0.5
+    /// A service-drive phase error beyond this is a seek/track change —
+    /// re-anchor outright instead of creeping there 30 ms at a time.
+    private static let serviceResyncThreshold = 0.120
 
     private var beatEpoch: Double = 0
+    /// True while a music-service metadata drive owns the clock (a track is
+    /// playing with a known BPM). Audio ingest may not steal the clock —
+    /// or the confidence display — while held. Not observed by any view.
+    private var serviceHold = false
 
     // ── Lock-guarded static mirror for render loops ──
     nonisolated private static let mirrorLock = NSLock()
@@ -168,25 +175,86 @@ final class BeatClock {
         publishMirror()
     }
 
-    /// Return to audio-follow.
+    /// Return to audio-follow (or the service drive, if one is active).
     func unpin() {
         isPinned = false
         tapTimes = []
-        if source == .tap || source == .manual { source = bpm > 0 ? .audio : .none }
+        if source == .tap || source == .manual {
+            source = serviceHold ? .service : (bpm > 0 ? .audio : .none)
+        }
     }
 
     /// Full reset (session end).
     func clear() {
         bpm = 0; confidence = 0; source = .none; isPinned = false
-        tapTimes = []; beatEpoch = 0
+        tapTimes = []; beatEpoch = 0; serviceHold = false
         publishMirror()
+    }
+
+    // MARK: - Service drive (~1 Hz from MusicSessionCoordinator)
+
+    /// Track-metadata drive: a playing track's position plus a known BPM
+    /// steer the clock. The beat grid is anchored at track t=0 (sidecar
+    /// BPMs carry no phase). Explicit tap/manual pins always win; re-poll
+    /// jitter is absorbed as gentle ≤30 ms corrections; a phase error
+    /// beyond serviceResyncThreshold (seek, track change) re-anchors
+    /// outright. Out-of-range BPMs are rejected, not clamped — a bad
+    /// sidecar value must not bend the clock.
+    func driveFromTrack(bpm newBPM: Double, position: PlaybackPosition,
+                        confidence newConfidence: Double = 1.0,
+                        now: Double = CACurrentMediaTime()) {
+        guard !isPinned else { return }
+        guard position.isPlaying, newBPM >= 20, newBPM <= 300 else { return }
+        serviceHold = true
+
+        let interval = 60.0 / newBPM
+        let positionSec = Double(position.positionMs) / 1000.0 + (now - position.capturedAt)
+        let candidateEpoch = now - positionSec
+
+        if source != .service || bpm == 0 {
+            // Entering service drive: adopt tempo + phase outright.
+            bpm = newBPM
+            confidence = newConfidence
+            source = .service
+            beatEpoch = candidateEpoch
+            publishMirror()
+            return
+        }
+
+        if bpm != newBPM { bpm = newBPM }
+        if confidence != newConfidence { confidence = newConfidence }
+
+        // Signed error in seconds: how far the track's grid sits from ours,
+        // wrapped to ±half-beat (same semantics as the audio ingest path).
+        let snap = BeatSnapshot(bpm: bpm, beatEpoch: beatEpoch, beatsPerBar: beatsPerBar)
+        var error = snap.beatPhase(at: candidateEpoch) * interval
+        if error > interval / 2 { error -= interval }
+
+        if abs(error) > Self.serviceResyncThreshold {
+            beatEpoch = candidateEpoch
+        } else {
+            beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
+        }
+        publishMirror()
+    }
+
+    /// End the track-metadata drive (pause, track gone, session end). Keeps
+    /// the last tempo running and returns the clock to audio-follow — the
+    /// mic pass re-adopts tempo on its next confident estimate.
+    func endServiceDrive() {
+        guard serviceHold || source == .service else { return }
+        serviceHold = false
+        if source == .service { source = bpm > 0 ? .audio : .none }
     }
 
     // MARK: - Audio drive (~2 Hz from the tempo pass)
 
     /// Feed an audio tempo estimate. Ignored while pinned (except that the
-    /// confidence display still updates so the UI can show what audio hears).
+    /// confidence display still updates so the UI can show what audio hears)
+    /// and ignored entirely while a service drive holds the clock — the
+    /// track's known BPM outranks what the microphone guesses.
     func ingest(estimate: TempoEstimate, endTime: Double) {
+        guard !serviceHold else { return }
         confidence = estimate.confidence
         guard !isPinned else { return }
         guard estimate.confidence >= Self.minAudioConfidence, estimate.bpm > 0 else { return }
