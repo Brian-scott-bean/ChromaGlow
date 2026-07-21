@@ -386,6 +386,51 @@
 
 ---
 
+## 2026-07-21 - [Claude] MUSIC R2 — Now Playing UI: Studio bar, Dashboard strip, source picker (build 35) — GATE A OPEN
+
+### Branch
+- `main` (rollback tag: `checkpoint/music-R2`, pushed)
+
+### Did
+- **R2 feature commit `c7250fe`:** `UI/Music/NowPlayingBar.swift` (MusicNowPlayingBar .full/.compact
+  + `StudioMusicWiring`) and `UI/Music/MusicSourcePicker.swift` (pure `MusicSourceCatalog` + sheet).
+  Studio mount = exactly ONE StudioView line (`.modifier(StudioMusicWiring(vm: vm))` after
+  StudioDrainWiring); Dashboard compact strip inserted as a SIBLING of the effects now-playing bar;
+  `MusicSessionCoordinator` env-injected in HueHomeApp (2 lines); BeatPanelView label swaps to new
+  `DriveSource.displayName` ("Music" — "service" never reaches users).
+- **Design rules baked in:** album-art thumb previews the extracted palette AND is the
+  "Use album colors" control (amber paint badge; writes ONLY via `vm.activeCompositionBox` +
+  `triggerRESTBurst`); BeatStatusChip `.fixedSize()`; whole-bar tap opens the picker (a dedicated
+  button starved the title width); slim "Sync to music" pill when no session; bar hidden while the
+  mixer is up on ≤700pt screens; no dead picker rows (Apple Music appears in R3, Spotify in R5);
+  honest tempo-lookup toggle (`music.tempoLookupEnabled`) + Pandora truth footer.
+- **`MusicUISnapshotTests`** renders all three surfaces to xcresult attachments (render-crash smoke
+  + human review artifact). Gate-A copies at `~/Desktop/ChromaGlow-GateA/`. Snapshots drive
+  `BeatClock.shared` (BeatStatusChip reads the shared instance — tearDown clears it).
+
+### Working
+- Suite **757/757** (11 new); `hardening_guards.sh` green (Guard 6 scans the new UI copy);
+  build 35 across all 12 pbxproj entries.
+
+### Left
+- **GATE A (Brian):** screenshot sign-off (`~/Desktop/ChromaGlow-GateA/`) + account batch —
+  TIDAL dev app (keys), GetSongBPM key, MusicKit checkbox on `com.huehome.pro`, Apple Music sub
+  on the test phone, Spotify dashboard app (Premium; allowlist self). R3 coding can proceed in
+  parallel; keys/checkbox gate only the live-lookup wiring and on-device QA.
+- R3 next: `AppleMusicSource` + real `TIDALTempoProvider`/`GetSongBPMProvider`
+  (TIDAL `bpm` VERIFIED in live spec — R1 entry).
+
+### Validation
+- Full suite via xcresulttool; guards script; simulator render review (title truncation and a
+  BPM-chip compression found and fixed via layout priorities before commit).
+
+### Gotchas
+- A ternary producing an optional closure inside `safeAreaInset` content put StudioMusicWiring
+  over the type-checker cliff ("failed to produce diagnostic") — split into small computed
+  properties (`bottomInset`, `paletteAction`). Same budget discipline as StudioView.body.
+- `BeatStatusChip` reads `BeatClock.shared`, NOT an injected clock — any surface pairing the chip
+  with a coordinator must drive the shared clock (production does; test fixtures must too).
+
 ## 2026-07-21 - [Claude] MUSIC R1 — core music layer: MusicSource, BeatClock service drive, tempo resolver, artwork palettes (build 34)
 
 ### Branch
