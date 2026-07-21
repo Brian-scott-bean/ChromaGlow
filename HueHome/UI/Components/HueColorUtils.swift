@@ -43,17 +43,23 @@ enum HueColorUtils {
 
     /// Convert SwiftUI hue (0–1), saturation (0–1), brightness (0–1) to Hue CIE xy.
     static func xyFrom(hue: Double, saturation: Double, brightness: Double) -> (x: Double, y: Double) {
-        // 1. HSB → sRGB
+        // HSB → sRGB, then the shared RGB path below.
         let color = UIColor(hue: hue, saturation: saturation, brightness: brightness, alpha: 1)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
         color.getRed(&r, green: &g, blue: &b, alpha: nil)
+        return xyFrom(red: Double(r), green: Double(g), blue: Double(b))
+    }
 
-        // 2. Gamma correction (sRGB → linear)
-        let rL = linearise(Double(r))
-        let gL = linearise(Double(g))
-        let bL = linearise(Double(b))
+    /// Convert sRGB components (0–1) to Hue CIE xy. The single conversion
+    /// source for callers that already have RGB (artwork palette extraction)
+    /// — no UIKit round-trip.
+    static func xyFrom(red: Double, green: Double, blue: Double) -> (x: Double, y: Double) {
+        // 1. Gamma correction (sRGB → linear)
+        let rL = linearise(red.clamped(0, 1))
+        let gL = linearise(green.clamped(0, 1))
+        let bL = linearise(blue.clamped(0, 1))
 
-        // 3. Linear RGB → XYZ (Wide Colour D65 matrix)
+        // 2. Linear RGB → XYZ (Wide Colour D65 matrix)
         let X = rL * 0.664511 + gL * 0.154324 + bL * 0.162028
         let Y = rL * 0.283881 + gL * 0.668433 + bL * 0.047685
         let Z = rL * 0.000088 + gL * 0.072310 + bL * 0.986039
