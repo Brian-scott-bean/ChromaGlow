@@ -601,6 +601,26 @@ struct ReactionConfig: Codable, Equatable {
         }
     }
 
+    /// Sources whose DATA comes from the microphone. `.beat` is deliberately
+    /// absent — it only CONSUMES BeatClock, which a music service may be
+    /// driving (see needsMicNow). Bridge eligibility keeps using the static
+    /// requiresMic above.
+    var requiresMicFeatures: Bool {
+        switch source {
+        case .micAmplitude, .micBass, .micMid, .micTreble, .onset: return true
+        case .none, .tapTempo, .beat: return false
+        }
+    }
+
+    /// Live mic demand for THIS moment: mic-fed sources always; `.beat` only
+    /// when no music service is driving the clock (audio-follow is then the
+    /// headline experience). Evaluated per frame by the orchestrator's
+    /// demand refresh, so a service drive starting or ending flips the mic
+    /// off/on within a frame.
+    func needsMicNow(serviceDriven: Bool) -> Bool {
+        requiresMicFeatures || (source == .beat && !serviceDriven)
+    }
+
     /// Per-beat punch decay time constant in seconds.
     var punchDecayTau: Double {
         0.08 + min(100, max(0, punchDecay)) / 100.0 * 0.52

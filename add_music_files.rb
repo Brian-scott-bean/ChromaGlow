@@ -80,6 +80,7 @@ TEST_FILES = {
   'HueHomeTests/TempoProviderTests.swift'            => ['HueHomeTests'],
   'HueHomeTests/ShazamPolicyTests.swift'             => ['HueHomeTests'],
   'HueHomeTests/SpotifyAuthTests.swift'              => ['HueHomeTests'],
+  'HueHomeTests/MicDemandPolicyTests.swift'          => ['HueHomeTests'],
 }
 
 existing = existing_paths(project)

@@ -2492,15 +2492,24 @@ final class UnifiedOrchestrator {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private func anyCompositionNeedsMic() -> Bool {
-        if compositionRuntimes.values.contains(where: { $0.paramBox.reaction.requiresMic }) {
+        // R7 demand split: `.beat` needs no mic while a music service drives
+        // the clock. Per-frame refresh means a drive starting/ending flips
+        // demand within a frame — no extra plumbing.
+        let serviceDriven = BeatClock.shared.isServiceDriven
+        if compositionRuntimes.values.contains(where: {
+            $0.paramBox.reaction.needsMicNow(serviceDriven: serviceDriven)
+        }) {
             return true
         }
         // A mic-reactive preset cued on Perform's deck B isn't a runtime box
         // yet — it must still raise demand or it reads silence until promoted.
-        if let mix = activePerformanceMix, mix.deckB?.reaction.requiresMic == true {
+        if let mix = activePerformanceMix,
+           mix.deckB?.reaction.needsMicNow(serviceDriven: serviceDriven) == true {
             return true
         }
-        return compositionEntParamBoxes.values.contains { $0.reaction.requiresMic }
+        return compositionEntParamBoxes.values.contains {
+            $0.reaction.needsMicNow(serviceDriven: serviceDriven)
+        }
     }
 
     /// Last mic-demand value pushed to the audio engine. The composition render loops
@@ -2533,14 +2542,16 @@ final class UnifiedOrchestrator {
         let roomID = room.id
         let nextGeneration = (compositionGenerations[roomID] ?? 0) + 1
         compositionGenerations[roomID] = nextGeneration
+        let startNeedsMic = paramBox.reaction.needsMicNow(
+            serviceDriven: BeatClock.shared.isServiceDriven)
         let compositionGamut: HueColorUtils.Gamut
         if let gamutOverride {
             compositionGamut = gamutOverride
-            if paramBox.reaction.requiresMic {
+            if startNeedsMic {
                 await AudioAnalysisEngine.shared.setDemand(.composerReaction, active: true)
                 lastComposerMicDemand = true   // keep the per-frame refresh cache coherent
             }
-        } else if paramBox.reaction.requiresMic {
+        } else if startNeedsMic {
             async let gamutResolved = resolveCompositionGamut(for: room, api: api)
             async let micHeadStart: Bool = AudioAnalysisEngine.shared.setDemand(.composerReaction, active: true)
             _ = await micHeadStart

@@ -1256,8 +1256,8 @@ final class StudioViewModel {
             } else {
                 // Overlap mic startup with gamut fetch so voice-derived levels exist sooner (Sync-style responsiveness).
                 async let gamutTask = resolveDominantGamut(for: room, api: api, cachedLights: bridgeLights)
-                async let micHeadStart: Void = {
-                    guard preset.reaction.requiresMic else { return }
+                async let micHeadStart: Void = { [serviceDriven = BeatClock.shared.isServiceDriven] in
+                    guard preset.reaction.needsMicNow(serviceDriven: serviceDriven) else { return }
                     await AudioAnalysisEngine.shared.setDemand(.composerReaction, active: true)
                 }()
                 // Prefer completing mic handoff before blocking on gamut result — bridge fetch still runs in parallel.

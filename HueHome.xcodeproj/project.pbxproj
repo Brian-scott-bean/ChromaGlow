@@ -72,6 +72,7 @@
 		4704DD6C3412CE4A2BF1CEF7 /* SavedColorStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDB148CB7314645E8098A866 /* SavedColorStrip.swift */; };
 		490529F81A5193DF91EF0836 /* ComposerLayerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFC0CA6833BC4EC5140FFD63 /* ComposerLayerSheet.swift */; };
 		4A5A77F11CC0A8194C72E055 /* HueAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C8D43ABEA2DF3F97E70CAA /* HueAppShortcuts.swift */; };
+		4B877271E843BC31EAE8D90D /* MicDemandPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 824843114E2CF9D61F1C85E7 /* MicDemandPolicyTests.swift */; };
 		4BF64D53B0E97F7FAFFDD67B /* CompositionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78AC498F54F25255B55133B1 /* CompositionStore.swift */; };
 		4CC8ABF8933F3B2A769C1218 /* SceneChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9122685BB2530B50697D4D2 /* SceneChip.swift */; };
 		4D6A92C35CE3146DFFDADE81 /* ShazamPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0EA7D31963C88AF14FFD401 /* ShazamPolicyTests.swift */; };
@@ -503,6 +504,7 @@
 		8058B9C9232869AF1CC77BB8 /* LightingPreset+UI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "LightingPreset+UI.swift"; path = "HueHome/UI/Components/LightingPreset+UI.swift"; sourceTree = "<group>"; };
 		8090A732A95BB7D22AD00660 /* CompositionModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionModels.swift; path = HueHome/Core/Models/CompositionModels.swift; sourceTree = "<group>"; };
 		8223FA80DC0EC19E9CE6C831 /* StudioView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioView.swift; path = ./HueHome/UI/Studio/StudioView.swift; sourceTree = "<group>"; };
+		824843114E2CF9D61F1C85E7 /* MicDemandPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MicDemandPolicyTests.swift; path = ./HueHomeTests/MicDemandPolicyTests.swift; sourceTree = "<group>"; };
 		825FE84E577223087FB6A47F /* InvitePayloadCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InvitePayloadCodec.swift; path = ./HueHome/Core/Share/InvitePayloadCodec.swift; sourceTree = "<group>"; };
 		82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyAuthTests.swift; path = ./HueHomeTests/SpotifyAuthTests.swift; sourceTree = "<group>"; };
 		8408ED226D19F7C1E2884F2A /* AppleMusicSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppleMusicSource.swift; path = ./HueHome/Core/Music/AppleMusicSource.swift; sourceTree = "<group>"; };
@@ -1397,6 +1399,7 @@
 				1F100D68A69CAEBF2A70DFED /* TempoProviderTests.swift */,
 				C0EA7D31963C88AF14FFD401 /* ShazamPolicyTests.swift */,
 				82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */,
+				824843114E2CF9D61F1C85E7 /* MicDemandPolicyTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -2034,6 +2037,7 @@
 				59A2FCBE6ED2D9B705DD3561 /* TempoProviderTests.swift in Sources */,
 				4D6A92C35CE3146DFFDADE81 /* ShazamPolicyTests.swift in Sources */,
 				93402B91C1F931EA48EE4CF0 /* SpotifyAuthTests.swift in Sources */,
+				4B877271E843BC31EAE8D90D /* MicDemandPolicyTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
