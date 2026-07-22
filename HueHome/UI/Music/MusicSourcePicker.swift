@@ -99,6 +99,11 @@ struct MusicSourcePicker: View {
         var id: String { title }
     }
     @State private var activationAlert: ActivationAlert?
+    /// Overlapping activations were the fuel for the coordinator's
+    /// supersede races (audit R9, F11 → F3/F4): a double-tap or a quick
+    /// second pick while start() sat on a system prompt raced two
+    /// sources. One activation at a time.
+    @State private var isActivating = false
 
     private var isSimulator: Bool {
         #if targetEnvironment(simulator)
@@ -218,8 +223,10 @@ struct MusicSourcePicker: View {
             .padding(14)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
+            .opacity(isActivating ? 0.5 : 1)
         }
         .buttonStyle(.plain)
+        .disabled(isActivating)
         .contextMenu {
             // Recovery lever for a dead Spotify link (revoked refresh
             // token): without it, the only way out was clearing the
@@ -247,47 +254,45 @@ struct MusicSourcePicker: View {
     }
 
     private func select(_ kind: MusicSourceOption.Kind) {
+        guard !isActivating else { return }
         switch kind {
         case .mic:
             music.deactivate()   // mic reactivity is the shipped default path
             dismiss()
         case .demo:
-            Task { try? await music.activate(MockMusicSource()) }
-            dismiss()
+            activate(MockMusicSource(), failureAlert: nil)
         case .appleMusic:
-            Task {
-                do {
-                    try await music.activate(AppleMusicSource())
-                    dismiss()
-                } catch {
-                    activationAlert = ActivationAlert(
-                        title: "Apple Music Access Needed",
-                        message: "Allow ChromaGlow to see what's playing in Apple Music. Nothing is played or changed without you."
-                    )
-                }
-            }
+            activate(AppleMusicSource(), failureAlert: ActivationAlert(
+                title: "Apple Music Access Needed",
+                message: "Allow ChromaGlow to see what's playing in Apple Music. Nothing is played or changed without you."
+            ))
         case .shazam:
-            Task {
-                do {
-                    try await music.activate(ShazamSource())
-                    dismiss()
-                } catch {
-                    activationAlert = ActivationAlert(
-                        title: "Microphone Access Needed",
-                        message: "Auto-Detect listens for the song playing nearby. Audio is analyzed on this phone and never recorded."
-                    )
-                }
-            }
+            activate(ShazamSource(), failureAlert: ActivationAlert(
+                title: "Microphone Access Needed",
+                message: "Auto-Detect listens for the song playing nearby. Audio is analyzed on this phone and never recorded."
+            ))
         case .spotify:
-            Task {
-                do {
-                    try await music.activate(SpotifySource())
+            activate(SpotifySource(), failureAlert: ActivationAlert(
+                title: "Spotify Link Needed",
+                message: "Finish the Spotify login to follow what you play. Heads-up: Spotify only allows accounts on this app's developer allowlist for now."
+            ))
+        }
+    }
+
+    /// One activation at a time; success dismisses, failure alerts (a nil
+    /// alert means fire-and-dismiss — the demo source cannot fail).
+    private func activate(_ source: any MusicSource, failureAlert: ActivationAlert?) {
+        isActivating = true
+        Task {
+            defer { isActivating = false }
+            do {
+                try await music.activate(source)
+                dismiss()
+            } catch {
+                if let failureAlert {
+                    activationAlert = failureAlert
+                } else {
                     dismiss()
-                } catch {
-                    activationAlert = ActivationAlert(
-                        title: "Spotify Link Needed",
-                        message: "Finish the Spotify login to follow what you play. Heads-up: Spotify only allows accounts on this app's developer allowlist for now."
-                    )
                 }
             }
         }

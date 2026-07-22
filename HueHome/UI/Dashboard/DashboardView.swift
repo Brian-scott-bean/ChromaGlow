@@ -22,6 +22,7 @@ struct DashboardView: View {
     @State private var showLog           = false
     @State private var showEffectsMenu   = false   // multi-effect stop dropdown
     @State private var showScheduleSheet = false   // upcoming automations dropdown
+    @State private var showMusicPicker = false     // music strip → source picker
 
     @Query(sort: \AppAutomation.createdAt, order: .forward)
     private var appAutomations: [AppAutomation]
@@ -244,9 +245,16 @@ struct DashboardView: View {
 
                 // Music session strip — sibling of the effects bar above
                 // (the effect registry and the music session never merge).
+                // Whole-strip tap opens the picker, same as Studio's bar —
+                // it LOOKED tappable but was inert without the closure
+                // (audit R9, F11). Sheet is scoped to the strip on purpose.
                 if music.hasSession {
-                    MusicNowPlayingBar(style: .compact)
+                    MusicNowPlayingBar(style: .compact,
+                                       onOpenPicker: { showMusicPicker = true })
                         .transition(.move(edge: .top).combined(with: .opacity))
+                        .sheet(isPresented: $showMusicPicker) {
+                            MusicSourcePicker()
+                        }
                 }
 
                 LazyVGrid(columns: gridColumns, spacing: Self.gridSpacing) {
