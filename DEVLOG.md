@@ -386,6 +386,81 @@
 
 ---
 
+## 2026-07-21 - [Claude] MUSIC R9 — full audit of the music integration: 11 findings, 8 fix commits (build 43)
+
+### Branch
+- `main` (rollback tag: `checkpoint/music-audit-2026-07-21`, pushed — revert =
+  `git reset --hard checkpoint/music-audit-2026-07-21`)
+
+### Did
+Brian asked for a world-expert audit of the whole music surface (sources, tempo lookup,
+BeatClock drive, Now Playing UI, album colors, Composer apply/unapply edges) — fix what's
+found. Every music-layer file read end-to-end + three parallel exploration sweeps,
+cross-verified. **The apply/Revert/Save/Stop box lifecycle is structurally sound**; the
+defects were lifecycle races, clock-authority edges, and "apply does nothing / apply
+clobbers" holes. 11 findings, 8 fix commits (each suite-green):
+
+1. **BeatClock (F1/F5):** `isServiceDriven` is now stale-aware (a dead drive stops
+   claiming the clock after 10s — before, the stale flag suppressed the very mic demand
+   whose `ingest` self-heal was the only release path: a deadlock); the serviceHold
+   phase nudge now respects a pin; `unpin()` is stale-aware.
+2. **Coordinator (F1/F4):** track change now calls `endServiceDrive()` when it nils
+   tempo (the old track's grid drove FOREVER if the new track's tempo never resolved);
+   `activate()` gained liveness guards — a failed start no longer tears down a NEWER
+   session, a superseded start unwinds instead of running as a zombie.
+3. **Shazam (F3):** demand handoff serialized via a static release rail (the Set-not-
+   refcount `.shazamID` release landed AFTER a re-activation's acquire → deterministic
+   deafness on re-pick); stop-during-start no longer installs the tap/session.
+4. **AppleMusic/Spotify (F9):** block-based NC observers now removed by token —
+   `removeObserver(self)` was a no-op for them, leaking one pair per activation.
+5. **REST burst (F2 — the big one):** `forceRESTBurstUntil` had 8 writers and ZERO
+   readers since birth (commit `6d4e105`'s doc describes the scheduler read; it never
+   shipped — pickaxe-proven). The frame[0] delta gate could skip a palette edit forever
+   on a static look. `runCompositionScheduler` now sends during the burst window.
+6. **Album colors (F6/F7/F10):** clamps to the ROOM gamut (was raw gamut-C); clears the
+   harmony chip via a `.none` sentinel + one-shot echo guard (a lit rule re-imposed
+   itself on the next pad drag, overwriting album color2/3 — and the chip's `.none`
+   onChange branch is destructive, hence the guard); the restore onChange is symmetric
+   now (rule-less presets clear the stale chip too); paint badge hidden on
+   bridge-stored transport (no live loop reads the box there).
+7. **Spotify auth (F8):** 401 retry FORCES a refresh (was re-serving the same cached
+   token → guaranteed second 401); a definitively-rejected refresh grant unlinks + one
+   interactive retry in start() (was: permanently un-pickable); interactive login gated
+   out of background polls; PKCE `state` param + callback verification; web-auth
+   session retained; picker long-press → "Unlink Spotify".
+8. **Picker/Dashboard (F11):** one activation at a time (double-tap fed the C2/C3
+   races); the Dashboard strip's whole-bar tap now opens the picker (was inert).
+
+### Working
+- Suite **807/807** per commit (xcresulttool-verified; 799 → +4 clock, +3 coordinator,
+  +1 Spotify state); `Scripts/hardening_guards.sh` green; build 43 across all 12
+  pbxproj entries.
+
+### Left — Brian device gate (build 43)
+- The standing build-40/41/42 music checklist PLUS: album colors on a non-gamut-C room
+  land correctly; album tap then pad-drag KEEPS the album colors (chip cleared); album
+  tap on a static look repaints within ~1s over Room mode; tap-pin during a track, then
+  unpin → returns to Music; pick Auto-Detect, re-pick it fast → still hears (the old
+  deterministic deafness); play a track, then change to an obscure/unknown song →
+  lights drop to audio-follow instead of pulsing the old grid forever; Spotify:
+  long-press row → Unlink, relink works.
+- GetSongBPM key rotation still open (pre-existing).
+
+### Gotchas
+- The audit's report-only items (no code): bridge-stored transport shows the whole live
+  editor whose sliders are equally dead (product call needed); the bar (and album
+  apply) is suppressed on ≤700pt while an effect runs (R2 design choice); album palette
+  is one-shot by design; no GetSongBPM negative caching/429 backoff (bounded by
+  forever-cache); no Revert on starter drafts; Shazam advertises `.artwork` but serves
+  URL-only.
+- `git log -S` (pickaxe) on a symbol with writers-but-no-reader is the fastest way to
+  prove a consumer never existed vs was refactored away.
+- Block-based `addObserver(forName:)` tokens MUST be stored and removed by token;
+  `removeObserver(self)` silently no-ops. Third occurrence of this class in the repo —
+  grep for it when auditing new observers.
+
+---
+
 ## 2026-07-21 - [Claude] MUSIC R8c — Composer "jumps back to Ambient" root-caused + the dead band above the bar (build 42)
 
 ### Branch
