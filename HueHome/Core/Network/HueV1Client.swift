@@ -32,12 +32,14 @@ struct BridgeResourceCapacity {
     var scenesAvailable: Int { scenesTotal - scenesUsed }
 
     /// Whether there's room for at least one 8-step animation
-    /// (needs ~10 rules, 1 sensor, 1 schedule, 8 scenes)
+    /// (needs ~10 rules, 1 sensor, 1 schedule). Scene capacity deliberately
+    /// does not gate: the rules-chain uploader drives light states directly
+    /// and creates zero scenes, so requiring free scene slots produced false
+    /// "bridge full" refusals on scene-heavy bridges (audit L-04).
     var canFitOneAnimation: Bool {
         rulesAvailable >= 12 &&
         sensorsAvailable >= 2 &&
-        schedulesAvailable >= 2 &&
-        scenesAvailable >= 10
+        schedulesAvailable >= 2
     }
 }
 

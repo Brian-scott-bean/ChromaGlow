@@ -56,7 +56,7 @@ enum BridgeAnimationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .bridgeFull(let cap):
-            return "Bridge is near capacity: \(cap.rulesAvailable) rules, \(cap.scenesAvailable) scenes available."
+            return "Bridge is almost full — this animation needs about 12 free rule slots and only \(cap.rulesAvailable) are left."
         case .noLightsResolved:
             return "No lights found for this room."
         case .noGroupFound:

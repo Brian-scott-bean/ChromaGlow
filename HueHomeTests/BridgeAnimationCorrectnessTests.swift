@@ -113,6 +113,30 @@ final class BridgeAnimationCorrectnessTests: XCTestCase {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - L-04: scene capacity never gates the rules-chain uploader
+    // ──────────────────────────────────────────────
+
+    func testSceneStarvedBridgeStillFitsOneAnimation() {
+        // The uploader drives light states directly (sceneIDs is always []),
+        // so a bridge with zero free scene slots must still accept an animation.
+        let cap = BridgeResourceCapacity(rulesUsed: 0, rulesTotal: 250,
+                                         sensorsUsed: 0, sensorsTotal: 250,
+                                         schedulesUsed: 0, schedulesTotal: 100,
+                                         scenesUsed: 200, scenesTotal: 200)
+        XCTAssertTrue(cap.canFitOneAnimation,
+                      "free scenes are not consumed by the rules-chain path (L-04)")
+    }
+
+    func testRuleStarvedBridgeReportsFull() {
+        let cap = BridgeResourceCapacity(rulesUsed: 245, rulesTotal: 250,
+                                         sensorsUsed: 0, sensorsTotal: 250,
+                                         schedulesUsed: 0, schedulesTotal: 100,
+                                         scenesUsed: 0, scenesTotal: 200)
+        XCTAssertFalse(cap.canFitOneAnimation,
+                       "rules remain the real constraint — 12 free required")
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - M-05: 8+ light rooms chunk to ≤8 actions per rule
     // ──────────────────────────────────────────────
 
