@@ -267,9 +267,17 @@ actor HueEntertainmentClient {
 
     // MARK: - DTLS Connection
 
+    /// Hue entertainment clientkeys are always 32 hex chars — a 16-byte PSK for
+    /// TLS_PSK_WITH_AES_128_GCM_SHA256. Any other length can only end as an
+    /// opaque DTLS handshake timeout 10 s later, so refuse it up front (L-12).
+    static func decodePSK(_ hex: String) -> Data? {
+        guard let data = Data(hexString: hex), data.count == 16 else { return nil }
+        return data
+    }
+
     private func openDTLSConnection() async throws {
-        // Convert hex client key to binary
-        guard let pskData = Data(hexString: clientKeyHex) else {
+        // Convert hex client key to binary (length-validated — audit L-12)
+        guard let pskData = Self.decodePSK(clientKeyHex) else {
             state = .error("Invalid client key format")
             throw EntertainmentError.invalidClientKey
         }

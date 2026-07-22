@@ -198,4 +198,23 @@ final class EntertainmentRobustnessTests: XCTestCase {
         XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-race"),
             "a failed startSession must leave the registry balanced")
     }
+
+    // MARK: - L-12: PSK length validation
+
+    func testDecodePSKAcceptsExactly32HexChars() {
+        let key = String(repeating: "AB", count: 16)   // 32 hex chars
+        XCTAssertEqual(HueEntertainmentClient.decodePSK(key)?.count, 16)
+        // Data(hexString:) trims edge whitespace — still a valid 16-byte key.
+        XCTAssertEqual(HueEntertainmentClient.decodePSK(" \(key) ")?.count, 16)
+    }
+
+    func testDecodePSKRefusesWrongLengthAndNonHex() {
+        // A truncated key used to sail into the DTLS handshake and die as a
+        // 10-second timeout; now it's refused before the connection opens.
+        XCTAssertNil(HueEntertainmentClient.decodePSK(""))
+        XCTAssertNil(HueEntertainmentClient.decodePSK(String(repeating: "AB", count: 15)))  // 30 chars
+        XCTAssertNil(HueEntertainmentClient.decodePSK(String(repeating: "AB", count: 17)))  // 34 chars
+        XCTAssertNil(HueEntertainmentClient.decodePSK(String(repeating: "A", count: 31)))   // odd length
+        XCTAssertNil(HueEntertainmentClient.decodePSK(String(repeating: "ZZ", count: 16)))  // non-hex
+    }
 }
