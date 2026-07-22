@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-07-17)
+## Current Status Snapshot (updated 2026-07-22)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
@@ -12,7 +12,29 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **33**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **44**).
+- **BUILD 44 (2026-07-22): FULL-APP AUDIT ROUND — 30 shippable commits, awaiting Brian's
+  on-device check** (rollback tag `checkpoint/full-audit-2026-07-22`). The §8.4 deferred-LOW
+  ledger is closed for every software-only item (L-02/L-28 2xx errors surfaced, L-03, L-04,
+  L-12, L-13, L-16-software, L-29, L-47; L-05 died with the deleted dead Sync stack —
+  RestSender extracted to Core/Network; L-06/L-11 verified already-fixed; L-43 documented
+  dead code), plus a 4-lane fresh sweep's confirmed findings: music-session lifecycle
+  (unpair/guest-flip/demo-leak + paired demo-exit dead app), automation notification
+  replay/double-fire + launch re-registration + honest copy, All Day Scenes timezone
+  inversion, watch/widget optimistic writes now acknowledgment-gated, favorites order
+  scramble, RoomDetail delete hygiene, widget publish diff-gate + revocation timeline
+  reload, Spotify pause-tier/single-flight/dead-grant, BeatClock pin-vs-service-hold +
+  high-BPM re-anchor, Shazam idempotent stop, audio stale-tempo guards, LookPreviewStrip
+  idle tier, harmony-clear sentinel (`Optional.none` bug). **THE TOUR IS 13 PAGES** —
+  new owner-only `tour.music` + copy refresh (66 looks, previews, Brightness Shape) + a
+  versioned "What's New" (`castchroma.seenTourVersion`) so v1.0-tour completers meet the
+  music page once. run_tests.sh finally targets `HueHome 1` with a simulator default.
+  Audit ledger: `docs/audit/hardening-audit-2026-07-01.md` §9. Full entry below
+  (2026-07-22). Suite 833/833 green per batch (xcresulttool-verified).
+- **MUSIC INTEGRATION (builds 34–43, 2026-07-21) is dev-complete** — sources (Apple Music /
+  Auto-Detect Song / sample track / DEBUG-flagged Spotify), beat-locked looks, album-color
+  painting, Dashboard strip; R9 audited it end-to-end (11 findings, 8 fixed). v1.1-only:
+  the 1.0 ASC archive cuts from the build-33 commit `0318516`. See the MUSIC R1–R9 entries.
 - **WORLD-CLASS POLISH PROGRAM IN FLIGHT (2026-07-17, Brian-approved):** six rollback-safe
   rounds → builds 29–33 (A visible UX: tour-overlap/keyboard/44pt · B previews-everywhere +
   envelope/mic visuals · C terminology/one-transport-vocabulary · D new-effects pack incl.
@@ -385,6 +407,119 @@
 ```
 
 ---
+
+## 2026-07-22 - [Claude] FULL-APP AUDIT ROUND — deferred-LOW ledger closed, 4-lane fresh sweep, 13-page tour + What's New (build 44)
+
+### Branch
+- `main` (rollback tag `checkpoint/full-audit-2026-07-22`; 30 shippable commits)
+
+### Did
+- **Part A — the §8.4 deferred-LOW round** (per-finding designs re-verified against build 43):
+  L-02/L-28 (pure `bridgeBodyVerdict` + `decodeV2`; fatal 2xx bodies throw `bridgeError` so
+  optimistic rollbacks fire, partial log-only, fixtures at BOTH choke points because
+  TestableAPIClient bypasses execute()); L-03 eager sessions; L-04 scene-capacity gate dropped;
+  L-12 `decodePSK` 32-hex guard; L-13 dead `HueSSEService` class deleted (models kept, NO
+  pbxproj edit — the audit's assumption was wrong) + AGENTS.md corrected; L-16 software half
+  (`validatedManualHost`: strict IPv4 — Darwin inet_pton accepts leading zeros, we guard —
+  IPv6, RFC-1123; inline sheet error; NO private-range block, VPN/CGNAT homes are real);
+  L-29 ghost-ref pruning against the light cache (ref order = M-04; zero fetches pinned by
+  ComposerFetchPathParityTests — the first design fetched and the suite caught it); L-47
+  full-array toggle + observation test; the dead Sync-engine stack DELETED with `RestSender`
+  extracted verbatim to `Core/Network/` (closes L-05 by deletion; `add_full_audit_files.rb`
+  registers/prunes idempotently). L-06/L-11 verified ALREADY FIXED (ledgered); L-43 WONT-FIX
+  (EffectEngine actor is dead code — deletion candidate; `EffectLoops.setAll` must survive).
+  run_tests.sh: real scheme, simulator default, xcresult verdict (grep-on-piped-logs killed).
+- **Part B — Welcome Tour**: page 13 `tour.music` (ownerOnly — guests have zero music entry
+  points; copy dodges "Shazam"/"Spotify"/any "hue" substring), MusicArt illustration (8s
+  story, ≥0.75s periods, Reduce-Motion still at t=4.6), copy refresh (scenes previews /
+  66 looks on studio / Brightness Shape on composer), and the versioned **What's New**:
+  `addedInVersion` (defaulted var!), `catalogVersion = 2`, `whatsNewPages` +
+  `shouldPresentWhatsNew` (`max(1,·)` legacy fold), `castchroma.seenTourVersion` stamped on
+  both finishes, guest-empty presents-and-stamps NOTHING, deep-link parity, same
+  dropped-cover retry. `shouldAutoPresent` + its truth table byte-identical.
+- **Part C — 4-lane fresh sweep** (cross-feature seams / state machines / optimization /
+  never-audited seams), every finding re-verified in code before fixing:
+  · **Music lifecycle**: session survived Forget-All (mic hot on the pairing splash), the
+    guest-only flip, and demo exit (Sample Track's phantom BPM grid suppressed the mic for
+    every `.beat` look on real lights); paired demo-exit also left a DEAD APP until relaunch
+    (`.hueDemoExited` never reconfigured) — receiver now rebuilds configure/loadAll/SSE.
+  · **Automations**: willPresent/didReceive each got ONE delivery channel (stale pending key
+    replayed last night's Sleep at 7am; tap-while-backgrounded double-fired); `scheduleAll`
+    at launch (restore/migration + late permission left schedules silently dead); honest
+    "runs when you tap it or while the app is open" copy in the create sheet.
+  · **All Day Scenes**: solar base was device-calendar startOfDay + anchor offset — errors
+    cancel only at home; traveling INVERTED day/night (NY home viewed from Tokyo), DST days
+    ±1h. Now UTC-midnight-of-anchor-day + UT seconds; `AllDayCurve` internal for the
+    NOAA-referenced NYC-solstice regression test.
+  · **Watch/widget honesty**: all four widget intents + watch toggle/recall gate their
+    optimistic writes on a 2xx (BridgeWriter stays fire-and-forget, now returns Bool);
+    watch bridge-targeted commands no longer fall back to ANOTHER bridge's credentials;
+    empty-rooms pickup loop exits on cancellation.
+  · **Widget publish**: diff-gated (SSE quiet-gaps re-published byte-identical snapshots +
+    watch push + Siri re-donation for hours during bridge-side dynamic scenes); STRUCTURAL
+    changes reload timelines (a revocation-pruned room list sat stale for hours); reload is
+    main-app-only (the widget extension shares the write path — refresh-loop hazard).
+  · **Music/audio edges**: BeatClock pin no longer starves the service hold (mic spun up
+    during any pin >10s; unpin fell to .audio) + high-BPM seeks re-anchor (threshold now
+    scales with interval); Shazam `stop()` idempotent (the double-stop rail defeat — F3
+    deafness resurrected); Spotify paused-poll tier (the 10s tier keyed on a condition that
+    could never be true), dead-grant stops the loop, single-flight token refresh (rotation
+    made concurrent refreshes unlink a HEALTHY grant); audio tempo task can't publish stale
+    over stopEngine's zeros + estimator reset chains behind its predecessor.
+  · **Scenes/colors**: RoomDetail starring used the order-destroying Set round-trip
+    (Dashboard pills scrambled); RoomDetail deletes now scrub favorites/usage/provenance
+    like ScenesTab; SavedColorStore capped at 200 + clamps at the application boundary
+    (Transferable payloads bypass the clamping init via Codable).
+  · **Previews**: LookPreviewStrip got its missing idle tier (12fps at rest on every deck
+    card → 4fps; running cards keep 12); EnvelopeStrip curve hoisted out of the tick;
+    Create-hero border sweep now consumes `\.isTabActive`; Apple Music artwork request
+    600→128px (sole consumer is a 32×32 k-means).
+  · **Deep links**: a route to a deleted room cleared `pendingGroupID` never — it suppressed
+    the Welcome Tour on every launch.
+  · **Harmony**: `vm.restoredHarmonyRule = .none` assigned `Optional.none` (nil), not the
+    sentinel CASE — from an already-nil state the chip-clear onChange never fired and pad
+    drags re-imposed the rule over album colors (the compiler warning was pointing at it).
+- **Part D**: DEVLOG snapshot un-staled (was 2026-07-17/build 33); CHANGELOG gets a 1.0.0
+  summary + "DEVLOG is canonical" pointer; audit doc §9 Round-4 ledger; `.gitignore` covers
+  the local `ChromaGlow/` + `ChromaGlow.xcodeproj/` husks (untracked xcuserdata-only relics
+  of a rename experiment — NOT deleted, Brian's call); build 43→44 (all 12 entries).
+
+### Working
+- Suite green per batch, 833/833 at final state, verified via xcresulttool on the .xcresult
+  every time (one run's piped exit code lied — tail swallowed a 3-failure result; the
+  xcresult caught it, and two of those failures were MY L-29 design violating the
+  zero-fetch contract, redesigned against the cache).
+- `Scripts/hardening_guards.sh` green after every copy-adjacent change.
+
+### Left
+- **Report-only findings** (deliberate, need Brian/product calls): mid-tour Siri/deep-link
+  arrival can start lights behind the tour cover + the photosensitivity-alert covered-tab
+  variant (needs a small design: defer routing while the cover is up); widget/watch
+  staleness plumbing exists but is unrendered (`isStale`, `updatedAt` — needs a designed
+  badge across faces); notification 64-request cap (~9 daily automations) unwarned;
+  Shazam wall-clock track-clear (frozen Now Playing if the engine dies silently);
+  Spotify keychain read per poll (cache-in-memory nicety); scene-move breaks Siri/Control
+  Center scene configurations (system-persisted ids — needs name+room re-resolution);
+  BeatClock 2Hz bpm observability (inherent); LookPreviewCanvas 4Hz idle tick is the
+  designed "living cards" ambience (leave). The `meta:` cache-key separator WONT-FIX.
+- L-14/L-15/L-17 pairing bundle + L-48..L-51/L-53 + Android items — unchanged owners.
+- Brian's device gates: below.
+
+### Validation
+- Full suite per batch (build 809 → 833 tests across the round), xcresulttool-verified;
+  hardening guards; copy bounds verified against all 16 TutorialCatalogTests invariants
+  before the suite ever ran.
+
+### Gotchas
+- `ComposerFetchPathParityTests` pins zone resolution to ZERO fetches — any L-29-style
+  pruning must ride `cachedRawLights`, never a fetch.
+- The tour's trademark test is substring-based ("hues" fails); What's-New must stamp
+  NOTHING when the filtered page set is empty or the state machine wedges for guests.
+- `TutorialPage.addedInVersion` must stay a defaulted `var` — a defaulted `let` drops out
+  of the memberwise init and every v1 page literal stops compiling.
+- Widget-extension code paths must never call `WidgetCenter.reloadAllTimelines()` — the
+  shared `WidgetDataStore.write` takes `reloadOnStructureChange:` and only the main app
+  passes true.
 
 ## 2026-07-21 - [Claude] MUSIC R9 — full audit of the music integration: 11 findings, 8 fix commits (build 43)
 
