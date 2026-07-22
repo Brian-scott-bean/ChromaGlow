@@ -12,7 +12,15 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **44**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **45**).
+- **BUILD 45 (2026-07-22): ROUND 4b — Brian's two deferred product calls, decided + shipped.**
+  (1) A deep link/Siri command arriving MID-TOUR now dismisses the tour (no seen-stamp — it
+  returns next clean launch) and routes after the cover's dismissal animation
+  (`DeepLinkCoordinator.tourSurfaceUp`, retry guards keyed on `openToken == 0`).
+  (2) Minimal staleness honesty: stale widget snapshots dim on every face + the paired-empty
+  small face says "Open ChromaGlow to refresh" instead of asserting "All lights off"; the
+  watch rooms list shows "Updated Xm ago" past 30 min (`WatchStore.lastSyncedAt` — the
+  timestamp was always written, never read). Entry below.
 - **BUILD 44 (2026-07-22): FULL-APP AUDIT ROUND — 30 shippable commits, awaiting Brian's
   on-device check** (rollback tag `checkpoint/full-audit-2026-07-22`). The §8.4 deferred-LOW
   ledger is closed for every software-only item (L-02/L-28 2xx errors surfaced, L-03, L-04,
@@ -407,6 +415,49 @@
 ```
 
 ---
+
+## 2026-07-22 - [Claude] ROUND 4b — tour×deep-link dismissal + minimal staleness honesty (build 45)
+
+### Branch
+- `main` (continues the build-44 round; same rollback tag `checkpoint/full-audit-2026-07-22`)
+
+### Did
+- **Tour × deep link (Brian's call: user intent wins).** `DeepLinkCoordinator.tourSurfaceUp`
+  (mirrored by the cover's onAppear/onDisappear); `WelcomeTourWiring` dismisses the tour on
+  any `openToken` bump WITHOUT stamping (kill-mid-tour rule — full tour returns next clean
+  launch), and both dropped-cover retry guards now require `openToken == 0` (presentation
+  only ever begins at token 0, so non-zero means a link arrived since — the retry can never
+  re-present over a link). `MainTabView.consumeDeepLink` waits ~650ms when the tour surface
+  is up so invite/share sheets never present into a still-dismissing fullScreenCover (the
+  drop-and-poison class).
+- **Staleness honesty (Brian's call: minimal text-only).** `HueHomeWidgetEntryView` (the
+  single all-faces dispatch root) dims stale entries to 0.72; the small face's
+  paired-but-empty state shows "Open ChromaGlow to refresh" instead of asserting
+  "0 on / All lights off" over no data (medium/large assert nothing — root dimming covers
+  them; complications untouched by decision). Watch: `WatchStore.lastSyncedAt` (@Published,
+  loaded from `hue_widget_updated_at`, stamped on cache save + applicationContext receipt)
+  drives one "Updated Xm ago" footer line past 30 minutes.
+
+### Working
+- Suite green (xcresulttool-verified), hardening guards green. No new files, no pbxproj edits.
+
+### Left
+- Brian device checks (added to his gate list): Siri command mid-tour → tour dismisses,
+  Studio opens, effect starts, tour re-presents next clean launch; unreachable-bridge widget
+  dims + empty state reads "Open ChromaGlow to refresh"; watch shows "Updated Xm ago" after
+  >30 min without phone contact and clears on next sync.
+- Remaining report-only items unchanged: notification 64-cap warning, scene-move breaking
+  system-persisted Siri/Control-Center configs, Shazam wall-clock clear, Spotify keychain
+  poll-read cache, full staleness design (v1.2 candidate per decision).
+
+### Validation
+- Full suite via `-resultBundlePath` + xcresulttool (no piped verdicts); guards pass.
+
+### Gotchas
+- The tour retry's `openToken == 0` guards are load-bearing — without them the 500ms retry
+  window could re-present the tour on top of a routed deep link.
+- Widget staleness dimming lives at the ONE dispatch root; per-face styling would re-open
+  the full-design option Brian explicitly deferred.
 
 ## 2026-07-22 - [Claude] FULL-APP AUDIT ROUND — deferred-LOW ledger closed, 4-lane fresh sweep, 13-page tour + What's New (build 44)
 
