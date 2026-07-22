@@ -74,7 +74,11 @@ extension AppDelegate {
         let info = notification.request.content.userInfo
         if notification.request.content.categoryIdentifier == AutomationScheduler.categoryID {
             log.info("Automation notification delivered (foreground) — firing immediately")
-            handle(userInfo: info)
+            // Post-only: the app is alive, so the .automationShouldExecute
+            // receiver runs it NOW. Persisting here too left a stale pending
+            // key that replayed the automation on the next cold launch
+            // (Sleep at 10:30pm re-dimming the house at 7am).
+            handle(userInfo: info, delivery: .foreground)
         }
         // Suppress the visual banner — lights are already being applied automatically.
         // Showing "Tap to apply" while executing is confusing UX.
@@ -92,38 +96,54 @@ extension AppDelegate {
         let info = response.notification.request.content.userInfo
         if response.notification.request.content.categoryIdentifier == AutomationScheduler.categoryID {
             log.info("Automation notification tapped — queuing for execution after app init")
-            handle(userInfo: info)
+            // Persist-only: the tap is foregrounding the app, so the
+            // scenePhase/cold-start drain executes and clears the key.
+            // Posting here too raced the drain into double execution.
+            handle(userInfo: info, delivery: .tapped)
         }
         completionHandler()
     }
 
     // MARK: - Private
 
-    private func handle(userInfo: [AnyHashable: Any]) {
+    /// How the notification reached us decides the execution channel —
+    /// exactly one of the two, never both:
+    /// - `.foreground` (willPresent): the app is alive → post the event;
+    ///   persisting too replayed the automation on the NEXT launch.
+    /// - `.tapped` (didReceive): the app is foregrounding → persist for the
+    ///   scenePhase/cold-start drain; posting too double-executed.
+    enum AutomationDelivery { case foreground, tapped }
+
+    private func handle(userInfo: [AnyHashable: Any], delivery: AutomationDelivery) {
         let actionType = userInfo["actionType"] as? String ?? "preset"
         let presetID   = userInfo["presetID"]   as? String ?? ""
         let effectID   = userInfo["effectID"]   as? String ?? ""
 
         if actionType == "effect", !effectID.isEmpty {
-            // ── Effect action ──────────────────────────────────────────
-            // Store for cold-start pickup after loadAll() completes
-            UserDefaults.standard.set(effectID, forKey: "pendingAutomationEffectID")
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .automationShouldExecute,
-                    object: nil,
-                    userInfo: ["effectID": effectID, "actionType": "effect"]
-                )
+            switch delivery {
+            case .tapped:
+                UserDefaults.standard.set(effectID, forKey: "pendingAutomationEffectID")
+            case .foreground:
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .automationShouldExecute,
+                        object: nil,
+                        userInfo: ["effectID": effectID, "actionType": "effect"]
+                    )
+                }
             }
         } else if !presetID.isEmpty {
-            // ── Preset action ──────────────────────────────────────────
-            UserDefaults.standard.set(presetID, forKey: "pendingAutomationPresetID")
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .automationShouldExecute,
-                    object: nil,
-                    userInfo: ["presetID": presetID, "actionType": "preset"]
-                )
+            switch delivery {
+            case .tapped:
+                UserDefaults.standard.set(presetID, forKey: "pendingAutomationPresetID")
+            case .foreground:
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .automationShouldExecute,
+                        object: nil,
+                        userInfo: ["presetID": presetID, "actionType": "preset"]
+                    )
+                }
             }
         } else {
             log.warning("handle(userInfo:): no valid preset or effect ID found — skipping")
