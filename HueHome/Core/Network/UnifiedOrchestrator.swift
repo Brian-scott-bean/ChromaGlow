@@ -4561,7 +4561,7 @@ extension UnifiedOrchestrator {
 /// - Computes sunrise/sunset from a one-time location anchor.
 /// - Produces target brightness (% 1–100) + CCT (mirek) for grouped_light.
 /// - Intentionally low-fidelity: it’s stable, predictable, and cheap to compute.
-private enum AllDayCurve {
+enum AllDayCurve {   // internal for the solar-instant regression test
     struct Output: Equatable {
         let brightnessPercent: Double
         let mirek: Int
@@ -4675,14 +4675,22 @@ private enum AllDayCurve {
             var UT = T - lngHour
             UT = fmod(UT + 24, 24)
 
-            // Convert UT hours to local Date
+            // Convert UT hours to the ABSOLUTE event instant: UTC midnight of
+            // the anchor calendar day + UT seconds. The consumer compares
+            // epoch seconds against Date(), so the result must be true
+            // absolute time. The old base was startOfDay in the DEVICE
+            // calendar plus the anchor offset — the two errors cancel only
+            // while device tz == anchor tz; traveling shifted sunrise/sunset
+            // by the tz difference (day/night inverted from Tokyo for a NY
+            // home), and DST-transition days were off by an hour.
             let seconds = UT * 3600
-            let utcDay = Calendar(identifier: .gregorian).startOfDay(for: date)
-            let utcDate = utcDay.addingTimeInterval(seconds)
-
-            // Shift to timezone (date is already in tz; simplest is to rebuild using tz offset)
-            let offset = TimeInterval(tz.secondsFromGMT(for: utcDate))
-            return utcDate.addingTimeInterval(offset)
+            var anchorCal = Calendar(identifier: .gregorian)
+            anchorCal.timeZone = tz
+            var utcCal = Calendar(identifier: .gregorian)
+            utcCal.timeZone = TimeZone(identifier: "UTC") ?? tz
+            let dayComps = anchorCal.dateComponents([.year, .month, .day], from: date)
+            guard let utcDay = utcCal.date(from: dayComps) else { return nil }
+            return utcDay.addingTimeInterval(seconds)
         }
 
         private static func dayOfYear(_ date: Date, calendar: Calendar) -> Int {

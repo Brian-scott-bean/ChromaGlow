@@ -487,6 +487,38 @@ final class OrchestratorTests: XCTestCase {
                       "After a genuine load, delete-all must reach the widgets as empty")
     }
 
+    // MARK: - All Day Scenes solar math
+
+    func testSolarInstantsAreAbsoluteRegardlessOfDeviceTimeZone() throws {
+        // The consumer compares epoch seconds against Date(), so SolarTimes
+        // must return TRUE absolute instants. The old base (startOfDay in
+        // the DEVICE calendar + anchor offset) was only right while the
+        // device sat in the anchor's timezone — from Tokyo, a New York
+        // home's day/night curve inverted. Reference: NYC 2026-06-21,
+        // sunrise ≈ 09:25Z, sunset ≈ 00:31Z next UTC day (NOAA).
+        let ny = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let probe = try XCTUnwrap(utc.date(from: DateComponents(
+            year: 2026, month: 6, day: 21, hour: 16)))   // noon EDT
+
+        let solar = AllDayCurve.SolarTimes(date: probe, lat: 40.7128, lon: -74.0060, timeZone: ny)
+        let sunrise = try XCTUnwrap(solar.sunrise)
+        let sunset  = try XCTUnwrap(solar.sunset)
+
+        let expectedSunrise = try XCTUnwrap(utc.date(from: DateComponents(
+            year: 2026, month: 6, day: 21, hour: 9, minute: 25)))
+        let expectedSunset = try XCTUnwrap(utc.date(from: DateComponents(
+            year: 2026, month: 6, day: 22, hour: 0, minute: 31)))
+
+        XCTAssertEqual(sunrise.timeIntervalSince1970,
+                       expectedSunrise.timeIntervalSince1970, accuracy: 25 * 60,
+                       "sunrise must be the absolute instant, not a device-tz-relative one")
+        XCTAssertEqual(sunset.timeIntervalSince1970,
+                       expectedSunset.timeIntervalSince1970, accuracy: 25 * 60,
+                       "sunset must be the absolute instant, not a device-tz-relative one")
+    }
+
     // MARK: - Helpers
 
     private func makeLocalRoom(id: String, name: String, isOn: Bool, bridgeID: String = "bridge-1") -> HueLocalRoom {
