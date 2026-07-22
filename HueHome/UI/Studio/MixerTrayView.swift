@@ -349,7 +349,10 @@ struct MixerTrayView: View {
                                 .padding(.top, HueSpacing.md)
                                 .padding(.bottom, HueSpacing.md)
                             }
-                            .scrollBounceBehavior(.basedOnSize)
+                            // No .basedOnSize here: the tab content swapped by
+                            // .id() changes height under the ScrollView, and
+                            // basedOnSize's stale fit-evaluation rubber-bands
+                            // the drag back before the bottom is reachable.
                             .scrollDismissesKeyboard(.interactively)
                             .frame(height: scrollGeo.size.height)
                             // Auto-anchor: enabling a beat source scrolls the
@@ -398,7 +401,10 @@ struct MixerTrayView: View {
                                 .padding(.top, HueSpacing.md)
                                 .padding(.bottom, HueSpacing.md)
                             }
-                            .scrollBounceBehavior(.basedOnSize)
+                            // Same rule as the composition panel above: inline
+                            // param counts change (expanded tray adds ADVANCED
+                            // rows) — basedOnSize goes stale and blocks the
+                            // scroll to the bottom rows.
                             .scrollDismissesKeyboard(.interactively)
                             .frame(height: scrollGeo.size.height)
                         }

@@ -144,12 +144,15 @@ struct MicLevelMeterView: View {
         TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !isLive)) { _ in
             let features = AudioAnalysisEngine.latestFeatures()
             VStack(alignment: .leading, spacing: 5) {
-                if features == .silent {
-                    Text("MIC LISTENS WHEN THE LOOK RUNS")
-                        .font(HueFont.stageTag)
-                        .tracking(1.0)
-                        .foregroundStyle(StagePalette.muted)
-                }
+                // The caption occupies its row UNCONDITIONALLY: features flip
+                // silent/active as mic ownership changes, and a child that
+                // inserts/removes itself at 12fps inside a ScrollView yanks
+                // the user's scroll position (the composer "jump" bug).
+                Text("MIC LISTENS WHEN THE LOOK RUNS")
+                    .font(HueFont.stageTag)
+                    .tracking(1.0)
+                    .foregroundStyle(StagePalette.muted)
+                    .opacity(features == .silent ? 1 : 0)
                 meterBar(label: "LEVEL", value: Double(features.level),
                          tint: HuePalette.amber, threshold: threshold.map { $0 / 100.0 })
                 HStack(spacing: 8) {
