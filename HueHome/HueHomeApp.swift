@@ -125,6 +125,13 @@ final class DeepLinkCoordinator {
     /// mutable state provably single-threaded.
     static let shared = DeepLinkCoordinator()
 
+    /// True while the Welcome Tour's fullScreenCover is on screen (mirrored
+    /// by WelcomeTourWiring). A deep link arriving mid-tour dismisses the
+    /// tour and MainTabView delays its routing one beat past the dismissal
+    /// animation — presenting a sheet from a hierarchy whose cover is still
+    /// animating away is the silently-dropped-presentation class.
+    var tourSurfaceUp = false
+
     /// The room/zone id from the tapped widget (nil for a plain dashboard open).
     var pendingGroupID: String?
     /// A scene decoded from a share link, awaiting the user's confirmation.

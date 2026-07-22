@@ -48,6 +48,15 @@ struct WelcomeTourWiring: ViewModifier {
     func body(content: Content) -> some View {
         content
             .task { await autoPresentIfNeeded() }
+            // A deep link/Siri command mid-tour is explicit user intent —
+            // dismiss the tour and let it route. NO stamping: dismissal is
+            // the kill-mid-tour rule, so the tour returns next clean launch.
+            .onChange(of: deepLink.openToken) { _, _ in
+                if tourPresentation != nil {
+                    debugLog("[Tour] deep link arrived mid-tour — dismissing to route")
+                    tourPresentation = nil
+                }
+            }
             .fullScreenCover(item: $tourPresentation) { presentation in
                 WelcomeTourView(pages: presentation.pages,
                                 headerTitle: presentation.isWhatsNew ? "WHAT'S NEW" : "WELCOME TOUR") {
@@ -55,8 +64,14 @@ struct WelcomeTourWiring: ViewModifier {
                     seenTourVersion = TutorialCatalog.catalogVersion
                     tourPresentation = nil
                 }
-                .onAppear { tourSurfaceVisible = true }
-                .onDisappear { tourSurfaceVisible = false }
+                .onAppear {
+                    tourSurfaceVisible = true
+                    deepLink.tourSurfaceUp = true
+                }
+                .onDisappear {
+                    tourSurfaceVisible = false
+                    deepLink.tourSurfaceUp = false
+                }
             }
     }
 
@@ -105,13 +120,18 @@ struct WelcomeTourWiring: ViewModifier {
         tourPresentation = presentation
 
         // Verify the cover actually presented; re-request once if it was
-        // swallowed by a racing presentation (see header comment).
+        // swallowed by a racing presentation (see header comment). The
+        // openToken == 0 guards keep the retry from re-presenting over a
+        // deep link: presentation only ever BEGINS at token 0, so a
+        // non-zero token here always means a link arrived since.
         try? await Task.sleep(for: .seconds(2))
-        guard !Task.isCancelled, tourPresentation != nil, !tourSurfaceVisible else { return }
+        guard !Task.isCancelled, tourPresentation != nil, !tourSurfaceVisible,
+              deepLink.openToken == 0 else { return }
         debugLog("[Tour] cover was dropped — re-requesting presentation")
         tourPresentation = nil
         try? await Task.sleep(for: .milliseconds(500))
-        guard !Task.isCancelled, tourPresentation == nil else { return }
+        guard !Task.isCancelled, tourPresentation == nil,
+              deepLink.openToken == 0 else { return }
         tourPresentation = TourPresentation(id: 2, pages: presentation.pages,
                                             isWhatsNew: presentation.isWhatsNew)
     }

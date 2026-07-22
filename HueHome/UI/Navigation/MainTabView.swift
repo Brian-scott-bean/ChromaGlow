@@ -215,6 +215,17 @@ struct MainTabView: View {
     /// A plain `lightshade://dashboard` tap pops back to the dashboard root.
     /// A share link goes to Studio instead — see `routePendingShare`.
     private func consumeDeepLink() {
+        // The Welcome Tour dismisses itself on this same token bump — wait
+        // one beat past its cover's dismissal animation before routing, or
+        // an invite/share SHEET presented into the still-dismissing
+        // hierarchy gets silently dropped (and poisons the next present).
+        if deepLink.tourSurfaceUp {
+            Task {
+                try? await Task.sleep(for: .milliseconds(650))
+                consumeDeepLink()
+            }
+            return
+        }
         if routePendingInvite() { return }
         if routePendingShare() { return }
         if routePendingStudioAction() { return }
