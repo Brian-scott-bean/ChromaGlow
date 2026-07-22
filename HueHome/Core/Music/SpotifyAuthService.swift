@@ -134,15 +134,31 @@ final class SpotifyAuthService: NSObject {
             }
         }
         if let refresh = try? KeychainManager.shared.load(for: Self.refreshTokenAccount) {
-            return try await exchange(form: [
-                "grant_type": "refresh_token",
-                "refresh_token": refresh,
-                "client_id": clientID,
-            ])
+            // Single-flight, static because auth instances are per-source:
+            // Spotify rotates refresh tokens, so two concurrent refreshes
+            // (a dying poll's 401 retry + a fresh start()) both spending the
+            // SAME token meant the loser got exchangeRejected — and start()'s
+            // rejected arm then unlinked the freshly-rotated healthy grant.
+            if let inflight = Self.inflightRefresh {
+                return try await inflight.value
+            }
+            let task = Task<String, Error> {
+                try await exchange(form: [
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh,
+                    "client_id": clientID,
+                ])
+            }
+            Self.inflightRefresh = task
+            defer { Self.inflightRefresh = nil }
+            return try await task.value
         }
         guard allowInteractive else { throw AuthError.notLinked }
         return try await interactiveLogin()
     }
+
+    /// The one in-flight refresh exchange, joined by every concurrent caller.
+    private static var inflightRefresh: Task<String, Error>?
 
     func unlink() {
         try? KeychainManager.shared.delete(for: Self.accessTokenAccount)
