@@ -3099,7 +3099,16 @@ final class UnifiedOrchestrator {
                 return hypot(firstXY.x - lx, firstXY.y - ly)
             }()
             let briDelta = abs(firstBri - (runtime.lastSentBri ?? -999))
-            if colorDelta < 0.003 && briDelta < 1.0 {
+            // triggerRESTBurst's designed consumer (6d4e105's doc described
+            // this read; it was never implemented — audit R9, F2). The gate
+            // proxies "did anything change" through frame[0] alone, so a
+            // user edit that barely moves light 0 (album colors / harmony /
+            // revert on a static look) was skipped forever while every
+            // other light stayed wrong. During the post-edit burst window,
+            // send regardless. Same epoch on both sides: CFAbsoluteTime ==
+            // seconds since 2001 == timeIntervalSinceReferenceDate.
+            let userEditBurstActive = runtime.paramBox.forceRESTBurstUntil > now
+            if !userEditBurstActive && colorDelta < 0.003 && briDelta < 1.0 {
                 try? await Task.sleep(for: tickInterval)
                 continue
             }
