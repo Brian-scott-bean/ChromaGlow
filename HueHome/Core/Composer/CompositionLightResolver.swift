@@ -32,9 +32,18 @@ enum CompositionLightResolver {
         lights: [HueLight]
     ) -> [String] {
         if hasDirectLightReferences(childResourceRefs: childResourceRefs) {
-            return childResourceRefs
+            let ids = childResourceRefs
                 .filter { $0.rtype == "light" }
                 .map(\.rid)
+            // Zone refs can outlive their lights (a deleted bulb leaves a
+            // ghost rid that black-holes its share of the render) — intersect
+            // with the live set when one is supplied, preserving ref order
+            // (positional per-light colors, M-04). Empty `lights` keeps the
+            // historic pass-through for callers with nothing to intersect
+            // against (audit L-29).
+            guard !lights.isEmpty else { return ids }
+            let live = Set(lights.map(\.id))
+            return ids.filter { live.contains($0) }
         }
 
         let deviceIDs = Set(childResourceRefs.map(\.rid))

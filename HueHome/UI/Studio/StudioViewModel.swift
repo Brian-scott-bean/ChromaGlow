@@ -823,10 +823,17 @@ final class StudioViewModel {
         let refs = room.childResourceRefs
         guard !refs.isEmpty else { return [] }
 
-        // Zones reference lights directly — no API call needed
+        // Zones reference lights directly — no API call needed. When the
+        // caller already holds the live lights, prune ghost refs from
+        // deleted bulbs while keeping ref order (L-29 parity with
+        // CompositionLightResolver; no extra fetch is ever added here).
         let hasDirectLightRefs = refs.contains { $0.rtype == "light" }
         if hasDirectLightRefs {
-            let ids = refs.filter { $0.rtype == "light" }.map { $0.rid }
+            var ids = refs.filter { $0.rtype == "light" }.map { $0.rid }
+            if let cachedLights {
+                let live = Set(cachedLights.map(\.id))
+                ids = ids.filter { live.contains($0) }
+            }
             debugLog("[Studio] 🔍 Resolved \(ids.count) lights from zone refs (no API call)")
             return ids
         }

@@ -3368,11 +3368,15 @@ final class UnifiedOrchestrator {
         let refs = room.childResourceRefs
         guard !refs.isEmpty else { return [] }
 
-        // Zones reference lights directly — zero API calls
+        // Zones reference lights directly — zero API calls (pinned by
+        // ComposerFetchPathParityTests). A ref can still outlive its light
+        // (L-29), so prune ghosts against the in-memory light cache, which
+        // the same loadAll that produced these refs also filled; an absent
+        // cache keeps the historic pass-through.
         if CompositionLightResolver.hasDirectLightReferences(childResourceRefs: refs) {
             return CompositionLightResolver.resolveLightIDs(
                 childResourceRefs: refs,
-                lights: []
+                lights: cachedRawLights(for: room.bridgeID) ?? []
             )
         }
 

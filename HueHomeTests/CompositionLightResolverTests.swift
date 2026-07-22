@@ -220,4 +220,37 @@ final class CompositionLightResolverTests: XCTestCase {
         XCTAssertEqual(childRefs.map { "\($0.rid)|\($0.rtype)" }, refsSnapshot)
         XCTAssertEqual(lights.map { "\($0.id)|\($0.owner?.rid ?? "")" }, lightsSnapshot)
     }
+
+    // MARK: - L-29: ghost refs prune against the live light set
+
+    func testResolveLightIDs_directMode_prunesGhostsPreservingRefOrder() {
+        // A zone still referencing a deleted bulb must not hand the ghost id
+        // to the render loop — but surviving ids keep REF order (positional
+        // per-light colors, M-04), never fetched-light order.
+        let childRefs = refs([
+            ("light-b", "light"),
+            ("light-ghost", "light"),
+            ("light-a", "light"),
+        ])
+        let lights = [light(id: "light-a"), light(id: "light-b")]
+
+        let result = CompositionLightResolver.resolveLightIDs(
+            childResourceRefs: childRefs,
+            lights: lights
+        )
+
+        XCTAssertEqual(result, ["light-b", "light-a"])
+    }
+
+    func testResolveLightIDs_directMode_allGhostsResolveEmpty() {
+        // A fully-ghost zone resolves to [] so the caller takes its honest
+        // no-lights path instead of silently writing into the void.
+        let childRefs = refs([("light-ghost-1", "light"), ("light-ghost-2", "light")])
+        let lights = [light(id: "light-real")]
+
+        XCTAssertEqual(
+            CompositionLightResolver.resolveLightIDs(childResourceRefs: childRefs, lights: lights),
+            []
+        )
+    }
 }
