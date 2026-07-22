@@ -24,6 +24,9 @@ final class SpotifySource: MusicSource {
     private var pollTask: Task<Void, Never>?
     private var isBackgrounded = false
     private var lastKnownPlaying = false
+    /// Block-based NC observers are removed by TOKEN — removeObserver(self)
+    /// is a no-op for them and leaked one pair per activation (audit R9, F9).
+    private var lifecycleObservers: [NSObjectProtocol] = []
 
     init(auth: SpotifyAuthService = SpotifyAuthService()) {
         self.auth = auth
@@ -41,19 +44,20 @@ final class SpotifySource: MusicSource {
             try await authService.validAccessToken()
         })
 
-        NotificationCenter.default.addObserver(
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
-        ) { [weak self] _ in Task { @MainActor in self?.setBackgrounded(true) } }
-        NotificationCenter.default.addObserver(
+        ) { [weak self] _ in Task { @MainActor in self?.setBackgrounded(true) } })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
-        ) { [weak self] _ in Task { @MainActor in self?.setBackgrounded(false) } }
+        ) { [weak self] _ in Task { @MainActor in self?.setBackgrounded(false) } })
 
         await pollOnce()
         startPolling()
     }
 
     func stop() {
-        NotificationCenter.default.removeObserver(self)
+        for token in lifecycleObservers { NotificationCenter.default.removeObserver(token) }
+        lifecycleObservers.removeAll()
         pollTask?.cancel()
         pollTask = nil
         client = nil

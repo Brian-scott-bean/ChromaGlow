@@ -61,6 +61,10 @@ final class AppleMusicSource: MusicSource {
     private var pollTask: Task<Void, Never>?
     private var isBackgrounded = false
     private var lastTrack: NowPlayingTrack?
+    /// Block-based NC observers are removed by TOKEN — removeObserver(self)
+    /// is a no-op for them and leaked one pair per activation (audit R9,
+    /// F9; correct pattern precedent: AudioAnalysisEngine.ncObservers).
+    private var lifecycleObservers: [NSObjectProtocol] = []
 
     func start() async throws {
         var status = MusicAuthorization.currentStatus
@@ -81,25 +85,26 @@ final class AppleMusicSource: MusicSource {
             .store(in: &sinks)
 
         // Foreground discipline (AudioAnalysisEngine's observer pattern).
-        NotificationCenter.default.addObserver(
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.setBackgrounded(true) }
-        }
-        NotificationCenter.default.addObserver(
+        })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.setBackgrounded(false) }
-        }
+        })
 
         refresh()
     }
 
     func stop() {
         sinks.removeAll()
-        NotificationCenter.default.removeObserver(self)
+        for token in lifecycleObservers { NotificationCenter.default.removeObserver(token) }
+        lifecycleObservers.removeAll()
         pollTask?.cancel()
         pollTask = nil
         lastTrack = nil
