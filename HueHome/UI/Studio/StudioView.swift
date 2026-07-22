@@ -230,8 +230,7 @@ struct StudioView: View {
                         .padding(.bottom, 6)
                     }
 
-                    // Tab bar clearance
-                    Color.clear.frame(height: 80)
+                    studioBottomClearance
                 }
 
                 if mixerVisible {
@@ -457,6 +456,16 @@ struct StudioView: View {
 
     private var isCompactStudio: Bool {
         UIScreen.main.bounds.height <= 700 || dynamicTypeSize.isAccessibilitySize
+    }
+
+    /// The music bar's safeAreaInset already clears the floating tab bar —
+    /// stacking the old 80pt spacer under it left a dead band above the bar.
+    /// Manual clearance exists ONLY while the bar is suppressed; keep this
+    /// condition in lockstep with StudioMusicWiring.suppressedForCompactMixer.
+    @ViewBuilder private var studioBottomClearance: some View {
+        if vm.currentRoomEffect != nil && UIScreen.main.bounds.height <= 700 {
+            Color.clear.frame(height: 80)
+        }
     }
 
     /// Caps tray height to available tab content so the mixer can use most of the screen on SE while keeping the deck visible.
@@ -989,14 +998,24 @@ struct StudioView: View {
                     // 56 built-ins made one flat grid a wall. The All view
                     // groups by category — the user's own work first — behind
                     // collapsible headers whose state survives relaunch.
-                    ForEach(vm.composerSections(), id: \.category) { section in
-                        composerSectionHeader(category: section.category,
-                                              count: section.presets.count)
-                        if !collapsedComposerSections.contains(section.category.rawValue) {
-                            LazyVGrid(columns: columns, spacing: HueSpacing.md) {
-                                ForEach(section.presets) { preset in
-                                    composerPresetCell(preset: preset, visible: visible)
+                    // ONE lazy container for all sections: stacked
+                    // per-section LazyVGrids each under-estimate their
+                    // unmaterialized rows, the ScrollView believes a far
+                    // shorter content height, and dragging past that phantom
+                    // bottom clamps the offset back up (the "jumps back to
+                    // Ambient" bug — collapsing sections hid it because
+                    // header-only content estimates exactly).
+                    LazyVGrid(columns: columns, spacing: HueSpacing.md) {
+                        ForEach(vm.composerSections(), id: \.category) { section in
+                            Section {
+                                if !collapsedComposerSections.contains(section.category.rawValue) {
+                                    ForEach(section.presets) { preset in
+                                        composerPresetCell(preset: preset, visible: visible)
+                                    }
                                 }
+                            } header: {
+                                composerSectionHeader(category: section.category,
+                                                      count: section.presets.count)
                             }
                         }
                     }
