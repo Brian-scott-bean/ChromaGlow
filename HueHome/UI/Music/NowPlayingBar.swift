@@ -236,7 +236,12 @@ struct StudioMusicWiring: ViewModifier {
         // StudioView's onChange arms the echo guard so its destructive
         // `.none` branch can't fire on the fresh palette.
         if vm.restoredHarmonyRule != HarmonyRule.none {
-            vm.restoredHarmonyRule = .none
+            // The CASE, not Optional.none — bare `.none` on the optional
+            // assigned nil, and from an already-nil state (rule picked by
+            // hand, then album tapped) nil→nil never fired the onChange,
+            // so the chip stayed lit and the next pad drag re-imposed the
+            // rule over the album colors.
+            vm.restoredHarmonyRule = HarmonyRule.none
         }
         box.triggerRESTBurst()
     }
