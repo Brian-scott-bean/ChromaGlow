@@ -20,6 +20,44 @@ struct BridgeEndpoint: Identifiable, Equatable {
     let name: String          // mDNS service instance name (e.g. "Philips Hue - XXXXXX")
     let host: String          // Resolved IPv4 or IPv6 address
     let port: UInt16
+
+    /// Validates a user-typed bridge address before it may enter the pairing
+    /// flow (audit L-16): a strict IPv4 literal (out-of-range and
+    /// leading-zero octets rejected), an IPv6 literal, or an
+    /// RFC-1123 hostname (covers `philips-hue.local`). Returns the trimmed
+    /// host, or nil. Deliberately no private-range requirement — VPN/CGNAT
+    /// homes (100.64/10) legitimately reach bridges outside RFC1918; the
+    /// pairing TOFU identity gate remains the real protection.
+    static func validatedManualHost(_ raw: String) -> String? {
+        let host = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty, host.count <= 253 else { return nil }
+
+        // Darwin's inet_pton is BSD-lenient about leading-zero octets
+        // ("01.2.3.4" parses) — reject them ourselves before consulting it.
+        let dotLabels = host.split(separator: ".", omittingEmptySubsequences: false)
+        if dotLabels.count == 4, dotLabels.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) {
+            guard dotLabels.allSatisfy({ $0 == "0" || !$0.hasPrefix("0") }) else { return nil }
+        }
+        var v4 = in_addr()
+        if inet_pton(AF_INET, host, &v4) == 1 { return host }
+        var v6 = in6_addr()
+        if inet_pton(AF_INET6, host, &v6) == 1 { return host }
+
+        // RFC-1123 hostname: dot-separated labels, 1–63 chars of
+        // [A-Za-z0-9-], no leading/trailing hyphen, no empty labels.
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard !labels.isEmpty else { return nil }
+        for label in labels {
+            guard (1...63).contains(label.count),
+                  !label.hasPrefix("-"), !label.hasSuffix("-"),
+                  label.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") })
+            else { return nil }
+        }
+        // All-numeric labels are a malformed IPv4 (192.168.1.999), not a
+        // DNS name — refuse rather than hand a typo to the pairing flow.
+        if labels.allSatisfy({ $0.allSatisfy(\.isNumber) }) { return nil }
+        return host
+    }
 }
 
 // MARK: - BridgeDiscoveryService

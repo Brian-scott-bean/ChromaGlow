@@ -77,6 +77,7 @@ struct BridgeSetupContent: View {
     @State private var showManualEntry = false
     @State private var showDebugLog    = false
     @State private var manualIP        = ""
+    @State private var manualIPError: String?
     @FocusState private var manualIPFocused: Bool
     // ── Share Invite (home-join + guest invite) ───────────
     @State private var showInviteScanner = false
@@ -698,6 +699,14 @@ struct BridgeSetupContent: View {
                         .overlay(RoundedRectangle(cornerRadius: 12)
                             .strokeBorder(.white.opacity(0.15), lineWidth: 1))
                         .onAppear { manualIPFocused = true }
+                        .onChange(of: manualIP) { manualIPError = nil }
+
+                    if let manualIPError {
+                        Text(manualIPError)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.4))
+                            .multilineTextAlignment(.center)
+                    }
 
                     Button {
                         connectManualIP()
@@ -729,9 +738,16 @@ struct BridgeSetupContent: View {
 
     /// Shared by the Connect button and the keyboard's Go key.
     private func connectManualIP() {
-        let ip = manualIP.trimmingCharacters(in: .whitespaces)
-        guard !ip.isEmpty else { return }
-        let bridge = BridgeEndpoint(name: "Hue Bridge", host: ip, port: 443)
+        let raw = manualIP.trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return }
+        // L-16: only a syntactically valid IPv4/IPv6/hostname may enter the
+        // pairing flow — a typo dies here with guidance, not as a hung probe.
+        guard let host = BridgeEndpoint.validatedManualHost(raw) else {
+            manualIPError = "That doesn't look like a bridge address. Double-check the numbers — it usually looks like 192.168.1.100."
+            return
+        }
+        manualIPError = nil
+        let bridge = BridgeEndpoint(name: "Hue Bridge", host: host, port: 443)
         showManualEntry = false
         vm.phase = .bridgeFound(bridge)
     }
