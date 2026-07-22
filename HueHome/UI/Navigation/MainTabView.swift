@@ -226,7 +226,16 @@ struct MainTabView: View {
             homePath = []
             return
         }
-        guard let room = resolveGroup(id) else { return }   // retried on load
+        guard let room = resolveGroup(id) else {
+            // Retried when rooms/zones land — but once data IS here and the
+            // id still doesn't resolve, the room was deleted: clear the
+            // stale route (a retained pendingGroupID kept hasPendingRoute
+            // true, which suppressed the Welcome Tour on every launch).
+            if !(orchestrator.allRooms.isEmpty && orchestrator.allZones.isEmpty) {
+                deepLink.pendingGroupID = nil
+            }
+            return
+        }
         homePath = [room]
         deepLink.pendingGroupID = nil
     }
