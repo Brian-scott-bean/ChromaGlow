@@ -157,8 +157,9 @@ struct MusicNowPlayingBar: View {
 
 /// Studio's music mount — one `.modifier(StudioMusicWiring(vm:))` line on
 /// StudioView.body (which sits at the type-checker ceiling; extend THIS,
-/// never the body chain). Shows the full bar during a session, a slim
-/// "Sync to music" affordance otherwise, and owns the source-picker sheet.
+/// never the body chain). Always shows the full bar and owns the
+/// source-picker sheet; without a session the bar reads "Nothing playing —
+/// pick a source" (the earlier slim pill was too subtle to find).
 struct StudioMusicWiring: ViewModifier {
     let vm: StudioViewModel
 
@@ -183,15 +184,11 @@ struct StudioMusicWiring: ViewModifier {
     private var bottomInset: some View {
         if !suppressedForCompactMixer {
             Group {
-                if music.hasSession {
-                    MusicNowPlayingBar(
-                        style: .full,
-                        onUseAlbumColors: paletteAction,
-                        onOpenPicker: { showSourcePicker = true }
-                    )
-                } else {
-                    syncToMusicPill
-                }
+                MusicNowPlayingBar(
+                    style: .full,
+                    onUseAlbumColors: music.hasSession ? paletteAction : nil,
+                    onOpenPicker: { showSourcePicker = true }
+                )
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 6)
@@ -201,30 +198,6 @@ struct StudioMusicWiring: ViewModifier {
     private var paletteAction: (() -> Void)? {
         guard vm.activeCompositionBox != nil else { return nil }
         return { applyAlbumPalette() }
-    }
-
-    private var syncToMusicPill: some View {
-        Button {
-            showSourcePicker = true
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "music.note")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("Sync to music")
-                    .font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundStyle(StagePalette.muted)
-            .padding(.horizontal, 14)
-            .frame(height: 44)   // full-size target, slim look
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .background(
-            Capsule().fill(.white.opacity(0.05))
-                .overlay(Capsule().stroke(StagePalette.line, lineWidth: 1))
-                .frame(height: 32)
-        )
-        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     /// The one sanctioned palette write path: through the live editor box,
