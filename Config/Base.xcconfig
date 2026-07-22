@@ -1,0 +1,9 @@
+// Base.xcconfig — wired as the base configuration of the HueHome app target
+// (Debug + Release). Defines safe empty defaults for local secrets, then lets
+// the git-ignored Config/Secrets.xcconfig override them. The include is
+// optional (#include?): fresh clones and CI build keyless — dependent
+// providers simply stay inactive.
+
+GETSONGBPM_API_KEY =
+
+#include? "Secrets.xcconfig"

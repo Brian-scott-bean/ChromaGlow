@@ -400,6 +400,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C0F1C0DE0000000000000001 /* Base.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = Base.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
+		C0F1C0DE0000000000000002 /* Secrets.xcconfig.example */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig.example; path = Config/Secrets.xcconfig.example; sourceTree = "<group>"; };
 		013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAPIClient.swift; path = ./HueHome/Core/Network/BridgeAPIClient.swift; sourceTree = "<group>"; };
 		05C9A90CE5077C985B897851 /* HueSceneEntity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueSceneEntity.swift; path = ./HueHome/Intents/HueSceneEntity.swift; sourceTree = "<group>"; };
 		0AE302747F21A3DDFB547CD1 /* KeychainManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeychainManager.swift; path = HueHome/Core/Keychain/KeychainManager.swift; sourceTree = "<group>"; };
@@ -831,6 +833,15 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		C0F1C0DE0000000000000003 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				C0F1C0DE0000000000000001 /* Base.xcconfig */,
+				C0F1C0DE0000000000000002 /* Secrets.xcconfig.example */,
+			);
+			name = Config;
+			sourceTree = "<group>";
+		};
 		05E0DE7E33BBD7B45A6D8281 /* LightControl */ = {
 			isa = PBXGroup;
 			children = (
@@ -904,6 +915,7 @@
 		22CB1F2908CACDFE206C8810 = {
 			isa = PBXGroup;
 			children = (
+				C0F1C0DE0000000000000003 /* Config */,
 				DDC82E612F9FBA7E00324E29 /* PrivacyInfo.xcprivacy */,
 				DD4BB4DB2F8C6B1400BED513 /* HueHomeWidgetExtension.entitlements */,
 				DD4BB4C92F8C6AF100BED513 /* HueHomeWidget */,
@@ -2170,6 +2182,7 @@
 		};
 		6DACD504AD3301687CF45FE8 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0F1C0DE0000000000000001 /* Base.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -2326,6 +2339,7 @@
 		};
 		A11DB52F66195EFD74B81087 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0F1C0DE0000000000000001 /* Base.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;

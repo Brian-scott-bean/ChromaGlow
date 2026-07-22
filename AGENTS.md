@@ -501,7 +501,10 @@ Music integration (2026-07-21, builds 34–38) durable facts — design source o
 - **Tempo:** `TrackTempoResolver` order = source hint → forever-cache (Application Support,
   `.atomic`-only — never pair with `.withoutOverwriting`) → GetSongBPM (two-step, base URL
   `api.getsong.co` — the documented api.getsongbpm.com host is legacy, test-pinned) → live
-  `TempoEstimator`. Keyless-inactive via `TempoProviderKeys`; gated by user toggle
+  `TempoEstimator`. Keyless-inactive via `TempoProviderKeys` — the key lives in the git-ignored
+  `Config/Secrets.xcconfig` (template `Config/Secrets.xcconfig.example`; flows
+  `Config/Base.xcconfig` → build setting → Info.plist → `Bundle.main`; NEVER hardcode a
+  credential in source — this repo is public); gated by user toggle
   `music.tempoLookupEnabled` (absent = ON); lookups send ONLY track identifiers. GetSongBPM's
   REQUIRED attribution backlink lives in More → APP ("Song Tempo Data") + the hosted support
   page — removing either risks account suspension. **TIDAL was REMOVED (R7, 2026-07-21) on

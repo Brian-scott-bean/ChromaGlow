@@ -111,3 +111,41 @@ final class TempoProviderAssemblyTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Keys
+
+final class TempoProviderKeysTests: XCTestCase {
+    private let keyName = "GETSONGBPM_API_KEY"
+
+    func testNilInfoDictionaryYieldsEmptyKey() {
+        XCTAssertEqual(TempoProviderKeys.key(named: keyName, in: nil), "")
+    }
+
+    func testMissingEntryYieldsEmptyKey() {
+        XCTAssertEqual(TempoProviderKeys.key(named: keyName, in: ["OTHER_KEY": "x"]), "")
+    }
+
+    func testNonStringEntryYieldsEmptyKey() {
+        XCTAssertEqual(TempoProviderKeys.key(named: keyName, in: [keyName: 7]), "")
+    }
+
+    func testEmptyAndWhitespaceValuesYieldEmptyKey() {
+        XCTAssertEqual(TempoProviderKeys.key(named: keyName, in: [keyName: ""]), "")
+        XCTAssertEqual(TempoProviderKeys.key(named: keyName, in: [keyName: " \n"]), "")
+    }
+
+    func testUnresolvedPlaceholderYieldsEmptyKey() {
+        XCTAssertEqual(TempoProviderKeys.key(named: keyName, in: [keyName: "$(GETSONGBPM_API_KEY)"]), "")
+    }
+
+    func testConfiguredValueComesThroughTrimmed() {
+        XCTAssertEqual(TempoProviderKeys.key(named: keyName, in: [keyName: " not-a-real-key \n"]),
+                       "not-a-real-key")
+    }
+
+    func testEmptyResolvedKeyKeepsProviderInactive() {
+        // End of the chain: an empty resolved key must refuse to build the
+        // network provider (the same gate testKeylessInitReturnsNil pins).
+        XCTAssertNil(GetSongBPMProvider(apiKey: TempoProviderKeys.key(named: keyName, in: [:])))
+    }
+}

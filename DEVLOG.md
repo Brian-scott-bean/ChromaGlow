@@ -386,6 +386,54 @@
 
 ---
 
+## 2026-07-21 - [Claude] GetSongBPM key moves to an ignored local xcconfig (public-repo safety)
+
+### Branch
+- `main` (single commit, no checkpoint tag)
+
+### Did
+- **Config layer:** tracked `Config/Base.xcconfig` (empty `GETSONGBPM_API_KEY =` default +
+  `#include? "Secrets.xcconfig"`) wired as `baseConfigurationReference` on the HueHome app
+  target's Debug AND Release configs (pbxproj refs `C0F1C0DE…01/02/03`); tracked template
+  `Config/Secrets.xcconfig.example`; git-ignored local `Config/Secrets.xcconfig` (explicit
+  .gitignore line beside the old lowercase `secrets.xcconfig` pattern — case-sensitive
+  checkouts).
+- **Flow:** local xcconfig → build setting → `HueHome/Info.plist` `$(GETSONGBPM_API_KEY)` →
+  `TempoProviderKeys.getSongBPMKey` now reads `Bundle.main.infoDictionary`; trims whitespace,
+  collapses missing/non-string/unresolved-`$(...)` values to "" — same failable-init gate, so
+  keyless = provider inactive, unchanged. Key never logged.
+- 7 new `TempoProviderKeysTests` (nil dict, missing entry, non-string, empty, whitespace,
+  unresolved placeholder, configured+trimmed, empty-key→provider-nil).
+
+### Working
+- Fake-value round trip proven: value in local Secrets.xcconfig appeared in Debug+Release
+  `-showBuildSettings` and in the built app's Info.plist (PlistBuddy), then reset to empty.
+- Keyless is the committed state — fresh clones/CI build without the local file
+  (`#include?` is optional).
+
+### Left
+- Brian: paste the real key into `Config/Secrets.xcconfig` as `GETSONGBPM_API_KEY = <key>`
+  once the GetSongBPM signup (ios-app:// App-ID format) exists. Plain rebuild picks it up.
+- `SpotifyKeys.clientID` is still a hardcoded-empty in source — same xcconfig treatment
+  whenever it's wanted.
+- No CURRENT_PROJECT_VERSION bump (not a device round) — rides with the next release commit.
+
+### Validation
+- Suite 796/796 green on iPhone 17 Pro sim (xcresulttool-verified; 789 + 7 new).
+  `hardening_guards.sh` all pass. `git check-ignore Config/Secrets.xcconfig` confirms ignored;
+  tracked diff grepped clean of anything credential-shaped.
+
+### Gotchas
+- `xcodebuild -showBuildSettings` OMITS empty custom settings — an empty
+  `GETSONGBPM_API_KEY =` is invisible there yet still substitutes as "" into Info.plist.
+  Verify wiring with a throwaway fake value, never by grepping for the empty setting.
+- Don't name a stored property `name` inside an `XCTestCase` subclass — it collides with
+  XCTest's inherited `name` and the target won't compile.
+- The pbxproj wiring is hand-edited; rerunning legacy `generate_xcodeproj.rb` would drop the
+  `baseConfigurationReference` entries.
+
+---
+
 ## 2026-07-21 - [Claude] Support page: GetSongBPM attribution backlink (docs only)
 
 ### Branch

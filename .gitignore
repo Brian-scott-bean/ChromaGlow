@@ -54,3 +54,4 @@ fastlane/test_output
 *.p12
 *.mobileprovision
 secrets.xcconfig
+Config/Secrets.xcconfig

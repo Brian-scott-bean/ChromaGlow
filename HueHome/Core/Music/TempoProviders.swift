@@ -24,12 +24,25 @@ import Foundation
 
 // MARK: - Keys
 //
-// Paste the real key when Brian's signup exists (register with the
-// ios-app:// App-ID format). Low-sensitivity catalog-lookup key — but move
-// to an ignored xcconfig before any open-sourcing.
+// Keys live OUTSIDE source control: paste them into Config/Secrets.xcconfig
+// (git-ignored; template at Config/Secrets.xcconfig.example). The value
+// flows Base.xcconfig → GETSONGBPM_API_KEY build setting → Info.plist →
+// here; keyless checkouts resolve to "" and the provider stays inactive.
+// Register with the ios-app:// App-ID format. Never log a key value.
 
 enum TempoProviderKeys {
-    static let getSongBPMKey = ""
+    static var getSongBPMKey: String {
+        key(named: "GETSONGBPM_API_KEY", in: Bundle.main.infoDictionary)
+    }
+
+    /// Missing, non-string, whitespace-only, or unresolved `$(...)`
+    /// placeholder values collapse to "" so dependent providers disable
+    /// themselves instead of sending a garbage credential.
+    static func key(named name: String, in info: [String: Any]?) -> String {
+        guard let raw = info?[name] as? String else { return "" }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.hasPrefix("$(") ? "" : trimmed
+    }
 }
 
 /// Shared transport shape — URLSession in production, fixtures in tests.
