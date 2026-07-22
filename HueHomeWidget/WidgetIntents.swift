@@ -26,28 +26,37 @@ enum BridgeWriter {
     }()
 
     /// PUT a grouped_light resource (on/off, dimming, color temperature…).
+    /// Still fire-and-forget (never throws — the deliberate twin of the
+    /// throwing HueIntentAPIClient), but reports whether the bridge said 2xx
+    /// so callers stop persisting optimistic state for writes that died.
+    @discardableResult
     static func patchGroupedLight(
         id: String, body: [String: Any],
         ip: String, token: String
-    ) async {
-        guard let url = URL(string: "https://\(ip)/clip/v2/resource/grouped_light/\(id)") else { return }
+    ) async -> Bool {
+        guard let url = URL(string: "https://\(ip)/clip/v2/resource/grouped_light/\(id)") else { return false }
         var req = URLRequest(url: url, timeoutInterval: 8)
         req.httpMethod = "PUT"
         req.setValue("application/json",  forHTTPHeaderField: "Content-Type")
         req.setValue(token,               forHTTPHeaderField: "hue-application-key")
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        _ = try? await session.data(for: req)
+        guard let (_, response) = try? await session.data(for: req),
+              let http = response as? HTTPURLResponse else { return false }
+        return (200...299).contains(http.statusCode)
     }
 
     /// Recall a scene — mirrors HueAPIClient.activateScene.
-    static func recallScene(id: String, ip: String, token: String) async {
-        guard let url = URL(string: "https://\(ip)/clip/v2/resource/scene/\(id)") else { return }
+    @discardableResult
+    static func recallScene(id: String, ip: String, token: String) async -> Bool {
+        guard let url = URL(string: "https://\(ip)/clip/v2/resource/scene/\(id)") else { return false }
         var req = URLRequest(url: url, timeoutInterval: 8)
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(token,              forHTTPHeaderField: "hue-application-key")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["recall": ["action": "active"]])
-        _ = try? await session.data(for: req)
+        guard let (_, response) = try? await session.data(for: req),
+              let http = response as? HTTPURLResponse else { return false }
+        return (200...299).contains(http.statusCode)
     }
 }
 
@@ -82,12 +91,14 @@ struct ToggleRoomIntent: AppIntent {
             return .result()
         }
         let newState = !currentlyOn
-        await BridgeWriter.patchGroupedLight(
+        let ok = await BridgeWriter.patchGroupedLight(
             id: glID,
             body: ["on": ["on": newState]],
             ip: creds.ip, token: creds.token
         )
-        store.applyOptimistic(groupID: roomID, isOn: newState)
+        // Only persist the flip the bridge acknowledged — a dead/revoked
+        // bridge used to leave the widget asserting a state it invented.
+        if ok { store.applyOptimistic(groupID: roomID, isOn: newState) }
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }
@@ -120,12 +131,12 @@ struct SetRoomPowerIntent: SetValueIntent {
               let glID  = group.groupedLightId else {
             return .result()
         }
-        await BridgeWriter.patchGroupedLight(
+        let ok = await BridgeWriter.patchGroupedLight(
             id: glID,
             body: ["on": ["on": value]],
             ip: creds.ip, token: creds.token
         )
-        store.applyOptimistic(groupID: roomID, isOn: value)
+        if ok { store.applyOptimistic(groupID: roomID, isOn: value) }
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }
@@ -159,12 +170,12 @@ struct AdjustBrightnessIntent: AppIntent {
             return .result()
         }
         let target = min(100, max(1, group.brightness + Double(delta)))
-        await BridgeWriter.patchGroupedLight(
+        let ok = await BridgeWriter.patchGroupedLight(
             id: glID,
             body: ["on": ["on": true], "dimming": ["brightness": target]],
             ip: creds.ip, token: creds.token
         )
-        store.applyOptimistic(groupID: roomID, isOn: true, brightness: target)
+        if ok { store.applyOptimistic(groupID: roomID, isOn: true, brightness: target) }
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }
@@ -195,8 +206,10 @@ struct ActivateSceneIntent: AppIntent {
         guard let creds = store.credentials(for: bridgeID.isEmpty ? nil : bridgeID) else {
             return .result()
         }
-        await BridgeWriter.recallScene(id: sceneID, ip: creds.ip, token: creds.token)
-        if !groupID.isEmpty { store.applyOptimistic(groupID: groupID, isOn: true) }
+        let ok = await BridgeWriter.recallScene(id: sceneID, ip: creds.ip, token: creds.token)
+        // A recall of a since-deleted scene id (scene moved rooms) 200s
+        // nothing — never paint the room on for a write that didn't land.
+        if ok, !groupID.isEmpty { store.applyOptimistic(groupID: groupID, isOn: true) }
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }
