@@ -1,27 +1,19 @@
 // HueSSEService.swift
-// CastChroma — Epic 3 / Story 3.2
+// ChromaGlow — SSE event models for the Hue V2 event stream
 //
-// Server-Sent Events client for the Hue V2 event stream.
-// Endpoint: GET https://{ip}/eventstream/clip/v2
+// The LIVE SSE connection is UnifiedOrchestrator.runSSE (its own session +
+// retry/backoff + rebuild coalescing); these are the decode models it and
+// RoomDetailViewModel consume. The old standalone HueSSEService class that
+// used to live here was a never-referenced duplicate stream with a latent
+// Task/connection leak — deleted in the L-13 close-out (2026-07-22).
 //
-// Uses URLSession.bytes(for:) to stream lines from the bridge.
-// Yields [SSEResourceUpdate] arrays — one per SSE "data:" line that contains an "update" event.
-// The stream throws when the connection drops; callers MUST retry with backoff.
-//
-// Two resource types we care about:
+// Two resource types we care about most:
 //   "light"          → individual bulb — consumed by RoomDetailViewModel
 //   "grouped_light"  → room-level on/off + brightness — consumed by DashboardViewModel
 
 import Foundation
-import OSLog
 
 // MARK: - SSE Event Models
-
-/// Top-level SSE envelope. One data: line can contain multiple envelopes.
-struct SSEEnvelope: Decodable {
-    let type: String               // "update" | "add" | "delete" | "error"
-    let data: [SSEResourceUpdate]
-}
 
 /// A single resource change within an SSE event.
 /// Partial — only fields relevant to UI state are decoded; extras are silently ignored.
@@ -101,90 +93,3 @@ struct SSERotaryState: Decodable {
     var rotation: Report.Rotation? { rotary_report?.rotation ?? last_event?.rotation }
 }
 
-
-// MARK: - HueSSEService
-
-final class HueSSEService: @unchecked Sendable {
-
-    static let shared = HueSSEService()
-    private init() {}
-
-    private let log = Logger(subsystem: "com.lightshade.app", category: "SSE")
-    /// Shared decoder — JSONDecoder is stateless/thread-safe; reuse avoids heap churn on every SSE frame.
-    private static let decoder = JSONDecoder()
-
-    // URLSession with no read/resource timeout — required for indefinite SSE streaming.
-    // Pinned bridge trust (H-01/D-016) — shared delegate, never trust-all.
-    private lazy var session: URLSession = {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest  = .infinity
-        config.timeoutIntervalForResource = .infinity
-        return URLSession(
-            configuration: config,
-            delegate: BridgePinnedTrustDelegate.shared,
-            delegateQueue: nil
-        )
-    }()
-
-    // ──────────────────────────────────────────────
-    // MARK: - Event Stream
-    // ──────────────────────────────────────────────
-
-    /// Opens a persistent SSE connection to the Bridge and yields resource-update arrays.
-    /// Each yield corresponds to one "update" SSE event.
-    /// The stream finishes (with or without an error) when the connection drops.
-    /// Callers should retry with exponential backoff.
-    func events(ip: String, token: String) -> AsyncThrowingStream<[SSEResourceUpdate], Error> {
-        AsyncThrowingStream { continuation in
-            Task {
-                let urlStr = "https://\(ip)/eventstream/clip/v2"
-                guard let url = URL(string: urlStr) else {
-                    continuation.finish(throwing: HueAPIError.badURL(urlStr))
-                    return
-                }
-
-                var request = URLRequest(url: url)
-                request.httpMethod = "GET"
-                request.setValue(token,               forHTTPHeaderField: "hue-application-key")
-                request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-
-                do {
-                    // L-09: the stream URL embeds the bridge LAN IP — do not log it publicly.
-                    self.log.info("SSE: Connecting to bridge event stream.")
-                    let (bytes, _) = try await self.session.bytes(for: request)
-
-                    for try await line in bytes.lines {
-                        // SSE line format:
-                        //   "data: [...]"  → payload
-                        //   "id: ..."      → event ID
-                        //   ": hi"         → Bridge keepalive comment
-                        //   ""             → event boundary
-                        guard line.hasPrefix("data:") else { continue }
-
-                        let jsonStr = String(line.dropFirst(5))
-                            .trimmingCharacters(in: .whitespaces)
-                        guard !jsonStr.isEmpty,
-                              let payload = jsonStr.data(using: .utf8) else { continue }
-
-                        do {
-                            let envelopes = try Self.decoder.decode([SSEEnvelope].self, from: payload)
-                            for env in envelopes where env.type == "update" {
-                                continuation.yield(env.data)
-                            }
-                        } catch {
-                            // Malformed event — log and keep streaming (non-fatal)
-                            self.log.warning("SSE: Parse error — \(error.localizedDescription)")
-                        }
-                    }
-
-                    self.log.info("SSE: Stream ended.")
-                    continuation.finish()
-
-                } catch {
-                    self.log.error("SSE: Error — \(error.localizedDescription)")
-                    continuation.finish(throwing: error)
-                }
-            }
-        }
-    }
-}

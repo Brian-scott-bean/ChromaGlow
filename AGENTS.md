@@ -193,7 +193,7 @@ The iOS app is mature and feature dense:
 - Optional entertainment client key handling
 - Hue CLIP v2 REST client in `HueAPIClient.swift`
 - Hue v1 client in `HueV1Client.swift`
-- SSE event stream via `HueSSEService.swift`
+- SSE event stream via `UnifiedOrchestrator.runSSE` (decode models live in `HueSSEService.swift`; the old standalone class there was dead and deleted — audit L-13)
 - DTLS/UDP Entertainment transport via `HueEntertainmentClient.swift`
 - Multi-bridge registry
 - Room/light dashboard controls
