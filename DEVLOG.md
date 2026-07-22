@@ -386,6 +386,54 @@
 
 ---
 
+## 2026-07-21 - [Claude] MUSIC R8b — the bar was UNDER the tab bar: simulator-rig evidence round (build 41)
+
+### Branch
+- `main` (continues under the `checkpoint/music-picker-spotify-scroll` tag)
+
+### Did
+- **Brian reported R8's bar "not showing" + scroll "still skipping". Built a reproduction rig
+  instead of guessing:** booted the iPhone 17 Pro sim, drove the REAL Debug app with a CGEvent
+  injection tool (scratchpad `simtap` — click/drag/scroll at screen coords mapped from
+  `simctl` screenshots), and pixel-verified every claim.
+- **Bar root cause (CONFIRMED):** `StudioMusicWiring`'s `safeAreaInset` bar rendered INSIDE
+  the floating HueTabBar capsule's band — MainTabView's 64pt clear inset never reaches the
+  inner inset ("the system safe area has no knowledge of it"). The bar existed on every build
+  but was hidden behind the tab bar. Fix: explicit `.padding(.bottom, 70)` on the inset
+  content, the same hardcoded-clearance discipline as `studioTabBarClearance`. Rig-verified:
+  bar renders above the capsule; tapping it opens the Music Source picker showing
+  Microphone / Auto-Detect / Sample Track / Apple Music / **Spotify** (local ID active) +
+  the tempo-lookup toggle.
+- **Scroll verdict on build 40 (rig, 7+ instrumented drags with mid-drag screenshots):**
+  Scenes list, Effects deck, and the full Composer deck (66 looks, deep into ENERGETIC)
+  all track the finger and HOLD position — no snap-back in the idle app. The R7-era symptom
+  is not reproducible on 40/41 while idle; remaining untested configuration = scrolling WHILE
+  a look runs (see Left).
+- Harness: `StudioScrollStabilityTests` (new file, registered in pbxproj refs
+  `C0F1C0DE…04/05`) pins the bar-renders contract with a pixel probe + attached render.
+  In-process offset tests were REMOVED — iOS 26 SwiftUI scrolling is not UIKit-backed
+  (no UIScrollView to introspect); the rig is the scroll-reproduction tool of record.
+
+### Working
+- Suite 799/799 (xcresulttool-verified; +1 bar-contract test); guards green; build 41.
+
+### Left
+- **Brian device gate build 41:** all build-40 items PLUS — the bar sits above the tab bar
+  and opens the picker; scroll the Composer deck top-to-bottom WITH a look running (the one
+  configuration the rig couldn't drive — the transport popover resists synthetic clicks);
+  if it still skips there, capture which page + whether a look/music was running.
+- If Brian's device still lacks the bar on build 41 → check More → APP build number first.
+
+### Gotchas
+- A `safeAreaInset` inside tab content does NOT stack on MainTabView's per-tab clear inset —
+  anything mounted at a tab page's bottom edge needs explicit HueTabBar clearance.
+- Simulator injection rig: ALWAYS `osascript activate` Simulator before each CGEvent batch
+  (background test runs steal focus and events go nowhere); calibrate y-mapping from two
+  known-good tap anchors, not the title-bar guess. Popover/confirmationDialog buttons do not
+  respond to synthetic mouse clicks — plan flows around them.
+
+---
+
 ## 2026-07-21 - [Claude] MUSIC R8 — the picker is findable, Spotify ID wired, composer scroll-jump fixed (build 40)
 
 ### Branch
