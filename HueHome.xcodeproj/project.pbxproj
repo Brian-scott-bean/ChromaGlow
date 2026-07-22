@@ -136,6 +136,7 @@
 		9104ED28E648C70654A53BC6 /* NowPlayingBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 450C00831509B188AC9710FD /* NowPlayingBar.swift */; };
 		91A44ACA5E6CD5A45629A2B4 /* CreateAutomationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FA271B19432BA4813305C8A /* CreateAutomationView.swift */; };
 		93402B91C1F931EA48EE4CF0 /* SpotifyAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */; };
+		C0F1C0DE0000000000000005 /* StudioScrollStabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F1C0DE0000000000000004 /* StudioScrollStabilityTests.swift */; };
 		951658093BEEBEC42FBEB22C /* HarmonyEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 864AC7B556935239B283510D /* HarmonyEngine.swift */; };
 		98241981FA9EF6CA7A3E7A97 /* BridgeSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67D63CB3391ED01349572D57 /* BridgeSetupView.swift */; };
 		98370CEBD9A64016AAC08FA2 /* MockMusicSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A48446A2F5B16431E585E443 /* MockMusicSource.swift */; };
@@ -509,6 +510,7 @@
 		824843114E2CF9D61F1C85E7 /* MicDemandPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MicDemandPolicyTests.swift; path = ./HueHomeTests/MicDemandPolicyTests.swift; sourceTree = "<group>"; };
 		825FE84E577223087FB6A47F /* InvitePayloadCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InvitePayloadCodec.swift; path = ./HueHome/Core/Share/InvitePayloadCodec.swift; sourceTree = "<group>"; };
 		82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyAuthTests.swift; path = ./HueHomeTests/SpotifyAuthTests.swift; sourceTree = "<group>"; };
+		C0F1C0DE0000000000000004 /* StudioScrollStabilityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioScrollStabilityTests.swift; path = ./HueHomeTests/StudioScrollStabilityTests.swift; sourceTree = "<group>"; };
 		8408ED226D19F7C1E2884F2A /* AppleMusicSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppleMusicSource.swift; path = ./HueHome/Core/Music/AppleMusicSource.swift; sourceTree = "<group>"; };
 		850FF1B3391225414ACFB723 /* HueIntentAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueIntentAPIClient.swift; path = ./HueHome/Intents/HueIntentAPIClient.swift; sourceTree = "<group>"; };
 		864AC7B556935239B283510D /* HarmonyEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HarmonyEngine.swift; path = HueHome/UI/SceneBuilder/HarmonyEngine.swift; sourceTree = "<group>"; };
@@ -1411,6 +1413,7 @@
 				1F100D68A69CAEBF2A70DFED /* TempoProviderTests.swift */,
 				C0EA7D31963C88AF14FFD401 /* ShazamPolicyTests.swift */,
 				82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */,
+				C0F1C0DE0000000000000004 /* StudioScrollStabilityTests.swift */,
 				824843114E2CF9D61F1C85E7 /* MicDemandPolicyTests.swift */,
 			);
 			name = HueHomeTests;
@@ -2049,6 +2052,7 @@
 				59A2FCBE6ED2D9B705DD3561 /* TempoProviderTests.swift in Sources */,
 				4D6A92C35CE3146DFFDADE81 /* ShazamPolicyTests.swift in Sources */,
 				93402B91C1F931EA48EE4CF0 /* SpotifyAuthTests.swift in Sources */,
+				C0F1C0DE0000000000000005 /* StudioScrollStabilityTests.swift in Sources */,
 				4B877271E843BC31EAE8D90D /* MicDemandPolicyTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

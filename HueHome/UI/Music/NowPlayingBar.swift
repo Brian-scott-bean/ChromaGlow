@@ -191,7 +191,12 @@ struct StudioMusicWiring: ViewModifier {
                 )
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 6)
+            // The floating HueTabBar capsule is invisible to the safe-area
+            // system (MainTabView's 64pt clear inset does not reach this
+            // safeAreaInset — the bar rendered INSIDE the capsule's band,
+            // pixel-verified). Clear the band explicitly, same discipline
+            // as studioTabBarClearance everywhere else in Studio.
+            .padding(.bottom, 70)
         }
     }
 
