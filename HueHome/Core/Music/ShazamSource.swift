@@ -129,6 +129,13 @@ final class ShazamSource: NSObject, MusicSource {
     }
 
     func stop() {
+        // Idempotent — the coordinator's superseded-activation path can call
+        // stop() twice (deactivate + the `source !== newSource` sweep). Only
+        // the FIRST stop may park a demand release: a second parked release
+        // is one nobody awaits, and it lands after a successor Shazam start
+        // acquired the demand — killing the live engine (the F3 deafness,
+        // resurrected through the defensive double-stop).
+        guard !isStopped else { return }
         isStopped = true
         AudioAnalysisEngine.removeBufferTap(id: Self.tapID)
         sessionBox?.session.delegate = nil
