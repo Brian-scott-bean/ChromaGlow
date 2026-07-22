@@ -1750,7 +1750,8 @@ struct StudioCardView: View, Equatable {
                     // cards show their accent-tinted signature pattern.
                     if let previewSpec {
                         LookPreviewStrip(spec: previewSpec,
-                                         animated: isVisible)
+                                         animated: isVisible,
+                                         isRunning: isRunning)
                             .padding(.top, 6)
                     } else if let patternSignature {
                         PatternStripView(pattern: patternSignature,

@@ -132,6 +132,10 @@ enum LookPreviewMath {
 struct LookPreviewStrip: View, Equatable {
     let spec: LookPreviewSpec
     var animated: Bool = true
+    /// Frame-budget tier (StudioCardCanvas discipline): running cards tick
+    /// at 12fps, at-rest "living" cards drift at 4fps — the canvas always
+    /// had this split; the strip used to run 12fps at rest.
+    var isRunning: Bool = false
     var height: CGFloat = 8
 
     private static let segmentCount = 8
@@ -140,7 +144,8 @@ struct LookPreviewStrip: View, Equatable {
     @Environment(\.isTabActive) private var isTabActive
 
     static func == (lhs: LookPreviewStrip, rhs: LookPreviewStrip) -> Bool {
-        lhs.spec == rhs.spec && lhs.animated == rhs.animated && lhs.height == rhs.height
+        lhs.spec == rhs.spec && lhs.animated == rhs.animated
+            && lhs.isRunning == rhs.isRunning && lhs.height == rhs.height
     }
 
     private var isLive: Bool {
@@ -148,7 +153,8 @@ struct LookPreviewStrip: View, Equatable {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !isLive)) { timeline in
+        TimelineView(.animation(minimumInterval: isRunning ? 1.0 / 12.0 : 0.25,
+                                paused: !isLive)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             HStack(spacing: 4) {
                 ForEach(0..<Self.segmentCount, id: \.self) { i in

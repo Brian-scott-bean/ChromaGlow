@@ -76,7 +76,8 @@ struct SceneMoodCard: View {
                     // name-derived accent otherwise.
                     LookPreviewStrip(
                         spec: lookSpec,
-                        animated: scene.isDynamic && scene.isActive
+                        animated: scene.isDynamic && scene.isActive,
+                        isRunning: true   // only animates while actively recalling
                     )
                     .padding(.top, 4)
                     .frame(maxWidth: 120)

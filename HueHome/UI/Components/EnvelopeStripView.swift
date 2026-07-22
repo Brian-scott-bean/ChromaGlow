@@ -80,9 +80,11 @@ struct EnvelopeStripView: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !isLive)) { timeline in
+        // Depends only on the config — hoisted out of the 12fps tick, which
+        // recomputed all 48 envelope evaluations every frame.
+        let points = EnvelopeStripMath.curvePoints(envelope)
+        return TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !isLive)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
-            let points = EnvelopeStripMath.curvePoints(envelope)
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: HueRadius.sm)
                     .fill(StagePalette.raised)
