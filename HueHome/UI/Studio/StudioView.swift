@@ -111,6 +111,7 @@ struct StudioView: View {
     // cover (`item:`); dismissal nils it back out.
     @State private var performVM: PerformanceViewModel? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isTabActive) private var isTabActive
     @State private var activeCompositionTab: CompositionLayerTab = .palette
     @State private var showCompositionSaveSheet = false
     @State private var compositionSaveName = ""
@@ -772,7 +773,11 @@ struct StudioView: View {
             // animation running directly behind the AI-prompt TextField.
             TimelineView(.animation(
                 minimumInterval: 1.0 / 20.0,
-                paused: !visible || reduceMotion || KeyboardState.shared.isKeyboardUp
+                // `visible` only tracks the deck pager — without isTabActive
+                // this 20fps sweep kept redrawing behind whichever tab the
+                // user switched to (the hidden-tab clock class every sibling
+                // animation gates on).
+                paused: !visible || !isTabActive || reduceMotion || KeyboardState.shared.isKeyboardUp
             )) { timeline in
                 let phase = (timeline.date.timeIntervalSinceReferenceDate / 3.0)
                     .truncatingRemainder(dividingBy: 1.0)
