@@ -75,9 +75,10 @@ class HueAPIClient: @unchecked Sendable {
     // MARK: URLSession (pinned bridge trust — H-01/D-016)
     // BridgePinnedTrustDelegate evaluates the chain and requires the pinned
     // bridge identity on every challenge; it never trust-alls.
-    private lazy var session: URLSession = {
+    // Eager, not lazy: this class is @unchecked Sendable, and a lazy var's
+    // first touch from two threads is a data race (audit L-03).
+    private let session: URLSession =
         URLSession(configuration: .default, delegate: BridgePinnedTrustDelegate.shared, delegateQueue: nil)
-    }()
 
     // ──────────────────────────────────────────────
     // MARK: - Bootstrap

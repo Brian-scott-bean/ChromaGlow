@@ -69,9 +69,10 @@ class HueV1Client: @unchecked Sendable {
     var bridgeIP: String { ip }
 
     // Shared pinned bridge trust (H-01/D-016) — same delegate as HueAPIClient.
-    private lazy var session: URLSession = {
+    // Eager, not lazy: this class is @unchecked Sendable, and a lazy var's
+    // first touch from two threads is a data race (audit L-03).
+    private let session: URLSession =
         URLSession(configuration: .default, delegate: BridgePinnedTrustDelegate.shared, delegateQueue: nil)
-    }()
 
     init(ip: String, token: String) {
         self.ip = ip
