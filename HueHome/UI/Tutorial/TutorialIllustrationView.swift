@@ -89,6 +89,7 @@ struct TutorialIllustrationView: View {
         case .studio:      StudioArt(accent: accent, t: t, live: isActive && !reduceMotion)
         case .composer:    ComposerArt(accent: accent, t: t, live: isActive && !reduceMotion)
         case .perform:     PerformArt(accent: accent, t: t)
+        case .music:       MusicArt(accent: accent, t: t)
         case .automations: AutomationsArt(accent: accent, t: t)
         case .family:      FamilyArt(accent: accent, t: t)
         case .everywhere:  EverywhereArt(accent: accent, t: t)
@@ -610,6 +611,91 @@ private struct PerformArt: View {
                 RoundedRectangle(cornerRadius: 10)
                     .strokeBorder(accent.opacity(0.25 + 0.6 * energy), lineWidth: 1.5)
             )
+    }
+}
+
+// MARK: - 8b. Music — a song matched, lights painted
+
+private struct MusicArt: View {
+    let accent: Color
+    let t: Double
+
+    var body: some View {
+        // 8s story: a tap ripple on the album art → the room's dots take on
+        // the album's colors; reaction capsules pulse throughout (1.5s) and
+        // the beat dot breathes at 1Hz. Every period ≥ 0.75s (flash cap).
+        // Reduce-Motion still (t = 4.6 → p ≈ 0.575): song matched, dots
+        // fully painted, capsules form a varied skyline — reads deliberate.
+        let p       = TourMotionMath.wrap(t, period: 8.0)
+        let ring    = TourMotionMath.segment(p, from: 0.06, to: 0.16)
+                    * (1 - TourMotionMath.segment(p, from: 0.16, to: 0.28))
+        let painted = TourMotionMath.ease(TourMotionMath.segment(p, from: 0.30, to: 0.52))
+        let beat    = TourMotionMath.pulse(t, period: 1.0)
+        let hot     = TourMotionMath.hop(t, count: 4, period: TourMotionMath.fastestAllowedPeriod)
+        let albumA  = accent
+        let albumB  = Color(red: 0.25, green: 0.79, blue: 1.0)
+
+        VStack(spacing: 14) {
+            // Mock now-playing bar: album thumb + track + live beat chip.
+            MockCard(accent: accent) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(LinearGradient(colors: [albumA, albumB],
+                                                 startPoint: .topLeading,
+                                                 endPoint: .bottomTrailing))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "music.note")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.9))
+                        Circle()
+                            .strokeBorder(accent.opacity(0.9 * ring), lineWidth: 2)
+                            .frame(width: 36 + 22 * ring, height: 36 + 22 * ring)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Midnight Drive")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(StagePalette.ink)
+                        MonoTag(text: "HEARD NEARBY")
+                    }
+                    Spacer(minLength: 8)
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(HuePalette.amber.opacity(0.35 + 0.6 * beat))
+                            .frame(width: 7, height: 7)
+                        MonoTag(text: "104", color: accent)
+                    }
+                }
+                .frame(width: 216)
+            }
+
+            // Beat-reaction capsules — phase-staggered, 1.5s period.
+            HStack(alignment: .bottom, spacing: 5) {
+                ForEach(0..<9, id: \.self) { i in
+                    let level = TourMotionMath.pulse(t + Double(i) * 0.35, period: 1.5)
+                    Capsule()
+                        .fill(accent.opacity(0.30 + 0.50 * level))
+                        .frame(width: 13, height: 6 + 16 * level)
+                }
+            }
+            .frame(height: 24, alignment: .bottom)
+
+            // Four lights taking on the album's colors.
+            HStack(spacing: 18) {
+                ForEach(0..<4, id: \.self) { i in
+                    let col = i.isMultiple(of: 2) ? albumA : albumB
+                    let glow = (i == hot && painted > 0.5) ? 0.25 * beat : 0
+                    Circle()
+                        .fill(col.opacity(0.12 + 0.68 * painted + glow))
+                        .frame(width: 22, height: 22)
+                        .overlay(
+                            Circle().strokeBorder(col.opacity(0.30 + 0.55 * painted),
+                                                  lineWidth: 1.5)
+                        )
+                }
+            }
+        }
+        .frame(width: 264)
     }
 }
 

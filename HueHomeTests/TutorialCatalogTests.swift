@@ -15,8 +15,8 @@ final class TutorialCatalogTests: XCTestCase {
 
     // MARK: - Structure
 
-    func testCatalogHasTwelvePagesBookendedForEveryone() {
-        XCTAssertEqual(pages.count, 12)
+    func testCatalogHasThirteenPagesBookendedForEveryone() {
+        XCTAssertEqual(pages.count, 13)
         XCTAssertEqual(pages.first?.id, "tour.welcome")
         XCTAssertEqual(pages.last?.id, "tour.wrap")
         // Guests must always get a proper opening and closing.
@@ -30,6 +30,7 @@ final class TutorialCatalogTests: XCTestCase {
         XCTAssertEqual(pages.map(\.id), [
             "tour.welcome", "tour.rooms", "tour.moods", "tour.roomDetail",
             "tour.scenes", "tour.studio", "tour.composer", "tour.perform",
+            "tour.music",
             "tour.automations", "tour.family", "tour.everywhere", "tour.wrap",
         ])
     }
@@ -145,16 +146,53 @@ final class TutorialCatalogTests: XCTestCase {
 
     func testStudioSuiteIsOwnerOnlyAndNothingElseIs() {
         let ownerOnly = Set(pages.filter { $0.audience == .ownerOnly }.map(\.id))
-        XCTAssertEqual(ownerOnly, ["tour.studio", "tour.composer", "tour.perform"],
-                       "exactly the Studio suite mirrors the hidden guest Studio tab")
+        XCTAssertEqual(ownerOnly, ["tour.studio", "tour.composer", "tour.perform", "tour.music"],
+                       "exactly the Studio suite + Music mirrors the hidden guest Studio tab" +
+                       " (music has zero guest entry points — the Dashboard strip needs a session)")
     }
 
     func testGuestFilterPreservesOrderAndDropsExactlyTheStudioSuite() {
         let guestPages = TutorialCatalog.pages(includeStudioSuite: false)
         XCTAssertEqual(guestPages, pages.filter { $0.audience == .everyone },
                        "guest filter must be the .everyone subsequence in original order")
-        XCTAssertEqual(guestPages.count, pages.count - 3)
+        XCTAssertEqual(guestPages.count, pages.count - 4)
         XCTAssertEqual(TutorialCatalog.pages(includeStudioSuite: true), pages)
+    }
+
+    // MARK: - What's New (catalog versioning)
+
+    func testCatalogVersionMatchesNewestPage() {
+        XCTAssertEqual(TutorialCatalog.catalogVersion,
+                       pages.map(\.addedInVersion).max(),
+                       "bump catalogVersion in the same change that adds a page")
+        for page in pages {
+            XCTAssertTrue((1...TutorialCatalog.catalogVersion).contains(page.addedInVersion),
+                          "\(page.id): addedInVersion out of range")
+        }
+        XCTAssertEqual(pages.filter { $0.addedInVersion == 1 }.count, 12,
+                       "exactly the original twelve carry version 1")
+    }
+
+    func testWhatsNewGateTruthTable() {
+        // (hasSeenTour, lastSeenVersion, deepLink) → present?
+        XCTAssertTrue(TutorialCatalog.shouldPresentWhatsNew(hasSeenTour: true, lastSeenVersion: 0, hasPendingDeepLink: false),
+                      "legacy install (key absent = 0) folds to v1 and sees v2")
+        XCTAssertTrue(TutorialCatalog.shouldPresentWhatsNew(hasSeenTour: true, lastSeenVersion: 1, hasPendingDeepLink: false))
+        XCTAssertFalse(TutorialCatalog.shouldPresentWhatsNew(hasSeenTour: true, lastSeenVersion: TutorialCatalog.catalogVersion, hasPendingDeepLink: false),
+                       "current version — nothing new")
+        XCTAssertFalse(TutorialCatalog.shouldPresentWhatsNew(hasSeenTour: false, lastSeenVersion: 0, hasPendingDeepLink: false),
+                       "first run belongs to shouldAutoPresent, never What's New")
+        XCTAssertFalse(TutorialCatalog.shouldPresentWhatsNew(hasSeenTour: true, lastSeenVersion: 0, hasPendingDeepLink: true),
+                       "deep-link suppression — parity with the full tour")
+    }
+
+    func testWhatsNewPagesFilterRespectsAudience() {
+        XCTAssertEqual(TutorialCatalog.whatsNewPages(sinceVersion: 1, includeStudioSuite: true).map(\.id),
+                       ["tour.music"])
+        XCTAssertTrue(TutorialCatalog.whatsNewPages(sinceVersion: 1, includeStudioSuite: false).isEmpty,
+                      "guest shells see no owner-only additions — the wiring then stamps NOTHING")
+        XCTAssertTrue(TutorialCatalog.whatsNewPages(sinceVersion: TutorialCatalog.catalogVersion,
+                                                    includeStudioSuite: true).isEmpty)
     }
 
     // MARK: - Motion math (the illustrations are pure functions of time)

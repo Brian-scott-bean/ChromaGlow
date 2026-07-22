@@ -39,8 +39,14 @@ struct TutorialPage: Identifiable, Equatable, Sendable {
     /// Tests assert the mapping is one-to-one so no art is orphaned or reused.
     enum Illustration: String, CaseIterable, Sendable {
         case welcome, rooms, moods, roomDetail, scenes, studio,
-             composer, perform, automations, family, everywhere, wrap
+             composer, perform, music, automations, family, everywhere, wrap
     }
+
+    /// The catalog version this page first shipped in. Defaulted `var`, not
+    /// a defaulted `let` — a defaulted `let` drops out of the memberwise
+    /// init and every v1 page literal would stop compiling. Drives the
+    /// "What's New" mini-tour for users who completed an older tour.
+    var addedInVersion: Int = 1
 }
 
 enum TutorialCatalog {
@@ -97,7 +103,7 @@ enum TutorialCatalog {
             id: "tour.scenes",
             eyebrow: "SCENES",
             title: "A library of looks",
-            body: "Every scene lives here, grouped by room, with your starred favorites floating on top. Copy a scene you love into another room, and give moving scenes their own pace with the speed control.",
+            body: "Every scene lives here, grouped by room, with your starred favorites floating on top. Each card previews its real colors and motion before you play it. Copy a scene you love into another room, and give moving scenes their own pace with the speed control.",
             footnote: nil,
             audience: .everyone,
             illustration: .scenes,
@@ -107,7 +113,7 @@ enum TutorialCatalog {
             id: "tour.studio",
             eyebrow: "STUDIO",
             title: "Where the show begins",
-            body: "Pick a room, then flip through three decks: Effects that run on the bridge itself, Live modes that listen and react to sound, and everything you compose yourself. Tap a card to start it, then open the mixer and tune it to taste.",
+            body: "Pick a room, then flip through three decks: Effects that run on the bridge itself, Live modes that react to sound, and everything you compose yourself — sixty-six built-in looks, every card previewing its real colors and motion. Tap one to start it, then tune it to taste in the mixer.",
             footnote: nil,
             audience: .ownerOnly,
             illustration: .studio,
@@ -117,7 +123,7 @@ enum TutorialCatalog {
             id: "tour.composer",
             eyebrow: "COMPOSER",
             title: "Compose your own light",
-            body: "Layer a palette, a motion, and a reaction into a scene that's yours alone, then save it with its own icon and color. Share it as a QR code — a friend scans it and the scene plays on their lights.",
+            body: "Layer a palette, a motion, and a reaction into a scene that's yours alone — the editor draws your Brightness Shape as a live curve, with a mic meter when sound drives it. Save it with its own icon and color, or share it as a QR code a friend can scan.",
             footnote: nil,
             audience: .ownerOnly,
             illustration: .composer,
@@ -132,6 +138,17 @@ enum TutorialCatalog {
             audience: .ownerOnly,
             illustration: .perform,
             accentHex: blue
+        ),
+        TutorialPage(
+            id: "tour.music",
+            eyebrow: "MUSIC",
+            title: "Lights that move to your music",
+            body: "Pick a music source in Studio — follow along with Apple Music, or let Auto-Detect Song name whatever's playing nearby, even vinyl. Beat-synced looks lock onto the song's tempo, and one tap on the album art paints your lights in its colors.",
+            footnote: "While music plays, a strip on Home shows the song and the beat — tap it anytime to switch sources.",
+            audience: .ownerOnly,
+            illustration: .music,
+            accentHex: purple,
+            addedInVersion: 2
         ),
         TutorialPage(
             id: "tour.automations",
@@ -187,5 +204,31 @@ enum TutorialCatalog {
     /// marking it seen — it returns on the next clean launch.
     static func shouldAutoPresent(hasSeenTour: Bool, hasPendingDeepLink: Bool) -> Bool {
         !hasSeenTour && !hasPendingDeepLink
+    }
+
+    // MARK: - What's New (added pages for completed-tour users)
+
+    /// Bumped when pages are ADDED, so users who completed an older tour get
+    /// shown just the new ones once. v1 = the original twelve; v2 added
+    /// `tour.music` (the v1.1 music integration).
+    static let catalogVersion = 2
+
+    /// The pages newer than `sinceVersion`, already audience-filtered.
+    /// Empty for a guest when every new page is owner-only — the caller
+    /// then presents nothing AND stamps nothing, so the check re-runs on a
+    /// later launch (the device may gain owner access).
+    static func whatsNewPages(sinceVersion: Int, includeStudioSuite: Bool) -> [TutorialPage] {
+        pages(includeStudioSuite: includeStudioSuite)
+            .filter { $0.addedInVersion > sinceVersion }
+    }
+
+    /// Whether a "What's New" mini-tour should present. Only for users who
+    /// FINISHED the full tour (first-run belongs to shouldAutoPresent), with
+    /// the same deep-link suppression, and only when the catalog outgrew the
+    /// last version they saw. `max(1, ·)` folds legacy installs — the key
+    /// didn't exist before v2, so absent (0) means "saw version 1".
+    static func shouldPresentWhatsNew(hasSeenTour: Bool, lastSeenVersion: Int,
+                                      hasPendingDeepLink: Bool) -> Bool {
+        hasSeenTour && !hasPendingDeepLink && max(1, lastSeenVersion) < catalogVersion
     }
 }
