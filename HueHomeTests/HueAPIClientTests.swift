@@ -84,6 +84,9 @@ final class TestableAPIClient: HueAPIClient {
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw HueAPIError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
         }
+        // Mirror production execute(): the L-02/L-28 body policy runs on
+        // every 2xx (this override bypasses execute, so apply it here).
+        try applyBridgeBodyPolicy(data, context: path)
         return data
     }
 
@@ -98,6 +101,8 @@ final class TestableAPIClient: HueAPIClient {
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw HueAPIError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
         }
+        // Mirror production execute() — see get() above.
+        try applyBridgeBodyPolicy(data, context: path)
         return data
     }
 }
@@ -146,6 +151,73 @@ final class HueAPIClientTests: XCTestCase {
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
+    }
+
+    // MARK: - 2xx body errors (audit L-02/L-28)
+
+    func testFetchRoomsThrowsWhenA200CarriesOnlyErrors() async {
+        StubURLProtocol.stubs["/clip/v2/resource/room"] = (
+            data: #"{"errors":[{"description":"resource unavailable"}],"data":[]}"#.data(using: .utf8)!,
+            statusCode: 200
+        )
+        do {
+            _ = try await client.fetchRooms()
+            XCTFail("a 200 that is errors-with-no-data is a refusal and must throw")
+        } catch HueAPIError.bridgeError(let msgs) {
+            XCTAssertEqual(msgs, ["resource unavailable"])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testFetchRoomsPartialErrorsStillReturnData() async throws {
+        let partial = #"""
+        {
+          "errors": [{"description": "one resource degraded"}],
+          "data": [
+            {
+              "id": "room-001",
+              "metadata": {"name": "Living Room", "archetype": "living_room"},
+              "children": [],
+              "services": [{"rid": "gl-001", "rtype": "grouped_light"}]
+            }
+          ]
+        }
+        """#.data(using: .utf8)!
+        StubURLProtocol.stubs["/clip/v2/resource/room"] = (data: partial, statusCode: 200)
+
+        let rooms = try await client.fetchRooms()
+        XCTAssertEqual(rooms.count, 1, "errors alongside data degrade gracefully — log-only")
+    }
+
+    func testActivateSceneThrowsWhenA200CarriesOnlyErrors() async {
+        StubURLProtocol.stubs["/clip/v2/resource/scene/scene-9"] = (
+            data: #"{"errors":[{"description":"scene not available"}],"data":[]}"#.data(using: .utf8)!,
+            statusCode: 200
+        )
+        do {
+            try await client.activateScene(id: "scene-9")
+            XCTFail("a write acknowledged as 200-with-errors must throw so rollbacks fire")
+        } catch HueAPIError.bridgeError(let msgs) {
+            XCTAssertEqual(msgs, ["scene not available"])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testBridgeBodyVerdictClassifiesAllShapes() {
+        func verdict(_ s: String) -> HueAPIClient.BridgeBodyVerdict {
+            HueAPIClient.bridgeBodyVerdict(s.data(using: .utf8)!)
+        }
+        XCTAssertEqual(verdict(#"{"errors":[],"data":[{}]}"#), .clean)
+        XCTAssertEqual(verdict(#"[{"success":{"id":"1"}}]"#), .clean,
+                       "v1-style array bodies carry no v2 envelope — clean")
+        XCTAssertEqual(HueAPIClient.bridgeBodyVerdict(Data()), .clean, "empty body is clean")
+        XCTAssertEqual(verdict("not json at all"), .clean, "unparseable is clean, never a throw")
+        XCTAssertEqual(verdict(#"{"errors":[{"description":"x"}],"data":[{}]}"#), .partialErrors(["x"]))
+        XCTAssertEqual(verdict(#"{"errors":[{"description":"x"}],"data":[]}"#), .fatalErrors(["x"]))
+        XCTAssertEqual(verdict(#"{"errors":[{"code":7}]}"#), .fatalErrors(["unspecified bridge error"]),
+                       "errors without descriptions still refuse, with a placeholder")
     }
 
     // MARK: - Lights

@@ -114,28 +114,28 @@ class HueAPIClient: @unchecked Sendable {
         let (ip, token) = try credentials()
         let data = try await get(path: "/clip/v2/resource/room", ip: ip, token: token)
         logRaw(data, label: "GET /room")
-        return try decode(HueV2Response<HueRoom>.self, from: data).data
+        return try decodeV2(HueRoom.self, from: data).data
     }
 
     func fetchZones() async throws -> [HueZone] {
         let (ip, token) = try credentials()
         let data = try await get(path: "/clip/v2/resource/zone", ip: ip, token: token)
         logRaw(data, label: "GET /zone")
-        return try decode(HueV2Response<HueZone>.self, from: data).data
+        return try decodeV2(HueZone.self, from: data).data
     }
 
     func fetchLights() async throws -> [HueLight] {
         let (ip, token) = try credentials()
         let data = try await get(path: "/clip/v2/resource/light", ip: ip, token: token)
         logRaw(data, label: "GET /light")
-        return try decode(HueV2Response<HueLight>.self, from: data).data
+        return try decodeV2(HueLight.self, from: data).data
     }
 
     func fetchScenes() async throws -> [HueScene] {
         let (ip, token) = try credentials()
         let data = try await get(path: "/clip/v2/resource/scene", ip: ip, token: token)
         logRaw(data, label: "GET /scene")
-        return try decode(HueV2Response<HueScene>.self, from: data).data
+        return try decodeV2(HueScene.self, from: data).data
     }
 
     /// Fetch one scene's FULL resource, including the stored per-light
@@ -145,7 +145,7 @@ class HueAPIClient: @unchecked Sendable {
         let (ip, token) = try credentials()
         let data = try await get(path: "/clip/v2/resource/scene/\(id)", ip: ip, token: token)
         logRaw(data, label: "GET /scene/\(id)")
-        guard let detail = try decode(HueV2Response<HueSceneDetail>.self, from: data).data.first else {
+        guard let detail = try decodeV2(HueSceneDetail.self, from: data).data.first else {
             throw HueAPIError.decodingFailed("Scene \(id) missing from detail response")
         }
         return detail
@@ -340,7 +340,7 @@ class HueAPIClient: @unchecked Sendable {
         let (ip, token) = try credentials()
         let data = try await get(path: "/clip/v2/resource/behavior_instance", ip: ip, token: token)
         logRaw(data, label: "GET /behavior_instance")
-        return try decode(HueV2Response<HueBehaviorInstance>.self, from: data).data
+        return try decodeV2(HueBehaviorInstance.self, from: data).data
     }
 
     /// Returns raw Data so the caller can do its own resilient per-item decoding.
@@ -366,7 +366,7 @@ class HueAPIClient: @unchecked Sendable {
         let (ip, token) = try credentials()
         let data = try await get(path: "/clip/v2/resource/grouped_light/\(id)", ip: ip, token: token)
         logRaw(data, label: "GET /grouped_light/\(id)")
-        let response = try decode(HueV2Response<HueGroupedLight>.self, from: data)
+        let response = try decodeV2(HueGroupedLight.self, from: data)
         guard let first = response.data.first else {
             throw HueAPIError.decodingFailed("Empty grouped_light response for id \(id)")
         }
@@ -379,7 +379,7 @@ class HueAPIClient: @unchecked Sendable {
         let (ip, token) = try credentials()
         let data = try await get(path: "/clip/v2/resource/grouped_light", ip: ip, token: token)
         logRaw(data, label: "GET /grouped_light")
-        return try decode(HueV2Response<HueGroupedLight>.self, from: data).data
+        return try decodeV2(HueGroupedLight.self, from: data).data
     }
 
     // ──────────────────────────────────────────────
@@ -700,6 +700,10 @@ class HueAPIClient: @unchecked Sendable {
             }
             throw HueAPIError.httpError(http.statusCode)
         }
+        // L-02/L-28: a 2xx whose body is errors-with-no-data is a refusal —
+        // surface it so callers (and their rollbacks) stop reading silence
+        // as success. Partial errors log and proceed.
+        try applyBridgeBodyPolicy(data, context: resourcePath)
         return data
     }
 
@@ -716,6 +720,57 @@ class HueAPIClient: @unchecked Sendable {
             log.error("API: Decode error — \(error.localizedDescription)")
             throw HueAPIError.decodingFailed(error.localizedDescription)
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - 2xx body errors (audit L-02/L-28)
+    // ──────────────────────────────────────────────
+
+    /// What a 2xx response body actually said. The bridge can answer 200
+    /// with `{"errors":[…],"data":[]}` — a refusal wearing a success code.
+    enum BridgeBodyVerdict: Equatable {
+        case clean
+        case partialErrors([String])   // errors alongside data — degraded
+        case fatalErrors([String])     // errors and NO data — a refusal
+    }
+
+    /// Pure classification — v1-style array bodies, empty bodies, and
+    /// unparseable payloads are all `.clean` (only the v2 object envelope
+    /// carries `errors[]`). Descriptions are the bridge's own error text;
+    /// they never contain credentials.
+    static func bridgeBodyVerdict(_ data: Data) -> BridgeBodyVerdict {
+        guard !data.isEmpty,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let errs = obj["errors"] as? [[String: Any]], !errs.isEmpty
+        else { return .clean }
+        let descriptions = errs.compactMap { $0["description"] as? String }
+        let messages = descriptions.isEmpty ? ["unspecified bridge error"] : descriptions
+        let dataArr = obj["data"] as? [Any] ?? []
+        return dataArr.isEmpty ? .fatalErrors(messages) : .partialErrors(messages)
+    }
+
+    /// Shared policy: fatal throws (so optimistic-UI rollbacks fire on a
+    /// 200-with-errors), partial logs and proceeds. Internal, not private —
+    /// TestableAPIClient's stub transport applies the same policy execute()
+    /// does in production.
+    func applyBridgeBodyPolicy(_ data: Data, context: String) throws {
+        switch Self.bridgeBodyVerdict(data) {
+        case .clean:
+            break
+        case .partialErrors(let msgs):
+            log.warning("API: bridge reported partial errors — \(msgs.joined(separator: " | "))")
+        case .fatalErrors(let msgs):
+            log.error("API: bridge refused inside a 2xx — \(msgs.joined(separator: " | "))")
+            throw HueAPIError.bridgeError(msgs)
+        }
+    }
+
+    /// Typed-envelope decode with the L-02/L-28 policy applied — the GET
+    /// twin of execute()'s check. The suite exercises the policy HERE:
+    /// TestableAPIClient overrides get/put and bypasses execute().
+    func decodeV2<T: Decodable>(_ type: T.Type, from data: Data) throws -> HueV2Response<T> {
+        try applyBridgeBodyPolicy(data, context: "decode")
+        return try decode(HueV2Response<T>.self, from: data)
     }
 
     // ──────────────────────────────────────────────
