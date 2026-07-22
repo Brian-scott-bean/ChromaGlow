@@ -100,7 +100,12 @@ final class SpotifySource: MusicSource {
         guard pollTask == nil, !isBackgrounded else { return }
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: (self?.isBackgrounded == false ? Self.pollSeconds : 10) * 1_000_000_000)
+                // Slow tier keys on PLAYBACK, not backgrounding — background
+                // cancels this task entirely, so an isBackgrounded check here
+                // could never be true and the paused case polled at full rate
+                // forever (1,200 req/h against a silent session).
+                let interval = (self?.lastKnownPlaying == true) ? Self.pollSeconds : 10
+                try? await Task.sleep(nanoseconds: interval * 1_000_000_000)
                 guard !Task.isCancelled else { return }
                 await self?.pollOnce()
             }
@@ -119,6 +124,15 @@ final class SpotifySource: MusicSource {
                 lastKnownPlaying = false
                 onUpdate?(nil, nil)
             }
+        } catch SpotifyAuthService.AuthError.exchangeRejected {
+            // The grant died mid-session (revoked in Spotify's dashboard).
+            // Without this arm the 3s loop re-hit the token endpoint forever
+            // — no backoff, silent frozen UI. Stop the loop and clear the
+            // bar; recovery is the picker's start() (unlink + relink there).
+            pollTask?.cancel()
+            pollTask = nil
+            lastKnownPlaying = false
+            onUpdate?(nil, nil)
         } catch {
             // Transient network/auth hiccup — keep the last state; the next
             // poll tick is the retry.
