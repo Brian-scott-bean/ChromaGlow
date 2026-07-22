@@ -76,9 +76,7 @@ final class GetSongBPMProvider: TempoProvider, @unchecked Sendable {
             URLQueryItem(name: "lookup", value: "song:\(query.title) artist:\(query.artist)"),
         ]
         let (searchData, searchResponse) = try await transport(URLRequest(url: search.url!))
-        guard (searchResponse as? HTTPURLResponse)?.statusCode == 200 else {
-            throw TempoProviderError.badResponse
-        }
+        try Self.checkStatus(searchResponse)
         guard let songID = try JSONDecoder()
             .decode(GetSongBPMSearchResponse.self, from: searchData).search?.first?.id
         else { return nil }
@@ -89,12 +87,18 @@ final class GetSongBPMProvider: TempoProvider, @unchecked Sendable {
             URLQueryItem(name: "id", value: songID),
         ]
         let (detailData, detailResponse) = try await transport(URLRequest(url: detail.url!))
-        guard (detailResponse as? HTTPURLResponse)?.statusCode == 200 else {
-            throw TempoProviderError.badResponse
-        }
+        try Self.checkStatus(detailResponse)
         let tempoString = try JSONDecoder()
             .decode(GetSongBPMSongResponse.self, from: detailData).song?.tempo
         return tempoString.flatMap(Double.init)
+    }
+
+    /// 429 gets its own error so the resolver can cool the provider down
+    /// instead of hammering an exhausted hourly quota (audit R9 follow-up).
+    private static func checkStatus(_ response: URLResponse) throws {
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 429 { throw TempoProviderError.rateLimited }
+        guard status == 200 else { throw TempoProviderError.badResponse }
     }
 }
 
@@ -121,6 +125,8 @@ struct GetSongBPMSongResponse: Decodable {
 enum TempoProviderError: Error, Equatable {
     case authFailed
     case badResponse
+    /// HTTP 429 — quota exhausted; the resolver cools this provider down.
+    case rateLimited
 }
 
 // MARK: - Assembly

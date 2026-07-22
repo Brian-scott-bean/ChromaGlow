@@ -190,4 +190,78 @@ final class TrackTempoResolverTests: XCTestCase {
             TempoQuery(track: track(title: "Golden Hour", artist: "Ava Lane")).cacheKey,
             "meta:ava lane|golden hour")
     }
+
+    // MARK: Negative cache + 429 cooldown (audit R9 follow-up)
+
+    func testDefinitiveMissIsNegativeCached() async {
+        let provider = MockTempoProvider(id: "p1", result: nil)   // reachable, no data
+        let r = resolver(providers: [provider])
+        _ = await r.resolve(for: track())
+        _ = await r.resolve(for: track())
+        XCTAssertEqual(provider.calls.count, 1,
+                       "a definitive miss must not re-query on every track change")
+        XCTAssertEqual(r.cachedMissCount, 1)
+    }
+
+    func testMissRetriesAfterTTLAndHitClearsIt() async {
+        var fakeNow = Date(timeIntervalSince1970: 1_000_000)
+        let missing = MockTempoProvider(id: "p1", result: nil)
+        let rA = resolver(providers: [missing], now: { fakeNow })
+        _ = await rA.resolve(for: track())
+        XCTAssertEqual(rA.cachedMissCount, 1)
+
+        fakeNow += TrackTempoResolver.missTTL + 60
+        let found = MockTempoProvider(id: "p1", result: 120)
+        let rB = resolver(providers: [found], now: { fakeNow })
+        let resolved = await rB.resolve(for: track())
+        XCTAssertEqual(found.calls.count, 1, "an expired miss retries the provider")
+        XCTAssertEqual(resolved?.bpm, 120)
+        XCTAssertEqual(rB.cachedMissCount, 0, "a hit supersedes the old miss")
+        XCTAssertEqual(rB.cachedTempoCount, 1)
+    }
+
+    func testTransportErrorIsNotNegativeCached() async {
+        let flaky = MockTempoProvider(id: "p1", error: StubError())
+        let r = resolver(providers: [flaky])
+        _ = await r.resolve(for: track())
+        _ = await r.resolve(for: track())
+        XCTAssertEqual(flaky.calls.count, 2,
+                       "network trouble is not a negative signal — retry next track")
+        XCTAssertEqual(r.cachedMissCount, 0)
+    }
+
+    func testRateLimitedProviderCoolsDownThenRetries() async {
+        var fakeNow = Date(timeIntervalSince1970: 2_000_000)
+        let limited = MockTempoProvider(id: "p1", error: TempoProviderError.rateLimited)
+        let r = resolver(providers: [limited], now: { fakeNow })
+        _ = await r.resolve(for: track(title: "A"))
+        _ = await r.resolve(for: track(title: "B"))
+        XCTAssertEqual(limited.calls.count, 1,
+                       "an exhausted quota must not be hammered on the next track")
+        XCTAssertEqual(r.cachedMissCount, 0, "429 is not a per-track miss")
+
+        fakeNow += TrackTempoResolver.rateLimitCooldown + 60
+        _ = await r.resolve(for: track(title: "C"))
+        XCTAssertEqual(limited.calls.count, 2, "cooldown over — provider consulted again")
+    }
+
+    func testLegacyCacheFileWithoutMissesDecodes() async throws {
+        let legacy = #"{"entries":{"meta:artist|song":{"bpm":120,"providerID":"old","storedAt":0}}}"#
+        try legacy.data(using: .utf8)!.write(to: tempURL)
+        let r = resolver()
+        let resolved = await r.resolve(for: track())
+        XCTAssertEqual(resolved?.bpm, 120, "pre-misses cache files must decode cleanly")
+        XCTAssertEqual(r.cachedMissCount, 0)
+    }
+
+    func testOutOfRangeCachedEntryIsDroppedAndReResolved() async throws {
+        let poisoned = #"{"entries":{"meta:artist|song":{"bpm":500,"providerID":"old","storedAt":0}}}"#
+        try poisoned.data(using: .utf8)!.write(to: tempURL)
+        let provider = MockTempoProvider(id: "p1", result: 120)
+        let r = resolver(providers: [provider])
+        let resolved = await r.resolve(for: track())
+        XCTAssertEqual(resolved?.bpm, 120,
+                       "a cached BPM the clock would reject must be re-resolved, not served")
+        XCTAssertEqual(provider.calls.count, 1)
+    }
 }

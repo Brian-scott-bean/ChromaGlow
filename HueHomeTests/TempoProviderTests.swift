@@ -87,13 +87,28 @@ final class GetSongBPMProviderTests: XCTestCase {
 
     func testHTTPErrorThrowsSoResolverFallsThrough() async {
         let fixture = FixtureTransport()
+        fixture.route("/search/", status: 500, body: "{}")
+        let provider = GetSongBPMProvider(apiKey: "key", transport: fixture.transport)!
+        do {
+            _ = try await provider.tempo(
+                for: TempoQuery(track: NowPlayingTrack(service: .demo, title: "X", artist: "Y")))
+            XCTFail("HTTP 500 must throw")
+        } catch { /* expected: resolver falls to the live estimate */ }
+    }
+
+    func testRateLimitThrowsItsOwnErrorForTheCooldown() async {
+        let fixture = FixtureTransport()
         fixture.route("/search/", status: 429, body: "{}")
         let provider = GetSongBPMProvider(apiKey: "key", transport: fixture.transport)!
         do {
             _ = try await provider.tempo(
                 for: TempoQuery(track: NowPlayingTrack(service: .demo, title: "X", artist: "Y")))
             XCTFail("429 must throw")
-        } catch { /* expected: resolver falls to the live estimate */ }
+        } catch TempoProviderError.rateLimited {
+            // expected: the resolver parks this provider for the cooldown
+        } catch {
+            XCTFail("429 must surface as .rateLimited, got \(error)")
+        }
     }
 }
 
