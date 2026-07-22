@@ -238,10 +238,14 @@ final class BeatClock {
     func driveFromTrack(bpm newBPM: Double, position: PlaybackPosition,
                         confidence newConfidence: Double = 1.0,
                         now: Double = CACurrentMediaTime()) {
-        guard !isPinned else { return }
         guard position.isPlaying, newBPM >= 20, newBPM <= 300 else { return }
+        // Refresh the hold BEFORE the pin guard: a pinned clock still knows
+        // the service is alive. Guarding first let any pin held >10s make a
+        // live drive look stale — the mic spun up for nothing and unpin()
+        // fell to .audio instead of returning to the track.
         serviceHold = true
         lastServiceDriveAt = now
+        guard !isPinned else { return }
 
         let interval = 60.0 / newBPM
         let positionSec = Double(position.positionMs) / 1000.0 + (now - position.capturedAt)
@@ -266,7 +270,12 @@ final class BeatClock {
         var error = snap.beatPhase(at: candidateEpoch) * interval
         if error > interval / 2 { error -= interval }
 
-        if abs(error) > Self.serviceResyncThreshold {
+        // The wrap caps |error| at interval/2, which sits below the fixed
+        // 120ms threshold once BPM ≥ 250 — a seek would only ever creep at
+        // ≤30ms per drive (seconds of visible lag). Scale the re-anchor
+        // trigger down with the interval so fast tempos still snap.
+        let resyncThreshold = min(Self.serviceResyncThreshold, interval / 4)
+        if abs(error) > resyncThreshold {
             beatEpoch = candidateEpoch
         } else {
             beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))

@@ -125,6 +125,35 @@ final class BeatClockServiceDriveTests: XCTestCase {
                        "unpin during an active music session returns to the service drive")
     }
 
+    func testLongPinKeepsServiceDriveAlive() {
+        let clock = BeatClock()
+        clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)
+        clock.setBPM(90, now: 101)   // pin
+        // Drives keep arriving ~1 Hz while pinned; 15 s later the hold must
+        // still read fresh — guarding the pin first made a live drive look
+        // stale, spun the mic up for nothing, and broke unpin's return path.
+        clock.driveFromTrack(bpm: 120, position: position(ms: 16_000, at: 116), now: 116)
+        XCTAssertEqual(clock.bpm, 90, "the pin still owns tempo")
+        XCTAssertEqual(clock.source, .manual)
+        XCTAssertTrue(clock.isServiceDriven(now: 116),
+                      "a live drive during a pin keeps the service hold fresh")
+        clock.unpin(now: 117)
+        XCTAssertEqual(clock.source, .service,
+                       "unpin after a long pin returns to the still-alive track drive")
+    }
+
+    func testHighBPMSeekStillHardResyncs() {
+        let clock = BeatClock()
+        clock.driveFromTrack(bpm: 288, position: position(ms: 0, at: 100), now: 100)
+        // At 288 BPM the ±half-beat wrap caps |error| (~104ms) below the
+        // fixed 120ms threshold — the re-anchor trigger must scale with the
+        // interval or a seek could only creep 30ms per drive for seconds.
+        clock.driveFromTrack(bpm: 288, position: position(ms: 9_920, at: 110), now: 110)
+        let snap = BeatClock.snapshot()
+        XCTAssertEqual(snap.beatPhase(at: 110 - 9.92), 0, accuracy: 1e-6,
+                       "an off-grid seek at high BPM must hard re-anchor")
+    }
+
     // MARK: - Session end
 
     func testEndServiceDriveFallsBackToAudioKeepingTempo() {
