@@ -386,6 +386,52 @@
 
 ---
 
+## 2026-07-21 - [Claude] MUSIC R8 — the picker is findable, Spotify ID wired, composer scroll-jump fixed (build 40)
+
+### Branch
+- `main` (rollback tag: `checkpoint/music-picker-spotify-scroll`, pushed)
+
+### Did
+- **`847cdd8` composer scroll-jump:** two causes, one symptom ("scroll to the bottom skips back
+  up"). `MicLevelMeterView` flipped its caption row in/out at 12fps from inside its
+  TimelineView as live features crossed silent/active — height thrash under a drag yanks the
+  scroll offset (row is now a fixed slot, text fades). Both vertical mixer-tray ScrollViews
+  dropped `.scrollBounceBehavior(.basedOnSize)` — its fit-evaluation goes stale when the
+  `.id()`-swapped tab content changes height and the drag rubber-bands before the bottom.
+  The horizontal chip-row keeps `.basedOnSize` (axis never changes size).
+- **`803cd09` picker findability (Brian's report: "can't see the music picker"):** the
+  no-session Studio state showed only the slim muted "Sync to music" capsule. Now the full
+  `MusicNowPlayingBar` always mounts — idle it reads "Nothing playing — Pick a source to sync
+  your lights", tap anywhere opens the picker. Pill deleted.
+- **`ef9d6be` Spotify client ID via local xcconfig:** `SPOTIFY_CLIENT_ID` joins
+  `GETSONGBPM_API_KEY` in the same flow (ignored `Config/Secrets.xcconfig` → Base.xcconfig
+  default → Info.plist → `SpotifyKeys.clientID` computed through the shared
+  `TempoProviderKeys.key(named:in:)` sanitizer). Keyless = inert at every gate; Release stays
+  Spotify-free via `FeatureFlags`. New `SpotifyKeysTests` (sanitizer + `.notConfigured` gate).
+
+### Working
+- Suite 798/798 on iPhone 17 Pro sim (xcresulttool-verified; +2 Spotify key tests);
+  guards green; Spotify ID round-trip verified in the built plist REDACTED (32 chars, value
+  never printed). Build 40.
+
+### Left
+- **Brian's device gate is now build 40:** the build-36/37/38/39 combined music checklist
+  PLUS — picker reachable from Studio's always-present bottom bar; composer panel scrolls to
+  the true bottom on every tab (Palette/Motion/Brightness/React, half and expanded tray);
+  Spotify row appears (Debug build, allowlisted account), login → currently-playing →
+  play/pause/next.
+- GetSongBPM key rotation still pending (screenshot leak) — one value line in
+  `Config/Secrets.xcconfig`, then rebuild.
+- Scroll-physics fixes are not unit-testable — they are the device gate's first item.
+
+### Gotchas
+- Never insert/remove layout-affecting children from inside a `TimelineView` tick — reserve
+  the space and fade. Same class as the R2 "96 must never compress" fixedSize rule.
+- `.scrollBounceBehavior(.basedOnSize)` + `.id()`-swapped variable-height content = stale
+  scrollability. Use it only where content size is static per mount.
+
+---
+
 ## 2026-07-21 - [Claude] GetSongBPM key moves to an ignored local xcconfig (public-repo safety)
 
 ### Branch
