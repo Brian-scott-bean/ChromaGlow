@@ -120,7 +120,7 @@ final class BeatClockServiceDriveTests: XCTestCase {
         clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)
         clock.setBPM(90, now: 101)
         XCTAssertEqual(clock.source, .manual)
-        clock.unpin()
+        clock.unpin(now: 102)
         XCTAssertEqual(clock.source, .service,
                        "unpin during an active music session returns to the service drive")
     }
@@ -197,7 +197,54 @@ final class BeatClockServiceDriveTests: XCTestCase {
         clock.ingest(estimate: TempoEstimate(bpm: 97, confidence: 0.9, lastBeatOffset: 0),
                      endTime: 105)
         XCTAssertEqual(clock.bpm, 120)
-        XCTAssertTrue(clock.isServiceDriven)
+        XCTAssertTrue(clock.isServiceDriven(now: 105))
+    }
+
+    // MARK: - Stale-aware isServiceDriven (audit R9)
+
+    func testIsServiceDrivenGoesStaleWithoutIngest() {
+        let clock = BeatClock()
+        clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)
+        XCTAssertTrue(clock.isServiceDriven(now: 109),
+                      "a fresh drive reports service-driven")
+        XCTAssertFalse(clock.isServiceDriven(now: 111),
+                       "past the timeout the flag must clear WITHOUT an ingest — " +
+                       "mic demand is suppressed by this very flag, so no ingest may come")
+    }
+
+    func testDriveRefreshKeepsServiceDrivenAlive() {
+        let clock = BeatClock()
+        clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)
+        clock.driveFromTrack(bpm: 120, position: position(ms: 9_000, at: 109), now: 109)
+        XCTAssertTrue(clock.isServiceDriven(now: 118),
+                      "each poll refreshes the hold's lease")
+    }
+
+    func testUnpinDuringStaleHoldFallsToAudio() {
+        let clock = BeatClock()
+        clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)
+        clock.tap(now: 101)   // pin freezes the drive refresh
+        clock.unpin(now: 120) // 20 s later: the hold's lease is long dead
+        XCTAssertEqual(clock.source, .audio,
+                       "unpin after the drive died must not label a dead session 'Music'")
+    }
+
+    // MARK: - Pin blocks the phase nudge (audit R9)
+
+    func testPinnedBlocksServiceHoldPhaseNudge() {
+        let clock = BeatClock()
+        clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)  // epoch 100
+        clock.tap(now: 100.2)   // pin re-anchors the epoch; serviceHold stays set
+        let pinnedEpoch = BeatClock.snapshot().beatEpoch
+        let pinnedConfidence = clock.confidence
+        // Confident mic estimate 100 ms off the pinned grid — before the fix
+        // this nudged the pinned epoch 30 ms per ingest.
+        clock.ingest(estimate: TempoEstimate(bpm: 100, confidence: 0.9, lastBeatOffset: 0),
+                     endTime: 101.1)
+        XCTAssertEqual(BeatClock.snapshot().beatEpoch, pinnedEpoch, accuracy: 1e-9,
+                       "the mic may not move a pinned epoch, service hold or not")
+        XCTAssertEqual(clock.confidence, pinnedConfidence, accuracy: 1e-9,
+                       "the confidence display stays the pin's while the hold is live")
     }
 
     // MARK: - Contract stability

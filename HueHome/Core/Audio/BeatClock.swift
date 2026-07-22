@@ -115,8 +115,17 @@ final class BeatClock {
     private static let serviceDriveTimeout = 10.0
 
     /// Read by the mic-demand evaluator: a `.beat` reaction needs no
-    /// microphone while a music service drives the clock.
-    var isServiceDriven: Bool { serviceHold }
+    /// microphone while a music service drives the clock. Stale-aware:
+    /// a hold whose drive stopped refreshing (dead source, or a track
+    /// change whose tempo never resolved) stops reporting service-driven
+    /// after serviceDriveTimeout. Without this, the suppressed mic is
+    /// the only thing that could run ingest's self-heal — the flag that
+    /// blocks the mic would be the flag only the mic can clear.
+    var isServiceDriven: Bool { isServiceDriven(now: CACurrentMediaTime()) }
+
+    func isServiceDriven(now: Double) -> Bool {
+        serviceHold && now - lastServiceDriveAt <= Self.serviceDriveTimeout
+    }
 
     // ── Lock-guarded static mirror for render loops ──
     nonisolated private static let mirrorLock = NSLock()
@@ -198,11 +207,14 @@ final class BeatClock {
     }
 
     /// Return to audio-follow (or the service drive, if one is active).
-    func unpin() {
+    func unpin(now: Double = CACurrentMediaTime()) {
         isPinned = false
         tapTimes = []
         if source == .tap || source == .manual {
-            source = serviceHold ? .service : (bpm > 0 ? .audio : .none)
+            // Stale-aware: while pinned, driveFromTrack early-returns and
+            // stops refreshing the hold — a session that died mid-pin must
+            // not leave the label on "Music" with nothing driving.
+            source = isServiceDriven(now: now) ? .service : (bpm > 0 ? .audio : .none)
         }
     }
 
@@ -287,6 +299,12 @@ final class BeatClock {
                 serviceHold = false
                 if source == .service { source = bpm > 0 ? .audio : .none }
                 // Fall through — audio-follow resumes normally below.
+            } else if isPinned {
+                // A pin owns phase outright — the mic may not nudge a
+                // pinned epoch, and the service keeps the confidence
+                // display. tap() deliberately leaves serviceHold set, so
+                // this branch is reachable (pin during a live track).
+                return
             } else {
                 guard estimate.confidence >= Self.minAudioConfidence, bpm > 0 else { return }
                 let interval = 60.0 / bpm
