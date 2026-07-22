@@ -93,10 +93,29 @@ final class ShazamSource: NSObject, MusicSource {
     private var sessionBox: SessionBox?
     private var missPolicy = ShazamMissPolicy()
     private var currentTrack: NowPlayingTrack?
+    private var isStopped = false
+
+    /// The demand handoff rail (audit R9, F3). `.shazamID` is a Set member
+    /// on the engine, not a refcount — on a stop→start re-activation the
+    /// old instance's fire-and-forget release used to land AFTER the new
+    /// instance's acquire and switch the engine off under it (deterministic
+    /// interleaving: the release Task runs at the new start's first
+    /// suspension). stop() parks its release here; the next start() awaits
+    /// it BEFORE acquiring, so release-then-acquire is the only order.
+    static var pendingDemandRelease: Task<Void, Never>?
 
     func start() async throws {
+        await Self.pendingDemandRelease?.value
+        guard !isStopped else { return }   // stopped while waiting on the rail
         guard await AudioAnalysisEngine.shared.setDemand(.shazamID, active: true) else {
             throw MusicSourceError.unavailable("microphone")
+        }
+        guard !isStopped else {
+            // stop() ran while the demand was being acquired. Its release
+            // is parked on the rail and lands after our acquire (Set
+            // semantics make that the correct net state: off). Installing
+            // the tap/session on a dead instance was the leak — skip it.
+            return
         }
         let session = SHSession()
         session.delegate = self
@@ -110,11 +129,14 @@ final class ShazamSource: NSObject, MusicSource {
     }
 
     func stop() {
+        isStopped = true
         AudioAnalysisEngine.removeBufferTap(id: Self.tapID)
         sessionBox?.session.delegate = nil
         sessionBox = nil
         currentTrack = nil
-        Task { await AudioAnalysisEngine.shared.setDemand(.shazamID, active: false) }
+        Self.pendingDemandRelease = Task {
+            await AudioAnalysisEngine.shared.setDemand(.shazamID, active: false)
+        }
     }
 
     func transport(_ action: TransportAction) async {
