@@ -277,6 +277,7 @@ final class DeepLinkCoordinator {
 struct AppRootView: View {
     @Environment(\.modelContext)          private var modelContext
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Environment(MusicSessionCoordinator.self) private var music
     @Query private var bridges: [BridgeRecord]
 
     @State private var isPaired:    Bool = false
@@ -342,14 +343,35 @@ struct AppRootView: View {
                         }
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .hueBridgeUnpaired)) { _ in
+                        // Music has no other teardown hook here — without
+                        // this, a Shazam session kept the mic hot on the
+                        // pairing splash with no reachable UI to stop it.
+                        music.deactivate()
                         orchestrator.stopSSE()
                         orchestrator.exitDemoMode()
                         isPaired   = false
                         isDemoMode = false
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .hueDemoExited)) { _ in
+                        // Sample Track must not leak into real mode — a
+                        // phantom 96–128 BPM playlist grid suppresses the
+                        // mic for every .beat look on real lights.
+                        if music.activeService == .demo { music.deactivate() }
                         orchestrator.exitDemoMode()
                         isDemoMode = false
+                        // exitDemoMode wipes clients/rooms/SSE, and the
+                        // MainTabView .task won't re-fire (view identity
+                        // unchanged while isPaired stays true) — rebuild, or
+                        // "Resume real bridge" hands back a dead app until
+                        // relaunch.
+                        if isPaired {
+                            Task {
+                                orchestrator.configure(bridges: bridges, modelContext: modelContext)
+                                await orchestrator.loadAll(cacheContext: modelContext)
+                                orchestrator.startSSE()
+                                orchestrator.startAllDayScenesIfNeeded()
+                            }
+                        }
                     }
                     // ── Background automation drain ──────────────────────────────────
                     // willPresent only fires when app is foregrounded at trigger time.

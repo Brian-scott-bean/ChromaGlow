@@ -42,6 +42,7 @@ struct MainTabView: View {
     @Environment(\.horizontalSizeClass) var sizeClass
     @Environment(DeepLinkCoordinator.self) private var deepLink
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Environment(MusicSessionCoordinator.self) private var music
     @State private var selectedTab: HueTab = .home
     /// Tabs whose root view has been constructed at least once — avoids building Studio/Scenes/More until first visit (reduces cold-launch work).
     @State private var realizedTabs: Set<HueTab> = [.home]
@@ -97,6 +98,13 @@ struct MainTabView: View {
         .onChange(of: orchestrator.guestAccessInfo) { _, _ in
             if !visibleTabs.contains(selectedTab) {
                 withAnimation(HueAnimation.toggle) { selectedTab = .home }
+            }
+            // A guest-only shell has no Studio, so a surviving music session
+            // would drive a pipeline the guest can't see — and its Dashboard
+            // strip could keep the mic listening. End it with the role flip.
+            if orchestrator.guestAccessInfo.isGuestOnly, !orchestrator.isDemoMode,
+               music.hasSession {
+                music.deactivate()
             }
         }
         .task { await prewarmDeferredTabs() }
