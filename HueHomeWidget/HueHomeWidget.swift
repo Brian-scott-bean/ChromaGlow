@@ -289,6 +289,15 @@ struct HueHomeWidgetEntryView: View {
     @Environment(\.widgetFamily) var family
 
     var body: some View {
+        faces
+            // Staleness honesty (audit N17): a snapshot the provider flagged
+            // as unconfirmed (cached fallback, empty data) dims on every
+            // face instead of dressing hours-old rooms as live truth.
+            .opacity(entry.isStale ? 0.72 : 1)
+    }
+
+    @ViewBuilder
+    private var faces: some View {
         switch family {
         // ── Lock screen ──────────────────────────
         case .accessoryCircular:    AccessoryCircularView(entry: entry)
@@ -339,6 +348,17 @@ struct SmallWidgetView: View {
                     .font(.system(size: 28))
                     .foregroundStyle(.white.opacity(0.4))
                 Text("Open app to pair")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .padding(.top, 4)
+            } else if entry.isStale && entry.totalCount == 0 {
+                // Paired but no confirmed snapshot yet (fresh pairing before
+                // the app's first publish, or an emptied cache) — say so
+                // instead of asserting "All lights off" over no data.
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 24))
+                    .foregroundStyle(.white.opacity(0.4))
+                Text("Open ChromaGlow to refresh")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.4))
                     .padding(.top, 4)

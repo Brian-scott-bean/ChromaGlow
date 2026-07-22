@@ -111,6 +111,18 @@ struct ContentView: View {
                         }
                     }
                 }
+
+                // ── Staleness honesty ──
+                // Rooms older than 30 min were presented exactly like live
+                // data; say when they were last confirmed instead.
+                if let synced = store.lastSyncedAt,
+                   Date().timeIntervalSince(synced) > 30 * 60 {
+                    (Text("Updated ") + Text(synced, style: .relative) + Text(" ago"))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .listRowBackground(Color.clear)
+                }
             }
             .navigationTitle("ChromaGlow")
             .navigationBarTitleDisplayMode(.inline)

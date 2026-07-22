@@ -88,6 +88,10 @@ final class WatchStore: NSObject, ObservableObject {
     @Published var isPaired:  Bool        = false
     @Published var isLoading: Bool        = false
     @Published var errorMsg:  String?     = nil
+    /// Last confirmed data contact (phone push, bridge refresh, or an
+    /// acknowledged command). Drives the honest "Updated Xm ago" line —
+    /// the timestamp was always written, never read (audit N13).
+    @Published var lastSyncedAt: Date?    = nil
 
     /// Rooms followed by zones — the full set of controllable groups.
     var allGroups: [WatchRoom] { rooms + zones }
@@ -180,6 +184,7 @@ final class WatchStore: NSObject, ObservableObject {
             scenes = decoded
         }
         isPaired = !bridges.isEmpty || !(bridgeIP?.isEmpty ?? true)
+        lastSyncedAt = watchGroup?.object(forKey: "hue_widget_updated_at") as? Date
     }
 
     private func saveToLocalCache() {
@@ -196,6 +201,7 @@ final class WatchStore: NSObject, ObservableObject {
         if let zonesData  { watchGroup?.set(zonesData,  forKey: "hue_widget_zones_v1") }
         if let scenesData { watchGroup?.set(scenesData, forKey: "hue_widget_scenes_v1") }
         watchGroup?.set(Date(), forKey: "hue_widget_updated_at")
+        lastSyncedAt = Date()
         WidgetCenter.shared.reloadAllTimelines()
     }
 
@@ -575,6 +581,7 @@ extension WatchStore: WCSessionDelegate {
             self?.zones    = decodedZones
             self?.scenes   = decodedScenes
             self?.isPaired = !(decoded.isEmpty && decodedZones.isEmpty) || !ip.isEmpty || bridgesData != nil
+            self?.lastSyncedAt = Date()
             WidgetCenter.shared.reloadAllTimelines()
         }
     }
