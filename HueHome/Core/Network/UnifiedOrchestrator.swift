@@ -2016,7 +2016,14 @@ final class UnifiedOrchestrator {
                 live:      self.globalScenes,
                 stored:    WidgetDataStore.shared.scenes
             )
-            WidgetDataStore.shared.write(rooms: roomSnaps, zones: zoneSnaps, scenes: sceneSnaps)
+            let outcome = WidgetDataStore.shared.write(rooms: roomSnaps, zones: zoneSnaps,
+                                                       scenes: sceneSnaps,
+                                                       reloadOnStructureChange: true)
+            // Byte-identical snapshot → the watch push and Siri re-donation
+            // are pure waste (SSE quiet-gaps during a bridge-side dynamic
+            // scene scheduled them for hours). The store already stamped
+            // freshness; nothing downstream can have changed.
+            guard outcome.contentChanged else { return }
             WatchSessionManager.shared.push(
                 rooms: roomSnaps,
                 zones: zoneSnaps,

@@ -104,6 +104,7 @@ final class WidgetDataStore: @unchecked Sendable {
         static let bridgeIP  = "hue_widget_bridge_ip"
         static let updatedAt = "hue_widget_updated_at"
         static let largePage = "hue_widget_large_page"   // current page of the paginated Large widget
+        static let structure = "hue_widget_structure_v1" // identity list of the last published snapshot
         // Legacy plaintext-secret keys (pre-D-018) — scrubbed, never written.
         static let legacyBridges = "hue_widget_bridges_v1"
         static let legacyToken   = "hue_widget_token"
@@ -119,15 +120,66 @@ final class WidgetDataStore: @unchecked Sendable {
         ud?.set(Date(), forKey: Key.updatedAt)
     }
 
+    /// What a snapshot publish actually changed — the caller gates the
+    /// downstream fan-out (watch push, Siri re-donation) on it.
+    struct SnapshotPublishOutcome {
+        let contentChanged: Bool
+    }
+
     /// Publish rooms, zones, and scenes together (one coherent snapshot).
     /// Rooms/zones are stored separately so the widget can group them; `groups`
     /// reads them back merged. Scenes are keyed to their owning room/zone id.
-    func write(rooms: [WidgetRoomSnapshot], zones: [WidgetRoomSnapshot], scenes: [WidgetSceneSnapshot]) {
+    ///
+    /// Diff-gated: SSE-driven rebuilds schedule a publish every quiet gap for
+    /// as long as a bridge-side dynamic scene runs — hours of byte-identical
+    /// snapshots re-written, re-pushed to the watch, and re-donated to Siri.
+    /// An unchanged snapshot now skips everything except the freshness stamp.
+    /// A STRUCTURAL change (the room/zone/scene identity list — what the
+    /// widget's timeline actually renders) additionally reloads timelines:
+    /// nothing else did, so a revocation-pruned room list sat stale on the
+    /// widget until WidgetKit's own budgeted refresh, potentially hours.
+    /// State-only flips (isOn/brightness) deliberately do NOT reload — the
+    /// timeline provider fetches live grouped-light state itself, and reload
+    /// budget is precious.
+    /// `reloadOnStructureChange` must be true ONLY from the main app — the
+    /// widget extension also calls this to persist freshly fetched state,
+    /// and a timeline reload issued from inside the widget process is a
+    /// refresh-loop hazard. When false, the structure key is left alone so
+    /// the main app's next publish still detects and reloads.
+    @discardableResult
+    func write(rooms: [WidgetRoomSnapshot], zones: [WidgetRoomSnapshot], scenes: [WidgetSceneSnapshot],
+               reloadOnStructureChange: Bool = false) -> SnapshotPublishOutcome {
         let encoder = JSONEncoder()
-        if let roomsData = try? encoder.encode(rooms) { ud?.set(roomsData, forKey: Key.rooms) }
-        if let zonesData = try? encoder.encode(zones) { ud?.set(zonesData, forKey: Key.zones) }
-        if let scenesData = try? encoder.encode(scenes) { ud?.set(scenesData, forKey: Key.scenes) }
+        guard let roomsData = try? encoder.encode(rooms),
+              let zonesData = try? encoder.encode(zones),
+              let scenesData = try? encoder.encode(scenes) else {
+            return SnapshotPublishOutcome(contentChanged: false)
+        }
+        // updatedAt always advances — it means "the app last confirmed this
+        // snapshot", and any staleness affordance depends on that meaning.
         ud?.set(Date(), forKey: Key.updatedAt)
+
+        let contentChanged = roomsData != ud?.data(forKey: Key.rooms)
+            || zonesData != ud?.data(forKey: Key.zones)
+            || scenesData != ud?.data(forKey: Key.scenes)
+        guard contentChanged else {
+            return SnapshotPublishOutcome(contentChanged: false)
+        }
+
+        let structure = ((rooms + zones).map { "\($0.id)|\($0.name)|\($0.kind ?? "room")" }
+            + ["§"]
+            + scenes.map { "\($0.id)|\($0.name)|\($0.ownerGroupID)" })
+            .joined(separator: ",")
+
+        ud?.set(roomsData, forKey: Key.rooms)
+        ud?.set(zonesData, forKey: Key.zones)
+        ud?.set(scenesData, forKey: Key.scenes)
+
+        if reloadOnStructureChange, structure != (ud?.string(forKey: Key.structure) ?? "") {
+            ud?.set(structure, forKey: Key.structure)
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+        return SnapshotPublishOutcome(contentChanged: true)
     }
 
     func write(bridges: [String: WidgetBridgeCredentials]) {
