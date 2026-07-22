@@ -30,13 +30,10 @@ struct RoomDetailView: View {
         Set(favoriteSceneIDsRaw.split(separator: ",").map(String.init))
     }
     private func toggleFavorite(_ scene: SceneDisplayItem) {
-        var ids = favoriteSceneIDs
-        if ids.contains(scene.id) {
-            ids.remove(scene.id)
-        } else {
-            ids.insert(scene.id)
-        }
-        favoriteSceneIDsRaw = ids.joined(separator: ",")
+        // Order-preserving toggle — the Set round-trip this used to do
+        // rewrote the CSV in arbitrary order, scrambling every Dashboard
+        // favorite pill whenever a scene was starred from a room.
+        favoriteSceneIDsRaw = FavoriteSceneCSV.toggled(favoriteSceneIDsRaw, id: scene.id)
     }
 
     // ── Room / Zone CRUD ──────────────────────────────────────────────────────
