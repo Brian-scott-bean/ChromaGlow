@@ -73,8 +73,25 @@ final class MusicSessionCoordinator {
         do {
             try await newSource.start()
         } catch {
-            deactivate()
+            // start() can suspend for a long time (auth prompt, login
+            // sheet) — by the time it throws, a newer activation may own
+            // the coordinator. Tearing THAT down was the audit-R9 race:
+            // only deactivate if this source is still the active one.
+            if source === newSource {
+                deactivate()
+            } else {
+                newSource.onUpdate = nil
+                newSource.stop()
+            }
             throw error
+        }
+        if source !== newSource {
+            // Superseded while start() was suspended: the newer session
+            // owns the coordinator. deactivate() already stopped this
+            // instance once; stop again defensively (sources are
+            // idempotent) in case start() re-installed anything after.
+            newSource.onUpdate = nil
+            newSource.stop()
         }
     }
 
@@ -134,6 +151,14 @@ final class MusicSessionCoordinator {
     private func startTempoResolve(for track: NowPlayingTrack?) {
         tempoTask?.cancel()
         if tempo != nil { tempo = nil }   // a stale grid must not drive the new track
+        // ...and the CLOCK must not keep it either: without this, a track
+        // change whose tempo never resolves left the old track's grid
+        // driving indefinitely — and the stale hold suppressed the very
+        // mic demand whose ingest self-heal could have cleared it (audit
+        // R9, F1). driveClockIfReady re-enters the drive when the new
+        // tempo lands; until then the look runs at the last tempo on
+        // audio-follow, exactly like a pause.
+        clock.endServiceDrive()
         guard let track else { return }
         let gen = generation
         tempoTask = Task { [weak self] in

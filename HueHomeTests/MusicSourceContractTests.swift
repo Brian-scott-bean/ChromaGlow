@@ -30,6 +30,31 @@ private final class ScriptedMusicSource: MusicSource {
     }
 }
 
+/// start() suspends until released — models the auth-prompt / login-sheet
+/// window where a second activation can interleave (audit R9, F4).
+@MainActor
+private final class GatedStartMusicSource: MusicSource {
+    let service: MusicService = .demo
+    let capabilities: SourceCapabilities = []
+    var onUpdate: ((NowPlayingTrack?, PlaybackPosition?) -> Void)?
+    private(set) var stopped = false
+    var startError: MusicSourceError?
+    private var gate: CheckedContinuation<Void, Never>?
+
+    func start() async throws {
+        await withCheckedContinuation { self.gate = $0 }
+        if let startError { throw startError }
+    }
+
+    func releaseStart() {
+        gate?.resume()
+        gate = nil
+    }
+
+    func stop() { stopped = true }
+    func transport(_ action: TransportAction) async {}
+}
+
 private final class SlowTempoProvider: TempoProvider, @unchecked Sendable {
     let id = "slow"
     let bpm: Double
@@ -154,6 +179,80 @@ final class MusicSourceContractTests: XCTestCase {
         XCTAssertFalse(mus.isPlaying)
         XCTAssertTrue(scripted.stopped)
         XCTAssertEqual(clock.source, .audio, "session end releases the clock")
+    }
+
+    // MARK: - Track change releases the clock (audit R9, F1)
+
+    func testTrackChangeEndsServiceDriveWhileTempoUnresolved() async throws {
+        // No providers, silent live estimate: the second track's tempo can
+        // NEVER resolve. The old track's grid must not keep driving —
+        // before the fix it held serviceHold forever, suppressing the mic
+        // demand that ingest's self-heal needed.
+        let mus = coordinator()
+        let scripted = ScriptedMusicSource()
+        try await mus.activate(scripted)
+        scripted.emit(
+            NowPlayingTrack(service: .demo, title: "A", artist: "X", tempoHint: 120),
+            PlaybackPosition(positionMs: 0, capturedAt: 100, isPlaying: true)
+        )
+        await waitUntil { self.clock.source == .service }
+
+        scripted.emit(
+            NowPlayingTrack(service: .demo, title: "B", artist: "X"),   // no hint
+            PlaybackPosition(positionMs: 0, capturedAt: 200, isPlaying: true)
+        )
+        XCTAssertEqual(clock.source, .audio,
+                       "an unresolved next track hands the clock to audio-follow, like a pause")
+        XCTAssertEqual(clock.bpm, 120, "the look keeps running at the last tempo")
+        XCTAssertFalse(clock.isServiceDriven(now: 201),
+                       "mic demand for .beat looks must be able to return immediately")
+    }
+
+    // MARK: - Activation liveness (audit R9, F4)
+
+    func testFailedStartDoesNotKillNewerSession() async throws {
+        let mus = coordinator()
+        let slow = GatedStartMusicSource()
+        slow.startError = .authorizationDenied
+
+        let firstActivation = Task { try await mus.activate(slow) }
+        await waitUntil { mus.activeService != nil }   // slow is provisionally active
+
+        // The user changes their mind mid-auth-prompt and picks another source.
+        let fast = ScriptedMusicSource()
+        try await mus.activate(fast)
+        fast.emit(
+            NowPlayingTrack(service: .demo, title: "T", artist: "A", tempoHint: 96),
+            PlaybackPosition(positionMs: 0, capturedAt: 100, isPlaying: true)
+        )
+        await waitUntil { mus.tempo != nil }
+
+        // Now the abandoned auth prompt resolves to a denial.
+        slow.releaseStart()
+        _ = await firstActivation.result
+
+        XCTAssertTrue(mus.hasSession, "the failed OLD activation must not tear down the NEW session")
+        XCTAssertEqual(mus.nowPlaying?.title, "T")
+        XCTAssertFalse(fast.stopped)
+        XCTAssertTrue(slow.stopped)
+    }
+
+    func testSupersededStartUnwindsQuietly() async throws {
+        let mus = coordinator()
+        let slow = GatedStartMusicSource()   // will SUCCEED, but too late
+
+        let firstActivation = Task { try await mus.activate(slow) }
+        await waitUntil { mus.activeService != nil }
+
+        let fast = ScriptedMusicSource()
+        try await mus.activate(fast)
+
+        slow.releaseStart()
+        _ = await firstActivation.result
+
+        XCTAssertTrue(slow.stopped, "a superseded start must unwind, not run as a zombie")
+        XCTAssertNil(slow.onUpdate, "a superseded source must not keep a coordinator callback")
+        XCTAssertFalse(fast.stopped)
     }
 
     // MARK: - Generation counter
