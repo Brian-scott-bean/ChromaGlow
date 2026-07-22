@@ -386,6 +386,47 @@
 
 ---
 
+## 2026-07-21 - [Claude] MUSIC R8c — Composer "jumps back to Ambient" root-caused + the dead band above the bar (build 42)
+
+### Branch
+- `main` (continues under `checkpoint/music-picker-spotify-scroll`)
+
+### Did
+- **Brian's precise repro cracked the scroll bug:** it lives in the Composer deck's sectioned
+  "All" view only — stacked PER-SECTION `LazyVGrid`s inside the non-lazy VStack each
+  under-estimate their unmaterialized rows, the ScrollView believes a far shorter content
+  height, and dragging past that phantom bottom clamps the offset back up — landing at
+  ~Ambient every time. Collapsing chevrons hid it because header-only content estimates
+  exactly. Fix: ONE `LazyVGrid` hosting every category as a `Section` (headers span the grid,
+  collapse logic unchanged, laziness preserved). Rig-verified: deep-scroll through all demo
+  sections holds, true bottom reachable and stable.
+- **Dead band above the Now Playing bar:** the R2-era 80pt `Color.clear` tab-bar spacer
+  double-counted once the bar's safeAreaInset (R8b) began clearing the tab bar itself.
+  Replaced with `studioBottomClearance` — present ONLY while the bar is suppressed
+  (≤700pt + running effect; condition in lockstep with
+  `StudioMusicWiring.suppressedForCompactMixer`). Rig-verified: dots → bar → tab bar stack
+  tight, extra row of deck real estate back.
+- Also this round (pre-R8c): restored `GuestAccessModels.swift` after a stray `x` keystroke
+  at char 0 broke Brian's device build (working-tree only, `git checkout --`).
+
+### Working
+- Suite 799/799 (xcresulttool-verified); guards green; build 42.
+
+### Left
+- **Brian device gate build 42:** Composer → All with every chevron OPEN → scroll to the very
+  bottom (the exact repro that failed on 41); the tightened bottom stack; then the standing
+  build-40/41 music checklist.
+- GetSongBPM key rotation still open.
+
+### Gotchas
+- NEVER stack multiple lazy containers in one ScrollView pass — a lazy grid's height estimate
+  for unmaterialized rows is wrong until visited, and the scroll clamps to the sum of wrong
+  estimates. One lazy container, `Section`s inside.
+- Any bottom-of-tab-page spacer must now account for the music bar's inset — clearance is the
+  bar's job unless the bar is suppressed.
+
+---
+
 ## 2026-07-21 - [Claude] MUSIC R8b — the bar was UNDER the tab bar: simulator-rig evidence round (build 41)
 
 ### Branch
