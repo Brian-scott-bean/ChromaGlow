@@ -145,3 +145,32 @@ final class SpotifyAPIClientTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Keys
+
+final class SpotifyKeysTests: XCTestCase {
+
+    /// clientID rides the same sanitizer as the GetSongBPM key: unresolved
+    /// `$(SPOTIFY_CLIENT_ID)` placeholders and whitespace collapse to "".
+    func testPlaceholderAndWhitespaceCollapseToEmpty() {
+        let name = "SPOTIFY_CLIENT_ID"
+        XCTAssertEqual(TempoProviderKeys.key(named: name, in: [name: "$(SPOTIFY_CLIENT_ID)"]), "")
+        XCTAssertEqual(TempoProviderKeys.key(named: name, in: [name: "  \n"]), "")
+        XCTAssertEqual(TempoProviderKeys.key(named: name, in: [name: " id-123 "]), "id-123")
+    }
+
+    /// An empty resolved clientID must close the auth gate before anything
+    /// (Keychain, network, login UI) is touched. Explicit "" injection makes
+    /// this deterministic whether or not a local Secrets.xcconfig exists.
+    @MainActor
+    func testEmptyClientIDKeepsAuthNotConfigured() async {
+        let auth = SpotifyAuthService(clientID: TempoProviderKeys.key(named: "SPOTIFY_CLIENT_ID", in: [:]))
+        do {
+            _ = try await auth.validAccessToken()
+            XCTFail("empty clientID must throw .notConfigured")
+        } catch SpotifyAuthService.AuthError.notConfigured {
+        } catch {
+            XCTFail("unexpected error: \(type(of: error))")
+        }
+    }
+}

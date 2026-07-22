@@ -15,12 +15,16 @@ import Foundation
 import CryptoKit
 import AuthenticationServices
 
-// MARK: - Config (paste at Gate D)
+// MARK: - Config
 
 enum SpotifyKeys {
-    /// From Brian's dashboard app at developer.spotify.com. Empty = the
-    /// Spotify source stays inert even with the DEBUG flag on.
-    static let clientID = ""
+    /// From Brian's dashboard app at developer.spotify.com, pasted into the
+    /// git-ignored Config/Secrets.xcconfig (SPOTIFY_CLIENT_ID) — same flow
+    /// as the GetSongBPM key, same sanitizer. Empty = the Spotify source
+    /// stays inert even with the DEBUG flag on.
+    static var clientID: String {
+        TempoProviderKeys.key(named: "SPOTIFY_CLIENT_ID", in: Bundle.main.infoDictionary)
+    }
     /// Must be registered VERBATIM in the dashboard's Redirect URIs.
     static let redirectURI = "chromaglow://spotify-callback"
     static let scopes = "user-read-playback-state user-read-currently-playing user-modify-playback-state"
