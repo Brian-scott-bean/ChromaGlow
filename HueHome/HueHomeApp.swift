@@ -306,6 +306,16 @@ struct AppRootView: View {
                             orchestrator.startAllDayScenesIfNeeded()
                             StartupTimeline.mark("sse.start")
 
+                            // Re-register every enabled automation's local
+                            // notifications: pending requests don't survive a
+                            // restore/new-phone migration, and ones scheduled
+                            // while permission was denied were silently dead
+                            // even after the user granted it in Settings.
+                            // Same-identifier adds replace — idempotent.
+                            let appAutomations = (try? modelContext.fetch(
+                                FetchDescriptor<AppAutomation>())) ?? []
+                            AutomationScheduler.shared.scheduleAll(appAutomations)
+
                             // ── Pending automation (cold-start: user tapped notification) ──
                             if let presetID = UserDefaults.standard.string(forKey: "pendingAutomationPresetID") {
                                 UserDefaults.standard.removeObject(forKey: "pendingAutomationPresetID")

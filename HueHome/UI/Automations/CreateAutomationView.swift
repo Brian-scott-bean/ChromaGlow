@@ -110,6 +110,12 @@ struct CreateAutomationView: View {
                 .frame(maxWidth: .infinity)
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.07)))
+            // Honesty: a local notification can't run code on silent
+            // delivery — the schedule fires only via a tap or a live app.
+            // The old silence here read as "set and forget".
+            Text("Runs when you tap its reminder, or right away if the app is open at that time.")
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.45))
         }
     }
 
