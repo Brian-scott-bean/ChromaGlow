@@ -143,6 +143,9 @@ struct ContentView: View {
             guard store.rooms.isEmpty else { return }
             while store.rooms.isEmpty {
                 try? await Task.sleep(for: .seconds(5))
+                // A cancelled sleep returns immediately — without this the
+                // loop busy-spins loadFromLocalCache on the main actor.
+                if Task.isCancelled { return }
                 store.loadFromLocalCache()
             }
         }

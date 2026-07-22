@@ -200,7 +200,15 @@ final class WatchStore: NSObject, ObservableObject {
     }
 
     private func credentials(for bridgeID: String?) -> WatchBridgeCredentials? {
-        if let bridgeID, let creds = bridges[bridgeID] { return creds }
+        if let bridgeID {
+            if let creds = bridges[bridgeID] { return creds }
+            // A bridge-targeted command must never fall back to ANOTHER
+            // bridge's credentials — a partial sync used to send room B's
+            // PUT to bridge A (404, swallowed, optimistic UI showed
+            // success). The legacy ip/token fallback is only for pre-
+            // multibridge snapshots, whose map is empty.
+            if !bridges.isEmpty { return nil }
+        }
         if let ip = bridgeIP, let token = token {
             return WatchBridgeCredentials(bridgeID: bridgeID ?? "legacy-default", ip: ip, token: token)
         }
@@ -216,8 +224,15 @@ final class WatchStore: NSObject, ObservableObject {
         // Update whichever list owns this group (room OR zone).
         if let idx = rooms.firstIndex(where: { $0.id == room.id }) { rooms[idx].isOn = newState }
         if let idx = zones.firstIndex(where: { $0.id == room.id }) { zones[idx].isOn = newState }
-        await patch(id: glID, body: ["on": ["on": newState]], ip: creds.ip, token: creds.token)
-        saveToLocalCache()
+        let ok = await patch(id: glID, body: ["on": ["on": newState]], ip: creds.ip, token: creds.token)
+        if ok {
+            saveToLocalCache()
+        } else {
+            // Away from home / dead bridge: revert instead of persisting an
+            // invented state to the cache AND complications indefinitely.
+            if let idx = rooms.firstIndex(where: { $0.id == room.id }) { rooms[idx].isOn = !newState }
+            if let idx = zones.firstIndex(where: { $0.id == room.id }) { zones[idx].isOn = !newState }
+        }
     }
 
     // MARK: - Set Brightness (latest-wins mailbox)
@@ -343,7 +358,9 @@ final class WatchStore: NSObject, ObservableObject {
 
     func recallScene(_ scene: WatchScene) async {
         guard let creds = credentials(for: scene.bridgeID) else { return }
-        // Optimistically mark the owning group on.
+        // Optimistically mark the owning group on — reverted if the write dies.
+        let prevRoomOn = rooms.first(where: { $0.id == scene.ownerGroupID })?.isOn
+        let prevZoneOn = zones.first(where: { $0.id == scene.ownerGroupID })?.isOn
         if let idx = rooms.firstIndex(where: { $0.id == scene.ownerGroupID }) { rooms[idx].isOn = true }
         if let idx = zones.firstIndex(where: { $0.id == scene.ownerGroupID }) { zones[idx].isOn = true }
         guard let url = URL(string: "https://\(creds.ip)/clip/v2/resource/scene/\(scene.id)") else { return }
@@ -352,8 +369,21 @@ final class WatchStore: NSObject, ObservableObject {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(creds.token,        forHTTPHeaderField: "hue-application-key")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["recall": ["action": "active"]])
-        _ = try? await Self.bridgeSession.data(for: req)
-        saveToLocalCache()
+        let ok: Bool
+        if let (_, response) = try? await Self.bridgeSession.data(for: req),
+           let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+            ok = true
+        } else {
+            ok = false
+        }
+        if ok {
+            saveToLocalCache()
+        } else {
+            if let prev = prevRoomOn,
+               let idx = rooms.firstIndex(where: { $0.id == scene.ownerGroupID }) { rooms[idx].isOn = prev }
+            if let prev = prevZoneOn,
+               let idx = zones.firstIndex(where: { $0.id == scene.ownerGroupID }) { zones[idx].isOn = prev }
+        }
     }
 
     // MARK: - Refresh from bridges (bounded, multi-bridge)
@@ -436,14 +466,19 @@ final class WatchStore: NSObject, ObservableObject {
         delegateQueue: nil
     )
 
-    private func patch(id: String, body: [String: Any], ip: String, token: String) async {
-        guard let url = URL(string: "https://\(ip)/clip/v2/resource/grouped_light/\(id)") else { return }
+    /// True only when the bridge acknowledged with a 2xx — callers use it to
+    /// decide whether an optimistic flip may be persisted.
+    @discardableResult
+    private func patch(id: String, body: [String: Any], ip: String, token: String) async -> Bool {
+        guard let url = URL(string: "https://\(ip)/clip/v2/resource/grouped_light/\(id)") else { return false }
         var req = URLRequest(url: url, timeoutInterval: 8)
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(token,              forHTTPHeaderField: "hue-application-key")
         req.httpBody  = try? JSONSerialization.data(withJSONObject: body)
-        _ = try? await Self.bridgeSession.data(for: req)
+        guard let (_, response) = try? await Self.bridgeSession.data(for: req),
+              let http = response as? HTTPURLResponse else { return false }
+        return (200...299).contains(http.statusCode)
     }
 }
 
