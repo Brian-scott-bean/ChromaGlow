@@ -563,6 +563,13 @@ final class StudioViewModel {
     var activeCompositionGamut: HueColorUtils.Gamut = .c
     var roomHasColorLights: Bool = true
     var restoredHarmonyRule: HarmonyRule? = nil
+    /// One-shot guard for programmatic harmony-chip clears (album colors,
+    /// a rule-less preset restore): StudioView's activeHarmonyRule onChange
+    /// has a DESTRUCTIVE `.none` branch (nils color3, resets color2) meant
+    /// for the user turning harmony off — a programmatic clear must reset
+    /// the chip without that echo. Armed by the restoredHarmonyRule
+    /// onChange, consumed by the activeHarmonyRule one. (Audit R9, F6.)
+    @ObservationIgnored var harmonyEchoSuppressed = false
     let suggestedAIPrompts: [String] = [
         "Static Warm Sunset",
         "Cozy Reading Corner",

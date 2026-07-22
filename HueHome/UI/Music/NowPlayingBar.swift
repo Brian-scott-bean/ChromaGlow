@@ -164,6 +164,7 @@ struct StudioMusicWiring: ViewModifier {
     let vm: StudioViewModel
 
     @Environment(MusicSessionCoordinator.self) private var music
+    @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var showSourcePicker = false
 
     /// Height contention is real on small phones: hide the bar while the
@@ -202,6 +203,13 @@ struct StudioMusicWiring: ViewModifier {
 
     private var paletteAction: (() -> Void)? {
         guard vm.activeCompositionBox != nil else { return nil }
+        // A bridge-stored room has no live loop reading the box — the
+        // paint badge there would invite a tap that does nothing (the
+        // schedule plays on the bridge hardware). Audit R9, F10.
+        if let roomID = vm.selectedRoom?.id,
+           orchestrator.compositionTransportByRoom[roomID] == .bridgeStored {
+            return nil
+        }
         return { applyAlbumPalette() }
     }
 
@@ -210,11 +218,26 @@ struct StudioMusicWiring: ViewModifier {
     private func applyAlbumPalette() {
         guard let palette = music.artworkPalette,
               let box = vm.activeCompositionBox else { return }
+        // commitSwatchEdit's clamp discipline: the extractor emits gamut-C
+        // points; the running room may be gamut A/B (audit R9, F7).
+        let gamut = vm.activeCompositionGamut
+        func clamped(_ c: CodableColor) -> CodableColor {
+            let xy = HueColorUtils.clampXYToGamut(x: c.x, y: c.y, gamut: gamut)
+            return CodableColor(x: xy.x, y: xy.y)
+        }
         if box.palette.mode != palette.mode { box.palette.mode = palette.mode }
-        box.palette.color1 = palette.color1
-        box.palette.color2 = palette.color2
-        box.palette.color3 = palette.color3
+        box.palette.color1 = clamped(palette.color1)
+        box.palette.color2 = clamped(palette.color2)
+        box.palette.color3 = palette.color3.map(clamped)
         box.palette.harmonyRule = nil
+        // Clear the harmony CHIP too — a lit rule re-imposes itself on the
+        // next pad drag and overwrites these colors (audit R9, F6). The
+        // `.none` sentinel rides the existing restoredHarmonyRule chain;
+        // StudioView's onChange arms the echo guard so its destructive
+        // `.none` branch can't fire on the fresh palette.
+        if vm.restoredHarmonyRule != HarmonyRule.none {
+            vm.restoredHarmonyRule = .none
+        }
         box.triggerRESTBurst()
     }
 }

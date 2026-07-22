@@ -312,9 +312,25 @@ struct StudioView: View {
             }
         }
         .onChange(of: vm.restoredHarmonyRule) { _, rule in
-            if let rule { activeHarmonyRule = rule }
+            // `.none` is the programmatic-clear sentinel (album colors);
+            // nil means the restored preset has no rule. Both must clear
+            // the chip WITHOUT the destructive `.none` echo below — it
+            // would nil color3 / reset color2 on the fresh palette
+            // (audit R9, F6 + the old non-nil-only asymmetry).
+            if let rule, rule != .none {
+                if activeHarmonyRule != rule { activeHarmonyRule = rule }
+            } else if activeHarmonyRule != .none {
+                vm.harmonyEchoSuppressed = true
+                activeHarmonyRule = .none
+            } else {
+                vm.harmonyEchoSuppressed = false   // nothing will fire; don't stay armed
+            }
         }
         .onChange(of: activeHarmonyRule) { _, newRule in
+            if vm.harmonyEchoSuppressed {
+                vm.harmonyEchoSuppressed = false
+                return
+            }
             guard let box = vm.activeCompositionBox else { return }
             if newRule == .none {
                 box.palette.color3 = nil
