@@ -32,13 +32,25 @@ final class SpotifyPKCETests: XCTestCase {
         let verifier = SpotifyPKCE.codeVerifier()
         let url = SpotifyPKCE.authorizeURL(
             clientID: "abc123",
-            challenge: SpotifyPKCE.codeChallenge(for: verifier)
+            challenge: SpotifyPKCE.codeChallenge(for: verifier),
+            state: "st-token"
         ).absoluteString
         XCTAssertTrue(url.contains("code_challenge_method=S256"))
         XCTAssertTrue(url.contains("client_id=abc123"))
         XCTAssertTrue(url.contains("response_type=code"))
+        XCTAssertTrue(url.contains("state=st-token"), "CSRF/mix-up defense rides every authorize URL")
         XCTAssertFalse(url.contains(verifier), "the verifier is a secret until the exchange")
         XCTAssertTrue(url.contains("user-read-currently-playing"))
+    }
+
+    func testStateTokensAreRandomAndURLSafe() {
+        let a = SpotifyPKCE.stateToken()
+        let b = SpotifyPKCE.stateToken()
+        XCTAssertNotEqual(a, b, "state tokens are per-login random")
+        let allowed = CharacterSet(charactersIn:
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        XCTAssertTrue(a.unicodeScalars.allSatisfy(allowed.contains))
+        XCTAssertEqual(a.count, 22, "16 octets base64url = 22 chars")
     }
 
     func testTokenResponseDecodes() throws {
@@ -74,7 +86,7 @@ final class SpotifyAPIClientTests: XCTestCase {
     private func client(status: Int, body: String = "", tokens: [String] = ["tok1"]) -> SpotifyAPIClient {
         let remaining = TokenFeed(tokens)
         return SpotifyAPIClient(
-            accessToken: { remaining.next() },
+            accessToken: { _ in remaining.next() },
             transport: { request in
                 let response = HTTPURLResponse(url: request.url!, statusCode: status,
                                                httpVersion: nil, headerFields: nil)!
@@ -136,13 +148,27 @@ final class SpotifyAPIClientTests: XCTestCase {
             return (Data(), HTTPURLResponse(url: request.url!, statusCode: 401,
                                             httpVersion: nil, headerFields: nil)!)
         }
-        let client = SpotifyAPIClient(accessToken: { "tok" }, transport: counter)
+        let forces = ForceLog()
+        let client = SpotifyAPIClient(
+            accessToken: { force in forces.append(force); return "tok" },
+            transport: counter
+        )
         do {
             _ = try await client.currentlyPlaying()
             XCTFail("second 401 must throw")
         } catch {
             XCTAssertEqual(callCount, 2, "exactly one auth retry")
+            XCTAssertEqual(forces.values, [false, true],
+                           "the retry must FORCE a refresh — re-serving the cached token " +
+                           "the expiry clock still trusts would just 401 again")
         }
+    }
+
+    private final class ForceLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var log: [Bool] = []
+        func append(_ v: Bool) { lock.lock(); log.append(v); lock.unlock() }
+        var values: [Bool] { lock.lock(); defer { lock.unlock() }; return log }
     }
 }
 

@@ -38,10 +38,23 @@ final class SpotifySource: MusicSource {
         }
         // Interactive login happens here if never linked — thrown errors
         // (cancelled sheet) surface in the picker.
-        _ = try await auth.validAccessToken()
+        do {
+            _ = try await auth.validAccessToken(allowInteractive: true)
+        } catch SpotifyAuthService.AuthError.exchangeRejected {
+            // The stored refresh token is definitively dead (revoked in
+            // the user's Spotify account). Without this, picking Spotify
+            // failed forever with no recovery path — wipe the dead grant
+            // and run the login once. Transport errors deliberately do
+            // NOT land here (a blip must not cost the stored link).
+            auth.unlink()
+            _ = try await auth.validAccessToken(allowInteractive: true)
+        }
         let authService = auth   // @MainActor class — implicitly Sendable
-        client = SpotifyAPIClient(accessToken: { @Sendable in
-            try await authService.validAccessToken()
+        client = SpotifyAPIClient(accessToken: { @Sendable force in
+            // Never interactive from a poll: after a mid-session unlink
+            // this throws .notLinked and pollOnce keeps the last state —
+            // a login sheet must only ever come from the picker's start().
+            try await authService.validAccessToken(forceRefresh: force)
         })
 
         lifecycleObservers.append(NotificationCenter.default.addObserver(

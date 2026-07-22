@@ -46,6 +46,13 @@ enum SpotifyPKCE {
         base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
     }
 
+    /// OAuth `state` (CSRF/mix-up defense): 16 random octets base64url.
+    static func stateToken() -> String {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return base64URL(Data(bytes))
+    }
+
     static func base64URL(_ data: Data) -> String {
         data.base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
@@ -53,7 +60,7 @@ enum SpotifyPKCE {
             .replacingOccurrences(of: "=", with: "")
     }
 
-    static func authorizeURL(clientID: String, challenge: String) -> URL {
+    static func authorizeURL(clientID: String, challenge: String, state: String) -> URL {
         var components = URLComponents(string: "https://accounts.spotify.com/authorize")!
         components.queryItems = [
             URLQueryItem(name: "client_id", value: clientID),
@@ -61,6 +68,7 @@ enum SpotifyPKCE {
             URLQueryItem(name: "redirect_uri", value: SpotifyKeys.redirectURI),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "code_challenge", value: challenge),
+            URLQueryItem(name: "state", value: state),
             URLQueryItem(name: "scope", value: SpotifyKeys.scopes),
         ]
         return components.url!
@@ -82,7 +90,12 @@ final class SpotifyAuthService: NSObject {
     static let refreshTokenAccount = "spotify_refresh_token"
     static let expiryDefaultsKey = "music.spotify.tokenExpiry"
 
-    enum AuthError: Error { case notConfigured, loginCancelled, exchangeFailed }
+    /// exchangeRejected = the token endpoint said NO (4xx/decode) — the
+    /// stored grant is definitively dead. Transport trouble is NOT mapped
+    /// here; it propagates as the transport's own error so callers never
+    /// wipe tokens over a network blip. notLinked = no refresh token and
+    /// interactive login wasn't allowed in this context (background poll).
+    enum AuthError: Error { case notConfigured, loginCancelled, exchangeRejected, notLinked }
 
     private let clientID: String
     private let transport: TempoTransport
@@ -104,12 +117,21 @@ final class SpotifyAuthService: NSObject {
 
     /// A currently-valid access token: cached → refreshed → interactive
     /// login (ASWebAuthenticationSession) as the last resort.
-    func validAccessToken() async throws -> String {
+    ///
+    /// `forceRefresh` skips the cached token — the API client passes it on
+    /// its one 401 retry (the local expiry clock said "valid" but Spotify
+    /// disagreed; re-serving the same token guaranteed a second 401).
+    /// `allowInteractive` gates the login sheet to explicit user contexts
+    /// (the picker's start()) — a background poll must never pop it.
+    func validAccessToken(forceRefresh: Bool = false,
+                          allowInteractive: Bool = false) async throws -> String {
         guard !clientID.isEmpty else { throw AuthError.notConfigured }
-        let expiry = defaults.double(forKey: Self.expiryDefaultsKey)
-        if Date().timeIntervalSince1970 < expiry - 60,
-           let token = try? KeychainManager.shared.load(for: Self.accessTokenAccount) {
-            return token
+        if !forceRefresh {
+            let expiry = defaults.double(forKey: Self.expiryDefaultsKey)
+            if Date().timeIntervalSince1970 < expiry - 60,
+               let token = try? KeychainManager.shared.load(for: Self.accessTokenAccount) {
+                return token
+            }
         }
         if let refresh = try? KeychainManager.shared.load(for: Self.refreshTokenAccount) {
             return try await exchange(form: [
@@ -118,6 +140,7 @@ final class SpotifyAuthService: NSObject {
                 "client_id": clientID,
             ])
         }
+        guard allowInteractive else { throw AuthError.notLinked }
         return try await interactiveLogin()
     }
 
@@ -129,16 +152,24 @@ final class SpotifyAuthService: NSObject {
 
     // MARK: Interactive login (untestable edge, kept minimal)
 
+    /// Held for the sheet's lifetime — a session with no strong reference
+    /// can deallocate mid-presentation (vanishing sheet, completion that
+    /// never fires).
+    private var activeWebAuthSession: ASWebAuthenticationSession?
+
     private func interactiveLogin() async throws -> String {
         let verifier = SpotifyPKCE.codeVerifier()
+        let expectedState = SpotifyPKCE.stateToken()
         let url = SpotifyPKCE.authorizeURL(
             clientID: clientID,
-            challenge: SpotifyPKCE.codeChallenge(for: verifier)
+            challenge: SpotifyPKCE.codeChallenge(for: verifier),
+            state: expectedState
         )
         let callback: URL = try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
                 url: url, callbackURLScheme: "chromaglow"
-            ) { callbackURL, error in
+            ) { [weak self] callbackURL, error in
+                Task { @MainActor in self?.activeWebAuthSession = nil }
                 if let callbackURL {
                     continuation.resume(returning: callbackURL)
                 } else {
@@ -147,11 +178,25 @@ final class SpotifyAuthService: NSObject {
             }
             session.presentationContextProvider = self
             session.prefersEphemeralWebBrowserSession = false
-            session.start()
+            activeWebAuthSession = session
+            if !session.start() {
+                // Couldn't present (no window scene yet) — the completion
+                // handler never fires in this case, so fail here instead
+                // of leaving the caller suspended forever.
+                activeWebAuthSession = nil
+                continuation.resume(throwing: AuthError.loginCancelled)
+            }
         }
-        guard let code = URLComponents(url: callback, resolvingAgainstBaseURL: false)?
-            .queryItems?.first(where: { $0.name == "code" })?.value
-        else { throw AuthError.exchangeFailed }
+        let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems
+        if let denial = items?.first(where: { $0.name == "error" })?.value {
+            throw denial == "access_denied" ? AuthError.loginCancelled
+                                            : AuthError.exchangeRejected
+        }
+        guard items?.first(where: { $0.name == "state" })?.value == expectedState else {
+            throw AuthError.exchangeRejected   // CSRF/mix-up — refuse the code
+        }
+        guard let code = items?.first(where: { $0.name == "code" })?.value
+        else { throw AuthError.exchangeRejected }
 
         return try await exchange(form: [
             "grant_type": "authorization_code",
@@ -170,11 +215,13 @@ final class SpotifyAuthService: NSObject {
         components.queryItems = form.map { URLQueryItem(name: $0.key, value: $0.value) }
         request.httpBody = Data((components.percentEncodedQuery ?? "").utf8)
 
+        // Transport errors propagate as thrown (never mapped to
+        // exchangeRejected) — a network blip must not read as a dead grant.
         let (data, response) = try await transport(request)
         guard (response as? HTTPURLResponse)?.statusCode == 200,
               let decoded = try? JSONDecoder().decode(SpotifyTokenResponse.self, from: data)
         else {
-            throw AuthError.exchangeFailed
+            throw AuthError.exchangeRejected
         }
         try? KeychainManager.shared.save(value: decoded.access_token, for: Self.accessTokenAccount)
         if let refresh = decoded.refresh_token {

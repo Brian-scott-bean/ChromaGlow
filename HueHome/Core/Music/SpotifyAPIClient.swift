@@ -65,11 +65,13 @@ final class SpotifyAPIClient: @unchecked Sendable {
     enum ClientError: Error { case http(Int), unauthorized }
 
     private let transport: TempoTransport
-    /// Supplies a valid access token; called again (forced) after a 401.
-    private let accessToken: @Sendable () async throws -> String
+    /// Supplies a valid access token. The Bool is forceRefresh: true on
+    /// the one 401 retry — the local expiry clock said "valid" but Spotify
+    /// disagreed, so re-serving the cached token would just 401 again.
+    private let accessToken: @Sendable (Bool) async throws -> String
 
     init(
-        accessToken: @escaping @Sendable () async throws -> String,
+        accessToken: @escaping @Sendable (Bool) async throws -> String,
         transport: @escaping TempoTransport = { try await URLSession.shared.data(for: $0) }
     ) {
         self.accessToken = accessToken
@@ -99,7 +101,7 @@ final class SpotifyAPIClient: @unchecked Sendable {
     private func call(_ method: String, _ path: String, retriedAuth: Bool = false) async throws -> Data? {
         var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/\(path)")!)
         request.httpMethod = method
-        request.setValue("Bearer \(try await accessToken())", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(try await accessToken(retriedAuth))", forHTTPHeaderField: "Authorization")
 
         let (data, response) = try await transport(request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -107,8 +109,8 @@ final class SpotifyAPIClient: @unchecked Sendable {
         case 200: return data
         case 204: return nil
         case 401 where !retriedAuth:
-            // Token expired mid-flight — the auth service refreshes on the
-            // next accessToken() call; retry exactly once.
+            // Token revoked/expired server-side — retry exactly once with
+            // a FORCED refresh (retriedAuth becomes the closure's flag).
             return try await call(method, path, retriedAuth: true)
         case 401: throw ClientError.unauthorized
         default: throw ClientError.http(status)

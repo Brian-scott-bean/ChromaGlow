@@ -220,6 +220,20 @@ struct MusicSourcePicker: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            // Recovery lever for a dead Spotify link (revoked refresh
+            // token): without it, the only way out was clearing the
+            // Keychain. Lazy closure — the Keychain read happens on
+            // long-press, not per render.
+            if option.kind == .spotify, SpotifyAuthService().isLinked {
+                Button(role: .destructive) {
+                    SpotifyAuthService().unlink()
+                    if music.activeService == .spotify { music.deactivate() }
+                } label: {
+                    Label("Unlink Spotify", systemImage: "link.badge.minus")
+                }
+            }
+        }
     }
 
     private var divider: some View {
