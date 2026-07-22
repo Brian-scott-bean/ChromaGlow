@@ -136,7 +136,6 @@
 		9104ED28E648C70654A53BC6 /* NowPlayingBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 450C00831509B188AC9710FD /* NowPlayingBar.swift */; };
 		91A44ACA5E6CD5A45629A2B4 /* CreateAutomationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FA271B19432BA4813305C8A /* CreateAutomationView.swift */; };
 		93402B91C1F931EA48EE4CF0 /* SpotifyAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */; };
-		C0F1C0DE0000000000000005 /* StudioScrollStabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F1C0DE0000000000000004 /* StudioScrollStabilityTests.swift */; };
 		951658093BEEBEC42FBEB22C /* HarmonyEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 864AC7B556935239B283510D /* HarmonyEngine.swift */; };
 		98241981FA9EF6CA7A3E7A97 /* BridgeSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67D63CB3391ED01349572D57 /* BridgeSetupView.swift */; };
 		98370CEBD9A64016AAC08FA2 /* MockMusicSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A48446A2F5B16431E585E443 /* MockMusicSource.swift */; };
@@ -256,6 +255,7 @@
 		C0DEC0DE013F000000000001 /* SceneBuilderLauncherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE013F000000000000 /* SceneBuilderLauncherView.swift */; };
 		C0DEC0DE0200000000000001 /* StartupTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0200000000000000 /* StartupTimeline.swift */; };
 		C0DEC0DE0201000000000001 /* MainThreadWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0201000000000000 /* MainThreadWatchdog.swift */; };
+		C0F1C0DE0000000000000005 /* StudioScrollStabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F1C0DE0000000000000004 /* StudioScrollStabilityTests.swift */; };
 		C1F360D81291713EACE0C1FD /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27B5C4A4767211516073798 /* SettingsView.swift */; };
 		C47CF29F24AA56854A38162C /* CreateGlobalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92662E9280D48307551834BA /* CreateGlobalSceneView.swift */; };
 		C5D93FFD211A2A6CAB0CF38A /* TransportVocabulary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19BE9C1668BB96CB3AF94716 /* TransportVocabulary.swift */; };
@@ -305,6 +305,7 @@
 		F4E1000311111111 /* EntertainmentConfigBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1000300000000 /* EntertainmentConfigBuilderView.swift */; };
 		F4E53A7CFA06753812998AC5 /* AppleMusicMappingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C36DDAEBF5B11FA1CDF0E2E3 /* AppleMusicMappingTests.swift */; };
 		F76C25A7507754502EAA43F1 /* GuestProfileEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B6660DD4E01C5236B17B0E0 /* GuestProfileEditorView.swift */; };
+		F78CE3DED80E10B9385E8367 /* AutomationsViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF29CC7E389A978458F93702 /* AutomationsViewModelTests.swift */; };
 		FCDEBFD9B7F0424A792BD6E5 /* BeatClockServiceDriveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 650A2BEE57CD50BA8DBF6324 /* BeatClockServiceDriveTests.swift */; };
 		FFD15D82F204C6955D0943F9 /* ShareSceneSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E83AFD376842F3C78B89CB40 /* ShareSceneSheet.swift */; };
 		FFF8215FC86B7529C8791696 /* SceneCopyEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B48BD4B2A1666C11CE73E4CF /* SceneCopyEngine.swift */; };
@@ -401,8 +402,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		C0F1C0DE0000000000000001 /* Base.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = Base.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
-		C0F1C0DE0000000000000002 /* Secrets.xcconfig.example */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig.example; path = Config/Secrets.xcconfig.example; sourceTree = "<group>"; };
 		013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeAPIClient.swift; path = ./HueHome/Core/Network/BridgeAPIClient.swift; sourceTree = "<group>"; };
 		05C9A90CE5077C985B897851 /* HueSceneEntity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueSceneEntity.swift; path = ./HueHome/Intents/HueSceneEntity.swift; sourceTree = "<group>"; };
 		0AE302747F21A3DDFB547CD1 /* KeychainManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KeychainManager.swift; path = HueHome/Core/Keychain/KeychainManager.swift; sourceTree = "<group>"; };
@@ -510,7 +509,6 @@
 		824843114E2CF9D61F1C85E7 /* MicDemandPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MicDemandPolicyTests.swift; path = ./HueHomeTests/MicDemandPolicyTests.swift; sourceTree = "<group>"; };
 		825FE84E577223087FB6A47F /* InvitePayloadCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InvitePayloadCodec.swift; path = ./HueHome/Core/Share/InvitePayloadCodec.swift; sourceTree = "<group>"; };
 		82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyAuthTests.swift; path = ./HueHomeTests/SpotifyAuthTests.swift; sourceTree = "<group>"; };
-		C0F1C0DE0000000000000004 /* StudioScrollStabilityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioScrollStabilityTests.swift; path = ./HueHomeTests/StudioScrollStabilityTests.swift; sourceTree = "<group>"; };
 		8408ED226D19F7C1E2884F2A /* AppleMusicSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppleMusicSource.swift; path = ./HueHome/Core/Music/AppleMusicSource.swift; sourceTree = "<group>"; };
 		850FF1B3391225414ACFB723 /* HueIntentAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueIntentAPIClient.swift; path = ./HueHome/Intents/HueIntentAPIClient.swift; sourceTree = "<group>"; };
 		864AC7B556935239B283510D /* HarmonyEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HarmonyEngine.swift; path = HueHome/UI/SceneBuilder/HarmonyEngine.swift; sourceTree = "<group>"; };
@@ -566,6 +564,7 @@
 		BB78DD6E803F76A88BE41CC5 /* RoomColorWashPlanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomColorWashPlanner.swift; path = HueHome/Core/Models/RoomColorWashPlanner.swift; sourceTree = "<group>"; };
 		BCB467185E202C3283838BC2 /* PresetSurfaceClassifierTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PresetSurfaceClassifierTests.swift; path = HueHomeTests/PresetSurfaceClassifierTests.swift; sourceTree = "<group>"; };
 		BE943A83FCAB08B4D0A0AD77 /* HueComponents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueComponents.swift; path = ./HueHome/UI/Components/HueComponents.swift; sourceTree = "<group>"; };
+		BF29CC7E389A978458F93702 /* AutomationsViewModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationsViewModelTests.swift; path = ./HueHomeTests/AutomationsViewModelTests.swift; sourceTree = "<group>"; };
 		BF677E03890391D6C1A26444 /* DemoDataProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DemoDataProvider.swift; path = HueHome/Core/DemoMode/DemoDataProvider.swift; sourceTree = "<group>"; };
 		C0DEC0DE005B000000000002 /* CompositionRoomPriorityScorer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionRoomPriorityScorer.swift; path = HueHome/Core/Composer/CompositionRoomPriorityScorer.swift; sourceTree = "<group>"; };
 		C0DEC0DE005B000000000004 /* CompositionRoomPriorityScorerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionRoomPriorityScorerTests.swift; path = ./HueHomeTests/CompositionRoomPriorityScorerTests.swift; sourceTree = "<group>"; };
@@ -631,6 +630,9 @@
 		C0DEC0DE0201000000000000 /* MainThreadWatchdog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MainThreadWatchdog.swift; path = HueHome/Core/Diagnostics/MainThreadWatchdog.swift; sourceTree = "<group>"; };
 		C0E0F77DAE2A16ED3DF08393 /* RoomAccessPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomAccessPicker.swift; path = ./HueHome/UI/Profiles/RoomAccessPicker.swift; sourceTree = "<group>"; };
 		C0EA7D31963C88AF14FFD401 /* ShazamPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShazamPolicyTests.swift; path = ./HueHomeTests/ShazamPolicyTests.swift; sourceTree = "<group>"; };
+		C0F1C0DE0000000000000001 /* Base.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = Base.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
+		C0F1C0DE0000000000000002 /* Secrets.xcconfig.example */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig.example; path = Config/Secrets.xcconfig.example; sourceTree = "<group>"; };
+		C0F1C0DE0000000000000004 /* StudioScrollStabilityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioScrollStabilityTests.swift; path = ./HueHomeTests/StudioScrollStabilityTests.swift; sourceTree = "<group>"; };
 		C14CC5CE1985B4B7902B6289 /* BridgeDynamicSceneExporter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeDynamicSceneExporter.swift; path = HueHome/Core/Composer/BridgeDynamicSceneExporter.swift; sourceTree = "<group>"; };
 		C1B3EB07FD696F50186A8835 /* RenameSceneSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RenameSceneSheet.swift; path = ./HueHome/UI/Scenes/RenameSceneSheet.swift; sourceTree = "<group>"; };
 		C27B5C4A4767211516073798 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = HueHome/UI/Settings/SettingsView.swift; sourceTree = "<group>"; };
@@ -835,15 +837,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		C0F1C0DE0000000000000003 /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				C0F1C0DE0000000000000001 /* Base.xcconfig */,
-				C0F1C0DE0000000000000002 /* Secrets.xcconfig.example */,
-			);
-			name = Config;
-			sourceTree = "<group>";
-		};
 		05E0DE7E33BBD7B45A6D8281 /* LightControl */ = {
 			isa = PBXGroup;
 			children = (
@@ -1254,6 +1247,15 @@
 			name = Diagnostics;
 			sourceTree = "<group>";
 		};
+		C0F1C0DE0000000000000003 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				C0F1C0DE0000000000000001 /* Base.xcconfig */,
+				C0F1C0DE0000000000000002 /* Secrets.xcconfig.example */,
+			);
+			name = Config;
+			sourceTree = "<group>";
+		};
 		C2AD2426AB8C66E8F060B556 /* RoomDetail */ = {
 			isa = PBXGroup;
 			children = (
@@ -1415,6 +1417,7 @@
 				82998370CD3B96ED1CF688EE /* SpotifyAuthTests.swift */,
 				C0F1C0DE0000000000000004 /* StudioScrollStabilityTests.swift */,
 				824843114E2CF9D61F1C85E7 /* MicDemandPolicyTests.swift */,
+				BF29CC7E389A978458F93702 /* AutomationsViewModelTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -2054,6 +2057,7 @@
 				93402B91C1F931EA48EE4CF0 /* SpotifyAuthTests.swift in Sources */,
 				C0F1C0DE0000000000000005 /* StudioScrollStabilityTests.swift in Sources */,
 				4B877271E843BC31EAE8D90D /* MicDemandPolicyTests.swift in Sources */,
+				F78CE3DED80E10B9385E8367 /* AutomationsViewModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

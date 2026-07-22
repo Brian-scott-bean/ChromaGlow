@@ -120,9 +120,13 @@ final class AutomationsViewModel {
     func toggle(_ item: AutomationDisplayItem) {
         let newEnabled = !item.enabled
 
-        // Optimistic update
-        if let idx = automations.firstIndex(where: { $0.id == item.id }) {
-            automations[idx].enabled = newEnabled
+        // Optimistic update — full-array replacement, not an in-place subscript
+        // write: iOS 17.0/17.1 Observation missed element mutations, which is
+        // why RoomDetailViewModel adopted this idiom (audit L-47).
+        automations = automations.map {
+            var a = $0
+            if a.id == item.id { a.enabled = newEnabled }
+            return a
         }
         appendLog("\(newEnabled ? "✅" : "⏸") '\(item.name)' → \(newEnabled ? "enabled" : "disabled")")
 
@@ -143,9 +147,11 @@ final class AutomationsViewModel {
                 log.info("Automations: '\(item.name)' → \(newEnabled)")
             } catch {
                 appendLog("❌ Toggle failed: \(error.localizedDescription)")
-                // Rollback
-                if let idx = automations.firstIndex(where: { $0.id == item.id }) {
-                    automations[idx].enabled = !newEnabled
+                // Rollback (same full-array idiom as the optimistic write)
+                automations = automations.map {
+                    var a = $0
+                    if a.id == item.id { a.enabled = !newEnabled }
+                    return a
                 }
             }
         }
