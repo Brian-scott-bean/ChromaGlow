@@ -28,10 +28,18 @@ struct TourPresentation: Identifiable, Equatable {
     /// Bumped per presentation attempt so a retry re-presents cleanly.
     let id: Int
     let pages: [TutorialPage]
+    /// True for the versioned "What's New" mini-deck (new pages only) shown
+    /// to users who completed an older tour. Defaulted so the full-tour and
+    /// MoreView replay call sites compile unchanged.
+    var isWhatsNew: Bool = false
 }
 
 struct WelcomeTourWiring: ViewModifier {
     @AppStorage("castchroma.hasSeenWelcomeTour") private var hasSeenWelcomeTour = false
+    /// Highest catalog version this user has finished seeing. 0 = key absent
+    /// (legacy install, folded to "saw v1" by shouldPresentWhatsNew). Stamped
+    /// by BOTH finishes: the full tour and the What's New deck.
+    @AppStorage("castchroma.seenTourVersion") private var seenTourVersion = 0
     @Environment(DeepLinkCoordinator.self) private var deepLink
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var tourPresentation: TourPresentation?
@@ -41,8 +49,10 @@ struct WelcomeTourWiring: ViewModifier {
         content
             .task { await autoPresentIfNeeded() }
             .fullScreenCover(item: $tourPresentation) { presentation in
-                WelcomeTourView(pages: presentation.pages) {
-                    hasSeenWelcomeTour = true
+                WelcomeTourView(pages: presentation.pages,
+                                headerTitle: presentation.isWhatsNew ? "WHAT'S NEW" : "WELCOME TOUR") {
+                    if !presentation.isWhatsNew { hasSeenWelcomeTour = true }
+                    seenTourVersion = TutorialCatalog.catalogVersion
                     tourPresentation = nil
                 }
                 .onAppear { tourSurfaceVisible = true }
@@ -51,7 +61,8 @@ struct WelcomeTourWiring: ViewModifier {
     }
 
     private func autoPresentIfNeeded() async {
-        guard !hasSeenWelcomeTour else { return }
+        guard !hasSeenWelcomeTour || seenTourVersion < TutorialCatalog.catalogVersion
+        else { return }
         // Let the first frame paint and any cold-start URL / Siri intent land.
         try? await Task.sleep(for: .milliseconds(700))
         // Wait for the first loadAll to settle so guestAccessInfo is truthful.
@@ -61,29 +72,48 @@ struct WelcomeTourWiring: ViewModifier {
               ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(100))
         }
-        guard !Task.isCancelled, tourPresentation == nil, !hasSeenWelcomeTour else { return }
+        guard !Task.isCancelled, tourPresentation == nil else { return }
         // openToken != 0 catches the plain lightshade://dashboard cold start,
         // which bumps the token without setting any pending field.
         let deepLinkBusy = deepLink.hasPendingRoute || deepLink.openToken != 0
-        guard TutorialCatalog.shouldAutoPresent(hasSeenTour: hasSeenWelcomeTour,
-                                                hasPendingDeepLink: deepLinkBusy) else { return }
         // Snapshot the audience now — a mid-tour grant update must not shift
         // the page count under the user's thumb.
-        let pages = TutorialCatalog.pages(includeStudioSuite:
-            !(orchestrator.guestAccessInfo.isGuestOnly && !orchestrator.isDemoMode))
-        debugLog("[Tour] auto-presenting (\(pages.count) pages)")
-        tourPresentation = TourPresentation(id: 1, pages: pages)
+        let includeStudioSuite =
+            !(orchestrator.guestAccessInfo.isGuestOnly && !orchestrator.isDemoMode)
+
+        let presentation: TourPresentation
+        if TutorialCatalog.shouldAutoPresent(hasSeenTour: hasSeenWelcomeTour,
+                                             hasPendingDeepLink: deepLinkBusy) {
+            let pages = TutorialCatalog.pages(includeStudioSuite: includeStudioSuite)
+            debugLog("[Tour] auto-presenting (\(pages.count) pages)")
+            presentation = TourPresentation(id: 1, pages: pages)
+        } else if TutorialCatalog.shouldPresentWhatsNew(hasSeenTour: hasSeenWelcomeTour,
+                                                        lastSeenVersion: seenTourVersion,
+                                                        hasPendingDeepLink: deepLinkBusy) {
+            let newPages = TutorialCatalog.whatsNewPages(
+                sinceVersion: max(1, seenTourVersion),
+                includeStudioSuite: includeStudioSuite)
+            // Guest shells may see nothing new — present nothing AND stamp
+            // nothing, so the check re-runs if this device gains owner
+            // access later. Deep-link suppression likewise stamps nothing.
+            guard !newPages.isEmpty else { return }
+            debugLog("[Tour] what's-new presenting (\(newPages.count) pages)")
+            presentation = TourPresentation(id: 1, pages: newPages, isWhatsNew: true)
+        } else {
+            return
+        }
+        tourPresentation = presentation
 
         // Verify the cover actually presented; re-request once if it was
         // swallowed by a racing presentation (see header comment).
         try? await Task.sleep(for: .seconds(2))
-        guard !Task.isCancelled, tourPresentation != nil, !tourSurfaceVisible,
-              !hasSeenWelcomeTour else { return }
+        guard !Task.isCancelled, tourPresentation != nil, !tourSurfaceVisible else { return }
         debugLog("[Tour] cover was dropped — re-requesting presentation")
         tourPresentation = nil
         try? await Task.sleep(for: .milliseconds(500))
-        guard !Task.isCancelled, !hasSeenWelcomeTour else { return }
-        tourPresentation = TourPresentation(id: 2, pages: pages)
+        guard !Task.isCancelled, tourPresentation == nil else { return }
+        tourPresentation = TourPresentation(id: 2, pages: presentation.pages,
+                                            isWhatsNew: presentation.isWhatsNew)
     }
 }
 

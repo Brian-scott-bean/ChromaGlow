@@ -13,6 +13,10 @@ import UIKit
 
 struct WelcomeTourView: View {
     let pages: [TutorialPage]
+    /// "WELCOME TOUR" for the full deck; the wiring passes "WHAT'S NEW" for
+    /// the versioned mini-deck. Declared between pages and onFinish so
+    /// trailing-closure call sites compile unchanged.
+    var headerTitle: String = "WELCOME TOUR"
     let onFinish: () -> Void
 
     @State private var pageIndex = 0
@@ -47,7 +51,7 @@ struct WelcomeTourView: View {
 
     private var topBar: some View {
         HStack {
-            Text("WELCOME TOUR")
+            Text(headerTitle)
                 .font(HueFont.stageTag)
                 .tracking(1.2)
                 .foregroundStyle(StagePalette.muted)
@@ -167,7 +171,7 @@ struct WelcomeTourView: View {
     }
 
     private var pageDots: some View {
-        // Compact metrics: 12 dots + Back + Next must fit a 375pt phone
+        // Compact metrics: 13 dots + Back + Next must fit a 375pt phone
         // without ever squeezing the Next label (which is fixedSize).
         HStack(spacing: 5) {
             ForEach(pages.indices, id: \.self) { i in
