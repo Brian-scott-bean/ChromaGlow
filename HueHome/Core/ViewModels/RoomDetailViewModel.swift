@@ -432,6 +432,7 @@ final class RoomDetailViewModel {
 
         if isDemoMode {
             appendLog("✦ Demo: \(count) scene(s) removed locally")
+            for scene in toDelete { scrubSceneIdentityState(for: scene.id) }
             return
         }
 
@@ -441,6 +442,7 @@ final class RoomDetailViewModel {
                 do {
                     try await api?.deleteScene(id: scene.id)
                     appendLog("✅ Deleted '\(scene.name)'")
+                    scrubSceneIdentityState(for: scene.id)
                 } catch {
                     appendLog("❌ Delete '\(scene.name)' failed: \(error.localizedDescription)")
                     anyFailed = true
@@ -873,6 +875,7 @@ final class RoomDetailViewModel {
 
         if isDemoMode {
             appendLog("✦ Demo: scene '\(item.name)' removed locally")
+            scrubSceneIdentityState(for: item.id)
             return
         }
 
@@ -880,11 +883,24 @@ final class RoomDetailViewModel {
             do {
                 try await api?.deleteScene(id: item.id)
                 appendLog("✅ Scene '\(item.name)' deleted.")
+                scrubSceneIdentityState(for: item.id)
             } catch {
                 appendLog("❌ Delete failed: \(error.localizedDescription)")
                 await loadScenes()   // restore strip on failure
             }
         }
+    }
+
+    /// The ScenesTab delete hygiene, mirrored: a scene deleted from RoomDetail
+    /// used to leave its favorite-CSV entry, usage history, and Studio
+    /// provenance badge key behind forever (identity-keyed stores never
+    /// self-clean — the build-25 transfer contract).
+    private func scrubSceneIdentityState(for sceneID: String) {
+        SceneProvenanceStore.shared.remove(key: sceneID)
+        let raw = UserDefaults.standard.string(forKey: "favoriteSceneIDs") ?? ""
+        UserDefaults.standard.set(FavoriteSceneCSV.removing(raw, id: sceneID),
+                                  forKey: "favoriteSceneIDs")
+        SceneUsageStore.shared.remove(bridgeSceneID: sceneID)
     }
 
     // ──────────────────────────────────────────────
