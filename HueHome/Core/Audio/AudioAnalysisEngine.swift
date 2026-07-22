@@ -311,9 +311,15 @@ final class AudioAnalysisEngine {
 
     private func startTempoTask() {
         tempoTask?.cancel()
+        let previous = tempoTask
         let extractor = self.extractor
         let estimator = self.tempoEstimator
         tempoTask = Task { @MainActor [weak self] in
+            // Drain the predecessor before reset(): cancel can't reach its
+            // in-flight detached update(), and TempoEstimator is single-
+            // writer — resetting under a live update both loses the reset
+            // and races the hysteresis state.
+            await previous?.value
             estimator.reset()
             while !Task.isCancelled, self?.engineRunning == true {
                 let snapshot = extractor.onsetEnvelopeSnapshot()
@@ -321,6 +327,11 @@ final class AudioAnalysisEngine {
                     let estimate = await Task.detached(priority: .utility) {
                         estimator.update(onsetEnvelope: snapshot.envelope, hopRate: snapshot.hopRate)
                     }.value
+                    // stopEngine() may have landed while we were suspended on
+                    // the detached estimate — publishing now would overwrite
+                    // its zeroed tempo with a stale one that then haunts
+                    // latestFeatures() through the whole off period.
+                    guard !Task.isCancelled, self?.engineRunning == true else { break }
                     if let estimate {
                         Self.publishTempo(bpm: estimate.bpm, confidence: estimate.confidence)
                         BeatClock.shared.ingest(estimate: estimate, endTime: snapshot.endTime)
