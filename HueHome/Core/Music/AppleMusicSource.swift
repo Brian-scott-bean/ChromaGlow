@@ -194,7 +194,11 @@ final class AppleMusicSource: MusicSource {
                 isrc: song.isrc,
                 appleMusicID: song.id.rawValue,
                 durationSeconds: song.duration,
-                artworkURL: song.artwork?.url(width: 600, height: 600)
+                // 128px is generous for the sole consumer — the palette
+                // extractor's 32×32 k-means sample; nothing renders pixels
+                // (the bar paints a gradient). 600px was ~1.4MB of transient
+                // decode per track change for nothing.
+                artworkURL: song.artwork?.url(width: 128, height: 128)
             )
         }
         // Non-song entries (videos etc.): show what we know, sync less.
@@ -204,7 +208,7 @@ final class AppleMusicSource: MusicSource {
             isrc: nil,
             appleMusicID: nil,
             durationSeconds: nil,
-            artworkURL: entry.artwork?.url(width: 600, height: 600)
+            artworkURL: entry.artwork?.url(width: 128, height: 128)
         )
     }
 }
