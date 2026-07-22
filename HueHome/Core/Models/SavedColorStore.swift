@@ -80,10 +80,18 @@ final class SavedColorStore {
         }
     }
 
+    /// Hard cap on saved swatches — four capture surfaces insert here and
+    /// nothing ever pruned, so the UserDefaults blob (and the My Colors
+    /// strip) grew without bound. Oldest drop off the end.
+    static let maxColors = 200
+
     /// Newest swatches first — the color you just saved is the one you'll
     /// reach for next.
     func add(_ color: SavedColor) {
         colors.insert(color, at: 0)
+        if colors.count > Self.maxColors {
+            colors.removeLast(colors.count - Self.maxColors)
+        }
         persist()
     }
 
@@ -144,12 +152,17 @@ extension SavedColor {
         mirekMin: Int = 153,
         mirekMax: Int = 500
     ) -> Application {
+        // Clamp at the boundary: the memberwise init clamps, but synthesized
+        // Codable decoding bypasses it — and SavedColor is Transferable
+        // under an exported UTType, so a cross-app drag payload arrives
+        // un-vetted.
+        let bri = max(1, min(100, brightness))
         if supportsColor, let x, let y {
-            return .color(x: x, y: y, brightness: brightness)
+            return .color(x: x, y: y, brightness: bri)
         }
         if let mirek, supportsColorTemp {
             return .colorTemp(mirek: max(mirekMin, min(mirekMax, mirek)),
-                              brightness: brightness)
+                              brightness: bri)
         }
         if supportsColor, let mirek {
             // CT swatch onto a color-only light: render the white as xy.
@@ -158,8 +171,8 @@ extension SavedColor {
             var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
             ui.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
             let (x, y) = HueColorUtils.xyFrom(hue: Double(h), saturation: Double(s), brightness: 1)
-            return .color(x: x, y: y, brightness: brightness)
+            return .color(x: x, y: y, brightness: bri)
         }
-        return .brightnessOnly(brightness)
+        return .brightnessOnly(bri)
     }
 }
