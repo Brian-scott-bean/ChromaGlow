@@ -547,3 +547,53 @@ build-28 print sweep left zero raw Release prints across all four targets. No ne
 needed — recorded here so the next round doesn't re-derive it.
 
 *End of Round 3 addendum.*
+
+---
+
+## 9. Round 4 — full-app audit round closures (2026-07-22, build 44)
+
+The "maintenance round" §8.4 anticipated. Every software-only deferred item was re-verified
+against build 43 and either fixed, closed as already-fixed, or documented. Per-fix commits on
+`main` (rollback tag `checkpoint/full-audit-2026-07-22`); suite green per batch via xcresulttool.
+
+### 9.1 FIXED THIS ROUND
+
+| ID | Disposition |
+|---|---|
+| L-02/L-28 | `bridgeBodyVerdict` + `decodeV2` — fatal 2xx bodies throw `bridgeError` (rollbacks fire), partial log-only; fixtures at both choke points (execute() and the decode layer TestableAPIClient exercises). |
+| L-03 | Eager `let session` on both clients (delegate is the static pinned-trust singleton — no lazy self access existed). |
+| L-04 | Scene capacity no longer gates `canFitOneAnimation` (the rules-chain uploader creates zero scenes); rules/sensors/schedules still gate. |
+| L-12 | `decodePSK` requires exactly 32 hex chars → 16 bytes before the DTLS open; wrong lengths fail fast instead of a 10s opaque timeout. |
+| L-13 | Dead `HueSSEService` class + `SSEEnvelope` deleted (models kept — no pbxproj change needed after all); AGENTS.md capability line corrected. |
+| L-16 (software half) | `BridgeEndpoint.validatedManualHost` (strict IPv4 incl. leading-zero refusal — Darwin inet_pton is lenient; IPv6; RFC-1123 hostname) gates the manual-IP sheet with inline guidance. Trust-all half MOOT since D-016/TOFU. |
+| L-29 | Ghost zone refs prune against the light cache (ref order preserved — M-04; zero fetches preserved — ComposerFetchPathParityTests). |
+| L-47 | Full-array replacement in AutomationsViewModel.toggle + rollback; `withObservationTracking` test pins notification. |
+| Dead Sync stack (incl. L-05) | `RestSender` extracted to Core/Network; SyncModeEngine/Visualizer/Gaming/Ambient/SyncEngineProtocol deleted (zero refs, pbxproj via `add_full_audit_files.rb`). L-05's race died with the corpse. |
+
+### 9.2 ALREADY FIXED (verified, closed without work)
+
+| ID | Evidence |
+|---|---|
+| L-06 | `lightEventSubscriberToken` identity check in `onTermination` (commit 72f13fe), pinned by `OrchestratorSSETests`. |
+| L-11 | `sendBestEffortStop()` compensating stop on failed DTLS open, pinned by `testFailedDTLSOpenIssuesCompensatingStop`. |
+
+### 9.3 WONT-FIX (documented)
+
+| ID | Reason |
+|---|---|
+| L-43 | The `EffectEngine` actor has ZERO instantiations (its consumer was the Round-4-deleted Effects tab); fixing a race in dead code adds noise. Deletion candidate for a future sweep — `EffectLoops.setAll/setOne` must survive (GatedBulkWriteTests pins the M-14 gate through them). |
+| Shazam `.artwork` capability | No consumer reads the flag; the coordinator falls back to `artworkURL` regardless. Doc-comment clarified on `SourceCapabilities`. |
+| TempoQuery `meta:` separator | Collision requires a `|` in an artist name mirrored in a title — contrived; changing the separator invalidates every user's tempo cache for no real risk. |
+
+### 9.4 STILL OPEN AFTER ROUND 4
+
+| ID | Why |
+|---|---|
+| L-14, L-15, L-17 | Pairing-flow bundle — stays with the dedicated physical-bridge round (L-16's validation half shipped; the rest needs the two-phone/hardware checklist). |
+| L-48..L-51, L-53 | Scene/automation write-path polish — edge-only, next maintenance round. |
+| L-31..L-40, L-55, M-19/D-020, I-01, I-13 | Android — Batch-4 promotion + D-020 (Brian + Codex loop). |
+
+Round 4 also fixed cross-feature findings OUTSIDE this audit's original scope (music-session
+lifecycle, automation notification replay/double-fire, All Day Scenes timezone math, watch/widget
+optimistic-write honesty, favorites ordering, widget publish diff-gating, harmony-clear sentinel).
+Full record: the 2026-07-22 DEVLOG entry.

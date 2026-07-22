@@ -1,8 +1,27 @@
-# HueHome Pro — Changelog
+# ChromaGlow — Changelog
 
 All notable changes are documented here.
 Format: `[vX.Y.Z] — YYYY-MM-DD`
 Types: `Added` | `Changed` | `Fixed` | `Removed` | `Architecture`
+
+> **The canonical, always-current history is `DEVLOG.md`** (per-build
+> entries, appended every session). This file carries release-level
+> summaries only and is updated at release milestones.
+
+---
+
+## [v1.0.0] — 2026-07 (in submission prep; builds 9–44)
+### Added
+- Studio (3 decks: bridge effects, live mic modes, Composer looks — 66 built-ins), Perform DJ surface, Sequence groundwork
+- Scenes overhaul: QR scene sharing, per-room grouping, favorites, usage ordering, speed control, copy/move with identity transfer
+- Family Sharing: per-guest minted keys, Profiles & Access, revocation honesty, guest-filtered every surface
+- Siri App Shortcuts (10), interactive widgets + Control Center, watch app + watch-face scenes
+- Music integration (v1.1 feature set, dev-complete): Apple Music / Auto-Detect Song / sample track, beat-locked looks, album-color painting
+- 12→13-page replayable Welcome Tour with versioned "What's New"
+### Changed
+- App identity: ChromaGlow naming, plain-language vocabulary pass, 44pt tap targets, previews-everywhere
+### Fixed
+- Hardening rounds 1–3 (TLS pinning, secret-log scrub, Keychain access group, privacy manifests) + the 2026-07-22 full-audit round (see DEVLOG)
 
 ---
 

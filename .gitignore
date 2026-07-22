@@ -55,3 +55,9 @@ fastlane/test_output
 *.mobileprovision
 secrets.xcconfig
 Config/Secrets.xcconfig
+
+# Local-only Xcode husks at the repo root (an old rename experiment:
+# ChromaGlow/ holds only .DS_Store, ChromaGlow.xcodeproj only xcuserdata).
+# The live project is HueHome.xcodeproj.
+ChromaGlow/
+ChromaGlow.xcodeproj/
