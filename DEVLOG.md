@@ -419,6 +419,175 @@
 
 ---
 
+## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 3 — scoped REST mailboxes + cooperative cancellation
+
+### Branch
+- `fix/composer-scoped-rest-mailbox`, cut from `main` (`ee9064e`, the Packet 2 merge, PR #52).
+- Rollback tag: `checkpoint/pre-composer-packet-3` (at `ee9064e`). No data-format or
+  persistence change, so `git reset --hard checkpoint/pre-composer-packet-3` is a total rollback.
+- **No version or build bump** — not an install build. PR opened, not merged.
+
+### The defect
+Phase 0 item 5 / review risk rows #3, #4, #5. `RestSender` was a single-slot,
+single-in-flight latest-wins mailbox, and **one instance** (`studioRestSender`) served every
+Composer room, every Studio app-driven engine loop, and every Studio live-param write, across
+every bridge. Four consequences, all live on `main` before this packet:
+
+1. **`clear()` was global.** `stopCompositionMode(roomID:)` discarded other rooms' and other
+   bridges' queued frames. Worse than a dropped frame: the scheduler had *already* recorded
+   `lastSentX/Y/Bri` for the frame `clear()` threw away, so the delta gate then skipped the
+   re-render — **a stopped room could freeze a RUNNING room's colour.**
+2. **`clear()` could not stop work that was already executing.** The gradient and per-light
+   Composer closures loop over 5-light batches with 80 ms sleeps between them and contained
+   zero cancellation checks — 300–500 ms of stale writes that could land *after* the
+   replacement look's prime frame.
+3. **`Task.isCancelled` was useless as a fix.** The flush task is unstructured, unowned and
+   never cancelled, so `Task.isCancelled` is *permanently false* inside an enqueued closure.
+   Any guard built on it there is a silent no-op. This also makes `BridgeCommandGate`'s own
+   cancellation guards inert when it is driven from inside a mailbox closure — which is
+   exactly what the Studio per-light loops do.
+4. **The one-in-flight guarantee had a scheduling race.** The in-flight flag was set inside
+   the separately spawned flush task, so two enqueues arriving before the first flush was
+   scheduled spawned two flush tasks; the second found `pending` empty, fell through, and
+   cleared the flag while the first was still awaiting work — permitting the concurrent
+   execution and bridge backlog the mailbox exists to prevent.
+
+### The design — why the scope key looks like this
+`RestScope` is `(roomID, owner)` where owner is `.composer` / `.studio` / `.allDay`.
+**`bridgeID` is deliberately NOT in the scope.** Bridge identity lives in the owning
+dictionary — `UnifiedOrchestrator.restSendersByBridge`, keyed exactly like `commandGates`
+(`"legacy"` for the nil-bridge fallback). Duplicating the bridge in the value would let the
+dictionary key and the scope disagree, and a `clear()` aimed at the wrong sender fails
+*silently*. Owner is part of the key because Composer and Studio can legitimately target the
+same room at once (a Studio slider while a composition runs) — one must not cancel the other.
+
+Cancellation is epoch-based, not `Task.isCancelled` (see defect 3). Every scope carries a
+monotonic epoch; each enqueued closure receives a `ValidityProbe` bound to the epoch it was
+stored under; `clear(scope:)` bumps that epoch. `enqueue` seeds `epochs[scope]` without
+bumping it — otherwise a scope whose work is *currently executing* would be in neither
+`pending` (flush removed it) nor `epochs`, and `clearAll()` would miss exactly the closure
+still writing to the bridge. (A unit test caught that; it is now test 4.)
+
+One lifecycle flag, `isFlushing`, set **synchronously inside `enqueue` before** the flush
+task is spawned — that closes defect 4. There is deliberately no second authoritative flag.
+
+### What `clear(scope:)` guarantees — and what it does not
+**GUARANTEED:** pending work for that scope is removed (it never starts); the epoch is
+invalidated *before* `clear` returns; an executing closure stops before entering its **next**
+batch or next light; at most the already-dispatched batch or request remains; every other
+scope — other rooms, the other owner on the same room, every other bridge — is untouched.
+
+**NOT GUARANTEED:** that an HTTP request already in flight completes before the replacement
+prime, or that the prime is the final write to those lights. Stated precisely: *the old scope
+is invalidated before the replacement prime; an already-dispatched batch may still complete,
+but no later batch may begin.*
+
+### Cooperative cancellation covers BOTH loops
+- **Composer five-light batches** — `stillCurrent` is probed at the top of every batch
+  iteration, including batch 1, in both the gradient-aware and flat per-light paths.
+- **Studio paced per-light parameter writes** — warmth, speed and base colour. The probe is
+  checked immediately before **every** `gate.send`, including the first light. Checking once
+  before the loop is not sufficient; that is what left a ~`lightCount × 100 ms` (~2 s on a
+  20-light room) uncancellable sweep.
+
+**Both carry the SAME bound: no more than the currently dispatched batch or individual light
+request can survive scope invalidation.** Neither aborts an in-flight HTTP request.
+
+### Composer bridge identity comes from the runtime, and nowhere else
+`stopCompositionMode` reads `compositionRuntimes[roomID]?.bridgeID`, captured before the
+dictionary is mutated (the runtime is still present at the clear point; it is removed later
+in the same function). Never from `allRooms`, manifests, selected-room state, or dictionary
+order — `CompositionRuntime.bridgeID` exists precisely because the `allRooms` snapshot goes
+stale mid-composition, and a stale lookup would clear the wrong bridge's mailbox in both
+directions. **No REST runtime → nothing is cleared and no sender is conjured.** Guessing a
+bridge cancels an innocent room; test 10 pins that the stop does not even lazily create a
+sender.
+
+### The previous-Studio-scope ownership fix
+`activeStudioTask` is one global slot, so starting Studio in room B silently replaces room A's
+loop. `startStudioMode` therefore clears the **previously recorded** scope (tracked in
+`activeStudioRestScope`, bridge key included), not the incoming room's — clearing only the new
+room would leave room A's epoch valid and its queued batches legal, i.e. cross-room crossfire.
+Order is: cancel prior task → clear previous scope → forget it → resolve new room → record the
+new scope **before** its first enqueue.
+
+### Sender lifecycle on bridge removal — a deliberate divergence
+- `forgetAllBridges()`: `clearAll()` every sender, *then* drop `restSendersByBridge` and
+  `activeStudioRestScope`.
+- `removeBridge(id:)`: clears and removes **only** that bridge's sender, and clears
+  `activeStudioRestScope` iff it belonged to that bridge.
+- `stopStudioMode()`: `clearAll()` on every sender — this is the stop-everything path, so
+  global is correct here, unlike the two room-scoped stops.
+
+**Divergence recorded on purpose:** `removeBridge` does *not* clean `commandGates` today, so
+that dictionary leaks an idle gate per removed bridge. Senders do not reproduce that — a
+leaked sender would also hold live epochs for a bridge that no longer exists.
+
+### Kept as-is, deliberately
+- **The three 150 ms settle sleeps stay.** They are practical bridge-firmware settle windows,
+  not formal drains. `clear` already guarantees no *later* batch begins; a true bounded
+  in-flight drain belongs to the later ownership/scheduler work, not to Packet 3.
+- **Both 80 ms inter-batch sleeps stay** — cadence unchanged.
+- **The Composer startup prime stays a DIRECT API call.** Routing it through the mailbox would
+  alter startup latency and ordering beyond this packet's scope. Stated so nobody "fixes" it.
+
+### Also cleaned up
+- `studioGeneration` was incremented on every Studio start/stop and **never read** — dead
+  state that looked like a working staleness guard. Deleted; Studio staleness is now the scope
+  epoch (which closures actually consult) plus `activeStudioTask` cancellation.
+- The three comments claiming *"Staleness is handled solely by `RestSender.clear()`
+  (latest-wins)"* were false once the batches could outlive the clear. Replaced with what is
+  now true.
+
+### All-Day — known limitation, deferred to Packet 6
+All-Day keeps its **own dedicated sender** and one sentinel scope; it is *not* routed through
+`restSendersByBridge` and is *not* keyed by room. Per-tick behavior is unchanged, and the
+limitation is now recorded in-source verbatim:
+
+> The single pending slot does not guarantee delivery to every room in one All-Day tick;
+> later room enqueues may overwrite earlier pending work.
+
+Per-room delivery and playback suppression are Packet 6's remit.
+
+### Files changed
+| File | Change |
+|---|---|
+| `HueHome/Core/Network/RestSender.swift` | rewritten in place — `RestScope`, `RestScopeOwner`, `RestEpoch`, `ValidityProbe`, scoped `enqueue`/`clear`/`clearAll`/`isCurrent`, FIFO `order`, single `isFlushing` |
+| `HueHome/Core/Network/UnifiedOrchestrator.swift` | `restSendersByBridge` + `restSender(for:)`, runtime-sourced Composer stop, `activeStudioRestScope`, scoped `enqueueStudioRestWrite(roomID:bridgeID:)`, batch probes, engine-loop scoping, lifecycle, All-Day sentinel, `studioGeneration` removed, DEBUG seams |
+| `HueHome/UI/Studio/StudioViewModel.swift` | six call sites scoped; three paced per-light loops made cancellable |
+| `HueHomeTests/GatedBulkWriteTests.swift` | 7 pure-sender tests + shared `RestGate`/`RestEventLog`/`RestProbeBox` support |
+| `HueHomeTests/MultiBridgeRoutingTests.swift` | packet 3 section: 13 orchestrator/integration tests + the source-shape guard |
+
+**No new source file and no `.pbxproj` edit** — the project file is hand-maintained, and a new
+file is avoidable build-breakage risk. No completion callback and no Packet 4 telemetry API:
+Packet 4 adapts this sender contract after it merges.
+
+### Tests
+`xcodebuild test … -scheme "HueHome 1"`, read via `xcresulttool` (a piped tail loses
+TEST SUCCEEDED; the post-success simulator launch error is teardown noise):
+- Narrow (`MultiBridgeRoutingTests` + `GatedBulkWriteTests`): **60/60 passed, 0 failed.**
+- Full suite: **939/939 passed, 0 failed.**
+
+Every assertion is on recorded event **order** and presence, driven by continuations —
+`Task.sleep` is never used as proof of anything. Packet 1a/1b/2 tests pass unmodified.
+
+Two source-shape guards ride along, because behavior tests alone would still pass if a later
+edit hoisted a probe out of a loop: every enqueued closure in both production files is checked
+for (a) no `Task.isCancelled`, (b) a `stillCurrent` guard immediately before every `gate.send`
+in all three per-light Studio loops, and (c) a probe before every Composer batch dispatch.
+(The fourth `gate.send`, in `applyEffectsV2Parameters`, is the initial apply — it is not
+inside a mailbox closure and has no probe to consult, so it is correctly outside that set.)
+
+### Gotchas
+- `RestSender.Work` takes `@escaping ValidityProbe` so a closure may hold the probe past its
+  own call — production calls it inline; tests capture it to observe what a *running* closure
+  would see.
+- `clearAll()` must bump every epoch **before** clearing `pending`/`order`. The other order
+  leaves a window where a running closure's probe still reports "current".
+- The `enqueue` epoch seed (above) is load-bearing, not cosmetic.
+
+---
+
 ## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 2 — scoped bridge-stored resource cleanup
 
 ### Branch
