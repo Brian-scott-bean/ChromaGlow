@@ -174,6 +174,14 @@ struct ComposerAdvancedControls: View {
             case .reaction: reactionAdvanced
             }
         }
+        // Whether directional motion is offered is now a room-membership
+        // question, so the answer has to come from a warm cache. Composer can be
+        // opened without ever visiting Studio, which is the only other surface
+        // that warms — without this the controls would hide themselves on a cold
+        // launch and tell the user to create an area they already have.
+        .task(id: vm.selectedRoom?.id) {
+            await orchestrator.warmEntertainmentCaches(for: vm.selectedRoom)
+        }
     }
 
     // ── Palette ───────────────────────────────────────────────
@@ -316,6 +324,10 @@ struct ComposerAdvancedControls: View {
         let pattern = vm.activeCompositionBox?.motion.pattern ?? .cascade
 
         if ComposerControlCatalog.isSpatialPattern(pattern) {
+            // Directional motion needs the area that actually contains THIS room's
+            // lights — a different room's area on the same bridge would aim the
+            // motion at the wrong lights. The warm below is what lets the answer
+            // come from real membership rather than a cold cache.
             if orchestrator.activeEntertainmentConfig(for: vm.selectedRoom) != nil {
                 directionControl
             } else {
@@ -704,13 +716,16 @@ struct ComposerAdvancedControls: View {
         }
         .buttonStyle(.plain)
         .sheet(isPresented: $showEntertainmentBuilder) {
-            EntertainmentConfigBuilderView { newConfig in
-                let bid = vm.selectedRoom?.bridgeID ?? ""
-                orchestrator.entertainmentConfigsByBridge[bid] = newConfig
-                // The bridge now definitively has an area — availability should
-                // flip to .available without another round trip.
-                orchestrator.entertainmentConfigsFetchedBridges.insert(bid)
-                recomputeSpatialPositions(angle: max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0))
+            EntertainmentConfigBuilderView { _ in
+                // Writing the new config straight into the cache is no longer
+                // enough: whether it belongs to THIS room is decided by the
+                // entertainment-service → device → light map, which only the
+                // bridge can answer. Re-warm, then recompute from the selection.
+                let room = vm.selectedRoom
+                Task {
+                    await orchestrator.warmEntertainmentCaches(for: room, force: true)
+                    recomputeSpatialPositions(angle: max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0))
+                }
             }
             .environment(orchestrator)
         }

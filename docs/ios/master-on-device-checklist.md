@@ -236,6 +236,41 @@ Setup: install, launch once, wait ~2–5 min; verify Shortcuts app shows 10 Chro
       merge to `main` (see pipeline doc §11; stale-APK diagnosis 2026-07-01).
 - [ ] Decide D-020 (canonical Android tree + CI hardening-presence gate) with Codex.
 
+## O. Composer 2 — Entertainment Area selection [packet 1b]
+
+Simulator unit tests prove the *decisions*; only hardware proves which bulbs light up. Packet
+1a's checks (in its DEVLOG entry) stay open and are NOT superseded by these.
+
+For every item record: **app build · bridge IDs or labels · bridge firmware · room names · area
+names · area membership · requested transport · actual transport · which lights actually moved.**
+
+- [ ] Two areas on one bridge: Area A holds Room A's lights, Area B holds Room B's. Start
+      Composer Entertainment in Room A → ONLY Area A streams. Then start in Room B → ONLY Area B
+      streams. (This is the wrong-room defect; before 1b either room could get either area.)
+- [ ] Response-order independence: refresh/relaunch several times and repeat the above → the
+      selected area never changes with the order the bridge lists them in.
+- [ ] Partial-room area: an Entertainment Area covering a deliberate subset of a larger room →
+      that area is selected and streams (the unique largest safe subset).
+- [ ] No matching area: start a composition in a room whose lights are in no area → the UI says
+      so honestly ("No Entertainment Area can safely stream to this room…"), Composer falls back
+      to REST, and **no other room's area activates**.
+- [ ] Ambiguous areas (where practical): two areas with competing, incomparable overlap of one
+      room → safe REST fallback, not a guess. Also try one whole-house area with a smaller room
+      → REST fallback, and the rest of the house stays dark.
+- [ ] Multi-bridge: each bridge has ≥1 area → each room selects only an area on **its own**
+      bridge; two bridges can stream at once.
+- [ ] Spatial movement: run a directional pattern → channel positions correspond to the selected
+      area, with **no movement in another room**.
+- [ ] Area membership change: edit an area's members in the Hue app, then refresh or relaunch
+      ChromaGlow → the updated membership is used for selection.
+- [ ] Studio cold path: force-quit, relaunch, tap a strobe/party/thunderstorm card **without**
+      opening Composer or the transport menu first → the correct area streams (Studio warms its
+      own cache; a cold cache used to demote silently to REST).
+- [ ] Regression, single-area home: a bridge with exactly one correctly-mapped area streams
+      normally — the conservative rules must not cost the common setup its streaming.
+- [ ] Honesty check: with an area that does NOT cover the selected room, the transport menu says
+      "no Entertainment Area for this room", **not** "this bridge has no entertainment area."
+
 ## Parked-agent "Left" register (tracked, not device QA)
 
 | Owner | Item | Status |

@@ -978,6 +978,19 @@ final class UnifiedOrchestrator {
         return lightsByBridge[bridgeID]
     }
 
+    /// Fill the raw-light cache from a fetch outside `fetchAndMergeAllBridges`.
+    ///
+    /// `warmEntertainmentCaches` has to fetch lights anyway to build the
+    /// entertainment→light map; dropping them on the floor would leave
+    /// `cachedRoomLightIDs` unanswerable on exactly the bridges whose `loadAll`
+    /// failed, so availability could never progress past `.unknown` there.
+    /// Only ever fills — never clears — so it cannot race a live load into an
+    /// empty state.
+    private func seedRawLightCache(bridgeID: String, lights: [HueLight]) {
+        guard !isDemoMode, !lights.isEmpty else { return }
+        lightsByBridge[bridgeID] = lights
+    }
+
     func cachedLightItems(for room: RoomDisplayItem) -> [LightDisplayItem] {
         guard !isDemoMode,
               let bridgeID = room.bridgeID,
@@ -2378,6 +2391,49 @@ final class UnifiedOrchestrator {
     func testCompositionRuntimeBridges() -> [String: String] {
         compositionRuntimes.mapValues(\.bridgeID)
     }
+
+    // Entertainment-area selection seams (packet 1b). Selection reads three
+    // caches that are normally filled by network work; these let tests stage
+    // each component independently — including the partial states that decide
+    // `.unknown` vs `.noArea` vs `.noMatchingArea` — without a live bridge.
+
+    /// Stage a bridge's entertainment caches.
+    /// `membership: nil` stages the "we could not fetch it" state, which is
+    /// deliberately different from a successfully-computed empty map.
+    func testSeedEntertainmentCaches(
+        bridgeID: String,
+        configs: [EntertainmentConfig]?,
+        membership: [String: String]?,
+        fetched: Bool
+    ) {
+        if let configs { entertainmentConfigsByBridge[bridgeID] = configs }
+        else { entertainmentConfigsByBridge.removeValue(forKey: bridgeID) }
+
+        if let membership { entertainmentMembershipByBridge[bridgeID] = membership }
+        else { entertainmentMembershipByBridge.removeValue(forKey: bridgeID) }
+
+        if fetched { entertainmentConfigsFetchedBridges.insert(bridgeID) }
+        else { entertainmentConfigsFetchedBridges.remove(bridgeID) }
+    }
+
+    /// The cached membership map for a bridge — nil when unknown/failed.
+    func testEntertainmentMembership(forBridge bridgeID: String) -> [String: String]? {
+        entertainmentMembershipByBridge[bridgeID]
+    }
+
+    /// The single start-time selection: config plus the channel IDs the render
+    /// loop will be driven with. Both come from one config, by construction.
+    func testEntertainmentStartPlan(
+        for room: RoomDisplayItem,
+        preferredConfigID: String? = nil
+    ) -> (config: EntertainmentConfig, channelIDs: [UInt8])? {
+        entertainmentStartPlan(for: room, preferredConfigID: preferredConfigID)
+    }
+
+    /// Whether this bridge currently holds a live Studio/Composer DTLS client.
+    func testHasEntertainmentClient(forBridge bridgeID: String) -> Bool {
+        studioEntClients[bridgeID] != nil
+    }
     #endif
 
     // MARK: Bridge-Stored Animation (v1 API)
@@ -2395,21 +2451,83 @@ final class UnifiedOrchestrator {
     /// may observe it freely. Replaces the old global `isBridgeStored` flag,
     /// which mislabeled every room whenever ANY room ran bridge-stored.
     var compositionTransportByRoom: [String: CompositionTransport] = [:]
-    /// Entertainment configs keyed by bridgeID.
-    /// StudioView reads the config for the currently selected room's bridge.
-    var entertainmentConfigsByBridge: [String: EntertainmentConfig] = [:]
+    /// EVERY entertainment config on a bridge, keyed by bridgeID.
+    ///
+    /// This used to hold one config per bridge — whichever the bridge happened to
+    /// list first — which is how a Bedroom composition could stream into the
+    /// Living Room's area. Selection is now a room-aware decision taken over the
+    /// whole inventory at read time (`selectedEntertainmentConfig(for:)`), so the
+    /// cache must keep all of it.
+    ///
+    /// Key absent = never fetched (or the fetch failed). Empty array = fetched,
+    /// and the bridge genuinely has no areas.
+    var entertainmentConfigsByBridge: [String: [EntertainmentConfig]] = [:]
 
-    /// Bridges whose entertainment configs we have actually asked about.
+    /// entertainmentServiceID → lightID, per bridge — the resolved membership map.
+    ///
+    /// Entertainment channel members reference *entertainment* services, not lights
+    /// (see `EntertainmentAreaSelector`), so this join is what makes room-aware
+    /// selection possible at all. It is warmed alongside the configs and read
+    /// synchronously by availability.
+    ///
+    /// Key absent = unknown or a failed fetch. `[:]` = successfully computed and
+    /// genuinely empty. The difference decides whether the UI may say no.
+    var entertainmentMembershipByBridge: [String: [String: String]] = [:]
+
+    /// Bridges whose entertainment configs we have **successfully** fetched.
     /// Assigning nil into `entertainmentConfigsByBridge` *removes* the key, so
     /// the dictionary alone cannot tell "this bridge has no area" apart from
     /// "we never looked" — and the difference decides whether the UI may say no.
+    /// A fetch that throws or fails to decode must NOT insert here, or a bridge
+    /// that times out reports "this bridge has no entertainment area yet".
     var entertainmentConfigsFetchedBridges: Set<String> = []
 
-    /// Convenience: returns the entertainment config for the given room's bridge.
-    /// Replaces the old single-slot `activeEntertainmentConfig`.
+    /// The Entertainment Area that safely belongs to this room, or nil.
+    ///
+    /// Synchronous and cache-only — safe inside a menu builder or a view body.
+    /// Returns nil (→ clean REST fallback) whenever the caches are not warm
+    /// enough to answer, or no area safely matches. See `EntertainmentAreaSelector`
+    /// for the selection contract.
+    func selectedEntertainmentConfig(
+        for room: RoomDisplayItem?,
+        preferredConfigID: String? = nil
+    ) -> EntertainmentConfig? {
+        guard let room,
+              let bridgeID = room.bridgeID,
+              let configs = entertainmentConfigsByBridge[bridgeID], !configs.isEmpty,
+              let membership = entertainmentMembershipByBridge[bridgeID],
+              let roomLightIDs = cachedRoomLightIDs(for: room)
+        else { return nil }
+
+        return EntertainmentAreaSelector.select(
+            roomLightIDs: roomLightIDs,
+            configs: configs,
+            entertainmentToLightMap: membership,
+            preferredConfigID: preferredConfigID
+        )
+    }
+
+    /// Convenience: the entertainment config that belongs to this room.
+    /// Used to return whatever config the room's *bridge* had cached, which is
+    /// the wrong-room defect; it now resolves through the room-aware selector.
     func activeEntertainmentConfig(for room: RoomDisplayItem?) -> EntertainmentConfig? {
-        guard let bridgeID = room?.bridgeID else { return nil }
-        return entertainmentConfigsByBridge[bridgeID]
+        selectedEntertainmentConfig(for: room)
+    }
+
+    /// The room's light IDs from cache, or nil when we cannot answer yet.
+    ///
+    /// Nil for BOTH "no raw-light cache for this bridge" and "the refs resolved to
+    /// nothing" — `preloadCached` builds rooms with empty `childResourceRefs`, so an
+    /// empty resolution means "we don't know yet", never "this room matches no area".
+    /// Reporting a definite no from a cold cache would disable a transport that
+    /// works, which is the failure mode `EntertainmentAvailability` exists to avoid.
+    private func cachedRoomLightIDs(for room: RoomDisplayItem) -> Set<String>? {
+        guard let lights = cachedRawLights(for: room.bridgeID), !lights.isEmpty else { return nil }
+        let ids = Set(CompositionLightResolver.resolveLightIDs(
+            childResourceRefs: room.childResourceRefs,
+            lights: lights
+        ))
+        return ids.isEmpty ? nil : ids
     }
 
     // MARK: - Entertainment availability
@@ -2426,6 +2544,11 @@ final class UnifiedOrchestrator {
         case noClientKey
         /// The bridge has no entertainment area defined. The user can make one.
         case noArea
+        /// The bridge HAS areas, but none of them safely covers this room — or the
+        /// one that does cannot actually be streamed. Distinct from `noArea` on
+        /// purpose: telling someone with three areas that they have none is a lie,
+        /// and it sends them to build a fourth.
+        case noMatchingArea
         case noBridge
         /// We have not asked the bridge yet. Offer streaming rather than
         /// wrongly disabling it — `startCompositionMode` still falls back.
@@ -2435,7 +2558,7 @@ final class UnifiedOrchestrator {
         var canStream: Bool {
             switch self {
             case .available, .unknown: return true
-            case .noClientKey, .noArea, .noBridge: return false
+            case .noClientKey, .noArea, .noMatchingArea, .noBridge: return false
             }
         }
 
@@ -2448,6 +2571,10 @@ final class UnifiedOrchestrator {
                 return "This bridge was paired without streaming access. Re-pair it in Settings to enable Entertainment."
             case .noArea:
                 return "This bridge has no entertainment area yet."
+            case .noMatchingArea:
+                // Covers both causes — no area contains this room's lights, and an
+                // area that does but cannot be streamed — so it stays true either way.
+                return "No Entertainment Area can safely stream to this room. Create or update an area for this room."
             case .noBridge:
                 return "This room isn't on a reachable bridge."
             }
@@ -2455,28 +2582,107 @@ final class UnifiedOrchestrator {
     }
 
     /// Synchronous — safe to call while a menu is being built. Reads the
-    /// Keychain and the config cache; never touches the network.
+    /// Keychain and the config caches; never touches the network.
+    ///
+    /// The order of the rungs is the honesty contract. We only ever say a definite
+    /// no when we actually know; every partial or failed cache answers `.unknown`,
+    /// which still offers streaming and lets the start path fall back. Saying
+    /// "no area" for a bridge that has three, or for one that merely timed out, is
+    /// worse than a fallback the user never notices.
     func entertainmentAvailability(for room: RoomDisplayItem?) -> EntertainmentAvailability {
-        guard let bridgeID = room?.bridgeID, hueClient(for: bridgeID) != nil else { return .noBridge }
+        guard let room, let bridgeID = room.bridgeID, hueClient(for: bridgeID) != nil else { return .noBridge }
         guard KeychainManager.shared.loadClientKey(for: bridgeID) != nil else { return .noClientKey }
 
-        if let config = entertainmentConfigsByBridge[bridgeID] {
-            return .available(areaName: config.name)
-        }
-        return entertainmentConfigsFetchedBridges.contains(bridgeID) ? .noArea : .unknown
+        // Never asked, or the first ask failed.
+        guard entertainmentConfigsFetchedBridges.contains(bridgeID),
+              let configs = entertainmentConfigsByBridge[bridgeID] else { return .unknown }
+        // Asked and answered: the bridge really has nothing.
+        guard !configs.isEmpty else { return .noArea }
+        // Membership absent means a failed or missing fetch — not "known empty".
+        guard entertainmentMembershipByBridge[bridgeID] != nil else { return .unknown }
+        // Room lights not resolvable yet — cold cache, not a verdict.
+        guard cachedRoomLightIDs(for: room) != nil else { return .unknown }
+
+        guard let config = selectedEntertainmentConfig(for: room) else { return .noMatchingArea }
+        return .available(areaName: config.name)
     }
 
-    /// Warms the config cache for a room's bridge so `entertainmentAvailability`
-    /// can stop answering `.unknown`. Cheap and idempotent: one GET per bridge.
+    /// Warms the entertainment caches for a room's bridge so
+    /// `entertainmentAvailability` can stop answering `.unknown`.
     func refreshEntertainmentConfigs(for room: RoomDisplayItem?) async {
+        await warmEntertainmentCaches(for: room)
+    }
+
+    /// Fetch whatever this bridge's entertainment caches are missing.
+    ///
+    /// Three components complete independently — the config inventory, the
+    /// entertainment→light membership map, and the bridge's raw lights — so a
+    /// partial success must never lock out a retry of the missing part. A single
+    /// "did we fetch this bridge" flag would strand a bridge whose configs
+    /// arrived but whose membership request failed: availability would sit on
+    /// `.unknown` forever and no ordinary refresh would ever try again.
+    ///
+    /// `force: false` fetches only what is missing. `force: true` refreshes
+    /// everything, but each component keeps its own last-known-good value if its
+    /// refresh fails — a later failure never replaces valid configs with `[]` nor
+    /// removes a valid membership map.
+    func warmEntertainmentCaches(for room: RoomDisplayItem?, force: Bool = false) async {
         guard let bridgeID = room?.bridgeID,
-              !entertainmentConfigsFetchedBridges.contains(bridgeID),
-              KeychainManager.shared.loadClientKey(for: bridgeID) != nil
+              let api = hueClient(for: bridgeID),
+              KeychainManager.shared.loadClientKey(for: bridgeID) != nil,
+              let (ip, token) = try? api.credentials()
         else { return }
 
-        let config = await findEntertainmentConfig(bridgeID: bridgeID)
-        entertainmentConfigsFetchedBridges.insert(bridgeID)
-        if let config { entertainmentConfigsByBridge[bridgeID] = config }
+        let cachedLights = cachedRawLights(for: bridgeID)
+        let needsConfigs = force || !entertainmentConfigsFetchedBridges.contains(bridgeID)
+        let needsMembership = force || entertainmentMembershipByBridge[bridgeID] == nil
+        let needsLights = force || cachedLights == nil || cachedLights?.isEmpty == true
+        guard needsConfigs || needsMembership else { return }
+
+        // Everything the child tasks touch is hoisted first: `api` is a Sendable
+        // class and `manager` is a local value, so nothing reaches back into
+        // MainActor state from inside the concurrent work.
+        let manager = EntertainmentConfigManager()
+
+        async let configsFetch: [EntertainmentConfig]? =
+            needsConfigs ? (try? await manager.fetchConfigs(client: api)) : nil
+        async let entServicesFetch: Data? =
+            needsMembership
+            ? (try? await api.get(path: "/clip/v2/resource/entertainment", ip: ip, token: token))
+            : nil
+        // Fetched whenever they are missing: the room-light resolution that
+        // availability depends on reads the same cache, so a bridge whose
+        // `loadAll` failed would otherwise never become answerable.
+        async let lightsFetch: [HueLight]? =
+            needsLights ? (try? await api.fetchLights()) : nil
+
+        let fetchedConfigs = await configsFetch
+        let entServicesData = await entServicesFetch
+        let fetchedLights = await lightsFetch
+
+        // Lights first — membership and room resolution both read them.
+        if let fetchedLights, !fetchedLights.isEmpty {
+            seedRawLightCache(bridgeID: bridgeID, lights: fetchedLights)
+        }
+        let lightsForMapping = fetchedLights ?? cachedRawLights(for: bridgeID) ?? []
+
+        if let fetchedConfigs {
+            entertainmentConfigsByBridge[bridgeID] = fetchedConfigs
+            entertainmentConfigsFetchedBridges.insert(bridgeID)
+        }
+        // A failed configs fetch deliberately leaves the previous inventory and
+        // the fetched marker alone: a transient error must not demote a bridge
+        // we already know the answer for to "no area".
+
+        if let entServicesData, !lightsForMapping.isEmpty {
+            entertainmentMembershipByBridge[bridgeID] = EntertainmentAreaSelector.entertainmentToLightMap(
+                entertainmentServiceOwners: EntertainmentAreaSelector.entertainmentServiceOwners(from: entServicesData),
+                lights: lightsForMapping
+            )
+        }
+        // Likewise: if the entertainment-service GET failed, or we still have no
+        // lights to join against, the key stays as it was — absent (unknown) or
+        // the last good map. It is never overwritten with an empty one.
     }
 
     /// Live param reference — StudioViewModel updates this dict, engine loops read it.
@@ -2526,13 +2732,23 @@ final class UnifiedOrchestrator {
         let paramBox = StudioParamBox(values: params, colors: colors)
         activeParamBox = paramBox
 
+        // Every Entertainment-capable engine below warms this bridge's caches
+        // itself rather than trusting that some UI surface already did. A Studio
+        // card can be tapped without ever opening Composer or the transport menu,
+        // and a cold cache would silently demote the card to REST forever.
+        switch key {
+        case "strobe", "party", "thunderstorm":
+            await warmEntertainmentCaches(for: room, force: true)
+        default:
+            break
+        }
+
         switch key {
         case "strobe":
             // Try entertainment first for crisp on/off, fall back to REST
-            let entClient = await tryStartEntertainment(room: room)
-            if let entClient {
-                let config = await findEntertainmentConfig(bridgeID: room.bridgeID)
-                let channelIDs = config?.channels.map { UInt8($0.id) } ?? [0]
+            if let plan = entertainmentStartPlan(for: room),
+               let entClient = await tryStartEntertainment(room: room, config: plan.config) {
+                let channelIDs = plan.channelIDs
                 activeStudioTask = Task {
                     await runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
                 }
@@ -2543,10 +2759,9 @@ final class UnifiedOrchestrator {
             }
 
         case "party":
-            let entClient = await tryStartEntertainment(room: room)
-            if let entClient {
-                let config = await findEntertainmentConfig(bridgeID: room.bridgeID)
-                let channelIDs = config?.channels.map { UInt8($0.id) } ?? [0]
+            if let plan = entertainmentStartPlan(for: room),
+               let entClient = await tryStartEntertainment(room: room, config: plan.config) {
+                let channelIDs = plan.channelIDs
                 activeStudioTask = Task {
                     await runPartyEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
                 }
@@ -2557,10 +2772,9 @@ final class UnifiedOrchestrator {
             }
 
         case "thunderstorm":
-            let entClient = await tryStartEntertainment(room: room)
-            if let entClient {
-                let config = await findEntertainmentConfig(bridgeID: room.bridgeID)
-                let channelIDs = config?.channels.map { UInt8($0.id) } ?? [0]
+            if let plan = entertainmentStartPlan(for: room),
+               let entClient = await tryStartEntertainment(room: room, config: plan.config) {
+                let channelIDs = plan.channelIDs
                 activeStudioTask = Task {
                     await runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
                 }
@@ -2659,17 +2873,12 @@ final class UnifiedOrchestrator {
             "[Composer] ▶ Start composition room='\(room.name)' id=\(roomID) gen=\(nextGeneration) groupedLightID=\(groupedLightID) preferEntertainment=\(preferEntertainment)"
         )
 
-        // ── Fetch entertainment config BEFORE transport decision ──
-        // Both REST and DTLS paths benefit from spatial positions.
-        let entConfig = await findEntertainmentConfig(bridgeID: room.bridgeID)
-        let capturedBridgeID = room.bridgeID ?? ""
-        await MainActor.run {
-            // A nil assignment removes the key, so record separately that we
-            // asked — that is what lets the transport menu say "no area"
-            // instead of hedging.
-            entertainmentConfigsByBridge[capturedBridgeID] = entConfig
-            entertainmentConfigsFetchedBridges.insert(capturedBridgeID)
-        }
+        // ── Select this ROOM's entertainment area BEFORE the transport decision ──
+        // Both REST and DTLS paths benefit from spatial positions. The warm keeps
+        // the inventory and the membership map current (an area edited in the Hue
+        // app is picked up here); selection then happens once, from cache.
+        await warmEntertainmentCaches(for: room, force: true)
+        let entConfig = selectedEntertainmentConfig(for: room)
 
         // Resolve individual light IDs early — needed for REST spatial positions
         // AND for per-light REST mode later.
@@ -2684,9 +2893,10 @@ final class UnifiedOrchestrator {
 
             // ── Build lightID → position map ──
             // Entertainment channel members point to entertainment services (not light services).
-            // Bridge the IDs: entertainment_service → device → light.
-            let lightPositions = await resolveEntertainmentLightPositions(
-                config: entConfig, api: api
+            // Bridge the IDs: entertainment_service → device → light, from the map
+            // the warm above already resolved for this bridge.
+            let lightPositions = resolveEntertainmentLightPositions(
+                config: entConfig, bridgeID: room.bridgeID
             )
 
             // Pre-compute spatial positions for REST path (lightID order)
@@ -2717,50 +2927,54 @@ final class UnifiedOrchestrator {
            canAcquireEntertainment(onBridge: bridgeID) {
             // Mic (when reaction uses it) is already warming during gamut resolution above,
             // overlapping network time with FFT capture startup.
-            let entClient = await tryStartEntertainment(room: room)
-            if let entClient, let entConfig {
-                let channelIDs = entConfig.channels.map { UInt8($0.id) }
-                if !channelIDs.isEmpty {
-                    // Override with channel-ordered positions for DTLS transport
-                    let entPositions = CompositionEngine.computeSpatialPositionsForEntertainment(
-                        channels: entConfig.channels,
-                        motionAngle: paramBox.motion.motionAngle
-                    )
-                    if !entPositions.isEmpty {
-                        paramBox.spatialPositions = entPositions
-                        paramBox.targetSpatialPositions = entPositions
-                    }
-                    let entGeometry = CompositionEngine.computeRadialAngular(channels: entConfig.channels)
-                    paramBox.radialPositions = entGeometry.radial
-                    paramBox.angularPositions = entGeometry.angular
-                    compositionEntRoomByBridge[bridgeID] = roomID
-                    compositionTransportByRoom[roomID] = .entertainment
-                    compositionEntParamBoxes[bridgeID] = paramBox
-                    compositionEntTasks[bridgeID]?.cancel()
-                    let capturedRoom = room
-                    let capturedTier = tier
-                    compositionEntTasks[bridgeID] = Task { [weak self] in
-                        guard let self else { return }
-                        await self.runCompositionEntertainment(
-                            entClient: entClient,
-                            channelIDs: channelIDs,
-                            paramBox: paramBox,
-                            gamut: compositionGamut
-                        )
-                        // M-10 follow-through: the loop exits early when the
-                        // client's bounded reconnect is exhausted. Fail the
-                        // room over to the REST scheduler so the show keeps
-                        // running instead of freezing on the last frame.
-                        guard !Task.isCancelled, await entClient.isTerminallyFailed else { return }
-                        await self.failCompositionEntertainmentToREST(
-                            bridgeID: bridgeID, roomID: roomID, room: capturedRoom,
-                            paramBox: paramBox, gamut: compositionGamut, tier: capturedTier
-                        )
-                    }
-                    await refreshCompositionMicDemand()
-                    debugLog("[Composer] ⚡ Entertainment transport active for room='\(room.name)' bridge='\(bridgeID)'")
-                    return
+            //
+            // The plan is taken — and its channel IDs validated — BEFORE any session
+            // is opened. Opening first and checking channels afterwards used to leave
+            // a live client parked in `studioEntClients` and the configuration left
+            // started on the bridge whenever the area had no usable channels.
+            if let plan = entertainmentStartPlan(for: room),
+               let entClient = await tryStartEntertainment(room: room, config: plan.config) {
+                let entConfig = plan.config
+                let channelIDs = plan.channelIDs
+                // Override with channel-ordered positions for DTLS transport
+                let entPositions = CompositionEngine.computeSpatialPositionsForEntertainment(
+                    channels: entConfig.channels,
+                    motionAngle: paramBox.motion.motionAngle
+                )
+                if !entPositions.isEmpty {
+                    paramBox.spatialPositions = entPositions
+                    paramBox.targetSpatialPositions = entPositions
                 }
+                let entGeometry = CompositionEngine.computeRadialAngular(channels: entConfig.channels)
+                paramBox.radialPositions = entGeometry.radial
+                paramBox.angularPositions = entGeometry.angular
+                compositionEntRoomByBridge[bridgeID] = roomID
+                compositionTransportByRoom[roomID] = .entertainment
+                compositionEntParamBoxes[bridgeID] = paramBox
+                compositionEntTasks[bridgeID]?.cancel()
+                let capturedRoom = room
+                let capturedTier = tier
+                compositionEntTasks[bridgeID] = Task { [weak self] in
+                    guard let self else { return }
+                    await self.runCompositionEntertainment(
+                        entClient: entClient,
+                        channelIDs: channelIDs,
+                        paramBox: paramBox,
+                        gamut: compositionGamut
+                    )
+                    // M-10 follow-through: the loop exits early when the
+                    // client's bounded reconnect is exhausted. Fail the
+                    // room over to the REST scheduler so the show keeps
+                    // running instead of freezing on the last frame.
+                    guard !Task.isCancelled, await entClient.isTerminallyFailed else { return }
+                    await self.failCompositionEntertainmentToREST(
+                        bridgeID: bridgeID, roomID: roomID, room: capturedRoom,
+                        paramBox: paramBox, gamut: compositionGamut, tier: capturedTier
+                    )
+                }
+                await refreshCompositionMicDemand()
+                debugLog("[Composer] ⚡ Entertainment transport active for room='\(room.name)' bridge='\(bridgeID)'")
+                return
             }
         }
 
@@ -3008,8 +3222,11 @@ final class UnifiedOrchestrator {
         compositionEntTasks.removeValue(forKey: bridgeID)   // this task; loop already ended
         compositionEntRoomByBridge.removeValue(forKey: bridgeID)
         entertainmentConfigsByBridge.removeValue(forKey: bridgeID)
+        entertainmentMembershipByBridge.removeValue(forKey: bridgeID)
         // Session teardown, not "this bridge has no area" — forget that we
         // asked, so availability reverts to .unknown rather than .noArea.
+        // Dropping the inventory here is also what makes an area edited in the
+        // Hue app take effect on the next start instead of only after a relaunch.
         entertainmentConfigsFetchedBridges.remove(bridgeID)
         if let entClient = studioEntClients[bridgeID] {
             await entClient.stopSession()   // no-op post-teardown (configID cleared)
@@ -3077,6 +3294,7 @@ final class UnifiedOrchestrator {
             compositionEntTasks.removeValue(forKey: bid)
             compositionEntRoomByBridge.removeValue(forKey: bid)
             entertainmentConfigsByBridge.removeValue(forKey: bid)
+            entertainmentMembershipByBridge.removeValue(forKey: bid)
             entertainmentConfigsFetchedBridges.remove(bid)   // see failCompositionEntertainmentToREST
             if let entClient = studioEntClients[bid] {
                 await entClient.stopSession()
@@ -3485,59 +3703,22 @@ final class UnifiedOrchestrator {
 
     /// Resolve lightID → physical (x, z) position from an entertainment config.
     ///
-    /// Entertainment channel members reference **entertainment** services (not light services).
-    /// This function bridges the gap:
-    ///   1. Fetch `/clip/v2/resource/entertainment` → entertainment service → device owner
-    ///   2. Fetch lights → light → device owner
-    ///   3. Match via shared device ID: entService → device → light
-    ///   4. Return lightID → channel position
+    /// The entertainment→device→light join this used to perform inline now lives in
+    /// `EntertainmentAreaSelector` and is cached per bridge by
+    /// `warmEntertainmentCaches`, so positions and *area selection* read the same
+    /// truth. Keeping a second copy of the algorithm here is what let the two drift:
+    /// selection could pick one area while positions were resolved from another.
+    /// Synchronous now — the two fetches it used to repeat on every start are done
+    /// once during the warm.
     private func resolveEntertainmentLightPositions(
         config: EntertainmentConfig,
-        api: HueAPIClient
-    ) async -> [String: (x: Double, z: Double)] {
-        guard let (ip, token) = try? api.credentials() else { return [:] }
-
-        // Fetch entertainment services and lights in parallel
-        async let entServicesData = api.get(
-            path: "/clip/v2/resource/entertainment",
-            ip: ip, token: token
+        bridgeID: String?
+    ) -> [String: (x: Double, z: Double)] {
+        guard let bridgeID, let membership = entertainmentMembershipByBridge[bridgeID] else { return [:] }
+        let result = EntertainmentAreaSelector.lightPositions(
+            for: config,
+            entertainmentToLightMap: membership
         )
-        async let lightsFetch = api.fetchLights()
-
-        guard let entData = try? await entServicesData,
-              let lights = try? await lightsFetch else { return [:] }
-
-        // Build entServiceID → deviceID from entertainment services
-        var entServiceToDevice: [String: String] = [:]
-        if let json = try? JSONSerialization.jsonObject(with: entData) as? [String: Any],
-           let items = json["data"] as? [[String: Any]] {
-            for item in items {
-                guard let entID = item["id"] as? String,
-                      let owner = item["owner"] as? [String: Any],
-                      let deviceID = owner["rid"] as? String else { continue }
-                entServiceToDevice[entID] = deviceID
-            }
-        }
-
-        // Build deviceID → lightID from lights
-        var deviceToLightID: [String: String] = [:]
-        for light in lights {
-            if let deviceID = light.owner?.rid {
-                deviceToLightID[deviceID] = light.id
-            }
-        }
-
-        // Map each channel's entertainment service members to light IDs with positions
-        var result: [String: (x: Double, z: Double)] = [:]
-        for channel in config.channels {
-            for entServiceID in channel.lightServiceIDs {
-                if let deviceID = entServiceToDevice[entServiceID],
-                   let lightID = deviceToLightID[deviceID] {
-                    result[lightID] = (x: channel.position.x, z: channel.position.z)
-                }
-            }
-        }
-
         debugLog("[Composer] 🗺️ Resolved \(result.count) light positions from entertainment config")
         return result
     }
@@ -3591,6 +3772,7 @@ final class UnifiedOrchestrator {
         compositionEntRoomByBridge.removeAll()
         compositionEntParamBoxes.removeAll()
         entertainmentConfigsByBridge.removeAll()
+        entertainmentMembershipByBridge.removeAll()
         entertainmentConfigsFetchedBridges.removeAll()
 
         // Also notify any mic engines
@@ -3633,13 +3815,20 @@ final class UnifiedOrchestrator {
 
     // MARK: - Entertainment Setup Helpers
 
-    /// Try to open an entertainment DTLS session for the given room.
-    /// Returns the client if successful, nil if no entertainment config or connection failed.
-    private func tryStartEntertainment(room: RoomDisplayItem, configID: String? = nil) async -> HueEntertainmentClient? {
+    /// Try to open an entertainment DTLS session for an ALREADY-SELECTED area.
+    ///
+    /// Takes the config rather than looking one up: the caller has already chosen
+    /// it (and validated its channels) via `entertainmentStartPlan`, so there is no
+    /// second selection here to disagree with the first, and no way to open a
+    /// session for a config the render loop cannot drive.
+    /// Returns the client if successful, nil if the connection failed.
+    private func tryStartEntertainment(
+        room: RoomDisplayItem,
+        config: EntertainmentConfig
+    ) async -> HueEntertainmentClient? {
         guard let bridgeID = room.bridgeID,
               let api = hueClient(for: bridgeID),
-              let clientKey = KeychainManager.shared.loadClientKey(for: bridgeID),
-              let config = await findEntertainmentConfig(bridgeID: bridgeID, preferredConfigID: configID) else {
+              let clientKey = KeychainManager.shared.loadClientKey(for: bridgeID) else {
             return nil
         }
 
@@ -3661,16 +3850,39 @@ final class UnifiedOrchestrator {
         }
     }
 
-    /// Find an entertainment config on the given bridge.
-    private func findEntertainmentConfig(bridgeID: String?, preferredConfigID: String? = nil) async -> EntertainmentConfig? {
-        guard let bid = bridgeID, let api = hueClient(for: bid) else { return nil }
-        let manager = EntertainmentConfigManager()
-        guard let configs = try? await manager.fetchConfigs(client: api) else { return nil }
-        if let preferredConfigID,
-           let matched = configs.first(where: { $0.id == preferredConfigID }) {
-            return matched
-        }
-        return configs.first
+    /// The Entertainment Area that safely belongs to this room, warming first.
+    ///
+    /// Room-shaped on purpose. The old bridge-only form returned `configs.first`,
+    /// which is how a composition in one room streamed into another room's area;
+    /// no bridge-only convenience is kept, because "any area on this bridge" is
+    /// never a safe answer.
+    private func findEntertainmentConfig(
+        for room: RoomDisplayItem,
+        preferredConfigID: String? = nil
+    ) async -> EntertainmentConfig? {
+        await warmEntertainmentCaches(for: room, force: true)
+        return selectedEntertainmentConfig(for: room, preferredConfigID: preferredConfigID)
+    }
+
+    /// Everything a start attempt needs, chosen exactly once.
+    ///
+    /// Selection used to happen twice per Studio start — once to open the session,
+    /// once more to read channel IDs — as two independent `configs.first` picks
+    /// that only agreed by accident. One plan means the config ID handed to
+    /// `startSession`, the channel IDs driving the render loop, and the spatial
+    /// positions are guaranteed to describe the same area.
+    ///
+    /// Returns nil when no area safely matches OR when the selected area cannot
+    /// produce usable channel IDs — so an unstreamable config can never get as far
+    /// as opening a DTLS session.
+    private func entertainmentStartPlan(
+        for room: RoomDisplayItem,
+        preferredConfigID: String? = nil
+    ) -> (config: EntertainmentConfig, channelIDs: [UInt8])? {
+        guard let config = selectedEntertainmentConfig(for: room, preferredConfigID: preferredConfigID),
+              let channelIDs = EntertainmentAreaSelector.validatedChannelIDs(for: config)
+        else { return nil }
+        return (config, channelIDs)
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
