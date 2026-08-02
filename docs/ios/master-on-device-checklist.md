@@ -271,6 +271,41 @@ names · area membership · requested transport · actual transport · which lig
 - [ ] Honesty check: with an area that does NOT cover the selected room, the transport menu says
       "no Entertainment Area for this room", **not** "this bridge has no entertainment area."
 
+## P. Composer 2 — scoped bridge-stored cleanup [packet 2]
+
+Simulator unit tests prove the *decisions*; only hardware proves which bulbs keep running.
+Packet 1a's and packet 1b's checks (§O and packet 1a's DEVLOG entry) stay open and are NOT
+superseded by these.
+
+Before packet 2, every bridge-stored start deleted every `CG_` resource on the bridge — so
+starting a look in one room stopped the other room's bridge-stored animation and orphaned its
+manifest. These checks are the hardware proof that cleanup is now scoped to the room's own
+recorded resources on its own bridge.
+
+For every item record: **app build · bridge ID or label · bridge firmware · room names ·
+preset names · requested transport · actual transport · which rooms continued · which rooms
+stopped · maintenance-action result.**
+
+- [ ] Two bridge-stored rooms on one bridge: start a bridge-optimized look in Room A, then
+      start one in Room B. Expected: **Room A keeps running** and Room B starts. (Before
+      packet 2, Room A died here.)
+- [ ] Replace Room B: with A and B both running, pick a *different* bridge-optimized look in
+      Room B. Expected: Room B's old resources stop, the new Room B look starts, **Room A
+      continues undisturbed**.
+- [ ] Stop Room B. Expected: Room B stops cleanly; **Room A continues**.
+- [ ] Stop Room A afterward. Expected: Room A stops cleanly, and no stale ChromaGlow bridge
+      resources remain visible.
+- [ ] Multi-bridge isolation: run bridge-stored looks on bridge A **and** bridge B, then
+      replace one. Expected: the other bridge sees **no interruption**.
+- [ ] Explicit maintenance action — **use only disposable test animations**. Invoke Settings →
+      Clean Bridge Resources manually. Expected: ChromaGlow bridge-animation resources are
+      intentionally removed, and **ordinary Hue scenes / third-party (Hue Labs, Sync Box)
+      resources remain untouched**. (Known limitation: this action targets one bridge — see
+      the packet 2 DEVLOG entry.)
+- [ ] Relaunch observation: relaunch the app while a bridge-stored animation is running.
+      **Record the current behavior — missing in-app restoration is NOT a packet 2 failure.**
+      Launch-time manifest reconciliation is Phase 0 item 10.
+
 ## Parked-agent "Left" register (tracked, not device QA)
 
 | Owner | Item | Status |

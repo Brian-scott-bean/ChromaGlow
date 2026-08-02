@@ -28,16 +28,42 @@ import XCTest
 // MARK: - Spies
 
 /// v1 spy recording resource deletes without touching the network.
+///
+/// Packet 2 also makes it record every *enumeration* (`fetch*`) and vend stub
+/// inventories. Two reasons: "normal playback never enumerates the bridge" is
+/// only assertable if the fetches are observable, and an un-overridden fetch
+/// would otherwise attempt a real request against the TEST-NET-1 address the
+/// spies are built with.
 private final class RoutingSpyV1Client: HueV1Client, @unchecked Sendable {
     private let lock = NSLock()
     private var _deletedResources: [String] = []
+    private var _fetchCalls: [String] = []
+    private var _inventories: [String: [String: [String: Any]]] = [:]
+
+    /// Deletes in the order they were issued ("schedule:33", "rule:22", …).
     var deletedResources: [String] {
         lock.lock(); defer { lock.unlock() }
         return _deletedResources
     }
+    /// Bridge-wide enumerations in the order they were issued.
+    var fetchCalls: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _fetchCalls
+    }
+    /// Stage what `fetchSchedules`/`fetchRules`/… should report. Empty by default.
+    func stageInventory(_ kind: String, _ contents: [String: [String: Any]]) {
+        lock.lock(); defer { lock.unlock() }
+        _inventories[kind] = contents
+    }
+
     private func record(_ entry: String) {
         lock.lock(); defer { lock.unlock() }
         _deletedResources.append(entry)
+    }
+    private func inventory(_ kind: String) -> [String: [String: Any]] {
+        lock.lock(); defer { lock.unlock() }
+        _fetchCalls.append(kind)
+        return _inventories[kind] ?? [:]
     }
 
     override func deleteSchedule(id: String) async throws { record("schedule:\(id)") }
@@ -45,6 +71,12 @@ private final class RoutingSpyV1Client: HueV1Client, @unchecked Sendable {
     override func deleteSensor(id: String) async throws { record("sensor:\(id)") }
     override func deleteScene(id: String) async throws { record("scene:\(id)") }
     override func deleteResourcelink(id: String) async throws { record("resourcelink:\(id)") }
+
+    override func fetchSchedules() async throws -> [String: [String: Any]] { inventory("fetchSchedules") }
+    override func fetchRules() async throws -> [String: [String: Any]] { inventory("fetchRules") }
+    override func fetchSensors() async throws -> [String: [String: Any]] { inventory("fetchSensors") }
+    override func fetchScenes() async throws -> [String: [String: Any]] { inventory("fetchScenes") }
+    override func fetchResourcelinks() async throws -> [String: [String: Any]] { inventory("fetchResourcelinks") }
 }
 
 /// v2 spy recording grouped_light effect PUTs and vending a paired v1 spy.
@@ -561,5 +593,354 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(vm.entertainmentHandoffPrompt,
                      "no owner, no conflict — the prompt must not become a tax on ordinary taps")
         XCTAssertEqual(vm.runningEffects["room-b"]?.cardID, "ambient")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 2: bridge-stored cleanup is scoped to the owning manifest
+    // ──────────────────────────────────────────────
+    //
+    // Every bridge-stored start used to end its per-room cleanup loop with
+    // `purgeAllChromaGlowResources`, which enumerates the bridge and deletes
+    // EVERY `CG_`-prefixed schedule/rule/sensor/scene/resourcelink. Starting a
+    // look in room B therefore tore down room A's live animation on the same
+    // bridge and left room A's manifest persisted, pointing at resources that no
+    // longer existed. The per-room loop had a second, quieter bug: it filtered
+    // on `roomID` alone, so a manifest recorded against a DIFFERENT bridge was
+    // "stopped" through the current room's client — deletes aimed at a bridge
+    // that never held those resources, and the only record of them dropped.
+    //
+    // The ownership boundary is now the manifest's own recorded IDs, selected by
+    // roomID AND bridgeIP. Names are not ownership: `CG_` is a prefix every
+    // room's resources share.
+
+    /// Manifests staged into the shared store, torn down per test.
+    private var stagedManifests: [(presetID: UUID, roomID: String)] = []
+
+    override func tearDown() async throws {
+        for staged in stagedManifests {
+            BridgeAnimationStore.shared.remove(presetID: staged.presetID, roomID: staged.roomID)
+        }
+        stagedManifests.removeAll()
+        try await super.tearDown()
+    }
+
+    /// Persist a manifest with a fresh preset ID (the store keys on
+    /// presetID_roomID, so same-room manifests must differ by preset).
+    @discardableResult
+    private func stageManifest(
+        roomID: String,
+        bridgeIP: String,
+        presetName: String = "Packet2",
+        sensorID: String,
+        ruleIDs: [String],
+        scheduleID: String,
+        sceneIDs: [String] = [],
+        resourcelinkID: String? = nil
+    ) -> BridgeAnimationManifest {
+        let presetID = UUID()
+        let manifest = BridgeAnimationManifest(
+            id: UUID(), presetID: presetID, presetName: presetName,
+            roomID: roomID, roomName: roomID,
+            bridgeIP: bridgeIP,
+            sensorID: sensorID, ruleIDs: ruleIDs, scheduleID: scheduleID,
+            sceneIDs: sceneIDs, resourcelinkID: resourcelinkID,
+            stepCount: 2, intervalSeconds: 3, cycleDurationSeconds: 6,
+            createdAt: Date()
+        )
+        BridgeAnimationStore.shared.save(manifest)
+        stagedManifests.append((presetID, roomID))
+        return manifest
+    }
+
+    /// Every delete a correct teardown of this manifest must issue — as a SET.
+    /// Manifests live in a dictionary, so the order two manifests are cleaned in
+    /// is not a contract; only the order WITHIN one manifest is.
+    private func expectedDeletes(for manifest: BridgeAnimationManifest) -> Set<String> {
+        var expected: Set<String> = [
+            "schedule:\(manifest.scheduleID)",
+            "sensor:\(manifest.sensorID)"
+        ]
+        for ruleID in manifest.ruleIDs { expected.insert("rule:\(ruleID)") }
+        for sceneID in manifest.sceneIDs { expected.insert("scene:\(sceneID)") }
+        if let rlID = manifest.resourcelinkID { expected.insert("resourcelink:\(rlID)") }
+        return expected
+    }
+
+    private func storeStillHolds(_ manifest: BridgeAnimationManifest) -> Bool {
+        BridgeAnimationStore.shared.allManifests()
+            .contains { $0.presetID == manifest.presetID && $0.roomID == manifest.roomID }
+    }
+
+    func testStartingARoomPreservesASiblingRoomsBridgeAnimation() async {
+        let sibling = stageManifest(
+            roomID: "p2-sibling-a", bridgeIP: "192.0.2.1", presetName: "Sibling A",
+            sensorID: "a-sensor", ruleIDs: ["a-rule-1", "a-rule-2"], scheduleID: "a-sched",
+            sceneIDs: ["a-scene"], resourcelinkID: "a-link"
+        )
+
+        // Room B has no previous animation: this is a first start, not a replacement.
+        await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "p2-sibling-b", v1Client: bridgeA.v1Spy)
+
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty,
+                      "starting one room must delete nothing belonging to another room")
+        XCTAssertTrue(bridgeA.v1Spy.fetchCalls.isEmpty,
+                      "a first start must not enumerate the bridge — that enumeration WAS the defect")
+        XCTAssertTrue(storeStillHolds(sibling),
+                      "the sibling's manifest must survive intact, not be orphaned by a global purge")
+    }
+
+    func testReplacingARoomDeletesOnlyThatRoomsKnownResources() async {
+        let sibling = stageManifest(
+            roomID: "p2-replace-a", bridgeIP: "192.0.2.1", presetName: "Sibling A",
+            sensorID: "a-sensor", ruleIDs: ["a-rule-1"], scheduleID: "a-sched",
+            sceneIDs: ["a-scene"], resourcelinkID: "a-link"
+        )
+        let replaced = stageManifest(
+            roomID: "p2-replace-b", bridgeIP: "192.0.2.1", presetName: "Old B",
+            sensorID: "b-sensor", ruleIDs: ["b-rule-1", "b-rule-2"], scheduleID: "b-sched",
+            sceneIDs: ["b-scene-1", "b-scene-2"], resourcelinkID: "b-link"
+        )
+
+        await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "p2-replace-b", v1Client: bridgeA.v1Spy)
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.deletedResources), expectedDeletes(for: replaced),
+                       "replacement deletes exactly the replaced room's recorded resources — no more, no less")
+        XCTAssertTrue(Set(bridgeA.v1Spy.deletedResources).isDisjoint(with: expectedDeletes(for: sibling)),
+                      "and nothing belonging to the sibling room")
+        XCTAssertFalse(storeStillHolds(replaced), "the replaced manifest must be removed")
+        XCTAssertTrue(storeStillHolds(sibling), "the sibling manifest must remain")
+    }
+
+    func testEveryOldManifestForTheTargetRoomIsCleaned() async {
+        let firstOld = stageManifest(
+            roomID: "p2-multi-b", bridgeIP: "192.0.2.1", presetName: "Old B one",
+            sensorID: "b1-sensor", ruleIDs: ["b1-rule"], scheduleID: "b1-sched",
+            sceneIDs: ["b1-scene"], resourcelinkID: "b1-link"
+        )
+        let secondOld = stageManifest(
+            roomID: "p2-multi-b", bridgeIP: "192.0.2.1", presetName: "Old B two",
+            sensorID: "b2-sensor", ruleIDs: ["b2-rule"], scheduleID: "b2-sched",
+            sceneIDs: [], resourcelinkID: nil
+        )
+        let sibling = stageManifest(
+            roomID: "p2-multi-a", bridgeIP: "192.0.2.1", presetName: "Sibling A",
+            sensorID: "a-sensor", ruleIDs: ["a-rule"], scheduleID: "a-sched"
+        )
+
+        await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "p2-multi-b", v1Client: bridgeA.v1Spy)
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.deletedResources),
+                       expectedDeletes(for: firstOld).union(expectedDeletes(for: secondOld)),
+                       "a room can accumulate more than one manifest — every known resource in all of them goes")
+        XCTAssertFalse(storeStillHolds(firstOld))
+        XCTAssertFalse(storeStillHolds(secondOld))
+        XCTAssertTrue(storeStillHolds(sibling), "…and the other room's manifest is untouched")
+    }
+
+    func testSameRoomIDOnAnotherBridgeIsNotTreatedAsOwned() async {
+        // One room id, two bridges. Filtering on roomID alone would clean both —
+        // issuing bridge B's deletes through bridge A's client and dropping the
+        // only record of resources still live on bridge B.
+        let onBridgeA = stageManifest(
+            roomID: "p2-room-shared", bridgeIP: "192.0.2.1", presetName: "Shared on A",
+            sensorID: "a-sensor", ruleIDs: ["a-rule"], scheduleID: "a-sched",
+            sceneIDs: ["a-scene"], resourcelinkID: "a-link"
+        )
+        let onBridgeB = stageManifest(
+            roomID: "p2-room-shared", bridgeIP: "192.0.2.2", presetName: "Shared on B",
+            sensorID: "b-sensor", ruleIDs: ["b-rule"], scheduleID: "b-sched",
+            sceneIDs: ["b-scene"], resourcelinkID: "b-link"
+        )
+
+        await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "p2-room-shared", v1Client: bridgeA.v1Spy)
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.deletedResources), expectedDeletes(for: onBridgeA),
+                       "only the manifest recorded on THIS bridge is owned by this cleanup")
+        XCTAssertFalse(storeStillHolds(onBridgeA))
+        XCTAssertTrue(storeStillHolds(onBridgeB),
+                      "the other bridge's animation is still live — its manifest must not be dropped")
+    }
+
+    func testCleanupOnOneBridgeSendsZeroTrafficToTheOther() async {
+        stageManifest(
+            roomID: "p2-traffic-shared", bridgeIP: "192.0.2.1", presetName: "On A",
+            sensorID: "a-sensor", ruleIDs: ["a-rule"], scheduleID: "a-sched"
+        )
+        stageManifest(
+            roomID: "p2-traffic-shared", bridgeIP: "192.0.2.2", presetName: "On B",
+            sensorID: "b-sensor", ruleIDs: ["b-rule"], scheduleID: "b-sched"
+        )
+
+        await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "p2-traffic-shared", v1Client: bridgeA.v1Spy)
+
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty,
+                      "a cleanup on bridge A must issue no deletes on bridge B")
+        XCTAssertTrue(bridgeB.v1Spy.fetchCalls.isEmpty,
+                      "…and no reads either — bridge B sees nothing at all")
+    }
+
+    func testNormalReplacementNeverEnumeratesBridgeResources() async {
+        stageManifest(
+            roomID: "p2-noenum-b", bridgeIP: "192.0.2.1", presetName: "Old B",
+            sensorID: "b-sensor", ruleIDs: ["b-rule"], scheduleID: "b-sched",
+            sceneIDs: ["b-scene"], resourcelinkID: "b-link"
+        )
+
+        await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "p2-noenum-b", v1Client: bridgeA.v1Spy)
+
+        XCTAssertTrue(bridgeA.v1Spy.fetchCalls.isEmpty,
+                      """
+                      normal playback must issue zero fetchSchedules/fetchRules/fetchSensors/\
+                      fetchScenes/fetchResourcelinks — enumerating the bridge is the first half \
+                      of the global purge that destroyed sibling rooms
+                      """)
+        XCTAssertFalse(bridgeA.v1Spy.deletedResources.isEmpty,
+                       "…while the manifest-specific deletes still happen")
+    }
+
+    func testExplicitMaintenancePurgeDeletesOnlyChromaGlowResources() async {
+        // The maintenance action is the ONE place a global CG_ sweep is correct.
+        // It must stay whole — and must still leave everything else alone.
+        let spy = bridgeA.v1Spy
+        spy.stageInventory("fetchSchedules", [
+            "1": ["name": "CG_Aurora_tmr"],
+            "2": ["name": "Wake up"]
+        ])
+        spy.stageInventory("fetchRules", [
+            "10": ["name": "CG_Aurora_s0"],
+            "11": ["name": "Motion sensor rule"]
+        ])
+        spy.stageInventory("fetchSensors", [
+            "20": ["name": "CG_Aurora_ctr"],
+            "21": ["name": "Hallway motion"]
+        ])
+        spy.stageInventory("fetchScenes", [
+            "abc": ["name": "CG_Aurora_f0"],
+            "def": ["name": "Relax"]
+        ])
+        spy.stageInventory("fetchResourcelinks", [
+            "30": ["name": "CG_Aurora"],
+            "31": ["name": "Hue Labs formula"]
+        ])
+
+        await BridgeAnimationEngine().purgeAllChromaGlowResources(v1Client: spy)
+
+        XCTAssertEqual(Set(spy.deletedResources),
+                       ["schedule:1", "rule:10", "sensor:20", "scene:abc", "resourcelink:30"],
+                       "the explicit purge must still remove every CG_ resource in all five inventories")
+        for survivor in ["schedule:2", "rule:11", "sensor:21", "scene:def", "resourcelink:31"] {
+            XCTAssertFalse(spy.deletedResources.contains(survivor),
+                           "the purge must never touch a non-ChromaGlow resource (\(survivor))")
+        }
+    }
+
+    func testManifestCleanupDeletesInDependencySafeOrder() async throws {
+        // Within ONE manifest the order matters: kill the timer, then the chain,
+        // then the counter, then the stored states, then the grouping. A rule
+        // outliving its sensor is a rule that can still fire.
+        stageManifest(
+            roomID: "p2-order-b", bridgeIP: "192.0.2.1", presetName: "Ordered",
+            sensorID: "sen", ruleIDs: ["rule-1", "rule-2"], scheduleID: "sched",
+            sceneIDs: ["scene-1", "scene-2"], resourcelinkID: "link"
+        )
+
+        await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "p2-order-b", v1Client: bridgeA.v1Spy)
+
+        let deletes = bridgeA.v1Spy.deletedResources
+        func position(_ entry: String) throws -> Int {
+            try XCTUnwrap(deletes.firstIndex(of: entry), "\(entry) was never deleted")
+        }
+        let schedule = try position("schedule:sched")
+        let lastRule = max(try position("rule:rule-1"), try position("rule:rule-2"))
+        let sensor = try position("sensor:sen")
+        let firstScene = min(try position("scene:scene-1"), try position("scene:scene-2"))
+        let link = try position("resourcelink:link")
+
+        XCTAssertLessThan(schedule, try position("rule:rule-1"), "the timer dies before the chain it drives")
+        XCTAssertLessThan(lastRule, sensor, "every rule goes before the sensor its condition reads")
+        XCTAssertLessThan(sensor, firstScene, "the counter goes before the states it selected")
+        XCTAssertLessThan(firstScene, link, "the grouping resourcelink goes last")
+    }
+
+    func testManifestWithoutAResourcelinkCleansSafely() async {
+        // The resourcelink is best-effort at upload time (`resourcelinkID: nil`
+        // on failure); its absence must not strand the rest of the teardown.
+        let noLink = stageManifest(
+            roomID: "p2-nolink-b", bridgeIP: "192.0.2.1", presetName: "No link",
+            sensorID: "sen", ruleIDs: ["rule-1"], scheduleID: "sched",
+            sceneIDs: ["scene-1"], resourcelinkID: nil
+        )
+
+        await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "p2-nolink-b", v1Client: bridgeA.v1Spy)
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.deletedResources), expectedDeletes(for: noLink))
+        XCTAssertFalse(bridgeA.v1Spy.deletedResources.contains { $0.hasPrefix("resourcelink:") },
+                       "no resourcelink recorded, no resourcelink delete")
+        XCTAssertFalse(storeStillHolds(noLink))
+    }
+
+    func testManifestWithEmptyRuleAndSceneArraysCleansSafely() async {
+        let sparse = stageManifest(
+            roomID: "p2-sparse-b", bridgeIP: "192.0.2.1", presetName: "Sparse",
+            sensorID: "sen", ruleIDs: [], scheduleID: "sched",
+            sceneIDs: [], resourcelinkID: nil
+        )
+
+        await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "p2-sparse-b", v1Client: bridgeA.v1Spy)
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.deletedResources), ["schedule:sched", "sensor:sen"])
+        XCTAssertEqual(expectedDeletes(for: sparse), ["schedule:sched", "sensor:sen"])
+        XCTAssertFalse(storeStillHolds(sparse))
+    }
+
+    /// Architectural guard, not a behavior test.
+    ///
+    /// The tests above exercise the cleanup helper, and the helper genuinely
+    /// enumerates nothing. But they would all still pass if a later edit called
+    /// `purgeAllChromaGlowResources` from `startCompositionMode` right AFTER the
+    /// helper — which is exactly the shape the defect had. So pin the wiring
+    /// itself: the orchestrator has no purge call at all, and the one legitimate
+    /// caller is the explicit Settings maintenance action.
+    func testGlobalBridgeAnimationPurgeIsWiredOnlyToExplicitMaintenance() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // HueHomeTests/
+            .deletingLastPathComponent()   // repo root
+
+        /// Production source with comment-only lines stripped: a doc comment
+        /// naming the purge (the orchestrator carries one, recording why the
+        /// call left) is documentation, not a call site.
+        func code(_ relativePath: String) throws -> String {
+            let url = repoRoot.appendingPathComponent(relativePath)
+            return try String(contentsOf: url, encoding: .utf8)
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+        }
+
+        XCTAssertFalse(
+            try code("HueHome/Core/Network/UnifiedOrchestrator.swift")
+                .contains("purgeAllChromaGlowResources"),
+            """
+            no normal playback path may reach the global CG_ purge: start, stop, replacement, \
+            launch and refresh all live in UnifiedOrchestrator, so one call anywhere in it \
+            reopens the cross-room destruction defect
+            """)
+        XCTAssertTrue(
+            try code("HueHome/UI/Settings/SettingsView.swift")
+                .contains("purgeAllChromaGlowResources(v1Client:"),
+            "the user-invoked Clean Bridge Resources maintenance action must keep its purge")
+        XCTAssertTrue(
+            try code("HueHome/Core/Network/BridgeAnimationEngine.swift")
+                .contains("func purgeAllChromaGlowResources("),
+            "the recovery operation itself stays available — it was unwired, not deleted")
     }
 }
