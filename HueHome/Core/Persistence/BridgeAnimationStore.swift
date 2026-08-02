@@ -40,6 +40,20 @@ final class BridgeAnimationStore {
         return Array(manifests.values)
     }
 
+    /// The manifests this room owns ON THIS BRIDGE (Composer 2 packet 2).
+    ///
+    /// `roomID` alone is not ownership: the same room id can appear in manifests
+    /// recorded against two different bridges, and cleaning one of those against
+    /// the other's client aims deletes at a bridge that never held the resources
+    /// while dropping the manifest that was the only record of them.
+    ///
+    /// Order is dictionary order and is deliberately not a contract — callers
+    /// clean every returned manifest, and each manifest's own teardown order is
+    /// what has to be dependency-safe.
+    func ownedManifests(roomID: String, bridgeIP: String) -> [BridgeAnimationManifest] {
+        return manifests.values.filter { $0.roomID == roomID && $0.bridgeIP == bridgeIP }
+    }
+
     func remove(presetID: UUID, roomID: String) {
         let key = "\(presetID.uuidString)_\(roomID)"
         manifests.removeValue(forKey: key)

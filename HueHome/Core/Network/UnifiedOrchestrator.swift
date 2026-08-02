@@ -2434,11 +2434,46 @@ final class UnifiedOrchestrator {
     func testHasEntertainmentClient(forBridge bridgeID: String) -> Bool {
         studioEntClients[bridgeID] != nil
     }
+
+    /// Packet 2: the exact pre-upload cleanup the bridge-stored start path runs.
+    /// Exposes the decision, not the store — tests stage manifests through the
+    /// store's own public API and assert on what reaches each bridge's client.
+    func testCleanupBridgeStoredForReplacement(roomID: String, v1Client: HueV1Client) async {
+        await cleanupBridgeStoredAnimationForReplacement(roomID: roomID, v1Client: v1Client)
+    }
     #endif
 
     // MARK: Bridge-Stored Animation (v1 API)
     private let bridgeAnimationEngine = BridgeAnimationEngine()
     private let bridgeAnimationStore = BridgeAnimationStore.shared
+
+    /// Remove ONLY the bridge-stored animations `roomID` owns on the bridge that
+    /// `v1Client` talks to, using each manifest's recorded resource IDs as the
+    /// ownership boundary (Composer 2 packet 2, Phase 0 item 4).
+    ///
+    /// What this deliberately does NOT do: enumerate `/schedules`, `/rules`,
+    /// `/sensors`, `/scenes` or `/resourcelinks`, and never match on the `CG_`
+    /// name prefix. Every bridge-stored start used to finish its per-room loop
+    /// with `purgeAllChromaGlowResources`, which deletes every `CG_` resource on
+    /// the bridge — so starting a look in room B tore down room A's live
+    /// animation and left room A's manifest pointing at resources that no longer
+    /// existed. The global purge is a recovery operation and now reaches the
+    /// bridge only through the explicit Settings maintenance action.
+    ///
+    /// The bridge identity comes from `v1Client.bridgeIP` rather than a caller-
+    /// supplied string on purpose: it makes cleaning one bridge's manifests
+    /// against another bridge's client structurally impossible.
+    private func cleanupBridgeStoredAnimationForReplacement(
+        roomID: String,
+        v1Client: HueV1Client
+    ) async {
+        let bridgeIP = v1Client.bridgeIP
+        for oldManifest in bridgeAnimationStore.ownedManifests(roomID: roomID, bridgeIP: bridgeIP) {
+            debugLog("[Composer] Cleaning up previous bridge animation '\(oldManifest.presetName)' for room=\(roomID)")
+            await bridgeAnimationEngine.stop(manifest: oldManifest, v1Client: v1Client)
+            bridgeAnimationStore.remove(presetID: oldManifest.presetID, roomID: oldManifest.roomID)
+        }
+    }
 
     /// Which transport is driving each room's composition right now.
     enum CompositionTransport: Equatable {
@@ -2992,15 +3027,8 @@ final class UnifiedOrchestrator {
             do {
                 let v1Client = try api.makeV1Client()
 
-                // Clean up any existing bridge animation for this room first
-                for oldManifest in bridgeAnimationStore.allManifests() where oldManifest.roomID == roomID {
-                    debugLog("[Composer] Cleaning up previous bridge animation for \(oldManifest.presetName)")
-                    await bridgeAnimationEngine.stop(manifest: oldManifest, v1Client: v1Client)
-                    bridgeAnimationStore.remove(presetID: oldManifest.presetID, roomID: roomID)
-                }
-
-                // Purge any orphaned CG_ resources from previous test runs
-                await bridgeAnimationEngine.purgeAllChromaGlowResources(v1Client: v1Client)
+                // Clean up only what THIS room owns on THIS bridge (packet 2).
+                await cleanupBridgeStoredAnimationForReplacement(roomID: roomID, v1Client: v1Client)
 
                 debugLog("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
                 // M-04: the engine maps v2 UUIDs → v1 numeric ids via id_v1
