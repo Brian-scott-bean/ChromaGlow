@@ -419,6 +419,57 @@
 
 ---
 
+## 2026-08-02 - [Claude] Composer 2 review round 2 — ChatGPT cross-review amendments + PR 49 scope cleanup (docs only)
+
+### Branch
+- `docs/composer2-architecture-review` (PR #49) — docs only, no source changes, no version
+  bump, nothing to install.
+
+### Did
+- Reviewed PR #49 for cohesion at Brian's request, against six requirements ChatGPT sent
+  back from its cross-review. The document held up internally (all D/N/K/risk/phase
+  cross-references resolve); four of the six requirements were unmet or ambiguous.
+- Cleaned PR scope: `origin/main` was still at build 45, so the validated build-46
+  mixer-tray commit (79b5e9b) rode along in the PR diff — contradicting the PR's own
+  "docs only" claim. Fast-forward pushed `origin/main` to 79b5e9b (Brian's install-branch
+  convention); the PR is now genuinely two doc files.
+- Amended `docs/ios/composer2-architecture-review-2026-08-01.md` on all six points:
+  1. Ent-config selection now requires an exact/unambiguous best match (subset preferred,
+     unique max-overlap else, tie/near-tie → nil → REST) — not mere channel intersection
+     (Part L, Phase 0-3, Part H).
+  2. Studio-over-composition is a user-confirmed handoff — confirmation prompt naming the
+     running look *before* teardown, never a silent stop or after-the-fact toast (Part L,
+     Phase 0-2, Part H; the same-surface card swap stays promptless as the one deliberate
+     exception).
+  3. Explicit rule: every Phase 0 fix lands with its regression test in the same commit.
+  4. Unified creation experience added explicitly: Create + Advanced settings become one
+     continuous editor via `ComposerControlCatalog` progressive disclosure, no separate
+     modals (Part F new bullet + named Phase 7 slice).
+  5. Third-party sessions yielded to by default: launch/foreground cleanup never touches or
+     prompts about foreign sessions; the K1 take-over prompt fires only on an explicit
+     playback action that conflicts (Phase 0-9, K1).
+  6. Rolling >20-light REST strategy got its defined contract: round-robin fairness within
+     one bounded rotation, frame-age limit (older than one rotation → dropped, never sent
+     late), generation-checked cancellation between subsets, `TransportVocabulary`
+     degradation copy (K6, Phase 2).
+
+### Working
+- Suite untouched (no source changes).
+
+### Left
+- Brian: Part K decisions (K1–K6) still open — unchanged ask from round 1.
+- Feed the amended doc back to ChatGPT; merging PR #49 remains Brian's call.
+
+### Validation
+- N/A (docs only). `gh pr view 49 --json files` now lists only DEVLOG.md + the review doc.
+
+### Gotchas
+- The PR-scope confusion was purely a stale-remote artifact: the branch was cut from local
+  main. Push main before opening docs-only PRs, or GitHub charges the branch with every
+  unpushed main commit.
+
+---
+
 ## 2026-08-01 - [Claude] Composer 2 architecture review — ChatGPT baseline verified against main (docs only)
 
 ### Branch

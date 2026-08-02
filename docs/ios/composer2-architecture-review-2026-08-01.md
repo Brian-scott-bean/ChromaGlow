@@ -498,9 +498,16 @@ cached composer demand) — it is already correct; add route-change/interruption
 
 # PART F — UX and aesthetic plan
 
-- **Information architecture: unchanged.** Cards remain the entry point; `+ Create` remains
-  live-by-default; the tray remains the editor; browsing/editing never interrupts playback
-  (all already true on main — these become explicit no-regression contracts in Slice 0).
+- **Information architecture: largely unchanged.** Cards remain the entry point; `+ Create`
+  remains live-by-default; the tray remains the editor; browsing/editing never interrupts
+  playback (all already true on main — these become explicit no-regression contracts in
+  Slice 0). The one deliberate structural change is the unified creation experience below.
+- **Unified creation experience (explicit new work, Phase 7):** Create and Advanced
+  settings become **one continuous editor**. The `+ Create` flow opens the same editor
+  surface the tray uses, and `ComposerControlCatalog` progressive disclosure carries the
+  user from the basic tier to advanced tiers *in place* — no separate Create modal, no
+  separate Advanced-settings modal, no context switch between them. Lands via the
+  ViewModifier-wiring pattern (D8 ii) and the catalog's "no dead controls" discipline.
 - **Disclosure:** extend `ComposerControlCatalog` (basic = the current essential tier;
   advanced = current advanced tier; expert additions arrive as new catalog entries only when
   the engine consumes them — the catalog's existing "no dead controls" test discipline is the
@@ -539,10 +546,12 @@ never chained with the commit) + device-checklist items appended for Brian where
 implicated.
 
 ### Phase 0 — Stop the bleeding (current engine; ~10 surgical fixes, one commit each)
-Objective: retire every live silent failure without new architecture.
+Objective: retire every live silent failure without new architecture. **Rule: every Phase 0
+correction lands with its regression test in the same commit** — no fix-now-test-later.
 1. Per-bridge Entertainment gate (drop `.isEmpty`) — packet 1 (Part L).
-2. `startStudioMode` ownership check → proper composition stop or user-visible conflict — packet 1.
-3. Room-filtered `findEntertainmentConfig` (+ honest availability) — packet 1.
+2. `startStudioMode` ownership check → user-confirmed handoff, never a silent stop — packet 1.
+3. Room-filtered `findEntertainmentConfig` (exact/unambiguous best match + honest
+   availability) — packet 1.
 4. Scoped bridge-stored cleanup: manifest-aware deletes; global `CG_` purge only via an
    explicit maintenance action, never on start (`UnifiedOrchestrator.swift:2701`).
 5. Scoped mailbox: `clear(roomID:bridgeID:)` semantics + cooperative cancellation checks
@@ -553,8 +562,11 @@ Objective: retire every live silent failure without new architecture.
    bridge-stored truncation surfaced in UI copy; `GradientChannelMap` documents the DTLS-only
    20-channel protocol limit as such.
 8. All-Day skips rooms present in any playback registry (`UnifiedOrchestrator.swift:216-231`).
-9. Third-party eviction behind consent (K1): stuck-cleanup only auto-stops sessions *this app*
-   recorded (persisted registry), prompts otherwise.
+9. Third-party sessions yielded to by default (K1): launch/foreground stuck-cleanup only
+   auto-stops sessions *this app* recorded (persisted registry) and never touches — or
+   prompts about — foreign sessions. The take-over prompt appears only when an **explicit
+   user playback action** conflicts with a foreign session (the arbiter's `.needsHandoff`
+   path, Part E); the app never surfaces a conflict the user didn't initiate.
 10. Launch-time manifest reconciliation: restore `runningEffects`/transport map from
     `BridgeAnimationStore` so relaunched animations are stoppable (N3).
 Edge/error cases per fix are in Part H. Hardware checks: two-bridge concurrency, wrong-room
@@ -575,8 +587,10 @@ repro, Sync-Box coexistence, relaunch-stop.
 - Per-bridge REST scheduler: per-bridge `RestSender` instances routed through
   `BridgeCommandGate` extended to a token bucket with 429/503/`Retry-After`; coalescing keyed
   by resource; fairness across rooms; adaptive backoff; completion-based metrics; rolling
-  subsets for large rooms with defined degradation order (brightness cadence > color cadence >
-  spatial resolution > grouped fallback).
+  subsets for large rooms per the K6 contract (round-robin fairness with a bounded rotation,
+  frame-age cap of one rotation, cancellation checks between subsets, degradation copy) and
+  with defined degradation order (brightness cadence > color cadence > spatial resolution >
+  grouped fallback).
 - Studio DTLS loops adopt failover parity (N6); upload rollback (compensating deletes) +
   scaled capacity precheck for bridge-stored (#11, #12); `NWPathMonitor` + IP re-resolution.
 - Non-goals: no document changes; UI unchanged except conflict/consent surfaces.
@@ -612,7 +626,9 @@ repro, Sync-Box coexistence, relaunch-stop.
   (mostly exists for DTLS→REST).
 
 ### Phase 7 — UX expansion + showcase + audio polish
-- In-context help system (`HelpCatalog`); create-flow polish; conflict/consent copy;
+- Unified creation editor: Create and Advanced settings merge into one continuous,
+  progressively disclosed editor (Part F) — a named slice, not incidental polish.
+- In-context help system (`HelpCatalog`); conflict/consent copy;
   showcase effect proving the pipeline end-to-end — recommend **Lava Lamp on the real
   engine** (the preset pack shipped in build 32 proves the *look*; the showcase proves
   per-segment gradient output + spatial sampling + degradation tiers) plus the baseline's
@@ -645,11 +661,11 @@ Owner key: **ARB** arbiter · **SCHED** rest scheduler · **CAP** capability sna
 | White-only + color mixed | Per-target calibration: white-only follow brightness/CT; copy states it | CAP+UI | unit |
 | Mixed gamuts | Per-light gamut mapping (kills majority vote) | CAP | unit |
 | Light unreachable mid-show | Keep rendering; scheduler skips with backoff; badge "N unreachable" | SCHED+UI | unit + HW |
-| Ent config includes out-of-room lights | Config chosen by room membership; channels outside target rendered black or excluded — never driven by another room's look | ARB+CAP | unit + HW |
+| Ent config includes out-of-room lights | Config chosen only on exact/unambiguous room match (subset preferred, unique max-overlap else, tie → REST); channels outside target rendered black or excluded — never driven by another room's look | ARB+CAP | unit + HW |
 | Positions missing/identical/collinear | Keep valid positions; synthesize missing (centroid/index-interpolated); never discard all (#28); collinear → 1-D axis fine; identical → scalar | RT | unit |
-| Second composition, same room | Replace via ordered handoff (drain → start); no user prompt (same surface) | ARB | unit |
+| Second composition, same room | Replace via ordered handoff (drain → start); no user prompt (same surface swap — the one deliberate exception to the confirmation rule) | ARB | unit |
 | Composition in overlapping zone | Arbiter detects target-set overlap → conflict prompt naming the running look | ARB | unit |
-| Another Entertainment mode, same bridge | Handoff with full bookkeeping (never the N2 orphan) | ARB | unit |
+| Another Entertainment mode, same bridge | Confirmation prompt naming the running look, then handoff with full bookkeeping (never the N2 orphan, never silent) | ARB | unit |
 | Effects on a different bridge | Fully concurrent (post P0-1) | ARB | unit |
 | Rapid A/B card alternation | Generation-checked dispatch; ≤1 batch stale window; prime always lands last | SCHED | race unit |
 | Stop while REST batch in flight | Drain-or-cancel bounded by one batch; then state refresh | SCHED | unit |
@@ -723,12 +739,12 @@ Owner key: **ARB** arbiter · **SCHED** rest scheduler · **CAP** capability sna
 
 | # | Decision | Recommendation | If chosen differently |
 |---|---|---|---|
-| K1 | Third-party Entertainment-session eviction | Consent prompt ("Another app is streaming to this bridge — take over?"), auto-stop only sessions this app recorded | Keep silent eviction: fastest UX, but breaks Sync Box users invisibly and is an App-Store/trust liability |
+| K1 | Third-party Entertainment-session eviction | Yield by default: launch/foreground never touches foreign sessions; the consent prompt ("Another app is streaming to this bridge — take over?") appears only when an explicit playback action conflicts; auto-stop only sessions this app recorded | Keep silent eviction: fastest UX, but breaks Sync Box users invisibly and is an App-Store/trust liability |
 | K2 | Diagnostics vs "Data Not Collected" privacy label | Local-only diagnostics; no label change | Real telemetry: changes privacy label + README claim; requires new infra + disclosure |
 | K3 | True blackout on REST | Allow explicit off-frames (remove floor) with safety-stage rate limiting | Keep 1% floor: transports stay inconsistent; Perform blackout pad stays broken on REST |
 | K4 | Bridge-stored preset shows a dead-slider editor (existing DEVLOG product call) | Read-only summary card + "Edit a live copy" action | Hide editor entirely: simpler, loses discoverability of editing |
 | K5 | External-controller conflict policy | Composition yields + toast (external wins) | App wins (re-assert): guarantees the show but fights wall switches/other apps forever |
-| K6 | >20-light rooms on REST | Rolling subsets (all lights participate at reduced cadence) | Honest hard cap with UI copy: simpler, permanently strands lights 21+ |
+| K6 | >20-light rooms on REST | Rolling subsets with a defined contract: round-robin fairness (every light served within one bounded rotation), frame-age limit (a frame older than one rotation is dropped, never sent late), generation-checked cancellation between subsets, and degradation copy via `TransportVocabulary` ("Large room — lights update in rotation") | Honest hard cap with UI copy: simpler, permanently strands lights 21+ |
 
 ---
 
@@ -743,18 +759,23 @@ Owner key: **ARB** arbiter · **SCHED** rest scheduler · **CAP** capability sna
 `CompositionEngine.swift`, `RestSender.swift`, any model/persistence file.
 **Changes:**
 1. Gate: `compositionEntRoomByBridge[bridgeID] == nil` only (drop `compositionRuntimes.isEmpty`).
-2. `startStudioMode`: if `compositionEntRoomByBridge[stopBid]` exists, route through
-   `stopCompositionMode(roomID:)` for that room (full bookkeeping + failover state cleared)
-   before acquiring the session; surface the takeover in the existing toast pathway.
-3. `findEntertainmentConfig`: filter fetched configs to those whose channel light-services
-   intersect the target room's lights (data available via the light resolver + config
-   channels); prefer the config with max overlap; none → return nil (clean REST fallback);
-   `entertainmentAvailability` uses the same predicate so it stops reporting areas the room
-   isn't in.
+2. `startStudioMode`: if `compositionEntRoomByBridge[stopBid]` exists, present a
+   **confirmation prompt naming the running look** ("Stop <composition> and start <card>?")
+   *before* any teardown — Studio never silently terminates a running composition. On
+   confirm, route through `stopCompositionMode(roomID:)` for that room (full bookkeeping +
+   failover state cleared) before acquiring the session; on cancel, the card does not start.
+3. `findEntertainmentConfig`: selection requires an **exact or unambiguous best match** —
+   never mere channel intersection. Prefer a config whose channel light-services are a
+   subset of the target room's lights (data available via the light resolver + config
+   channels); otherwise accept the max-overlap config only when it is unique with a clear
+   margin. A tie/near-tie between candidate configs, or no overlap at all → return nil
+   (clean REST fallback) — when in doubt, don't stream. `entertainmentAvailability` uses
+   the same predicate so it stops reporting areas the room isn't in.
 **Acceptance criteria:** two-bridge scenario — REST composition on bridge A does not demote a
 new start on bridge B to REST; starting a Studio entertainment card over a running composition
-stops that composition cleanly (transport map cleared, no orphaned 25 fps loop); a room with
-no matching entertainment area never opens a DTLS session and reports availability honestly.
+asks for confirmation first, then stops that composition cleanly (transport map cleared, no
+orphaned 25 fps loop); a room with no exact/unambiguous entertainment-area match never opens
+a DTLS session and reports availability honestly.
 **Tests:** `MultiBridgeRoutingTests`-style units for all three (stub configs with channel
 membership; assert gate, teardown ordering, and selection). Suite verified via xcresulttool,
 commit in a separate call, checkpoint tag first — per repo conventions.
