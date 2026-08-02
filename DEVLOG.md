@@ -419,6 +419,199 @@
 
 ---
 
+## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 2 — scoped bridge-stored resource cleanup
+
+### Branch
+- `fix/composer-scoped-bridge-cleanup`, cut from `main` (`b00bfa0`, the Packet 1b merge, PR #51).
+- Rollback tag: `checkpoint/pre-composer-packet-2` (at `b00bfa0`).
+- **No version or build bump** — not an install build. PR opened, not merged.
+- Commits: `95dec4f` (fix + all tests), then this docs commit.
+
+### Defect fixed
+Phase 0 item 4 / review defect 4 / risk-register row 10. Every bridge-stored composition
+start ran, after its per-room cleanup loop:
+
+```swift
+await bridgeAnimationEngine.purgeAllChromaGlowResources(v1Client: v1Client)
+```
+
+That purge enumerates `/schedules`, `/rules`, `/sensors`, `/scenes`, `/resourcelinks` and
+deletes **every** resource whose name begins `CG_`. `CG_` is a prefix *every* ChromaGlow
+room's resources share, so:
+
+- Room A is running a bridge-stored animation; manifest A records its sensor, rules,
+  schedule, resourcelink.
+- The user starts a bridge-optimized look in Room B on the same bridge.
+- Room B's start purges the bridge. Room A's resources are deleted.
+- Room A stops or half-stops — and manifest A is still persisted, now pointing at
+  resources that no longer exist.
+
+The per-room loop above it carried a quieter second bug: it filtered on `roomID` **alone**
+(`allManifests() where oldManifest.roomID == roomID`) and then stopped each match through
+the *current* room's `v1Client`. A manifest recorded against a different bridge was
+therefore "stopped" by issuing its deletes at a bridge that never held those resources —
+while the manifest, the only record of the live ones, was dropped.
+
+### Before / after
+
+| | Before | After |
+| --- | --- | --- |
+| Manifest selection | `roomID` only | `roomID` **and** `bridgeIP` |
+| Bridge identity source | caller's `v1Client`, unchecked against the manifest | derived from `v1Client.bridgeIP`, matched against `manifest.bridgeIP` |
+| Bridge enumeration on start | all five inventories, every start | none |
+| Prefix-based deletes on start | yes, all `CG_*` | none |
+| Sibling room on the same bridge | destroyed | untouched |
+| Same room id on another bridge | deletes misrouted, manifest dropped | untouched, manifest kept |
+
+### Exact normal-playback cleanup rule
+`cleanupBridgeStoredAnimationForReplacement(roomID:v1Client:)` (private, `UnifiedOrchestrator`):
+
+1. `bridgeIP = v1Client.bridgeIP`.
+2. `bridgeAnimationStore.ownedManifests(roomID:bridgeIP:)` — the new store query, matching
+   `manifest.roomID == roomID && manifest.bridgeIP == bridgeIP`.
+3. For each: `bridgeAnimationEngine.stop(manifest:v1Client:)` (the manifest's own recorded
+   IDs, in the existing dependency-safe order: schedule → rules → sensor → scenes →
+   resourcelink), then `bridgeAnimationStore.remove(presetID:roomID:)`.
+4. No `fetchSchedules` / `fetchRules` / `fetchSensors` / `fetchScenes` /
+   `fetchResourcelinks`. No name-prefix matching. **The manifest's recorded IDs are the
+   ownership boundary.**
+
+### Approved signature deviation
+The packet proposed `(roomID:bridgeIP:v1Client:)`. Shipped as `(roomID:v1Client:)` with
+`bridgeIP` derived from `v1Client.bridgeIP`. Same semantics, and it makes cleaning one
+bridge's manifests against another bridge's client *structurally impossible* rather than
+merely correct-by-convention — which is precisely the failure this packet exists to
+prevent. Confirmed approved in the Lane A continuation.
+
+### Global purge: removed from playback, kept for maintenance
+`BridgeAnimationEngine.purgeAllChromaGlowResources` is **unchanged** — same five
+inventories, same `CG_`-only filter, same behavior. Only its wiring changed.
+
+- Callers **before**: `SettingsView.swift:554` (explicit maintenance) **and**
+  `UnifiedOrchestrator.swift:3003` (every bridge-stored start).
+- Callers **after**: `SettingsView.swift:554` only.
+
+It is not called from `startCompositionMode`, `stopCompositionMode`, `startStudioMode`, app
+launch, foreground refresh, area refresh, automatic recovery, or card replacement. The
+Settings → Clean Bridge Resources maintenance action is untouched, and no Settings UI was
+redesigned.
+
+`stopCompositionMode(roomID:)` was deliberately **not** modified: it already resolves each
+manifest's own bridge via `hueClient(forBridgeIP:)` (M-07) and filters by room, so it never
+reaches a sibling room's resources.
+
+### Tests added — 11, all in `HueHomeTests/MultiBridgeRoutingTests.swift`
+No new test file, no pbxproj churn. `RoutingSpyV1Client` gained `fetchCalls` recording,
+settable stub inventories, and overrides for all five `fetch*` methods — which both makes
+"normal playback never enumerates the bridge" assertable and stops an un-overridden fetch
+from attempting a real request against the TEST-NET-1 spy addresses. One narrow DEBUG seam,
+`testCleanupBridgeStoredForReplacement(roomID:v1Client:)`, modeled on the packet 1a/1b
+seams: it exposes the decision, never mutable ownership state.
+
+1. `testStartingARoomPreservesASiblingRoomsBridgeAnimation` — first start in room B deletes
+   nothing of room A's, enumerates nothing, leaves A's manifest in the store.
+2. `testReplacingARoomDeletesOnlyThatRoomsKnownResources` — exactly B's recorded set,
+   disjoint from A's; B's manifest gone, A's kept.
+3. `testEveryOldManifestForTheTargetRoomIsCleaned` — two manifests for the target room,
+   both fully cleaned, sibling untouched.
+4. `testSameRoomIDOnAnotherBridgeIsNotTreatedAsOwned` — the guard against roomID-only
+   filtering. Distinct preset IDs, because the store key is `presetID_roomID`.
+5. `testCleanupOnOneBridgeSendsZeroTrafficToTheOther` — bridge B sees no deletes *and* no
+   reads.
+6. `testNormalReplacementNeverEnumeratesBridgeResources` — zero `fetch*` calls, while the
+   manifest-specific deletes still happen.
+7. `testExplicitMaintenancePurgeDeletesOnlyChromaGlowResources` — drives the purge directly
+   with inventories mixing `CG_*` and ordinary Hue/third-party entries; every `CG_` goes,
+   no other resource is touched.
+8. `testManifestCleanupDeletesInDependencySafeOrder` — schedule → rules → sensor → scenes →
+   resourcelink, **within a single manifest**, by index. No sleeps, no wall-clock.
+9. `testManifestWithoutAResourcelinkCleansSafely` — `resourcelinkID == nil`.
+10. `testManifestWithEmptyRuleAndSceneArraysCleansSafely` — empty `ruleIDs` / `sceneIDs`.
+11. `testGlobalBridgeAnimationPurgeIsWiredOnlyToExplicitMaintenance` — **architectural
+    guard, not a behavior test.** Tests 1–10 all exercise the helper, and the helper
+    genuinely enumerates nothing — but every one of them would still pass if a later edit
+    called the global purge from `startCompositionMode` right *after* the helper, which is
+    exactly the shape the defect had. It derives the repo root from `#filePath`, strips
+    comment-only lines (the orchestrator now carries a doc comment naming the purge, and
+    documentation is not a call site), and asserts: no `purgeAllChromaGlowResources` in
+    `UnifiedOrchestrator.swift`; the maintenance call still in `SettingsView.swift`; the
+    definition still in `BridgeAnimationEngine.swift`. Production sources only.
+
+**Ordering discipline:** `BridgeAnimationStore` holds manifests in a dictionary, so the
+order two manifests are cleaned in is not a contract. Multi-manifest tests compare **sets**;
+delete order is asserted only *within* one manifest. Production cleanup was not sorted to
+satisfy a test. Test hygiene: fresh `UUID()` preset IDs, unique room ids per test, staged
+manifests removed in `tearDown`, no `removeAll()`, no order dependence.
+
+### Validation
+- Narrow: `-only-testing:HueHomeTests/MultiBridgeRoutingTests` → **33 passed, 0 failed,
+  0 skipped** (22 pre-existing + 11 new), verified via `xcresulttool` on
+  `/tmp/Packet2Narrow.xcresult`.
+- Full suite: `/tmp/ComposerPacket2.xcresult` → `xcrun xcresulttool get test-results
+  summary` reports **918 passed, 0 failed, 0 skipped, result "Passed"**. Packet 1b's merged
+  baseline was 907 — delta is exactly the 11 new tests, no unrelated count change.
+- `scripts/hardening_guards.sh` → all guards passed.
+- `git diff --check` → clean.
+- **Simulator only.** Nothing here is physical-Hue validation; §P of the master on-device
+  checklist is the hardware gate.
+
+### Files touched
+- `HueHome/Core/Network/UnifiedOrchestrator.swift` — new private helper, new DEBUG seam,
+  the dangerous start sequence replaced by one call.
+- `HueHome/Core/Persistence/BridgeAnimationStore.swift` — `ownedManifests(roomID:bridgeIP:)`
+  only. **No format change, no migration, `BridgeAnimationManifest.key` untouched,
+  `bridge_animations.json` not migrated.**
+- `HueHomeTests/MultiBridgeRoutingTests.swift` — spy extension + 11 tests.
+- `DEVLOG.md`, `docs/ios/master-on-device-checklist.md` (this docs commit).
+
+### Pending hardware checks
+§P of `docs/ios/master-on-device-checklist.md` — seven checks: two bridge-stored rooms on
+one bridge, replace room B, stop room B, stop room A, multi-bridge isolation, the explicit
+maintenance action, relaunch observation. **Packet 1a's and packet 1b's hardware checks stay
+open and are not superseded.**
+
+### Non-goals (not implemented)
+Scoped `RestSender` mailboxes; per-bridge REST scheduling; cooperative cancellation in REST
+batches; telemetry; the >20-light rolling subsets; All-Day arbitration; third-party
+Entertainment consent; `BridgeSessionArbiter`; `activeStudioTask` redesign; Entertainment
+ownership or area-selection changes; `studioEntClients` restructuring; schema or
+persistence-envelope changes; render-state extraction; OKLab/mirek/blackout; compiler or
+patch editing; Composer UX; Android; any version or build bump. The four optional packet 1b
+review findings (dead `findEntertainmentConfig` cleanup, `needsLights` warm-guard refactor,
+`preferredConfigID` behavior, Studio force-warm optimization) are **not** part of packet 2.
+
+### Explicitly deferred
+- **Upload rollback remains deferred.** A partially-failed upload is not compensated; its
+  orphaned `CG_` resources stay on the bridge until the explicit maintenance action runs.
+  Accepted by design (packet §7) — belongs to later ownership/transport hardening.
+- **Launch-time manifest reconciliation remains Phase 0 item 10.** Relaunching while a
+  bridge-stored animation runs still does not restore in-app state. Not a packet 2 failure.
+- **Packet 1a and packet 1b behavior is unchanged.** The per-bridge Entertainment gate, the
+  Studio↔Composer handoff prompt, room-aware area selection, honest availability and the
+  multi-bridge routing guarantees are untouched; their tests pass unmodified.
+
+### Adjacent risks found, left open
+- `SettingsView.cleanBridgeResources` builds its client from the legacy shared
+  `HueAPIClient.shared`, so the maintenance action purges **one** bridge. It is not a
+  complete multi-bridge maintenance UI. Packet 2 explicitly does not redesign it.
+- `BridgeAnimationManifest.key` is `presetID_roomID` and omits bridge identity: the same
+  preset in the same room on two bridges collides in the store, and one manifest silently
+  overwrites the other. The new query filters correctly on what *is* stored; the key itself
+  is out of scope (the packet forbids changing it).
+- `stopCompositionMode(roomID:)` takes no bridge argument and so can affect every manifest
+  sharing that room id. It routes each one to its own bridge correctly (M-07), so it is not
+  the destruction defect — but the API cannot express "stop this room on this bridge".
+  Packet 2 fixes the normal replacement path only.
+
+### Rollback
+```bash
+git reset --hard checkpoint/pre-composer-packet-2   # = b00bfa0, the Packet 1b merge
+```
+Or revert `95dec4f` alone to restore the old start sequence (which reinstates the
+cross-room destruction defect). The branch is not merged; closing the PR is also sufficient.
+
+---
+
 ## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 1b — room-aware Entertainment Area selection
 
 ### Branch
