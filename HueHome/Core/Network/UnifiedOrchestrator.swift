@@ -2245,6 +2245,13 @@ final class UnifiedOrchestrator {
     private struct CompositionRuntime {
         let roomID: String
         let roomName: String
+        /// The bridge this room's REST composition writes to. Recorded at start
+        /// rather than re-derived from `allRooms` at read time — the snapshot can
+        /// go stale mid-composition, and the Entertainment gate below must not
+        /// mistake a stale lookup for "no composition on this bridge".
+        /// `api` cannot answer this: it is a `HueAPIClient`, and only the
+        /// `BridgeAPIClient` subclass carries a bridge identity.
+        let bridgeID: String
         let api: HueAPIClient
         let groupedLightID: String
         /// Individual light IDs for per-light REST mode.
@@ -2291,6 +2298,87 @@ final class UnifiedOrchestrator {
     private var compositionEntRoomByBridge: [String: String] = [:]
     /// Per-bridge param boxes for mic-demand tracking. Weak so they don't prevent dealloc.
     private var compositionEntParamBoxes: [String: CompositionParamBox] = [:]
+
+    /// Which room's composition currently owns the DTLS session on this bridge.
+    /// The ownership maps are private because only this type may mutate them, but
+    /// Studio has to be able to *ask* — without this, a Studio card tap could not
+    /// tell "nobody is streaming here" from "a composition is", and the only way
+    /// to find out was to tear the session down and see what broke.
+    func compositionOwningEntertainment(onBridge bridgeID: String) -> String? {
+        compositionEntRoomByBridge[bridgeID]
+    }
+
+    /// Whether a composition may take the Entertainment session on this bridge.
+    ///
+    /// Both conjuncts are scoped to the target bridge. The second one used to be
+    /// `compositionRuntimes.isEmpty` — a *global* test, so a single REST
+    /// composition anywhere silently demoted every later start on every bridge
+    /// to REST. Bridge A's state may not decide bridge B's transport.
+    ///
+    /// The same-bridge REST block is deliberate and stays: a REST composition on
+    /// this bridge may be writing to lights that also sit inside the entertainment
+    /// area we are about to stream into, and DTLS and REST would fight over them.
+    /// Resolving that precisely needs area membership, which this packet does not
+    /// have yet — so we refuse rather than guess. (Composer 2 packet 1b revisits
+    /// this as overlap-based arbitration.)
+    private func canAcquireEntertainment(onBridge bridgeID: String) -> Bool {
+        guard compositionEntRoomByBridge[bridgeID] == nil else { return false }
+        return !compositionRuntimes.values.contains { $0.bridgeID == bridgeID }
+    }
+
+    #if DEBUG
+    // Ownership seams (mirror `injectForTesting`): the maps are private because
+    // only this type may mutate them in production, but the per-bridge gate is
+    // exactly the kind of rule that regresses silently — so tests get a way to
+    // stage ownership without a live bridge or a real DTLS handshake.
+
+    /// Stage a REST composition on a bridge, as `startCompositionMode` would.
+    func testStageRESTComposition(roomID: String, bridgeID: String, api: HueAPIClient) {
+        compositionTransportByRoom[roomID] = .rest
+        compositionRuntimes[roomID] = CompositionRuntime(
+            roomID: roomID,
+            roomName: roomID,
+            bridgeID: bridgeID,
+            api: api,
+            groupedLightID: "grouped-\(roomID)",
+            lightIDs: [],
+            paramBox: CompositionParamBox(
+                palette: PaletteConfig(), motion: MotionConfig(),
+                envelope: EnvelopeConfig(), reaction: ReactionConfig()
+            ),
+            tier: .runtimeOnly,
+            gamut: .c,
+            startTime: CFAbsoluteTimeGetCurrent(),
+            generation: 1,
+            nextDueAt: CFAbsoluteTimeGetCurrent(),
+            wasInteracting: false,
+            pendingSettle: false,
+            interactionBurstUntil: nil,
+            sendCount: 0,
+            lastSentX: nil,
+            lastSentY: nil,
+            lastSentBri: nil,
+            lastSentAt: nil
+        )
+        if !compositionOrder.contains(roomID) { compositionOrder.append(roomID) }
+    }
+
+    /// Stage composition ownership of a bridge's Entertainment session.
+    func testStageEntertainmentOwner(roomID: String, bridgeID: String) {
+        compositionEntRoomByBridge[bridgeID] = roomID
+        compositionTransportByRoom[roomID] = .entertainment
+    }
+
+    /// The per-bridge acquisition gate, exactly as `startCompositionMode` asks it.
+    func testCanAcquireEntertainment(onBridge bridgeID: String) -> Bool {
+        canAcquireEntertainment(onBridge: bridgeID)
+    }
+
+    /// roomID → bridgeID for every live REST composition runtime.
+    func testCompositionRuntimeBridges() -> [String: String] {
+        compositionRuntimes.mapValues(\.bridgeID)
+    }
+    #endif
 
     // MARK: Bridge-Stored Animation (v1 API)
     private let bridgeAnimationEngine = BridgeAnimationEngine()
@@ -2626,8 +2714,7 @@ final class UnifiedOrchestrator {
         // One session per bridge — multiple bridges can run simultaneously.
         let bridgeID = room.bridgeID ?? ""
         if preferEntertainment,
-           compositionEntRoomByBridge[bridgeID] == nil,
-           compositionRuntimes.isEmpty {
+           canAcquireEntertainment(onBridge: bridgeID) {
             // Mic (when reaction uses it) is already warming during gamut resolution above,
             // overlapping network time with FFT capture startup.
             let entClient = await tryStartEntertainment(room: room)
@@ -2778,6 +2865,7 @@ final class UnifiedOrchestrator {
         compositionRuntimes[roomID] = CompositionRuntime(
             roomID: roomID,
             roomName: room.name,
+            bridgeID: bridgeID,
             api: api,
             groupedLightID: groupedLightID,
             lightIDs: compositionLightIDs,
