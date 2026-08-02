@@ -419,6 +419,236 @@
 
 ---
 
+## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 1b — room-aware Entertainment Area selection
+
+### Branch
+- `fix/composer-entertainment-area-selection`, cut from `main` (`260c54f`, the Packet 1a merge).
+- Rollback tag: `checkpoint/pre-composer-packet-1b` (at `260c54f`).
+- **No version or build bump** — not an install build. PR opened, not merged.
+
+### Defect fixed
+`findEntertainmentConfig(bridgeID:preferredConfigID:)` fetched every
+`entertainment_configuration` on a bridge and returned `configs.first`. Selection was scoped
+to the **bridge**, never the **room**:
+
+- A Bedroom composition could open a DTLS session on the Living Room's Entertainment Area.
+- `entertainmentAvailability(for:)` reported "available" for rooms with zero lights in any
+  area, because *some* area existed on their bridge.
+- `startStudioMode` selected **twice** per start — once to open the session, once more to read
+  channel IDs — two independent `configs.first` picks that agreed only by accident.
+
+The trap underneath it (the reason Packet 1a split this out):
+`EntertainmentChannel.lightServiceIDs` holds **entertainment service** rids, not light rids —
+`parseChannel` fills it from `members[].service.rid`. Comparing them with room light IDs
+matches nothing on any bridge, so a selector built that way returns nil always and disables
+Entertainment app-wide, silently, while every test written against the same assumption passes.
+
+### Mapping extraction
+The correct join already existed inside `resolveEntertainmentLightPositions`:
+
+```
+entertainment service --owner.rid--> device <--owner.rid-- light service
+```
+
+It is now `EntertainmentAreaSelector` (appended to `EntertainmentConfigManager.swift` — no new
+file, no pbxproj churn, same call Packet 1a made), cached per bridge, and consumed by
+selection, channel IDs, spatial positions and availability alike.
+`resolveEntertainmentLightPositions` was **deleted, not wrapped** — two names for one join is
+exactly how the rid confusion survived this long. It also removes a duplicate
+`/resource/entertainment` + `fetchLights` round trip from every composition start.
+
+`deviceToLightID` resolves a multi-light device to its **lowest** light ID rather than
+last-writer-wins, so a reordered `/resource/light` response cannot change the map. (Such an
+area then maps to a strict subset of the room and is selected by stage B instead of stage A —
+still safe, just not an exact match. Known limitation, documented in the type.)
+
+### Exact selection contract
+Pure, deterministic, order-independent. Eligibility first: a config must resolve to ≥1 real
+light **and** yield usable channel IDs — an unstreamable area may never be selected, or
+availability promises a stream startup then refuses. Configs resolving to the *same* light set
+are grouped as equivalents.
+
+1. **Exact** — the group equal to the room's light set wins.
+2. **Contained** — else the unique largest strict subset wins; equal-size different subsets are
+   ambiguous → nil. (This is what lets an area deliberately cover part of a larger room.)
+3. **Dominant overlap** — else, and **only when ≥2 groups have distinct non-empty overlaps**,
+   the group whose overlap strictly contains every other's wins.
+
+Array order, area name and `configs.first` are never tie-breakers; the only tie-break is the
+stable config ID, inside a group of equivalents. A `preferredConfigID` is honoured only inside
+the winning group (or its unstreamable twin), else nil — an explicit ID cannot buy its way past
+room safety.
+
+**Two agreed deviations from the packet's literal wording** (Brian's calls, both amendments to
+the approved plan):
+
+- *§6A "multiple exact matches → nil"* would have disabled Entertainment for anyone holding
+  both a Hue-app area and a ChromaGlow-built one over the same room (our own builder POSTs
+  `configuration_type: "music"`). Equivalent light sets are normalized at **selection time**
+  only; nothing is deleted or merged on the bridge.
+- *§6C "strict superset of every other overlap"* is vacuously true with one candidate, so a
+  lone whole-house area would have been selected for a Bedroom composition — the exact defect
+  1b fixes. Stage C now requires a real contest.
+
+### Cache before/after
+| | before | after |
+|---|---|---|
+| configs | `[String: EntertainmentConfig]` — one per bridge, whichever was listed first | `[String: [EntertainmentConfig]]` — the whole inventory |
+| membership | *(none — recomputed by two fetches on every start)* | `[String: [String: String]]`, entertainment service → light |
+| fetched marker | inserted unconditionally | inserted **only on a successful configs GET** |
+
+Key absent = unknown or failed. Empty value = successfully computed and genuinely empty. That
+distinction is what separates `.unknown` from `.noArea` from `.noMatchingArea`.
+
+**Warming is component-aware.** Configs, membership and raw lights complete independently, so
+`force: false` fetches only what is missing — a bridge whose configs arrived but whose
+membership request failed is retried by an ordinary warm instead of stranding on `.unknown`
+forever. `force: true` refreshes all three, but each component keeps its own last-known-good if
+its refresh fails: a blip never replaces valid configs with `[]` nor removes a valid map.
+Lights fetched during a warm are written back into the raw-light cache, so bridges whose
+`loadAll` failed become answerable instead of silently unstreamable.
+
+### Honest availability
+New case `.noMatchingArea` (a definite no, `canStream == false`):
+*"No Entertainment Area can safely stream to this room. Create or update an area for this
+room."* — worded to stay true for both causes (no membership match, and a matching area whose
+channels are unusable). Precedence:
+
+```
+noBridge → noClientKey
+→ configs never fetched / first fetch failed   .unknown
+→ configs fetched and empty                    .noArea
+→ membership absent (a fetch failed)           .unknown
+→ room lights unresolvable (cold or empty)     .unknown
+→ selector returns nil                         .noMatchingArea
+→ otherwise                    .available(areaName: the SELECTED area)
+```
+
+`.noArea` is never used for a bridge that has areas belonging to other rooms.
+
+### Consumers migrated
+`findEntertainmentConfig` (room-shaped; the bridge-only convenience is **gone**),
+`refreshEntertainmentConfigs`, `activeEntertainmentConfig(for:)`, `entertainmentAvailability`,
+Composer start (`startCompositionMode`), all three Studio Entertainment starts (strobe / party /
+thunderstorm — each warms its own cache rather than trusting a UI surface to have done it),
+spatial-position resolution, `tryStartEntertainment` (now takes the already-selected config),
+the Composer directional gate, the spatial minimap, `recomputeSpatialPositions`, and the
+area-builder callback in `ComposerLayerSheet`.
+
+`entertainmentStartPlan(for:)` is the single selection per start attempt: the config ID handed
+to `startSession`, the channel IDs driving the render loop and the spatial positions now
+provably describe the same area.
+
+### Three enabling correctness fixes (Brian approved; scope-bounded, no other adjacent cleanup)
+1. **Network failure ≠ "no area."** A configs fetch that throws or fails to decode no longer
+   marks the bridge fetched. `EntertainmentConfigManager.fetchConfigs` now **throws** on a
+   decode failure instead of returning `[]`, so network failure / decode failure / a genuinely
+   empty response stay distinguishable.
+2. **Unstreamable configs open no session.** Selection and channel validation happen *before*
+   any client is created. The old order opened the session and checked `channelIDs.isEmpty`
+   afterwards, leaving a live client parked in `studioEntClients` and the configuration left
+   `action=start` on the bridge.
+3. **`UInt8(channel.id)` no longer traps.** `validatedChannelIDs` uses `UInt8(exactly:)` and
+   refuses the whole config rather than streaming it partially — a partial stream would light
+   half an area and would also break the index alignment
+   `computeSpatialPositionsForEntertainment` relies on. All four conversion sites migrated.
+
+### Tests added (57, all shipped in the same commit as the fix)
+Existing files extended — no new test file, no pbxproj churn.
+
+- `HueHomeTests/EntertainmentAvailabilityTests.swift` → new `EntertainmentAreaSelectorTests`
+  (41 with the existing enum tests): the mandatory positive exact match; wrong-first-config;
+  order independence; unique largest subset; equal-subset ambiguity; dominant overlap;
+  competing incomparable overlaps; equal overlaps cancelling; **lone whole-house area refused**;
+  lone contained partial area selected; no overlap; empty room set; the
+  service→device→light join built from raw `/resource/entertainment` JSON + `HueLight.owner`
+  (never a pre-resolved fake map); entertainment rids proven not to be light rids; stale member
+  ignored; multi-light device determinism; malformed payload; duplicate-equivalent areas
+  streaming, agreeing in either order and not manufacturing a contest; repeated config ID;
+  `validatedChannelIDs` for 0/255/−1/256/empty/duplicate/one-bad-channel; unstreamable area
+  never selected; a valid duplicate beating an unusable lower-ID twin; preferred ID inside the
+  group honoured, for another room rejected, naming nothing rejected, unstreamable falling back
+  to its usable equivalent; two rooms one bridge; positions resolving through the same map.
+- `HueHomeTests/EntertainmentRobustnessTests.swift` → new `EntertainmentRoomSelectionTests`
+  (21): the four availability states incl. `.noMatchingArea` and unusable-channel areas;
+  first-fetch failure staying `.unknown`; transient failure preserving last-known-good; a
+  failure on one bridge not disturbing another; **membership retried by an ordinary non-forced
+  warm**, and the inverse for configs; a successfully-empty membership treated as a verdict;
+  availability and selection issuing zero GETs warm *and* cold; each room on a shared bridge
+  selecting its own area; a single correctly-mapped area still streaming; caches staying
+  bridge-scoped under identical room/config IDs; **one selection per start** (the activated
+  config ID equals the plan's, and the other room's area is never touched); the **cold-cache
+  Studio path** (bridge lists the wrong room's area first, card tapped with no Composer or
+  transport menu opened); an unstreamable area opening no session, parking no client, claiming
+  no ownership; and Packet 1a's same-bridge REST block still refusing.
+
+DEBUG seams added alongside Packet 1a's: `testSeedEntertainmentCaches`,
+`testEntertainmentMembership`, `testEntertainmentStartPlan`, `testHasEntertainmentClient`.
+`EntertainmentSpyClient` gained `stubEntertainmentJSON`, `stubLights`, a `fetchLights()`
+override, per-endpoint failure switches and GET/fetch recorders. No mutable ownership or cache
+state is exposed publicly in production for tests.
+
+### Validation
+- Narrow: `EntertainmentAreaSelectorTests` + `EntertainmentAvailabilityTests` → 41 passed;
+  `EntertainmentRoomSelectionTests` → 21 passed.
+- Full suite: **907 passed, 0 failed, 0 skipped** — `xcodebuild test -project HueHome.xcodeproj
+  -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+  -resultBundlePath /tmp/ComposerPacket1B.xcresult`, verified with
+  `xcrun xcresulttool get test-results summary` (`"result": "Passed"`), not inferred from exit
+  text. Packet 1a's baseline was 850; the 57 new tests account for the delta.
+- `scripts/hardening_guards.sh`: all guards passed. `git diff --check`: clean.
+- Files touched: `EntertainmentConfigManager.swift`, `UnifiedOrchestrator.swift`,
+  `ComposerLayerSheet.swift`, `EntertainmentAvailabilityTests.swift`,
+  `EntertainmentRobustnessTests.swift`. No pbxproj, no version bump, no unrelated files.
+- **No hardware validation.** Simulator unit tests only — nothing here proves anything about
+  physical Hue behaviour.
+
+### Gotchas
+- **REST compositions in rooms with no safe area match now lose entertainment-derived spatial
+  positions** and fall back to index order. Previously they borrowed whichever config the bridge
+  listed first — the same defect, on the REST path. Correct, but visible: do not mistake it for
+  a regression.
+- Session teardown still drops the bridge's inventory + fetched marker (and now the membership
+  map). That is deliberate: it is what makes an area edited in the Hue app take effect on the
+  next start rather than only after a relaunch.
+- The Composer advanced-controls sheet now warms on `vm.selectedRoom?.id`. Without it the
+  directional gate answers from a cold cache and tells a user with an area to create one.
+- `EntertainmentAreasView`'s rename/delete still do not invalidate the orchestrator caches. The
+  forced warm on every start covers it in practice; a stale name can briefly show in the
+  transport menu. Not in this packet's scope.
+- Packet 1a's gotchas all still stand (global `activeStudioTask`; compositions storing their
+  client in `studioEntClients`; Entertainment compositions never writing `compositionRuntimes`).
+
+### Hardware checks still pending (Brian)
+Appended to `docs/ios/master-on-device-checklist.md` as section **O**. Packet 1a's seven checks
+remain open and are **not** superseded.
+
+### Non-goals (explicitly not in this branch)
+Light-overlap REST/Entertainment coexistence; any relaxation of Packet 1a's same-bridge REST
+block; `canAcquireEntertainment` changes; BridgeSessionArbiter; per-bridge REST scheduler;
+global `activeStudioTask` redesign; `studioEntClients` rename; third-party Entertainment
+takeover; All-Day arbitration; bridge-stored cleanup; Composer schema/version envelope;
+compiler; render-state extraction; OKLab/mirek; unified Create + Advanced editor; new effects,
+layers, modulation or timelines; Android; telemetry; build/marketing-version changes.
+
+- **Packet 1a's same-bridge REST block is unchanged.** `canAcquireEntertainment` was not
+  touched; a REST composition on a bridge still refuses Entertainment on that bridge, and
+  `testARESTCompositionOnTheSameBridgeStillBlocksEntertainment` pins it.
+- **Overlap-aware REST/Entertainment coexistence remains deferred.** Packet 1b makes membership
+  selection trustworthy; it does not yet spend that trust on letting the two transports share a
+  bridge.
+
+### Rollback
+```bash
+git checkout main                                       # never merged; main is untouched
+git branch -D fix/composer-entertainment-area-selection # discard the work entirely
+# or, to inspect the pre-packet tree:
+git checkout checkpoint/pre-composer-packet-1b
+```
+No data-format changes; nothing persisted changed shape.
+
+---
+
 ## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 1a — Entertainment ownership correctness
 
 ### Branch
