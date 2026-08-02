@@ -306,6 +306,58 @@ stopped · maintenance-action result.**
       **Record the current behavior — missing in-app restoration is NOT a packet 2 failure.**
       Launch-time manifest reconciliation is Phase 0 item 10.
 
+## Q. Composer 2 — scoped REST mailboxes [packet 3]
+
+Simulator unit tests prove the *decisions*; only hardware proves which bulbs keep moving.
+Packets 1a, 1b and 2's checks (§O, §P and packet 1a's DEVLOG entry) stay open and are NOT
+superseded by these.
+
+Before packet 3, ONE latest-wins REST mailbox served every Composer room, every Studio engine
+loop, and every Studio live-param write across every bridge — so one room's stop cleared
+everyone's queued frame, and a running multi-batch sweep had no way to notice it had been
+superseded. These checks are the hardware proof that mailboxes are now per bridge × room ×
+owner, and that a stop actually halts an in-flight sweep.
+
+**Read the guarantee before judging a result.** `clear` stops *pending* work outright and
+stops *executing* work before its next batch — **at most one already-dispatched batch or
+individual light request may still complete**, and superseded intermediate values may be
+dropped by design. A single brief overlap frame is expected. Minor pacing variation is not a
+failure. What *is* a failure: continued old-look motion, a frozen or stalled scope, or a scope
+being cleared that no one asked to stop.
+
+For every item record: **app build · bridge IDs or labels · bridge firmware · room names ·
+light counts · requested transport · actual transport · which rooms kept moving · which
+stopped · how quickly the old look stopped.**
+
+- [ ] Two rooms on one bridge, both Composer REST: stop room A. Expected: room B does **not**
+      stall, does **not** freeze on a stale colour, and does **not** have its queued work
+      cleared. (Before packet 3, the global clear also poisoned room B's delta gate, so room B
+      could sit frozen on the discarded frame's colour.)
+- [ ] Two bridges, one Composer room each: stop the bridge-A room. Expected: bridge B keeps
+      running. Minor pacing variation is not a failure.
+- [ ] Card replacement, same room, **≥10 lights** (ideally a gradient strip): tap card 1, then
+      card 2 fast. Expected: at most **one** already-dispatched batch of the old look may
+      complete after the new prime; no subsequent old batch may begin. A single brief overlap
+      frame is expected and acceptable — **continued old-look motion is a failure**.
+- [ ] Same-bridge Studio + Composer: the Studio scope must not be cleared or frozen when the
+      Composer room stops, and vice versa. Minor pacing variation is not a packet 3 failure.
+- [ ] Slider + Composer: scrub a Studio param while a Composer look runs elsewhere. Expected:
+      both scopes keep converging to their latest intended values. Intermediate superseded
+      values may be dropped by design; **neither scope may be globally cleared or frozen**.
+- [ ] Studio running in room A, then start Studio in room B. Expected: room A stops cleanly,
+      room B starts clean, **no crossfire from room A**. (One global task slot used to leave
+      room A's queued writes legal.)
+- [ ] Composer running, tap a Studio entertainment card on the same bridge, confirm the
+      prompt. Expected: a clean switch (packet 1A regression check).
+- [ ] Remove a bridge from Bridge Manager while a Composer look runs on **another** bridge.
+      Expected: the other bridge's look continues uninterrupted.
+- [ ] Bridge-native effect on a room with **≥10 v2-capable lights**: drag the warmth or speed
+      slider, then immediately stop or switch the card. Expected: the old per-light
+      re-parameterization stops **within roughly one light**, not continuing to sweep the room.
+      (This is the path that previously ran ~lightCount × 100 ms uncancellable — about 2 s on a
+      20-light room.)
+- [ ] Stop/start the same card **5× rapidly**. Expected: no stuck lights, no doubled ramps.
+
 ## Parked-agent "Left" register (tracked, not device QA)
 
 | Owner | Item | Status |

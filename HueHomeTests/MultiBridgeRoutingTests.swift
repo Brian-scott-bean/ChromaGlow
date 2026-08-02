@@ -125,6 +125,14 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
         _groupedStateIDs.append(id)
     }
 
+    /// Packet 3: `startStudioMode`'s default branch issues exactly this PUT.
+    /// Overridden so the ownership tests never reach the (unroutable) TEST-NET-1
+    /// address the spies are built with.
+    override func setGroupedLightBrightness(id: String, brightness: Double) async throws {
+        lock.lock(); defer { lock.unlock() }
+        _groupedStateIDs.append(id)
+    }
+
     override func setLightNativeEffect(id: String, effect: String) async throws {
         lock.lock(); defer { lock.unlock() }
         _v1EffectPuts.append("\(id):\(effect)")
@@ -942,5 +950,539 @@ final class MultiBridgeRoutingTests: XCTestCase {
             try code("HueHome/Core/Network/BridgeAnimationEngine.swift")
                 .contains("func purgeAllChromaGlowResources("),
             "the recovery operation itself stays available — it was unwired, not deleted")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 3: scoped REST mailboxes + cooperative cancellation
+    // ──────────────────────────────────────────────
+    //
+    // Before packet 3 ONE `RestSender` served every Composer room, every Studio
+    // engine loop, and every Studio live-param write across every bridge — so
+    // `clear()` was global, and the multi-batch closures had no way to notice
+    // they had been superseded. These are the orchestrator-level guards; the
+    // pure sender semantics live in GatedBulkWriteTests.
+    //
+    // Everything below is proven by continuations and recorded event ORDER.
+    // Nothing is proven by elapsed time.
+
+    /// Park a closure inside a sender's flush loop so later enqueues stay
+    /// pending and observable.
+    private func park(
+        _ sender: RestSender,
+        room: String = "__park__",
+        events: RestEventLog
+    ) async -> RestGate {
+        let gate = RestGate()
+        await sender.enqueue(scope: RestScope(roomID: room, owner: .composer)) { _ in
+            gate.signalStarted()
+            await gate.waitForRelease()
+        }
+        await gate.waitUntilStarted()
+        _ = events
+        return gate
+    }
+
+    /// Deterministic barrier: everything enqueued before this has run.
+    private func drain(_ sender: RestSender) async {
+        let done = RestGate()
+        await sender.enqueue(scope: RestScope(roomID: "__drain__", owner: .studio)) { _ in
+            done.signalStarted()
+        }
+        await done.waitUntilStarted()
+    }
+
+    private func enqueueRecording(
+        _ sender: RestSender,
+        _ scope: RestScope,
+        _ events: RestEventLog,
+        _ label: String
+    ) async {
+        await sender.enqueue(scope: scope) { _ in events.record(label) }
+    }
+
+    private func composerScope(_ roomID: String) -> RestScope {
+        RestScope(roomID: roomID, owner: .composer)
+    }
+    private func studioScope(_ roomID: String) -> RestScope {
+        RestScope(roomID: roomID, owner: .studio)
+    }
+
+    // 8. Stopping room A must not discard room B's queued frame. This is the
+    //    headline defect: the global clear() also poisoned room B's delta gate
+    //    (the scheduler had already recorded lastSent* for the discarded
+    //    frame), so a stopped room could FREEZE a running room's colour.
+    func testStoppingOneRoomPreservesAnotherRoomsQueuedWork() async {
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+        orchestrator.testStageRESTComposition(roomID: "room-b", bridgeID: "bridge-a", api: bridgeA)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+
+        let gate = await park(sender, events: events)
+        await enqueueRecording(sender, composerScope("room-a"), events, "A")
+        await enqueueRecording(sender, composerScope("room-b"), events, "B")
+
+        await orchestrator.stopCompositionMode(roomID: "room-a")
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertEqual(events.entries, ["B"], """
+            room A's queued frame is dropped and room B's survives — a global \
+            clear() here is what froze running rooms on a stale colour
+            """)
+    }
+
+    // 9. The same isolation across bridges: bridge B's mailbox is a different
+    //    object entirely, so a bridge-A stop cannot reach it.
+    func testStoppingARoomOnOneBridgePreservesTheOtherBridgesQueuedWork() async {
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+        orchestrator.testStageRESTComposition(roomID: "room-b", bridgeID: "bridge-b", api: bridgeB)
+        let senderA = orchestrator.testRestSender(for: "bridge-a")
+        let senderB = orchestrator.testRestSender(for: "bridge-b")
+        let events = RestEventLog()
+
+        let gateA = await park(senderA, room: "__park-a__", events: events)
+        let gateB = await park(senderB, room: "__park-b__", events: events)
+        await enqueueRecording(senderA, composerScope("room-a"), events, "A")
+        await enqueueRecording(senderB, composerScope("room-b"), events, "B")
+
+        await orchestrator.stopCompositionMode(roomID: "room-a")
+
+        gateA.release()
+        gateB.release()
+        await drain(senderA)
+        await drain(senderB)
+
+        XCTAssertEqual(events.entries, ["B"],
+            "bridge B's mailbox is a separate object; a bridge-A stop cannot reach it")
+    }
+
+    // 10. A stop with NO REST runtime (Entertainment transport, bridge-stored
+    //     transport, or already stopped) must clear NOTHING and must not
+    //     conjure a sender — guessing a bridge cancels an innocent room.
+    func testStoppingARoomWithNoRESTRuntimeClearsNothingAndGuessesNoBridge() async {
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+        let keysBefore = orchestrator.testRestSenderBridgeKeys()
+
+        let gate = await park(sender, events: events)
+        await enqueueRecording(sender, composerScope("ghost-room"), events, "ghost")
+
+        // No runtime was ever staged for "ghost-room".
+        await orchestrator.stopCompositionMode(roomID: "ghost-room")
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertEqual(events.entries, ["ghost"],
+            "with no runtime there is no recorded bridge, so nothing may be cleared")
+        XCTAssertEqual(orchestrator.testRestSenderBridgeKeys(), keysBefore,
+            "the stop must not lazily create a sender for a bridge it guessed")
+    }
+
+    // 11. The bridge comes from the RUNTIME's recorded bridgeID, never from
+    //     `allRooms` — that snapshot goes stale mid-composition, and a stale
+    //     lookup would clear the wrong bridge's mailbox in both directions.
+    func testComposerStopUsesTheRuntimesBridgeNotAStaleRoomSnapshot() async {
+        // Runtime says room-a lives on bridge A…
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+        // …but the room snapshot has since moved it to bridge B.
+        let movedRoom = HueLocalRoom(roomID: "room-a", bridgeID: "bridge-b")
+        movedRoom.cachedName = "Room A"
+        movedRoom.cachedGroupedLightID = "gl-a"
+        orchestrator.preloadCached(from: [movedRoom])
+        XCTAssertEqual(orchestrator.allRooms.first(where: { $0.id == "room-a" })?.bridgeID,
+                       "bridge-b", "precondition: the snapshot disagrees with the runtime")
+
+        let senderA = orchestrator.testRestSender(for: "bridge-a")
+        let senderB = orchestrator.testRestSender(for: "bridge-b")
+        let events = RestEventLog()
+
+        let gateA = await park(senderA, room: "__park-a__", events: events)
+        let gateB = await park(senderB, room: "__park-b__", events: events)
+        await enqueueRecording(senderA, composerScope("room-a"), events, "on-bridge-a")
+        await enqueueRecording(senderB, composerScope("room-a"), events, "on-bridge-b")
+
+        await orchestrator.stopCompositionMode(roomID: "room-a")
+
+        gateA.release()
+        gateB.release()
+        await drain(senderA)
+        await drain(senderB)
+
+        XCTAssertEqual(events.entries, ["on-bridge-b"], """
+            the RUNTIME's bridge (A) is cleared and the stale snapshot's bridge \
+            (B) is left alone — reading allRooms here would invert this
+            """)
+    }
+
+    // 12. Composer and Studio may target the same room simultaneously (a Studio
+    //     slider while a composition runs). The owner is part of the key, so
+    //     they are independent slots and one cannot cancel the other.
+    func testStudioAndComposerScopesForTheSameRoomAreIndependent() async {
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+
+        let gate = await park(sender, events: events)
+        await enqueueRecording(sender, composerScope("room-a"), events, "composer")
+        await enqueueRecording(sender, studioScope("room-a"), events, "studio")
+
+        await sender.clear(scope: composerScope("room-a"))
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertEqual(events.entries, ["studio"],
+            "clearing the room's Composer slot must leave its Studio slot alone")
+    }
+
+    // 13. CROSS-ROOM STUDIO REPLACEMENT. `activeStudioTask` is one global slot,
+    //     so starting Studio in room B replaces room A's loop. startStudioMode
+    //     must therefore clear the PREVIOUSLY RECORDED scope, not the incoming
+    //     room's — otherwise room A's epoch stays valid and it keeps writing.
+    func testStartingStudioInAnotherRoomInvalidatesThePreviousRoomsScope() async {
+        let roomA = RoomDisplayItem(
+            id: "room-a", name: "Room A", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-a", lightCount: 1,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "LA1", rtype: "light")]
+        )
+        let roomB = RoomDisplayItem(
+            id: "room-b", name: "Room B", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-b", lightCount: 1,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "LB1", rtype: "light")]
+        )
+
+        // A Studio card with no engine loop: `startStudioMode`'s default branch
+        // does one grouped PUT, so the ownership sequence runs without spawning
+        // an endless engine task.
+        await orchestrator.startStudioMode(key: "static-test-card", room: roomA,
+                                           params: [:], colors: [:])
+        XCTAssertEqual(orchestrator.testActiveStudioRestScope()?.scope, studioScope("room-a"),
+            "room A is recorded as the Studio REST owner")
+
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+        let gate = await park(sender, events: events)
+        // Room A's Studio work is queued, and an unrelated Composer scope too.
+        await enqueueRecording(sender, studioScope("room-a"), events, "studio-a")
+        await enqueueRecording(sender, composerScope("room-c"), events, "composer-c")
+
+        await orchestrator.startStudioMode(key: "static-test-card", room: roomB,
+                                           params: [:], colors: [:])
+
+        let roomAStillCurrent = await sender.isCurrent(scope: studioScope("room-a"), epoch: 0)
+        XCTAssertFalse(roomAStillCurrent,
+            "room A's epoch must be invalidated even though the new card targets room B")
+        XCTAssertEqual(orchestrator.testActiveStudioRestScope()?.scope, studioScope("room-b"),
+            "room B is recorded before its first enqueue")
+
+        // Room B's first work is accepted normally.
+        await enqueueRecording(sender, studioScope("room-b"), events, "studio-b")
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertEqual(events.entries, ["composer-c", "studio-b"], """
+            room A's queued Studio work is gone, room B's is accepted, and the \
+            unrelated Composer scope was never touched
+            """)
+    }
+
+    // 14. removeBridge clears and removes ONLY that bridge's sender, and drops
+    //     the Studio owner iff it lived there. (Deliberate divergence from the
+    //     commandGates precedent, which leaks a gate per removed bridge.)
+    func testRemovingABridgeClearsOnlyItsOwnSenderAndStudioOwnership() async {
+        let senderA = orchestrator.testRestSender(for: "bridge-a")
+        let senderB = orchestrator.testRestSender(for: "bridge-b")
+        let events = RestEventLog()
+        orchestrator.testSetActiveStudioRestScope(bridgeKey: "bridge-a", roomID: "room-a")
+
+        let gateA = await park(senderA, room: "__park-a__", events: events)
+        let gateB = await park(senderB, room: "__park-b__", events: events)
+        await enqueueRecording(senderA, studioScope("room-a"), events, "A")
+        await enqueueRecording(senderB, composerScope("room-b"), events, "B")
+
+        await orchestrator.removeBridge(id: "bridge-a")
+
+        XCTAssertFalse(orchestrator.testRestSenderBridgeKeys().contains("bridge-a"),
+            "bridge A's sender is removed, not leaked")
+        XCTAssertTrue(orchestrator.testRestSenderBridgeKeys().contains("bridge-b"),
+            "bridge B's sender survives")
+        XCTAssertNil(orchestrator.testActiveStudioRestScope(),
+            "the Studio owner lived on bridge A, so it is forgotten")
+
+        gateA.release()
+        gateB.release()
+        await drain(senderA)
+        await drain(senderB)
+
+        XCTAssertEqual(events.entries, ["B"],
+            "only bridge A's queued work was invalidated")
+    }
+
+    // 14b. …and a removal on the OTHER bridge must leave Studio ownership alone.
+    func testRemovingADifferentBridgeLeavesStudioOwnershipIntact() async {
+        _ = orchestrator.testRestSender(for: "bridge-a")
+        _ = orchestrator.testRestSender(for: "bridge-b")
+        orchestrator.testSetActiveStudioRestScope(bridgeKey: "bridge-a", roomID: "room-a")
+
+        await orchestrator.removeBridge(id: "bridge-b")
+
+        XCTAssertEqual(orchestrator.testActiveStudioRestScope()?.bridgeKey, "bridge-a",
+            "the Studio owner is cleared iff it belonged to the removed bridge")
+    }
+
+    // 15. An EXECUTING multi-batch closure stops before its NEXT batch. This is
+    //     the cooperative-cancellation guarantee — Task.isCancelled cannot do
+    //     it, because the flush task is unstructured and never cancelled.
+    func testAnExecutingMultiBatchClosureStopsBeforeItsNextBatch() async {
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+        let scope = composerScope("room-a")
+        let batch1 = RestGate()
+        let finished = RestGate()
+
+        await sender.enqueue(scope: scope) { stillCurrent in
+            // Mirrors the production Composer shape: probe at the TOP of every
+            // batch, including the first.
+            for batch in 1...3 {
+                guard await stillCurrent() else { break }
+                events.record("batch\(batch)")
+                if batch == 1 {
+                    batch1.signalStarted()
+                    await batch1.waitForRelease()   // stands in for the 80 ms gap
+                }
+            }
+            finished.signalStarted()
+        }
+
+        await batch1.waitUntilStarted()
+        await sender.clear(scope: scope)
+        batch1.release()
+        await finished.waitUntilStarted()
+
+        XCTAssertEqual(events.entries, ["batch1"], """
+            the already-dispatched batch may complete, but no LATER batch may \
+            begin — batch2 and batch3 must never appear
+            """)
+    }
+
+    // 16. Superseded queued work never begins at all: the closure body is not
+    //     entered even once.
+    func testSupersededQueuedWorkNeverBegins() async {
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+        let scope = composerScope("room-a")
+
+        let gate = await park(sender, events: events)
+        await sender.enqueue(scope: scope) { _ in events.record("old-look") }
+        await sender.enqueue(scope: scope) { _ in events.record("new-look") }
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertEqual(events.entries, ["new-look"],
+            "the superseded closure body is never entered — not entered-and-aborted")
+    }
+
+    // 17. Repeated stop/start is idempotent: clearing three times then enqueuing
+    //     once must run exactly once, with no stuck or doubled work.
+    func testRepeatedClearThenEnqueueRunsExactlyOnce() async {
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+        let scope = composerScope("room-a")
+
+        for _ in 0..<3 { await sender.clear(scope: scope) }
+        await enqueueRecording(sender, scope, events, "run")
+        await drain(sender)
+
+        XCTAssertEqual(events.entries, ["run"],
+            "repeated clears leave the mailbox usable, and the work runs exactly once")
+    }
+
+    // 18. Cross-bridge independence asserted by ORDERING, not elapsed time:
+    //     bridge B's mailbox makes progress while bridge A's is parked.
+    func testCrossBridgeIndependenceIsProvenByOrderingNotTiming() async {
+        let senderA = orchestrator.testRestSender(for: "bridge-a")
+        let senderB = orchestrator.testRestSender(for: "bridge-b")
+        let events = RestEventLog()
+
+        let gateA = await park(senderA, room: "__park-a__", events: events)
+        await enqueueRecording(senderA, composerScope("room-a"), events, "A")
+
+        // Bridge B runs to completion while bridge A is still blocked.
+        await enqueueRecording(senderB, composerScope("room-b"), events, "B")
+        await drain(senderB)
+        XCTAssertEqual(events.entries, ["B"],
+            "a parked bridge-A mailbox cannot stall bridge B")
+
+        gateA.release()
+        await drain(senderA)
+        XCTAssertEqual(events.entries, ["B", "A"], "bridge A resumes independently")
+    }
+
+    // 19. STUDIO PER-LIGHT COOPERATIVE CANCELLATION. Before packet 3 this loop
+    //     ran ~lightCount x 100 ms with nothing able to stop it: the gate's own
+    //     cancellation guards are inert inside a mailbox closure. Mirrors the
+    //     production shape in StudioViewModel (see the source guard below).
+    func testStudioPerLightSweepStopsAfterTheDispatchedLight() async {
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let gate = orchestrator.commandGate(for: "bridge-a")
+        let events = RestEventLog()
+        let firstLight = RestGate()
+        let finished = RestGate()
+        let lights = ["light-1", "light-2", "light-3"]
+
+        await orchestrator.enqueueStudioRestWrite(
+            roomID: "room-a", bridgeID: "bridge-a"
+        ) { stillCurrent in
+            for id in lights {
+                guard await stillCurrent() else { break }
+                _ = await gate.send(retry: false) {
+                    events.record(id)
+                    if id == "light-1" {
+                        firstLight.signalStarted()
+                        await firstLight.waitForRelease()
+                    }
+                }
+            }
+            finished.signalStarted()
+        }
+
+        // An unrelated Composer scope is queued behind it.
+        await enqueueRecording(sender, composerScope("room-z"), events, "composer-z")
+
+        await firstLight.waitUntilStarted()
+        await sender.clear(scope: studioScope("room-a"))
+        firstLight.release()
+        await finished.waitUntilStarted()
+        await drain(sender)
+
+        XCTAssertEqual(events.entries, ["light-1", "composer-z"], """
+            only the already-dispatched light completes; lights 2 and 3 never \
+            begin, and the unrelated Composer scope is still executable
+            """)
+    }
+
+    // Hardening guard, not a behavior test.
+    //
+    // Test 19 proves the SHAPE works. It would still pass if a later edit moved
+    // production's `stillCurrent` check to before the loop instead of before
+    // every send — which is exactly the ~2 s uncancellable window packet 3
+    // removed. And `Task.isCancelled` is permanently false inside an enqueued
+    // closure (the mailbox flush task is unstructured and never cancelled), so
+    // any staleness guard built on it in there is a silent no-op. Pin both
+    // properties against the production source.
+    func testEveryEnqueuedClosureIsCooperativelyCancellable() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // HueHomeTests/
+            .deletingLastPathComponent()   // repo root
+
+        /// The body of every `enqueue(scope:)` / `enqueueStudioRestWrite(...)`
+        /// closure in a file, as arrays of trimmed lines. Comment-only lines are
+        /// stripped first so prose about a call is never mistaken for one.
+        /// The closure opener may sit several lines below the call (the scoped
+        /// signature wraps), so the opener is found by scanning forward for the
+        /// `{ … in` line, then the body is taken by brace depth.
+        func enqueuedClosureBodies(_ relativePath: String) throws -> [[String]] {
+            let raw = try String(
+                contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
+            let lines = raw
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .map { $0.hasPrefix("//") ? "" : $0 }
+
+            var bodies: [[String]] = []
+            var index = 0
+            while index < lines.count {
+                let isCall = lines[index].contains(".enqueue(scope:")
+                    || lines[index].contains("enqueueStudioRestWrite(")
+                guard isCall else { index += 1; continue }
+
+                var opener = index
+                while opener < lines.count, opener - index <= 6,
+                      !(lines[opener].hasSuffix(" in") && lines[opener].contains("{")) {
+                    opener += 1
+                }
+                guard opener < lines.count, opener - index <= 6,
+                      lines[opener].hasSuffix(" in"), lines[opener].contains("{") else {
+                    index += 1; continue
+                }
+
+                var depth = 0
+                var body: [String] = []
+                var scan = opener
+                while scan < lines.count {
+                    depth += lines[scan].filter { $0 == "{" }.count
+                    depth -= lines[scan].filter { $0 == "}" }.count
+                    body.append(lines[scan])
+                    scan += 1
+                    if depth == 0 { break }
+                }
+                bodies.append(body)
+                index = scan
+            }
+            return bodies
+        }
+
+        let orchestratorClosures = try enqueuedClosureBodies("HueHome/Core/Network/UnifiedOrchestrator.swift")
+        let studioClosures = try enqueuedClosureBodies("HueHome/UI/Studio/StudioViewModel.swift")
+        XCTAssertFalse(orchestratorClosures.isEmpty, "UnifiedOrchestrator must still enqueue REST work")
+        XCTAssertFalse(studioClosures.isEmpty, "StudioViewModel must still enqueue REST work")
+
+        // (a) No enqueued closure may guard on Task.isCancelled.
+        for (label, closures) in [("UnifiedOrchestrator", orchestratorClosures),
+                                  ("StudioViewModel", studioClosures)] {
+            for body in closures {
+                XCTAssertFalse(body.contains(where: { $0.contains("Task.isCancelled") }), """
+                    \(label): an enqueued closure must not guard on \
+                    Task.isCancelled — it is permanently false in there, so the \
+                    guard silently does nothing. Use the stillCurrent probe.
+                    """)
+            }
+        }
+
+        // (b) Every gate.send inside an enqueued closure is a PACED PER-LIGHT
+        //     sweep, and must be guarded immediately before EVERY send —
+        //     including the first light. One check before the loop leaves a
+        //     full ~lightCount x 100 ms uncancellable sweep.
+        //     (The unguarded gate.send in applyEffectsV2Parameters is NOT in an
+        //     enqueued closure — it is the initial apply, with no probe to
+        //     consult — so it is correctly out of this set.)
+        let perLightClosures = studioClosures.filter { body in
+            body.contains(where: { $0.contains("gate.send(") })
+        }
+        XCTAssertEqual(perLightClosures.count, 3, """
+            the three paced per-light Studio loops (warmth, speed, base colour) \
+            are the cancellable ones — a new per-light site needs a guard too
+            """)
+        for body in perLightClosures {
+            let sendLines = body.indices.filter { body[$0].hasPrefix("_ = await gate.send(") }
+            XCTAssertFalse(sendLines.isEmpty)
+            for line in sendLines {
+                XCTAssertEqual(body[line - 1], "guard await stillCurrent() else { return }",
+                    "every gate.send in a per-light Studio loop must be immediately guarded")
+            }
+        }
+
+        // (c) Both Composer batch loops probe at the TOP of each batch, before
+        //     dispatching it — otherwise a stopped room keeps writing for
+        //     another 300-500 ms after the replacement look primed.
+        let batchClosures = orchestratorClosures.filter { body in
+            body.contains(where: { $0.hasPrefix("for batchStart in stride(") })
+        }
+        XCTAssertEqual(batchClosures.count, 2,
+            "the gradient-aware and flat per-light Composer batch loops")
+        for body in batchClosures {
+            let loopLines = body.indices.filter { body[$0].hasPrefix("for batchStart in stride(") }
+            for line in loopLines {
+                XCTAssertEqual(body[line + 1], "guard await stillCurrent() else { return }",
+                    "each Composer batch must be probed before it is dispatched")
+            }
+        }
     }
 }
