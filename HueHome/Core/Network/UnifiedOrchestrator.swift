@@ -703,8 +703,28 @@ final class UnifiedOrchestrator {
         // bridge. Senders do not reproduce that — a leaked sender would also
         // hold live epochs for a bridge that no longer exists.
         if let sender = restSendersByBridge.removeValue(forKey: id) {
-            await sender.clearAll()
+            let removedScopes = await sender.clearAll()
+            // Packet 4: the sender's OWN report — the exact scopes whose
+            // pending work was dropped — drives pending-cancellation evidence.
+            // Executing-only scopes are invalidated but not returned; their
+            // closures report at their probes and those reports die once the
+            // session below is deactivated.
+            for scope in removedScopes where scope.owner == .composer {
+                deactivateComposerTelemetrySession(
+                    sessionKey: ComposerTelemetrySessionKey(bridgeKey: id, scope: scope),
+                    pendingRemovalReported: true)
+            }
         }
+        // Sessions with nothing pending at removal time (executing-only or
+        // idle, incl. Entertainment compositions on this bridge) still belong
+        // to it — deactivate the remainder by EXACT key, filtered on the
+        // authoritative bridge identity, never on roomID.
+        for sessionKey in Array(composerTelemetrySessions.keys)
+        where sessionKey.bridgeKey == id {
+            deactivateComposerTelemetrySession(
+                sessionKey: sessionKey, pendingRemovalReported: false)
+        }
+        activeRESTCadenceByBridgeRoom.removeValue(forKey: id)
         // …and forget the Studio owner iff it lived on this bridge.
         if activeStudioRestScope?.bridgeKey == id {
             activeStudioRestScope = nil
@@ -2338,13 +2358,37 @@ final class UnifiedOrchestrator {
     private struct CompositionRuntime {
         let roomID: String
         let roomName: String
-        /// The bridge this room's REST composition writes to. Recorded at start
-        /// rather than re-derived from `allRooms` at read time — the snapshot can
-        /// go stale mid-composition, and the Entertainment gate below must not
-        /// mistake a stale lookup for "no composition on this bridge".
-        /// `api` cannot answer this: it is a `HueAPIClient`, and only the
+        /// **Entertainment-oriented bridge identity.** The `?? ""`-coerced
+        /// nonoptional the Entertainment bookkeeping compares against — the
+        /// `compositionRuntimes.values.contains { $0.bridgeID == … }` gates
+        /// take a plain `String` bridge key, so this stays nonoptional for them.
+        ///
+        /// Recorded at start rather than re-derived from `allRooms` at read
+        /// time: the snapshot can go stale mid-composition, and those gates must
+        /// not mistake a stale lookup for "no composition on this bridge".
+        /// `api` cannot answer this — it is a `HueAPIClient`, and only the
         /// `BridgeAPIClient` subclass carries a bridge identity.
+        ///
+        /// **Do not route the REST mailbox through this.** For a bridgeless room
+        /// it is `""`, which is not nil — see `restBridgeIdentity`.
         let bridgeID: String
+        /// **Composer REST sender identity.** The room's ORIGINAL optional
+        /// bridge identity, captured before `startCompositionMode`'s `?? ""`
+        /// coercion (packet 4). This is what every Composer mailbox path passes
+        /// to `restSender(for:)`, which normalizes nil → the `"legacy"` key.
+        ///
+        /// The distinction is the whole point: `""` is NOT nil, so `?? "legacy"`
+        /// never fired for it and a bridgeless room got its own private `""`
+        /// sender while All-Day and Studio shared `"legacy"` — two mailboxes for
+        /// one conceptual bridge.
+        ///
+        /// Enqueue (`runCompositionScheduler`), clear (`stopCompositionMode`),
+        /// and any telemetry identity built on top of them must ALL key on this
+        /// value. They move together or not at all: if enqueue used this while
+        /// clear still used `bridgeID`, `clear(scope:)` would target a different
+        /// actor and packet 3's cooperative cancellation would silently stop
+        /// working for bridgeless rooms.
+        let restBridgeIdentity: String?
         let api: HueAPIClient
         let groupedLightID: String
         /// Individual light IDs for per-light REST mode.
@@ -2371,20 +2415,74 @@ final class UnifiedOrchestrator {
         var lastSentAt: CFAbsoluteTime?
     }
 
-    private struct CompositionTelemetry {
-        var sends: Int = 0
-        var lagSumMs: Double = 0
-        var maxLagMs: Double = 0
-        var windowStart: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    // ── Composer telemetry (packet 4) ────────────────────────────
+    //
+    // The old enqueue-time telemetry (CompositionTelemetry / activeRESTCadence /
+    // activeRESTCadenceByRoom) was deleted rather than repaired: its lag was
+    // structurally 0.0, its "sends" counted enqueues the mailbox may discard,
+    // and its global cadence was clobbered by whichever room recorded last.
+    // What replaced it is completion-based: the pure CompositionSendLedger
+    // records what the sender and the closures PROVED happened; this type owns
+    // only session identity and publication.
+
+    /// Published cadence, keyed by bridgeKey → roomID. Bridge-scoped so two
+    /// rooms with the same ID on different bridges can never read each other's
+    /// number; read through `activeRESTCadence(roomID:bridgeID:)` only.
+    private(set) var activeRESTCadenceByBridgeRoom: [String: [String: Double]] = [:]
+
+    /// The seconds-per-update the tray may show for this room, or nil for the
+    /// honest no-data state ("updates a little slower"). `bridgeID` is the
+    /// room's ORIGINAL optional identity; nil normalizes to "legacy" exactly
+    /// like `restSender(for:)`, so the read key always matches the write key.
+    func activeRESTCadence(roomID: String, bridgeID: String?) -> Double? {
+        activeRESTCadenceByBridgeRoom[bridgeID ?? "legacy"]?[roomID]
     }
-    /// Latest observed REST cadence (seconds/update) for composition scheduler.
-    /// Exposed for QA visibility in Studio UI.
-    var activeRESTCadence: Double? = nil
-    /// Per-room cadence in seconds/update.
-    var activeRESTCadenceByRoom: [String: Double] = [:]
+
+    /// Exact identity of one Composer telemetry session: the SAME bridge key
+    /// the mailbox uses plus the Composer scope. Never keyed by roomID alone —
+    /// identical room IDs on different bridges are different sessions.
+    private struct ComposerTelemetrySessionKey: Hashable {
+        let bridgeKey: String
+        let scope: RestScope
+    }
+
+    /// Retained per-session value. `isRESTActive` marks the sessions whose
+    /// composition actually installed a REST runtime — only those get the
+    /// per-scheduler-pass publication refresh. Entertainment and bridge-stored
+    /// sessions keep telemetry identity (stop must find them) but stay false.
+    private struct ComposerTelemetrySession {
+        let generation: Int
+        var isRESTActive: Bool
+    }
+
+    /// Completion-based event book. Pure value type — every timestamp it sees
+    /// comes from `compositionTelemetryNow`.
     @ObservationIgnored
-    private var cadenceLastUIUpdateByRoom: [String: CFAbsoluteTime] = [:]
-    private var compositionTelemetryByRoom: [String: CompositionTelemetry] = [:]
+    private var compositionSendLedger = CompositionSendLedger()
+
+    /// The active telemetry sessions, retained INDEPENDENTLY of
+    /// `compositionRuntimes` so stop and teardown work when the transport is
+    /// Entertainment or bridge-stored and no REST runtime ever existed.
+    @ObservationIgnored
+    private var composerTelemetrySessions: [ComposerTelemetrySessionKey: ComposerTelemetrySession] = [:]
+
+    /// The one not-yet-started token per (bridgeKey, scope). Installed BEFORE
+    /// awaiting `enqueue` (so a fast dispatch can consume it via the started
+    /// report), removed only by an equality-checked started/terminal report,
+    /// and terminalized only on RestSender's own evidence.
+    @ObservationIgnored
+    private var composerPendingTokens: [ComposerTelemetrySessionKey: CompositionSendLedger.Token] = [:]
+
+    /// Monotonic token mint. Uniqueness only — ordering claims come from the
+    /// ledger's state machine, never from comparing sequences.
+    @ObservationIgnored
+    private var composerTokenSequence: UInt64 = 0
+
+    /// The ONE clock every telemetry event and publication refresh samples.
+    /// A seam, not a convenience: tests inject a deterministic clock here, so
+    /// cadence expiry is provable without a single wall-clock sleep.
+    @ObservationIgnored
+    private var compositionTelemetryNow: () -> CFAbsoluteTime = { CFAbsoluteTimeGetCurrent() }
     /// Per-bridge entertainment tasks — allows concurrent sessions across multiple bridges.
     private var compositionEntTasks: [String: Task<Void, Never>] = [:]
     /// Per-bridge active room IDs — guards against starting a second session on the same bridge.
@@ -2426,12 +2524,19 @@ final class UnifiedOrchestrator {
     // stage ownership without a live bridge or a real DTLS handshake.
 
     /// Stage a REST composition on a bridge, as `startCompositionMode` would.
-    func testStageRESTComposition(roomID: String, bridgeID: String, api: HueAPIClient) {
+    ///
+    /// `bridgeID` is optional so a test can stage a room with NO bridge — the
+    /// case that exposed the `""`-vs-`"legacy"` mailbox split (packet 4). It
+    /// reproduces production exactly: the nonoptional field takes `?? ""`, the
+    /// mailbox identity keeps the original optional. Existing callers passing a
+    /// plain `String` still compile.
+    func testStageRESTComposition(roomID: String, bridgeID: String?, api: HueAPIClient, generation: Int = 1) {
         compositionTransportByRoom[roomID] = .rest
         compositionRuntimes[roomID] = CompositionRuntime(
             roomID: roomID,
             roomName: roomID,
-            bridgeID: bridgeID,
+            bridgeID: bridgeID ?? "",
+            restBridgeIdentity: bridgeID,
             api: api,
             groupedLightID: "grouped-\(roomID)",
             lightIDs: [],
@@ -2442,7 +2547,7 @@ final class UnifiedOrchestrator {
             tier: .runtimeOnly,
             gamut: .c,
             startTime: CFAbsoluteTimeGetCurrent(),
-            generation: 1,
+            generation: generation,
             nextDueAt: CFAbsoluteTimeGetCurrent(),
             wasInteracting: false,
             pendingSettle: false,
@@ -2454,6 +2559,30 @@ final class UnifiedOrchestrator {
             lastSentAt: nil
         )
         if !compositionOrder.contains(roomID) { compositionOrder.append(roomID) }
+        // Packet 4: production start also opens the telemetry session and
+        // marks it REST-active once the runtime is installed — stage the same.
+        compositionGenerations[roomID] = generation
+        let sessionKey = ComposerTelemetrySessionKey(
+            bridgeKey: bridgeID ?? "legacy",
+            scope: RestScope(roomID: roomID, owner: .composer))
+        beginComposerTelemetrySession(sessionKey: sessionKey, generation: generation)
+        markComposerTelemetrySessionRESTActive(sessionKey: sessionKey)
+    }
+
+    /// Run the PRODUCTION startup prime for a staged room, as issued by a
+    /// specific generation — the seam behind the stale-prime and thrown-prime
+    /// guards. Same method `startCompositionMode` calls; no parallel logic.
+    func testPerformCompositionPrime(room: RoomDisplayItem, generation: Int) async {
+        guard let api = hueClient(for: room.bridgeID),
+              let groupedLightID = room.groupedLightID else { return }
+        await performCompositionPrime(
+            room: room, api: api, groupedLightID: groupedLightID,
+            paramBox: CompositionParamBox(
+                palette: PaletteConfig(), motion: MotionConfig(),
+                envelope: EnvelopeConfig(), reaction: ReactionConfig()
+            ),
+            gamut: .c,
+            nextGeneration: generation)
     }
 
     /// Stage composition ownership of a bridge's Entertainment session.
@@ -2501,6 +2630,137 @@ final class UnifiedOrchestrator {
             bridgeKey: bridgeKey,
             scope: RestScope(roomID: roomID, owner: .studio)
         )
+    }
+
+    // Composer telemetry seams (packet 4). Same rule as the mailbox seams:
+    // readers, a clock injector, and thin pass-throughs to the PRODUCTION
+    // helpers and closure factories — never parallel implementations, so what
+    // the tests prove is exactly what the scheduler runs.
+
+    /// Inject a deterministic telemetry clock. tearDown must restore the
+    /// production clock via `testResetCompositionTelemetryClock()`.
+    func testSetCompositionTelemetryClock(_ clock: @escaping () -> CFAbsoluteTime) {
+        compositionTelemetryNow = clock
+    }
+
+    func testResetCompositionTelemetryClock() {
+        compositionTelemetryNow = { CFAbsoluteTimeGetCurrent() }
+    }
+
+    /// The ledger's view of one Composer session, as of the telemetry clock.
+    func testComposerLedgerSnapshot(roomID: String, bridgeID: String?) -> CompositionSendLedger.Snapshot {
+        compositionSendLedger.snapshot(
+            bridgeKey: bridgeID ?? "legacy",
+            scope: RestScope(roomID: roomID, owner: .composer),
+            asOf: compositionTelemetryNow())
+    }
+
+    /// Every retained telemetry session's exact identity and status.
+    func testComposerTelemetrySessions() -> [(bridgeKey: String, roomID: String, generation: Int, isRESTActive: Bool)] {
+        composerTelemetrySessions.map {
+            ($0.key.bridgeKey, $0.key.scope.roomID, $0.value.generation, $0.value.isRESTActive)
+        }
+    }
+
+    /// The tracked not-yet-started token for one exact scope, if any.
+    func testComposerPendingToken(roomID: String, bridgeID: String?) -> CompositionSendLedger.Token? {
+        composerPendingTokens[ComposerTelemetrySessionKey(
+            bridgeKey: bridgeID ?? "legacy",
+            scope: RestScope(roomID: roomID, owner: .composer))]
+    }
+
+    /// The runtime's delta-gate send state — what completion bookkeeping moves.
+    func testCompositionRuntimeSendState(roomID: String) -> (sendCount: Int, lastSentX: Double?, lastSentY: Double?, lastSentBri: Double?, lastSentAt: CFAbsoluteTime?)? {
+        compositionRuntimes[roomID].map {
+            ($0.sendCount, $0.lastSentX, $0.lastSentY, $0.lastSentBri, $0.lastSentAt)
+        }
+    }
+
+    /// Run the SAME per-pass publication sweep the scheduler runs.
+    func testRefreshComposerCadencePublications() {
+        refreshAllActiveComposerCadencePublications()
+    }
+
+    /// Begin a telemetry session exactly as `startCompositionMode` does at its
+    /// head; `isRESTActive: true` additionally stages the REST-runtime mark.
+    func testBeginComposerTelemetrySession(roomID: String, bridgeID: String?, generation: Int, isRESTActive: Bool) {
+        let sessionKey = ComposerTelemetrySessionKey(
+            bridgeKey: bridgeID ?? "legacy",
+            scope: RestScope(roomID: roomID, owner: .composer))
+        beginComposerTelemetrySession(sessionKey: sessionKey, generation: generation)
+        if isRESTActive {
+            markComposerTelemetrySessionRESTActive(sessionKey: sessionKey)
+        }
+    }
+
+    /// The production enqueue sequence against the REAL sender for this bridge.
+    @discardableResult
+    func testEnqueueComposerWork(
+        roomID: String, bridgeID: String?, generation: Int,
+        workBuilder: (CompositionSendLedger.Token) -> RestSender.Work
+    ) async -> CompositionSendLedger.Token {
+        await enqueueComposerWork(
+            sessionKey: ComposerTelemetrySessionKey(
+                bridgeKey: bridgeID ?? "legacy",
+                scope: RestScope(roomID: roomID, owner: .composer)),
+            generation: generation,
+            sender: restSender(for: bridgeID),
+            workBuilder: workBuilder)
+    }
+
+    /// Production closure factories — the closure a test enqueues is the
+    /// closure the scheduler enqueues.
+    func testMakeComposerGradientWork(
+        token: CompositionSendLedger.Token, map: GradientChannelMap,
+        frames: [LightFrame], api: HueAPIClient, gamut: HueColorUtils.Gamut,
+        sentX: Double, sentY: Double, sentBri: Double
+    ) -> RestSender.Work {
+        makeComposerGradientWork(
+            token: token, map: map, frames: frames, api: api, gamut: gamut,
+            sentX: sentX, sentY: sentY, sentBri: sentBri)
+    }
+
+    func testMakeComposerPerLightWork(
+        token: CompositionSendLedger.Token, lightIDs: [String],
+        frames: [LightFrame], api: HueAPIClient, gamut: HueColorUtils.Gamut,
+        sentX: Double, sentY: Double, sentBri: Double
+    ) -> RestSender.Work {
+        makeComposerPerLightWork(
+            token: token, lightIDs: lightIDs, frames: frames, api: api,
+            gamut: gamut, sentX: sentX, sentY: sentY, sentBri: sentBri)
+    }
+
+    func testMakeComposerGroupedWork(
+        token: CompositionSendLedger.Token, groupedLightID: String,
+        brightness: Double, xy: (x: Double, y: Double), api: HueAPIClient
+    ) -> RestSender.Work {
+        makeComposerGroupedWork(
+            token: token, groupedLightID: groupedLightID,
+            brightness: brightness, xy: xy, api: api)
+    }
+
+    /// Direct event reports through the production handlers, for tests that
+    /// exercise the ledger/bookkeeping gates without a live closure.
+    func testReportComposerStarted(_ token: CompositionSendLedger.Token) {
+        composerWorkStarted(token)
+    }
+
+    func testReportComposerCompleted(
+        token: CompositionSendLedger.Token, attemptedOperations: Int, failures: Int,
+        sentX: Double? = nil, sentY: Double? = nil, sentBri: Double? = nil
+    ) {
+        composerWorkTerminated(
+            token: token, kind: .completed,
+            attemptedOperations: attemptedOperations, failures: failures,
+            sentX: sentX, sentY: sentY, sentBri: sentBri)
+    }
+
+    func testReportComposerCancelled(
+        token: CompositionSendLedger.Token, attemptedOperations: Int, failures: Int
+    ) {
+        composerWorkTerminated(
+            token: token, kind: .cancelled,
+            attemptedOperations: attemptedOperations, failures: failures)
     }
 
     // Entertainment-area selection seams (packet 1b). Selection reads three
@@ -3012,6 +3272,18 @@ final class UnifiedOrchestrator {
         let roomID = room.id
         let nextGeneration = (compositionGenerations[roomID] ?? 0) + 1
         compositionGenerations[roomID] = nextGeneration
+        // Packet 4: telemetry session identity is established HERE, from
+        // nextGeneration directly — no CompositionRuntime required, so stop can
+        // find this session even when the transport decision below lands on
+        // Entertainment or bridge-stored and no REST runtime ever exists.
+        // Key = the room's ORIGINAL optional bridge identity, normalized
+        // exactly like restSender(for:). The session starts NOT-REST-active;
+        // only the REST-runtime installation below flips it.
+        let composerTelemetryKey = ComposerTelemetrySessionKey(
+            bridgeKey: room.bridgeID ?? "legacy",
+            scope: RestScope(roomID: roomID, owner: .composer))
+        beginComposerTelemetrySession(
+            sessionKey: composerTelemetryKey, generation: nextGeneration)
         let startNeedsMic = paramBox.reaction.needsMicNow(
             serviceDriven: BeatClock.shared.isServiceDriven)
         let compositionGamut: HueColorUtils.Gamut
@@ -3234,6 +3506,9 @@ final class UnifiedOrchestrator {
             roomID: roomID,
             roomName: room.name,
             bridgeID: bridgeID,
+            // The ORIGINAL optional, not the `?? ""` above — see the field's
+            // doc comment. This is what every Composer mailbox path keys on.
+            restBridgeIdentity: room.bridgeID,
             api: api,
             groupedLightID: groupedLightID,
             lightIDs: compositionLightIDs,
@@ -3256,35 +3531,67 @@ final class UnifiedOrchestrator {
         if !compositionOrder.contains(roomID) {
             compositionOrder.append(roomID)
         }
+        // Packet 4: this composition is genuinely REST — its telemetry session
+        // becomes refresh-eligible. The Entertainment and bridge-stored returns
+        // above never reach this line, so their sessions stay inactive.
+        markComposerTelemetrySessionRESTActive(sessionKey: composerTelemetryKey)
 
         // Prime immediately so newly started rooms visibly turn on without
         // waiting for the next round-robin scheduler slot.
+        // KEPT a direct API call, outside RestSender and outside cadence
+        // (packet 3 decision, restated in packet 4) — routing it through the
+        // mailbox would alter startup latency and ordering.
         await refreshCompositionMicDemand()
-        if let firstFrame = CompositionEngine.render(
+        await performCompositionPrime(
+            room: room, api: api, groupedLightID: groupedLightID,
+            paramBox: paramBox, gamut: compositionGamut,
+            nextGeneration: nextGeneration)
+
+        ensureCompositionSchedulerRunning()
+        await refreshCompositionMicDemand()
+        debugLog("[Composer] 📡 Scheduled room='\(room.name)' on global composition ticker")
+    }
+
+    /// The Composer startup prime — one direct grouped PUT so the room turns
+    /// on immediately. Outside RestSender and outside cadence, by design.
+    ///
+    /// Packet 4: runtime bookkeeping happens only INSIDE the success path — a
+    /// thrown prime records no send — and only for the runtime THIS prime was
+    /// issued for: the network await suspends, and a stop+restart in that
+    /// window installs a generation-(N+1) runtime that a generation-N prime
+    /// must not touch.
+    private func performCompositionPrime(
+        room: RoomDisplayItem,
+        api: HueAPIClient,
+        groupedLightID: String,
+        paramBox: CompositionParamBox,
+        gamut: HueColorUtils.Gamut,
+        nextGeneration: Int
+    ) async {
+        let roomID = room.id
+        guard let firstFrame = CompositionEngine.render(
             time: 0,
             channelIDs: [0],
             params: paramBox,
             features: AudioAnalysisEngine.latestFeatures(),
             beat: BeatClock.snapshot(),
             hostNow: CACurrentMediaTime()
-        ).first {
-            let xy = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: compositionGamut)
-            let bri = max(1, firstFrame.brightness * 100.0)
-            do {
-                try await api.setGroupedLightEffect(
-                    id: groupedLightID, on: true,
-                    brightness: bri,
-                    xy: (xy.x, xy.y),
-                    mirek: nil,
-                    duration: 140
-                )
-                debugLog(
-                    "[Composer][Prime] ✅ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) bri=\(String(format: "%.1f", bri)) xy=(\(String(format: "%.4f", xy.x)),\(String(format: "%.4f", xy.y)))"
-                )
-            } catch {
-                debugLog("[Composer][Prime] ❌ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) error=\(error)")
-            }
-            if var runtime = compositionRuntimes[roomID] {
+        ).first else { return }
+        let xy = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: gamut)
+        let bri = max(1, firstFrame.brightness * 100.0)
+        do {
+            try await api.setGroupedLightEffect(
+                id: groupedLightID, on: true,
+                brightness: bri,
+                xy: (xy.x, xy.y),
+                mirek: nil,
+                duration: 140
+            )
+            debugLog(
+                "[Composer][Prime] ✅ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) bri=\(String(format: "%.1f", bri)) xy=(\(String(format: "%.4f", xy.x)),\(String(format: "%.4f", xy.y)))"
+            )
+            if var runtime = compositionRuntimes[roomID],
+               runtime.generation == nextGeneration {
                 runtime.lastSentX = xy.x
                 runtime.lastSentY = xy.y
                 runtime.lastSentBri = bri
@@ -3292,11 +3599,9 @@ final class UnifiedOrchestrator {
                 runtime.lastSentAt = CFAbsoluteTimeGetCurrent()
                 compositionRuntimes[roomID] = runtime
             }
+        } catch {
+            debugLog("[Composer][Prime] ❌ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) error=\(error)")
         }
-
-        ensureCompositionSchedulerRunning()
-        await refreshCompositionMicDemand()
-        debugLog("[Composer] 📡 Scheduled room='\(room.name)' on global composition ticker")
     }
 
     /// Composition render loop via Entertainment API — per-light colors at 25fps.
@@ -3414,9 +3719,443 @@ final class UnifiedOrchestrator {
         }
     }
 
-    func stopCompositionMode(roomID: String) async {
-        debugLog("[Handoff] Composer stop requested for roomID=\(roomID)")
+    // ── Composer telemetry helpers (packet 4) ────────────────────
+    //
+    // Reset and publication are SEPARATE responsibilities, and neither belongs
+    // to the pure ledger: the session helper below owns identity, the refresh
+    // helper owns what the tray is allowed to show. Every event and refresh
+    // samples `compositionTelemetryNow` — never the wall clock directly.
+
+    /// Open a telemetry session for one exact (bridgeKey, Composer scope).
+    /// Clears the orchestrator's OWN stale tracking BEFORE install — a pending
+    /// token left from an old generation or transport window must not survive
+    /// to be misreported as a cancellation later. This does not infer sender
+    /// supersession and does not touch RestSender.
+    /// `isRESTActive` starts false; only the REST-runtime installation path
+    /// flips it (`markComposerTelemetrySessionRESTActive`).
+    private func beginComposerTelemetrySession(
+        sessionKey: ComposerTelemetrySessionKey, generation: Int
+    ) {
+        composerPendingTokens.removeValue(forKey: sessionKey)
+        composerTelemetrySessions.removeValue(forKey: sessionKey)
+        compositionSendLedger.beginSession(
+            bridgeKey: sessionKey.bridgeKey, scope: sessionKey.scope, generation: generation)
+        removeComposerCadencePublication(sessionKey: sessionKey)
+        composerTelemetrySessions[sessionKey] =
+            ComposerTelemetrySession(generation: generation, isRESTActive: false)
+    }
+
+    /// Flip the exact session to REST-active. Called only when
+    /// `startCompositionMode` actually installs a REST runtime — Entertainment
+    /// and bridge-stored sessions stay false and are never refresh-eligible.
+    private func markComposerTelemetrySessionRESTActive(
+        sessionKey: ComposerTelemetrySessionKey
+    ) {
+        composerTelemetrySessions[sessionKey]?.isRESTActive = true
+    }
+
+    /// Deactivate one exact session, in the approved order:
+    /// the caller has ALREADY consumed RestSender's pending-removal evidence
+    /// and passes it here; (1) record the pending cancellation (0/0 — removed
+    /// pending work never started) for the exact tracked token only when the
+    /// sender reported the removal; (2) deactivate the ledger session;
+    /// (3) drop the retained identity, pending tracker, and publication.
+    /// Executing work stays governed by its probe; its later report dies in
+    /// the deactivated ledger.
+    private func deactivateComposerTelemetrySession(
+        sessionKey: ComposerTelemetrySessionKey, pendingRemovalReported: Bool
+    ) {
+        if pendingRemovalReported, let pending = composerPendingTokens[sessionKey] {
+            compositionSendLedger.cancelled(
+                pending, at: compositionTelemetryNow(),
+                attemptedOperations: 0, failures: 0)
+        }
+        if let session = composerTelemetrySessions[sessionKey] {
+            compositionSendLedger.deactivateSession(
+                bridgeKey: sessionKey.bridgeKey, scope: sessionKey.scope,
+                generation: session.generation)
+        }
+        composerTelemetrySessions.removeValue(forKey: sessionKey)
+        composerPendingTokens.removeValue(forKey: sessionKey)
+        removeComposerCadencePublication(sessionKey: sessionKey)
+    }
+
+    /// Publication refresh for one exact session: sample the clock, snapshot,
+    /// then store the cadence — or REMOVE it, which is the whole point: a
+    /// number the ledger can no longer justify must leave the screen.
+    private func refreshComposerCadencePublication(
+        sessionKey: ComposerTelemetrySessionKey
+    ) {
+        let snapshot = compositionSendLedger.snapshot(
+            bridgeKey: sessionKey.bridgeKey, scope: sessionKey.scope,
+            asOf: compositionTelemetryNow())
+        if let cadence = snapshot.cadenceSeconds {
+            activeRESTCadenceByBridgeRoom[sessionKey.bridgeKey, default: [:]][sessionKey.scope.roomID] = cadence
+        } else {
+            removeComposerCadencePublication(sessionKey: sessionKey)
+        }
+    }
+
+    /// The per-scheduler-pass sweep: every retained REST-ACTIVE session, exact
+    /// keys only. Eligibility comes from the retained session value itself —
+    /// NEVER from `compositionTransportByRoom`, whose roomID-only key cannot
+    /// tell identical room IDs on different bridges apart. This is what makes
+    /// a published cadence expire when requests hang and no completion ever
+    /// arrives to trigger an event-driven refresh.
+    private func refreshAllActiveComposerCadencePublications() {
+        for (sessionKey, session) in composerTelemetrySessions where session.isRESTActive {
+            refreshComposerCadencePublication(sessionKey: sessionKey)
+        }
+    }
+
+    private func removeComposerCadencePublication(
+        sessionKey: ComposerTelemetrySessionKey
+    ) {
+        activeRESTCadenceByBridgeRoom[sessionKey.bridgeKey]?
+            .removeValue(forKey: sessionKey.scope.roomID)
+        if activeRESTCadenceByBridgeRoom[sessionKey.bridgeKey]?.isEmpty == true {
+            activeRESTCadenceByBridgeRoom.removeValue(forKey: sessionKey.bridgeKey)
+        }
+    }
+
+    private func mintComposerToken(
+        sessionKey: ComposerTelemetrySessionKey, generation: Int
+    ) -> CompositionSendLedger.Token {
+        composerTokenSequence &+= 1
+        return CompositionSendLedger.Token(
+            bridgeKey: sessionKey.bridgeKey, scope: sessionKey.scope,
+            generation: generation, sequence: composerTokenSequence)
+    }
+
+    /// A closure began executing. Marked FIRST, before the first validity
+    /// check — a probe-rejected sweep still STARTED, and pretending otherwise
+    /// would resurrect the enqueue-counting lie this packet removes.
+    private func composerWorkStarted(_ token: CompositionSendLedger.Token) {
+        compositionSendLedger.started(token, at: compositionTelemetryNow())
+        let sessionKey = ComposerTelemetrySessionKey(
+            bridgeKey: token.bridgeKey, scope: token.scope)
+        if composerPendingTokens[sessionKey] == token {
+            composerPendingTokens.removeValue(forKey: sessionKey)
+        }
+        refreshComposerCadencePublication(sessionKey: sessionKey)
+    }
+
+    private enum ComposerTerminalKind { case completed, cancelled }
+
+    /// A closure finished — normally or at a failed probe. ONE clock sample
+    /// (`terminalAt`) serves both the ledger event and, when every bookkeeping
+    /// gate passes, `runtime.lastSentAt` — the send time the scorer sees is
+    /// the send time the ledger recorded.
+    ///
+    /// Runtime delta-gate state advances ONLY on an ACCEPTED, fully successful
+    /// `completed`: the ledger accepted the transition (so duplicates and
+    /// stale-generation stragglers change nothing), every dispatched operation
+    /// succeeded, the runtime still exists, and both its generation AND its
+    /// bridge identity match the token. Cancelled, partial, and all-failed
+    /// items leave the frame eligible for re-send — that is the one
+    /// intentional behavior change of this packet.
+    private func composerWorkTerminated(
+        token: CompositionSendLedger.Token,
+        kind: ComposerTerminalKind,
+        attemptedOperations: Int,
+        failures: Int,
+        sentX: Double? = nil,
+        sentY: Double? = nil,
+        sentBri: Double? = nil
+    ) {
+        let terminalAt = compositionTelemetryNow()
+        let sessionKey = ComposerTelemetrySessionKey(
+            bridgeKey: token.bridgeKey, scope: token.scope)
+
+        // ACCEPTANCE FIRST. A rejected terminal (absent token, stale
+        // generation, completed-before-started, duplicate) must not mutate the
+        // pending tracker: that tracker is the teardown paths' map of what
+        // RestSender may still be holding, and only the ledger's verdict — or
+        // the sender's own clear/clearAll evidence — may consume it.
+        let accepted: Bool
+        switch kind {
+        case .completed:
+            accepted = compositionSendLedger.completed(
+                token, at: terminalAt,
+                attemptedOperations: attemptedOperations, failures: failures)
+        case .cancelled:
+            accepted = compositionSendLedger.cancelled(
+                token, at: terminalAt,
+                attemptedOperations: attemptedOperations, failures: failures)
+        }
+        // Defensive: an ACCEPTED terminal normally finds nothing here — the
+        // started report already removed an executing token — but an accepted
+        // pending cancellation consumes its tracker, and the equality check
+        // keeps a newer token's slot safe either way.
+        if accepted, composerPendingTokens[sessionKey] == token {
+            composerPendingTokens.removeValue(forKey: sessionKey)
+        }
+        refreshComposerCadencePublication(sessionKey: sessionKey)
+
+        guard kind == .completed,
+              accepted,
+              attemptedOperations > 0,
+              failures == 0,
+              var runtime = compositionRuntimes[token.scope.roomID],
+              runtime.generation == token.generation,
+              (runtime.restBridgeIdentity ?? "legacy") == token.bridgeKey
+        else { return }
+        if let sentX { runtime.lastSentX = sentX }
+        if let sentY { runtime.lastSentY = sentY }
+        if let sentBri { runtime.lastSentBri = sentBri }
+        runtime.lastSentAt = terminalAt
+        runtime.sendCount += 1
+        compositionRuntimes[token.scope.roomID] = runtime
+    }
+
+    /// The production enqueue sequence, used verbatim by the scheduler AND the
+    /// DEBUG seams — one code path, so what the tests prove is what ships.
+    ///
+    /// Ordering is load-bearing (packet 4): the ledger record and the pending
+    /// tracker are installed BEFORE awaiting the actor, because the mailbox may
+    /// dispatch the closure the moment it accepts it and the started report
+    /// must find the tracker in place. Supersession trusts ONLY the returned
+    /// `replacedPending`, applied to the PREVIOUSLY captured token — never to
+    /// the one just installed.
+    @discardableResult
+    private func enqueueComposerWork(
+        sessionKey: ComposerTelemetrySessionKey,
+        generation: Int,
+        sender: RestSender,
+        workBuilder: (CompositionSendLedger.Token) -> RestSender.Work
+    ) async -> CompositionSendLedger.Token {
+        let token = mintComposerToken(sessionKey: sessionKey, generation: generation)
+        let work = workBuilder(token)
+        let previousToken = composerPendingTokens[sessionKey]
+        compositionSendLedger.enqueued(token, at: compositionTelemetryNow())
+        composerPendingTokens[sessionKey] = token
+        let result = await sender.enqueue(scope: sessionKey.scope, work)
+        if result.replacedPending, let previousToken {
+            compositionSendLedger.superseded(previousToken)
+        }
+        refreshComposerCadencePublication(sessionKey: sessionKey)
+        return token
+    }
+
+    // The three Composer REST closures, extracted so the scheduler and the
+    // DEBUG seams build the IDENTICAL closure (packet 4). Shared contract:
+    //   • packet 3 cancellation is untouched — `stillCurrent` before EVERY
+    //     batch including the first; a failed probe reports `cancelled` with
+    //     the operations accumulated so far and returns;
+    //   • `started` is reported FIRST, before the first probe — a sweep the
+    //     very first check rejects still started;
+    //   • operations are counted where they are DISPATCHED: an entry with no
+    //     frame, or a light beyond the frame array, `continue`s before
+    //     `addTask` and counts nothing;
+    //   • each task-group child returns its own outcome; successes/failures
+    //     are aggregated AFTER awaiting the group — no shared mutable counters
+    //     inside child tasks;
+    //   • `sentX/Y/Bri` ride along so an accepted fully-successful completion
+    //     can install the frame proxy as delta-gate state.
+
+    private func makeComposerGradientWork(
+        token: CompositionSendLedger.Token,
+        map: GradientChannelMap,
+        frames: [LightFrame],
+        api: HueAPIClient,
+        gamut: HueColorUtils.Gamut,
+        sentX: Double, sentY: Double, sentBri: Double
+    ) -> RestSender.Work {
+        return { [weak self] stillCurrent in
+            self?.composerWorkStarted(token)
+            var attempted = 0
+            var failures = 0
+
+            let batchSize = 5
+            let entries = map.entries
+            for batchStart in stride(from: 0, to: entries.count, by: batchSize) {
+                guard await stillCurrent() else {
+                    self?.composerWorkTerminated(
+                        token: token, kind: .cancelled,
+                        attemptedOperations: attempted, failures: failures)
+                    return
+                }
+                let batchEnd = min(batchStart + batchSize, entries.count)
+                let outcomes = await withTaskGroup(of: Bool.self) { group -> [Bool] in
+                    for entry in entries[batchStart..<batchEnd] {
+                        let entryFrames = entry.channelRange.compactMap { idx in
+                            idx < frames.count ? frames[idx] : nil
+                        }
+                        guard let first = entryFrames.first else { continue }
+                        group.addTask {
+                            do {
+                                if entry.isGradient {
+                                    let points = entryFrames.map { frame -> CGPoint in
+                                        let xy = HueColorUtils.clampXYToGamut(
+                                            x: frame.x, y: frame.y, gamut: gamut)
+                                        return CGPoint(x: xy.x, y: xy.y)
+                                    }
+                                    let avgBri = entryFrames.map(\.brightness)
+                                        .reduce(0, +) / Double(entryFrames.count)
+                                    try await api.setLightGradient(
+                                        id: entry.lightID,
+                                        body: GradientBody(
+                                            pointsXY: points,
+                                            brightness: max(1, avgBri * 100.0),
+                                            on: true,
+                                            durationMs: 200))
+                                } else {
+                                    let xy = HueColorUtils.clampXYToGamut(
+                                        x: first.x, y: first.y, gamut: gamut)
+                                    try await api.setLightEffect(
+                                        id: entry.lightID, on: true,
+                                        brightness: max(1, first.brightness * 100.0),
+                                        xy: (xy.x, xy.y),
+                                        mirek: nil,
+                                        duration: 200)
+                                }
+                                return true
+                            } catch {
+                                return false
+                            }
+                        }
+                    }
+                    var results: [Bool] = []
+                    for await outcome in group { results.append(outcome) }
+                    return results
+                }
+                attempted += outcomes.count
+                failures += outcomes.lazy.filter { !$0 }.count
+                if batchEnd < entries.count {
+                    try? await Task.sleep(for: .milliseconds(80))
+                }
+            }
+            #if DEBUG
+            print("[Composer][REST] ✅ gradient-aware room=\(token.scope.roomID) dispatched=\(attempted) failures=\(failures)")
+            #endif
+            self?.composerWorkTerminated(
+                token: token, kind: .completed,
+                attemptedOperations: attempted, failures: failures,
+                sentX: sentX, sentY: sentY, sentBri: sentBri)
+        }
+    }
+
+    private func makeComposerPerLightWork(
+        token: CompositionSendLedger.Token,
+        lightIDs: [String],
+        frames: [LightFrame],
+        api: HueAPIClient,
+        gamut: HueColorUtils.Gamut,
+        sentX: Double, sentY: Double, sentBri: Double
+    ) -> RestSender.Work {
+        return { [weak self] stillCurrent in
+            self?.composerWorkStarted(token)
+            var attempted = 0
+            var failures = 0
+
+            // Send each light its unique color — batched with concurrent
+            // sends (bridge handles ~10/sec individual)
+            let batchSize = 5  // safe concurrent limit
+            for batchStart in stride(from: 0, to: lightIDs.count, by: batchSize) {
+                guard await stillCurrent() else {
+                    self?.composerWorkTerminated(
+                        token: token, kind: .cancelled,
+                        attemptedOperations: attempted, failures: failures)
+                    return
+                }
+                let batchEnd = min(batchStart + batchSize, lightIDs.count)
+                let outcomes = await withTaskGroup(of: Bool.self) { group -> [Bool] in
+                    for i in batchStart..<batchEnd {
+                        guard i < frames.count else { continue }
+                        let lightID = lightIDs[i]
+                        let frame = frames[i]
+                        let xy = HueColorUtils.clampXYToGamut(
+                            x: frame.x, y: frame.y, gamut: gamut
+                        )
+                        let bri = max(1, frame.brightness * 100.0)
+                        group.addTask {
+                            do {
+                                try await api.setLightEffect(
+                                    id: lightID, on: true,
+                                    brightness: bri,
+                                    xy: (xy.x, xy.y),
+                                    mirek: nil,
+                                    duration: 200
+                                )
+                                return true
+                            } catch {
+                                return false
+                            }
+                        }
+                    }
+                    var results: [Bool] = []
+                    for await outcome in group { results.append(outcome) }
+                    return results
+                }
+                attempted += outcomes.count
+                failures += outcomes.lazy.filter { !$0 }.count
+                // Small gap between batches if more remain
+                if batchEnd < lightIDs.count {
+                    try? await Task.sleep(for: .milliseconds(80))
+                }
+            }
+            #if DEBUG
+            print("[Composer][REST] ✅ per-light room=\(token.scope.roomID) dispatched=\(attempted) failures=\(failures)")
+            #endif
+            self?.composerWorkTerminated(
+                token: token, kind: .completed,
+                attemptedOperations: attempted, failures: failures,
+                sentX: sentX, sentY: sentY, sentBri: sentBri)
+        }
+    }
+
+    private func makeComposerGroupedWork(
+        token: CompositionSendLedger.Token,
+        groupedLightID: String,
+        brightness: Double,
+        xy: (x: Double, y: Double),
+        api: HueAPIClient
+    ) -> RestSender.Work {
+        // One request, no loop — nothing to cancel between dispatches, so this
+        // path ignores the probe (packet 3). Scope invalidation still prevents
+        // it from STARTING once the room is stopped.
+        return { [weak self] _ in
+            self?.composerWorkStarted(token)
+            do {
+                try await api.setGroupedLightEffect(
+                    id: groupedLightID, on: true,
+                    brightness: brightness,
+                    xy: (xy.x, xy.y),
+                    mirek: nil,
+                    duration: 200
+                )
+                #if DEBUG
+                print("[Composer][REST] ✅ grouped room=\(token.scope.roomID) bri=\(String(format: "%.1f", brightness))")
+                #endif
+                self?.composerWorkTerminated(
+                    token: token, kind: .completed,
+                    attemptedOperations: 1, failures: 0,
+                    sentX: xy.x, sentY: xy.y, sentBri: brightness)
+            } catch {
+                // Ran to its natural end and failed — a completed item with
+                // one failure, not a cancellation.
+                self?.composerWorkTerminated(
+                    token: token, kind: .completed,
+                    attemptedOperations: 1, failures: 1)
+            }
+        }
+    }
+
+    /// Stop one room's composition. `bridgeID` is the room's ORIGINAL optional
+    /// bridge identity (packet 4) — the caller states it explicitly because no
+    /// reliable room-only lookup exists: `compositionRuntimes` is absent for
+    /// Entertainment and bridge-stored transports, and any roomID-only search
+    /// would conflate identical room IDs on different bridges. nil normalizes
+    /// to "legacy", exactly like `restSender(for:)`.
+    func stopCompositionMode(roomID: String, bridgeID: String?) async {
+        debugLog("[Handoff] Composer stop requested for roomID=\(roomID) bridge=\(bridgeID ?? "legacy")")
         compositionGenerations[roomID] = (compositionGenerations[roomID] ?? 0) + 1
+        // The ONE identity every teardown step below uses: sender clear,
+        // pending-token cancellation, ledger deactivation, retained-session
+        // removal, and publication removal all key off this exact value.
+        let sessionKey = ComposerTelemetrySessionKey(
+            bridgeKey: bridgeID ?? "legacy",
+            scope: RestScope(roomID: roomID, owner: .composer))
 
         // ─── Stop bridge-stored animation if active ───
         // M-07: tear down against the manifest's OWN bridge, never the
@@ -3435,31 +4174,25 @@ final class UnifiedOrchestrator {
             bridgeAnimationStore.remove(presetID: manifest.presetID, roomID: roomID)
         }
         compositionTransportByRoom.removeValue(forKey: roomID)
-        // Packet 3: clear ONLY this room's Composer scope, on the bridge the
-        // runtime actually recorded at start.
+        // Packet 3: clear ONLY this room's Composer scope. Packet 4: on the
+        // bridge the CALLER named — the same identity the scheduler enqueues
+        // on — never a bridge recovered from `allRooms`, manifests,
+        // selected-room state, or dictionary order, all of which can go stale
+        // mid-composition and would clear a mailbox on the wrong bridge
+        // (silently leaving this room's stale frames queued and killing an
+        // innocent room's).
         //
-        // The bridge comes from `compositionRuntimes[roomID]?.bridgeID` and
-        // NOTHING else — not `allRooms`, not the manifests, not selected-room
-        // state, not dictionary order. `CompositionRuntime.bridgeID` exists for
-        // exactly this reason: the `allRooms` snapshot can go stale mid-
-        // composition, and a stale lookup would clear a mailbox on the wrong
-        // bridge (silently leaving this room's stale frames queued and killing
-        // an innocent room's).
-        //
-        // The runtime is still populated here; it is removed further down in
-        // this same function. Keep that ordering.
-        //
-        // No REST runtime (Entertainment transport, bridge-stored transport, or
-        // already stopped) means there is nothing to clear — do NOT guess a
-        // sender, because guessing wrong cancels another room's playback.
-        let previousBridgeID = compositionRuntimes[roomID]?.bridgeID
-        if let previousBridgeID {
-            debugLog("[Handoff] Clearing Composer REST scope roomID=\(roomID) bridge=\(previousBridgeID)")
-            await restSender(for: previousBridgeID).clear(
-                scope: RestScope(roomID: roomID, owner: .composer)
-            )
+        // LOOK UP the sender; never create one here. An Entertainment or
+        // bridge-stored composition may run on a bridge that never had REST
+        // work, and stopping it must not conjure an empty mailbox actor just
+        // to clear nothing. A missing sender simply means no pending work was
+        // removed.
+        var removedPending = false
+        if let sender = restSendersByBridge[sessionKey.bridgeKey] {
+            debugLog("[Handoff] Clearing Composer REST scope roomID=\(roomID) bridge=\(sessionKey.bridgeKey)")
+            removedPending = await sender.clear(scope: sessionKey.scope)
         } else {
-            debugLog("[Handoff] No REST runtime for roomID=\(roomID) — no mailbox to clear")
+            debugLog("[Handoff] No REST sender for bridge=\(sessionKey.bridgeKey) — no mailbox to clear")
         }
         // Give Hue bridge firmware a brief settle window before any new owner starts writing.
         // KEPT AS-IS (packet 3): this is a practical settle window, not a formal
@@ -3484,12 +4217,15 @@ final class UnifiedOrchestrator {
             }
         }
         compositionRuntimes.removeValue(forKey: roomID)
-        compositionTelemetryByRoom.removeValue(forKey: roomID)
-        activeRESTCadenceByRoom.removeValue(forKey: roomID)
-        cadenceLastUIUpdateByRoom.removeValue(forKey: roomID)
-        if activeRESTCadenceByRoom.isEmpty {
-            activeRESTCadence = nil
-        }
+        // Packet 4: DEACTIVATION, not merely reset — consume the sender's
+        // pending-removal evidence gathered above, record the 0/0 pending
+        // cancellation for the exact tracked token if the sender reported one,
+        // deactivate the ledger session, and drop the retained identity and
+        // publication for exactly this bridgeKey + scope. Reports from the
+        // stopped generation are ignored from here on; a restart begins a
+        // fresh session with its new runtime generation.
+        deactivateComposerTelemetrySession(
+            sessionKey: sessionKey, pendingRemovalReported: removedPending)
         compositionOrder.removeAll { $0 == roomID }
         if compositionRuntimes.isEmpty {
             compositionSchedulerTask?.cancel()
@@ -3537,9 +4273,17 @@ final class UnifiedOrchestrator {
 
             await refreshCompositionMicDemand()
 
+            // Packet 4: refresh EVERY REST-active session's publication once
+            // per pass, BEFORE room selection — this is the expiry path. When
+            // requests hang or a room is delta-skipped, no ledger event fires,
+            // and without this sweep a stale cadence would sit on screen
+            // forever. Deliberately not tied to the selected room: the room
+            // that needs expiring is precisely the one not completing.
+            refreshAllActiveComposerCadencePublications()
+
             let now = CFAbsoluteTimeGetCurrent()
             guard let roomID = nextCompositionRoomPriority(now: now),
-                  var runtime = compositionRuntimes[roomID] else {
+                  let runtime = compositionRuntimes[roomID] else {
                 try? await Task.sleep(for: tickInterval)
                 continue
             }
@@ -3623,212 +4367,81 @@ final class UnifiedOrchestrator {
             // Packet 3: this room's own mailbox slot, on its OWN bridge. The
             // bridge comes from the runtime (recorded at start), never from a
             // possibly-stale `allRooms` lookup.
-            let composerSender = restSender(for: runtime.bridgeID)
+            // `restBridgeIdentity`, NOT `bridgeID` — the nonoptional field
+            // carries "" for a bridgeless room, which is not nil and so gets
+            // its own sender instead of the shared "legacy" one. The clear
+            // side in `stopCompositionMode` keys off the same value.
+            let composerSender = restSender(for: runtime.restBridgeIdentity)
             let composerScope = RestScope(roomID: roomID, owner: .composer)
+
+            // Packet 4: one token per enqueued work item, keyed exactly like
+            // the mailbox. The closure itself is built by the same factory the
+            // DEBUG seams expose, and the enqueue sequence (tracker installed
+            // BEFORE the await, supersession only on the sender's word) lives
+            // in enqueueComposerWork — one code path for production and tests.
+            let sessionKey = ComposerTelemetrySessionKey(
+                bridgeKey: runtime.restBridgeIdentity ?? "legacy",
+                scope: composerScope)
+            let sentX = firstXY.x
+            let sentY = firstXY.y
+            let sentBri = firstBri
 
             if usePerLight, let map = runtime.gradientMap {
                 // ── GRADIENT-AWARE PER-LIGHT MODE (Round 3 F) ──
                 // Strips get ONE gradient.points PUT carrying their whole
                 // channel range; flat lights keep the per-light PUT. Same
                 // mailbox, same pacing profile as the flat path.
-                let capturedMap = map
-                let capturedFrames = frames
-
-                await composerSender.enqueue(scope: composerScope) { stillCurrent in
-                    // Packet 3 — COOPERATIVE CANCELLATION.
-                    // `stillCurrent` is backed by this scope's epoch, which
-                    // `clear(scope:)` bumps. Checking it at the top of every
-                    // batch (including batch 1) means a stop halts this sweep
-                    // before the NEXT batch is dispatched; at most the batch
-                    // already in flight completes. Task.isCancelled cannot
-                    // stand in for this — the flush task is unstructured and
-                    // never cancelled, so it is permanently false here.
-
-                    let batchSize = 5
-                    let entries = capturedMap.entries
-                    for batchStart in stride(from: 0, to: entries.count, by: batchSize) {
-                        guard await stillCurrent() else { return }
-                        let batchEnd = min(batchStart + batchSize, entries.count)
-                        await withTaskGroup(of: Void.self) { group in
-                            for entry in entries[batchStart..<batchEnd] {
-                                let entryFrames = entry.channelRange.compactMap { idx in
-                                    idx < capturedFrames.count ? capturedFrames[idx] : nil
-                                }
-                                guard let first = entryFrames.first else { continue }
-                                group.addTask {
-                                    if entry.isGradient {
-                                        let points = entryFrames.map { frame -> CGPoint in
-                                            let xy = HueColorUtils.clampXYToGamut(
-                                                x: frame.x, y: frame.y, gamut: capturedGamut)
-                                            return CGPoint(x: xy.x, y: xy.y)
-                                        }
-                                        let avgBri = entryFrames.map(\.brightness)
-                                            .reduce(0, +) / Double(entryFrames.count)
-                                        try? await capturedAPI.setLightGradient(
-                                            id: entry.lightID,
-                                            body: GradientBody(
-                                                pointsXY: points,
-                                                brightness: max(1, avgBri * 100.0),
-                                                on: true,
-                                                durationMs: 200))
-                                    } else {
-                                        let xy = HueColorUtils.clampXYToGamut(
-                                            x: first.x, y: first.y, gamut: capturedGamut)
-                                        try? await capturedAPI.setLightEffect(
-                                            id: entry.lightID, on: true,
-                                            brightness: max(1, first.brightness * 100.0),
-                                            xy: (xy.x, xy.y),
-                                            mirek: nil,
-                                            duration: 200)
-                                    }
-                                }
-                            }
-                        }
-                        if batchEnd < entries.count {
-                            try? await Task.sleep(for: .milliseconds(80))
-                        }
-                    }
-                    #if DEBUG
-                    print("[Composer][REST] ✅ gradient-aware room=\(roomID) entries=\(entries.count)")
-                    #endif
+                await enqueueComposerWork(
+                    sessionKey: sessionKey, generation: runtime.generation,
+                    sender: composerSender
+                ) { token in
+                    makeComposerGradientWork(
+                        token: token, map: map, frames: frames,
+                        api: capturedAPI, gamut: capturedGamut,
+                        sentX: sentX, sentY: sentY, sentBri: sentBri)
                 }
             } else if usePerLight {
                 // ── PER-LIGHT MODE ──
                 // Each light gets its own color. Cascade/wave patterns visible.
                 // Bridge handles ~10 PUTs/sec for individual lights.
-                let capturedLightIDs = runtime.lightIDs
-                let capturedFrames = frames
-
-                await composerSender.enqueue(scope: composerScope) { stillCurrent in
-                    // Packet 3 — COOPERATIVE CANCELLATION. See the gradient
-                    // path above: `stillCurrent` is checked before EVERY batch
-                    // including the first, so a stop halts this sweep within
-                    // one already-dispatched batch instead of writing stale
-                    // colors for another 300-500 ms after the next look primed.
-
-                    // Send each light its unique color — batched with
-                    // concurrent sends (bridge handles ~10/sec individual)
-                    let batchSize = 5  // safe concurrent limit
-                    for batchStart in stride(from: 0, to: capturedLightIDs.count, by: batchSize) {
-                        guard await stillCurrent() else { return }
-                        let batchEnd = min(batchStart + batchSize, capturedLightIDs.count)
-                        await withTaskGroup(of: Void.self) { group in
-                            for i in batchStart..<batchEnd {
-                                guard i < capturedFrames.count else { continue }
-                                let lightID = capturedLightIDs[i]
-                                let frame = capturedFrames[i]
-                                let xy = HueColorUtils.clampXYToGamut(
-                                    x: frame.x, y: frame.y, gamut: capturedGamut
-                                )
-                                let bri = max(1, frame.brightness * 100.0)
-                                group.addTask {
-                                    try? await capturedAPI.setLightEffect(
-                                        id: lightID, on: true,
-                                        brightness: bri,
-                                        xy: (xy.x, xy.y),
-                                        mirek: nil,
-                                        duration: 200
-                                    )
-                                }
-                            }
-                        }
-                        // Small gap between batches if more remain
-                        if batchEnd < capturedLightIDs.count {
-                            try? await Task.sleep(for: .milliseconds(80))
-                        }
-                    }
-                    #if DEBUG
-                    print("[Composer][REST] ✅ per-light room=\(roomID) lights=\(capturedLightIDs.count)")
-                    #endif
+                await enqueueComposerWork(
+                    sessionKey: sessionKey, generation: runtime.generation,
+                    sender: composerSender
+                ) { token in
+                    makeComposerPerLightWork(
+                        token: token, lightIDs: runtime.lightIDs, frames: frames,
+                        api: capturedAPI, gamut: capturedGamut,
+                        sentX: sentX, sentY: sentY, sentBri: sentBri)
                 }
             } else {
                 // ── GROUPED FALLBACK ──
                 // No individual light IDs resolved — use grouped_light
-                let capturedGLID = runtime.groupedLightID
-                let capturedBri = firstBri
-                let capturedXY = firstXY
-
-                // One request, no loop — nothing to cancel between dispatches,
-                // so this path ignores the probe. Scope invalidation still
-                // prevents it from STARTING once the room is stopped.
-                await composerSender.enqueue(scope: composerScope) { _ in
-                    try? await capturedAPI.setGroupedLightEffect(
-                        id: capturedGLID, on: true,
-                        brightness: capturedBri,
-                        xy: (capturedXY.x, capturedXY.y),
-                        mirek: nil,
-                        duration: 200
-                    )
-                    #if DEBUG
-                    print("[Composer][REST] ✅ grouped room=\(roomID) bri=\(String(format: "%.1f", capturedBri))")
-                    #endif
+                await enqueueComposerWork(
+                    sessionKey: sessionKey, generation: runtime.generation,
+                    sender: composerSender
+                ) { token in
+                    makeComposerGroupedWork(
+                        token: token, groupedLightID: runtime.groupedLightID,
+                        brightness: firstBri, xy: (firstXY.x, firstXY.y),
+                        api: capturedAPI)
                 }
             }
 
-            // Track what we enqueued (for delta skip)
-            runtime.lastSentX = firstXY.x
-            runtime.lastSentY = firstXY.y
-            runtime.lastSentBri = firstBri
-            runtime.lastSentAt = now
-            runtime.sendCount += 1
-            runtime.nextDueAt = now + 0.12
-            compositionRuntimes[roomID] = runtime
-
-            recordCompositionTelemetry(
-                roomID: roomID,
-                roomName: runtime.roomName,
-                dueAt: now,
-                sentAt: now
-            )
+            // Scheduling state may advance at enqueue — but ONLY scheduling
+            // state. The delta-gate values (lastSentX/Y/Bri, lastSentAt,
+            // sendCount) now move in composerWorkTerminated, on an accepted
+            // fully-successful completion. Re-read the runtime rather than
+            // writing back the pre-enqueue copy: a fast completion may have
+            // already recorded its bookkeeping during the await above, and a
+            // stale whole-struct write would erase it.
+            if var current = compositionRuntimes[roomID],
+               current.generation == runtime.generation {
+                current.nextDueAt = now + 0.12
+                compositionRuntimes[roomID] = current
+            }
 
             try? await Task.sleep(for: tickInterval)
         }
-    }
-
-    // Simplified cadence functions — mailbox handles actual rate limiting
-    private func minimumComposerRESTInterval(roomCount: Int, tier: CompositionTier) -> Double {
-        return 0.12 * Double(max(1, roomCount))
-    }
-
-    private func minimumComposerBurstFloor(roomCount: Int, tier: CompositionTier) -> Double {
-        return 0.12 * Double(max(1, roomCount))
-    }
-
-    private func preferredComposerIdleInterval(roomCount: Int, tier: CompositionTier) -> Double {
-        return 0.12 * Double(max(1, roomCount))
-    }
-
-    private func lowPowerIdleInterval(roomCount: Int, tier: CompositionTier) -> Double {
-        return 0.25 * Double(max(1, roomCount))
-    }
-
-    private func recordCompositionTelemetry(roomID: String, roomName: String, dueAt: CFAbsoluteTime, sentAt: CFAbsoluteTime) {
-        let lagMs = max(0, (sentAt - dueAt) * 1000)
-        var metric = compositionTelemetryByRoom[roomID] ?? CompositionTelemetry(windowStart: sentAt)
-        metric.sends += 1
-        metric.lagSumMs += lagMs
-        metric.maxLagMs = max(metric.maxLagMs, lagMs)
-
-        let elapsed = max(0.001, sentAt - metric.windowStart)
-        let cadenceSeconds = elapsed / Double(max(1, metric.sends))
-        let lastUIUpdate = cadenceLastUIUpdateByRoom[roomID] ?? 0
-        if sentAt - lastUIUpdate >= 1.5 {
-            activeRESTCadenceByRoom[roomID] = cadenceSeconds
-            activeRESTCadence = cadenceSeconds
-            cadenceLastUIUpdateByRoom[roomID] = sentAt
-        }
-
-        if elapsed >= 5.0 {
-            #if DEBUG
-            let hz = Double(metric.sends) / elapsed
-            let avgLag = metric.lagSumMs / Double(max(1, metric.sends))
-            print(
-                "[Composer][Telemetry] room='\(roomName)' id=\(roomID) hz=\(String(format: "%.2f", hz)) avgLagMs=\(String(format: "%.1f", avgLag)) maxLagMs=\(String(format: "%.1f", metric.maxLagMs))"
-            )
-            #endif
-            metric = CompositionTelemetry(windowStart: sentAt)
-        }
-        compositionTelemetryByRoom[roomID] = metric
     }
 
     private func nextCompositionRoomPriority(now: CFAbsoluteTime) -> String? {
@@ -3942,10 +4555,26 @@ final class UnifiedOrchestrator {
         // Packet 3: invalidate every scope on every sender BEFORE dropping the
         // senders — a sender released while a closure still holds a live epoch
         // would let that closure keep writing to a bridge we just forgot.
-        for sender in restSendersByBridge.values {
-            await sender.clearAll()
+        // Packet 4: iterate ENTRIES — the dictionary key is the authoritative
+        // bridge identity for the scopes each clearAll returns; recovering it
+        // from anywhere else (roomID, allRooms, the sender object) can lie.
+        for (bridgeKey, sender) in restSendersByBridge {
+            let removedScopes = await sender.clearAll()
+            for scope in removedScopes where scope.owner == .composer {
+                deactivateComposerTelemetrySession(
+                    sessionKey: ComposerTelemetrySessionKey(bridgeKey: bridgeKey, scope: scope),
+                    pendingRemovalReported: true)
+            }
         }
         restSendersByBridge.removeAll()
+        // Forget-all leaves NO telemetry behind: sessions whose bridge never
+        // had a REST sender (Entertainment-only compositions) are deactivated
+        // here by exact key, and the publication map is emptied outright.
+        for sessionKey in Array(composerTelemetrySessions.keys) {
+            deactivateComposerTelemetrySession(
+                sessionKey: sessionKey, pendingRemovalReported: false)
+        }
+        activeRESTCadenceByBridgeRoom.removeAll()
         activeStudioRestScope = nil
         roomsByBridge.removeAll()
         zonesByBridge.removeAll()
@@ -3966,9 +4595,35 @@ final class UnifiedOrchestrator {
         // This is the forget-all / stop-everything path, so a GLOBAL clear is
         // the correct semantics here — unlike stopCompositionMode and
         // stopAppDrivenStudioEffect, which must stay room-scoped.
-        for sender in restSendersByBridge.values {
-            await sender.clearAll()
+        // Packet 4: entries, not values — each clearAll's returned scopes are
+        // meaningful only against the bridge key that owns that sender. Every
+        // dropped Composer scope records its 0/0 pending cancellation and its
+        // exact session is deactivated; the remaining sessions on that bridge
+        // (executing-only or idle) follow.
+        for (bridgeKey, sender) in restSendersByBridge {
+            let removedScopes = await sender.clearAll()
+            for scope in removedScopes where scope.owner == .composer {
+                deactivateComposerTelemetrySession(
+                    sessionKey: ComposerTelemetrySessionKey(bridgeKey: bridgeKey, scope: scope),
+                    pendingRemovalReported: true)
+            }
+            for sessionKey in Array(composerTelemetrySessions.keys)
+            where sessionKey.bridgeKey == bridgeKey {
+                deactivateComposerTelemetrySession(
+                    sessionKey: sessionKey, pendingRemovalReported: false)
+            }
         }
+        // This is stop-EVERYTHING: sessions on bridges that never created a
+        // REST sender (Entertainment-only, bridge-stored) are swept too — by
+        // their EXACT retained keys, never by roomID, and without conjuring a
+        // sender to do it. Afterwards no retained session, pending tracker, or
+        // published cadence may remain anywhere.
+        for sessionKey in Array(composerTelemetrySessions.keys) {
+            deactivateComposerTelemetrySession(
+                sessionKey: sessionKey, pendingRemovalReported: false)
+        }
+        composerPendingTokens.removeAll()
+        activeRESTCadenceByBridgeRoom.removeAll()
         activeStudioRestScope = nil
         // Small barrier so bridge transition buffers drain before a new startup sequence.
         // KEPT AS-IS (packet 3): a practical settle window, not a formal drain.

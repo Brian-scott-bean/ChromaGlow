@@ -88,6 +88,21 @@ struct RestScope: Hashable, Sendable {
 
 typealias RestEpoch = UInt64
 
+/// What `enqueue` actually did to the scope's pending slot (packet 4).
+///
+/// Purely observational: the enqueue behaves identically either way. Callers
+/// that record telemetry need this because they CANNOT infer it — `flush()`
+/// removes an entry from `pending` BEFORE awaiting its closure, so a scope with
+/// work in ledger state "enqueued but not yet started" may be either still
+/// pending (replaceable) or already dequeued and executing (not replaceable).
+/// Only the sender knows which, and only at the moment of the call.
+struct RestEnqueueResult: Sendable {
+    /// True when this enqueue overwrote work that had NOT started and will now
+    /// never run. False on a first enqueue, and false when the previous item for
+    /// this scope had already been dequeued for execution.
+    let replacedPending: Bool
+}
+
 actor RestSender {
 
     /// Asks the sender whether the closure that holds it is still the current
@@ -138,7 +153,12 @@ actor RestSender {
     /// Does NOT bump the epoch — enqueueing is not invalidation. Work stored
     /// here inherits the scope's current epoch, so a later `clear(scope:)` can
     /// invalidate it whether it has started or not.
-    func enqueue(scope: RestScope, _ work: @escaping Work) {
+    ///
+    /// Returns whether it replaced pending work (packet 4). The return value is
+    /// the ONLY thing added — every branch below is unchanged, and the same
+    /// result is returned whether or not this call spawns the flush task.
+    @discardableResult
+    func enqueue(scope: RestScope, _ work: @escaping Work) -> RestEnqueueResult {
         let epoch = epochs[scope] ?? 0
         // Record the scope even at epoch 0. `clearAll` invalidates what it
         // KNOWS about, and a scope whose work is currently executing is in
@@ -146,14 +166,19 @@ actor RestSender {
         // so a stop-everything would have missed exactly the closure that was
         // still writing to the bridge.
         epochs[scope] = epoch
-        if pending[scope] == nil { order.append(scope) }
+        // Same single lookup the `order` guard already performed — an occupied
+        // slot means this call drops a closure that will now never run.
+        let replacedPending = pending[scope] != nil
+        if !replacedPending { order.append(scope) }
         pending[scope] = (epoch: epoch, work: work)
+        let result = RestEnqueueResult(replacedPending: replacedPending)
 
-        guard !isFlushing else { return }
+        guard !isFlushing else { return result }
         // Set SYNCHRONOUSLY, inside this actor turn, BEFORE spawning — a second
         // enqueue arriving before the flush task is scheduled must observe it.
         isFlushing = true
         Task { await self.flush() }
+        return result
     }
 
     /// Invalidate one scope.
@@ -174,10 +199,19 @@ actor RestSender {
     /// Stated precisely: the old scope is invalidated before the replacement
     /// prime; an already-dispatched batch may still complete, but no later
     /// batch may begin.
-    func clear(scope: RestScope) {
+    /// Returns whether PENDING work was actually removed (packet 4) — true only
+    /// when a not-yet-started closure was dropped here. An executing-only scope,
+    /// or one this sender has never seen, returns false while still being
+    /// invalidated: the epoch bump above is unconditional, so a running
+    /// closure's probe still flips to false either way.
+    @discardableResult
+    func clear(scope: RestScope) -> Bool {
         epochs[scope, default: 0] &+= 1     // stops work that is EXECUTING
-        pending.removeValue(forKey: scope)  // stops work that has not STARTED
+        // Ordering unchanged: invalidate FIRST, then remove. `removeValue`
+        // already reported what it did; packet 4 just stopped discarding it.
+        let removedPending = pending.removeValue(forKey: scope) != nil
         order.removeAll { $0 == scope }
+        return removedPending
     }
 
     /// Invalidate everything this sender knows about (forget-all / stop-all).
@@ -185,7 +219,13 @@ actor RestSender {
     /// Ordering matters: every epoch is bumped FIRST, so a closure executing
     /// right now observes invalidation. Clearing pending first would leave a
     /// window where a running closure's probe still returned true.
-    func clearAll() {
+    /// Returns the scopes whose PENDING work was actually removed (packet 4) —
+    /// a strict subset of what it invalidates. Executing-only scopes are
+    /// invalidated (their probes flip to false) but are NOT returned: nothing
+    /// was dropped for them, so a caller counting cancelled-before-start work
+    /// must not count them.
+    @discardableResult
+    func clearAll() -> Set<RestScope> {
         // `enqueue` seeds `epochs` for every scope it has ever seen, so this
         // covers work that is PENDING and work that is EXECUTING right now.
         // Snapshot the keys: the loop mutates `epochs`.
@@ -193,8 +233,12 @@ actor RestSender {
         for scope in known {
             epochs[scope, default: 0] &+= 1
         }
+        // Snapshot BEFORE the wipe — after `removeAll` there is nothing to read,
+        // and `epochs` is the wrong source (it also holds executing-only scopes).
+        let removedPending = Set(pending.keys)
         pending.removeAll()
         order.removeAll()
+        return removedPending
     }
 
     /// Is `epoch` still the live epoch for `scope`? Backs every ValidityProbe.

@@ -506,6 +506,11 @@ final class StudioViewModel {
         /// The room whose composition owns the session — not necessarily the
         /// room being applied to; ownership is per bridge.
         let owningRoomID: String
+        /// The bridge that owns the session, retained at creation (packet 4):
+        /// the direct-teardown path passes it to
+        /// `stopCompositionMode(roomID:bridgeID:)`, whose exact-key teardown
+        /// must not guess an identity after the fact.
+        let owningBridgeID: String?
         let card: StudioCard
         let room: RoomDisplayItem
         let preferEntertainmentOverride: Bool?
@@ -747,12 +752,13 @@ final class StudioViewModel {
     }
 
     var activeRESTCadenceForSelectedRoom: Double? {
-        guard let orchestrator else { return nil }
-        if let roomID = selectedRoom?.id,
-           let roomCadence = orchestrator.activeRESTCadenceByRoom[roomID] {
-            return roomCadence
-        }
-        return orchestrator.activeRESTCadence
+        // Packet 4: bridge + room, or nothing. The old roomID-only lookup with
+        // a global fallback could show another room's — or another bridge's —
+        // number under this room's card. No ledger keys or scopes are built
+        // here; the orchestrator owns that vocabulary.
+        guard let orchestrator, let selectedRoom else { return nil }
+        return orchestrator.activeRESTCadence(
+            roomID: selectedRoom.id, bridgeID: selectedRoom.bridgeID)
     }
 
     // ──────────────────────────────────────────────
@@ -1092,6 +1098,7 @@ final class StudioViewModel {
                 runningLookName: runningEffects[owningRoomID]?.card.name ?? "A composition",
                 requestedLookName: card.name,
                 owningRoomID: owningRoomID,
+                owningBridgeID: bridgeID,
                 card: card,
                 room: room,
                 preferEntertainmentOverride: preferEntertainmentOverride
@@ -1430,7 +1437,8 @@ final class StudioViewModel {
             try? await Task.sleep(for: .milliseconds(200))
 
         case .composition:
-            await orchestrator.stopCompositionMode(roomID: roomID)
+            await orchestrator.stopCompositionMode(roomID: roomID,
+                                                   bridgeID: effect.room.bridgeID)
             // Keyed by the STOPPING room — the old single-slot nil-out
             // clobbered the selected room's editor when another room stopped.
             activeCompositionBoxes.removeValue(forKey: roomID)
@@ -1475,7 +1483,8 @@ final class StudioViewModel {
         } else {
             // Ownership without a Studio registry entry — stop the composition
             // directly rather than leaving the session to be silently orphaned.
-            await orchestrator.stopCompositionMode(roomID: prompt.owningRoomID)
+            await orchestrator.stopCompositionMode(roomID: prompt.owningRoomID,
+                                                   bridgeID: prompt.owningBridgeID)
             activeCompositionBoxes.removeValue(forKey: prompt.owningRoomID)
             orchestrator.removeActiveEffect(roomID: prompt.owningRoomID)
         }

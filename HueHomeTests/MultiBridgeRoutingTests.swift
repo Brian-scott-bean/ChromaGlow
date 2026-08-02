@@ -139,6 +139,46 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
     }
 
     override func fetchLights() async throws -> [HueLight] { [] }
+
+    // Packet 4: the Composer per-light path (and the gradient path's flat
+    // entries) issue exactly this PUT. Recorded — and optionally failed per
+    // light — so dispatch-count and bookkeeping tests never reach the
+    // unroutable TEST-NET-1 address the spies are built with.
+    private var _lightEffectIDs: [String] = []
+    var lightEffectIDs: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _lightEffectIDs
+    }
+    private var _failingLightEffectIDs: Set<String> = []
+    func stageLightEffectFailures(_ ids: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        _failingLightEffectIDs = ids
+    }
+    override func setLightEffect(
+        id: String, on: Bool?, brightness: Double?,
+        xy: (Double, Double)?, mirek: Int?, duration: Int
+    ) async throws {
+        lock.lock()
+        _lightEffectIDs.append(id)
+        let failing = _failingLightEffectIDs.contains(id)
+        lock.unlock()
+        if failing { throw HueAPIError.httpError(500) }
+    }
+}
+
+/// Deterministic clock for the packet-4 telemetry seam: tests advance it
+/// explicitly, so cadence expiry is provable without a single wall-clock wait.
+final class TelemetryTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: CFAbsoluteTime
+    init(_ start: CFAbsoluteTime) { value = start }
+    func advance(to newValue: CFAbsoluteTime) {
+        lock.lock(); value = newValue; lock.unlock()
+    }
+    func now() -> CFAbsoluteTime {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
 }
 
 // MARK: - Tests
@@ -217,7 +257,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         BridgeAnimationStore.shared.save(manifest)
         defer { BridgeAnimationStore.shared.remove(presetID: presetID, roomID: roomID) }
 
-        await orchestrator.stopCompositionMode(roomID: roomID)
+        await orchestrator.stopCompositionMode(roomID: roomID, bridgeID: nil)
 
         XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty,
                       "teardown must not touch a bridge the animation does not live on (M-07)")
@@ -238,7 +278,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         orchestrator.compositionTransportByRoom["room-a"] = .bridgeStored
         orchestrator.compositionTransportByRoom["room-b"] = .entertainment
 
-        await orchestrator.stopCompositionMode(roomID: "room-a")
+        await orchestrator.stopCompositionMode(roomID: "room-a", bridgeID: nil)
 
         XCTAssertNil(orchestrator.compositionTransportByRoom["room-a"],
                      "stop must clear the stopped room's transport")
@@ -368,7 +408,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         )
         orchestrator.testStageEntertainmentOwner(roomID: "room-b1", bridgeID: "bridge-b")
 
-        await orchestrator.stopCompositionMode(roomID: "room-a")
+        await orchestrator.stopCompositionMode(roomID: "room-a", bridgeID: "bridge-a")
 
         XCTAssertEqual(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"), "room-b1",
                        "bridge A's teardown must not clear bridge B's Entertainment ownership")
@@ -629,6 +669,8 @@ final class MultiBridgeRoutingTests: XCTestCase {
             BridgeAnimationStore.shared.remove(presetID: staged.presetID, roomID: staged.roomID)
         }
         stagedManifests.removeAll()
+        // Packet 4: never leave an injected telemetry clock behind.
+        orchestrator.testResetCompositionTelemetryClock()
         try await super.tearDown()
     }
 
@@ -1021,7 +1063,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         await enqueueRecording(sender, composerScope("room-a"), events, "A")
         await enqueueRecording(sender, composerScope("room-b"), events, "B")
 
-        await orchestrator.stopCompositionMode(roomID: "room-a")
+        await orchestrator.stopCompositionMode(roomID: "room-a", bridgeID: "bridge-a")
 
         gate.release()
         await drain(sender)
@@ -1046,7 +1088,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         await enqueueRecording(senderA, composerScope("room-a"), events, "A")
         await enqueueRecording(senderB, composerScope("room-b"), events, "B")
 
-        await orchestrator.stopCompositionMode(roomID: "room-a")
+        await orchestrator.stopCompositionMode(roomID: "room-a", bridgeID: "bridge-a")
 
         gateA.release()
         gateB.release()
@@ -1057,10 +1099,12 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "bridge B's mailbox is a separate object; a bridge-A stop cannot reach it")
     }
 
-    // 10. A stop with NO REST runtime (Entertainment transport, bridge-stored
-    //     transport, or already stopped) must clear NOTHING and must not
-    //     conjure a sender — guessing a bridge cancels an innocent room.
-    func testStoppingARoomWithNoRESTRuntimeClearsNothingAndGuessesNoBridge() async {
+    // 10. Stop identity is EXPLICIT (packet 4): the caller names the room's
+    //     original bridge, so a stop can never guess. Two protections replace
+    //     the old runtime-existence gate: a stop aimed at a bridge with no
+    //     sender must not conjure one, and a stop aimed at bridge X must not
+    //     reach work queued on bridge A — even for the same roomID.
+    func testStoppingAgainstASenderlessBridgeClearsNothingAndConjuresNoSender() async {
         let sender = orchestrator.testRestSender(for: "bridge-a")
         let events = RestEventLog()
         let keysBefore = orchestrator.testRestSenderBridgeKeys()
@@ -1068,16 +1112,19 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let gate = await park(sender, events: events)
         await enqueueRecording(sender, composerScope("ghost-room"), events, "ghost")
 
-        // No runtime was ever staged for "ghost-room".
-        await orchestrator.stopCompositionMode(roomID: "ghost-room")
+        // The caller says ghost-room lives on bridge-x — a bridge that has no
+        // REST sender (an Entertainment-only bridge, say). Nothing may be
+        // cleared anywhere, and no bridge-x mailbox may spring into existence
+        // just to clear nothing.
+        await orchestrator.stopCompositionMode(roomID: "ghost-room", bridgeID: "bridge-x")
 
         gate.release()
         await drain(sender)
 
         XCTAssertEqual(events.entries, ["ghost"],
-            "with no runtime there is no recorded bridge, so nothing may be cleared")
+            "bridge-a's queued work is untouched by a stop naming bridge-x")
         XCTAssertEqual(orchestrator.testRestSenderBridgeKeys(), keysBefore,
-            "the stop must not lazily create a sender for a bridge it guessed")
+            "the stop must not lazily create a sender for the named bridge")
     }
 
     // 11. The bridge comes from the RUNTIME's recorded bridgeID, never from
@@ -1103,7 +1150,10 @@ final class MultiBridgeRoutingTests: XCTestCase {
         await enqueueRecording(senderA, composerScope("room-a"), events, "on-bridge-a")
         await enqueueRecording(senderB, composerScope("room-a"), events, "on-bridge-b")
 
-        await orchestrator.stopCompositionMode(roomID: "room-a")
+        // The caller passes the identity RECORDED at start (packet 4) — the
+        // running-effect record says bridge A. The stale allRooms snapshot
+        // (which now claims bridge B) must play no part in the teardown.
+        await orchestrator.stopCompositionMode(roomID: "room-a", bridgeID: "bridge-a")
 
         gateA.release()
         gateB.release()
@@ -1111,7 +1161,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         await drain(senderB)
 
         XCTAssertEqual(events.entries, ["on-bridge-b"], """
-            the RUNTIME's bridge (A) is cleared and the stale snapshot's bridge \
+            the recorded bridge (A) is cleared and the stale snapshot's bridge \
             (B) is left alone — reading allRooms here would invert this
             """)
     }
@@ -1399,8 +1449,13 @@ final class MultiBridgeRoutingTests: XCTestCase {
             var bodies: [[String]] = []
             var index = 0
             while index < lines.count {
+                // Packet 4 moved the Composer closures into makeComposer*Work
+                // factories (so the scheduler and the DEBUG seams build the
+                // identical closure) — their `return { … in` bodies are the
+                // same enqueued closures and stay in this guard's remit.
                 let isCall = lines[index].contains(".enqueue(scope:")
                     || lines[index].contains("enqueueStudioRestWrite(")
+                    || lines[index].contains("-> RestSender.Work {")
                 guard isCall else { index += 1; continue }
 
                 var opener = index
@@ -1480,9 +1535,940 @@ final class MultiBridgeRoutingTests: XCTestCase {
         for body in batchClosures {
             let loopLines = body.indices.filter { body[$0].hasPrefix("for batchStart in stride(") }
             for line in loopLines {
-                XCTAssertEqual(body[line + 1], "guard await stillCurrent() else { return }",
+                // Packet 4: the guard's else body now REPORTS the cancellation
+                // (with the operations accumulated so far) before returning —
+                // the probe itself must still sit immediately above every
+                // batch, including the first.
+                XCTAssertTrue(body[line + 1].hasPrefix("guard await stillCurrent() else"),
                     "each Composer batch must be probed before it is dispatched")
+                let elseBody = body[(line + 1)...].prefix(6)
+                XCTAssertTrue(elseBody.contains(where: { $0.contains("kind: .cancelled,") }), """
+                    a failed probe must report an honest cancelled terminal — \
+                    silently returning would leave the item dangling forever
+                    """)
             }
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 4: canonical Composer bridge identity
+    // ──────────────────────────────────────────────
+    //
+    // `startCompositionMode` computes `room.bridgeID ?? ""` and stores it in the
+    // NONOPTIONAL `CompositionRuntime.bridgeID`, while `restSender(for:)`
+    // normalizes a NIL bridge to the key "legacy". "" is not nil — so routing the
+    // Composer mailbox through `bridgeID` gave a bridgeless room its own ""
+    // sender while All-Day and Studio used "legacy": two mailboxes for one
+    // conceptual bridge. Both Composer paths now key on `restBridgeIdentity`,
+    // the room's original optional.
+    //
+    // These must hold TOGETHER. Moving only the enqueue side would leave
+    // `clear(scope:)` aimed at a different actor, and packet 3's cooperative
+    // cancellation would silently stop working for bridgeless rooms.
+
+    /// The production resolver maps a bridgeless room to the SHARED "legacy"
+    /// sender and never an empty-string one. Stop reaches that same mailbox
+    /// WITHOUT creating anything (packet 4 dropped the old lazy creation:
+    /// stopping an Entertainment-only session must not conjure a REST sender).
+    func testBridgelessComposerRoomResolvesToTheLegacySender() async {
+        orchestrator.testStageRESTComposition(roomID: "room-nil", bridgeID: nil, api: bridgeA)
+        // The enqueue-side resolver — the same call the scheduler makes.
+        _ = orchestrator.testRestSender(for: nil)
+        let keysBefore = orchestrator.testRestSenderBridgeKeys()
+        XCTAssertTrue(keysBefore.contains("legacy"), """
+            a bridgeless room's Composer mailbox is the SHARED "legacy" sender — \
+            keying it off the nonoptional bridgeID resolved "" instead
+            """)
+        XCTAssertFalse(keysBefore.contains(""), """
+            no empty-string sender may ever be created: it is a second mailbox for \
+            the same conceptual bridge, invisible to every other bridgeless path
+            """)
+
+        await orchestrator.stopCompositionMode(roomID: "room-nil", bridgeID: nil)
+
+        XCTAssertEqual(orchestrator.testRestSenderBridgeKeys(), keysBefore, """
+            stop resolves the SAME legacy mailbox by lookup — it neither creates \
+            a new sender nor an empty-string one
+            """)
+    }
+
+    /// Enqueue and clear must resolve the SAME sender for a bridgeless room.
+    /// Proven by ordering: the stopped room's queued frame is dropped and a
+    /// sibling scope's survives. If clear still keyed off the nonoptional
+    /// `bridgeID` it would target a "" sender and "NIL" would have survived.
+    func testBridgelessComposerEnqueueAndStopUseTheSameSender() async {
+        orchestrator.testStageRESTComposition(roomID: "room-nil", bridgeID: nil, api: bridgeA)
+        let legacySender = orchestrator.testRestSender(for: nil)
+        let events = RestEventLog()
+
+        let gate = await park(legacySender, events: events)
+        await enqueueRecording(legacySender, composerScope("room-nil"), events, "NIL")
+        await enqueueRecording(legacySender, composerScope("room-other"), events, "OTHER")
+
+        await orchestrator.stopCompositionMode(roomID: "room-nil", bridgeID: nil)
+
+        gate.release()
+        await drain(legacySender)
+
+        XCTAssertEqual(events.entries, ["OTHER"], """
+            the stop reached the very mailbox the scheduler enqueues on, and \
+            reached ONLY the stopped room's scope
+            """)
+    }
+
+    /// Stop with the explicit nil identity clears EXACTLY the named room's
+    /// scope on the legacy mailbox — with or without a REST runtime — and a
+    /// sibling scope always survives. (Packet 4 replaced the old
+    /// runtime-existence gate: identity comes from the caller now, so an
+    /// Entertainment or bridge-stored stop still drops its stale mailbox work,
+    /// and there is no bridge to guess wrong.)
+    func testStopClearsOnlyTheNamedScopeOnTheLegacySender() async {
+        let legacySender = orchestrator.testRestSender(for: nil)
+
+        // (a) No runtime at all — the named scope is still cleared, the
+        // sibling scope is untouched.
+        let events = RestEventLog()
+        let gateA = await park(legacySender, room: "__park-a__", events: events)
+        await enqueueRecording(legacySender, composerScope("ghost"), events, "GHOST")
+        await enqueueRecording(legacySender, composerScope("bystander"), events, "BYSTANDER")
+        await orchestrator.stopCompositionMode(roomID: "ghost", bridgeID: nil)
+        gateA.release()
+        await drain(legacySender)
+        XCTAssertEqual(events.entries, ["BYSTANDER"], """
+            the named room's stale frame is dropped even without a runtime, and \
+            only that room's — the sibling scope survives
+            """)
+
+        // (b) A staged bridgeless runtime — same outcome.
+        orchestrator.testStageRESTComposition(roomID: "ghost", bridgeID: nil, api: bridgeA)
+        let events2 = RestEventLog()
+        let gateB = await park(legacySender, room: "__park-b__", events: events2)
+        await enqueueRecording(legacySender, composerScope("ghost"), events2, "GHOST2")
+        await orchestrator.stopCompositionMode(roomID: "ghost", bridgeID: nil)
+        gateB.release()
+        await drain(legacySender)
+        XCTAssertTrue(events2.entries.isEmpty, """
+            a bridgeless room DOES have a mailbox to clear — its scope on the \
+            legacy sender is dropped
+            """)
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 4: honest completion-based telemetry
+    // ──────────────────────────────────────────────
+    //
+    // The ledger's pure semantics live in CompositionRoomPriorityScorerTests.
+    // Everything here is the ORCHESTRATOR's half: sender-evidence handling,
+    // exact (bridgeKey, scope) session identity, publication refresh/expiry,
+    // and completion-gated runtime bookkeeping — driven through the same
+    // production helpers and closure factories the scheduler uses, under an
+    // injected telemetry clock. No wall-clock waits anywhere.
+
+    /// Packet-4 shorthand: begin a session and install a deterministic clock.
+    private func stageTelemetrySession(
+        room: String, bridge: String?, generation: Int = 1,
+        restActive: Bool = true, clock: TelemetryTestClock
+    ) {
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testBeginComposerTelemetrySession(
+            roomID: room, bridgeID: bridge, generation: generation,
+            isRESTActive: restActive)
+    }
+
+    /// One fully successful single-operation item, terminal at `finishAt`.
+    @discardableResult
+    private func completeComposerItem(
+        room: String, bridge: String?, generation: Int = 1,
+        clock: TelemetryTestClock, finishAt: CFAbsoluteTime,
+        sentX: Double? = nil, sentY: Double? = nil, sentBri: Double? = nil
+    ) async -> CompositionSendLedger.Token {
+        let token = await orchestrator.testEnqueueComposerWork(
+            roomID: room, bridgeID: bridge, generation: generation
+        ) { _ in { _ in } }
+        clock.advance(to: finishAt - 0.001)
+        orchestrator.testReportComposerStarted(token)
+        clock.advance(to: finishAt)
+        orchestrator.testReportComposerCompleted(
+            token: token, attemptedOperations: 1, failures: 0,
+            sentX: sentX, sentY: sentY, sentBri: sentBri)
+        return token
+    }
+
+    private func telemetrySnap(_ room: String, _ bridge: String?) -> CompositionSendLedger.Snapshot {
+        orchestrator.testComposerLedgerSnapshot(roomID: room, bridgeID: bridge)
+    }
+
+    // 13. superseded comes from the SENDER's replacedPending — a pending slot
+    //     that was actually overwritten — never from inference.
+    func testSupersededIsRecordedOnlyOnSenderReportedReplacement() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-a", clock: clock)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+
+        // Park the sender on ANOTHER scope so room-a's slot stays pending.
+        let gate = await park(sender, events: events)
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1
+        ) { _ in { _ in events.record("FIRST") } }
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1
+        ) { _ in { _ in events.record("SECOND") } }
+
+        gate.release()
+        await drain(sender)
+
+        let snapshot = telemetrySnap("room-a", "bridge-a")
+        XCTAssertEqual(snapshot.enqueuedItems, 2)
+        XCTAssertEqual(snapshot.supersededItems, 1,
+            "the sender reported one real replacement — FIRST never ran")
+        XCTAssertEqual(snapshot.cancelledItems, 0,
+            "superseded and cancelled are distinct counters")
+        XCTAssertEqual(events.entries, ["SECOND"])
+    }
+
+    // 14. THE INFERENCE ERROR THE SENDER EVIDENCE PREVENTS: an enqueue over an
+    //     item that has already been dequeued for execution replaces nothing,
+    //     so nothing may be marked superseded.
+    func testEnqueueOverAnExecutingItemDoesNotSupersedeIt() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-a", clock: clock)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+
+        // The FIRST item is dispatched immediately and parks INSIDE execution —
+        // its pending slot is empty while it runs.
+        let gate = RestGate()
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1
+        ) { _ in
+            { _ in
+                gate.signalStarted()
+                await gate.waitForRelease()
+            }
+        }
+        await gate.waitUntilStarted()
+
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1
+        ) { _ in { _ in } }
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a").supersededItems, 0, """
+            the sender reported replacedPending == false — the first item was \
+            executing, not pending, and wrongly superseding it would erase a \
+            send that actually happened
+            """)
+    }
+
+    // 15. Stop consumes the sender's pending-removal evidence: the pending
+    //     frame never runs, the tracker is cleaned, and the session ends
+    //     deactivated.
+    func testStopWithPendingWorkConsumesSenderEvidenceAndCleansTracker() async {
+        let clock = TelemetryTestClock(100)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+
+        let gate = await park(sender, events: events)
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1
+        ) { _ in { _ in events.record("RAN") } }
+        XCTAssertNotNil(orchestrator.testComposerPendingToken(roomID: "room-a", bridgeID: "bridge-a"))
+
+        await orchestrator.stopCompositionMode(roomID: "room-a", bridgeID: "bridge-a")
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertTrue(events.entries.isEmpty, "the pending frame was dropped before it could run")
+        XCTAssertNil(orchestrator.testComposerPendingToken(roomID: "room-a", bridgeID: "bridge-a"))
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a"), .empty,
+            "stop DEACTIVATES the session — nothing may linger")
+        XCTAssertFalse(orchestrator.testComposerTelemetrySessions()
+            .contains { $0.bridgeKey == "bridge-a" && $0.roomID == "room-a" })
+    }
+
+    // 16. An EXECUTING item is never terminalized by clear — it reports
+    //     cancelled at its own next probe, with the operations it accumulated,
+    //     and that report is ACCEPTED while its session is still active.
+    func testExecutingWorkIsNotTerminalizedByClearAndReportsAtItsProbe() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-a", clock: clock)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+
+        let gate = RestGate()
+        let orch = orchestrator!
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1
+        ) { token in
+            { stillCurrent in
+                orch.testReportComposerStarted(token)
+                gate.signalStarted()
+                await gate.waitForRelease()
+                if await stillCurrent() {
+                    orch.testReportComposerCompleted(
+                        token: token, attemptedOperations: 2, failures: 0)
+                } else {
+                    orch.testReportComposerCancelled(
+                        token: token, attemptedOperations: 2, failures: 0)
+                }
+            }
+        }
+        await gate.waitUntilStarted()
+
+        // Clear while it executes: RestSender reports NO pending removal, so
+        // no 0/0 pending cancellation may be recorded for it.
+        let removed = await sender.clear(scope: composerScope("room-a"))
+        XCTAssertFalse(removed, "the work had started — nothing was pending")
+
+        gate.release()
+        await drain(sender)
+
+        let snapshot = telemetrySnap("room-a", "bridge-a")
+        XCTAssertEqual(snapshot.cancelledItems, 1,
+            "the closure reported its OWN cancellation at the failed probe")
+        XCTAssertEqual(snapshot.attemptedOperations, 2,
+            "the operations dispatched before invalidation are preserved")
+        XCTAssertEqual(snapshot.successfulItems, 1,
+            "a partially successful cancelled item counts — not mutually exclusive")
+    }
+
+    // 17. Brian correction (round 3): a fast dispatch consumes the pending
+    //     tracker via its started report — after enqueue returns there is no
+    //     stale token, and a later clear of the empty scope records nothing.
+    func testFastDispatchLeavesNoStalePendingTokenAndClearRecordsNothing() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-a", clock: clock)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+
+        let orch = orchestrator!
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1
+        ) { token in
+            { _ in
+                orch.testReportComposerStarted(token)
+                orch.testReportComposerCompleted(
+                    token: token, attemptedOperations: 1, failures: 0)
+            }
+        }
+        await drain(sender)
+
+        XCTAssertNil(orchestrator.testComposerPendingToken(roomID: "room-a", bridgeID: "bridge-a"),
+            "the started report consumed the tracker — no stale token survives")
+        let removed = await sender.clear(scope: composerScope("room-a"))
+        XCTAssertFalse(removed, "the scope is empty — the sender has nothing to remove")
+
+        let snapshot = telemetrySnap("room-a", "bridge-a")
+        XCTAssertEqual(snapshot.successfulItems, 1)
+        XCTAssertEqual(snapshot.cancelledItems, 0,
+            "no pending cancellation may be recorded without sender evidence")
+    }
+
+    // 18. Cadence EXPIRES with no new completion: only the injected clock
+    //     advances, one refresh pass runs, and the number leaves the screen.
+    func testCadenceExpiresWithoutANewCompletion() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-a", clock: clock)
+
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.5)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 101.0)
+
+        XCTAssertEqual(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-a") ?? -1,
+                       0.5, accuracy: 0.000001,
+            "two completions 0.5 s apart publish a 0.5 s cadence")
+
+        // Requests hang: no further events. Only the clock moves.
+        clock.advance(to: 107.0)
+        orchestrator.testRefreshComposerCadencePublications()
+
+        XCTAssertNil(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-a"), """
+            the newest completion is 6 s old — past the 5 s horizon the number \
+            must disappear rather than freeze at the last good value
+            """)
+    }
+
+    // 19. Brian clarification 5: the per-pass refresh covers EVERY REST-active
+    //     session, so room B expires even while room A keeps completing.
+    func testTwoActiveRESTRoomsRefreshAndExpireIndependentlyPerSchedulerPass() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-a", clock: clock)
+        stageTelemetrySession(room: "room-b", bridge: "bridge-a", clock: clock)
+
+        await completeComposerItem(room: "room-b", bridge: "bridge-a", clock: clock, finishAt: 100.0)
+        await completeComposerItem(room: "room-b", bridge: "bridge-a", clock: clock, finishAt: 101.0)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 104.0)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 105.0)
+
+        XCTAssertNotNil(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-a"))
+        XCTAssertNotNil(orchestrator.activeRESTCadence(roomID: "room-b", bridgeID: "bridge-a"))
+
+        // One pass at t=107.5: room A's newest completion is 2.5 s old (keeps
+        // its number); room B's is 6.5 s old (expires) — with NO room selected
+        // and NO new completion for either.
+        clock.advance(to: 107.5)
+        orchestrator.testRefreshComposerCadencePublications()
+
+        XCTAssertEqual(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-a") ?? -1,
+                       1.0, accuracy: 0.000001, "room A keeps its valid value")
+        XCTAssertNil(orchestrator.activeRESTCadence(roomID: "room-b", bridgeID: "bridge-a"),
+            "room B expires without receiving another completion")
+    }
+
+    // 20. Brian correction (round 5): refresh eligibility is the EXACT retained
+    //     session's isRESTActive — never the roomID-keyed transport map, which
+    //     cannot tell identical room IDs on different bridges apart.
+    func testSchedulerRefreshUsesExactSessionRESTStatusNotRoomTransport() async {
+        let clock = TelemetryTestClock(100)
+        // The SAME roomID on two bridges: A's session is REST-active, B's is an
+        // Entertainment session (not REST-active).
+        stageTelemetrySession(room: "shared-room", bridge: "bridge-a", restActive: true, clock: clock)
+        stageTelemetrySession(room: "shared-room", bridge: "bridge-b", restActive: false, clock: clock)
+
+        await completeComposerItem(room: "shared-room", bridge: "bridge-a", clock: clock, finishAt: 100.0)
+        await completeComposerItem(room: "shared-room", bridge: "bridge-a", clock: clock, finishAt: 101.0)
+        XCTAssertNotNil(orchestrator.activeRESTCadence(roomID: "shared-room", bridgeID: "bridge-a"))
+
+        clock.advance(to: 108.0)
+        orchestrator.testRefreshComposerCadencePublications()
+
+        XCTAssertNil(orchestrator.activeRESTCadence(roomID: "shared-room", bridgeID: "bridge-a"),
+            "the REST-active session was swept and expired")
+        let sessions = orchestrator.testComposerTelemetrySessions()
+        XCTAssertTrue(sessions.contains {
+            $0.bridgeKey == "bridge-a" && $0.roomID == "shared-room" && $0.isRESTActive
+        })
+        XCTAssertTrue(sessions.contains {
+            $0.bridgeKey == "bridge-b" && $0.roomID == "shared-room" && !$0.isRESTActive
+        }, """
+            bridge B's exact session coexists and stays NOT REST-active — \
+            bridge A's roomID entry must not promote it
+            """)
+    }
+
+    // 21. Stop deactivates: publication gone immediately, late reports from the
+    //     stopped generation ignored, no session left behind.
+    func testStopDeactivatesTelemetryAndRemovesPublication() async {
+        let clock = TelemetryTestClock(100)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.5)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 101.0)
+        XCTAssertNotNil(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-a"))
+
+        // An executing straggler from this generation…
+        let straggler = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1
+        ) { _ in { _ in } }
+        orchestrator.testReportComposerStarted(straggler)
+
+        await orchestrator.stopCompositionMode(roomID: "room-a", bridgeID: "bridge-a")
+
+        XCTAssertNil(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-a"),
+            "publication is removed IMMEDIATELY at stop, not at the next horizon")
+        XCTAssertFalse(orchestrator.testComposerTelemetrySessions()
+            .contains { $0.bridgeKey == "bridge-a" && $0.roomID == "room-a" })
+
+        // …whose late report is ignored after deactivation.
+        orchestrator.testReportComposerCompleted(
+            token: straggler, attemptedOperations: 3, failures: 0)
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a"), .empty,
+            "reports from a stopped generation die in the deactivated ledger")
+    }
+
+    // 22. An Entertainment-selected composition has NO REST runtime and maybe
+    //     no REST sender — stop must still find and deactivate its telemetry
+    //     session, and must not conjure a sender to do it.
+    func testStoppingEntertainmentSelectedCompositionDeactivatesTelemetryAndCreatesNoSender() async {
+        let clock = TelemetryTestClock(100)
+        orchestrator.testStageEntertainmentOwner(roomID: "ent-room", bridgeID: "bridge-ent")
+        stageTelemetrySession(room: "ent-room", bridge: "bridge-ent", restActive: false, clock: clock)
+        let keysBefore = orchestrator.testRestSenderBridgeKeys()
+        XCTAssertFalse(keysBefore.contains("bridge-ent"), "precondition: no REST sender exists")
+
+        await orchestrator.stopCompositionMode(roomID: "ent-room", bridgeID: "bridge-ent")
+
+        XCTAssertFalse(orchestrator.testComposerTelemetrySessions()
+            .contains { $0.bridgeKey == "bridge-ent" && $0.roomID == "ent-room" },
+            "the retained identity is how stop finds a session with no runtime")
+        XCTAssertEqual(orchestrator.testRestSenderBridgeKeys(), keysBefore,
+            "stopping an Entertainment-only session must not create a REST sender")
+    }
+
+    // 23. Brian correction (round 4): the SAME roomID on two bridges — stop
+    //     with the explicit identity deactivates ONLY that bridge's session.
+    func testStopWithExplicitIdentityDeactivatesOnlyThatBridgesSession() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "shared", bridge: "bridge-a", clock: clock)
+        stageTelemetrySession(room: "shared", bridge: "bridge-b", clock: clock)
+
+        await completeComposerItem(room: "shared", bridge: "bridge-a", clock: clock, finishAt: 100.4)
+        await completeComposerItem(room: "shared", bridge: "bridge-a", clock: clock, finishAt: 100.8)
+        await completeComposerItem(room: "shared", bridge: "bridge-b", clock: clock, finishAt: 100.5)
+        await completeComposerItem(room: "shared", bridge: "bridge-b", clock: clock, finishAt: 101.0)
+
+        // A pending token on EACH bridge's mailbox for the same roomID.
+        let senderA = orchestrator.testRestSender(for: "bridge-a")
+        let senderB = orchestrator.testRestSender(for: "bridge-b")
+        let eventsA = RestEventLog()
+        let eventsB = RestEventLog()
+        let gateA = await park(senderA, room: "__park-a__", events: eventsA)
+        let gateB = await park(senderB, room: "__park-b__", events: eventsB)
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "shared", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "shared", bridgeID: "bridge-b", generation: 1) { _ in { _ in } }
+
+        await orchestrator.stopCompositionMode(roomID: "shared", bridgeID: "bridge-a")
+
+        gateA.release()
+        gateB.release()
+        await drain(senderA)
+        await drain(senderB)
+
+        XCTAssertFalse(orchestrator.testComposerTelemetrySessions()
+            .contains { $0.bridgeKey == "bridge-a" && $0.roomID == "shared" })
+        XCTAssertTrue(orchestrator.testComposerTelemetrySessions()
+            .contains { $0.bridgeKey == "bridge-b" && $0.roomID == "shared" },
+            "bridge B's session for the SAME roomID must survive untouched")
+        XCTAssertNil(orchestrator.testComposerPendingToken(roomID: "shared", bridgeID: "bridge-a"))
+        XCTAssertNotNil(orchestrator.testComposerPendingToken(roomID: "shared", bridgeID: "bridge-b"),
+            "bridge B's pending tracker survives")
+        XCTAssertNil(orchestrator.activeRESTCadence(roomID: "shared", bridgeID: "bridge-a"))
+        XCTAssertNotNil(orchestrator.activeRESTCadence(roomID: "shared", bridgeID: "bridge-b"),
+            "bridge B's publication survives")
+        XCTAssertNotEqual(telemetrySnap("shared", "bridge-b"), .empty,
+            "bridge B's counters survive")
+    }
+
+    // 24. Bridge removal clears that bridge's sessions, tokens, and publication
+    //     — and no other bridge's.
+    func testBridgeRemovalClearsOnlyThatBridgesTelemetry() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-a", clock: clock)
+        stageTelemetrySession(room: "room-b", bridge: "bridge-b", clock: clock)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.4)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.8)
+        await completeComposerItem(room: "room-b", bridge: "bridge-b", clock: clock, finishAt: 100.5)
+        await completeComposerItem(room: "room-b", bridge: "bridge-b", clock: clock, finishAt: 101.0)
+
+        await orchestrator.removeBridge(id: "bridge-a")
+
+        XCTAssertFalse(orchestrator.testComposerTelemetrySessions()
+            .contains { $0.bridgeKey == "bridge-a" })
+        XCTAssertNil(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-a"))
+        XCTAssertTrue(orchestrator.testComposerTelemetrySessions()
+            .contains { $0.bridgeKey == "bridge-b" && $0.roomID == "room-b" })
+        XCTAssertNotNil(orchestrator.activeRESTCadence(roomID: "room-b", bridgeID: "bridge-b"),
+            "another bridge's telemetry must survive a removal")
+    }
+
+    // 25. Forget-all leaves NOTHING: no sessions, no tokens, no publication —
+    //     including sessions on bridges that never had a REST sender.
+    func testForgetAllLeavesNoTelemetrySessionsTokensOrPublication() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-a", clock: clock)
+        stageTelemetrySession(room: "ent-room", bridge: "bridge-ent", restActive: false, clock: clock)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.4)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.8)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+        let gate = await park(sender, events: events)
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        gate.release()
+
+        await orchestrator.forgetAllBridges()
+
+        XCTAssertTrue(orchestrator.testComposerTelemetrySessions().isEmpty,
+            "no active telemetry session may survive forget-all")
+        XCTAssertNil(orchestrator.testComposerPendingToken(roomID: "room-a", bridgeID: "bridge-a"))
+        XCTAssertNil(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-a"))
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a"), .empty)
+        XCTAssertEqual(telemetrySnap("ent-room", "bridge-ent"), .empty,
+            "even a session whose bridge never had a sender is deactivated")
+    }
+
+    // 26. Runtime bookkeeping: a fully successful ACCEPTED completion advances
+    //     the delta gate, with lastSentAt from the SAME terminal clock sample.
+    func testFullySuccessfulCompletionAdvancesRuntimeBookkeeping() async {
+        let clock = TelemetryTestClock(200)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+
+        await completeComposerItem(
+            room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 200.7,
+            sentX: 0.41, sentY: 0.36, sentBri: 55)
+
+        let state = orchestrator.testCompositionRuntimeSendState(roomID: "room-a")
+        XCTAssertEqual(state?.sendCount, 1)
+        XCTAssertEqual(state?.lastSentX ?? -1, 0.41, accuracy: 0.000001)
+        XCTAssertEqual(state?.lastSentY ?? -1, 0.36, accuracy: 0.000001)
+        XCTAssertEqual(state?.lastSentBri ?? -1, 55, accuracy: 0.000001)
+        XCTAssertEqual(state?.lastSentAt ?? -1, 200.7, accuracy: 0.000001,
+            "lastSentAt is the SAME terminalAt the ledger recorded — one clock sample")
+    }
+
+    // 27. Partial and all-failed completions leave the delta gate untouched, so
+    //     the frame stays eligible for re-send.
+    func testPartialOrAllFailedCompletionLeavesRuntimeDeltaStateUnchanged() async {
+        let clock = TelemetryTestClock(200)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+
+        let partial = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        orchestrator.testReportComposerStarted(partial)
+        orchestrator.testReportComposerCompleted(
+            token: partial, attemptedOperations: 5, failures: 2,
+            sentX: 0.5, sentY: 0.5, sentBri: 50)
+
+        let allFailed = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        orchestrator.testReportComposerStarted(allFailed)
+        orchestrator.testReportComposerCompleted(
+            token: allFailed, attemptedOperations: 5, failures: 5,
+            sentX: 0.5, sentY: 0.5, sentBri: 50)
+
+        let state = orchestrator.testCompositionRuntimeSendState(roomID: "room-a")
+        XCTAssertEqual(state?.sendCount, 0, "no fully successful completion happened")
+        XCTAssertNil(state?.lastSentX)
+        XCTAssertNil(state?.lastSentAt)
+    }
+
+    // 28. SUCCESSFUL-BUT-CANCELLED: telemetry records the contributing item,
+    //     but the runtime delta gate must NOT advance.
+    func testSuccessfulButCancelledDoesNotAdvanceRuntime() async {
+        let clock = TelemetryTestClock(200)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+
+        let token = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        orchestrator.testReportComposerStarted(token)
+        // One 5-op batch succeeded, then the probe failed.
+        orchestrator.testReportComposerCancelled(
+            token: token, attemptedOperations: 5, failures: 0)
+
+        let snapshot = telemetrySnap("room-a", "bridge-a")
+        XCTAssertEqual(snapshot.successfulItems, 1)
+        XCTAssertEqual(snapshot.cancelledItems, 1)
+        let state = orchestrator.testCompositionRuntimeSendState(roomID: "room-a")
+        XCTAssertEqual(state?.sendCount, 0, """
+            cancelled work left lights mid-sweep — claiming the frame was sent \
+            would freeze the delta gate on a half-applied state
+            """)
+        XCTAssertNil(state?.lastSentAt)
+    }
+
+    // 29. Brian correction (round 5): ledger ACCEPTANCE gates bookkeeping — a
+    //     duplicate completed report increments sendCount exactly once.
+    func testDuplicateCompletedReportsIncrementRuntimeSendCountOnlyOnce() async {
+        let clock = TelemetryTestClock(200)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+
+        let token = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        orchestrator.testReportComposerStarted(token)
+        orchestrator.testReportComposerCompleted(
+            token: token, attemptedOperations: 1, failures: 0, sentX: 0.4, sentY: 0.3, sentBri: 40)
+        orchestrator.testReportComposerCompleted(
+            token: token, attemptedOperations: 1, failures: 0, sentX: 0.9, sentY: 0.9, sentBri: 90)
+
+        let state = orchestrator.testCompositionRuntimeSendState(roomID: "room-a")
+        XCTAssertEqual(state?.sendCount, 1, "the duplicate was rejected by the ledger")
+        XCTAssertEqual(state?.lastSentX ?? -1, 0.4, accuracy: 0.000001,
+            "the duplicate's values must not overwrite the accepted ones")
+    }
+
+    // 30. Brian correction (round 5): a same-generation token wiped by a
+    //     session reset cannot update the newer runtime when its late
+    //     completion finally arrives.
+    func testSameGenerationTokenRemovedByBeginSessionCannotUpdateNewerRuntime() async {
+        let clock = TelemetryTestClock(200)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+
+        let old = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        orchestrator.testReportComposerStarted(old)
+
+        // The transport window resets — SAME numeric generation.
+        orchestrator.testBeginComposerTelemetrySession(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1, isRESTActive: true)
+
+        orchestrator.testReportComposerCompleted(
+            token: old, attemptedOperations: 3, failures: 0,
+            sentX: 0.7, sentY: 0.7, sentBri: 70)
+
+        let state = orchestrator.testCompositionRuntimeSendState(roomID: "room-a")
+        XCTAssertEqual(state?.sendCount, 0, """
+            generation equality alone passes; token STATE does not — the wiped \
+            token's completion is rejected and the runtime stays untouched
+            """)
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a"), .empty)
+    }
+
+    // 31. Brian correction (round 5): completed-before-started is rejected and
+    //     cannot move the runtime either.
+    func testCompletedBeforeStartedCannotUpdateRuntimeBookkeeping() async {
+        let clock = TelemetryTestClock(200)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+
+        let token = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        // No started report — straight to completed.
+        orchestrator.testReportComposerCompleted(
+            token: token, attemptedOperations: 3, failures: 0,
+            sentX: 0.7, sentY: 0.7, sentBri: 70)
+
+        XCTAssertEqual(orchestrator.testCompositionRuntimeSendState(roomID: "room-a")?.sendCount, 0)
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a").successfulItems, 0)
+    }
+
+    // 32. Brian correction (round 4): a session reset leaves no prior pending
+    //     tracker that could later be misreported as a cancellation.
+    func testSessionBeginLeavesNoPriorPendingTokenToMisreportAsCancellation() async {
+        let clock = TelemetryTestClock(100)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+
+        let gate = await park(sender, events: events)
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        XCTAssertNotNil(orchestrator.testComposerPendingToken(roomID: "room-a", bridgeID: "bridge-a"))
+
+        // New session at the same key: the orchestrator's own stale tracking is
+        // cleared BEFORE install.
+        orchestrator.testBeginComposerTelemetrySession(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 2, isRESTActive: true)
+        XCTAssertNil(orchestrator.testComposerPendingToken(roomID: "room-a", bridgeID: "bridge-a"),
+            "no prior pending tracker survives the reset")
+
+        // Stop now consumes REAL sender evidence (the old closure IS still
+        // pending in the mailbox) — but with no tracked token there is nothing
+        // to misreport, and the fresh session simply deactivates.
+        await orchestrator.stopCompositionMode(roomID: "room-a", bridgeID: "bridge-a")
+        gate.release()
+        await drain(sender)
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a"), .empty)
+    }
+
+    // 33. Brian correction (round 3): attemptedOperations counts only requests
+    //     the task groups actually dispatched — never entries.count or
+    //     lightIDs.count.
+    func testAttemptedOperationsCountOnlyDispatchedRequests() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-g", bridge: "bridge-a", clock: clock)
+        stageTelemetrySession(room: "room-p", bridge: "bridge-a", clock: clock)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let frames = [
+            LightFrame(channelID: 0, x: 0.4, y: 0.35, brightness: 0.5),
+            LightFrame(channelID: 1, x: 0.45, y: 0.30, brightness: 0.6),
+        ]
+
+        // GRADIENT: three entries, only ONE has a frame. The frameless flat
+        // entry and the frameless gradient strip `continue` before dispatch.
+        let map = GradientChannelMap(entries: [
+            .init(lightID: "L1", channelStart: 0, channelCount: 1),
+            .init(lightID: "L2", channelStart: 5, channelCount: 1),
+            .init(lightID: "L3", channelStart: 6, channelCount: 3),
+        ])
+        let orch = orchestrator!
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-g", bridgeID: "bridge-a", generation: 1
+        ) { token in
+            orch.testMakeComposerGradientWork(
+                token: token, map: map, frames: frames, api: self.bridgeA,
+                gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
+        }
+        await drain(sender)
+
+        let gradientSnap = telemetrySnap("room-g", "bridge-a")
+        XCTAssertEqual(gradientSnap.attemptedOperations, 1, """
+            entries.count is 3, but only one entry had a frame to dispatch — \
+            attemptedOperations reports what the task group actually ran
+            """)
+
+        // PER-LIGHT: four lights, two frames — two dispatches.
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-p", bridgeID: "bridge-a", generation: 1
+        ) { token in
+            orch.testMakeComposerPerLightWork(
+                token: token, lightIDs: ["P1", "P2", "P3", "P4"], frames: frames,
+                api: self.bridgeA, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
+        }
+        await drain(sender)
+
+        let perLightSnap = telemetrySnap("room-p", "bridge-a")
+        XCTAssertEqual(perLightSnap.attemptedOperations, 2, """
+            lightIDs.count is 4, but only two lights had frames — the loop \
+            `continue`s past the rest before addTask
+            """)
+        XCTAssertEqual(Set(bridgeA.lightEffectIDs), ["L1", "P1", "P2"],
+            "exactly the dispatched requests reached the API")
+    }
+
+    // 34. The REAL closures still probe before the FIRST batch (packet 3), and
+    //     the cancellation they report is honest: started, zero operations.
+    func testRealComposerClosuresProbeBeforeTheFirstBatch() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-a", clock: clock)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+
+        // Mint + track a token through the production enqueue path (no-op
+        // mailbox work), then run the REAL per-light closure with a probe that
+        // is already false — as after a clear that bumped the epoch.
+        let token = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1
+        ) { _ in { _ in } }
+        await drain(sender)
+
+        let work = orchestrator.testMakeComposerPerLightWork(
+            token: token, lightIDs: ["P1", "P2"],
+            frames: [LightFrame(channelID: 0, x: 0.4, y: 0.35, brightness: 0.5),
+                     LightFrame(channelID: 1, x: 0.45, y: 0.30, brightness: 0.6)],
+            api: bridgeA, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
+        let dispatchedBefore = bridgeA.lightEffectIDs.count
+        await work({ false })
+
+        XCTAssertEqual(bridgeA.lightEffectIDs.count, dispatchedBefore,
+            "a failed FIRST probe dispatches nothing — batch 1 is guarded too")
+        let snapshot = telemetrySnap("room-a", "bridge-a")
+        XCTAssertEqual(snapshot.startedItems, 1, "the sweep still STARTED")
+        XCTAssertEqual(snapshot.cancelledItems, 1)
+        XCTAssertEqual(snapshot.attemptedOperations, 0,
+            "zero operations were dispatched before the probe failed")
+    }
+
+    // 35. Isolation: rooms, bridges, and owners do not leak into each other's
+    //     ledgers or publications.
+    func testTelemetryIsolationAcrossRoomsBridgesAndOwners() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-a", clock: clock)
+        stageTelemetrySession(room: "room-b", bridge: "bridge-a", clock: clock)
+        stageTelemetrySession(room: "room-a", bridge: "bridge-b", clock: clock)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.4)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.8)
+
+        // A Studio enqueue on the SAME room and bridge (packet 3 scope model).
+        await sender.enqueue(scope: studioScope("room-a")) { _ in }
+        await drain(sender)
+
+        XCTAssertNotNil(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-a"))
+        XCTAssertNil(orchestrator.activeRESTCadence(roomID: "room-b", bridgeID: "bridge-a"),
+            "room B never completed anything — its cadence is nil")
+        XCTAssertNil(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-b"),
+            "the same roomID on another bridge publishes independently")
+        let snapshot = telemetrySnap("room-a", "bridge-a")
+        XCTAssertEqual(snapshot.enqueuedItems, 2,
+            "the .studio enqueue left the .composer ledger untouched")
+    }
+
+    // 36. Re-staging a composition (a transport switch, a restart) begins a
+    //     FRESH telemetry session — nothing carries over.
+    func testRestagingACompositionBeginsAFreshTelemetrySession() async {
+        let clock = TelemetryTestClock(100)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+
+        let old = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        orchestrator.testReportComposerStarted(old)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.5)
+        XCTAssertNotEqual(telemetrySnap("room-a", "bridge-a"), .empty)
+
+        // Restart the composition (stage runs the same session-begin the
+        // production start runs).
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a"), .empty,
+            "the new transport window starts from a blank ledger")
+        orchestrator.testReportComposerCompleted(
+            token: old, attemptedOperations: 4, failures: 0)
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a"), .empty,
+            "the pre-restart token's late completion is ignored")
+    }
+
+    // 37. Amendment (round 6): a REJECTED terminal must not consume the pending
+    //     tracker — only ledger acceptance, or the sender's own clear/clearAll
+    //     evidence, may. Otherwise a bad report would erase the teardown's map
+    //     of what the mailbox still holds.
+    func testRejectedTerminalBeforeStartPreservesPendingTrackerUntilSenderClear() async {
+        let clock = TelemetryTestClock(100)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+
+        // A genuinely pending token: the sender is parked on another scope.
+        let gate = await park(sender, events: events)
+        let pending = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1
+        ) { _ in { _ in events.record("PENDING-RAN") } }
+
+        // Completed-before-started: the ledger rejects it…
+        orchestrator.testReportComposerCompleted(
+            token: pending, attemptedOperations: 3, failures: 0)
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a").successfulItems, 0,
+            "the invalid terminal was rejected")
+        // …and the tracker still holds the exact token.
+        XCTAssertEqual(
+            orchestrator.testComposerPendingToken(roomID: "room-a", bridgeID: "bridge-a"),
+            pending,
+            "a rejected terminal must not mutate the pending tracker")
+
+        // The sender's own evidence then consumes it: stop clears the scope,
+        // the clear reports an actual pending removal, and the teardown helper
+        // cancels the CORRECT tracked token before deactivating.
+        await orchestrator.stopCompositionMode(roomID: "room-a", bridgeID: "bridge-a")
+        gate.release()
+        await drain(sender)
+
+        XCTAssertTrue(events.entries.isEmpty,
+            "the pending closure was really removed — it never ran")
+        XCTAssertNil(orchestrator.testComposerPendingToken(roomID: "room-a", bridgeID: "bridge-a"))
+        XCTAssertEqual(telemetrySnap("room-a", "bridge-a"), .empty)
+    }
+
+    // 38. Amendment (round 6): stopStudioMode is stop-EVERYTHING — it sweeps
+    //     every retained session by exact key, including sessions whose bridge
+    //     never created a REST sender, and conjures nothing to do it.
+    func testStopStudioModeDeactivatesSenderlessEntertainmentTelemetry() async {
+        let clock = TelemetryTestClock(100)
+        orchestrator.testSetCompositionTelemetryClock(clock.now)
+        // Entertainment-only session: no RestSender exists for its bridge.
+        orchestrator.testBeginComposerTelemetrySession(
+            roomID: "ent-room", bridgeID: "bridge-ent", generation: 1, isRESTActive: false)
+        // Plus a live REST session with a pending token and a published cadence.
+        orchestrator.testStageRESTComposition(roomID: "room-a", bridgeID: "bridge-a", api: bridgeA)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.4)
+        await completeComposerItem(room: "room-a", bridge: "bridge-a", clock: clock, finishAt: 100.8)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+        let gate = await park(sender, events: events)
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-a", bridgeID: "bridge-a", generation: 1) { _ in { _ in } }
+        let keysBefore = orchestrator.testRestSenderBridgeKeys()
+
+        await orchestrator.stopStudioMode()
+        gate.release()
+
+        XCTAssertTrue(orchestrator.testComposerTelemetrySessions().isEmpty,
+            "no retained session may survive the global stop — senderless ones included")
+        XCTAssertNil(orchestrator.testComposerPendingToken(roomID: "room-a", bridgeID: "bridge-a"))
+        XCTAssertNil(orchestrator.activeRESTCadence(roomID: "room-a", bridgeID: "bridge-a"))
+        XCTAssertEqual(telemetrySnap("ent-room", "bridge-ent"), .empty)
+        XCTAssertEqual(orchestrator.testRestSenderBridgeKeys(), keysBefore,
+            "the sweep must not create a sender for bridge-ent")
     }
 }
