@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-07-22)
+## Current Status Snapshot (updated 2026-08-01)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
@@ -12,7 +12,10 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **45**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **46**).
+- **BUILD 46 (2026-08-01): mixer tray reclaims the ~200pt dead band above the Now Playing
+  card** — the R8c double-count, finally closed for the tray. Rollback tag
+  `checkpoint/mixer-tray-reclaim-band`. Entry below.
 - **BUILD 45 (2026-07-22): ROUND 4b — Brian's two deferred product calls, decided + shipped.**
   (1) A deep link/Siri command arriving MID-TOUR now dismisses the tour (no seen-stamp — it
   returns next clean launch) and routes after the cover's dismissal animation
@@ -644,6 +647,67 @@ clobbers" holes. 11 findings, 8 fix commits (each suite-green):
 - Block-based `addObserver(forName:)` tokens MUST be stored and removed by token;
   `removeObserver(self)` silently no-ops. Third occurrence of this class in the repo —
   grep for it when auditing new observers.
+
+---
+
+## 2026-08-01 - [Claude] The mixer tray's ~200pt dead band — R8c's double-count, closed for the tray (build 46)
+
+### Branch
+- `main` (rollback tag `checkpoint/mixer-tray-reclaim-band`)
+
+### Did
+- **Brian's report:** tapping Composer's **+ Create** brings up the mixer tray, but it stops
+  well short of the "Nothing playing" card — deck cards show through the gap and the tray's
+  own controls are cramped. Annotated screenshot: *"have the menu take up this space as well"*,
+  ask = **same position, just larger** (top edge fixed, grow downward).
+- **Root cause: the exact double-count R8c fixed for the deck spacer, missed on the tray.**
+  The music bar rides a bottom `safeAreaInset` on all of `StudioView`
+  (`StudioMusicWiring`), which already floors Studio's content at the bar's top edge and
+  already clears the floating `HueTabBar` via the bar's own `.padding(.bottom, 70)`. The tray
+  was then padded *again* by `studioTabBarClearance(bottomInset: geo.safeAreaInsets.bottom)` —
+  and that `bottomInset` is the whole music-bar band plus the home indicator, so
+  `max(72, 56 + inset)` resolved to ~200pt of padding pushing the tray off a floor it was
+  already sitting on. Measured from Brian's screenshots at ~200–240pt (scale pinned by
+  Candle's derived tray height, 362pt → 550px).
+- **Fix:** `MixerTrayMetrics.bottomClearance(bottomInset:barMounted:)` — `HueSpacing.sm` (8pt,
+  matching the tray's own side inset) when the bar is mounted, the full `tabBarClearance` when
+  it is suppressed. `studioTabBarClearance` moved off `StudioView` onto `MixerTrayMetrics` so
+  it is finally testable.
+- **Keeping the top edge fixed:** `resolvedMixerHeight` adds `reclaimed` (= old clearance −
+  new clearance) **after** both existing caps rather than rewriting them. Those caps are
+  known-good on device, so leaving them alone and appending the reclaim makes the top edge
+  provably invariant in both the half and dragged-up states while the bottom lands 8pt above
+  the music card — and needs no new assumption about what `proxy.size.height` means under a
+  safeAreaInset. Candle's tray ~362 → ~570pt; the composition tray ~492 → ~700pt.
+- **De-duplicated the suppression predicate:** `StudioMusicWiring.barSuppressed(currentRoomEffect:)`
+  is now the single source of truth; `suppressedForCompactMixer`, `studioBottomClearance`, and
+  the new clearance all read it. Retires the "keep this in lockstep" comment that was guarding
+  two hand-copied copies (a third was about to be added).
+- New wiring stayed out of `StudioView.body` (type-checker ceiling, AGENTS.md): the padding
+  call site reads a `mixerBarMounted` computed property, not an inline ternary.
+
+### Working
+- Suite 836/836 (xcresulttool-verified, `result: Passed`, 0 failures); build 46.
+- 3 new `MixerTrayMetricsTests`: the 72pt floor survives the move; a mounted bar reclaims the
+  band; a suppressed bar owes the full figure at every inset (so `reclaimed` is exactly 0 and
+  ≤700pt geometry is unchanged).
+
+### Left
+- **Brian device gate build 46:** Composer → + Create (top edge unmoved, bottom now at the
+  music card, Hue+Saturation pad and the rows under it visible); Effects → Candle (Brightness /
+  Flicker Rate / Base Color / `+2 MORE` all visible); drag the tray up; **with the tray up, tap
+  the Now Playing card's play/pause and artwork** — they should respond, not collapse the tray.
+- ≤700pt phones deliberately untouched (bar suppresses there, `reclaimed` = 0). If Brian sees
+  the same gap on an SE, that path's floor is `MainTabView`'s 64pt clear inset — which R8b
+  recorded as *not* reaching Studio's own `safeAreaInset` — so it needs measuring, not guessing.
+
+### Gotchas
+- The R8c rule applies to EVERY bottom-anchored Studio surface, not just spacers in the deck
+  VStack: while the music bar is mounted, clearance is the bar's job. Anything that reads
+  `safeAreaInsets.bottom` and adds it back as padding is double-counting the bar's whole band.
+- When growing a bottom-anchored panel that must keep its top edge, add the delta *after* the
+  existing caps. Rewriting the caps re-opens the question of what the proxy's size means under
+  a safeAreaInset; appending the delta does not.
 
 ---
 

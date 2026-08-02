@@ -167,10 +167,8 @@ struct StudioMusicWiring: ViewModifier {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @State private var showSourcePicker = false
 
-    /// Height contention is real on small phones: hide the bar while the
-    /// mixer tray is up on ≤700pt screens (the isCompactStudio boundary).
     private var suppressedForCompactMixer: Bool {
-        vm.currentRoomEffect != nil && UIScreen.main.bounds.height <= 700
+        StudioMusicWiring.barSuppressed(currentRoomEffect: vm.currentRoomEffect)
     }
 
     func body(content: Content) -> some View {
@@ -244,5 +242,19 @@ struct StudioMusicWiring: ViewModifier {
             vm.restoredHarmonyRule = HarmonyRule.none
         }
         box.triggerRESTBurst()
+    }
+}
+
+// MARK: - Bar mounting
+
+extension StudioMusicWiring {
+    /// Single source of truth for "is Studio's music bar mounted?" — the bar
+    /// itself, Studio's bottom clearance, and the mixer tray's clearance all
+    /// read this. Height contention is real on small phones: the bar hides
+    /// while the mixer tray is up on ≤700pt screens (the isCompactStudio
+    /// boundary). Three hand-copied versions of this predicate used to sit in
+    /// two files under a "keep in lockstep" comment.
+    static func barSuppressed(currentRoomEffect: RunningEffect?) -> Bool {
+        currentRoomEffect != nil && UIScreen.main.bounds.height <= 700
     }
 }

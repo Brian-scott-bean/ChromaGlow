@@ -33,6 +33,26 @@ enum MixerTrayMetrics {
     /// inline slider count they had before. MixerTrayMetricsTests pins this.
     static let compactHeightCap: CGFloat = 406
 
+    /// Floating tab bar + home indicator — the clearance a bottom-anchored
+    /// Studio surface owes when nothing else is clearing the bar for it.
+    static func tabBarClearance(bottomInset: CGFloat) -> CGFloat {
+        max(72, 56 + bottomInset)
+    }
+
+    /// Clearance below the mixer tray. When the music bar is mounted it rides
+    /// its own bottom safeAreaInset, which ALREADY floors Studio's content at
+    /// the bar's top edge and ALREADY clears the floating HueTabBar (the bar's
+    /// own `.padding(.bottom, 70)`) — so the tray owes only a card-to-card gap.
+    /// Re-adding `tabBarClearance` on top of that padded the tray off a floor
+    /// it was already sitting on: ~200pt of dead band, since `bottomInset` here
+    /// is the whole music-bar band plus the home indicator. Same double-count
+    /// DEVLOG R8c (2026-07-21) fixed for the deck spacer and missed on the
+    /// tray. With the bar suppressed nothing else clears the tab bar and the
+    /// full figure is owed.
+    static func bottomClearance(bottomInset: CGFloat, barMounted: Bool) -> CGFloat {
+        barMounted ? HueSpacing.sm : tabBarClearance(bottomInset: bottomInset)
+    }
+
     /// Total height of the three-row tray header: identity+actions, badge
     /// lane, and — for composition cards — the transport status sentence.
     /// The status line is *reserved* rather than measured so the tray does not

@@ -258,7 +258,8 @@ struct StudioView: View {
                     .frame(height: mixerHeight)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
-                    .padding(.bottom, studioTabBarClearance(bottomInset: geo.safeAreaInsets.bottom))
+                    .padding(.bottom, MixerTrayMetrics.bottomClearance(
+                        bottomInset: geo.safeAreaInsets.bottom, barMounted: mixerBarMounted))
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -466,21 +467,22 @@ struct StudioView: View {
         }
     }
 
-    /// Floating tab bar + home indicator — keeps mixer aligned above the bar on all phones.
-    private func studioTabBarClearance(bottomInset: CGFloat) -> CGFloat {
-        max(72, 56 + bottomInset)
-    }
-
     private var isCompactStudio: Bool {
         UIScreen.main.bounds.height <= 700 || dynamicTypeSize.isAccessibilitySize
     }
 
+    /// Whether the music bar is riding Studio's bottom safeAreaInset. Both
+    /// bottom-anchored surfaces below (the deck spacer and the mixer tray)
+    /// hinge on it — the bar clears the tab bar for them when it is up.
+    private var mixerBarMounted: Bool {
+        !StudioMusicWiring.barSuppressed(currentRoomEffect: vm.currentRoomEffect)
+    }
+
     /// The music bar's safeAreaInset already clears the floating tab bar —
     /// stacking the old 80pt spacer under it left a dead band above the bar.
-    /// Manual clearance exists ONLY while the bar is suppressed; keep this
-    /// condition in lockstep with StudioMusicWiring.suppressedForCompactMixer.
+    /// Manual clearance exists ONLY while the bar is suppressed.
     @ViewBuilder private var studioBottomClearance: some View {
-        if vm.currentRoomEffect != nil && UIScreen.main.bounds.height <= 700 {
+        if !mixerBarMounted {
             Color.clear.frame(height: 80)
         }
     }
@@ -488,15 +490,23 @@ struct StudioView: View {
     /// Caps tray height to available tab content so the mixer can use most of the screen on SE while keeping the deck visible.
     /// When expanded (dragged up), grows to near-full-screen so the whole composition editor is visible.
     private func resolvedMixerHeight(proxy: GeometryProxy) -> CGFloat {
-        let base = computeMixerHeight()
-        let half = min(base, max(300, proxy.size.height * 0.88))
-        guard isMixerExpanded else { return half }
+        let inset = proxy.safeAreaInsets.bottom
+        // Every point the tray stops spending on bottom padding becomes panel
+        // height. Added AFTER both existing caps — which are known-good on
+        // device — so the top edge lands exactly where it does today and the
+        // tray grows DOWNWARD only, to rest just above the music card. Zero
+        // when the bar is suppressed, so ≤700pt phones are unchanged.
+        let reclaimed = MixerTrayMetrics.tabBarClearance(bottomInset: inset)
+            - MixerTrayMetrics.bottomClearance(bottomInset: inset, barMounted: mixerBarMounted)
+
+        let half = min(computeMixerHeight(), max(300, proxy.size.height * 0.88))
+        guard isMixerExpanded else { return half + reclaimed }
         // Near-full-screen: leave a small top peek and clear the floating tab bar below.
         let expanded = proxy.size.height
             - proxy.safeAreaInsets.top
-            - studioTabBarClearance(bottomInset: proxy.safeAreaInsets.bottom)
+            - MixerTrayMetrics.tabBarClearance(bottomInset: inset)
             - 24
-        return max(half, min(expanded, proxy.size.height * 0.92))
+        return max(half, min(expanded, proxy.size.height * 0.92)) + reclaimed
     }
 
     private func computeMixerHeight() -> CGFloat {

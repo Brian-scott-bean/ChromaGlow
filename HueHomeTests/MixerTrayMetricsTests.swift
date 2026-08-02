@@ -32,6 +32,45 @@ final class MixerTrayMetricsTests: XCTestCase {
         )
     }
 
+    // MARK: - Bottom clearance
+    //
+    // The tray is bottom-anchored inside a region the music bar's safeAreaInset
+    // has already floored at the bar's top edge. Re-adding tabBarClearance
+    // there padded the tray off a floor it was already on (~200pt of dead
+    // band). These pin the two halves of that contract.
+
+    /// A realistic `safeAreaInsets.bottom` while the music bar is mounted:
+    /// the bar itself, its 70pt tab-bar padding, and the home indicator.
+    private let musicBarInset: CGFloat = 165
+
+    func testTabBarClearanceFloor() {
+        XCTAssertEqual(MixerTrayMetrics.tabBarClearance(bottomInset: 0), 72,
+                       "the 72pt floor must survive the move off StudioView")
+        XCTAssertEqual(MixerTrayMetrics.tabBarClearance(bottomInset: 34), 90)
+    }
+
+    func testMountedBarReclaimsTheBand() {
+        let mounted = MixerTrayMetrics.bottomClearance(bottomInset: musicBarInset,
+                                                       barMounted: true)
+        XCTAssertEqual(mounted, HueSpacing.sm,
+                       "with the bar up the tray owes only a card-to-card gap")
+        XCTAssertLessThan(mounted, MixerTrayMetrics.tabBarClearance(bottomInset: musicBarInset),
+                          "the dead band must actually be reclaimed")
+    }
+
+    /// Bar suppressed (≤700pt phone with a running effect): nothing else clears
+    /// the tab bar, so the full figure is owed and `reclaimed` is exactly 0 —
+    /// compact geometry stays byte-identical to before the change.
+    func testSuppressedBarKeepsFullClearance() {
+        for inset in [CGFloat(0), 34, musicBarInset] {
+            XCTAssertEqual(
+                MixerTrayMetrics.bottomClearance(bottomInset: inset, barMounted: false),
+                MixerTrayMetrics.tabBarClearance(bottomInset: inset),
+                "suppressed bar must owe the full tab-bar clearance at inset \(inset)"
+            )
+        }
+    }
+
     /// Compact devices must keep at least three inline slider rows after any
     /// header growth (the cap otherwise silently eats slider rows).
     func testCompactCapCoversHeaderGrowth() {
