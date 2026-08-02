@@ -487,6 +487,30 @@ final class StudioViewModel {
     /// Multiple rooms can have independent effects running simultaneously.
     var runningEffects: [String: RunningEffect] = [:]
 
+    /// A pending cross-surface handoff awaiting the user's answer.
+    ///
+    /// Non-nil means: a Studio card was tapped, a composition owns that bridge's
+    /// Entertainment session, and NOTHING has been torn down yet. The whole point
+    /// is that this state exists *before* any mutation — see `apply`.
+    var entertainmentHandoffPrompt: EntertainmentHandoffPrompt? = nil
+
+    /// Everything needed to either forget the request (cancel) or replay it
+    /// unchanged (confirm). Carrying the original call's arguments is what makes
+    /// cancel genuinely mutation-free: nothing had to be staged in advance.
+    struct EntertainmentHandoffPrompt: Identifiable {
+        let id = UUID()
+        /// The composition currently streaming, named as the user knows it.
+        let runningLookName: String
+        /// The Studio look they just asked for.
+        let requestedLookName: String
+        /// The room whose composition owns the session — not necessarily the
+        /// room being applied to; ownership is per bridge.
+        let owningRoomID: String
+        let card: StudioCard
+        let room: RoomDisplayItem
+        let preferEntertainmentOverride: Bool?
+    }
+
     /// The running effect on the CURRENTLY SELECTED room.
     /// Drives card grid running indicators and mixer tray content.
     var currentRoomEffect: RunningEffect? {
@@ -1020,7 +1044,9 @@ final class StudioViewModel {
 
     /// Apply using a captured room snapshot to avoid room-selection races
     /// when taps and room-swipes happen close together.
-    func apply(_ card: StudioCard, roomOverride: RoomDisplayItem?, preferEntertainmentOverride: Bool?) async {
+    func apply(_ card: StudioCard, roomOverride: RoomDisplayItem?,
+               preferEntertainmentOverride: Bool?,
+               skipHandoffConfirmation: Bool = false) async {
         debugLog("[Studio] apply '\(card.name)' — selectedRoom: \(selectedRoom?.name ?? "nil")")
         guard let room = roomOverride ?? selectedRoom else {
             statusMessage = "⚠ Select a room first"
@@ -1041,6 +1067,38 @@ final class StudioViewModel {
             return
         }
         debugLog("[Studio] ✅ All guards passed — groupedLightID: \(groupedLightID), bridgeID: \(room.bridgeID ?? "nil"), strategy: \(card.strategy)")
+
+        // ── Cross-surface conflict: Composer owns this bridge's session ──
+        //
+        // Every Studio app-driven card routes through startStudioMode, which
+        // stops whatever Entertainment client sits on the target bridge without
+        // asking who owns it. When the owner is a composition, the stop lands but
+        // its bookkeeping survives — the 25 fps loop keeps rendering into a
+        // disconnected client, `send` no-ops, `isTerminallyFailed` never trips, so
+        // the REST failover never fires either. Silent, permanent, unrecoverable
+        // without a restart.
+        //
+        // Ask before touching anything. Everything below this point is
+        // destructive, so the check has to sit above ALL of it — including the
+        // same-room replacement teardown.
+        //
+        // Composition → composition stays promptless: that is a replacement
+        // inside the surface that already owns the session, not a takeover.
+        if !skipHandoffConfirmation,
+           case .appDriven = card.strategy,
+           let bridgeID = room.bridgeID,
+           let owningRoomID = orchestrator.compositionOwningEntertainment(onBridge: bridgeID) {
+            entertainmentHandoffPrompt = EntertainmentHandoffPrompt(
+                runningLookName: runningEffects[owningRoomID]?.card.name ?? "A composition",
+                requestedLookName: card.name,
+                owningRoomID: owningRoomID,
+                card: card,
+                room: room,
+                preferEntertainmentOverride: preferEntertainmentOverride
+            )
+            debugLog("[Handoff] '\(card.name)' needs bridge \(bridgeID); room \(owningRoomID)'s composition owns it — asking first")
+            return
+        }
 
         // ── Stop any effect already running on THIS room ─────────────
         if let existing = runningEffects[room.id] {
@@ -1386,6 +1444,46 @@ final class StudioViewModel {
 
         runningEffects.removeValue(forKey: roomID)
         orchestrator.removeActiveEffect(roomID: roomID)
+    }
+
+    // ── Cross-surface Entertainment handoff ───────────────────────
+
+    /// Keep playing. The prompt was raised before anything was torn down, so
+    /// forgetting it IS the whole undo: no session, task, transport entry, or
+    /// selected card has been touched.
+    func cancelEntertainmentHandoff() {
+        guard let prompt = entertainmentHandoffPrompt else { return }
+        debugLog("[Handoff] User kept '\(prompt.runningLookName)' — nothing torn down")
+        entertainmentHandoffPrompt = nil
+    }
+
+    /// Switch. Stop the composition through its official path — the same one the
+    /// Studio stop button uses — and only then replay the original request.
+    func confirmEntertainmentHandoff() async {
+        // Consumed before the first await, so a double-tap while the teardown is
+        // in flight finds nil and returns instead of stopping or starting twice.
+        guard let prompt = entertainmentHandoffPrompt else { return }
+        entertainmentHandoffPrompt = nil
+        guard let orchestrator else { return }
+
+        debugLog("[Handoff] Switching from '\(prompt.runningLookName)' to '\(prompt.requestedLookName)'")
+        isExplicitStop = false
+        if runningEffects[prompt.owningRoomID] != nil {
+            // Studio knows this composition: its own stop path already routes to
+            // stopCompositionMode and clears the Now-Playing registry.
+            await stopEffect(on: prompt.owningRoomID)
+        } else {
+            // Ownership without a Studio registry entry — stop the composition
+            // directly rather than leaving the session to be silently orphaned.
+            await orchestrator.stopCompositionMode(roomID: prompt.owningRoomID)
+            activeCompositionBoxes.removeValue(forKey: prompt.owningRoomID)
+            orchestrator.removeActiveEffect(roomID: prompt.owningRoomID)
+        }
+
+        await apply(prompt.card,
+                    roomOverride: prompt.room,
+                    preferEntertainmentOverride: prompt.preferEntertainmentOverride,
+                    skipHandoffConfirmation: true)
     }
 
     /// Explicit stop — called when user taps the stop button directly.

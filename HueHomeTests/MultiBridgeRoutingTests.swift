@@ -16,6 +16,11 @@
 //    sees zero traffic.
 //
 // Audit: docs/audit/hardening-audit-2026-07-01.md §6 "Throughput / multi-bridge".
+//
+// Composer 2 packet 1a widened the remit from "writes go to the right bridge" to
+// "ownership is scoped to the right bridge, and is never taken without consent":
+// the per-bridge Entertainment gate and the Studio↔Composer handoff prompt.
+// Review: docs/ios/composer2-architecture-review-2026-08-01.md (defects 2 and 3).
 
 import XCTest
 @testable import HueHome
@@ -348,5 +353,213 @@ final class MultiBridgeRoutingTests: XCTestCase {
                        "each runtime must carry its own bridge — the gate reads this, not dictionary order")
         XCTAssertFalse(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-a"))
         XCTAssertFalse(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-b"))
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 1a: Studio cannot silently take Composer's session
+    // ──────────────────────────────────────────────
+    //
+    // startStudioMode stops whatever entertainment client sits on the target
+    // bridge without asking who owns it, and leaves composition bookkeeping
+    // behind. The composition's 25 fps loop then renders into a disconnected
+    // client forever: `send` no-ops, `isTerminallyFailed` never trips, so the
+    // REST failover never fires either. Silent and unrecoverable in-session.
+    //
+    // The fix is consent, not a smarter teardown — so what these lock is that
+    // NOTHING is mutated before the user answers.
+
+    /// A room on bridge B, used as the Studio target throughout this section.
+    private func roomOnBridgeB(id: String = "room-b", name: String = "Bedroom B") -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .zone,
+            id: id, name: name, archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-\(id)", lightCount: 2,
+            bridgeID: "bridge-b",
+            childResourceRefs: [(rid: "LB1", rtype: "light"), (rid: "LB2", rtype: "light")]
+        )
+    }
+
+    private func makePreset(named name: String) -> CompositionPreset {
+        CompositionPreset(
+            id: UUID(), name: name, icon: "sparkles", accentColorHex: "#FFB84D",
+            isBuiltIn: false, category: .ambient, seasonMonths: nil,
+            palette: PaletteConfig(),
+            motion: MotionConfig(),
+            envelope: EnvelopeConfig(),
+            reaction: ReactionConfig(),
+            createdAt: Date(timeIntervalSince1970: 1_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_000_000)
+        )
+    }
+
+    /// Studio VM wired to the two-bridge orchestrator, with a composition
+    /// already owning bridge B's Entertainment session and known to Studio's
+    /// Now-Playing registry (so the prompt can name it).
+    private func makeVMWithComposerOwningBridgeB(
+        owningRoomID: String = "room-b-composer"
+    ) -> (StudioViewModel, StudioCard) {
+        orchestrator.testStageEntertainmentOwner(roomID: owningRoomID, bridgeID: "bridge-b")
+
+        let vm = StudioViewModel()
+        vm.configure(orchestrator: orchestrator)
+        let compositionRoom = roomOnBridgeB(id: owningRoomID, name: "Aurora Room")
+        let compositionCard = vm.studioCard(for: makePreset(named: "Aurora Drift"))
+        vm.runningEffects[owningRoomID] = RunningEffect(
+            cardID: compositionCard.id, card: compositionCard, room: compositionRoom,
+            lightIDs: [], isEntertainment: true,
+            requestedTransport: .entertainmentArea, transportFallback: false
+        )
+        return (vm, compositionCard)
+    }
+
+    /// The app-driven engine cards (Party/Strobe/Thunderstorm/Ambient) — the
+    /// only Studio surface that reaches `startStudioMode`, and so the only one
+    /// that can take a bridge's Entertainment session out from under Composer.
+    private func liveModeCard(_ vm: StudioViewModel, _ id: String) throws -> StudioCard {
+        try XCTUnwrap(vm.liveModeCards.first { $0.id == id })
+    }
+
+    func testStudioTapOverAComposerOwnedBridgeAsksBeforeTearingAnythingDown() async throws {
+        let (vm, _) = makeVMWithComposerOwningBridgeB()
+        let ambient = try liveModeCard(vm, "ambient")
+
+        await vm.apply(ambient, roomOverride: roomOnBridgeB(), preferEntertainmentOverride: nil)
+
+        let prompt = try XCTUnwrap(vm.entertainmentHandoffPrompt,
+                                   "an explicit Studio tap over a Composer-owned bridge must ask")
+        XCTAssertEqual(prompt.runningLookName, "Aurora Drift", "the prompt must name what is playing")
+        XCTAssertEqual(prompt.requestedLookName, "Ambient")
+        XCTAssertEqual(prompt.owningRoomID, "room-b-composer",
+                       "ownership is per bridge — the owner need not be the targeted room")
+
+        // …and nothing may have moved yet.
+        XCTAssertEqual(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"),
+                       "room-b-composer", "the session must survive an unanswered prompt")
+        XCTAssertNotNil(vm.runningEffects["room-b-composer"],
+                        "the composition must still be registered as playing")
+        XCTAssertNil(vm.runningEffects["room-b"], "Studio must not have started")
+        XCTAssertTrue(bridgeB.groupedStateIDs.isEmpty && bridgeB.groupedEffectIDs.isEmpty,
+                      "no bridge traffic may precede the user's answer")
+    }
+
+    func testCancellingTheHandoffMutatesNothing() async throws {
+        let (vm, _) = makeVMWithComposerOwningBridgeB()
+        let ambient = try liveModeCard(vm, "ambient")
+        await vm.apply(ambient, roomOverride: roomOnBridgeB(), preferEntertainmentOverride: nil)
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt)
+
+        vm.cancelEntertainmentHandoff()
+
+        XCTAssertNil(vm.entertainmentHandoffPrompt, "the prompt is consumed")
+        XCTAssertEqual(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"),
+                       "room-b-composer", "cancel must not release ownership")
+        XCTAssertEqual(orchestrator.compositionTransportByRoom["room-b-composer"], .entertainment,
+                       "cancel must not touch transport bookkeeping")
+        XCTAssertNotNil(vm.runningEffects["room-b-composer"], "the composition keeps playing")
+        XCTAssertNil(vm.runningEffects["room-b"], "the Studio card must not have started")
+        XCTAssertTrue(bridgeB.groupedStateIDs.isEmpty && bridgeB.groupedEffectIDs.isEmpty,
+                      "cancel means no writes reached the bridge")
+    }
+
+    func testConfirmingTheHandoffStopsTheCompositionThenStartsStudio() async throws {
+        let (vm, _) = makeVMWithComposerOwningBridgeB()
+        let ambient = try liveModeCard(vm, "ambient")
+        await vm.apply(ambient, roomOverride: roomOnBridgeB(), preferEntertainmentOverride: nil)
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt)
+
+        await vm.confirmEntertainmentHandoff()
+        defer { Task { await orchestrator.stopStudioMode() } }
+
+        XCTAssertNil(vm.entertainmentHandoffPrompt)
+        XCTAssertNil(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"),
+                     "confirm must clear Entertainment ownership — a stopped composition cannot keep the session")
+        XCTAssertNil(orchestrator.compositionTransportByRoom["room-b-composer"],
+                     "the official stop path clears transport truth; a leftover entry is the orphaned-loop signature")
+        XCTAssertNil(vm.runningEffects["room-b-composer"],
+                     "the composition must leave the Now-Playing registry")
+        XCTAssertEqual(vm.runningEffects["room-b"]?.cardID, "ambient",
+                       "…and only then does the requested Studio look start")
+        XCTAssertTrue(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-b"),
+                      "the bridge is genuinely free afterwards — ownership and live state agree")
+    }
+
+    func testRepeatedConfirmOrCancelTapsCannotDoubleStopOrDoubleStart() async throws {
+        let (vm, _) = makeVMWithComposerOwningBridgeB()
+        let ambient = try liveModeCard(vm, "ambient")
+        await vm.apply(ambient, roomOverride: roomOnBridgeB(), preferEntertainmentOverride: nil)
+
+        await vm.confirmEntertainmentHandoff()
+        defer { Task { await orchestrator.stopStudioMode() } }
+        // The prompt was consumed before the first await, so every later tap is a no-op.
+        await vm.confirmEntertainmentHandoff()
+        vm.cancelEntertainmentHandoff()
+        await vm.confirmEntertainmentHandoff()
+
+        XCTAssertNil(vm.entertainmentHandoffPrompt)
+        XCTAssertEqual(vm.runningEffects.count, 1,
+                       "exactly one effect survives — no double start, no resurrected composition")
+        XCTAssertEqual(vm.runningEffects["room-b"]?.cardID, "ambient")
+        XCTAssertNil(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"))
+    }
+
+    func testCancelIsIdempotentAndSafeWithoutAPendingPrompt() {
+        let (vm, _) = makeVMWithComposerOwningBridgeB()
+
+        vm.cancelEntertainmentHandoff()
+        vm.cancelEntertainmentHandoff()
+
+        XCTAssertNil(vm.entertainmentHandoffPrompt)
+        XCTAssertEqual(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"),
+                       "room-b-composer",
+                       "a stray dismissal must never stop a composition nobody asked to replace")
+    }
+
+    func testReplacingOneCompositionWithAnotherDoesNotPrompt() async throws {
+        let (vm, _) = makeVMWithComposerOwningBridgeB()
+        // A composition card whose preset is not in the store: the composition
+        // branch bails immediately, so this asserts the CONFLICT decision alone —
+        // which is made before the strategy switch is ever reached.
+        let replacement = vm.studioCard(for: makePreset(named: "Ember Slow"))
+
+        await vm.apply(replacement, roomOverride: roomOnBridgeB(), preferEntertainmentOverride: nil)
+
+        XCTAssertNil(vm.entertainmentHandoffPrompt,
+                     "swapping looks inside the surface that already owns the session is not a takeover")
+    }
+
+    func testStudioTapOnADifferentBridgeDoesNotPrompt() async throws {
+        let (vm, _) = makeVMWithComposerOwningBridgeB()
+        let ambient = try liveModeCard(vm, "ambient")
+        let roomOnA = RoomDisplayItem(
+            kind: .zone,
+            id: "room-a", name: "Living A", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-room-a", lightCount: 1,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "LA1", rtype: "light")]
+        )
+
+        await vm.apply(ambient, roomOverride: roomOnA, preferEntertainmentOverride: nil)
+        defer { Task { await orchestrator.stopStudioMode() } }
+
+        XCTAssertNil(vm.entertainmentHandoffPrompt,
+                     "bridge B's owner may not gate playback on bridge A — that is the lockout defect wearing a prompt")
+        XCTAssertEqual(vm.runningEffects["room-a"]?.cardID, "ambient", "it just starts")
+        XCTAssertEqual(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"),
+                       "room-b-composer", "and bridge B is untouched")
+    }
+
+    func testStudioTapOnAFreeBridgeDoesNotPrompt() async throws {
+        let vm = StudioViewModel()
+        vm.configure(orchestrator: orchestrator)
+        let ambient = try liveModeCard(vm, "ambient")
+
+        await vm.apply(ambient, roomOverride: roomOnBridgeB(), preferEntertainmentOverride: nil)
+        defer { Task { await orchestrator.stopStudioMode() } }
+
+        XCTAssertNil(vm.entertainmentHandoffPrompt,
+                     "no owner, no conflict — the prompt must not become a tax on ordinary taps")
+        XCTAssertEqual(vm.runningEffects["room-b"]?.cardID, "ambient")
     }
 }

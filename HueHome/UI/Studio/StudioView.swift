@@ -415,6 +415,7 @@ struct StudioView: View {
             drainStudioAction: consumePendingStudioAction
         ))
         .modifier(StudioMusicWiring(vm: vm))
+        .modifier(EntertainmentHandoffAlert(vm: vm))
         .confirmationDialog(
             TransportVocabulary.choosePlayTitle,
             isPresented: $showCompositionTransportPrompt,
@@ -1873,6 +1874,39 @@ struct StudioCardButtonStyle: ButtonStyle {
 // warm re-fire of a share or "start X in Y"); `.task` on mount drains any
 // pending share; `.task(id: retryKey)` re-runs the Siri drain as each
 // cold-launch dependency lands (presets load off-main, rooms via loadAll).
+
+/// Studio's cross-surface handoff prompt — one `.modifier(...)` line on
+/// StudioView.body (which sits at the type-checker ceiling; extend THIS,
+/// never the body chain).
+///
+/// The view model raises `entertainmentHandoffPrompt` BEFORE tearing anything
+/// down, so this alert is the only thing standing between a Studio tap and a
+/// composition's DTLS session. Cancel discards the request; Switch stops the
+/// composition through its official path and then replays the tap.
+private struct EntertainmentHandoffAlert: ViewModifier {
+    let vm: StudioViewModel
+
+    func body(content: Content) -> some View {
+        content.alert(
+            "Switch lighting modes?",
+            isPresented: Binding(
+                get: { vm.entertainmentHandoffPrompt != nil },
+                // Swipe-away / system dismissal is a decline, and declining must
+                // be as mutation-free as tapping Keep Playing.
+                set: { if !$0 { vm.cancelEntertainmentHandoff() } }
+            ),
+            presenting: vm.entertainmentHandoffPrompt
+        ) { _ in
+            Button("Keep Playing", role: .cancel) { vm.cancelEntertainmentHandoff() }
+            Button("Switch") {
+                HapticManager.shared.light()
+                Task { await vm.confirmEntertainmentHandoff() }
+            }
+        } message: { prompt in
+            Text("“\(prompt.runningLookName)” is using Entertainment on this bridge. Stop it and start “\(prompt.requestedLookName)”?")
+        }
+    }
+}
 
 private struct StudioDrainWiring: ViewModifier {
     let openToken: Int
