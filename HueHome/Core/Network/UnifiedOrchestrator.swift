@@ -123,7 +123,14 @@ final class UnifiedOrchestrator {
     // sunrise/sunset locally. Updates are grouped_light-only and low cadence.
     private var allDayTask: Task<Void, Never>? = nil
     private var allDayGeneration: Int = 0
+    /// All-Day keeps its OWN dedicated sender — it is deliberately not part of
+    /// `restSendersByBridge`. Its cadence, ownership, and stop path are entirely
+    /// separate from Composer/Studio playback, and routing it through the shared
+    /// per-bridge senders would let a Composer stop drop an All-Day tick.
     private let allDayRestSender = RestSender()
+    /// One sentinel scope for the whole All-Day feature. Deliberately NOT keyed
+    /// by room — see the limitation recorded at the enqueue site.
+    private let allDayRestScope = RestScope(roomID: "__allDay__", owner: .allDay)
 
     private enum AllDayKeys {
         static let enabled = "allDayScenes.enabled"
@@ -195,7 +202,7 @@ final class UnifiedOrchestrator {
         allDayGeneration &+= 1
         allDayTask?.cancel()
         allDayTask = nil
-        Task { await allDayRestSender.clear() }
+        Task { [allDayRestScope] in await allDayRestSender.clear(scope: allDayRestScope) }
     }
 
     private func tickAllDayScenes(anchor: AllDayAnchor, generation: Int) async {
@@ -214,7 +221,13 @@ final class UnifiedOrchestrator {
         }
 
         for target in targets {
-            await allDayRestSender.enqueue { [weak self] in
+            // KNOWN LIMITATION (packet 3, deferred to packet 6):
+            // The single pending slot does not guarantee delivery to every room
+            // in one All-Day tick; later room enqueues may overwrite earlier
+            // pending work.
+            // Per-room delivery and playback suppression are packet 6's remit —
+            // packet 3 only scopes the mailbox, it does not change this cadence.
+            await allDayRestSender.enqueue(scope: allDayRestScope) { [weak self] _ in
                 guard let self else { return }
                 guard self.allDayGeneration == generation else { return }
                 guard let api = self.hueClient(for: target.bridgeID) else { return }
@@ -329,6 +342,29 @@ final class UnifiedOrchestrator {
         let gate = BridgeCommandGate()
         commandGates[key] = gate
         return gate
+    }
+
+    /// Per-bridge REST mailboxes (Composer 2 packet 3), modelled on
+    /// `commandGates` above and keyed identically ("legacy" for the
+    /// single-bridge fallback).
+    ///
+    /// Before packet 3 ONE `RestSender` served every Composer room, every
+    /// Studio engine loop, and every Studio live-param write across every
+    /// bridge — so `clear()` on one room's stop discarded another bridge's
+    /// queued frame. Bridge isolation now lives HERE, in the dictionary, and
+    /// room/owner isolation lives in `RestScope`. `RestScope` deliberately
+    /// carries no bridgeID: duplicating it would let the key and the value
+    /// disagree, and a clear() aimed at the wrong sender silently does nothing.
+    @ObservationIgnored
+    private var restSendersByBridge: [String: RestSender] = [:]
+
+    /// The REST mailbox for a bridge — one per bridge, created lazily.
+    private func restSender(for bridgeID: String?) -> RestSender {
+        let key = bridgeID ?? "legacy"
+        if let sender = restSendersByBridge[key] { return sender }
+        let sender = RestSender()
+        restSendersByBridge[key] = sender
+        return sender
     }
 
     /// Rooms per bridge — used for merge.  keyed by BridgeRecord.id
@@ -658,6 +694,21 @@ final class UnifiedOrchestrator {
         await stopEffectsForRemovedGroups(doomedGroups)
         sseTasks[id]?.cancel()
         sseTasks.removeValue(forKey: id)
+        // Packet 3: invalidate and drop ONLY this bridge's REST mailbox. Every
+        // other bridge's queued work must survive — removing one bridge from
+        // Bridge Manager may not stop a look running on another.
+        //
+        // DELIBERATE DIVERGENCE from the `commandGates` precedent above: that
+        // dictionary is never cleaned here, so it leaks an idle gate per removed
+        // bridge. Senders do not reproduce that — a leaked sender would also
+        // hold live epochs for a bridge that no longer exists.
+        if let sender = restSendersByBridge.removeValue(forKey: id) {
+            await sender.clearAll()
+        }
+        // …and forget the Studio owner iff it lived on this bridge.
+        if activeStudioRestScope?.bridgeKey == id {
+            activeStudioRestScope = nil
+        }
         clients.removeValue(forKey: id)
         roomsByBridge.removeValue(forKey: id)
         // Zones were never cleared here — and pruneStaleBridgeSnapshots bails
@@ -2221,20 +2272,49 @@ final class UnifiedOrchestrator {
     /// Internal access so StudioViewModel can report transport mode in debug.
     var studioEntClients: [String: HueEntertainmentClient] = [:]
 
-    /// Latest-wins REST sender for studio mode — prevents bridge command backlog.
-    private let studioRestSender = RestSender()
+    /// Which Studio scope currently owns REST, and on which bridge (packet 3).
+    ///
+    /// `activeStudioTask` above is ONE global slot: starting Studio in room B
+    /// silently replaces room A's loop. Without this record, `startStudioMode`
+    /// could only clear the INCOMING room's scope, leaving room A's epoch valid
+    /// and its in-flight batches legal — cross-room crossfire. The bridgeKey is
+    /// stored alongside because the replacement may target a different bridge,
+    /// and the old scope must be cleared on the sender that actually holds it.
+    private var activeStudioRestScope: (bridgeKey: String, scope: RestScope)?
 
     /// Studio live-param writes (StudioViewModel sendParam/sendColorParam)
-    /// share the studio mailbox: repeated writes to the same endpoint where
-    /// only the newest value matters — a slider scrub can never stack PUTs
-    /// behind stale frames, and the stop/handoff clear()s also drop any
-    /// pending param write before a new owner starts.
-    func enqueueStudioRestWrite(_ work: @escaping @Sendable () async -> Void) async {
-        await studioRestSender.enqueue(work)
+    /// share the room's Studio mailbox slot: repeated writes to the same
+    /// endpoint where only the newest value matters — a slider scrub can never
+    /// stack PUTs behind stale frames, and the stop/handoff clear()s also drop
+    /// any pending param write before a new owner starts.
+    ///
+    /// Packet 3: scoped. The write lands on the ROOM's bridge sender under
+    /// `.studio`, so it can no longer be dropped by another room's stop, and a
+    /// Composer look on the same room keeps its own independent slot.
+    /// Callers never construct a `RestScope` — that is this method's job.
+    func enqueueStudioRestWrite(
+        roomID: String,
+        bridgeID: String?,
+        _ work: @escaping RestSender.Work
+    ) async {
+        let scope = RestScope(roomID: roomID, owner: .studio)
+        await restSender(for: bridgeID).enqueue(scope: scope, work)
     }
-    /// Generation counter for studio/composer engine loops.
-    /// Increment on every start/stop; async closures must match to send.
-    private var studioGeneration: Int = 0
+
+    /// Clear whichever Studio scope currently owns REST, wherever it lives, and
+    /// forget it. Used by `startStudioMode` (before recording the new owner) and
+    /// by the bridge-removal paths.
+    private func clearActiveStudioRestScope() async {
+        guard let active = activeStudioRestScope else { return }
+        await restSender(for: active.bridgeKey).clear(scope: active.scope)
+        activeStudioRestScope = nil
+    }
+    // `studioGeneration` was deleted in packet 3. It was incremented on every
+    // Studio start/stop and NEVER read — dead state that looked like a working
+    // staleness guard. Studio staleness is now carried by the REST scope epoch
+    // (`RestScope(.studio)`), which enqueued closures actually consult, and by
+    // `activeStudioTask` cancellation for the engine loops.
+
     /// Per-room composition generation counters.
     private var compositionGenerations: [String: Int] = [:]
     /// Shared composition scheduler state (room-scoped runtimes, single bridge-fair ticker).
@@ -2390,6 +2470,37 @@ final class UnifiedOrchestrator {
     /// roomID → bridgeID for every live REST composition runtime.
     func testCompositionRuntimeBridges() -> [String: String] {
         compositionRuntimes.mapValues(\.bridgeID)
+    }
+
+    // Scoped-mailbox seams (packet 3). `restSendersByBridge` and
+    // `activeStudioRestScope` are private because only this type may route work
+    // into them, but "one room's stop must not clear another's mailbox" is
+    // precisely the rule that regressed — so tests get a way to enqueue into,
+    // and inspect, the real senders the production paths use.
+
+    /// The very sender a production call site would resolve for this bridge.
+    /// Creates it lazily, exactly as production does.
+    func testRestSender(for bridgeID: String?) -> RestSender {
+        restSender(for: bridgeID)
+    }
+
+    /// Which bridges currently HAVE a sender. Used to prove a stop with no REST
+    /// runtime does not conjure one (i.e. never guesses a bridge).
+    func testRestSenderBridgeKeys() -> Set<String> {
+        Set(restSendersByBridge.keys)
+    }
+
+    /// The recorded Studio REST owner, if any.
+    func testActiveStudioRestScope() -> (bridgeKey: String, scope: RestScope)? {
+        activeStudioRestScope
+    }
+
+    /// Stage a Studio REST owner without running an engine loop.
+    func testSetActiveStudioRestScope(bridgeKey: String, roomID: String) {
+        activeStudioRestScope = (
+            bridgeKey: bridgeKey,
+            scope: RestScope(roomID: roomID, owner: .studio)
+        )
     }
 
     // Entertainment-area selection seams (packet 1b). Selection reads three
@@ -2749,19 +2860,34 @@ final class UnifiedOrchestrator {
         params: [String: Double],
         colors: [String: Color]
     ) async {
-        // Cancel any previously running studio task first
+        // 1. Cancel any previously running studio task first
         activeStudioTask?.cancel()
         activeStudioTask = nil
-        studioGeneration += 1
-        await studioRestSender.clear()
+        // 2-3. Clear the PREVIOUSLY RECORDED Studio scope and forget it — even
+        // when the new card targets a different room or a different bridge.
+        // Clearing only the incoming room would be the bug: `activeStudioTask`
+        // is one global slot, so a room A -> room B switch would leave room A's
+        // epoch valid and its already-queued batches legal, and room A would
+        // keep writing over room B.
+        await clearActiveStudioRestScope()
         let stopBid = room.bridgeID ?? ""
         if let entClient = studioEntClients[stopBid] {
             await entClient.stopSession()
             studioEntClients.removeValue(forKey: stopBid)
         }
 
+        // 4. Resolve the new room.
         guard let api = hueClient(for: room.bridgeID),
               let groupedLightID = room.groupedLightID else { return }
+
+        // 5. Record the new owner BEFORE its first REST enqueue, so any later
+        // start/stop can find and invalidate it.
+        let studioRoomID = room.id
+        let studioBridgeID = room.bridgeID
+        activeStudioRestScope = (
+            bridgeKey: studioBridgeID ?? "legacy",
+            scope: RestScope(roomID: studioRoomID, owner: .studio)
+        )
 
         // Create live param box (engine loop reads from this; ViewModel updates it)
         let paramBox = StudioParamBox(values: params, colors: colors)
@@ -2789,7 +2915,7 @@ final class UnifiedOrchestrator {
                 }
             } else {
                 activeStudioTask = Task {
-                    await runStrobeREST(api: api, groupedLightID: groupedLightID, paramBox: paramBox)
+                    await runStrobeREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
                 }
             }
 
@@ -2802,7 +2928,7 @@ final class UnifiedOrchestrator {
                 }
             } else {
                 activeStudioTask = Task {
-                    await runPartyREST(api: api, groupedLightID: groupedLightID, paramBox: paramBox)
+                    await runPartyREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
                 }
             }
 
@@ -2815,14 +2941,14 @@ final class UnifiedOrchestrator {
                 }
             } else {
                 activeStudioTask = Task {
-                    await runThunderstormREST(api: api, groupedLightID: groupedLightID, paramBox: paramBox)
+                    await runThunderstormREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
                 }
             }
 
         case "ambient":
             // Ambient is slow enough for REST (one change every few seconds)
             activeStudioTask = Task {
-                await runAmbientREST(api: api, groupedLightID: groupedLightID, paramBox: paramBox)
+                await runAmbientREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
             }
 
         default:
@@ -3309,11 +3435,39 @@ final class UnifiedOrchestrator {
             bridgeAnimationStore.remove(presetID: manifest.presetID, roomID: roomID)
         }
         compositionTransportByRoom.removeValue(forKey: roomID)
-        debugLog("[Handoff] Clearing studio REST sender mailbox for roomID=\(roomID)")
-        await studioRestSender.clear()
+        // Packet 3: clear ONLY this room's Composer scope, on the bridge the
+        // runtime actually recorded at start.
+        //
+        // The bridge comes from `compositionRuntimes[roomID]?.bridgeID` and
+        // NOTHING else — not `allRooms`, not the manifests, not selected-room
+        // state, not dictionary order. `CompositionRuntime.bridgeID` exists for
+        // exactly this reason: the `allRooms` snapshot can go stale mid-
+        // composition, and a stale lookup would clear a mailbox on the wrong
+        // bridge (silently leaving this room's stale frames queued and killing
+        // an innocent room's).
+        //
+        // The runtime is still populated here; it is removed further down in
+        // this same function. Keep that ordering.
+        //
+        // No REST runtime (Entertainment transport, bridge-stored transport, or
+        // already stopped) means there is nothing to clear — do NOT guess a
+        // sender, because guessing wrong cancels another room's playback.
+        let previousBridgeID = compositionRuntimes[roomID]?.bridgeID
+        if let previousBridgeID {
+            debugLog("[Handoff] Clearing Composer REST scope roomID=\(roomID) bridge=\(previousBridgeID)")
+            await restSender(for: previousBridgeID).clear(
+                scope: RestScope(roomID: roomID, owner: .composer)
+            )
+        } else {
+            debugLog("[Handoff] No REST runtime for roomID=\(roomID) — no mailbox to clear")
+        }
         // Give Hue bridge firmware a brief settle window before any new owner starts writing.
+        // KEPT AS-IS (packet 3): this is a practical settle window, not a formal
+        // drain. `clear` above already invalidated the scope, so no LATER batch
+        // can begin; a bounded in-flight drain belongs to the later ownership/
+        // scheduler work, not here.
         try? await Task.sleep(for: .milliseconds(150))
-        debugLog("[Handoff] REST mailbox cleared + settle delay complete for roomID=\(roomID)")
+        debugLog("[Handoff] REST scope cleared + settle delay complete for roomID=\(roomID)")
         // Stop entertainment session for this room's bridge (if any)
         let stopBridgeID = compositionEntRoomByBridge.first(where: { $0.value == roomID })?.key
         if let bid = stopBridgeID {
@@ -3357,9 +3511,18 @@ final class UnifiedOrchestrator {
         // render engine. Cascade/wave/scatter patterns are now visible.
         // Bridge handles ~10 individual light PUTs/sec vs 1 grouped/sec.
         //
-        // All sends go through studioRestSender (latest-wins mailbox).
-        // The mailbox drops stale frames, so the bridge always gets
-        // the NEWEST per-light colors.
+        // Packet 3: every send goes through the ROOM'S BRIDGE mailbox,
+        // under RestScope(roomID, .composer). Latest-wins now applies
+        // within that scope alone, so the bridge gets this room's NEWEST
+        // per-light colors without another room's stop discarding them.
+        //
+        // The batch loops below are cooperatively cancellable: they check
+        // `stillCurrent` before every batch, so stopping this room's
+        // composition halts it within one already-dispatched batch instead
+        // of letting 300-500 ms of stale writes land after the next look's
+        // prime frame. Task.isCancelled cannot do this — the mailbox's
+        // flush task is unstructured and never cancelled, so it is
+        // permanently false in here.
         //
         // Fallback: if no individual light IDs were resolved, falls
         // back to grouped_light (same as before).
@@ -3457,6 +3620,11 @@ final class UnifiedOrchestrator {
             // Capture values for the closure
             let capturedAPI = runtime.api
             let capturedGamut = runtime.gamut
+            // Packet 3: this room's own mailbox slot, on its OWN bridge. The
+            // bridge comes from the runtime (recorded at start), never from a
+            // possibly-stale `allRooms` lookup.
+            let composerSender = restSender(for: runtime.bridgeID)
+            let composerScope = RestScope(roomID: roomID, owner: .composer)
 
             if usePerLight, let map = runtime.gradientMap {
                 // ── GRADIENT-AWARE PER-LIGHT MODE (Round 3 F) ──
@@ -3466,15 +3634,20 @@ final class UnifiedOrchestrator {
                 let capturedMap = map
                 let capturedFrames = frames
 
-                await studioRestSender.enqueue {
-                    // Staleness is handled solely by RestSender.clear()
-                    // (latest-wins): the old generation guard here compared
-                    // two enqueue-time snapshots — a tautology that could
-                    // never detect a later bump (audit L-08).
+                await composerSender.enqueue(scope: composerScope) { stillCurrent in
+                    // Packet 3 — COOPERATIVE CANCELLATION.
+                    // `stillCurrent` is backed by this scope's epoch, which
+                    // `clear(scope:)` bumps. Checking it at the top of every
+                    // batch (including batch 1) means a stop halts this sweep
+                    // before the NEXT batch is dispatched; at most the batch
+                    // already in flight completes. Task.isCancelled cannot
+                    // stand in for this — the flush task is unstructured and
+                    // never cancelled, so it is permanently false here.
 
                     let batchSize = 5
                     let entries = capturedMap.entries
                     for batchStart in stride(from: 0, to: entries.count, by: batchSize) {
+                        guard await stillCurrent() else { return }
                         let batchEnd = min(batchStart + batchSize, entries.count)
                         await withTaskGroup(of: Void.self) { group in
                             for entry in entries[batchStart..<batchEnd] {
@@ -3526,16 +3699,18 @@ final class UnifiedOrchestrator {
                 let capturedLightIDs = runtime.lightIDs
                 let capturedFrames = frames
 
-                await studioRestSender.enqueue {
-                    // Staleness is handled solely by RestSender.clear()
-                    // (latest-wins): the old generation guard here compared
-                    // two enqueue-time snapshots — a tautology that could
-                    // never detect a later bump (audit L-08).
+                await composerSender.enqueue(scope: composerScope) { stillCurrent in
+                    // Packet 3 — COOPERATIVE CANCELLATION. See the gradient
+                    // path above: `stillCurrent` is checked before EVERY batch
+                    // including the first, so a stop halts this sweep within
+                    // one already-dispatched batch instead of writing stale
+                    // colors for another 300-500 ms after the next look primed.
 
                     // Send each light its unique color — batched with
                     // concurrent sends (bridge handles ~10/sec individual)
                     let batchSize = 5  // safe concurrent limit
                     for batchStart in stride(from: 0, to: capturedLightIDs.count, by: batchSize) {
+                        guard await stillCurrent() else { return }
                         let batchEnd = min(batchStart + batchSize, capturedLightIDs.count)
                         await withTaskGroup(of: Void.self) { group in
                             for i in batchStart..<batchEnd {
@@ -3573,11 +3748,10 @@ final class UnifiedOrchestrator {
                 let capturedBri = firstBri
                 let capturedXY = firstXY
 
-                await studioRestSender.enqueue {
-                    // Staleness is handled solely by RestSender.clear()
-                    // (latest-wins): the old generation guard here compared
-                    // two enqueue-time snapshots — a tautology that could
-                    // never detect a later bump (audit L-08).
+                // One request, no loop — nothing to cancel between dispatches,
+                // so this path ignores the probe. Scope invalidation still
+                // prevents it from STARTING once the room is stopped.
+                await composerSender.enqueue(scope: composerScope) { _ in
                     try? await capturedAPI.setGroupedLightEffect(
                         id: capturedGLID, on: true,
                         brightness: capturedBri,
@@ -3765,6 +3939,14 @@ final class UnifiedOrchestrator {
         widgetWriteTask?.cancel()
         clients.removeAll()
         commandGates.removeAll()
+        // Packet 3: invalidate every scope on every sender BEFORE dropping the
+        // senders — a sender released while a closure still holds a live epoch
+        // would let that closure keep writing to a bridge we just forgot.
+        for sender in restSendersByBridge.values {
+            await sender.clearAll()
+        }
+        restSendersByBridge.removeAll()
+        activeStudioRestScope = nil
         roomsByBridge.removeAll()
         zonesByBridge.removeAll()
         connectionStatus.removeAll()
@@ -3780,12 +3962,18 @@ final class UnifiedOrchestrator {
         // Cancel the running loop task (strobe, etc.)
         activeStudioTask?.cancel()
         activeStudioTask = nil
-        studioGeneration += 1
-        debugLog("[Handoff] Clearing studio REST sender mailbox")
-        await studioRestSender.clear()
+        debugLog("[Handoff] Clearing every REST scope on every bridge sender")
+        // This is the forget-all / stop-everything path, so a GLOBAL clear is
+        // the correct semantics here — unlike stopCompositionMode and
+        // stopAppDrivenStudioEffect, which must stay room-scoped.
+        for sender in restSendersByBridge.values {
+            await sender.clearAll()
+        }
+        activeStudioRestScope = nil
         // Small barrier so bridge transition buffers drain before a new startup sequence.
+        // KEPT AS-IS (packet 3): a practical settle window, not a formal drain.
         try? await Task.sleep(for: .milliseconds(150))
-        debugLog("[Handoff] REST mailbox cleared + settle delay complete")
+        debugLog("[Handoff] REST scopes cleared + settle delay complete")
         activeParamBox = nil
         debugLog("[Studio] ⏹ stopStudioMode() canceled active engine loop")
 
@@ -3823,9 +4011,20 @@ final class UnifiedOrchestrator {
         debugLog("[Handoff] App-driven stop requested for roomID=\(roomID)")
         activeStudioTask?.cancel()
         activeStudioTask = nil
-        studioGeneration += 1
-        await studioRestSender.clear()
+        // Packet 3: clear ONLY this room's Studio scope, on the supplied
+        // bridge — a global clear here is what let one strobe's stop discard
+        // another room's queued Composer frame.
+        let stoppedScope = RestScope(roomID: roomID, owner: .studio)
+        await restSender(for: bridgeID).clear(scope: stoppedScope)
+        // Drop the ownership record when it is the one we just stopped; leave
+        // it alone if some other room has since become the Studio owner.
+        if let active = activeStudioRestScope,
+           active.bridgeKey == (bridgeID ?? "legacy"),
+           active.scope == stoppedScope {
+            activeStudioRestScope = nil
+        }
         // Small barrier so bridge transition buffers drain before a new owner starts.
+        // KEPT AS-IS (packet 3): a practical settle window, not a formal drain.
         try? await Task.sleep(for: .milliseconds(150))
         activeParamBox = nil
         // The loop may hold a DTLS session on its room's bridge. Stop it ONLY
@@ -3978,6 +4177,8 @@ final class UnifiedOrchestrator {
     /// Strobe via REST — fallback when no entertainment config.
     /// Limited to ~1Hz by bridge rate limits. Shows toast suggesting entertainment setup.
     private func runStrobeREST(
+        roomID: String,
+        bridgeID: String?,
         api: HueAPIClient,
         groupedLightID: String,
         paramBox: StudioParamBox
@@ -3990,7 +4191,7 @@ final class UnifiedOrchestrator {
 
             let bri = on ? peakBri : max(1, minBri)
 
-            await studioRestSender.enqueue {
+            await enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { _ in
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: bri > 1,
                     brightness: bri, xy: nil, mirek: nil,
@@ -4109,6 +4310,8 @@ final class UnifiedOrchestrator {
 
     /// Party via REST — fallback. Cycles colors at ~1/sec.
     private func runPartyREST(
+        roomID: String,
+        bridgeID: String?,
         api: HueAPIClient,
         groupedLightID: String,
         paramBox: StudioParamBox
@@ -4142,7 +4345,7 @@ final class UnifiedOrchestrator {
             }
 
             let tinted = Self.partyTinted(color, tint: tint)
-            await studioRestSender.enqueue {
+            await enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { _ in
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: true,
                     brightness: bri, xy: (tinted.x, tinted.y), mirek: nil,
@@ -4252,6 +4455,8 @@ final class UnifiedOrchestrator {
 
     /// Thunderstorm via REST — fallback. Random brightness spikes.
     private func runThunderstormREST(
+        roomID: String,
+        bridgeID: String?,
         api: HueAPIClient,
         groupedLightID: String,
         paramBox: StudioParamBox
@@ -4268,7 +4473,7 @@ final class UnifiedOrchestrator {
             let flashXY   = extractXY(from: paramBox.colors["flash_color"])
 
             // Ambient dim
-            await studioRestSender.enqueue {
+            await enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { _ in
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: true,
                     brightness: minBri, xy: ambientXY, mirek: nil,
@@ -4296,7 +4501,7 @@ final class UnifiedOrchestrator {
             let strikeChance = 0.3 + strikeRate * 0.5
             guard Double.random(in: 0...1) < strikeChance else { continue }
 
-            await studioRestSender.enqueue {
+            await enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { _ in
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: true,
                     brightness: flashIntensity, xy: flashXY, mirek: nil,
@@ -4315,6 +4520,8 @@ final class UnifiedOrchestrator {
     /// Ambient via REST — slow sine wave between min and max brightness.
     /// Smooth enough for REST since changes happen every ~1 second.
     private func runAmbientREST(
+        roomID: String,
+        bridgeID: String?,
         api: HueAPIClient,
         groupedLightID: String,
         paramBox: StudioParamBox
@@ -4359,7 +4566,7 @@ final class UnifiedOrchestrator {
 
             let mirek = Int(warmth.rounded())
 
-            await studioRestSender.enqueue {
+            await enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { _ in
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: true,
                     brightness: clampedBri, xy: nil, mirek: mirek,

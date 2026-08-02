@@ -1528,12 +1528,16 @@ final class StudioViewModel {
             let card = (effectCards + liveModeCards + composerStudioCards + [starterCompositionCard()]).first(where: { $0.id == cardID })
             let transitionMs = Int(paramValue(for: cardID, paramID: "transition", default: card?.params.first(where: { $0.id == "transition" })?.defaultValue ?? 400))
 
-            // Live param PUTs go through the studio latest-wins mailbox —
-            // a direct api call here (with only the 150 ms debounce) could
-            // stack behind in-flight frames and replay stale slider values.
+            // Live param PUTs go through this ROOM's Studio mailbox slot on its
+            // OWN bridge (packet 3) — a direct api call here (with only the
+            // 150 ms debounce) could stack behind in-flight frames and replay
+            // stale slider values, and the pre-packet-3 shared mailbox let
+            // another room's stop discard this write entirely.
             switch paramID {
             case "brightness":
-                await orchestrator.enqueueStudioRestWrite {
+                await orchestrator.enqueueStudioRestWrite(
+                    roomID: room.id, bridgeID: room.bridgeID
+                ) { _ in
                     try? await api.setGroupedLightEffect(
                         id: groupedLightID, on: nil,
                         brightness: value, xy: nil, mirek: nil,
@@ -1552,8 +1556,20 @@ final class StudioViewModel {
                    !effect.v2CapableLightIDs.isEmpty {
                     let gate = orchestrator.commandGate(for: room.bridgeID)
                     let capable = effect.v2CapableLightIDs
-                    await orchestrator.enqueueStudioRestWrite {
+                    await orchestrator.enqueueStudioRestWrite(
+                        roomID: room.id, bridgeID: room.bridgeID
+                    ) { stillCurrent in
+                        // Packet 3 — COOPERATIVE CANCELLATION. The gate paces
+                        // these at ~10/sec, so a 20-light room used to sweep
+                        // for ~2 s with NO way to stop it: the gate's own
+                        // cancellation guards are inert in here (the mailbox's
+                        // flush task is unstructured and never cancelled, so
+                        // Task.isCancelled is permanently false). The probe is
+                        // backed by the Studio scope epoch and must be checked
+                        // before EVERY send, including the first light —
+                        // checking once before the loop is not enough.
                         for id in capable {
+                            guard await stillCurrent() else { return }
                             _ = await gate.send(retry: false) {
                                 try await api.setLightEffectV2(
                                     id: id,
@@ -1563,7 +1579,9 @@ final class StudioViewModel {
                         }
                     }
                 } else {
-                    await orchestrator.enqueueStudioRestWrite {
+                    await orchestrator.enqueueStudioRestWrite(
+                        roomID: room.id, bridgeID: room.bridgeID
+                    ) { _ in
                         try? await api.setGroupedLightEffect(
                             id: groupedLightID, on: nil,
                             brightness: nil, xy: nil, mirek: mirek,
@@ -1586,8 +1604,13 @@ final class StudioViewModel {
                     let clamped = min(1.0, max(0.0, value / 100.0))
                     let gate = orchestrator.commandGate(for: room.bridgeID)
                     let capable = effect.v2CapableLightIDs
-                    await orchestrator.enqueueStudioRestWrite {
+                    await orchestrator.enqueueStudioRestWrite(
+                        roomID: room.id, bridgeID: room.bridgeID
+                    ) { stillCurrent in
+                        // Packet 3 — cooperative cancellation before EVERY
+                        // send, including the first light. See the warmth path.
                         for id in capable {
+                            guard await stillCurrent() else { return }
                             _ = await gate.send(retry: false) {
                                 try await api.setLightEffectV2(
                                     id: id,
@@ -1647,8 +1670,14 @@ final class StudioViewModel {
                 let gate = orchestrator.commandGate(for: room.bridgeID)
                 let capable = effect.v2CapableLightIDs
                 let point = CGPoint(x: xy.x, y: xy.y)
-                await orchestrator.enqueueStudioRestWrite {
+                await orchestrator.enqueueStudioRestWrite(
+                    roomID: room.id, bridgeID: room.bridgeID
+                ) { stillCurrent in
+                    // Packet 3 — cooperative cancellation before EVERY send,
+                    // including the first light. See the warmth path in
+                    // sendParam.
                     for id in capable {
+                        guard await stillCurrent() else { return }
                         _ = await gate.send(retry: false) {
                             try await api.setLightEffectV2(
                                 id: id,
@@ -1660,8 +1689,10 @@ final class StudioViewModel {
                 return
             }
 
-            // Same latest-wins routing as sendParam — see comment there.
-            await orchestrator.enqueueStudioRestWrite {
+            // Same scoped latest-wins routing as sendParam — see comment there.
+            await orchestrator.enqueueStudioRestWrite(
+                roomID: room.id, bridgeID: room.bridgeID
+            ) { _ in
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: nil,
                     brightness: nil, xy: (xy.x, xy.y), mirek: nil,
