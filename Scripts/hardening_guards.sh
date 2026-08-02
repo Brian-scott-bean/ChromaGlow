@@ -21,6 +21,9 @@
 #   5. M-07/H-05/M-18 — no room-targeted write path may use primaryAPIClient
 #              (= clients.values.first, nondeterministic wrong-bridge class).
 #              Resolve per-bridge via hueClient(for:)/hueClient(forBridgeIP:).
+#   6. Round C terminology — banned user-facing jargon literals.
+#   7. Composer 2 packet 4 — CompositionRoomPriorityScorerTests must stay
+#              deterministic: no Task.sleep, XCTWaiter, or wait(for:timeout:).
 
 set -u
 cd "$(dirname "$0")/.."
@@ -183,6 +186,20 @@ for pattern in "${JARGON_PATTERNS[@]}"; do
         fail "terminology" $'banned user-facing jargon "'"$pattern"$'" found in:\n'"$hits"
     fi
 done
+
+# ──────────────────────────────────────────────────────────────
+# Guard 7 (Composer 2 packet 4): the pure ledger/scorer tests must stay
+# deterministic. CompositionSendLedger takes every timestamp as a parameter
+# precisely so nothing in its test file ever waits — a sleep or waiter here
+# means someone is proving telemetry with elapsed time again.
+# ──────────────────────────────────────────────────────────────
+
+LEDGER_TESTS="HueHomeTests/CompositionRoomPriorityScorerTests.swift"
+
+wait_hits=$(grep -nE 'Task\.sleep|XCTWaiter|wait\(for:' "$LEDGER_TESTS" 2>/dev/null || true)
+if [[ -n "$wait_hits" ]]; then
+    fail "composer-p4" $'timing wait in the pure ledger/scorer tests:\n'"$wait_hits"
+fi
 
 # ──────────────────────────────────────────────────────────────
 

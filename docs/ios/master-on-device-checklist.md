@@ -358,6 +358,37 @@ stopped · how quickly the old look stopped.**
       20-light room.)
 - [ ] Stop/start the same card **5× rapidly**. Expected: no stuck lights, no doubled ramps.
 
+## R. Composer 2 — honest completion-based REST telemetry [packet 4]
+
+Simulator tests prove the counters and expiry rules; only hardware proves what the mixer
+tray shows while real requests fly. §O–§Q stay open and are NOT superseded.
+
+Before packet 4, the cadence line was computed at enqueue time — lag structurally 0.0,
+discarded frames counted as sends, and one global number shared by every room. It is now
+completion-based, per bridge × room, and expires when completions stop.
+
+- [ ] 1. Start a Room-mode composition. Expected: the tray NEVER flashes "updates about
+      every 0.0s" — it reads "…a little slower" until real completions justify a number.
+- [ ] 2. Two rooms, one bridge, both Room mode: each card shows its own number or none —
+      never the other room's.
+- [ ] 3. Two bridges, one Room-mode room each: the numbers move independently.
+- [ ] 4. Composition + a Studio slider in the SAME room: the composer cadence must NOT
+      collapse while the slider is scrubbed (different scopes under packet 3).
+- [ ] 5. Streaming (Entertainment) composition: no cadence sentence at all.
+- [ ] 6. DTLS→REST failover (kill the stream mid-composition): the sentence appears fresh
+      for the REST session — never a stale number carried across the switch.
+- [ ] 7. Stop, then immediately restart the same room: no number carried over; the fresh
+      session earns its own.
+- [ ] 8. Pull the bridge off the network mid-composition: the number DISAPPEARS within
+      ~5 s (back to "a little slower") rather than freezing at the last good value.
+- [ ] 9. Stop a 20+ light room mid-sweep: lights still halt within one already-dispatched
+      batch (packet 3 cancellation is untouched by the instrumentation).
+- [ ] 10. DEBUG console during a Room-mode run: non-zero queue delay and network duration;
+      successful items ≤ enqueued items; dispatched counts, not entry counts.
+- [ ] 11. Unplug ONE light mid-composition: the room keeps animating, and the unplugged
+      light recovers when it returns — partial failures must not freeze the delta gate
+      (completion-only bookkeeping keeps the frame eligible for re-send).
+
 ## Parked-agent "Left" register (tracked, not device QA)
 
 | Owner | Item | Status |

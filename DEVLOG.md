@@ -419,6 +419,157 @@
 
 ---
 
+## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 4 — honest completion-based REST telemetry
+
+### Branch
+- `fix/composer-honest-telemetry`, cut from `main` (`1a9fb21`, the Packet 3 merge, PR #53).
+- Rollback tag: `checkpoint/pre-composer-packet-4` (at `1a9fb21`). No data-format or
+  persistence change, so `git reset --hard checkpoint/pre-composer-packet-4` is a total rollback.
+- **No version or build bump** — not an install build. PR opened, not merged.
+
+### The defect (review risk row #17, arch N11 — noted here, review file NOT edited)
+The mixer tray's Room-mode cadence was structurally dishonest. `recordCompositionTelemetry`
+was called with `dueAt: now, sentAt: now` — the same variable — immediately after `enqueue`,
+before any HTTP request was issued. So: lag was identically `0.0` forever; "sends" counted
+enqueues, including work the latest-wins mailbox discarded and closures whose every operation
+threw (`try?`-swallowed); the FIRST record published cadence `0.001 s` → *"updates about every
+0.0s"* at the start of every composition; the published value saw-toothed (cumulative mean,
+5 s reset, 1.5 s throttle) with an interval off-by-one; and the global `activeRESTCadence`
+was clobbered by whichever room recorded last, with `StudioViewModel`'s fallback showing
+another room's number under this room's card. Zero test coverage on any of it.
+Arch-review row N11's four dead cadence functions sat alongside, callerless. Row #17
+(telemetry honesty) is addressed by this packet; the review file itself is deliberately
+untouched.
+
+### One bug this surfaced: the `""`-vs-`"legacy"` bridge identity split
+`startCompositionMode` computed `room.bridgeID ?? ""` into the NONOPTIONAL
+`CompositionRuntime.bridgeID`, while `restSender(for:)` normalizes nil → `"legacy"`. `""` is
+not nil — so a bridgeless room's Composer ran on a private `""` sender while All-Day and
+Studio shared `"legacy"`: two mailboxes for one conceptual bridge. Enqueue and clear were
+consistently wrong TOGETHER, so packet 3's cancellation still functioned — but any identity
+built on the runtime's `bridgeID` would have split them. The runtime now carries
+`restBridgeIdentity` (the room's ORIGINAL optional); the scheduler's sender resolution, the
+stop-side clear, token identity, publication, the accessor, and teardown ALL key on it. A
+bridgeless room is `"legacy"` everywhere; no `""` sender or telemetry bucket can exist.
+
+### The model — five events, evidence only
+`CompositionSendLedger` (pure value type, appended below `CompositionRoomPriorityScorer` in
+the same file — the HueHome target is not file-system-synchronized, so no new .swift file).
+Every timestamp is a parameter; the ledger knows nothing about publication or RestSender.
+
+- `Token = (bridgeKey, scope, generation, sequence)` where bridgeKey is
+  `restBridgeIdentity ?? "legacy"` — token identity can never disagree with the mailbox.
+- Events: `enqueued` / `started` / `completed` / `cancelled` / `superseded`, plus the
+  lifecycle pair `beginSession` / `deactivateSession`. No separate `failed` event: a
+  gradient/per-light closure is a BATCH with partial outcomes, so terminals carry
+  `attemptedOperations` + `failures`; `successfulOperations = max(0, attempted − failures)`.
+- STRICT token-state transitions: enqueued → started → completed; cancelled from enqueued
+  (pending, NORMALIZED to 0/0 — never-started work cannot have dispatched operations) or from
+  started (cooperative cancellation, carrying what ran); superseded from enqueued only.
+  Absent tokens, stale generations, duplicates, and out-of-order terminals are ignored, and
+  the terminal methods RETURN acceptance so callers can gate on the verdict.
+- `beginSession` always starts from a blank slate — even for a repeated generation value —
+  because generation equality alone cannot fence a new transport window from an old executing
+  completion; the wiped token state can. `deactivateSession` acts only when the supplied
+  generation is active; after it, every report from that generation dies and the snapshot is
+  empty.
+- Cadence = `(latest − oldest) / (n − 1)` over CONTRIBUTING completions (terminal items with
+  ≥1 successful operation) in a rolling 5 s horizon; nil under two items. **successfulItems
+  and cancelledItems are intentionally NOT mutually exclusive**: a sweep that landed a batch
+  and then honored its probe both succeeded (those writes lit real bulbs) and was cancelled.
+- Bounded memory: only non-terminal tokens retained; newest-32 completion timestamps pruned
+  past the horizon; counters and duration totals are scalars.
+
+### Orchestrator: sessions, evidence, expiry
+- Retained telemetry sessions are keyed by the EXACT `(bridgeKey, scope)` — never roomID
+  alone (identical room IDs on different bridges are different sessions) — with value
+  `{generation, isRESTActive}`, held INDEPENDENTLY of `compositionRuntimes` so stop works
+  when the transport is Entertainment or bridge-stored and no REST runtime ever existed.
+- `stopCompositionMode` now takes `(roomID:bridgeID:)` — the CALLER states the room's
+  original optional identity (Studio passes `effect.room.bridgeID`; the Entertainment
+  handoff prompt retains `owningBridgeID` from creation). Stop LOOKS UP the sender
+  (`restSendersByBridge[key]`) and never creates one — stopping an Entertainment-only
+  session must not conjure a mailbox.
+- Pending replacement and pending cancellation come ONLY from RestSender's own word:
+  `enqueue → RestEnqueueResult.replacedPending` supersedes the previously captured token;
+  `clear → Bool` / `clearAll → Set<RestScope>` drive 0/0 pending cancellations. Nothing is
+  inferred — `flush()` dequeues before dispatch, so "enqueued but not started" proves
+  nothing. The pending tracker is installed BEFORE awaiting `enqueue` (a fast dispatch's
+  started report must find it), removed only by equality-checked reports the ledger ACCEPTED
+  or by sender-evidence teardown, and a rejected terminal cannot touch it.
+- Teardown order everywhere (stop / bridge removal / stopStudioMode / forget-all): consume
+  the sender's pending-removal evidence → record 0/0 pending cancellations for exactly the
+  reported scopes → deactivate the ledger session → drop retained identity, tracker, and
+  publication. Global paths iterate `restSendersByBridge` ENTRIES (the dictionary key is the
+  authoritative bridge identity) and then sweep every remaining exact session key — including
+  senderless Entertainment bridges. Executing closures stay governed by their probes; their
+  later reports die in the deactivated ledger.
+- CADENCE EXPIRES WITHOUT A NEW COMPLETION: every `runCompositionScheduler` pass refreshes
+  publication for EVERY retained REST-active session (eligibility from the retained
+  `isRESTActive`, never `compositionTransportByRoom`) — so a hung bridge's number leaves the
+  screen within the 5 s horizon instead of freezing. No new timer; the 120 ms pass is reused.
+  Publication lives in `activeRESTCadenceByBridgeRoom[bridgeKey][roomID]`, read only through
+  `activeRESTCadence(roomID:bridgeID:)`; `StudioViewModel` passes the selected room's bridge
+  and has no global fallback.
+- COMPLETION-ONLY RUNTIME BOOKKEEPING (the one intentional behavior change):
+  `lastSentX/Y/Bri`, `lastSentAt`, `sendCount` advance only on an ACCEPTED `completed` with
+  attempted > 0, failures == 0, a live runtime, and matching generation + bridge identity —
+  at the SAME `terminalAt` the ledger recorded. Failed, partial, and CANCELLED items leave
+  the frame eligible for re-send (device check 11 covers the recovery this buys). The
+  scheduler re-reads the runtime after the enqueue await and advances only `nextDueAt`, so a
+  fast completion's bookkeeping can't be erased by a stale struct write. The startup prime
+  (still a direct API call, outside RestSender and cadence) moved its bookkeeping inside the
+  success path, gated on the issuing generation — a thrown prime records nothing and a stale
+  prime cannot mutate a newer runtime.
+- The three composer closures count ACTUAL dispatched operations: task-group children return
+  their own outcomes, aggregated after the await; frameless gradient entries and lights
+  beyond the frame array count nothing. `started` is reported before the first probe.
+  Packet 3's `stillCurrent` guard positions are byte-identical in intent and pinned by the
+  (extended) source-shape test; the closures now live in `makeComposer*Work` factories so
+  the scheduler and the DEBUG seams build the identical closure.
+
+### RestSender: return values only
+`RestEnqueueResult.replacedPending`, `clear -> Bool`, `clearAll -> Set<RestScope>` — each
+computed from a line packet 3 already executed, all `@discardableResult` so every existing
+caller compiles unchanged. Actor semantics, epochs, FIFO order, probes, `isFlushing`, and
+flush sequencing are UNCHANGED.
+
+### Deleted rather than repaired
+`CompositionTelemetry`, `recordCompositionTelemetry`, the four dead cadence functions
+(`minimumComposerRESTInterval` / `minimumComposerBurstFloor` / `preferredComposerIdleInterval`
+/ `lowPowerIdleInterval`, arch N11), the global `activeRESTCadence`, the roomID-only
+`activeRESTCadenceByRoom`, `cadenceLastUIUpdateByRoom`, `compositionTelemetryByRoom`, the
+DEBUG lag print, and `StudioViewModel`'s global fallback.
+
+### Files changed
+| File | Change |
+|---|---|
+| `HueHome/Core/Composer/CompositionRoomPriorityScorer.swift` | `CompositionSendLedger` appended (pure; no publication knowledge) |
+| `HueHome/Core/Network/RestSender.swift` | return-value observability only |
+| `HueHome/Core/Network/UnifiedOrchestrator.swift` | bridge-identity correction, sessions, evidence plumbing, clock seam, closure factories, per-pass refresh, exact-key teardown, deletions, DEBUG seams |
+| `HueHome/UI/Studio/StudioViewModel.swift` | `activeRESTCadence(roomID:bridgeID:)` accessor; handoff prompt retains `owningBridgeID`; stop passes explicit identity |
+| `Scripts/hardening_guards.sh` | Guard 7: no timing waits in the pure ledger/scorer tests |
+| `HueHomeTests/…` | 58 net new deterministic tests (pure ledger ×21, sender return values ×6, orchestrator integration ×29 net, prime gates ×2) |
+
+**No new source file, no `.pbxproj` edit, no version bump.**
+
+### Tests
+`xcodebuild test … -scheme "HueHome 1"`, read via `xcresulttool` (a piped tail loses
+TEST SUCCEEDED; the post-success simulator launch error is teardown noise):
+- Narrow (scorer/ledger + gated + multi-bridge + entertainment): **144/144 passed, 0 failed.**
+- Full suite: **997/997 passed, 0 failed.**
+- `hardening_guards.sh`: all guards passed (incl. new Guard 7).
+
+### What still needs hardware (the remaining gate)
+Simulator tests prove the decisions; only a physical bridge proves what the tray shows while
+real requests fly. The 11-item Packet 4 pass is §R of
+`docs/ios/master-on-device-checklist.md` — headline items: no "0.0s" flash at Room-mode
+start; per-room-per-bridge numbers; the cadence DISAPPEARING within ~5 s when a bridge drops
+off the network; stop/restart carrying nothing over; and a mid-composition unplugged light
+not freezing the delta gate.
+
+---
+
 ## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 3 — scoped REST mailboxes + cooperative cancellation
 
 ### Branch

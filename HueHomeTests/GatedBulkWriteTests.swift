@@ -465,6 +465,159 @@ final class GatedBulkWriteTests: XCTestCase {
         XCTAssertEqual(events.entries, ["gate", "C2", "B", "D", "E"],
             "scopes are served in the order they first joined the queue")
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Packet 4: return-value observability
+    // ──────────────────────────────────────────────
+    //
+    // `enqueue`/`clear`/`clearAll` now report what they DID to the pending slot.
+    // Behaviour is untouched — these report on the same branches packet 3 already
+    // took. A caller cannot derive any of it: `flush()` removes an entry from
+    // `pending` BEFORE awaiting its closure, so "enqueued but not yet started"
+    // covers both a replaceable pending item and an unreplaceable executing one.
+
+    // 8. A first enqueue drops nothing.
+    func testFirstEnqueueReportsNoReplacement() async {
+        let sender = RestSender()
+        let scope = RestScope(roomID: "room-a", owner: .composer)
+
+        let result = await sender.enqueue(scope: scope) { _ in }
+
+        XCTAssertFalse(result.replacedPending,
+            "an empty slot cannot have replaced anything")
+    }
+
+    // 9. Overwriting an occupied slot drops a closure that will never run.
+    func testEnqueueOverAPendingSlotReportsReplacement() async {
+        let sender = RestSender()
+        let events = RestEventLog()
+        let scope = RestScope(roomID: "room-a", owner: .composer)
+
+        // Park an unrelated scope so nothing for `scope` can start.
+        let gate = await parkBlockingWork(
+            on: sender, scope: RestScope(roomID: "__park__", owner: .composer),
+            events: events)
+
+        let first = await sender.enqueue(scope: scope) { _ in events.record("FIRST") }
+        let second = await sender.enqueue(scope: scope) { _ in events.record("SECOND") }
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertFalse(first.replacedPending, "first enqueue into an empty slot")
+        XCTAssertTrue(second.replacedPending, "second enqueue overwrote a pending closure")
+        XCTAssertEqual(events.entries, ["gate", "SECOND"],
+            "the reported replacement is real — FIRST never ran")
+    }
+
+    // 10. THE DISTINCTION THAT CANNOT BE INFERRED: once flush has dequeued an
+    //     item, the slot is empty again, so enqueueing over an EXECUTING item
+    //     replaces nothing. A caller guessing from its own "not yet started"
+    //     bookkeeping would wrongly call this a replacement.
+    func testEnqueueWhilePriorWorkIsExecutingReportsNoReplacement() async {
+        let sender = RestSender()
+        let events = RestEventLog()
+        let scope = RestScope(roomID: "room-a", owner: .composer)
+
+        // Park THIS scope: its closure is dequeued and running, slot now empty.
+        let gate = await parkBlockingWork(
+            on: sender, scope: scope, events: events, label: "EXEC")
+
+        let result = await sender.enqueue(scope: scope) { _ in events.record("NEXT") }
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertFalse(result.replacedPending, """
+            the executing closure had already left the pending slot, so nothing \
+            was dropped — reporting true here would count a send that did happen \
+            as superseded
+            """)
+        XCTAssertEqual(events.entries, ["EXEC", "NEXT"],
+            "both closures ran; neither was dropped")
+    }
+
+    // 11. clear reports removal only when it actually removed pending work.
+    func testClearReportsRemovalOnlyForActualPendingWork() async {
+        let sender = RestSender()
+        let events = RestEventLog()
+        let scope = RestScope(roomID: "room-a", owner: .composer)
+
+        let gate = await parkBlockingWork(
+            on: sender, scope: RestScope(roomID: "__park__", owner: .composer),
+            events: events)
+        await enqueueRecording(on: sender, scope: scope, events: events, "A")
+
+        let removedReal = await sender.clear(scope: scope)
+        let removedAgain = await sender.clear(scope: scope)
+        let removedUnknown = await sender.clear(
+            scope: RestScope(roomID: "never-seen", owner: .composer))
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertTrue(removedReal, "pending work was dropped")
+        XCTAssertFalse(removedAgain, "the slot was already empty")
+        XCTAssertFalse(removedUnknown, "this sender has never seen that scope")
+        XCTAssertEqual(events.entries, ["gate"], "A never ran")
+    }
+
+    // 12. An EXECUTING-only scope reports false — nothing was dropped — but is
+    //     still invalidated. Both halves matter: the count must not include it,
+    //     and packet 3's cancellation must still fire.
+    func testClearOfAnExecutingOnlyScopeReportsFalseButStillInvalidates() async {
+        let sender = RestSender()
+        let events = RestEventLog()
+        let probeBox = RestProbeBox()
+        let scope = RestScope(roomID: "room-a", owner: .composer)
+
+        let gate = await parkBlockingWork(
+            on: sender, scope: scope, events: events, probeBox: probeBox)
+
+        let removed = await sender.clear(scope: scope)
+
+        XCTAssertFalse(removed,
+            "no pending closure was dropped — the work had already started")
+        let stillCurrent = await probeBox.probe?()
+        XCTAssertEqual(stillCurrent, false,
+            "the executing closure is still invalidated: its probe flips to false")
+
+        gate.release()
+        await drain(sender)
+    }
+
+    // 13. clearAll returns exactly its PENDING scopes, excluding executing-only
+    //     ones, while still invalidating everything it knows about.
+    func testClearAllReturnsOnlyPendingScopesButInvalidatesExecutingOnes() async {
+        let sender = RestSender()
+        let events = RestEventLog()
+        let probeBox = RestProbeBox()
+        let executing = RestScope(roomID: "room-exec", owner: .composer)
+        let pendingA = RestScope(roomID: "room-a", owner: .composer)
+        let pendingB = RestScope(roomID: "room-b", owner: .studio)
+
+        let gate = await parkBlockingWork(
+            on: sender, scope: executing, events: events, probeBox: probeBox)
+        await enqueueRecording(on: sender, scope: pendingA, events: events, "A")
+        await enqueueRecording(on: sender, scope: pendingB, events: events, "B")
+
+        let removed = await sender.clearAll()
+
+        XCTAssertEqual(removed, [pendingA, pendingB], """
+            only scopes whose pending work was actually dropped — the executing \
+            scope lost nothing and must not be counted as cancelled-before-start
+            """)
+        XCTAssertFalse(removed.contains(executing), "executing-only scope excluded")
+
+        let stillCurrent = await probeBox.probe?()
+        XCTAssertEqual(stillCurrent, false,
+            "the executing closure is invalidated even though it is not returned")
+
+        gate.release()
+        await drain(sender)
+
+        XCTAssertEqual(events.entries, ["gate"], "neither A nor B ran")
+    }
 }
 
 // MARK: - Packet 3 test support

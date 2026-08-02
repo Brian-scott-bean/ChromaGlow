@@ -90,6 +90,29 @@ private final class EntertainmentSpyClient: BridgeAPIClient, @unchecked Sendable
         }
         return Data("{}".utf8)
     }
+
+    // Packet 4 prime seams: the Composer startup prime is exactly this PUT.
+    // A test can HOLD it at the network boundary (the gated-network stale-prime
+    // guard) or FAIL it (the thrown-prime guard).
+    private var _groupedEffectHold: RestGate?
+    func stageGroupedEffectHold(_ gate: RestGate?) {
+        lock.lock(); _groupedEffectHold = gate; lock.unlock()
+    }
+    var groupedEffectShouldFail = false
+    override func setGroupedLightEffect(
+        id: String, on: Bool?, brightness: Double?,
+        xy: (Double, Double)?, mirek: Int?, duration: Int
+    ) async throws {
+        lock.lock()
+        let hold = _groupedEffectHold
+        let fail = groupedEffectShouldFail
+        lock.unlock()
+        if let hold {
+            hold.signalStarted()
+            await hold.waitForRelease()
+        }
+        if fail { throw HueAPIError.httpError(500) }
+    }
 }
 
 // MARK: - Tests
@@ -658,7 +681,7 @@ final class EntertainmentRoomSelectionTests: XCTestCase {
         XCTAssertFalse(activated.contains { $0.configID == "area-living" },
             "the other room's area must never be touched")
 
-        await orchestrator.stopCompositionMode(roomID: bedroom.id)
+        await orchestrator.stopCompositionMode(roomID: bedroom.id, bridgeID: bridgeAID)
     }
 
     /// The cold-cache path a seeded test cannot see: a Studio card can be tapped
@@ -710,7 +733,7 @@ final class EntertainmentRoomSelectionTests: XCTestCase {
             "no ownership may be claimed")
         XCTAssertNotEqual(orchestrator.compositionTransportByRoom[bedroom.id], .entertainment)
 
-        await orchestrator.stopCompositionMode(roomID: bedroom.id)
+        await orchestrator.stopCompositionMode(roomID: bedroom.id, bridgeID: bridgeAID)
     }
 
     /// Packet 1a's same-bridge block is untouched by this packet.
@@ -734,6 +757,62 @@ final class EntertainmentRoomSelectionTests: XCTestCase {
         XCTAssertTrue(bridgeA.actions.isEmpty,
             "a blocked bridge must not activate an entertainment configuration")
 
-        await orchestrator.stopCompositionMode(roomID: bedroom.id)
+        await orchestrator.stopCompositionMode(roomID: bedroom.id, bridgeID: bridgeAID)
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 4: the startup prime's generation gate
+    // ──────────────────────────────────────────────
+
+    /// Gated-network stale-prime guard: a generation-1 prime is held at the
+    /// network boundary while the room restarts into generation 2. When the
+    /// old prime is finally released — and completes SUCCESSFULLY — it must
+    /// not mutate the newer runtime's send bookkeeping.
+    func testStalePrimeCannotMutateANewerRuntime() async {
+        let bedroom = room("bedroom", bridge: bridgeAID, lightIDs: [])
+        // The room has already restarted: its live runtime is generation 2.
+        orchestrator.testStageRESTComposition(
+            roomID: "bedroom", bridgeID: bridgeAID, api: bridgeA, generation: 2)
+
+        let hold = RestGate()
+        bridgeA.stageGroupedEffectHold(hold)
+        let stalePrime = Task { [orchestrator] in
+            await orchestrator!.testPerformCompositionPrime(room: bedroom, generation: 1)
+        }
+        await hold.waitUntilStarted()   // the generation-1 prime is on the wire
+        bridgeA.stageGroupedEffectHold(nil)
+        hold.release()                  // …and now completes successfully
+        await stalePrime.value
+
+        let state = orchestrator.testCompositionRuntimeSendState(roomID: "bedroom")
+        XCTAssertEqual(state?.sendCount, 0, """
+            a generation-1 prime completion must not record a send against the \
+            generation-2 runtime
+            """)
+        XCTAssertNil(state?.lastSentX)
+        XCTAssertNil(state?.lastSentAt)
+    }
+
+    /// A thrown prime records no send; the same prime re-issued by the LIVE
+    /// generation records exactly one.
+    func testThrownPrimeRecordsNoSendAndAMatchingPrimeRecordsOne() async {
+        let bedroom = room("bedroom", bridge: bridgeAID, lightIDs: [])
+        orchestrator.testStageRESTComposition(
+            roomID: "bedroom", bridgeID: bridgeAID, api: bridgeA, generation: 1)
+
+        bridgeA.groupedEffectShouldFail = true
+        await orchestrator.testPerformCompositionPrime(room: bedroom, generation: 1)
+
+        var state = orchestrator.testCompositionRuntimeSendState(roomID: "bedroom")
+        XCTAssertEqual(state?.sendCount, 0, "a thrown prime records no send")
+        XCTAssertNil(state?.lastSentX)
+
+        bridgeA.groupedEffectShouldFail = false
+        await orchestrator.testPerformCompositionPrime(room: bedroom, generation: 1)
+
+        state = orchestrator.testCompositionRuntimeSendState(roomID: "bedroom")
+        XCTAssertEqual(state?.sendCount, 1,
+            "the live generation's successful prime records exactly one send")
+        XCTAssertNotNil(state?.lastSentX)
     }
 }
