@@ -419,6 +419,131 @@
 
 ---
 
+## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 1a — Entertainment ownership correctness
+
+### Branch
+- `fix/composer-entertainment-ownership`, cut from `main` (79b5e9b, build 46).
+- Rollback tag: `checkpoint/pre-composer-packet-1a`.
+- **No version or build bump** — not an install build. PR opened, not merged.
+
+### Why this shape (packet split)
+Brian asked for a review of the Packet 1 implementation prompt before it was handed to an
+implementing agent. Two claims in it did not survive verification against current `main`:
+
+1. The prompt told the agent to stop if the architecture review was absent from `main` — but
+   the review only ever existed on `docs/composer2-architecture-review` (PR #49). Taken
+   literally, the packet would have halted having done nothing.
+2. The prompt specified matching room **light service rids** against each Entertainment
+   config's `channel.lightServiceIDs`. That field is misnamed: `EntertainmentConfigManager`
+   fills it from `members[].service.rid`, which is an **`entertainment` service rid**
+   (`EntertainmentConfigBuilderView` POSTs `"rtype": "entertainment"`, and
+   `resolveEntertainmentLightPositions` already maps entertainment-rid → owner device →
+   light rid via two fetches). Matching them directly yields the empty set for every room on
+   every bridge — the selector would have returned nil always, disabling Entertainment
+   app-wide, silently. Every test the prompt mandated would still have passed, because they
+   were specified against the same wrong assumption.
+
+Brian's calls: split the packet (1a = corrections 1 + 3 now; 1b = area selection, once the
+membership mapping exists), and for 1a block Entertainment whenever any REST composition is
+live on the **same bridge** — remove only the global cross-bridge lockout.
+
+### Did
+- **Per-bridge Entertainment gate** (`UnifiedOrchestrator.swift`). The acquisition condition
+  read `compositionEntRoomByBridge[bridgeID] == nil && compositionRuntimes.isEmpty`. The
+  second conjunct was global, so one REST composition anywhere demoted every later
+  Entertainment start on every bridge to REST — directly under a comment claiming "one
+  session per bridge — multiple bridges can run simultaneously". Both conjuncts are now
+  bridge-scoped behind `canAcquireEntertainment(onBridge:)`. `CompositionRuntime` gained a
+  `bridgeID` recorded at start: `runtime.api` is a `HueAPIClient` and carries no bridge
+  identity, and re-deriving from `allRooms` at read time can go stale mid-composition.
+- **User-confirmed Studio handoff** (`UnifiedOrchestrator`, `StudioViewModel`, `StudioView`).
+  `startStudioMode` stopped whatever Entertainment client sat on the target bridge without
+  checking ownership and cleared no composition bookkeeping, so a composition's 25 fps loop
+  kept rendering into a disconnected client — `send` no-ops, `isTerminallyFailed` never
+  trips, so the REST failover never fired either. Silent, permanent, relaunch-only recovery.
+  Now: the orchestrator answers `compositionOwningEntertainment(onBridge:)` (ownership maps
+  stay private); `StudioViewModel` raises `entertainmentHandoffPrompt` **above all of
+  `apply()`'s teardown** and owns the copy; `StudioView` mounts one
+  `EntertainmentHandoffAlert` modifier following the `StudioMusicWiring` precedent (body is
+  at the type-checker ceiling — extend the modifier, never the chain).
+- Confirm stops through the official path (`stopEffect` → `stopCompositionMode`, or
+  `stopCompositionMode` directly when Studio holds no registry entry) and only then replays
+  the original request. The prompt is consumed before the first `await`, so repeat taps
+  cannot double-start or double-stop. Cancel has nothing to undo by construction.
+- Composition → composition stays promptless; other-bridge and free-bridge taps start
+  normally.
+
+### Tests added (14, all shipped in the same commit as their fix)
+`HueHomeTests/MultiBridgeRoutingTests.swift` — extended rather than a new file, to avoid
+pbxproj churn (the main target uses explicit file references; only widget/watch use
+synchronized groups).
+
+- Gate (6): cross-bridge independence; same-bridge REST block; same-bridge Entertainment
+  exclusivity; idle bridge acquirable; teardown isolation (stopping A leaves B's ownership);
+  per-runtime bridge identity.
+- Handoff (8): conflict raised before any mutation (asserted against ownership, transport,
+  Studio registry **and** bridge traffic); mutation-free cancel; confirm ordering with
+  ownership genuinely released and Studio started after; repeat confirm/cancel idempotence;
+  stray-dismissal safety; promptless same-surface replacement; promptless other-bridge start;
+  promptless free-bridge start.
+
+DEBUG seams added alongside `injectForTesting`: `testStageRESTComposition`,
+`testStageEntertainmentOwner`, `testCanAcquireEntertainment`, `testCompositionRuntimeBridges`.
+
+### Validation
+- Full suite: **850 passed, 0 failed, 0 skipped** — `xcodebuild test -project
+  HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17
+  Pro'`, verified with `xcresulttool get test-results summary` (not inferred from exit text).
+- `scripts/hardening_guards.sh`: all guards passed. `git diff --check`: clean.
+- Files touched: `UnifiedOrchestrator.swift`, `StudioViewModel.swift`, `StudioView.swift`,
+  `MultiBridgeRoutingTests.swift`. No pbxproj, no version bump, no unrelated files.
+- **No hardware validation.** Simulator unit tests only.
+
+### Hardware checks still pending (Brian)
+1. Two bridges: REST composition on A, then an Entertainment composition on B → B must stay
+   Entertainment (this is the lockout fix).
+2. Same bridge: REST composition running → a second room's Entertainment start must demote
+   to REST cleanly (this is the deliberate 1a block, not a bug).
+3. Studio over a running composition → prompt appears **before** any light changes.
+4. Cancel → composition continues with no visible hiccup.
+5. Confirm → composition stops cleanly, Studio starts, no frozen UI or orphaned light motion.
+6. Rapid alternating cancel/confirm across cards → no double starts, stuck sessions, or
+   stale ownership.
+7. Record bridge firmware, app build, rooms involved, and Entertainment Area membership.
+
+### Gotchas
+- `startStudioMode` still cancels a single global `activeStudioTask`, so starting Studio on
+  bridge B stops Studio on bridge A. Pre-existing, out of scope, **not** caused by this
+  packet — flagged so it is not mistaken for a regression.
+- Compositions store their DTLS client in `studioEntClients` — the same dict Studio tears
+  down from. That aliasing is the mechanism of the freeze; 1a fixes it by ownership check
+  only, deliberately leaving the naming/structure alone to keep the diff auditable.
+- An Entertainment composition never writes `compositionRuntimes` (the start path returns
+  before the runtime insert), so `compositionRuntimes` is REST-only. The same-bridge block
+  therefore reads exactly as intended.
+- DEVLOG adjacency: PR #49 (`docs/composer2-architecture-review`) inserts its entry at the
+  same position. Whichever merges second will conflict here — keep both entries.
+
+### Deviations from the packet
+- Correction 2 (Entertainment-area selection) is **not** in this branch; deferred to packet
+  1b for the reason above. Before 1b is handed off, its prompt must (a) match on light rids
+  resolved through the entertainment→device→light map, (b) include a positive "a correct
+  config matches" test guarding against an always-nil selector, and (c) decide the cache
+  shape — `entertainmentAvailability` is synchronous and reads a single-config-per-bridge
+  cache, so room-aware selection needs `[String: [EntertainmentConfig]]` plus the ent→light
+  map cached during the existing warm, with the selector extracted as a pure function shared
+  by startup and availability.
+
+### Rollback
+```bash
+git checkout main                                  # never merged; main is untouched
+git branch -D fix/composer-entertainment-ownership # discard the work entirely
+# or, to inspect the pre-packet tree:
+git checkout checkpoint/pre-composer-packet-1a
+```
+
+---
+
 ## 2026-07-22 - [Claude] ROUND 4b — tour×deep-link dismissal + minimal staleness honesty (build 45)
 
 ### Branch
