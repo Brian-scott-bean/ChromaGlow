@@ -269,4 +269,84 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(bridgeA.v1EffectPuts.isEmpty,
                       "no per-light writes — no engine loop artifacts")
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 1a: the Entertainment gate is per bridge
+    // ──────────────────────────────────────────────
+    //
+    // The gate used to read `compositionEntRoomByBridge[bridgeID] == nil &&
+    // compositionRuntimes.isEmpty`. The second conjunct was global: one REST
+    // composition anywhere demoted every later Entertainment start on EVERY
+    // bridge to REST, silently and for as long as it ran. Bridge A's state may
+    // not decide bridge B's transport.
+    //
+    // The same-bridge REST block is kept on purpose, not overlooked: a REST
+    // composition on this bridge may be writing to lights inside the area we
+    // would stream into, and resolving that precisely needs area membership
+    // (packet 1b). Refusing beats guessing.
+
+    func testRESTCompositionOnOneBridgeDoesNotBlockEntertainmentOnAnother() {
+        orchestrator.testStageRESTComposition(
+            roomID: "room-a", bridgeID: "bridge-a", api: bridgeA
+        )
+
+        XCTAssertTrue(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-b"),
+                      "a REST composition on bridge A must not demote bridge B (the global-lockout defect)")
+    }
+
+    func testRESTCompositionBlocksEntertainmentOnItsOwnBridge() {
+        orchestrator.testStageRESTComposition(
+            roomID: "room-a", bridgeID: "bridge-a", api: bridgeA
+        )
+
+        XCTAssertFalse(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-a"),
+                       "same-bridge REST + DTLS could fight over shared lights — refuse until 1b can prove they don't")
+    }
+
+    func testExistingEntertainmentOwnerBlocksASecondAcquisitionOnThatBridge() {
+        orchestrator.testStageEntertainmentOwner(roomID: "room-b1", bridgeID: "bridge-b")
+
+        XCTAssertFalse(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-b"),
+                       "one Entertainment owner per bridge — same-bridge exclusivity must not weaken")
+        XCTAssertTrue(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-a"),
+                      "…and that exclusivity is still scoped to the owned bridge")
+    }
+
+    func testAnUnusedBridgeCanAcquireEntertainment() {
+        XCTAssertTrue(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-a"),
+                      "an idle bridge must be acquirable — the gate must not fail closed")
+    }
+
+    func testStoppingOneBridgeLeavesTheOthersOwnershipIntact() async {
+        orchestrator.testStageRESTComposition(
+            roomID: "room-a", bridgeID: "bridge-a", api: bridgeA
+        )
+        orchestrator.testStageEntertainmentOwner(roomID: "room-b1", bridgeID: "bridge-b")
+
+        await orchestrator.stopCompositionMode(roomID: "room-a")
+
+        XCTAssertEqual(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"), "room-b1",
+                       "bridge A's teardown must not clear bridge B's Entertainment ownership")
+        XCTAssertNil(orchestrator.testCompositionRuntimeBridges()["room-a"],
+                     "the stopped room's own runtime must be gone")
+        XCTAssertTrue(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-a"),
+                      "bridge A is free again once its REST composition stops")
+        XCTAssertFalse(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-b"),
+                       "bridge B is still owned")
+    }
+
+    func testRuntimesRecordTheirOwnBridgeNotTheFirstClient() {
+        orchestrator.testStageRESTComposition(
+            roomID: "room-a", bridgeID: "bridge-a", api: bridgeA
+        )
+        orchestrator.testStageRESTComposition(
+            roomID: "room-b", bridgeID: "bridge-b", api: bridgeB
+        )
+
+        XCTAssertEqual(orchestrator.testCompositionRuntimeBridges(),
+                       ["room-a": "bridge-a", "room-b": "bridge-b"],
+                       "each runtime must carry its own bridge — the gate reads this, not dictionary order")
+        XCTAssertFalse(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-a"))
+        XCTAssertFalse(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-b"))
+    }
 }
