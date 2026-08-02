@@ -419,6 +419,59 @@
 
 ---
 
+## 2026-08-01 - [Claude] Composer 2 architecture review — ChatGPT baseline verified against main (docs only)
+
+### Branch
+- `main` — docs only, no source changes, no version bump, nothing to install.
+
+### Did
+- Brian brought a "Composer 2" architecture/delivery plan authored by ChatGPT (document →
+  compiler → planner → arbiter → scheduler, 21 slices, ~41 candidate risks) and asked for an
+  independent deep-dive to compare against it. Ran three exhaustive audits of main @ 79b5e9b
+  (Composer core; transport/orchestration; docs/UI/tests) and hand-re-verified the four most
+  load-bearing findings in source.
+- Wrote `docs/ios/composer2-architecture-review-2026-08-01.md`: 16 deltas from the baseline +
+  full A–L response (verified risk table with file:line evidence, new-risk list N1–N16,
+  revised phase plan, edge-case matrix, first implementation packet).
+- Headline verdicts: the baseline's end-state architecture is endorsed, but ~9 of its risks
+  are already fixed and test-locked on main (tap tempo, "dead" controls, persistence data
+  loss, built-in reset, generation tautology, per-source audio…), so the right shape is a
+  strangler hardening of the existing engine, NOT a parallel second engine behind a flag.
+  The live emergencies are ownership bugs the baseline sequences last: wrong-room streaming
+  (`findEntertainmentConfig` returns `configs.first`, no room filter), `startStudioMode`
+  orphaning a Composer DTLS stream (silent permanent freeze), the global
+  `compositionRuntimes.isEmpty` Entertainment lockout, the `CG_` purge nuking sibling rooms,
+  one global latest-wins RestSender across all bridges, unconsented eviction of third-party
+  Entertainment sessions, All-Day scenes stomping running compositions, and bridge-stored
+  animations being unstoppable after a relaunch.
+
+### Working
+- Suite untouched (no source changes); review doc is self-contained with file:line cites.
+
+### Left
+- Brian: read Part K of the review — six product decisions (third-party session eviction
+  consent, local diagnostics vs privacy label, true blackout on REST, the bridge-stored
+  dead-slider editor call, external-controller yield policy, >20-light REST strategy).
+- Feed the review to ChatGPT for the planned second-reviewer comparison.
+- If approved, the first implementation packet is Part L: three surgical entertainment-
+  ownership fixes in UnifiedOrchestrator only (per-bridge gate, arbitrated startStudioMode,
+  room-filtered ent-config selection) + MultiBridgeRoutingTests-style units.
+
+### Validation
+- N/A (docs only). Every risk status in the review cites current file:line; spot-check rows
+  against source to audit.
+
+### Gotchas
+- ChatGPT's prompt names files that don't exist on main (CompositionMicCapture.swift,
+  ComposerViewModel) — its snapshot predates the audio-engine split and the Round-4 revamp;
+  treat its §6 risk list as historical, the review's Part B table as current.
+- The composition REST path never uses BridgeCommandGate — the ~10 cmd/s budget documented in
+  that file applies app-wide but is only enforced on bulk/Studio paths. Worth remembering
+  before trusting any cadence number printed by the mixer tray (telemetry currently stamps
+  dueAt == sentAt, lag is always 0 by construction).
+
+---
+
 ## 2026-07-22 - [Claude] ROUND 4b — tour×deep-link dismissal + minimal staleness honesty (build 45)
 
 ### Branch
