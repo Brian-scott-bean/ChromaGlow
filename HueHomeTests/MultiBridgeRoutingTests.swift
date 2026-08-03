@@ -8306,4 +8306,280 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(performance.mix.punch, .blackout,
             "Blackout still engages under Reduce Motion")
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Hardware convergence A: exact area choice
+    // ──────────────────────────────────────────────
+    //
+    // Brian's bridge has an area spanning bedroom+bathroom and another
+    // spanning bedroom+hallway. The selector refused to guess between them —
+    // correctly — and the UI rendered that refusal as "There's no compatible
+    // Entertainment Area for that room". Bedroom resolved; hallway and
+    // bathroom reported nothing at all, and no surface let him say which area
+    // he meant.
+    //
+    // These drive the REAL `apply` → `foreignTakeoverPreflight` →
+    // `exactTargetDecision` path. Same discipline as every packet above:
+    // presence, identity and ORDER only. No sleeps, no waiters.
+
+    /// `area-exact` covers exactly the room (L1+L2); `area-wide` covers the
+    /// room PLUS a hallway light (L3). Both are streamable, both are eligible.
+    private func stageTwoOverlappingAreas(_ spy: RoutingSpyClient) {
+        spy.stageLights([p7Light("L1", device: "D1"),
+                         p7Light("L2", device: "D2"),
+                         p7Light("L3", device: "D3")])
+        spy.stageEntertainmentServices(
+            #"{"data":[{"id":"E1","owner":{"rid":"D1","rtype":"device"}},"# +
+            #"{"id":"E2","owner":{"rid":"D2","rtype":"device"}},"# +
+            #"{"id":"E3","owner":{"rid":"D3","rtype":"device"}}]}"#)
+        spy.stageEntertainmentConfigs(Self.overlappingConfigsJSON())
+    }
+
+    private static func overlappingConfigsJSON(dropL2FromWide: Bool = false) -> String {
+        func channel(_ id: Int, _ ent: String) -> String {
+            #"{"channel_id":\#(id),"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"\#(ent)","rtype":"entertainment"}}]}"#
+        }
+        let exact = [channel(0, "E1"), channel(1, "E2")].joined(separator: ",")
+        let wideEnts = dropL2FromWide ? ["E1", "E3"] : ["E1", "E2", "E3"]
+        let wide = wideEnts.enumerated().map { channel($0.offset, $0.element) }.joined(separator: ",")
+        return #"{"data":["# +
+            #"{"id":"area-exact","metadata":{"name":"Bedroom"},"status":"inactive","channels":[\#(exact)]},"# +
+            #"{"id":"area-wide","metadata":{"name":"Bedroom + Hallway"},"status":"inactive","channels":[\#(wide)]}"# +
+            #"]}"#
+    }
+
+    private func areaIDs(_ vm: StudioViewModel) -> [String] {
+        (vm.areaChoiceRequest?.choices ?? []).map(\.configID)
+    }
+
+    /// HCW-01 — the defect itself. Two areas cover the room, so the app asks
+    /// instead of announcing that none exists.
+    func testTwoOverlappingAreasRaiseTheChooserAndMutateNothing() async throws {
+        stageTwoOverlappingAreas(bridgeB)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        let writesBefore = writeSnapshot(bridgeB)
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        let request = try XCTUnwrap(vm.areaChoiceRequest,
+            "two areas can serve this room — that is a question, not 'no compatible area'")
+        XCTAssertEqual(request.choices.map(\.configID), ["area-exact", "area-wide"],
+            "both are offered, in stable id order, neither collapsed away")
+        XCTAssertEqual(request.choices.map(\.areaName), ["Bedroom", "Bedroom + Hallway"],
+            "each under the name the user gave it in the Hue app")
+
+        XCTAssertNil(vm.studioNotice,
+            "and NOT the 'no compatible Entertainment Area' sentence, which would be false")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+            "nothing starts while the question is open")
+        XCTAssertEqual(writeSnapshot(bridgeB), writesBefore,
+            "the chooser is raised above every destructive step — nothing was written")
+        XCTAssertTrue(bridgeB.entertainmentActions.isEmpty)
+    }
+
+    /// HCW-02 — expanded scope is disclosed BEFORE the tap, not explained after
+    /// the wrong lights change.
+    func testTheWiderAreaDisclosesThatItReachesOutsideTheRequestedRoom() async throws {
+        stageTwoOverlappingAreas(bridgeB)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        let choices = try XCTUnwrap(vm.areaChoiceRequest?.choices)
+        let exact = try XCTUnwrap(choices.first { $0.configID == "area-exact" })
+        let wide = try XCTUnwrap(choices.first { $0.configID == "area-wide" })
+
+        XCTAssertFalse(exact.expandsScope, "this one is exactly the room")
+        XCTAssertEqual(exact.extraLightCount, 0)
+        XCTAssertTrue(wide.expandsScope,
+            "Hue streams whole configurations — the extra light comes with it, so say so")
+        XCTAssertEqual(wide.extraLightCount, 1)
+        XCTAssertEqual(wide.lightCount, 2, "and what it drives inside the room is counted separately")
+    }
+
+    /// HCW-03 — the bridge is named by its LABEL. An IP identifies a route, not
+    /// a box on a shelf, and it is exactly what a two-bridge home cannot map.
+    func testChooserRowsCarryTheBridgeLabelAndNeverTheIP() async throws {
+        stageTwoOverlappingAreas(bridgeB)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        let choices = try XCTUnwrap(vm.areaChoiceRequest?.choices)
+        XCTAssertFalse(choices.isEmpty)
+        for choice in choices {
+            XCTAssertFalse(choice.bridgeLabel.isEmpty, "every row can name its bridge")
+            XCTAssertFalse(choice.bridgeLabel.contains("192.0.2"),
+                "the IP is never the user-facing label: \(choice.bridgeLabel)")
+            XCTAssertEqual(choice.bridgeID, "bridge-b")
+        }
+    }
+
+    /// HCW-04 — choosing B opens B. A is never touched.
+    func testChoosingOneAreaStartsExactlyThatAreaAndNeverTheOther() async throws {
+        stageTwoOverlappingAreas(bridgeB)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        let wide = try XCTUnwrap(vm.areaChoiceRequest?.choices.first { $0.configID == "area-wide" })
+        await vm.confirmAreaChoice(wide)
+
+        XCTAssertNil(vm.areaChoiceRequest, "the question is answered and closed")
+        XCTAssertEqual(bridgeB.entertainmentStarts, ["area-wide"],
+            "exactly the area the user named — once")
+        XCTAssertFalse(bridgeB.entertainmentActions.contains { $0.configID == "area-exact" },
+            "the area they did NOT pick is never opened, started, or stopped")
+    }
+
+    /// HCW-05 — a saved Streaming composition takes the same road. A second
+    /// selection path is exactly how two surfaces come to disagree about which
+    /// area a room streams to.
+    func testASavedStreamingCompositionUsesTheSameChooser() async throws {
+        stageTwoOverlappingAreas(bridgeB)
+        let vm = makeP7FVM()
+        let composition = p7fComposition(vm)
+
+        await vm.apply(composition.card, roomOverride: streamRoomOnB(),
+                       preferEntertainmentOverride: true)
+
+        XCTAssertEqual(areaIDs(vm), ["area-exact", "area-wide"],
+            "compositions resolve their target through the one shared decision")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    /// HCW-06 — Party and Thunderstorm too. Their TRANSPORT is the engine's,
+    /// but WHERE they stream is still the user's.
+    func testEveryStreamingEngineReachesTheSameChooser() async throws {
+        for engineKey in ["party", "thunderstorm"] {
+            stageTwoOverlappingAreas(bridgeB)
+            orchestrator.invalidateEntertainmentCaches(forBridge: "bridge-b")
+            let vm = makeP7VM()
+            guard let card = vm.liveModeCards.first(where: { $0.id == engineKey }) else {
+                return XCTFail("'\(engineKey)' is a streaming engine and must exist")
+            }
+
+            await vm.apply(card, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+            XCTAssertEqual(areaIDs(vm), ["area-exact", "area-wide"],
+                "'\(engineKey)' must not have its own private way of picking an area")
+            vm.cancelAreaChoice()
+        }
+    }
+
+    /// HCW-07 — dismissing the sheet is not an answer, and answers nothing.
+    func testDismissingTheChooserStartsNothingAndWritesNothing() async throws {
+        stageTwoOverlappingAreas(bridgeB)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertNotNil(vm.areaChoiceRequest)
+        let writesBefore = writeSnapshot(bridgeB)
+
+        vm.cancelAreaChoice()
+
+        XCTAssertNil(vm.areaChoiceRequest)
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id], "no area was chosen, so nothing plays")
+        XCTAssertEqual(writeSnapshot(bridgeB), writesBefore)
+        XCTAssertTrue(bridgeB.entertainmentActions.isEmpty)
+    }
+
+    /// HCW-08 — a selection that no longer exists starts NOTHING. Not the other
+    /// candidate: substituting an area the user never picked is the whole class
+    /// of defect this slice exists to end.
+    func testASelectedAreaThatVanishedUnderTheSheetStartsNothing() async throws {
+        stageTwoOverlappingAreas(bridgeB)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let wide = try XCTUnwrap(vm.areaChoiceRequest?.choices.first { $0.configID == "area-wide" })
+
+        // The user deletes that area in the Hue app while the sheet is open.
+        bridgeB.stageEntertainmentConfigs(Self.configsJSON(areaID: "area-exact", active: []))
+
+        await vm.confirmAreaChoice(wide)
+
+        XCTAssertEqual(vm.studioNotice?.message, EntertainmentAreaChoiceCopy.staleSelection,
+            "and it says so, rather than silently playing somewhere else")
+        XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
+            "nothing was opened — least of all the area that was still available")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    /// HCW-09 — membership changing under the sheet fails closed. The frozen
+    /// plan is compared by whole value, so an area re-scoped to different
+    /// lights is not the area the user was shown.
+    func testMembershipChangedUnderTheSheetFailsClosed() async throws {
+        stageTwoOverlappingAreas(bridgeB)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let wide = try XCTUnwrap(vm.areaChoiceRequest?.choices.first { $0.configID == "area-wide" })
+
+        // Same id, same name — different lights. Only a whole-value comparison
+        // can tell that this is not what was on screen.
+        bridgeB.stageEntertainmentServices(
+            #"{"data":[{"id":"E1","owner":{"rid":"D1","rtype":"device"}},"# +
+            #"{"id":"E3","owner":{"rid":"D3","rtype":"device"}}]}"#)
+        bridgeB.stageEntertainmentConfigs(Self.overlappingConfigsJSON(dropL2FromWide: true))
+
+        await vm.confirmAreaChoice(wide)
+
+        XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
+            "an area re-scoped under the prompt streams nothing")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    /// HCW-10 — another bridge's areas are never candidates, even when both
+    /// bridges are staged and reachable.
+    func testAnotherBridgesAreasNeverAppearInTheChooser() async throws {
+        stageTwoOverlappingAreas(bridgeB)
+        stageStreamableBridge(bridgeA, areaID: "area-on-a")
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        let choices = try XCTUnwrap(vm.areaChoiceRequest?.choices)
+        XCTAssertEqual(choices.map(\.configID), ["area-exact", "area-wide"])
+        XCTAssertFalse(choices.contains { $0.configID == "area-on-a" },
+            "bridge A's inventory is not bridge B's room's business")
+        XCTAssertTrue(choices.allSatisfy { $0.bridgeID == "bridge-b" })
+        XCTAssertTrue(bridgeA.entertainmentActions.isEmpty, "and A is never touched")
+    }
+
+    /// HCW-11 — one bridge's decision is made entirely from its own inventory.
+    /// Configuration ids are unique per bridge, never globally.
+    func testOneBridgesDecisionIsMadeOnlyFromItsOwnInventory() async throws {
+        stageStreamableBridge(bridgeA, areaID: "area-shared")
+        stageTwoOverlappingAreas(bridgeB)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+
+        // Bridge A resolves to exactly one area and needs no chooser at all,
+        // even though B is ambiguous at the same moment.
+        await vm.apply(party, roomOverride: streamRoomOnA(), preferEntertainmentOverride: true)
+
+        XCTAssertNil(vm.areaChoiceRequest, "one candidate on A — nothing to ask")
+        XCTAssertEqual(bridgeA.entertainmentStarts, ["area-shared"])
+        XCTAssertTrue(bridgeB.entertainmentActions.isEmpty,
+            "and B's inventory played no part in A's decision")
+    }
+
+    /// HCW-12 — one candidate still auto-selects. The chooser is for genuine
+    /// ambiguity; making every start a question would be its own defect.
+    func testASingleCandidateStillStartsWithoutAsking() async throws {
+        stageStreamableBridge(bridgeB)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        XCTAssertNil(vm.areaChoiceRequest, "exactly one safe area — no question to ask")
+        XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"])
+        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id])
+    }
 }

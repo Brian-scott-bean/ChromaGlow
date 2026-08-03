@@ -4298,6 +4298,12 @@ final class UnifiedOrchestrator {
         /// purpose: telling someone with three areas that they have none is a lie,
         /// and it sends them to build a fourth.
         case noMatchingArea
+        /// Several areas could serve this room and only the user can say which
+        /// (hardware convergence slice A). Streaming absolutely works here —
+        /// reporting it as `noMatchingArea` was the defect: a bridge with an
+        /// area over bedroom+bathroom and another over bedroom+hallway told the
+        /// user that hallway and bathroom had no compatible area at all.
+        case choiceRequired(count: Int)
         case noBridge
         /// We have not asked the bridge yet. Offer streaming rather than
         /// wrongly disabling it — `startCompositionMode` still falls back.
@@ -4306,7 +4312,7 @@ final class UnifiedOrchestrator {
         /// Whether the transport option should be offered as usable.
         var canStream: Bool {
             switch self {
-            case .available, .unknown: return true
+            case .available, .unknown, .choiceRequired: return true
             case .noClientKey, .noArea, .noMatchingArea, .noBridge: return false
             }
         }
@@ -4316,6 +4322,10 @@ final class UnifiedOrchestrator {
             switch self {
             case .available, .unknown:
                 return nil
+            case .choiceRequired(let count):
+                // Not a refusal — an invitation. The row stays usable and the
+                // start path opens the chooser.
+                return "\(count) Entertainment Areas could cover this room. You'll be asked which one to use."
             case .noClientKey:
                 return "This bridge was paired without streaming access. Re-pair it in Settings to enable Entertainment."
             case .noArea:
@@ -4352,8 +4362,42 @@ final class UnifiedOrchestrator {
         // Room lights not resolvable yet — cold cache, not a verdict.
         guard cachedRoomLightIDs(for: room) != nil else { return .unknown }
 
-        guard let config = selectedEntertainmentConfig(for: room) else { return .noMatchingArea }
-        return .available(areaName: config.name)
+        // The typed decision, not the optional. `select` answering nil covers
+        // both "nothing here fits" and "several things fit and one of them is
+        // yours to pick"; only the first is a refusal.
+        switch cachedAreaDecision(for: room) {
+        case .exact(let config):            return .available(areaName: config.name)
+        case .choiceRequired(let options):  return .choiceRequired(count: options.count)
+        case .noCompatible, .none:          return .noMatchingArea
+        }
+    }
+
+    /// The exact-target decision from cache alone — synchronous, no network.
+    ///
+    /// Nil only when the caches cannot answer at all; the rungs above have
+    /// already separated that from a real verdict.
+    ///
+    /// An EMPTY inventory is an answer, not a gap — the key being present is
+    /// what says the bridge was asked and replied "none". Requiring
+    /// `!configs.isEmpty` here would report a bridge with no areas as
+    /// unreadable, turning an honest Room-mode fallback into a refusal.
+    func cachedAreaDecision(
+        for room: RoomDisplayItem?,
+        selectedConfigID: String? = nil
+    ) -> EntertainmentAreaSelector.ExactAreaDecision? {
+        guard let room,
+              let bridgeID = room.bridgeID,
+              let configs = entertainmentConfigsByBridge[bridgeID],
+              let membership = entertainmentMembershipByBridge[bridgeID],
+              let roomLightIDs = cachedRoomLightIDs(for: room)
+        else { return nil }
+
+        return EntertainmentAreaSelector.decide(
+            roomLightIDs: roomLightIDs,
+            configs: configs,
+            entertainmentToLightMap: membership,
+            preferredConfigID: selectedConfigID
+        )
     }
 
     /// Warms the entertainment caches for a room's bridge so
@@ -6841,11 +6885,14 @@ final class UnifiedOrchestrator {
     /// Returns nil when no area safely matches OR when the selected area cannot
     /// produce usable channel IDs — so an unstreamable config can never get as far
     /// as opening a DTLS session.
+    /// Routed through `decide`, not `select`: a room several areas could serve
+    /// has no single start plan, and must not be given one silently. That case
+    /// surfaces as `.choiceRequired` from `exactTargetDecision` instead.
     private func entertainmentStartPlan(
         for room: RoomDisplayItem,
         preferredConfigID: String? = nil
     ) -> (config: EntertainmentConfig, channelIDs: [UInt8])? {
-        guard let config = selectedEntertainmentConfig(for: room, preferredConfigID: preferredConfigID),
+        guard case .exact(let config)? = cachedAreaDecision(for: room, selectedConfigID: preferredConfigID),
               let channelIDs = EntertainmentAreaSelector.validatedChannelIDs(for: config)
         else { return nil }
         return (config, channelIDs)
@@ -7365,6 +7412,18 @@ final class UnifiedOrchestrator {
     /// Display name for a registered bridge (used by pickers).
     func bridgeName(for bridgeID: String) -> String? {
         clients[bridgeID]?.bridgeName
+    }
+
+    /// A bridge label that is always safe to show a person.
+    ///
+    /// Never falls back to the IP. An address identifies a route, not a box on
+    /// a shelf: during multi-bridge testing "192.0.2.4" tells the user nothing
+    /// about which bridge is about to be changed, and printing it in a
+    /// confirmation is how the wrong bridge gets approved.
+    func bridgeLabel(for bridgeID: String) -> String {
+        let name = bridgeName(for: bridgeID)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let name, !name.isEmpty { return name }
+        return "your bridge"
     }
 
     /// Returns the first available working API client.
@@ -8042,6 +8101,30 @@ enum EntertainmentAvailabilityCopy {
     static let couldNotStart = "Streaming couldn't start for that room, so nothing was changed."
 }
 
+/// User-facing copy for choosing between Entertainment Areas.
+///
+/// Its own home, like every other prompt vocabulary in this file, and free of
+/// protocol words for the same reason: the person reading it owns lights and
+/// rooms, not configurations. Nothing here names a configuration id — the
+/// chooser identifies areas the way the user named them in the Hue app.
+enum EntertainmentAreaChoiceCopy {
+    static let title = "Which lights should this play on?"
+    static let message = "More than one Entertainment Area covers this room."
+    static let cancel = "Cancel"
+    /// Shown on a candidate that reaches beyond the requested room. The scope
+    /// has to be stated BEFORE the tap, not explained after the lights change.
+    static func expandsScope(room: String) -> String {
+        "Also controls lights outside \(room)"
+    }
+    static func lightSummary(inRoom: Int, outside: Int) -> String {
+        let lights = "\(inRoom) light\(inRoom == 1 ? "" : "s")"
+        guard outside > 0 else { return lights }
+        return "\(lights) here · \(outside) elsewhere"
+    }
+    static let staleSelection =
+        "That Entertainment Area isn't available for this room any more, so nothing was changed."
+}
+
 /// Safety refusals shared between Studio and Perform.
 ///
 /// One literal, one home: two hand-typed copies of the same sentence drift the
@@ -8088,6 +8171,14 @@ extension UnifiedOrchestrator {
         case ambiguous
         /// The bridge could not be read. Unknown is not "free". Fail closed.
         case unreadable
+        /// Several areas could serve this room (hardware convergence slice A).
+        /// Deliberately NOT merged with `.ambiguous`: that one is about who
+        /// owns the bridge and fails closed, this one is about which area the
+        /// user meant and is answerable. One case for both would make a
+        /// question the user can settle look like a refusal.
+        case choiceRequired([EntertainmentAreaChoice])
+        /// A previously chosen area no longer serves this room. Starts nothing.
+        case staleSelection
     }
 
     /// Warm, resolve, and freeze this room's stream in one place — or nil when
@@ -8098,20 +8189,179 @@ extension UnifiedOrchestrator {
     /// warm and its own selection, so a cache refresh landing between them lets
     /// the prompt describe one area while the start opens another. One capture
     /// site makes that divergence unrepresentable.
-    func frozenStartPlan(for room: RoomDisplayItem) async -> EntertainmentTakeoverPlan? {
+    func frozenStartPlan(for room: RoomDisplayItem,
+                         selectedConfigID: String? = nil) async -> EntertainmentTakeoverPlan? {
         guard let bridgeID = room.bridgeID else { return nil }
         await warmEntertainmentCaches(for: room, force: true)
-        guard let resolved = entertainmentStartPlan(for: room) else { return nil }
+        guard let resolved = entertainmentStartPlan(for: room,
+                                                    preferredConfigID: selectedConfigID) else { return nil }
         return EntertainmentTakeoverPlan(bridgeID: bridgeID, roomID: room.id,
                                          config: resolved.config, channelIDs: resolved.channelIDs)
     }
 
+    /// One Entertainment Area, described the way a person picking one needs it.
+    ///
+    /// Everything here is user-facing. The bridge is named by its label, never
+    /// its IP — an address is not an identity, and on a two-bridge home it is
+    /// the one thing the user cannot map back to the box on the shelf.
+    struct EntertainmentAreaChoice: Identifiable, Equatable, Sendable {
+        var id: String { configID }
+        let configID: String
+        let areaName: String
+        let bridgeID: String
+        let bridgeLabel: String
+        /// Rooms this area reaches, resolved from real room records. Never
+        /// guessed: an unresolvable room is omitted rather than invented.
+        let roomNames: [String]
+        /// Lights it drives inside the room that was asked for.
+        let lightCount: Int
+        /// Lights it drives outside that room. Non-zero is the disclosure that
+        /// selecting this area controls more than the user asked about.
+        let extraLightCount: Int
+        /// The exact stream this row promises, frozen when the sheet opened.
+        ///
+        /// A configuration id alone is not enough to keep that promise. While
+        /// the sheet is open the area can be re-scoped to different lights or
+        /// have its channels rearranged, and an answer replayed on the id would
+        /// then open something the user never saw. Confirmation compares this
+        /// whole value against a freshly resolved one.
+        let plan: EntertainmentTakeoverPlan
+        var expandsScope: Bool { extraLightCount > 0 }
+    }
+
+    /// The exact target for one streaming request — or the honest reason there
+    /// isn't one yet (hardware convergence slice A).
+    ///
+    /// Six outcomes, deliberately not collapsed into an optional plan. They ask
+    /// for six different things from the caller: start · ask the user · fall
+    /// back to Room mode · fail closed · discard a stale choice · refuse to
+    /// guess between owners. The optional that used to stand here made the
+    /// honest failures indistinguishable from "nothing matches", which is how a
+    /// room served by two areas came to report that it had none.
+    enum ExactTargetDecision: Equatable {
+        /// Exactly one safe area. Frozen and ready to start.
+        case plan(EntertainmentTakeoverPlan)
+        /// Several areas could serve this room. Only the user can choose.
+        case choiceRequired([EntertainmentAreaChoice])
+        /// Nothing on this bridge can stream to this room.
+        case noCompatiblePlan
+        /// The bridge could not be read. Unknown is not "free" and not "empty".
+        case unreadableBridge
+        /// A previously chosen area no longer serves this room — deleted,
+        /// re-scoped, moved, or changed membership. Starts nothing.
+        case staleSelection
+        /// Several controllers hold this bridge. Nothing to name, nothing to ask.
+        case ambiguousOwnership
+    }
+
+    /// Resolve a room to its exact stream target, forcing fresh bridge reads.
+    ///
+    /// `selectedConfigID` carries a choice the user already made. It is
+    /// revalidated here rather than trusted: between the chooser appearing and
+    /// this call the area can be deleted, re-scoped to different lights, or
+    /// lose the channels the render loop needs, and replaying it then would
+    /// stream somewhere nobody was ever shown.
+    func exactTargetDecision(
+        for room: RoomDisplayItem,
+        selectedConfigID: String? = nil
+    ) async -> ExactTargetDecision {
+        guard let bridgeID = room.bridgeID else { return .noCompatiblePlan }
+        await warmEntertainmentCaches(for: room, force: true)
+
+        // Two different silences, and they must not be confused. The BRIDGE
+        // failing to answer is unreadable — unknown is not "free", so it fails
+        // closed. This room's lights failing to resolve is not: the bridge
+        // spoke, we simply cannot name an area for this room, which is the
+        // long-standing honest Room-mode fallback. Treating the second as the
+        // first turns a working fallback into a refusal.
+        guard entertainmentConfigsByBridge[bridgeID] != nil,
+              entertainmentMembershipByBridge[bridgeID] != nil else {
+            return .unreadableBridge
+        }
+        guard let decision = cachedAreaDecision(for: room, selectedConfigID: selectedConfigID) else {
+            return selectedConfigID == nil ? .noCompatiblePlan : .staleSelection
+        }
+
+        switch decision {
+        case .exact(let config):
+            guard let channelIDs = EntertainmentAreaSelector.validatedChannelIDs(for: config) else {
+                return selectedConfigID == nil ? .noCompatiblePlan : .staleSelection
+            }
+            return .plan(EntertainmentTakeoverPlan(bridgeID: bridgeID, roomID: room.id,
+                                                   config: config, channelIDs: channelIDs))
+
+        case .choiceRequired(let candidates):
+            let choices = candidates.compactMap {
+                areaChoice($0, bridgeID: bridgeID, room: room)
+            }
+            // Every candidate was eligibility-checked, so losing one here means
+            // it cannot actually be streamed — and an option that cannot be
+            // honoured must not be offered.
+            return choices.isEmpty ? .noCompatiblePlan : .choiceRequired(choices)
+
+        case .noCompatible:
+            // A selection that no longer resolves is stale, not absent. The
+            // distinction matters: "nothing fits" invites Room mode, while a
+            // vanished choice must start nothing at all.
+            return selectedConfigID == nil ? .noCompatiblePlan : .staleSelection
+        }
+    }
+
+    /// Describe one candidate for the chooser. Rooms are resolved from real
+    /// records on the SAME bridge — a room id that only exists on another
+    /// bridge is not this area's room, and is never borrowed to fill the gap.
+    private func areaChoice(
+        _ candidate: EntertainmentAreaSelector.ExactAreaCandidate,
+        bridgeID: String,
+        room: RoomDisplayItem
+    ) -> EntertainmentAreaChoice? {
+        guard let channelIDs = EntertainmentAreaSelector.validatedChannelIDs(for: candidate.config)
+        else { return nil }
+        let membership = entertainmentMembershipByBridge[bridgeID] ?? [:]
+        let areaLightIDs = EntertainmentAreaSelector.mappedLightIDs(
+            for: candidate.config, entertainmentToLightMap: membership)
+
+        var names: [String] = []
+        for candidateRoom in allRooms where candidateRoom.bridgeID == bridgeID {
+            guard let lights = cachedRawLights(for: bridgeID) else { break }
+            let ids = Set(CompositionLightResolver.resolveLightIDs(
+                childResourceRefs: candidateRoom.childResourceRefs, lights: lights))
+            if !ids.isDisjoint(with: areaLightIDs) { names.append(candidateRoom.name) }
+        }
+
+        return EntertainmentAreaChoice(
+            configID: candidate.config.id,
+            areaName: candidate.config.name,
+            bridgeID: bridgeID,
+            bridgeLabel: bridgeLabel(for: bridgeID),
+            roomNames: names.sorted(),
+            lightCount: candidate.lightIDs.count,
+            extraLightCount: candidate.extraLightIDs.count,
+            plan: EntertainmentTakeoverPlan(bridgeID: bridgeID, roomID: room.id,
+                                            config: candidate.config, channelIDs: channelIDs)
+        )
+    }
+
     func foreignTakeoverPreflight(
         for room: RoomDisplayItem,
-        requestsEntertainment: Bool
+        requestsEntertainment: Bool,
+        selectedConfigID: String? = nil
     ) async -> ForeignTakeoverPreflight {
         guard requestsEntertainment, let bridgeID = room.bridgeID else { return .notRequested }
-        guard let plan = await frozenStartPlan(for: room) else { return .noStreamableArea }
+
+        // One resolution path for every entry point — the Streaming row, a
+        // saved Streaming preset, Party, Thunderstorm. A second path that
+        // "just picks something" is exactly how two surfaces come to disagree
+        // about which area a room streams to.
+        let plan: EntertainmentTakeoverPlan
+        switch await exactTargetDecision(for: room, selectedConfigID: selectedConfigID) {
+        case .plan(let resolved):          plan = resolved
+        case .choiceRequired(let options): return .choiceRequired(options)
+        case .staleSelection:              return .staleSelection
+        case .noCompatiblePlan:            return .noStreamableArea
+        case .unreadableBridge:            return .unreadable
+        case .ambiguousOwnership:          return .ambiguous
+        }
 
         guard let snapshot = await entertainmentActivity(onBridge: bridgeID) else {
             return .unreadable
@@ -8254,13 +8504,22 @@ extension UnifiedOrchestrator {
     /// Re-resolve this room's start plan and confirm it still describes the
     /// stream the user was shown. Used immediately before a takeover stop.
     ///
-    /// Deliberately re-selects WITHOUT preferring the captured id: the question
-    /// is whether that area still safely and uniquely serves this room, and
-    /// forcing the preference would answer a different, easier question.
+    /// Re-resolves by the plan's OWN area id, then compares the whole value.
+    ///
+    /// This used to re-select blind, so that "still uniquely the winner" was
+    /// part of the test. That question is now the user's to answer: on a bridge
+    /// where two areas can serve one room, blind re-selection resolves to
+    /// nothing and every takeover refuses itself. Naming the captured id asks
+    /// the question that actually protects the user — is the area the user was
+    /// SHOWN still an eligible, streamable area for this room — and
+    /// `plan.matches` still fails closed on any change to its channels,
+    /// members, or positions, so a re-scoped area cannot slip through.
     func revalidateTakeoverPlan(_ plan: EntertainmentTakeoverPlan,
                                 room: RoomDisplayItem) async -> Bool {
         await warmEntertainmentCaches(for: room, force: true)
-        guard let resolved = entertainmentStartPlan(for: room) else { return false }
+        guard let resolved = entertainmentStartPlan(for: room,
+                                                    preferredConfigID: plan.targetConfigID)
+        else { return false }
         return plan.matches(config: resolved.config, channelIDs: resolved.channelIDs)
     }
 

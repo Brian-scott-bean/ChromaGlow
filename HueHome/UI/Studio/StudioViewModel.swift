@@ -604,6 +604,34 @@ final class StudioViewModel {
         var bridgeID: String { plan.bridgeID }
     }
 
+    /// A pending "which Entertainment Area did you mean?" awaiting the user
+    /// (hardware convergence slice A).
+    ///
+    /// Non-nil means: a start was requested, several areas could serve the
+    /// room, and NOTHING has been mutated — this is raised from the preflight,
+    /// above every destructive step, exactly like the two consent prompts.
+    var areaChoiceRequest: EntertainmentAreaChoiceRequest? = nil
+
+    /// A FOURTH request type, and the one that is not a consent.
+    ///
+    /// Choosing a target is not agreeing to replace anybody. This carries no
+    /// token, spends no ledger, and authorises no stop — picking "Bedroom TV"
+    /// answers *where*, and the takeover prompt still has to ask *whether*, on
+    /// its own terms. Folding this into `ForeignTakeoverRequest` would make one
+    /// tap silently answer two very different questions.
+    struct EntertainmentAreaChoiceRequest: Identifiable {
+        let id = UUID()
+        let choices: [UnifiedOrchestrator.EntertainmentAreaChoice]
+        let card: StudioCard
+        let room: RoomDisplayItem
+        let preferEntertainmentOverride: Bool?
+
+        /// Each choice carries the exact stream it promises, frozen when the
+        /// sheet opened — `confirmAreaChoice` compares that whole value against
+        /// a freshly resolved one before anything starts.
+        var offeredConfigIDs: [String] { choices.map(\.configID) }
+    }
+
     /// One sentence the user actually sees when we refused, or did something
     /// other than what was asked (packet 7 follow-up).
     ///
@@ -641,6 +669,54 @@ final class StudioViewModel {
     private func present(_ request: ForeignTakeoverRequest) {
         studioNotice = nil
         foreignTakeoverRequest = request
+    }
+
+    private func present(_ request: EntertainmentAreaChoiceRequest) {
+        studioNotice = nil
+        areaChoiceRequest = request
+    }
+
+    // ── Area choice: target fidelity only, never consent ──────────────
+
+    /// The user named the area. Revalidate that exact area, then replay the
+    /// original request against it through the normal production path.
+    ///
+    /// The revalidation is the point. `exactTargetDecision` re-reads the bridge
+    /// and the result is compared to the plan frozen when the sheet opened —
+    /// whole value, so a re-scoped area, reordered channels, or moved lights
+    /// all fail closed. Resolving by configuration id alone would accept an
+    /// area that now drives a different set of lights under the same name.
+    ///
+    /// A stale choice starts NOTHING. Deliberately not "fall back to the other
+    /// candidate": substituting an area the user did not pick is the defect
+    /// this whole chooser exists to remove.
+    func confirmAreaChoice(_ choice: UnifiedOrchestrator.EntertainmentAreaChoice) async {
+        // Cleared before the first await, so a double-tap finds nil.
+        guard let request = areaChoiceRequest else { return }
+        areaChoiceRequest = nil
+        guard let orchestrator else { return }
+
+        guard case .plan(let fresh) = await orchestrator.exactTargetDecision(
+                for: request.room, selectedConfigID: choice.configID),
+              fresh == choice.plan else {
+            studioNotice = StudioNotice(message: EntertainmentAreaChoiceCopy.staleSelection)
+            statusMessage = "⚠ \(EntertainmentAreaChoiceCopy.staleSelection)"
+            debugLog("[Handoff] '\(choice.areaName)' changed under the chooser — starting nothing")
+            return
+        }
+
+        await apply(request.card,
+                    roomOverride: request.room,
+                    preferEntertainmentOverride: request.preferEntertainmentOverride,
+                    selectedConfigID: choice.configID)
+    }
+
+    /// Dismissed without choosing. Nothing was mutated to raise this prompt and
+    /// nothing is mutated to drop it.
+    func cancelAreaChoice() {
+        guard areaChoiceRequest != nil else { return }
+        debugLog("[Handoff] Area chooser dismissed without a choice — nothing started")
+        areaChoiceRequest = nil
     }
 
     /// The running effect on the CURRENTLY SELECTED room.
@@ -1372,7 +1448,8 @@ final class StudioViewModel {
                preferEntertainmentOverride: Bool?,
                skipHandoffConfirmation: Bool = false,
                foreignConsent: EntertainmentConsent? = nil,
-               consentedPlan: EntertainmentTakeoverPlan? = nil) async {
+               consentedPlan: EntertainmentTakeoverPlan? = nil,
+               selectedConfigID: String? = nil) async {
         debugLog("[Studio] apply '\(card.name)' — selectedRoom: \(selectedRoom?.name ?? "nil")")
         guard let room = roomOverride ?? selectedRoom else {
             statusMessage = "⚠ Select a room first"
@@ -1489,7 +1566,29 @@ final class StudioViewModel {
             // Freeze BEFORE the slot is set. A bare configuration id would let
             // the area be deleted or re-scoped under the open prompt and still
             // be replayed on the way out.
-            guard let plan = await orchestrator.frozenStartPlan(for: room) else {
+            //
+            // The same exact-target decision the preflight uses, so this gate
+            // cannot resolve a room differently from the path just below it.
+            let plan: EntertainmentTakeoverPlan
+            switch await orchestrator.exactTargetDecision(for: room,
+                                                          selectedConfigID: selectedConfigID) {
+            case .plan(let resolved):
+                plan = resolved
+
+            case .choiceRequired(let choices):
+                // WHERE has to be settled before WHETHER TO SWITCH — asking to
+                // replace a live look without knowing which area replaces it
+                // would be asking the user to approve an unknown.
+                present(EntertainmentAreaChoiceRequest(
+                    choices: choices, card: card, room: room,
+                    preferEntertainmentOverride: preferEntertainmentOverride))
+                return
+
+            case .staleSelection:
+                studioNotice = StudioNotice(message: EntertainmentAreaChoiceCopy.staleSelection)
+                return
+
+            case .noCompatiblePlan, .unreadableBridge, .ambiguousOwnership:
                 // NOT the Room-mode sentence: this gate returns without
                 // starting anything, on purpose. Falling through to a
                 // Room-mode start here would put REST writes on a bridge
@@ -1564,12 +1663,39 @@ final class StudioViewModel {
             let preflight = await orchestrator.foreignTakeoverPreflight(
                 for: room,
                 requestsEntertainment: requestsEntertainment(
-                    card, preferEntertainmentOverride: preferEntertainmentOverride))
+                    card, preferEntertainmentOverride: preferEntertainmentOverride),
+                selectedConfigID: selectedConfigID)
 
             switch preflight {
             case .notRequested:
                 // This card never streams, so no third party can be in the way.
                 break
+
+            case .choiceRequired(let choices):
+                // Several areas cover this room. Ask — with nothing prepared,
+                // nothing torn down, and no consent implied by the answer.
+                //
+                // This reaches Party and Thunderstorm too: their transport is
+                // the engine's, but WHERE they stream is still the user's, and
+                // routing them around the chooser would be the second
+                // selection path this decision exists to prevent.
+                present(EntertainmentAreaChoiceRequest(
+                    choices: choices,
+                    card: card,
+                    room: room,
+                    preferEntertainmentOverride: preferEntertainmentOverride
+                ))
+                debugLog("[Handoff] \(choices.count) areas could serve room \(room.id) — asking which")
+                return
+
+            case .staleSelection:
+                // The area the user picked no longer serves this room. Falling
+                // back to whatever else is available would stream somewhere
+                // they did not choose, so start nothing and say so.
+                studioNotice = StudioNotice(message: EntertainmentAreaChoiceCopy.staleSelection)
+                statusMessage = "⚠ \(EntertainmentAreaChoiceCopy.staleSelection)"
+                debugLog("[Handoff] Selected area no longer valid for room \(room.id) — starting nothing")
+                return
 
             case .noStreamableArea:
                 // Room mode still starts — that fallback is honest and is what

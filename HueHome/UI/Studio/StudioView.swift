@@ -425,6 +425,7 @@ struct StudioView: View {
         .modifier(EntertainmentHandoffAlert(vm: vm))
         .modifier(StudioEntertainmentHandoffAlert(vm: vm))
         .modifier(ForeignTakeoverAlert(vm: vm))
+        .modifier(EntertainmentAreaChooserSheet(vm: vm))
         .modifier(StudioNoticeAlert(vm: vm))
         .confirmationDialog(
             TransportVocabulary.choosePlayTitle,
@@ -1991,6 +1992,125 @@ private struct ForeignTakeoverAlert: ViewModifier {
         // is streaming, not which room the other controller is lighting — so
         // any sentence naming a room would be asserting something we cannot
         // actually know.
+    }
+}
+
+/// "Which lights should this play on?" — the exact-area chooser
+/// (hardware convergence slice A).
+///
+/// A SHEET, not an alert, and not by preference. On Brian's bridge two areas
+/// reach one room; on a larger home there can be more, each needing its name,
+/// its bridge, the rooms it covers and a scope warning. That does not fit in
+/// two alert buttons, and squeezing it in is how the disclosure that selecting
+/// an area also lights another room ends up omitted.
+///
+/// This prompt is NOT a consent. Picking an area answers *where*; if another
+/// app owns the bridge, `ForeignTakeoverAlert` still has to ask *whether*.
+private struct EntertainmentAreaChooserSheet: ViewModifier {
+    let vm: StudioViewModel
+
+    func body(content: Content) -> some View {
+        content.sheet(
+            item: Binding(
+                get: { vm.areaChoiceRequest },
+                // Swipe-away is "not now": nothing was mutated to raise this,
+                // and nothing is mutated to drop it.
+                set: { if $0 == nil { vm.cancelAreaChoice() } }
+            )
+        ) { request in
+            StageSheetScaffold(title: EntertainmentAreaChoiceCopy.title) {
+                StageCard(icon: "sparkles.tv", title: request.room.name) {
+                    VStack(alignment: .leading, spacing: HueSpacing.md) {
+                        Text(EntertainmentAreaChoiceCopy.message)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        ForEach(request.choices) { choice in
+                            areaRow(choice, requestedRoom: request.room.name)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func areaRow(
+        _ choice: UnifiedOrchestrator.EntertainmentAreaChoice,
+        requestedRoom: String
+    ) -> some View {
+        Button {
+            HapticManager.shared.light()
+            Task { await vm.confirmAreaChoice(choice) }
+        } label: {
+            HStack(alignment: .top, spacing: HueSpacing.sm) {
+                Image(systemName: "light.panel")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HuePalette.amber.opacity(0.9))
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(choice.areaName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+
+                    // Bridge label, never the IP — during multi-bridge testing
+                    // this is the only line that says which box is involved.
+                    Text(choice.bridgeLabel)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.55))
+
+                    if !choice.roomNames.isEmpty {
+                        Text(choice.roomNames.joined(separator: " · "))
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Text(EntertainmentAreaChoiceCopy.lightSummary(
+                        inRoom: choice.lightCount, outside: choice.extraLightCount))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.55))
+
+                    // Stated BEFORE the tap. An area spanning bedroom+hallway
+                    // is a legitimate answer for "hallway" — Hue streams whole
+                    // configurations — but only if the user knows the bedroom
+                    // lights come with it.
+                    if choice.expandsScope {
+                        StageBadge(
+                            text: EntertainmentAreaChoiceCopy.expandsScope(room: requestedRoom),
+                            style: .amber)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .padding(.top, 2)
+            }
+            .padding(.vertical, HueSpacing.xs)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(minHeight: HueHit.min)
+        .accessibilityLabel(accessibilityLabel(choice, requestedRoom: requestedRoom))
+    }
+
+    private func accessibilityLabel(
+        _ choice: UnifiedOrchestrator.EntertainmentAreaChoice,
+        requestedRoom: String
+    ) -> String {
+        var parts = [choice.areaName, "on \(choice.bridgeLabel)"]
+        if !choice.roomNames.isEmpty { parts.append(choice.roomNames.joined(separator: ", ")) }
+        parts.append(EntertainmentAreaChoiceCopy.lightSummary(
+            inRoom: choice.lightCount, outside: choice.extraLightCount))
+        if choice.expandsScope {
+            parts.append(EntertainmentAreaChoiceCopy.expandsScope(room: requestedRoom))
+        }
+        return parts.joined(separator: ". ")
     }
 }
 

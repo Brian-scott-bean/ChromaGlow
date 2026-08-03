@@ -642,4 +642,182 @@ final class EntertainmentAreaSelectorTests: XCTestCase {
         XCTAssertEqual(positions["L1"]?.x ?? 0, -1, accuracy: 0.0001)
         XCTAssertEqual(positions["L2"]?.z ?? 0, -0.5, accuracy: 0.0001)
     }
+
+    // ─────────────────────────────────────────────────────────
+    // MARK: - Exact target decision (hardware convergence slice A)
+    // ─────────────────────────────────────────────────────────
+    //
+    // The defect these guard: on Brian's bridge one area spans
+    // bedroom+bathroom and another spans bedroom+hallway. `select` correctly
+    // refuses to guess for hallway and bathroom — and the UI reported that
+    // refusal as "There's no compatible Entertainment Area for that room",
+    // which is simply false. There are two. Only the user knows which.
+
+    /// HC-01
+    func testASingleExactCandidateAutoSelects() {
+        let decision = Selector.decide(
+            roomLightIDs: ["L1", "L2"],
+            configs: [config("area-a", "Bedroom", ent: ["E1", "E2"])],
+            entertainmentToLightMap: straightMap(2))
+
+        guard case .exact(let picked) = decision else {
+            return XCTFail("one safe area that exactly matches the room needs no question; got \(decision)")
+        }
+        XCTAssertEqual(picked.id, "area-a")
+    }
+
+    /// HC-02 — Brian's actual bridge, from the hallway's point of view.
+    func testTwoOverlappingAreasRequireAChoiceInsteadOfReportingNone() {
+        // bedroom+bathroom and bedroom+hallway; the request is the HALLWAY.
+        let configs = [
+            config("area-bb", "Bedroom + Bathroom", ent: ["E1", "E2"]),
+            config("area-bh", "Bedroom + Hallway", ent: ["E1", "E3"]),
+        ]
+        let membership = straightMap(3)
+
+        XCTAssertNil(
+            Selector.select(roomLightIDs: ["L3"], configs: configs,
+                            entertainmentToLightMap: membership),
+            "precondition: the safe selector refuses to guess — that part was always right")
+
+        guard case .choiceRequired(let options) = Selector.decide(
+            roomLightIDs: ["L3"], configs: configs, entertainmentToLightMap: membership)
+        else {
+            return XCTFail("the hallway IS reachable — by one of two areas — so this is a question, not a refusal")
+        }
+        XCTAssertEqual(options.map(\.config.id), ["area-bh"],
+            "only areas that actually touch the hallway are offered")
+        XCTAssertEqual(options.first?.extraLightIDs, ["L1"],
+            "and the bedroom light it drags along must be disclosed")
+        XCTAssertTrue(options.first?.expandsScope ?? false)
+    }
+
+    /// HC-03 — the bedroom, which BOTH areas serve.
+    func testARoomServedByTwoDifferentAreasAsksWhichOne() {
+        let configs = [
+            config("area-bb", "Bedroom + Bathroom", ent: ["E1", "E2"]),
+            config("area-bh", "Bedroom + Hallway", ent: ["E1", "E3"]),
+        ]
+        guard case .choiceRequired(let options) = Selector.decide(
+            roomLightIDs: ["L1"], configs: configs, entertainmentToLightMap: straightMap(3))
+        else { return XCTFail("two areas cover the bedroom; picking one silently is the defect") }
+
+        XCTAssertEqual(options.map(\.config.id), ["area-bb", "area-bh"],
+            "both are offered, each under its own name")
+        XCTAssertTrue(options.allSatisfy(\.expandsScope),
+            "each reaches a room the user did not ask about, and each must say so")
+    }
+
+    /// HC-04 — the no-collapse rule.
+    ///
+    /// Two areas over the SAME lights are still two areas. "TV" and "Movie
+    /// Night" are not interchangeable because their light sets match, and
+    /// `min(by: id)` picking one of them is a hidden choice — indistinguishable
+    /// from a wrong one.
+    func testTwoAreasOverIdenticalLightsAreBothOfferedAndNeitherIsCollapsed() {
+        let configs = [
+            config("area-tv", "TV", ent: ["E1", "E2"]),
+            config("area-movie", "Movie Night", ent: ["E1", "E2"]),
+        ]
+        let membership = straightMap(2)
+
+        XCTAssertEqual(
+            Selector.select(roomLightIDs: ["L1", "L2"], configs: configs,
+                            entertainmentToLightMap: membership)?.id, "area-movie",
+            "precondition: the legacy selector DOES collapse these to the lowest id")
+
+        guard case .choiceRequired(let options) = Selector.decide(
+            roomLightIDs: ["L1", "L2"], configs: configs, entertainmentToLightMap: membership)
+        else { return XCTFail("identical light sets must not license a silent pick") }
+
+        XCTAssertEqual(options.map(\.config.id), ["area-movie", "area-tv"])
+        XCTAssertEqual(options.map(\.config.name), ["Movie Night", "TV"],
+            "each candidate keeps its own exact id and its own name")
+    }
+
+    /// HC-05 — ordering is display, never selection.
+    func testReorderingTheSameCandidatesProducesTheIdenticalDecision() {
+        let a = config("area-bb", "Bedroom + Bathroom", ent: ["E1", "E2"])
+        let b = config("area-bh", "Bedroom + Hallway", ent: ["E1", "E3"])
+        let membership = straightMap(3)
+
+        let forward = Selector.decide(roomLightIDs: ["L1"], configs: [a, b],
+                                      entertainmentToLightMap: membership)
+        let reversed = Selector.decide(roomLightIDs: ["L1"], configs: [b, a],
+                                       entertainmentToLightMap: membership)
+
+        XCTAssertEqual(forward, reversed,
+            "array order may not change the answer OR the order it is presented in")
+    }
+
+    /// HC-06 — a single area reaching outside the room is still a question.
+    func testALoneAreaThatReachesOutsideTheRoomIsOfferedWithItsScopeStated() {
+        guard case .choiceRequired(let options) = Selector.decide(
+            roomLightIDs: ["L3"],
+            configs: [config("area-bh", "Bedroom + Hallway", ent: ["E1", "E3"])],
+            entertainmentToLightMap: straightMap(3))
+        else { return XCTFail("Hue streams whole configurations — this IS the hallway's only option") }
+
+        XCTAssertEqual(options.count, 1)
+        XCTAssertEqual(options[0].lightIDs, ["L3"], "what it lights in the room asked for")
+        XCTAssertEqual(options[0].extraLightIDs, ["L1"], "and what it lights outside it")
+    }
+
+    /// HC-07
+    func testAnAreaTouchingNoneOfTheRoomsLightsIsNeverOffered() {
+        let decision = Selector.decide(
+            roomLightIDs: ["L1"],
+            configs: [config("area-far", "Kitchen", ent: ["E2", "E3"])],
+            entertainmentToLightMap: straightMap(3))
+
+        XCTAssertEqual(decision, .noCompatible,
+            "another room's area is not a candidate, so it is never shown and never picked")
+    }
+
+    /// HC-08 — an unstreamable area cannot be offered.
+    func testAnAreaWithoutUsableChannelIDsIsNotACandidate() {
+        let broken = EntertainmentConfig(id: "area-broken", name: "Broken", channels: [
+            channel(0, ent: ["E1"]), channel(0, ent: ["E2"]),   // duplicate channel ids
+        ])
+        XCTAssertEqual(
+            Selector.decide(roomLightIDs: ["L1", "L2"], configs: [broken],
+                            entertainmentToLightMap: straightMap(2)),
+            .noCompatible,
+            "offering an area that startup would then refuse is a promise we cannot keep")
+    }
+
+    /// HC-09 — an explicit selection is honoured only while it still fits.
+    func testAnExplicitSelectionResolvesExactlyAndAStaleOneResolvesToNothing() {
+        let configs = [
+            config("area-bb", "Bedroom + Bathroom", ent: ["E1", "E2"]),
+            config("area-bh", "Bedroom + Hallway", ent: ["E1", "E3"]),
+        ]
+        let membership = straightMap(3)
+
+        guard case .exact(let chosen) = Selector.decide(
+            roomLightIDs: ["L1"], configs: configs,
+            entertainmentToLightMap: membership, preferredConfigID: "area-bh")
+        else { return XCTFail("the user named an area that serves this room") }
+        XCTAssertEqual(chosen.id, "area-bh", "and it is the one they named, not the lowest id")
+
+        XCTAssertEqual(
+            Selector.decide(roomLightIDs: ["L1"], configs: configs,
+                            entertainmentToLightMap: membership,
+                            preferredConfigID: "area-deleted"),
+            .noCompatible,
+            "a selection that no longer names a candidate resolves to nothing — never to a substitute")
+    }
+
+    /// HC-10 — a selection may not buy its way into another room.
+    func testAnExplicitSelectionCannotNameAnAreaThatDoesNotTouchThisRoom() {
+        XCTAssertEqual(
+            Selector.decide(
+                roomLightIDs: ["L1"],
+                configs: [config("area-a", "Bedroom", ent: ["E1"]),
+                          config("area-far", "Kitchen", ent: ["E2", "E3"])],
+                entertainmentToLightMap: straightMap(3),
+                preferredConfigID: "area-far"),
+            .noCompatible,
+            "an id the user once picked cannot redirect this room's stream into the kitchen")
+    }
 }
