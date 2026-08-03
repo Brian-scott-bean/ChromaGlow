@@ -437,6 +437,73 @@ and nothing on screen said so. The cap was never a Hue limit.
 > work they inform is correctness-in-waiting for Phase 6.
 
 
+## T. Composer 2 — All-Day playback ownership [packet 6]
+
+Simulator tests prove the decisions; only hardware proves which bulbs actually
+get overwritten, and when. §O–§S stay open and are NOT superseded.
+
+Before packet 6, All Day Scenes wrote colour temperature and brightness to every
+room every five minutes with no idea whether you were already playing something
+there — so a Composer look or a Studio effect was quietly stomped, and because
+the app suppresses its own echo you never saw it happen. Worse, All-Day shared
+ONE queue slot across every room, so in a home with several rooms most of them
+silently missed their update anyway.
+
+**Read the guarantee before judging a result.** A skipped room is a PASS, not a
+failure — All-Day now yields to whatever is playing. A freed room comes back on
+the NEXT normal tick, which can be up to five minutes later; there is
+deliberately no catch-up burst. All-Day still never touches zones.
+
+For every item record: **app build · bridge IDs or labels · bridge firmware ·
+room names · which rooms updated · which were skipped · what was playing where ·
+how long until a freed room resumed.**
+
+- [ ] 1. All Day on, two rooms, nothing playing. Expected: **both** rooms shift
+      within one tick. (Before this build, typically only one of them did.)
+- [ ] 2. Start a Composer look in room A. Expected: room A is **not** overwritten
+      while it plays, and room B still receives its All-Day update.
+- [ ] 3. Repeat item 2 with a Studio card in room A — once with an app-driven
+      card, and once with a **firmware card (Candle or Fire)**. Expected: the
+      same result for both.
+- [ ] 4. Repeat items 2–3 with two bridges, one room playing on each. Expected:
+      each bridge's free rooms keep updating.
+- [ ] 5. Queue-then-claim: with two bridges, unplug bridge A so its queue backs
+      up, then start playback in a bridge-B room within the same five-minute
+      window. Expected: that room is **not** written when the queue drains.
+- [ ] 6. Stop playback. Expected: the room resumes on the **next** tick (up to
+      5 min). An immediate change is NOT expected.
+- [ ] 7. Disable All Day mid-tick. Expected: no later stray write on any room.
+- [ ] 8. Toggle All Day **off and immediately back on, twice in a row**.
+      Expected: the first tick after each restart still updates every eligible
+      room. (A regression looks like rooms silently missing an update right
+      after a restart.)
+- [ ] 9. Remove a bridge from Bridge Manager while All Day is active. Expected:
+      the other bridge keeps updating normally.
+- [ ] 10. Remove a bridge, then re-pair it. Expected: All Day resumes updating
+      that bridge's rooms within one tick. **Repeat once with a force-quit and
+      relaunch between removing and re-pairing** — that exercises the other
+      registration path. (A regression looks like that bridge never receiving
+      All-Day again.)
+- [ ] 11. Forget All Bridges while All Day is enabled, and try to re-enable the
+      All Day toggle before the teardown finishes. Expected: no lights change
+      afterwards, and All Day stays **off** until you deliberately turn it on.
+- [ ] 12. Same room name on two bridges, one of them playing. Expected: only the
+      playing bridge's room is skipped.
+- [ ] 13. Start a firmware card (Candle) in a room, then pull that bridge off the
+      network and press Stop. Expected: the card clears from Now Playing, and
+      once the bridge returns that room receives All-Day again on the next tick.
+      (A regression looks like the room never resuming.)
+- [ ] 14. Start a firmware card in a room whose bulbs cannot run it (white-only
+      bulbs). Expected: you get the "no lights can run" message, the room does
+      not stay stuck lit, and that room **still** receives All-Day on the next
+      tick. (A regression looks like the room being skipped forever after a card
+      that never started.)
+
+> Note: All-Day does not restore ownership of a firmware effect across an app
+> relaunch — after a force-quit, a still-running Candle may be overwritten on the
+> next tick. Launch-time playback reconciliation is separate, later work.
+
+
 ## Parked-agent "Left" register (tracked, not device QA)
 
 | Owner | Item | Status |

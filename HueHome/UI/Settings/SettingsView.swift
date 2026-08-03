@@ -664,7 +664,7 @@ private struct AllDayScenesView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Enable All Day Scenes")
                         .foregroundStyle(.white)
-                    Text("Applies a slow, natural shift to all rooms.")
+                    Text("Applies a slow, natural shift to your rooms, skipping any that are already playing something.")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.45))
                 }
