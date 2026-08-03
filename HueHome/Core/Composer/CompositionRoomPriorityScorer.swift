@@ -461,6 +461,28 @@ enum CompositionRotationPlan {
             ? Advance(cursor: 0, crossedRotationBoundary: true)
             : Advance(cursor: next, crossedRotationBoundary: false)
     }
+
+    /// Whether rolling delivery must hold the delta gate OPEN — i.e. the room
+    /// has not yet earned the right to quiesce.
+    ///
+    /// True mid-rotation (`cursor != 0`: the remaining lights still need their
+    /// turn) and until one rotation has fully DELIVERED (`hasCompleted…`
+    /// false: attempted-but-failed is not delivered).
+    ///
+    /// An EMPTY eligible set is trivially complete, never incomplete. That is
+    /// the grouped fallback — no per-light IDs resolved, so rotation state is
+    /// armed with a count of 0, the grouped closure never reports a rotation
+    /// advance, and the flag could never rise. Without this short-circuit the
+    /// gate would be held open forever and a static grouped room would re-send
+    /// an identical PUT every tick instead of going quiet.
+    static func deliveryIncomplete(
+        eligibleOperationCount: Int,
+        hasCompletedInitialSuccessfulRotation: Bool,
+        cursor: Int
+    ) -> Bool {
+        eligibleOperationCount > 0
+            && (!hasCompletedInitialSuccessfulRotation || cursor != 0)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────

@@ -621,6 +621,20 @@ strip in a large room keeping its points while its neighbours keep their own
 motion. Plus two captures (§S 10–11) that would let the capability decoder and
 the v1 error classifier be tightened from documented to verified.
 
+### Review amendment (2026-08-02, pre-merge)
+PR #55 review found one defect in the new delta gate: rotation state is armed
+for EVERY REST session, including the grouped fallback, whose eligible count is
+0 — and nothing can ever complete a zero-count rotation (the grouped closure
+reports no rotation advance, and `composerRotationAdvanced` guards on a
+positive count). `rotationIncomplete` was therefore permanently true for
+grouped rooms, and a static grouped room re-sent an identical PUT every 120 ms
+tick forever instead of delta-gating to quiet. Fixed by extracting the gate
+predicate into `CompositionRotationPlan.deliveryIncomplete`, which treats an
+empty eligible set as trivially complete; covered by two pure predicate tests
+plus P5-17 (`testAGroupedSessionNeverHoldsTheDeltaGateOpen`) against the
+production-staged grouped shape. Suite after amendment: **1057 passed, 0
+failed**; all guards pass.
+
 ---
 
 ## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 4 — honest completion-based REST telemetry

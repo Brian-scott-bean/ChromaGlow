@@ -829,4 +829,30 @@ final class CompositionRotationPlanTests: XCTestCase {
         let slice = CompositionRotationPlan.slice(cursor: 99, eligibleCount: 10, limit: S)
         XCTAssertEqual(slice, .init(start: 0, count: 10))
     }
+
+    func testDeliveryIncompleteMidRotationOrBeforeFirstFullDelivery() {
+        // Mid-rotation: the remaining lights still need their turn.
+        XCTAssertTrue(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: 21,
+            hasCompletedInitialSuccessfulRotation: true, cursor: 20))
+        // At the boundary but never fully delivered: no quiescence yet.
+        XCTAssertTrue(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: 21,
+            hasCompletedInitialSuccessfulRotation: false, cursor: 0))
+        // Boundary reached after a clean rotation: eligible to quiesce.
+        XCTAssertFalse(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: 21,
+            hasCompletedInitialSuccessfulRotation: true, cursor: 0))
+    }
+
+    func testAnEmptyEligibleSetIsNeverIncomplete() {
+        // The grouped fallback arms rotation state with a count of 0, and the
+        // grouped closure never reports a rotation advance — so the completed
+        // flag can never rise. An empty set must therefore read as trivially
+        // complete, or the delta gate would be held open forever and a static
+        // grouped room would re-send an identical PUT every tick.
+        XCTAssertFalse(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: 0,
+            hasCompletedInitialSuccessfulRotation: false, cursor: 0))
+    }
 }

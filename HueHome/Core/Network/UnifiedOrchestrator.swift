@@ -4838,9 +4838,18 @@ final class UnifiedOrchestrator {
             // For rooms of ≤ maxOperationsPerSweep the cursor is back at 0
             // after every sweep, so this is identical to the old behaviour
             // from the second pass onward.
+            //
+            // An EMPTY eligible set (the grouped fallback — no per-light IDs
+            // resolved) is trivially complete: there is no rotation to finish,
+            // `makeComposerGroupedWork` never reports a rotation advance, and
+            // the flag could therefore never rise — see the predicate's doc.
             let rotation = compositionRotationStates[sessionKey]
-            let rotationIncomplete =
-                rotation.map { !$0.hasCompletedInitialSuccessfulRotation || $0.cursor != 0 } ?? false
+            let rotationIncomplete = rotation.map {
+                CompositionRotationPlan.deliveryIncomplete(
+                    eligibleOperationCount: $0.eligibleOperationCount,
+                    hasCompletedInitialSuccessfulRotation: $0.hasCompletedInitialSuccessfulRotation,
+                    cursor: $0.cursor)
+            } ?? false
             if !userEditBurstActive && !rotationIncomplete
                 && colorDelta < 0.003 && briDelta < 1.0 {
                 try? await Task.sleep(for: tickInterval)

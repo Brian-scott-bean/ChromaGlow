@@ -2970,4 +2970,41 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(seen.count, 10,
             "each (reason, largeRoom) pair needs its own sentence")
     }
+
+    // P5-17. The grouped fallback (no per-light IDs) arms rotation state with
+    //        an eligible count of ZERO, and the grouped closure never reports
+    //        a rotation advance — so `hasCompletedInitialSuccessfulRotation`
+    //        can never rise for it. That exact state must read as trivially
+    //        complete at the delta gate, or a static grouped room would
+    //        re-send an identical PUT every tick forever instead of going
+    //        quiet.
+    func testAGroupedSessionNeverHoldsTheDeltaGateOpen() {
+        orchestrator.testStageRESTComposition(
+            roomID: "grouped", bridgeID: "bridge-a", api: bridgeA)
+        // The default stage is the grouped shape: lightIDs empty.
+
+        let r = rotation("grouped", "bridge-a")
+        XCTAssertEqual(r?.eligibleOperationCount, 0)
+        XCTAssertEqual(r?.completedSuccessfulRotation, false,
+            "nothing ever advances a zero-count rotation, so the flag stays down…")
+
+        // …and the gate consults this exact state through the predicate.
+        XCTAssertFalse(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: r?.eligibleOperationCount ?? -1,
+            hasCompletedInitialSuccessfulRotation: r?.completedSuccessfulRotation ?? true,
+            cursor: r?.cursor ?? -1),
+            "an empty eligible set is trivially complete — the delta gate may quiesce")
+
+        // A real per-light session with the same flags down IS incomplete:
+        // the exemption is about emptiness, not a general loosening.
+        orchestrator.testStageRESTComposition(
+            roomID: "perlight", bridgeID: "bridge-a", api: bridgeA,
+            lightIDs: (0..<3).map { "L\($0)" })
+        let p = rotation("perlight", "bridge-a")
+        XCTAssertEqual(p?.eligibleOperationCount, 3)
+        XCTAssertTrue(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: p?.eligibleOperationCount ?? 0,
+            hasCompletedInitialSuccessfulRotation: p?.completedSuccessfulRotation ?? true,
+            cursor: p?.cursor ?? 0))
+    }
 }
