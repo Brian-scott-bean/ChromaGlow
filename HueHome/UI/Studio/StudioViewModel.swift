@@ -468,6 +468,11 @@ struct RunningEffect {
     /// Lights whose firmware accepted the effects_v2 upgrade — live
     /// speed/color slider writes target exactly these (bridgeNative only).
     var v2CapableLightIDs: [String] = []
+    /// The orchestrator-side claim that stops All-Day overwriting this room
+    /// (packet 6). Set for `.bridgeNative` only: those are long-running firmware
+    /// effects. One-shot `.bridgeOptimized` writes finish immediately and must
+    /// never register persistent ownership.
+    var bridgeNativeOwnership: UnifiedOrchestrator.BridgeNativeOwnershipToken? = nil
 }
 
 enum CompositionTransportPreference: String {
@@ -661,10 +666,20 @@ final class StudioViewModel {
     /// `false` = tear the effect down but leave lights at their current state.
     func stopFromNowPlaying(roomID: String, turnOffLights: Bool = true) async {
         isExplicitStop = turnOffLights
+        let stopping = runningEffects[roomID]
         await stopEffect(on: roomID)
-        // stopEffect's guard can bail (stale entry, missing grouped light) —
-        // the bar entry must still clear or Stop appears to do nothing.
-        orchestrator?.removeActiveEffect(roomID: roomID)
+        // stopEffect's guard can still bail (stale entry with nothing running),
+        // and the bar entry must clear in that case or Stop appears to do
+        // nothing. But this stop suspends, so a REPLACEMENT may have taken the
+        // room meanwhile — clearing unconditionally would erase the newcomer's
+        // Now-Playing row. Clear only when nothing newer holds the room.
+        let survivor = runningEffects[roomID]
+        let replacedByNewer = survivor != nil
+            && (survivor?.cardID != stopping?.cardID
+                || survivor?.bridgeNativeOwnership != stopping?.bridgeNativeOwnership)
+        if !replacedByNewer {
+            orchestrator?.removeActiveEffect(roomID: roomID)
+        }
         statusMessage = ""
     }
 
@@ -1187,6 +1202,24 @@ final class StudioViewModel {
             // remember whether we did it to a dark room so we can undo it.
             let roomWasOff = !room.isOn
 
+            // Packet 6: claim the room BEFORE the first mutating request, not
+            // when the RunningEffect is finally stored ~60 lines below. The
+            // steps in between turn the group on and write per-light firmware
+            // effects, and All-Day dispatching into that window would overwrite
+            // a half-started look.
+            //
+            // `ownershipTransferred` is what stops the defer from releasing a
+            // claim that has been handed to the RunningEffect: after transfer,
+            // `stopEffect` is the sole owner of release.
+            let bridgeNativeOwnership = orchestrator.beginBridgeNativeOwnership(
+                roomID: room.id, bridgeID: room.bridgeID)
+            var ownershipTransferred = false
+            defer {
+                if !ownershipTransferred {
+                    orchestrator.endBridgeNativeOwnership(bridgeNativeOwnership)
+                }
+            }
+
             // Step 1: Turn on group with brightness (1 grouped_light PUT).
             debugLog("[Studio] 📡 Group ON + bri=\(brightness) → \(room.name)")
             try? await api.setGroupedLightState(
@@ -1253,11 +1286,16 @@ final class StudioViewModel {
 
             if let coverage { effectCoverage[card.id] = coverage }
 
+            // The startup was accepted, so the provisional claim becomes the
+            // effect's own. Marking it transferred is what keeps the defer above
+            // from releasing it on the way out of this scope.
+            ownershipTransferred = true
             runningEffects[room.id] = RunningEffect(
                 cardID: card.id, card: card, room: room,
                 lightIDs: drivenIDs, isEntertainment: false,
                 requestedTransport: nil, transportFallback: false,
-                v2CapableLightIDs: v2Capable
+                v2CapableLightIDs: v2Capable,
+                bridgeNativeOwnership: bridgeNativeOwnership
             )
             publishNowPlaying(room: room, card: card)
             // Partial coverage is not a failure, but the user should hear it
@@ -1403,18 +1441,37 @@ final class StudioViewModel {
     }
 
     /// Stop the effect running on a specific room.
+    ///
+    /// Packet 6 narrowed the opening guard. It used to also require a resolvable
+    /// bridge client AND a groupedLightID, and returned if either was missing —
+    /// which left `runningEffects` populated, the Now-Playing row stuck, and
+    /// (once ownership existed) the room suppressed from All-Day forever. Only
+    /// the effect and the orchestrator are actually needed to begin teardown;
+    /// every network step below is best-effort.
     private func stopEffect(on roomID: String) async {
-        guard let effect = runningEffects[roomID],
-              let orchestrator,
-              let api = orchestrator.hueClient(for: effect.room.bridgeID),
-              let groupedLightID = effect.room.groupedLightID else { return }
+        guard let effect = runningEffects[roomID], let orchestrator else { return }
 
-        debugLog("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (glID: \(groupedLightID)) explicit=\(isExplicitStop)")
+        let api = orchestrator.hueClient(for: effect.room.bridgeID)
+        let groupedLightID = effect.room.groupedLightID
+        let ownership = effect.bridgeNativeOwnership
+        let stoppingCardID = effect.cardID
+
+        // Release on EVERY terminal path — missing client, missing grouped
+        // light, a failed cleanup request, or a room that has disappeared. The
+        // claim stays live for the duration of the best-effort cleanup below, so
+        // All-Day cannot slip in while the firmware effect is still being torn
+        // down. `endBridgeNativeOwnership` is synchronous, so `defer` is legal
+        // here, and a stale token is a no-op inside it.
+        defer {
+            if let ownership { orchestrator.endBridgeNativeOwnership(ownership) }
+        }
+
+        debugLog("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (glID: \(groupedLightID ?? "nil")) explicit=\(isExplicitStop)")
 
         switch effect.card.strategy {
         case .bridgeNative:
             // Clean up per-light effects (the ONLY way to clear them)
-            if !effect.lightIDs.isEmpty {
+            if let api, !effect.lightIDs.isEmpty {
                 debugLog("[Handoff] Clearing per-light no_effect on \(effect.lightIDs.count) lights for \(effect.room.name)")
                 await sendPerLightBatched(lightIDs: effect.lightIDs, api: api) { id in
                     try? await api.setLightNativeEffect(id: id, effect: "no_effect")
@@ -1424,7 +1481,7 @@ final class StudioViewModel {
                 debugLog("[Handoff] Per-light no_effect cleanup + settle delay complete for \(effect.room.name)")
             }
 
-            if isExplicitStop {
+            if isExplicitStop, let api, let groupedLightID {
                 // User tapped Stop — turn off the room (1 PUT)
                 try? await api.setGroupedLight(id: groupedLightID, on: false)
             }
@@ -1442,7 +1499,7 @@ final class StudioViewModel {
             // Keyed by the STOPPING room — the old single-slot nil-out
             // clobbered the selected room's editor when another room stopped.
             activeCompositionBoxes.removeValue(forKey: roomID)
-            if isExplicitStop {
+            if isExplicitStop, let api, let groupedLightID {
                 // Ensure composition cards (including bridge one-shot tier)
                 // fully release control and don't appear "stuck on".
                 try? await api.setGroupedLight(id: groupedLightID, on: false)
@@ -1450,6 +1507,13 @@ final class StudioViewModel {
             try? await Task.sleep(for: .milliseconds(200))
         }
 
+        // Identity-matched removal. This function suspends several times, so a
+        // stop that started before a replacement can finish after it — and the
+        // old unconditional removal would then erase the REPLACEMENT's entry and
+        // its Now-Playing row. Only clear what this stop actually owned.
+        guard let current = runningEffects[roomID],
+              current.cardID == stoppingCardID,
+              current.bridgeNativeOwnership == ownership else { return }
         runningEffects.removeValue(forKey: roomID)
         orchestrator.removeActiveEffect(roomID: roomID)
     }

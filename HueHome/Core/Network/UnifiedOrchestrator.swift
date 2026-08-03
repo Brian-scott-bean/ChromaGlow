@@ -186,6 +186,126 @@ final class UnifiedOrchestrator {
         allDayBlockedBridgeKeys.remove(bridgeID)
     }
 
+    // ── Bridge-native playback ownership (packet 6) ──────────────────────
+    //
+    // Studio's `.bridgeNative` cards (candle, fire, sparkle, prism, opal,
+    // glisten) are LONG-RUNNING firmware effects, but they leave no
+    // orchestrator state at all — the branch writes per-light effects and then
+    // records only `runningEffects[room.id]`, inside StudioViewModel.
+    //
+    // `activeEffectEntries` cannot stand in for that: it carries no bridgeID,
+    // and its `isAppDriven` flag is false for BOTH firmware effects and one-shot
+    // `.bridgeOptimized` presets, so it cannot tell persistent playback from a
+    // command that already finished. This registry can, and it lives here rather
+    // than in the view model so ownership survives StudioView being dismissed.
+
+    /// Exact identity of one bridge-native owner. Never keyed by roomID alone —
+    /// the same room id can exist on two bridges.
+    struct BridgeNativeOwnershipKey: Hashable {
+        let bridgeKey: String
+        let roomID: String
+    }
+
+    /// A specific bridge-native START. The generation is what makes a stale stop
+    /// harmless: an unregister only clears ownership it still holds.
+    struct BridgeNativeOwnershipToken: Hashable, Sendable {
+        let key: BridgeNativeOwnershipKey
+        let generation: Int
+    }
+
+    @ObservationIgnored
+    private var bridgeNativeOwners: [BridgeNativeOwnershipKey: Int] = [:]
+    @ObservationIgnored
+    private var bridgeNativeOwnershipSequence: Int = 0
+
+    /// Claim a room for a bridge-native effect. Called BEFORE the first mutating
+    /// request, not when the effect is finally registered — the startup sequence
+    /// turns the group on and writes per-light firmware effects well before it
+    /// stores a `RunningEffect`, and All-Day must not dispatch into that window.
+    @discardableResult
+    func beginBridgeNativeOwnership(roomID: String, bridgeID: String?) -> BridgeNativeOwnershipToken {
+        bridgeNativeOwnershipSequence &+= 1
+        let key = BridgeNativeOwnershipKey(bridgeKey: bridgeID ?? "legacy", roomID: roomID)
+        bridgeNativeOwners[key] = bridgeNativeOwnershipSequence
+        return BridgeNativeOwnershipToken(key: key, generation: bridgeNativeOwnershipSequence)
+    }
+
+    /// Release ownership — but only if this token still holds it. A stop that
+    /// completes after its effect was already replaced must not clear the
+    /// replacement's claim.
+    func endBridgeNativeOwnership(_ token: BridgeNativeOwnershipToken) {
+        guard bridgeNativeOwners[token.key] == token.generation else { return }
+        bridgeNativeOwners.removeValue(forKey: token.key)
+    }
+
+    // ── The All-Day suppression predicate (packet 6) ─────────────────────
+
+    /// May All-Day write to this exact bridge + room?
+    ///
+    /// Deliberately SEPARATE from `isAllDayBridgeEligible`, which answers the
+    /// different question of whether the bridge may be touched at all. Every arm
+    /// below is keyed or compared on BOTH bridge and room, and each is read with
+    /// its own subsystem's bridgeless convention — `"legacy"` for the Composer
+    /// session, Studio scope and this registry, `""` for the Entertainment maps.
+    /// Unifying those two spellings is a wider migration than this packet.
+    ///
+    /// Display state is not consulted: `activeEffectEntries` and
+    /// `runningEffects` are view-model mirrors with no bridge identity, and they
+    /// cannot distinguish a one-shot from a continuing owner.
+    private func isAllDayWriteAllowed(bridgeID: String?, roomID: String) -> Bool {
+        let legacyKey = bridgeID ?? "legacy"
+
+        // 1. Composer, ALL THREE transports. The telemetry session is opened in
+        //    `startCompositionMode` BEFORE the transport decision and removed by
+        //    `stopCompositionMode`, so it is the only record that covers REST,
+        //    Entertainment and bridge-stored under one exact key. Notably NOT
+        //    `compositionTransportByRoom`, whose roomID-only key cannot tell
+        //    identical room ids on different bridges apart.
+        let composerKey = ComposerTelemetrySessionKey(
+            bridgeKey: legacyKey,
+            scope: RestScope(roomID: roomID, owner: .composer))
+        if composerTelemetrySessions[composerKey] != nil { return false }
+
+        // 2. Entertainment ownership, recorded per bridge as bridge -> room.
+        if compositionEntRoomByBridge[bridgeID ?? ""] == roomID { return false }
+
+        // 3. Studio's app-driven engine. One global slot, but it carries both
+        //    halves of the identity, so compare both.
+        if let studio = activeStudioRestScope,
+           studio.bridgeKey == legacyKey,
+           studio.scope == RestScope(roomID: roomID, owner: .studio) {
+            return false
+        }
+
+        // 4. Bridge-stored manifests. These are persisted, so a look uploaded in
+        //    a previous session is still genuinely running on the bridge.
+        //    Manifests record the bridge by IP, so resolve this bridge's IP the
+        //    same way `hueClient(for:)` does and match on both fields.
+        if let ip = bridgeIPForAllDayOwnership(bridgeID),
+           bridgeAnimationStore.allManifests().contains(
+               where: { $0.roomID == roomID && $0.bridgeIP == ip }) {
+            return false
+        }
+
+        // 5. Long-running Studio firmware effects.
+        if bridgeNativeOwners[
+            BridgeNativeOwnershipKey(bridgeKey: legacyKey, roomID: roomID)] != nil {
+            return false
+        }
+
+        return true
+    }
+
+    /// This bridge's LAN IP, for matching bridge-stored manifests. Mirrors
+    /// `hueClient(for:)`'s nil rule: a bridgeless room can only exist in a
+    /// single-bridge home, and guessing with several bridges would reintroduce
+    /// the wrong-bridge class. Unresolvable means All-Day is not blocked here —
+    /// a bridge with no client cannot be written to anyway.
+    private func bridgeIPForAllDayOwnership(_ bridgeID: String?) -> String? {
+        guard let client = hueClient(for: bridgeID) else { return nil }
+        return (try? client.credentials())?.ip
+    }
+
     private enum AllDayKeys {
         static let enabled = "allDayScenes.enabled"
         static let lat     = "allDayScenes.anchor.lat"
@@ -295,6 +415,9 @@ final class UnifiedOrchestrator {
         let targets = allRooms.compactMap { room -> (roomID: String, glID: String, bridgeID: String?)? in
             guard let glID = room.groupedLightID else { return nil }
             guard isAllDayBridgeEligible(room.bridgeID) else { return nil }
+            // Active playback wins. Skipping happens per exact bridge+room, so
+            // one owned room never suppresses its neighbours.
+            guard isAllDayWriteAllowed(bridgeID: room.bridgeID, roomID: room.id) else { return nil }
             return (room.id, glID, room.bridgeID)
         }
 
@@ -319,6 +442,12 @@ final class UnifiedOrchestrator {
                 // Re-check at DISPATCH, not only at enqueue: a bridge may have
                 // been removed while this sat pending.
                 guard self.isAllDayBridgeEligible(target.bridgeID) else { return }
+                // Ownership is checked AGAIN, immediately before the write. The
+                // enqueue-time check alone is not enough: playback can start
+                // while this sits pending, and the whole point of the packet is
+                // that All-Day must not overwrite a room someone just claimed.
+                guard self.isAllDayWriteAllowed(
+                    bridgeID: target.bridgeID, roomID: target.roomID) else { return }
                 guard let api = self.hueClient(for: target.bridgeID) else { return }
                 // grouped_light supports on/dimming/ct/color; we do CT + brightness here.
                 try? await api.setGroupedLightEffect(
@@ -797,6 +926,11 @@ final class UnifiedOrchestrator {
         // can dispatch long afterwards.
         allDayBlockedBridgeKeys.insert(id)
         let retiredAllDaySender = allDayRestSendersByBridge.removeValue(forKey: id)
+        // Only THIS bridge's bridge-native claims — another bridge's firmware
+        // effect keeps running and keeps its room protected.
+        for key in bridgeNativeOwners.keys where key.bridgeKey == id {
+            bridgeNativeOwners.removeValue(forKey: key)
+        }
 
         // Stop running effects on this bridge's groups BEFORE dropping the
         // client, so teardown/no_effect PUTs can still reach the bridge.
@@ -3119,6 +3253,17 @@ final class UnifiedOrchestrator {
     func testSetAllDayTeardownInProgress(_ inProgress: Bool) {
         allDayTeardownInProgress = inProgress
     }
+
+    /// The suppression decision itself — a pure read, so it is testable as a
+    /// predicate independently of the tick that consults it.
+    func testIsAllDayWriteAllowed(bridgeID: String?, roomID: String) -> Bool {
+        isAllDayWriteAllowed(bridgeID: bridgeID, roomID: roomID)
+    }
+
+    /// Which exact (bridge, room) pairs currently hold a bridge-native claim.
+    func testBridgeNativeOwners() -> Set<BridgeNativeOwnershipKey> {
+        Set(bridgeNativeOwners.keys)
+    }
     #endif
 
     // MARK: Bridge-Stored Animation (v1 API)
@@ -5237,6 +5382,7 @@ final class UnifiedOrchestrator {
         allDayTask = nil
         let retiredAllDaySenders = Array(allDayRestSendersByBridge.values)
         allDayRestSendersByBridge.removeAll()
+        bridgeNativeOwners.removeAll()
 
         await stopStudioMode()
         stopSSE()
@@ -5347,6 +5493,9 @@ final class UnifiedOrchestrator {
         // Also notify any mic engines
         NotificationCenter.default.post(name: .studioStopAll, object: nil)
         activeEffectEntries.removeAll()
+        // Stop-everything includes the firmware effects Studio started, so their
+        // All-Day claims go with them.
+        bridgeNativeOwners.removeAll()
         debugLog("[Handoff] Studio teardown complete")
     }
 

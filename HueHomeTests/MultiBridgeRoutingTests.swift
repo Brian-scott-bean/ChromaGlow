@@ -132,7 +132,38 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
         return _v1EffectPuts
     }
 
+    /// Packet 6: gates on the FIRST mutating request of the bridge-native
+    /// startup, so a test can inspect ownership while that startup is genuinely
+    /// mid-flight rather than inferring it afterwards.
+    private var _groupedStateGate: RestGate?
+    func stageGroupedStateGate(_ gate: RestGate) {
+        lock.lock(); defer { lock.unlock() }
+        _groupedStateGate = gate
+    }
+    /// Same, for the per-light firmware teardown the stop path runs.
+    private var _lightNativeEffectGate: RestGate?
+    func stageLightNativeEffectGate(_ gate: RestGate) {
+        lock.lock(); defer { lock.unlock() }
+        _lightNativeEffectGate = gate
+    }
+    /// Lights `fetchLights()` should report — lets a test drive the capability
+    /// resolver to a real `.unsupported` verdict.
+    private var _stagedLights: [HueLight] = []
+    func stageLights(_ lights: [HueLight]) {
+        lock.lock(); defer { lock.unlock() }
+        _stagedLights = lights
+    }
+
     override func setGroupedLightState(id: String, on: Bool, brightness: Double) async throws {
+        lock.lock()
+        let gate = _groupedStateGate
+        lock.unlock()
+        // Gate BEFORE recording, so "the first mutation has begun" is observable
+        // at the earliest possible moment.
+        if let gate {
+            gate.signalStarted()
+            await gate.waitForRelease()
+        }
         lock.lock(); defer { lock.unlock() }
         _groupedStateIDs.append(id)
     }
@@ -146,11 +177,20 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
     }
 
     override func setLightNativeEffect(id: String, effect: String) async throws {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         _v1EffectPuts.append("\(id):\(effect)")
+        let gate = _lightNativeEffectGate
+        lock.unlock()
+        if let gate {
+            gate.signalStarted()
+            await gate.waitForRelease()
+        }
     }
 
-    override func fetchLights() async throws -> [HueLight] { [] }
+    override func fetchLights() async throws -> [HueLight] {
+        lock.lock(); defer { lock.unlock() }
+        return _stagedLights
+    }
 
     // Packet 4: the Composer per-light path (and the gradient path's flat
     // entries) issue exactly this PUT. Recorded — and optionally failed per
@@ -3589,5 +3629,598 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "addBridge must be findable")
         XCTAssertTrue(add.contains { $0.contains("clearAllDayBridgeTombstone(record.id)") },
             "addBridge is the in-session registration path and must lift it too")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 6: All-Day yields to active playback
+    //
+    // `tickAllDayScenes` wrote CT + brightness to EVERY room every 5 minutes
+    // with no check against any playback registry — and because SSE echo is
+    // suppressed for app-driven rooms, the overwrite was invisible in the UI.
+    //
+    // Suppression is per exact bridge + room, read from the strongest runtime
+    // state available for each owner — never from the view-model mirrors
+    // (`activeEffectEntries`, `runningEffects`), which carry no bridge identity
+    // and cannot tell a one-shot from a continuing owner.
+    // ──────────────────────────────────────────────
+
+    private func makeStudioVM() -> StudioViewModel {
+        let vm = StudioViewModel()
+        vm.configure(orchestrator: orchestrator)
+        return vm
+    }
+
+    private func bridgeNativeCard(
+        id: String = "candle-card", effect: String = "candle"
+    ) -> StudioCard {
+        StudioCard(
+            id: id, name: "Candle", tagline: "Soft flicker", icon: "flame",
+            accentColor: .orange, requiresForeground: false, params: [],
+            strategy: .bridgeNative(effect: effect),
+            compositionLayerActivity: nil)
+    }
+
+    private func firmwareRoom(
+        _ id: String = "room-1", bridge: String? = "bridge-a",
+        glID: String? = "gl-room-1", lights: [String] = ["L1"]
+    ) -> RoomDisplayItem {
+        RoomDisplayItem(
+            id: id, name: "Room \(id)", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: glID, lightCount: lights.count,
+            bridgeID: bridge,
+            childResourceRefs: lights.map { (rid: $0, rtype: "light") })
+    }
+
+    private func capabilityLight(id: String, v1Effects: [String]) -> HueLight {
+        HueLight(
+            id: id,
+            metadata: LightMetadata(name: id, archetype: nil),
+            on: OnState(on: true),
+            dimming: nil, color: nil, color_temperature: nil, owner: nil,
+            effects: LightEffectsV1(effect_values: v1Effects, status: nil),
+            effects_v2: nil, timed_effects: nil, gradient: nil)
+    }
+
+    private func ownershipKey(
+        _ roomID: String, _ bridgeKey: String
+    ) -> UnifiedOrchestrator.BridgeNativeOwnershipKey {
+        .init(bridgeKey: bridgeKey, roomID: roomID)
+    }
+
+    // ── Suppression, per exact bridge + room ─────────────────────────
+
+    // P6-4. An owned room is skipped while its neighbour still writes.
+    func testAnOwnedRoomIsSkippedWhileItsNeighbourStillWrites() async {
+        orchestrator.testBeginComposerTelemetrySession(
+            roomID: "owned", bridgeID: "bridge-a", generation: 1, isRESTActive: true)
+        orchestrator.allRooms = [
+            allDayRoom("owned", bridge: "bridge-a", glID: "gl-owned"),
+            allDayRoom("free", bridge: "bridge-a", glID: "gl-free"),
+        ]
+        await runAllDayTick()
+
+        XCTAssertEqual(bridgeA.groupedEffectIDs, ["gl-free"], """
+            one owned room must not suppress unrelated rooms — that is the whole \
+            point of skipping per exact bridge+room rather than per tick
+            """)
+    }
+
+    // P6-5. Composer REST suppresses only its exact room.
+    func testComposerRESTSuppressesOnlyItsExactRoom() {
+        orchestrator.testStageRESTComposition(
+            roomID: "room-1", bridgeID: "bridge-a", api: bridgeA)
+
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"))
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-2"),
+            "a sibling room on the same bridge stays eligible")
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-b", roomID: "room-1"),
+            "and the same room id on another bridge stays eligible")
+    }
+
+    // P6-6. Composer ENTERTAINMENT suppresses only its exact room — this holds
+    //       even though a streaming composition has no REST runtime.
+    func testComposerEntertainmentSuppressesOnlyItsExactRoom() {
+        orchestrator.testStageEntertainmentOwner(roomID: "room-1", bridgeID: "bridge-a")
+
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"))
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-2"))
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-b", roomID: "room-1"))
+    }
+
+    // P6-7. A Studio app-driven effect suppresses only its exact room.
+    func testStudioScopeSuppressesOnlyItsExactRoom() {
+        orchestrator.testSetActiveStudioRestScope(bridgeKey: "bridge-a", roomID: "room-1")
+
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"))
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-2"))
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-b", roomID: "room-1"),
+            "the Studio slot carries a bridge key, so it cannot suppress bridge B")
+    }
+
+    // P6-8. Bridge-stored playback suppresses where its manifest says it runs.
+    //       Manifests persist, so a look uploaded in an earlier session really
+    //       is still running on that bridge.
+    func testBridgeStoredManifestSuppressesItsOwnBridgeAndRoom() {
+        _ = stageManifest(
+            roomID: "room-1", bridgeIP: "192.0.2.1",
+            sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"),
+            "bridge A hosts the manifest (192.0.2.1)")
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-b", roomID: "room-1"), """
+            the SAME room id on bridge B is untouched — manifests are matched on \
+            roomID AND bridge IP, never roomID alone
+            """)
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-2"))
+    }
+
+    // P6-9. A one-shot leaves the room eligible: nothing about a completed
+    //       command may create permanent suppression.
+    func testAOneShotLeavesTheRoomEligible() async {
+        // A Now-Playing row is exactly what a one-shot leaves behind.
+        orchestrator.addActiveEffect(ActiveEffectEntry(
+            id: "room-1", roomName: "Room 1", groupedLightID: "gl-room-1",
+            effectID: "one-shot", effectName: "One Shot", effectIcon: "sparkles",
+            isAppDriven: false))
+
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"), """
+            that row is a display mirror with no bridge identity, and its \
+            isAppDriven flag is false for BOTH firmware effects and one-shots — \
+            it cannot be evidence of a continuing writer
+            """)
+
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        await runAllDayTick()
+        XCTAssertEqual(bridgeA.groupedEffectIDs, ["gl-room-1"],
+            "so the room still receives its All-Day update")
+    }
+
+    // P6-11. Ownership on bridge A does not suppress bridge B.
+    func testOwnershipOnBridgeADoesNotSuppressBridgeB() async {
+        orchestrator.testBeginComposerTelemetrySession(
+            roomID: "shared", bridgeID: "bridge-a", generation: 1, isRESTActive: true)
+        orchestrator.allRooms = [
+            allDayRoom("shared", bridge: "bridge-a", glID: "gl-a"),
+            allDayRoom("shared", bridge: "bridge-b", glID: "gl-b"),
+        ]
+        await runAllDayTick()
+
+        XCTAssertEqual(bridgeA.groupedEffectIDs, [], "the owned bridge+room is skipped")
+        XCTAssertEqual(bridgeB.groupedEffectIDs, ["gl-b"], """
+            the identically-named room on bridge B still updates — identical \
+            room ids on different bridges must remain independent
+            """)
+    }
+
+    // P6-12. When ownership ends the room is eligible on the NEXT normal tick.
+    //        There is deliberately no immediate catch-up write.
+    func testOwnershipEndingMakesTheRoomEligibleOnTheNextTick() async {
+        let token = orchestrator.beginBridgeNativeOwnership(
+            roomID: "room-1", bridgeID: "bridge-a")
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+
+        await runAllDayTick()
+        XCTAssertEqual(bridgeA.groupedEffectIDs, [], "owned: skipped")
+
+        orchestrator.endBridgeNativeOwnership(token)
+        await runAllDayTick()
+        XCTAssertEqual(bridgeA.groupedEffectIDs, ["gl-room-1"],
+            "freed: delivered on the next tick, with no catch-up burst")
+    }
+
+    // P6-10. Ownership that begins AFTER the enqueue still prevents the write.
+    //        An enqueue-time check alone cannot do this.
+    func testOwnershipBeginningAfterEnqueuePreventsTheWrite() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let sender = orchestrator.testAllDayRestSender(for: "bridge-a")!
+
+        let parked = RestGate()
+        await sender.enqueue(scope: allDayScope("__park__")) { _ in
+            parked.signalStarted()
+            await parked.waitForRelease()
+        }
+        await parked.waitUntilStarted()
+
+        await orchestrator.testTickAllDayScenes(
+            anchor: allDayAnchor(), generation: orchestrator.testAllDayGeneration())
+
+        // Playback claims the room while All-Day's write sits pending.
+        orchestrator.beginBridgeNativeOwnership(roomID: "room-1", bridgeID: "bridge-a")
+
+        parked.release()
+        await drainAllDay(sender)
+
+        XCTAssertEqual(bridgeA.groupedEffectIDs, [], """
+            the dispatch-time recheck must reject it — ownership can begin \
+            between enqueue and dispatch, and that write must not land
+            """)
+    }
+
+    // ── Bridge-native ownership registry ─────────────────────────────
+
+    func testBridgeNativeOwnershipSuppressesItsExactBridgeAndRoom() {
+        orchestrator.beginBridgeNativeOwnership(roomID: "room-1", bridgeID: "bridge-a")
+
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"))
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-2"))
+    }
+
+    func testBridgeNativeOwnershipOnOneBridgeLeavesTheOtherEligible() {
+        orchestrator.beginBridgeNativeOwnership(roomID: "shared", bridgeID: "bridge-a")
+
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "shared"))
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-b", roomID: "shared"),
+            "ownership is keyed by bridge AND room, never by room alone")
+    }
+
+    func testAStaleBridgeNativeTokenCannotClearItsReplacement() {
+        let old = orchestrator.beginBridgeNativeOwnership(roomID: "room-1", bridgeID: "bridge-a")
+        let new = orchestrator.beginBridgeNativeOwnership(roomID: "room-1", bridgeID: "bridge-a")
+
+        orchestrator.endBridgeNativeOwnership(old)
+
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"), """
+            the replacement still owns the room — a stop that completes late \
+            must not hand the room back to All-Day
+            """)
+
+        orchestrator.endBridgeNativeOwnership(new)
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"),
+            "and the CURRENT token does release it")
+    }
+
+    func testBridgeNativeSuppressionNeedsNoMountedStudioView() {
+        orchestrator.studioStopHandler = nil
+        orchestrator.beginBridgeNativeOwnership(roomID: "room-1", bridgeID: "bridge-a")
+
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"), """
+            correctness may not rest on an optional view-installed probe whose \
+            nil value would read as "not owned"
+            """)
+    }
+
+    func testBridgeRemovalClearsOnlyThatBridgesBridgeNativeOwnership() async {
+        orchestrator.beginBridgeNativeOwnership(roomID: "room-1", bridgeID: "bridge-a")
+        orchestrator.beginBridgeNativeOwnership(roomID: "room-1", bridgeID: "bridge-b")
+
+        await orchestrator.removeBridge(id: "bridge-a")
+
+        XCTAssertEqual(orchestrator.testBridgeNativeOwners(),
+            [ownershipKey("room-1", "bridge-b")], """
+            only the removed bridge's claims are dropped — another bridge's \
+            firmware effect is still running and still owns its room
+            """)
+    }
+
+    // ── A4: ownership begins before the first mutating write ─────────
+
+    // A4-a. The claim is visible while the FIRST mutating request is in flight.
+    func testBridgeNativeOwnershipIsRegisteredBeforeTheFirstNetworkMutation() async {
+        let vm = makeStudioVM()
+        let gate = RestGate()
+        bridgeA.stageGroupedStateGate(gate)
+
+        let finished = RestGate()
+        Task {
+            await vm.apply(bridgeNativeCard(), roomOverride: firmwareRoom(),
+                           preferEntertainmentOverride: nil)
+            finished.signalStarted()
+        }
+        await gate.waitUntilStarted()
+
+        XCTAssertTrue(orchestrator.testBridgeNativeOwners().contains(
+            ownershipKey("room-1", "bridge-a")), """
+            the group-on PUT is already in flight — claiming the room only at \
+            RunningEffect time would leave this whole startup window open to an \
+            All-Day overwrite
+            """)
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"))
+
+        gate.release()
+        await finished.waitUntilStarted()
+    }
+
+    // A4-b. An All-Day write parked before the startup is REJECTED when it is
+    //       released during that startup.
+    func testAnAllDayClosureParkedBeforeBridgeNativeStartupIsRejectedOnRelease() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let sender = orchestrator.testAllDayRestSender(for: "bridge-a")!
+
+        let parked = RestGate()
+        await sender.enqueue(scope: allDayScope("__park__")) { _ in
+            parked.signalStarted()
+            await parked.waitForRelease()
+        }
+        await parked.waitUntilStarted()
+        await orchestrator.testTickAllDayScenes(
+            anchor: allDayAnchor(), generation: orchestrator.testAllDayGeneration())
+
+        let vm = makeStudioVM()
+        let startGate = RestGate()
+        bridgeA.stageGroupedStateGate(startGate)
+        let finished = RestGate()
+        Task {
+            await vm.apply(bridgeNativeCard(), roomOverride: firmwareRoom(),
+                           preferEntertainmentOverride: nil)
+            finished.signalStarted()
+        }
+        await startGate.waitUntilStarted()
+
+        parked.release()
+        await drainAllDay(sender)
+
+        XCTAssertEqual(bridgeA.groupedEffectIDs, [], """
+            All-Day's grouped_light effect PUT must never land on a room whose \
+            firmware effect is mid-startup
+            """)
+
+        startGate.release()
+        await finished.waitUntilStarted()
+    }
+
+    // A4-c. A startup that exits because no lights resolved releases the claim.
+    func testNoLightBridgeNativeExitReleasesTheProvisionalToken() async {
+        let vm = makeStudioVM()
+
+        await vm.apply(bridgeNativeCard(), roomOverride: firmwareRoom(lights: []),
+                       preferEntertainmentOverride: nil)
+
+        XCTAssertTrue(orchestrator.testBridgeNativeOwners().isEmpty,
+            "the provisional claim is released on the no-light exit")
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"),
+            "so All-Day may resume for that room")
+        XCTAssertNil(vm.runningEffects["room-1"],
+            "and nothing was registered as running")
+    }
+
+    // A4-d. Same for the unsupported-routing exit.
+    func testUnsupportedRoutingExitReleasesTheProvisionalToken() async {
+        // A light that reports a capability list, but not the effect we ask for.
+        bridgeA.stageLights([capabilityLight(id: "L1", v1Effects: ["candle"])])
+        let vm = makeStudioVM()
+        var room = firmwareRoom()
+        room.isOn = false   // exercise the roomWasOff undo
+
+        await vm.apply(bridgeNativeCard(id: "fire-card", effect: "fire"),
+                       roomOverride: room, preferEntertainmentOverride: nil)
+
+        XCTAssertTrue(orchestrator.testBridgeNativeOwners().isEmpty, """
+            nothing is running after an unsupported verdict, so the room must \
+            not stay suppressed from All-Day
+            """)
+        XCTAssertNil(vm.runningEffects["room-1"])
+        XCTAssertTrue(bridgeA.groupedStateIDs.contains("gl-room-1"),
+            "the group-on that preceded the verdict still happened")
+    }
+
+    // A4-e. A successful startup transfers EXACTLY one token — the provisional
+    //       defer must not also release it.
+    func testSuccessfulBridgeNativeStartupTransfersExactlyOneToken() async {
+        let vm = makeStudioVM()
+
+        await vm.apply(bridgeNativeCard(), roomOverride: firmwareRoom(),
+                       preferEntertainmentOverride: nil)
+
+        XCTAssertEqual(orchestrator.testBridgeNativeOwners(),
+            [ownershipKey("room-1", "bridge-a")],
+            "exactly one claim survives a successful start")
+        XCTAssertEqual(
+            vm.runningEffects["room-1"]?.bridgeNativeOwnership?.key,
+            ownershipKey("room-1", "bridge-a"),
+            "and the token the effect holds IS the one the registry holds")
+    }
+
+    // ── A2: release survives missing network state ───────────────────
+
+    /// Inject a running bridge-native effect plus its orchestrator claim,
+    /// exactly as a successful startup leaves them.
+    @discardableResult
+    private func injectRunningFirmwareEffect(
+        into vm: StudioViewModel, room: RoomDisplayItem,
+        card: StudioCard, lightIDs: [String] = ["L1"]
+    ) -> UnifiedOrchestrator.BridgeNativeOwnershipToken {
+        let token = orchestrator.beginBridgeNativeOwnership(
+            roomID: room.id, bridgeID: room.bridgeID)
+        vm.runningEffects[room.id] = RunningEffect(
+            cardID: card.id, card: card, room: room,
+            lightIDs: lightIDs, isEntertainment: false,
+            requestedTransport: nil, transportFallback: false,
+            v2CapableLightIDs: [], bridgeNativeOwnership: token)
+        return token
+    }
+
+    // A2-a. No bridge client at stop time. The old combined guard returned
+    //       before the switch AND before the cleanup, stranding the claim.
+    func testStopWithNoBridgeClientStillReleasesBridgeNativeOwnership() async {
+        let vm = makeStudioVM()
+        let room = firmwareRoom("room-1", bridge: "bridge-gone")
+        injectRunningFirmwareEffect(into: vm, room: room, card: bridgeNativeCard())
+
+        await vm.stopFromNowPlaying(roomID: "room-1")
+
+        XCTAssertTrue(orchestrator.testBridgeNativeOwners().isEmpty, """
+            an unreachable bridge must not strand the claim — the room would be \
+            skipped by All-Day forever
+            """)
+        XCTAssertNil(vm.runningEffects["room-1"],
+            "and the running-effect entry is cleaned up too")
+    }
+
+    // A2-b. No groupedLightID — the same class of early return.
+    func testStopWithNoGroupedLightIDStillReleasesBridgeNativeOwnership() async {
+        let vm = makeStudioVM()
+        let room = firmwareRoom("room-1", bridge: "bridge-a", glID: nil)
+        injectRunningFirmwareEffect(into: vm, room: room, card: bridgeNativeCard())
+
+        await vm.stopFromNowPlaying(roomID: "room-1")
+
+        XCTAssertTrue(orchestrator.testBridgeNativeOwners().isEmpty)
+        XCTAssertNil(vm.runningEffects["room-1"])
+    }
+
+    // A2-c. A failing firmware cleanup request still releases the claim.
+    func testFailedFirmwareCleanupStillReleasesBridgeNativeOwnership() async {
+        let vm = makeStudioVM()
+        bridgeA.stageLightEffectFailures(["L1"])
+        injectRunningFirmwareEffect(
+            into: vm, room: firmwareRoom(), card: bridgeNativeCard())
+
+        await vm.stopFromNowPlaying(roomID: "room-1")
+
+        XCTAssertTrue(orchestrator.testBridgeNativeOwners().isEmpty,
+            "teardown is best-effort; ownership release is not")
+    }
+
+    // A2-d. A stale stop completing AFTER a replacement must clear neither the
+    //       replacement's claim nor its Now-Playing row.
+    func testAStaleStopAfterReplacementPreservesTheReplacementOwnershipAndNowPlaying() async {
+        let vm = makeStudioVM()
+        let room = firmwareRoom()
+        injectRunningFirmwareEffect(
+            into: vm, room: room, card: bridgeNativeCard(id: "old-card"))
+        orchestrator.addActiveEffect(ActiveEffectEntry(
+            id: "room-1", roomName: "Room 1", groupedLightID: "gl-room-1",
+            effectID: "old-card", effectName: "Old", effectIcon: "flame",
+            isAppDriven: false))
+
+        // Park the stop inside its per-light firmware teardown.
+        let teardownGate = RestGate()
+        bridgeA.stageLightNativeEffectGate(teardownGate)
+        let stopFinished = RestGate()
+        Task {
+            await vm.stopFromNowPlaying(roomID: "room-1")
+            stopFinished.signalStarted()
+        }
+        await teardownGate.waitUntilStarted()
+
+        // A replacement takes the room while the old stop is still suspended.
+        injectRunningFirmwareEffect(
+            into: vm, room: room, card: bridgeNativeCard(id: "new-card"))
+        orchestrator.addActiveEffect(ActiveEffectEntry(
+            id: "room-1", roomName: "Room 1", groupedLightID: "gl-room-1",
+            effectID: "new-card", effectName: "New", effectIcon: "flame",
+            isAppDriven: false))
+
+        teardownGate.release()
+        await stopFinished.waitUntilStarted()
+
+        XCTAssertTrue(orchestrator.testBridgeNativeOwners().contains(
+            ownershipKey("room-1", "bridge-a")), """
+            the stale stop's token no longer holds the room, so its release is a \
+            no-op — the replacement keeps its claim
+            """)
+        XCTAssertEqual(vm.runningEffects["room-1"]?.cardID, "new-card",
+            "and the replacement's RunningEffect survives")
+        XCTAssertEqual(orchestrator.activeEffectEntries.filter { $0.id == "room-1" }.count, 1,
+            "its Now-Playing row survives too")
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
+            bridgeID: "bridge-a", roomID: "room-1"),
+            "so All-Day still yields to the replacement")
+    }
+
+    // ── Packets 4 and 5 remain untouched ─────────────────────────────
+
+    // P6-19. No All-Day action alters Composer telemetry.
+    func testAllDayTicksAlterNoComposerTelemetry() async {
+        let clock = TelemetryTestClock(1_000)
+        stageTelemetrySession(room: "room-1", bridge: "bridge-a", clock: clock)
+        await completeComposerItem(
+            room: "room-1", bridge: "bridge-a", clock: clock, finishAt: 1_001)
+        let before = telemetrySnap("room-1", "bridge-a")
+
+        orchestrator.allRooms = [allDayRoom("room-2", bridge: "bridge-a")]
+        await runAllDayTick()
+
+        let after = telemetrySnap("room-1", "bridge-a")
+        XCTAssertEqual(after.successfulItems, before.successfulItems,
+            "All-Day writes are not Composer sends and must not be counted as any")
+        XCTAssertEqual(after.cadenceSeconds, before.cadenceSeconds,
+            "nor may they move the published cadence")
+    }
+
+    // P6-20. No All-Day action alters packet-5 rotation or degradation state.
+    func testAllDayTicksAlterNoRotationOrDegradationState() async {
+        orchestrator.testStageRESTComposition(
+            roomID: "room-1", bridgeID: "bridge-a", api: bridgeA,
+            lightIDs: (0..<3).map { "L\($0)" })
+        let before = rotation("room-1", "bridge-a")
+
+        orchestrator.allRooms = [allDayRoom("room-2", bridge: "bridge-a")]
+        await runAllDayTick()
+
+        let after = rotation("room-1", "bridge-a")
+        XCTAssertEqual(after?.cursor, before?.cursor)
+        XCTAssertEqual(after?.eligibleOperationCount, before?.eligibleOperationCount)
+        XCTAssertNil(orchestrator.testCompositionDegradation(
+            roomID: "room-1", bridgeID: "bridge-a"),
+            "All-Day cannot invent a degradation reason for a Composer room")
+    }
+
+    // ── Source guard ─────────────────────────────────────────────────
+
+    // P6-23. The dispatch-time recheck must not be optimised away, and the
+    //        firmware claim must precede the first mutating write.
+    func testAllDayRechecksOwnershipAtDispatchNotOnlyAtEnqueue() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+        let tick = try XCTUnwrap(
+            functionBody(code, startingWith: "private func tickAllDayScenes(anchor:"),
+            "tickAllDayScenes must be findable")
+
+        let enqueueIndex = try XCTUnwrap(
+            tick.firstIndex { $0.contains(".enqueue(") },
+            "the tick must enqueue its work")
+        let ownershipChecks = tick.indices.filter {
+            tick[$0].contains("isAllDayWriteAllowed(")
+        }
+
+        XCTAssertTrue(ownershipChecks.contains { $0 < enqueueIndex }, """
+            an ownership check must run at target selection, so an already-owned \
+            room is never queued
+            """)
+        XCTAssertTrue(ownershipChecks.contains { $0 > enqueueIndex }, """
+            and AGAIN inside the enqueued closure: ownership can begin after the \
+            enqueue but before the dispatch, and an enqueue-only check would let \
+            that write land
+            """)
+
+        let studio = try productionCode("HueHome/UI/Studio/StudioViewModel.swift")
+        let beginIndex = try XCTUnwrap(
+            studio.range(of: "beginBridgeNativeOwnership(")?.lowerBound,
+            "the firmware startup must claim the room")
+        let firstMutation = try XCTUnwrap(
+            studio.range(of: "api.setGroupedLightState(")?.lowerBound,
+            "…and setGroupedLightState is that startup's first mutating request")
+        XCTAssertLessThan(beginIndex, firstMutation, """
+            ownership must be claimed BEFORE the group-on PUT — claiming it at \
+            RunningEffect time leaves the whole startup window unowned
+            """)
+        XCTAssertTrue(studio.contains("if !ownershipTransferred"), """
+            and a defer must release the provisional claim on every exit that \
+            never reached registration — enumerating today's early returns would \
+            not protect the next one added
+            """)
     }
 }

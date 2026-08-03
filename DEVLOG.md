@@ -419,6 +419,198 @@
 
 ---
 
+## 2026-08-03 - [Claude] Composer 2 / Phase 0 / Packet 6 — All-Day playback ownership
+
+### Branch
+- `fix/all-day-playback-ownership`, cut from `main` (`c316e15`, the Packet 5 merge, PR #55).
+- Rollback tag: `checkpoint/pre-composer-packet-6` (at `c316e15`). No data-format or
+  persistence change, so `git reset --hard checkpoint/pre-composer-packet-6` is a total rollback.
+- **No version or build bump** — not an install build. Two commits. PR opened, not merged.
+
+### The defect (review fix #8, risk N5)
+`tickAllDayScenes` wrote CT + brightness to *every* room every 5 minutes with no
+check against any playback registry, and SSE echo is suppressed for app-driven
+rooms — so a Composer or Studio look was stomped invisibly. Packet 3 recorded a
+second defect in-source and deferred it here: All-Day owned ONE `RestSender` and
+ONE sentinel scope (`RestScope(roomID: "__allDay__", owner: .allDay)`), so every
+room in a tick overwrote the previous room's pending slot. With N rooms, N-2 were
+typically dropped without a trace. The closure also discarded the
+`ValidityProbe`, and **no** teardown path — `removeBridge`, `forgetAllBridges`,
+`stopStudioMode` — could reach the mailbox at all.
+
+### The design — delivery first, then ownership
+One sender **per bridge**, one scope **per room**. Latest-wins is per scope, so
+rooms stop erasing each other; `order` (FIFO across scopes) guarantees every
+eligible room is dispatched; identical room ids on two bridges land in two sender
+instances that never meet. The tick now carries `room.id` through — the key every
+ownership table already uses, and which the old target tuple threw away.
+
+Suppression is one centralized predicate, `isAllDayWriteAllowed(bridgeID:roomID:)`,
+called at target selection **and again inside the enqueued closure** immediately
+before the write. Five arms, each keyed on BOTH bridge and room:
+
+1. `composerTelemetrySessions` — the only record covering REST, Entertainment and
+   bridge-stored under one exact key, because `startCompositionMode` opens it
+   *before* the transport decision.
+2. `compositionEntRoomByBridge` — Entertainment ownership.
+3. `activeStudioRestScope` — Studio's app-driven engine, comparing both halves.
+4. `BridgeAnimationStore` manifests, matched on roomID **and bridge IP**.
+5. The new bridge-native ownership registry (below).
+
+Deliberately NOT `compositionTransportByRoom`: its roomID-only key cannot tell
+identical room ids on different bridges apart, and the scheduler already refuses
+to trust it for exactly that reason. Deliberately NOT `activeEffectEntries` or
+`runningEffects`: view-model mirrors with no bridge identity, whose `isAppDriven`
+flag is false for BOTH firmware effects and one-shots.
+
+Bridge eligibility (`isAllDayBridgeEligible`) is kept SEPARATE from room
+ownership. Folding them together would let a later edit to the ownership rule
+silently reopen the sender-recreation race below.
+
+### Sender retirement — why detachment is synchronous
+`stopAllDayScenes` cannot become async (a SwiftUI Toggle setter cannot await)
+while `clearAll()` is, and `startAllDayScenes` calls stop and then *immediately*
+starts the next generation. So the sender map is **detached synchronously before
+any cleanup is spawned**: a retired `clearAll()` landing on a sender the new
+generation had reused would erase that generation's pending work, and no
+generation guard can catch it — `clearAll` bumps epochs on whatever sender it
+holds, regardless of which generation queued the closures. Generation bump +
+map detachment are the correctness boundary; `clearAll` is mailbox hygiene.
+
+### Blocked bridges and the teardown gate — why detachment alone is not enough
+Detaching is a point-in-time act, and the suspension window is open afterwards.
+While `removeBridge` is parked in `stopEffectsForRemovedGroups`, `clients[id]`
+and the bridge's `allRooms` entries both still exist, so a concurrent tick would
+lazily *rebuild* the mailbox that was just detached. A per-bridge tombstone is
+therefore inserted before that first `await` and **outlives the removal** — a
+tick captured earlier can dispatch long afterwards. `allDayRestSender(for:)`
+returns an `Optional` so the refusal is structural rather than a rule every
+caller must remember.
+
+Both legitimate registration paths lift the tombstone through one helper:
+`configure(bridges:modelContext:)` as well as `addBridge(_:)`. Clearing only in
+`addBridge` would leave a re-paired bridge blocked from All-Day forever after the
+next relaunch, because `configure` is the launch path and `HueHomeApp` calls it
+immediately before `startAllDayScenesIfNeeded`. A source guard pins both.
+
+`forgetAllBridges` has the global form of the same race — its first statement is
+`await stopStudioMode()` — so it sets a teardown gate, disables, bumps the
+generation, cancels the task and detaches every sender **above** that line.
+Starts are refused while the gate is up, and All-Day is deliberately **not**
+auto-restarted afterwards.
+
+### Bridge-native ownership begins before the first write, not at registration
+Studio's `.bridgeNative` cards are long-running firmware effects that left no
+orchestrator state at all. They now claim the room through an exact-keyed,
+generation-tokened registry that lives in `UnifiedOrchestrator` — not behind an
+optional view-installed callback whose nil value would read as "not owned", and
+so it survives `StudioView` being dismissed.
+
+The claim is taken **immediately before the first mutating request**, not when
+the `RunningEffect` is finally stored ~60 lines later: in between, the startup
+turns the group on, writes per-light firmware effects, runs the effects_v2
+upgrade and resolves capability. Registering at the end would leave that whole
+window open to an All-Day overwrite of a half-started look. A `defer` releases
+the provisional claim on every path that exits before registration (no lights
+resolved, unsupported routing, and any future early return by construction); on
+acceptance the token is transferred into the `RunningEffect` and the defer stands
+down.
+
+### The Studio stop path — why the guard was narrowed
+`stopEffect` opened with a four-way guard that also required a resolvable bridge
+client AND a `groupedLightID`, returning if either was missing — before the
+strategy switch and before its own cleanup. That left `runningEffects` populated
+and the Now-Playing row stuck, and would have stranded the ownership claim
+forever, skipping that room from All-Day permanently. It now guards only on what
+teardown actually needs; `api` and `groupedLightID` are optional and every
+network step is best-effort, with the claim released via `defer` on every
+terminal path.
+
+Removal is also identity-matched now. `stopEffect` and `stopFromNowPlaying`
+suspend several times, so a stop that began before a replacement can finish after
+it; the old unconditional removal would erase the *replacement's* entry and its
+Now-Playing row. Both now clear only what the stop actually owned.
+
+### What is deliberately NOT claimed
+- **The roomID-keyed limitation is pre-existing and NOT solved here.**
+  `compositionRuntimes`, `compositionTransportByRoom`, `compositionOrder`,
+  `runningEffects` and `activeEffectEntries` remain roomID-keyed. Packet 6 routes
+  *around* them by choosing arms that already carry bridge identity.
+- **The `""` vs `"legacy"` bridgeless split persists.** Each arm reads its own
+  subsystem's convention; unifying them is a wider migration.
+- **Zones are still never targeted.** The tick reads `allRooms` only.
+- **No relaunch restoration.** A firmware effect running across a force-quit has
+  no local record, so All-Day may overwrite it on the next tick. That is
+  launch-time reconciliation (Phase 0 fix #10), not this packet.
+- **A leaked claim is conservative, not destructive.** If the Studio view model
+  is destroyed mid-effect, the claim persists until Studio stop-all, bridge
+  removal or forget-all — All-Day skips rather than stomps, and the firmware
+  effect genuinely is still running.
+- **Identity matching falls back to `cardID` for non-`.bridgeNative` strategies**
+  (their token is nil), so re-applying the *same* card to the *same* room is not
+  distinguishable by identity alone. `apply` awaits `stopEffect` before
+  re-registering, so that sequence is ordered.
+- **No wall-clock delivery guarantee and no catch-up write.** A freed room
+  resumes on the next normal tick, up to 5 minutes later.
+- All-Day still swallows every REST error at `try?` and still writes `on: true`,
+  turning deliberately-off unowned rooms back on. Both pre-existing.
+
+### Files changed
+| File | Change |
+| --- | --- |
+| `HueHome/Core/Network/UnifiedOrchestrator.swift` | per-bridge All-Day senders + per-room scopes; tombstones and teardown gate; six-step retirement; bridge-native ownership registry; `isAllDayWriteAllowed`; DEBUG seams |
+| `HueHome/UI/Studio/StudioViewModel.swift` | `RunningEffect.bridgeNativeOwnership`; provisional claim before the first mutating write with `defer` release and transfer; narrowed `stopEffect` guard with best-effort network steps; identity-matched removal in `stopEffect` and `stopFromNowPlaying` |
+| `HueHome/UI/Settings/SettingsView.swift` | one copy correction — the toggle no longer claims it applies to "all rooms" |
+| `HueHomeTests/MultiBridgeRoutingTests.swift` | 46 tests across two new packet-6 sections, plus spy gates for grouped-state, per-light firmware, and staged lights |
+| `DEVLOG.md`, `docs/ios/master-on-device-checklist.md` | this entry; new checklist §T |
+
+**No new source file, no `.pbxproj` edit, no version bump.**
+
+### Tests
+`xcodebuild test … -scheme "HueHome 1"`, read via `xcresulttool` (a piped tail
+loses TEST SUCCEEDED; the post-success simulator launch error is teardown noise):
+- Commit 1 narrow (`MultiBridgeRoutingTests`): **116/116 passed, 0 failed.**
+- Commit 1 full suite: **1077/1077 passed, 0 failed.**
+- Commit 2 narrow (`MultiBridgeRoutingTests`): **142/142 passed, 0 failed.**
+- Commit 2 full suite: **1103/1103 passed, 0 failed.**
+- `hardening_guards.sh`: all guards passed.
+
+No `Task.sleep` as proof, no timing waiters, no elapsed-time assertions. Four
+source guards carry the claims behavior cannot reach: that the sentinel scope
+stays gone, that the sender accessor stays refusal-capable and is never
+force-unwrapped, that every invalidating step precedes its function's first
+`await`, that both registration paths lift the tombstone, and that the ownership
+check appears on both sides of the enqueue.
+
+One test bug was found and fixed during the run rather than worked around: an
+early `drainAllDay` helper enqueued a sentinel *after* a stop, and the stop's own
+retirement cleanup could drop that sentinel — hanging the suite instead of
+failing it. The barrier is now a `clearAll()` the test awaits, which is
+idempotent and cannot be swallowed.
+
+### What still needs hardware
+Simulator tests prove the decisions; only a physical bridge proves which bulbs
+get overwritten and when. The 14-item pass is §T of
+`docs/ios/master-on-device-checklist.md` — headline items: both rooms updating in
+one tick; a Composer or Studio room not being stomped while its neighbour still
+updates; the off/on-twice restart still delivering; re-pairing a removed bridge
+restoring All-Day (including across a relaunch, which exercises the other
+registration path); forget-all refusing a racing re-enable; and a failed firmware
+card not suppressing its room forever.
+
+### Gotchas
+- `allDayRestSender(for:)` is `Optional` on purpose. A non-optional
+  lazily-creating accessor cannot express "this bridge is being removed", and a
+  caller that forgot the tombstone check would recreate the mailbox mid-removal.
+- The tombstone deliberately outlives `removeBridge`. Clearing it at the end of
+  removal would reopen the race for any tick captured before it started.
+- `defer` is legal in the `.bridgeNative` branch only because
+  `endBridgeNativeOwnership` is synchronous.
+- A drain sentinel enqueued after an All-Day stop can be swallowed by that stop's
+  own cleanup. Use an awaited `clearAll()` as the barrier instead.
+
+---
+
 ## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 5 — honest light limits
 
 ### Branch
