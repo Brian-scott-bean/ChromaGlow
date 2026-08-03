@@ -432,6 +432,138 @@
 
 ---
 
+## 2026-08-03 - [Claude] Composer 2 / Phase 0 / Packet 8 — bridge-stored animations survive a relaunch
+
+Branch `fix/bridge-animation-relaunch-reconciliation`, rollback tag
+`checkpoint/pre-composer-packet-8` (at `f1cbef7`), PR open and **unmerged**. One commit, no
+`project.pbxproj` change, no version/build bump. Composer 2 Phase 0 item 10 / risk N3.
+
+**The defect.** A bridge-stored Composer look is a CLIP sensor + rule chain + recurring schedule
+living on the bridge's own firmware, so it keeps running after ChromaGlow is force-quit — that is
+the transport's entire purpose. But nothing read `bridge_animations.json` back at launch.
+`BridgeAnimationStore` persisted the manifest and `isAllDayWriteAllowed` was its only reader, so
+after a force-quit the animation ran indefinitely while the app showed nothing in Now Playing, held
+no `runningEffects` entry, had no transport record, and offered **no ordinary way to stop it**. The
+only escape was Settings → Clean Bridge Resources, which deletes every `CG_` resource on the
+bridge — including other rooms' live looks.
+
+**Two defects found on the way in, both fixed here.**
+- `stopCompositionMode` removed the manifest **unconditionally**, including in the branch where no
+  client resolved for its IP. At launch "no registered client for this host" is the *normal*
+  transient state (bridge asleep, DHCP moved it, fetch in flight), and forgetting the manifest
+  there is permanent.
+- All five v1 inventory reads did `(try? JSONSerialization…) ?? [:]`, so a v1 error envelope —
+  which v1 returns with HTTP **200**, so the status check never fires — was indistinguishable from
+  "this bridge has none". The same swallow existed on the five `delete*` methods, which discarded
+  the response body entirely. Reconciliation's central question is exactly the difference those
+  swallowed, so both are now honest: reads throw on an envelope, and a delete counts as done only
+  when the bridge accepted it or answered `type: 3` ("resource not available").
+
+**Identity.** `BridgeAnimationManifest` gains an optional stable `bridgeID` beside the historic
+`bridgeIP` — an IP is a route, not an identity. The synthesized `Codable` is used deliberately:
+Swift emits `decodeIfPresent` for an optional stored property, so a pre-packet-8 file decodes to
+`nil` with no custom code and re-encodes byte-identically, whereas a hand-written decoder that
+forgot that would throw, `load()` would swallow it, and every manifest on disk would be lost. A
+legacy manifest is upgraded only when its IP resolves to **exactly one** registered bridge;
+ambiguous or unmapped means retained, unmutated, and not even read against. `BridgeAnimationStore`
+is rekeyed from `presetID_roomID` to the manifest id — the old key made the same preset, in the
+same room id, on two bridges into ONE entry, so saving the second silently destroyed the only
+record of the first. The on-disk format was already a JSON array, so this is a key-only migration.
+Every roomID-only lookup and removal is gone.
+
+**Reconciliation.** `UnifiedOrchestrator` owns bridge verification and the authoritative
+`recoveredBridgeAnimations` registry, keyed by exact `(bridgeID, manifestID)`. It hooks into
+`loadAll` after `rebuildAllRooms()`, throttled like the Entertainment cleanup because
+`scheduleStateRefresh` drives loads every ~1.5 s. One **batched** inventory read per bridge, bridges
+concurrent, each swallowing its own error so an offline bridge blocks nothing. A manifest is live
+only when its schedule exists *and is enabled*, its sensor exists, every rule exists, and every
+recorded scene exists; the resourcelink is optional because `upload` is allowed to fail creating it.
+An unread category is `.indeterminate`, never "absent". Reconciling a live manifest issues **zero**
+mutating requests. A structurally incomplete one has only its own still-present ids deleted — never
+the global purge, never a `CG_` name sweep.
+
+**Freshness.** Every decision is computed from a manifest snapshot taken before the network await,
+and the whole manifest value is the fingerprint. `stillCurrent(_:)` is re-checked immediately before
+cleanup, retirement and publication; a miss skips the decision and schedules another pass. Publication
+merges by exact identity and never sweeps by pass membership — a manifest saved *after* the pass began
+would otherwise be destroyed for being absent from its input.
+
+**Stop.** `stopRecoveredBridgeAnimation(_:turnOffLights:)` is the one exact-identity stop, reached
+from Dashboard, Studio and Stop All through a new `requestNowPlayingStop(_ entry:)` overload — a
+recovered row's presentation key is its manifest, not its room, because two bridges can run the same
+room id. Stale stops are structurally harmless: `upload` regenerates the manifest id, so a stop that
+began before a replacement names an id nothing holds. The power-off mirrors existing `.composition`
+semantics (Siri keeps `turnOffLights: false`, an unresolved room is never powered off) but is now
+generation-safe: a `RecoveredStopToken` captures the per-exact-bridge+room ownership generation, and
+the off PUT is skipped if that generation moved or `isAllDayWriteAllowed` says something else now
+owns the room. Failure keeps the manifest, the row, the transport record and the All-Day suppression,
+and says so honestly. `stopStudioMode` no longer clears recovered rows: it sends no v1 delete, so it
+cannot claim to have stopped them.
+
+**Replacement is blocked until the old chain is provably gone.**
+`cleanupBridgeStoredAnimationForReplacement` returns a typed
+`BridgeStoredReplacementReadiness`, and the bridge-stored branch of `startCompositionMode` guards on
+`.clear` before the first create. A partial or unreadable cleanup retains every affected manifest and
+creates no sensor, rule, schedule, scene or resourcelink — two recurring chains fighting over one room
+is a correctness failure, not accumulation to tidy later. Packet 2's rule holds: this path still
+performs no inventory enumeration.
+
+**Studio.** Presentation only — it hydrates from the registry and never decides liveness. `configure`
+installs a hydration handler *and* hydrates inline, which is what makes both orderings converge
+(loadAll-before-configure and configure-before-loadAll), with a generation guard so re-entering the tab
+is free. A recovered row gets a distinct card: no params, no layer chips, `requiresForeground: false`,
+and no `activeCompositionBoxes` entry — that absence is what makes live-edit inert rather than fake.
+The preset's own grid card is deliberately not highlighted, so tapping it stays a deliberate fresh
+start. A room that no longer resolves gets no Studio row and no guess, but keeps a Now-Playing row
+with its stored names and a working exact-manifest Stop.
+
+**Tests.** 20 pure decision tests in `BridgeAnimationCorrectnessTests` (legacy-JSON decode, the
+liveness truth table, the `[:]`-swallow guards, cleanup-result classification) and 39 orchestrator
+tests in `MultiBridgeRoutingTests`, all deterministic — `RestGate` continuations, staged inventories
+and event logs, no sleeps or waiters anywhere. While writing them I found and fixed a real isolation
+defect of my own making: `BridgeAnimationStore.shared` is process-wide, so one test's set-up could
+empty the store while another was suspended inside a production settle window. Each test now gets an
+isolated store on its own file via a `#if DEBUG init(fileURL:)`, injected with
+`injectForTesting(bridgeAnimationStore:)` — which also stops the suite leaving fixtures in the
+developer's real `bridge_animations.json`.
+
+Guard 10 (`composer-p8`) in `Scripts/hardening_guards.sh` pins the four shapes that destroy manifest
+evidence; the two function-scoped rules (reconciliation's position inside `loadAll`, and that
+destructive selection always goes through `exactManifests(`) are in-test source-shape assertions,
+because a grep cannot express ordering or containment within one function body.
+
+Device checklist: `docs/ios/master-on-device-checklist.md` **§V**, 11 items. Only hardware can prove
+a look really kept running while the app was dead.
+
+**Three corrections folded in before merge.**
+- `StudioViewModel.runningEffects` is keyed by room id alone, so it cannot represent one room id
+  running on two bridges. Hydration was letting dictionary order pick a winner, which meant
+  selecting bridge A and pressing Stop could tear down bridge B's animation. It now **fails closed**:
+  a room id claimed by more than one bridge is mirrored for neither, and a second bridge appearing
+  retracts an existing mirror. Nothing is lost — the orchestrator's registry is exact-keyed, so both
+  keep their own Dashboard row and each stays stoppable by its exact manifest. Resolving the
+  ambiguity (stopping one) makes the survivor mirrorable again.
+- `publishRecovered` bumped the room ownership generation for every live decision, including an
+  idempotent republish of an unchanged owner. That generation is what a parked stop compares against
+  before powering the room off, so a routine reconciliation landing mid-stop looked like a
+  replacement and silently swallowed the room-off. It now moves only on genuine acquisition — a
+  replacement carries a new manifest id, hence a new key, hence a real insert. A display-name
+  refresh is not an ownership change either. `bridgeAnimationReconcileGeneration` stays separate and
+  still drives UI hydration.
+- The recovered Studio card was built from the orchestrator's published name and only *then*
+  refreshed, so a renamed preset showed the stale name in Studio until some later pass (the refresh
+  deliberately does not bump the hydration generation). Studio now resolves the current preset name
+  **before** constructing the card and mirrors the same string onto the Dashboard row. `makeRecovered`
+  stopped carrying a previously-upgraded name forward, which had meant a preset that was renamed and
+  then deleted kept displaying the old preset's name instead of falling back to the manifest's.
+  Tests cover renamed and deleted on both surfaces, using a `CompositionStore` on an isolated file
+  via a new `injectForTesting(compositionStore:)` seam so no assertion reads or writes the
+  developer's real `compositions.json`.
+
+Both correction guards were verified load-bearing by reverting each fix and confirming its test
+fails. Final counts: narrow 56/56, `MultiBridgeRoutingTests` 232/232, full suite 1245/1245, guards
+pass.
+
 ## 2026-08-03 - [Claude] Composer 2 / Phase 0 / Packet 7 — third-party Entertainment consent
 
 ### Branch

@@ -403,7 +403,10 @@ struct DashboardView: View {
         Task {
             // Studio owns the teardown (engine loops, per-light cleanup) —
             // a bare grouped-light PUT here would leave the loop running.
-            await orchestrator.requestNowPlayingStop(roomID: entry.id)
+            // Packet 8: routed on the ENTRY, because a recovered bridge-stored
+            // row's id is its manifest, not its room, and only the manifest
+            // says which bridge to clean.
+            await orchestrator.requestNowPlayingStop(entry)
         }
     }
 
@@ -411,7 +414,7 @@ struct DashboardView: View {
         HapticManager.shared.medium()
         Task {
             for entry in orchestrator.activeEffectEntries {
-                await orchestrator.requestNowPlayingStop(roomID: entry.id)
+                await orchestrator.requestNowPlayingStop(entry)
             }
         }
     }

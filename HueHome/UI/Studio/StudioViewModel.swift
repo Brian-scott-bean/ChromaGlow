@@ -473,6 +473,14 @@ struct RunningEffect {
     /// effects. One-shot `.bridgeOptimized` writes finish immediately and must
     /// never register persistent ownership.
     var bridgeNativeOwnership: UnifiedOrchestrator.BridgeNativeOwnershipToken? = nil
+    /// Non-nil = this row MIRRORS a bridge-stored animation that was already
+    /// running on the bridge when the app launched (packet 8).
+    ///
+    /// There is no app task, no Entertainment client, no REST scheduler and no
+    /// mic demand behind it — only the bridge's own rule chain. Note that
+    /// `activeCompositionBoxes` is deliberately NOT populated for these, which
+    /// is what makes every live-edit control inert rather than fake.
+    var recovered: UnifiedOrchestrator.RecoveredBridgeAnimationKey? = nil
 }
 
 enum CompositionTransportPreference: String {
@@ -633,7 +641,16 @@ final class StudioViewModel {
     // loadsSynchronously: false — StudioView constructs this VM eagerly (and again on
     // every tab switch), so the composition-library file read + JSON decode must not run
     // on the main thread. Presets publish shortly after; mutations force a sync load first.
-    let compositionStore = CompositionStore(loadsSynchronously: false)
+    private(set) var compositionStore = CompositionStore(loadsSynchronously: false)
+
+    #if DEBUG
+    /// Swap in a store backed by an isolated file, so a test can assert what
+    /// Studio displays for a renamed or deleted preset without loading — or
+    /// writing — the developer's real `compositions.json`.
+    func injectForTesting(compositionStore store: CompositionStore) {
+        compositionStore = store
+    }
+    #endif
     private let aiGenerator = AICompositionGenerator()
     var isGeneratingAIComposition = false
     var aiGenerationErrorMessage: String?
@@ -684,10 +701,137 @@ final class StudioViewModel {
         orchestrator.studioStopHandler = { [weak self] roomID, turnOffLights in
             await self?.stopFromNowPlaying(roomID: roomID, turnOffLights: turnOffLights)
         }
+        // Packet 8: this pair is the two-way ordering mechanism for recovered
+        // bridge-stored animations. The handler covers configure-BEFORE-load
+        // (reconciliation calls it when it publishes); the inline hydrate below
+        // covers load-BEFORE-configure (reconciliation already published, and
+        // this view model was not alive to hear it). Both paths converge on the
+        // same generation-guarded function, so the order the user visits
+        // screens in cannot change what they see.
+        orchestrator.studioRecoveredHydrationHandler = { [weak self] in
+            self?.hydrateRecoveredBridgeStored()
+        }
         if selectedRoom == nil, let first = orchestrator.allRooms.first {
             selectedRoom = first
         }
         restoreLastUsedParams()
+        hydrateRecoveredBridgeStored()
+    }
+
+    /// Which reconcile generation this view model has already mirrored.
+    /// `StudioView.onAppear` re-runs `configure` on every appearance, so this
+    /// is what makes re-entering the tab free.
+    @ObservationIgnored private var hydratedRecoveredGeneration: Int = -1
+
+    /// Mirror the orchestrator's reconciled registry into `runningEffects`.
+    ///
+    /// Presentation only. This never decides whether a manifest is live — the
+    /// orchestrator owns bridge verification, and a second opinion here is how
+    /// a phantom row appears.
+    func hydrateRecoveredBridgeStored() {
+        guard let orchestrator else { return }
+        guard orchestrator.bridgeAnimationReconcileGeneration != hydratedRecoveredGeneration else { return }
+        hydratedRecoveredGeneration = orchestrator.bridgeAnimationReconcileGeneration
+
+        let live = orchestrator.recoveredBridgeAnimations
+
+        // `runningEffects` is keyed by room id alone, so it cannot represent
+        // the same room id running on two different bridges. Letting dictionary
+        // order pick a winner would mean selecting bridge A and pressing Stop
+        // could tear down bridge B's animation instead. Fail closed: a room id
+        // claimed by more than one bridge is mirrored for NEITHER.
+        //
+        // Nothing is lost by that. The orchestrator's registry is exact-keyed,
+        // so both animations keep their own Dashboard Now-Playing row and each
+        // stays independently stoppable by its exact manifest.
+        var recoveredCountByRoomID: [String: Int] = [:]
+        for animation in live.values where animation.room != nil {
+            recoveredCountByRoomID[animation.manifest.roomID, default: 0] += 1
+        }
+
+        // Drop mirrors whose animation is gone, and any whose room id has since
+        // become ambiguous — a second bridge appearing must retract the first
+        // one's row rather than leave a now-unsafe owner in place.
+        for (roomID, effect) in runningEffects {
+            guard let key = effect.recovered else { continue }
+            if live[key] == nil || recoveredCountByRoomID[roomID, default: 0] > 1 {
+                runningEffects.removeValue(forKey: roomID)
+            }
+        }
+
+        for (key, animation) in live {
+            // No room ⇒ no RunningEffect and no room guessing. The orchestrator
+            // still publishes a Now-Playing row carrying the stored room name
+            // and a working exact-manifest Stop.
+            guard let room = animation.room else { continue }
+            guard recoveredCountByRoomID[room.id] == 1 else { continue }
+            // Never overwrite a live effect the user started, and never rebuild
+            // a mirror that already matches.
+            if let existing = runningEffects[room.id], existing.recovered != key { continue }
+
+            // Resolve the display name BEFORE building the card. The
+            // orchestrator holds no CompositionStore, so it publishes the
+            // manifest's persisted name; Studio has the live preset and is what
+            // makes a rename show through. Building the card first and
+            // refreshing afterwards left Studio showing the stale name until
+            // some later pass, because the refresh deliberately does not bump
+            // the hydration generation.
+            let currentPresetName = compositionStore.presets
+                .first { $0.id == animation.manifest.presetID }?.name
+            // A DELETED preset simply keeps the persisted name, and the row
+            // stays stoppable either way because Stop routes on the manifest.
+            let displayName = currentPresetName ?? animation.displayName
+
+            runningEffects[room.id] = RunningEffect(
+                cardID: Self.recoveredCardID(manifestID: key.manifestID),
+                card: recoveredCard(for: animation, displayName: displayName),
+                room: room,
+                lightIDs: [],
+                isEntertainment: false,
+                requestedTransport: nil,
+                transportFallback: false,
+                recovered: key)
+            // NO publishNowPlaying: the orchestrator is the sole publisher of
+            // recovered rows. Two publishers is exactly how duplicates appear.
+            // NO activeCompositionBoxes entry, no mic demand, no engine task.
+
+            // Mirror the same name onto the Dashboard row. This replaces the
+            // row in place and is NOT an ownership change, so it cannot move
+            // the generation a parked stop is comparing against.
+            if displayName != animation.displayName {
+                orchestrator.refreshRecoveredDisplayName(key: key, name: displayName)
+            }
+        }
+    }
+
+    static func recoveredCardID(manifestID: UUID) -> String {
+        "recovered_\(manifestID.uuidString)"
+    }
+
+    /// A card that describes a bridge-stored animation honestly.
+    ///
+    /// Deliberately NOT the preset's own card id: the app does not hold this
+    /// animation's editable runtime state, so sliders and layer chips would
+    /// imply control that no longer exists, and highlighting the original
+    /// preset card would suggest the running animation is still linked to that
+    /// preset instance. Tapping the real preset stays a deliberate fresh start
+    /// with the normal replacement cleanup. A distinct id also keeps two
+    /// bridges running the same preset from colliding on one card.
+    private func recoveredCard(
+        for animation: UnifiedOrchestrator.RecoveredBridgeAnimation,
+        displayName: String
+    ) -> StudioCard {
+        StudioCard(
+            id: Self.recoveredCardID(manifestID: animation.manifest.id),
+            name: displayName,
+            tagline: "Running on the bridge — recovered at launch",
+            icon: "externaldrive.connected.to.line.below",
+            accentColor: .cyan,
+            requiresForeground: false,      // no app task ⇒ no "keep app open"
+            params: [],                     // no sliders: nothing to drive
+            strategy: .composition(presetID: animation.manifest.presetID),
+            compositionLayerActivity: nil,  // no layer chips
+            compositionTier: .bridgeOptimized)
     }
 
     /// Mirror a running effect into the orchestrator's shared now-playing
@@ -719,7 +863,8 @@ final class StudioViewModel {
         let survivor = runningEffects[roomID]
         let replacedByNewer = survivor != nil
             && (survivor?.cardID != stopping?.cardID
-                || survivor?.bridgeNativeOwnership != stopping?.bridgeNativeOwnership)
+                || survivor?.bridgeNativeOwnership != stopping?.bridgeNativeOwnership
+                || survivor?.recovered != stopping?.recovered)
         if !replacedByNewer {
             orchestrator?.removeActiveEffect(roomID: roomID)
         }
@@ -1683,6 +1828,29 @@ final class StudioViewModel {
     /// every network step below is best-effort.
     private func stopEffect(on roomID: String) async {
         guard let effect = runningEffects[roomID], let orchestrator else { return }
+
+        // Packet 8: a recovered bridge-stored animation has no engine loop, no
+        // per-light firmware state and no REST scope to tear down. The ONLY
+        // teardown is its own resources on its own bridge, addressed by the
+        // exact manifest — so it takes none of the strategy switch below.
+        if let key = effect.recovered {
+            let stopped = await orchestrator.stopRecoveredBridgeAnimation(
+                key, turnOffLights: isExplicitStop)
+            guard stopped else {
+                // The animation is still running. Say so, and leave the row and
+                // the Now-Playing entry exactly where they are.
+                statusMessage = "⚠ Couldn't stop \(effect.card.name) — it's still running on the bridge"
+                return
+            }
+            // Identity-matched removal, same discipline as the tail of this
+            // function: a replacement that took this room while the stop was in
+            // flight must keep its row.
+            guard let current = runningEffects[roomID], current.recovered == key else { return }
+            runningEffects.removeValue(forKey: roomID)
+            // NOT removeActiveEffect(roomID:) — a recovered row is keyed by its
+            // manifest, and the orchestrator already removed it.
+            return
+        }
 
         let api = orchestrator.hueClient(for: effect.room.bridgeID)
         let groupedLightID = effect.room.groupedLightID

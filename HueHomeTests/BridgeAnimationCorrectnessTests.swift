@@ -572,3 +572,351 @@ final class BridgeAnimationCorrectnessTests: XCTestCase {
             "exactly one step-0 rule advances the sensor — duplicates would skip steps")
     }
 }
+
+// MARK: - Composer 2 packet 8: identity, liveness and honest cleanup
+//
+// Every test below is a PURE decision — no orchestrator, no shared store, no
+// network — so what is proven here is the rule itself, not a wiring accident.
+// No Task.sleep, no XCTWaiter, no wait(for:), no elapsed-time assertion.
+
+/// A v1 delete/read spy that can fail, or answer "already gone".
+private final class CleanupSpyV1Client: HueV1Client, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _attempted: [String] = []
+    private var _fetchCalls: [String] = []
+    var attempted: [String] { lock.lock(); defer { lock.unlock() }; return _attempted }
+    /// A cleanup that reads the bridge would break packet 2's guarantee that a
+    /// normal replacement never enumerates it, so this must stay empty.
+    var fetchCalls: [String] { lock.lock(); defer { lock.unlock() }; return _fetchCalls }
+
+    /// Entries the bridge ANSWERS and refuses → `.partial`.
+    var refusing: Set<String> = []
+    /// Entries no request reaches at all → `.bridgeUnreadable`.
+    var unreachable: Set<String> = []
+    /// Entries the bridge says are already gone → still `.removed`.
+    var alreadyAbsent: Set<String> = []
+
+    private func perform(_ entry: String) throws {
+        lock.lock(); _attempted.append(entry); lock.unlock()
+        if alreadyAbsent.contains(entry) {
+            try HueV1Client.throwUnlessDeleted(
+                Data(#"[{"error":{"type":3,"address":"/x","description":"not available"}}]"#.utf8))
+            return
+        }
+        if unreachable.contains(entry) { throw HueAPIError.httpError(500) }
+        if refusing.contains(entry) {
+            throw HueV1ClientError.apiError(type: 1, address: "/x", description: "unauthorized user")
+        }
+    }
+    private func note(_ kind: String) { lock.lock(); _fetchCalls.append(kind); lock.unlock() }
+
+    override func deleteSchedule(id: String) async throws { try perform("schedule:\(id)") }
+    override func deleteRule(id: String) async throws { try perform("rule:\(id)") }
+    override func deleteSensor(id: String) async throws { try perform("sensor:\(id)") }
+    override func deleteScene(id: String) async throws { try perform("scene:\(id)") }
+    override func deleteResourcelink(id: String) async throws { try perform("resourcelink:\(id)") }
+
+    override func fetchSchedules() async throws -> [String: [String: Any]] { note("schedules"); return [:] }
+    override func fetchRules() async throws -> [String: [String: Any]] { note("rules"); return [:] }
+    override func fetchSensors() async throws -> [String: [String: Any]] { note("sensors"); return [:] }
+    override func fetchScenes() async throws -> [String: [String: Any]] { note("scenes"); return [:] }
+    override func fetchResourcelinks() async throws -> [String: [String: Any]] { note("resourcelinks"); return [:] }
+}
+
+final class BridgeAnimationPacket8Tests: XCTestCase {
+
+    // ── Fixtures ────────────────────────────────────────────────────────
+
+    private func manifest(
+        bridgeID: String? = "bridge-a",
+        sensorID: String = "S1",
+        ruleIDs: [String] = ["R1", "R2"],
+        scheduleID: String = "SC1",
+        sceneIDs: [String] = [],
+        resourcelinkID: String? = "L1"
+    ) -> BridgeAnimationManifest {
+        BridgeAnimationManifest(
+            id: UUID(), presetID: UUID(), presetName: "Sunset Drift",
+            roomID: "room-1", roomName: "Living Room",
+            bridgeIP: "192.0.2.1", bridgeID: bridgeID,
+            sensorID: sensorID, ruleIDs: ruleIDs, scheduleID: scheduleID,
+            sceneIDs: sceneIDs, resourcelinkID: resourcelinkID,
+            stepCount: 2, intervalSeconds: 3, cycleDurationSeconds: 6,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
+    private func inventory(
+        schedules: [String: Bool] = ["SC1": true],
+        rules: Set<String> = ["R1", "R2"],
+        sensors: Set<String> = ["S1"],
+        scenes: Set<String>? = nil,
+        resourcelinks: Set<String>? = ["L1"]
+    ) -> BridgeAnimationInventory {
+        BridgeAnimationInventory(
+            schedules: schedules, rules: rules, sensors: sensors,
+            scenes: scenes, resourcelinks: resourcelinks)
+    }
+
+    // ── Persisted-manifest migration ────────────────────────────────────
+
+    /// The highest-value single test in the packet. A non-optional `bridgeID`,
+    /// or a hand-written decoder that forgot `decodeIfPresent`, throws here —
+    /// `BridgeAnimationStore.load()` swallows that, and EVERY manifest on disk
+    /// is lost. That would turn this packet's fix into a worse version of the
+    /// bug it fixes.
+    func testALegacyManifestJSONWithoutBridgeIDStillDecodes() throws {
+        let legacy = """
+        [{
+          "id":"11111111-1111-1111-1111-111111111111",
+          "presetID":"22222222-2222-2222-2222-222222222222",
+          "presetName":"Sunset Drift",
+          "roomID":"room-1","roomName":"Living Room",
+          "bridgeIP":"192.0.2.1",
+          "sensorID":"S1","ruleIDs":["R1","R2"],"scheduleID":"SC1",
+          "sceneIDs":[],"resourcelinkID":"L1",
+          "stepCount":2,"intervalSeconds":3,"cycleDurationSeconds":6,
+          "createdAt":723456789.0
+        }]
+        """
+        let decoded = try BridgeAnimationStore.decodeManifests(Data(legacy.utf8))
+
+        XCTAssertEqual(decoded.count, 1, "a pre-packet-8 file must still decode")
+        let only = try XCTUnwrap(decoded.first)
+        XCTAssertNil(only.bridgeID, "an absent bridgeID decodes to nil, never a throw")
+        XCTAssertEqual(only.presetName, "Sunset Drift")
+        XCTAssertEqual(only.roomID, "room-1")
+        XCTAssertEqual(only.bridgeIP, "192.0.2.1")
+        XCTAssertEqual(only.ruleIDs, ["R1", "R2"])
+        XCTAssertEqual(only.scheduleID, "SC1")
+        XCTAssertEqual(only.resourcelinkID, "L1")
+    }
+
+    /// Re-encoding an untouched legacy manifest must not invent the key, so a
+    /// build that merely READS the file cannot change what an older build sees.
+    func testAnUntouchedLegacyManifestReEncodesWithoutABridgeIDKey() throws {
+        let legacy = manifest(bridgeID: nil)
+        let json = try XCTUnwrap(String(data: try JSONEncoder().encode([legacy]), encoding: .utf8))
+        XCTAssertFalse(json.contains("bridgeID"), "a nil bridgeID must be omitted, not written as null")
+
+        let upgraded = legacy.adoptingBridgeID("bridge-a")
+        let upgradedJSON = try XCTUnwrap(String(data: try JSONEncoder().encode([upgraded]), encoding: .utf8))
+        XCTAssertTrue(upgradedJSON.contains("bridge-a"))
+
+        // Round-trips, and the id is stable so teardown can still find it.
+        let reread = try BridgeAnimationStore.decodeManifests(try JSONEncoder().encode([upgraded]))
+        XCTAssertEqual(reread.first?.bridgeID, "bridge-a")
+        XCTAssertEqual(reread.first?.id, legacy.id)
+        XCTAssertEqual(reread.first, upgraded, "the whole value is the freshness fingerprint")
+    }
+
+    /// `adoptingBridgeID` changes nothing else — the fingerprint must move for
+    /// the bridge id and for nothing besides.
+    func testAdoptingABridgeIDChangesOnlyTheBridgeID() {
+        let legacy = manifest(bridgeID: nil)
+        let upgraded = legacy.adoptingBridgeID("bridge-a")
+        XCTAssertNotEqual(legacy, upgraded)
+        XCTAssertEqual(upgraded.adoptingBridgeID("bridge-a"), upgraded, "idempotent")
+        XCTAssertEqual(upgraded.id, legacy.id)
+        XCTAssertEqual(upgraded.sensorID, legacy.sensorID)
+        XCTAssertEqual(upgraded.ruleIDs, legacy.ruleIDs)
+        XCTAssertEqual(upgraded.createdAt, legacy.createdAt)
+    }
+
+    // ── Liveness truth table ────────────────────────────────────────────
+
+    func testAFullyPresentEnabledAnimationIsLive() {
+        XCTAssertEqual(BridgeAnimationEngine.liveness(of: manifest(), in: inventory()), .live)
+    }
+
+    /// A schedule that exists but is disabled drives nothing. Treating presence
+    /// alone as "running" is how a phantom Now Playing row appears.
+    func testADisabledScheduleIsNotRunning() {
+        let result = BridgeAnimationEngine.liveness(
+            of: manifest(), in: inventory(schedules: ["SC1": false]))
+        guard case .notRunning(let residue) = result else { return XCTFail("expected notRunning") }
+        XCTAssertEqual(residue.scheduleID, "SC1", "the schedule still exists, so cleanup must remove it")
+        XCTAssertEqual(residue.ruleIDs, ["R1", "R2"])
+        XCTAssertEqual(residue.sensorID, "S1")
+    }
+
+    func testAMissingScheduleIsNotRunning() {
+        let result = BridgeAnimationEngine.liveness(of: manifest(), in: inventory(schedules: [:]))
+        guard case .notRunning(let residue) = result else { return XCTFail("expected notRunning") }
+        XCTAssertNil(residue.scheduleID, "a schedule the bridge does not have is not in the delete set")
+    }
+
+    func testAMissingSensorIsNotRunning() {
+        let result = BridgeAnimationEngine.liveness(of: manifest(), in: inventory(sensors: []))
+        guard case .notRunning(let residue) = result else { return XCTFail("expected notRunning") }
+        XCTAssertNil(residue.sensorID)
+    }
+
+    /// One broken link breaks the chain: a partially-present rule set cannot
+    /// produce the animation the manifest describes.
+    func testASingleMissingRuleIsNotRunning() {
+        let result = BridgeAnimationEngine.liveness(of: manifest(), in: inventory(rules: ["R1"]))
+        guard case .notRunning(let residue) = result else { return XCTFail("expected notRunning") }
+        XCTAssertEqual(residue.ruleIDs, ["R1"], "only the rule that still exists may be deleted")
+    }
+
+    /// The resourcelink is a grouping convenience whose creation is allowed to
+    /// fail during upload — requiring it would declare healthy looks dead.
+    func testAMissingResourcelinkIsStillLive() {
+        XCTAssertEqual(
+            BridgeAnimationEngine.liveness(of: manifest(), in: inventory(resourcelinks: [])),
+            .live)
+    }
+
+    func testAllScenesPresentIsLiveAndOneMissingSceneIsNot() {
+        let withScenes = manifest(sceneIDs: ["SC-A", "SC-B"])
+        XCTAssertEqual(
+            BridgeAnimationEngine.liveness(of: withScenes, in: inventory(scenes: ["SC-A", "SC-B"])),
+            .live)
+        let partial = BridgeAnimationEngine.liveness(
+            of: withScenes, in: inventory(scenes: ["SC-A"]))
+        guard case .notRunning(let residue) = partial else { return XCTFail("expected notRunning") }
+        XCTAssertEqual(residue.sceneIDs, ["SC-A"])
+    }
+
+    /// Fail closed. An unread category is not evidence, and evidence is what
+    /// authorises a delete.
+    func testAnUnreadSceneCategoryIsIndeterminateNotAbsent() {
+        let withScenes = manifest(sceneIDs: ["SC-A"])
+        guard case .indeterminate = BridgeAnimationEngine.liveness(
+            of: withScenes, in: inventory(scenes: nil)) else {
+            return XCTFail("an unread category must never resolve to a verdict")
+        }
+    }
+
+    func testAnUnreadResourcelinkCategoryIsIndeterminate() {
+        guard case .indeterminate = BridgeAnimationEngine.liveness(
+            of: manifest(), in: inventory(resourcelinks: nil)) else {
+            return XCTFail("an unread category must never resolve to a verdict")
+        }
+    }
+
+    /// The one state that authorises dropping the manifest outright.
+    func testAnEntirelyAbsentAnimationProvesTotalAbsence() {
+        let result = BridgeAnimationEngine.liveness(
+            of: manifest(),
+            in: inventory(schedules: [:], rules: [], sensors: [], resourcelinks: []))
+        guard case .notRunning(let residue) = result else { return XCTFail("expected notRunning") }
+        XCTAssertTrue(residue.isEmpty, "nothing remains, so the evidence may be retired")
+    }
+
+    /// Foreign resources are never in the residue. `CG_` is a shared prefix,
+    /// not an ownership claim — packet 2's rule, restated at launch.
+    func testResidueNeverIncludesResourcesThisManifestDoesNotName() {
+        let residue = BridgeAnimationEngine.residue(
+            of: manifest(),
+            in: inventory(schedules: ["SC1": true, "SC9": true],
+                          rules: ["R1", "R2", "R9"],
+                          sensors: ["S1", "S9"],
+                          resourcelinks: ["L1", "L9"]))
+        XCTAssertEqual(residue.scheduleID, "SC1")
+        XCTAssertEqual(residue.ruleIDs, ["R1", "R2"])
+        XCTAssertEqual(residue.sensorID, "S1")
+        XCTAssertEqual(residue.resourcelinkID, "L1")
+    }
+
+    // ── The `[:]`-swallow regression guards ─────────────────────────────
+
+    /// Before packet 8 both of these produced `[:]`, so "the bridge refused me"
+    /// and "this bridge has no rules" were the same answer — and reconciliation
+    /// would have read the refusal as proof of absence and deleted.
+    func testAnEmptyCollectionDecodesButAnErrorEnvelopeThrows() throws {
+        let empty = try HueV1Client.decodeResourceMap(Data("{}".utf8), path: "/rules")
+        XCTAssertTrue(empty.isEmpty, "a genuinely empty bridge still decodes normally")
+
+        XCTAssertThrowsError(
+            try HueV1Client.decodeResourceMap(
+                Data(#"[{"error":{"type":1,"address":"/rules","description":"unauthorized user"}}]"#.utf8),
+                path: "/rules"),
+            "an HTTP-200 error envelope must never look like an empty inventory")
+    }
+
+    func testAlreadyAbsentCountsAsDeletedButAnyOtherRefusalThrows() throws {
+        XCTAssertNoThrow(try HueV1Client.throwUnlessDeleted(
+            Data(#"[{"success":{"/rules/1":"deleted"}}]"#.utf8)))
+        XCTAssertNoThrow(
+            try HueV1Client.throwUnlessDeleted(
+                Data(#"[{"error":{"type":3,"address":"/rules/1","description":"not available"}}]"#.utf8)),
+            "type 3 means the delete's goal is already met")
+        XCTAssertThrowsError(
+            try HueV1Client.throwUnlessDeleted(
+                Data(#"[{"error":{"type":1,"address":"/rules/1","description":"unauthorized user"}}]"#.utf8)),
+            "any other refusal is a failure, not a silent success")
+    }
+
+    // ── Typed cleanup result ────────────────────────────────────────────
+
+    func testACleanTeardownReportsRemovedAndReadsNothing() async {
+        let spy = CleanupSpyV1Client(ip: "192.0.2.1", token: "t")
+        let result = await BridgeAnimationEngine().stop(manifest: manifest(), v1Client: spy)
+
+        XCTAssertEqual(result, .removed)
+        XCTAssertEqual(spy.attempted,
+                       ["schedule:SC1", "rule:R1", "rule:R2", "sensor:S1", "resourcelink:L1"],
+                       "dependency-safe order is unchanged from before packet 8")
+        XCTAssertTrue(spy.fetchCalls.isEmpty,
+                      "cleanup must never enumerate the bridge (packet 2)")
+    }
+
+    /// A user who deleted the resources by hand must not leave the manifest
+    /// permanently unprunable.
+    func testAnAlreadyAbsentResourceStillReportsRemoved() async {
+        let spy = CleanupSpyV1Client(ip: "192.0.2.1", token: "t")
+        spy.alreadyAbsent = ["rule:R2", "sensor:S1"]
+        let result = await BridgeAnimationEngine().stop(manifest: manifest(), v1Client: spy)
+        XCTAssertEqual(result, .removed)
+    }
+
+    func testARefusedDeleteReportsPartialNamingOnlyWhatMayRemain() async {
+        let spy = CleanupSpyV1Client(ip: "192.0.2.1", token: "t")
+        spy.refusing = ["rule:R2"]
+        let result = await BridgeAnimationEngine().stop(manifest: manifest(), v1Client: spy)
+
+        guard case .partial(let remaining) = result else { return XCTFail("expected partial") }
+        XCTAssertEqual(remaining.ruleIDs, ["R2"])
+        XCTAssertNil(remaining.scheduleID)
+        XCTAssertNil(remaining.sensorID)
+        XCTAssertEqual(spy.attempted.count, 5,
+                       "every step is still attempted — aborting early leaves rules firing")
+    }
+
+    func testAnUnreachableBridgeReportsBridgeUnreadableNotPartial() async {
+        let spy = CleanupSpyV1Client(ip: "192.0.2.1", token: "t")
+        spy.unreachable = ["schedule:SC1", "rule:R1", "rule:R2", "sensor:S1", "resourcelink:L1"]
+        let result = await BridgeAnimationEngine().stop(manifest: manifest(), v1Client: spy)
+
+        guard case .bridgeUnreadable(let remaining) = result else {
+            return XCTFail("expected bridgeUnreadable")
+        }
+        XCTAssertEqual(remaining.scheduleID, "SC1")
+        XCTAssertEqual(remaining.ruleIDs, ["R1", "R2"])
+    }
+
+    /// One reachable answer proves the bridge is talking to us, so a mixed
+    /// outcome is a refusal to act on — not a connectivity problem to wait out.
+    func testAMixedOutcomeReportsPartialRatherThanUnreadable() async {
+        let spy = CleanupSpyV1Client(ip: "192.0.2.1", token: "t")
+        spy.unreachable = ["schedule:SC1"]
+        spy.refusing = ["rule:R1"]
+        let result = await BridgeAnimationEngine().stop(manifest: manifest(), v1Client: spy)
+        guard case .partial = result else { return XCTFail("expected partial") }
+    }
+
+    /// Reconciliation passes a residue so it deletes only what the bridge still
+    /// holds — never the manifest's full list, which would aim deletes at ids
+    /// another controller may since have reused.
+    func testANarrowedResidueDeletesExactlyThatSubset() async {
+        let spy = CleanupSpyV1Client(ip: "192.0.2.1", token: "t")
+        let residue = BridgeAnimationResidue(sensorID: "S1")
+        let result = await BridgeAnimationEngine().stop(
+            manifest: manifest(), v1Client: spy, only: residue)
+
+        XCTAssertEqual(result, .removed)
+        XCTAssertEqual(spy.attempted, ["sensor:S1"])
+        XCTAssertTrue(spy.fetchCalls.isEmpty)
+    }
+}

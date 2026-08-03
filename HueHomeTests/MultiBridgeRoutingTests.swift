@@ -60,23 +60,173 @@ private final class RoutingSpyV1Client: HueV1Client, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         _deletedResources.append(entry)
     }
-    private func inventory(_ kind: String) -> [String: [String: Any]] {
+
+    // ── Packet 8 staging ────────────────────────────────────────────────
+    //
+    // Reconciliation needs three distinctions packet 2 never did, and all three
+    // look identical to the packet-2 spy while taking the reconciler down
+    // completely different paths: a read that FAILED (vs. one that found
+    // nothing), a delete that failed (vs. one that succeeded), and a delete the
+    // bridge answers "already gone".
+
+    /// Inventory kinds whose read must FAIL. Deliberately distinct from an
+    /// empty staged inventory: "I could not look" and "there is nothing there"
+    /// are exactly the two answers packet 8 exists to keep apart.
+    private var _failingInventoryKinds: Set<String> = []
+    /// The raw v1 error envelope a bridge returns for a refused read. v1 sends
+    /// it with HTTP 200, so this proves an envelope is never mistaken for an
+    /// empty bridge end to end, not only at the decoder.
+    private var _inventoryErrorEnvelopes: [String: String] = [:]
+    /// Deletes that fail, spelled exactly as `deletedResources` records them.
+    private var _failingDeletes: Set<String> = []
+    /// Deletes the bridge answers with v1 `type: 3` (resource not available).
+    /// A correct cleanup counts these as SUCCESS — a stale manifest whose
+    /// resources a user already removed must be prunable, not stuck forever.
+    private var _absentDeletes: Set<String> = []
+    /// Only the deletes that did NOT throw. `deletedResources` stays ATTEMPTED,
+    /// because packet 2 asserts on attempts and that meaning must not shift.
+    private var _succeededDeletes: [String] = []
+    private var _deleteGates: [String: RestGate] = [:]
+    private var _inventoryGates: [String: RestGate] = [:]
+    private var _creations: [String] = []
+
+    func stageInventoryFailure(_ kinds: Set<String>) {
         lock.lock(); defer { lock.unlock() }
-        _fetchCalls.append(kind)
-        return _inventories[kind] ?? [:]
+        _failingInventoryKinds = kinds
+    }
+    func stageInventoryErrorEnvelope(_ kind: String, _ json: String) {
+        lock.lock(); defer { lock.unlock() }
+        _inventoryErrorEnvelopes[kind] = json
+    }
+    func stageDeleteFailures(_ entries: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        _failingDeletes = entries
+    }
+    func stageAlreadyAbsentDeletes(_ entries: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        _absentDeletes = entries
+    }
+    /// Park a specific delete mid-flight — the continuation handshake that
+    /// makes "a stale stop landed after a replacement" provable with no timing.
+    func stageDeleteGate(_ entry: String, _ gate: RestGate) {
+        lock.lock(); defer { lock.unlock() }
+        _deleteGates[entry] = gate
+    }
+    /// Park a specific inventory read mid-pass, so the store can be mutated
+    /// while a reconciliation pass is holding a snapshot.
+    func stageInventoryGate(_ kind: String, _ gate: RestGate) {
+        lock.lock(); defer { lock.unlock() }
+        _inventoryGates[kind] = gate
     }
 
-    override func deleteSchedule(id: String) async throws { record("schedule:\(id)") }
-    override func deleteRule(id: String) async throws { record("rule:\(id)") }
-    override func deleteSensor(id: String) async throws { record("sensor:\(id)") }
-    override func deleteScene(id: String) async throws { record("scene:\(id)") }
-    override func deleteResourcelink(id: String) async throws { record("resourcelink:\(id)") }
+    var succeededDeletes: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _succeededDeletes
+    }
+    /// Every v1 resource creation, so "zero new create requests" is directly
+    /// assertable when a replacement must be refused.
+    var creations: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _creations
+    }
 
-    override func fetchSchedules() async throws -> [String: [String: Any]] { inventory("fetchSchedules") }
-    override func fetchRules() async throws -> [String: [String: Any]] { inventory("fetchRules") }
-    override func fetchSensors() async throws -> [String: [String: Any]] { inventory("fetchSensors") }
-    override func fetchScenes() async throws -> [String: [String: Any]] { inventory("fetchScenes") }
-    override func fetchResourcelinks() async throws -> [String: [String: Any]] { inventory("fetchResourcelinks") }
+    private func recordCreation(_ kind: String) {
+        lock.lock(); defer { lock.unlock() }
+        _creations.append(kind)
+    }
+    private func deleteGate(_ entry: String) -> RestGate? {
+        lock.lock(); defer { lock.unlock() }
+        return _deleteGates[entry]
+    }
+    private func deletePlan(_ entry: String) -> (fails: Bool, absent: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        return (_failingDeletes.contains(entry), _absentDeletes.contains(entry))
+    }
+
+    /// One delete. Records the ATTEMPT first, then applies the staged outcome.
+    private func performDelete(_ entry: String) async throws {
+        record(entry)
+        if let gate = deleteGate(entry) {
+            await gate.signalStarted()
+            await gate.waitForRelease()
+        }
+        let plan = deletePlan(entry)
+        if plan.absent {
+            // Through the PRODUCTION classifier, so "already absent counts as
+            // removed" is proven where it actually lives.
+            try HueV1Client.throwUnlessDeleted(
+                Data(#"[{"error":{"type":3,"address":"/x","description":"resource, /x, not available"}}]"#.utf8))
+        } else if plan.fails {
+            throw HueV1ClientError.apiError(type: 1, address: "/x", description: "unauthorized user")
+        }
+        lock.lock(); defer { lock.unlock() }
+        _succeededDeletes.append(entry)
+    }
+
+    private func inventoryGate(_ kind: String) -> RestGate? {
+        lock.lock(); defer { lock.unlock() }
+        return _inventoryGates[kind]
+    }
+    private func inventoryPlan(
+        _ kind: String
+    ) -> (fails: Bool, envelope: String?, contents: [String: [String: Any]]) {
+        lock.lock(); defer { lock.unlock() }
+        _fetchCalls.append(kind)
+        return (_failingInventoryKinds.contains(kind),
+                _inventoryErrorEnvelopes[kind],
+                _inventories[kind] ?? [:])
+    }
+
+    private func inventory(_ kind: String) async throws -> [String: [String: Any]] {
+        if let gate = inventoryGate(kind) {
+            await gate.signalStarted()
+            await gate.waitForRelease()
+        }
+        let plan = inventoryPlan(kind)
+        if let envelope = plan.envelope {
+            // Through the PRODUCTION decoder, so this proves the real
+            // envelope-vs-empty rule and not a test-local imitation of it.
+            return try HueV1Client.decodeResourceMap(Data(envelope.utf8), path: kind)
+        }
+        if plan.fails { throw HueAPIError.httpError(500) }
+        return plan.contents
+    }
+
+    override func deleteSchedule(id: String) async throws { try await performDelete("schedule:\(id)") }
+    override func deleteRule(id: String) async throws { try await performDelete("rule:\(id)") }
+    override func deleteSensor(id: String) async throws { try await performDelete("sensor:\(id)") }
+    override func deleteScene(id: String) async throws { try await performDelete("scene:\(id)") }
+    override func deleteResourcelink(id: String) async throws { try await performDelete("resourcelink:\(id)") }
+
+    override func fetchSchedules() async throws -> [String: [String: Any]] { try await inventory("fetchSchedules") }
+    override func fetchRules() async throws -> [String: [String: Any]] { try await inventory("fetchRules") }
+    override func fetchSensors() async throws -> [String: [String: Any]] { try await inventory("fetchSensors") }
+    override func fetchScenes() async throws -> [String: [String: Any]] { try await inventory("fetchScenes") }
+    override func fetchResourcelinks() async throws -> [String: [String: Any]] { try await inventory("fetchResourcelinks") }
+
+    override func createCLIPSensor(name: String, initialStatus: Int) async throws -> String {
+        recordCreation("sensor"); return "new-sensor"
+    }
+    override func createRule(
+        name: String, conditions: [[String: Any]], actions: [[String: Any]]
+    ) async throws -> String {
+        recordCreation("rule"); return "new-rule"
+    }
+    override func createRecurringSchedule(
+        name: String, intervalSeconds: Int, command: [String: Any], autoDelete: Bool
+    ) async throws -> String {
+        recordCreation("schedule"); return "new-schedule"
+    }
+    override func createScene(
+        name: String, lightIDs: [String], lightstates: [String: [String: Any]], recycle: Bool
+    ) async throws -> String {
+        recordCreation("scene"); return "new-scene"
+    }
+    override func createResourcelink(
+        name: String, description: String, links: [String]
+    ) async throws -> String {
+        recordCreation("resourcelink"); return "new-resourcelink"
+    }
 }
 
 /// v2 spy recording grouped_light effect PUTs and vending a paired v1 spy.
@@ -96,6 +246,18 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
     }
 
     override func makeV1Client() throws -> HueV1Client { v1Spy }
+
+    /// Packet 8: the explicit-stop power-off. A SEPARATE recorder from
+    /// `groupedStateIDs` so existing suites' "no state writes" assertions keep
+    /// meaning exactly what they meant before.
+    private var _groupedPowerIDs: [String] = []
+    var groupedPowerIDs: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _groupedPowerIDs
+    }
+    override func setGroupedLight(id: String, on: Bool) async throws {
+        lock.lock(); _groupedPowerIDs.append("\(id):\(on)"); lock.unlock()
+    }
 
     /// Packet 6: All-Day's tick issues exactly this PUT, one per room. Failing
     /// a chosen grouped light proves a per-room error stays confined to its own
@@ -391,10 +553,20 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
+        // Every assertion in this class is about which EXACT manifests exist,
+        // so each test gets its own store on its own file. Sharing
+        // `BridgeAnimationStore.shared` meant a sibling test's set-up could
+        // empty the store while this one was suspended inside a production
+        // settle window, and it also left fixtures in the developer's real
+        // `bridge_animations.json`.
+        animationStoreURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("p8-\(UUID().uuidString).json")
+        animationStore = BridgeAnimationStore(fileURL: animationStoreURL)
         bridgeA = RoutingSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A", ip: "192.0.2.1")
         bridgeB = RoutingSpyClient(bridgeID: "bridge-b", bridgeName: "Bridge B", ip: "192.0.2.2")
         orchestrator = UnifiedOrchestrator()
         orchestrator.injectForTesting(clients: ["bridge-a": bridgeA, "bridge-b": bridgeB])
+        orchestrator.injectForTesting(bridgeAnimationStore: animationStore)
     }
 
     // ──────────────────────────────────────────────
@@ -448,15 +620,20 @@ final class MultiBridgeRoutingTests: XCTestCase {
             id: UUID(), presetID: presetID, presetName: "RoutingTest",
             roomID: roomID, roomName: "Routing Room",
             bridgeIP: "192.0.2.2",          // lives on bridge B — NOT the first client
+            bridgeID: "bridge-b",
             sensorID: "11", ruleIDs: ["22", "23"], scheduleID: "33",
             sceneIDs: [], resourcelinkID: nil,
             stepCount: 2, intervalSeconds: 3, cycleDurationSeconds: 6,
             createdAt: Date()
         )
-        BridgeAnimationStore.shared.save(manifest)
-        defer { BridgeAnimationStore.shared.remove(presetID: presetID, roomID: roomID) }
+        animationStore.save(manifest)
+        defer { animationStore.remove(id: manifest.id) }
 
-        await orchestrator.stopCompositionMode(roomID: roomID, bridgeID: nil)
+        // Packet 8: the caller names the bridge. A roomID-only reach could
+        // never be exact with two bridges registered, and the production
+        // comment on `stopCompositionMode` has always said so — this makes it
+        // structural. The claim under test is unchanged and now stronger.
+        await orchestrator.stopCompositionMode(roomID: roomID, bridgeID: "bridge-b")
 
         XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty,
                       "teardown must not touch a bridge the animation does not live on (M-07)")
@@ -464,9 +641,32 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(deletedOnB.contains("schedule:33"), "schedule delete must land on the manifest's bridge")
         XCTAssertTrue(deletedOnB.contains("rule:22") && deletedOnB.contains("rule:23"))
         XCTAssertTrue(deletedOnB.contains("sensor:11"))
-        XCTAssertFalse(BridgeAnimationStore.shared.allManifests()
-            .contains { $0.presetID == presetID && $0.roomID == roomID },
-            "manifest must be removed after correct-bridge cleanup")
+        XCTAssertFalse(animationStore.allManifests().contains { $0.id == manifest.id },
+                       "manifest must be removed after correct-bridge cleanup")
+    }
+
+    /// Packet 8: with several bridges registered and no bridge named, there is
+    /// no exact identity to delete against — so nothing is deleted and every
+    /// manifest is retained. Failing closed here is the point: the alternative
+    /// is guessing a bridge from a room id two bridges can both hold.
+    func testStopCompositionModeWithNoNamedBridgeAndSeveralBridgesDeletesNothing() async throws {
+        let manifest = BridgeAnimationManifest(
+            id: UUID(), presetID: UUID(), presetName: "Ambiguous",
+            roomID: "ambiguous-room", roomName: "Ambiguous Room",
+            bridgeIP: "192.0.2.2", bridgeID: nil,
+            sensorID: "11", ruleIDs: ["22"], scheduleID: "33",
+            sceneIDs: [], resourcelinkID: nil,
+            stepCount: 2, intervalSeconds: 3, cycleDurationSeconds: 6,
+            createdAt: Date())
+        animationStore.save(manifest)
+        defer { animationStore.remove(id: manifest.id) }
+
+        await orchestrator.stopCompositionMode(roomID: "ambiguous-room", bridgeID: nil)
+
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(animationStore.allManifests().contains { $0.id == manifest.id },
+                      "an unresolvable identity must retain the manifest, never drop it")
     }
 
     // ──────────────────────────────────────────────
@@ -860,44 +1060,56 @@ final class MultiBridgeRoutingTests: XCTestCase {
     // roomID AND bridgeIP. Names are not ownership: `CG_` is a prefix every
     // room's resources share.
 
-    /// Manifests staged into the shared store, torn down per test.
-    private var stagedManifests: [(presetID: UUID, roomID: String)] = []
+    /// This test's isolated manifest store (see `setUp`).
+    private var animationStore: BridgeAnimationStore!
+    private var animationStoreURL: URL!
+
+    /// Manifests staged into this test's store.
+    private var stagedManifests: [UUID] = []
 
     override func tearDown() async throws {
-        for staged in stagedManifests {
-            BridgeAnimationStore.shared.remove(presetID: staged.presetID, roomID: staged.roomID)
-        }
+        // Drain before sweeping: a pass `loadAll` scheduled must not still be
+        // writing to the shared store while the next test sets up.
+        await orchestrator.testDrainBridgeAnimationReconciliation()
         stagedManifests.removeAll()
+        if let animationStoreURL { try? FileManager.default.removeItem(at: animationStoreURL) }
         // Packet 4: never leave an injected telemetry clock behind.
         orchestrator.testResetCompositionTelemetryClock()
         try await super.tearDown()
     }
 
-    /// Persist a manifest with a fresh preset ID (the store keys on
-    /// presetID_roomID, so same-room manifests must differ by preset).
+    /// Persist a manifest.
+    ///
+    /// Packet 8: the store now keys on the MANIFEST id, so `presetID` and
+    /// `bridgeID` are both explicit parameters — staging the same preset in the
+    /// same room on two bridges is exactly the collision case that used to be
+    /// impossible to express, and `bridgeID: nil` stages a legacy IP-only
+    /// record for the migration tests.
     @discardableResult
     private func stageManifest(
         roomID: String,
         bridgeIP: String,
+        bridgeID: String? = nil,
+        presetID: UUID = UUID(),
         presetName: String = "Packet2",
+        roomName: String? = nil,
         sensorID: String,
         ruleIDs: [String],
         scheduleID: String,
         sceneIDs: [String] = [],
         resourcelinkID: String? = nil
     ) -> BridgeAnimationManifest {
-        let presetID = UUID()
         let manifest = BridgeAnimationManifest(
             id: UUID(), presetID: presetID, presetName: presetName,
-            roomID: roomID, roomName: roomID,
-            bridgeIP: bridgeIP,
+            roomID: roomID, roomName: roomName ?? roomID,
+            bridgeIP: bridgeIP, bridgeID: bridgeID,
             sensorID: sensorID, ruleIDs: ruleIDs, scheduleID: scheduleID,
             sceneIDs: sceneIDs, resourcelinkID: resourcelinkID,
             stepCount: 2, intervalSeconds: 3, cycleDurationSeconds: 6,
             createdAt: Date()
         )
-        BridgeAnimationStore.shared.save(manifest)
-        stagedManifests.append((presetID, roomID))
+        animationStore.save(manifest)
+        stagedManifests.append(manifest.id)
         return manifest
     }
 
@@ -916,8 +1128,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
     }
 
     private func storeStillHolds(_ manifest: BridgeAnimationManifest) -> Bool {
-        BridgeAnimationStore.shared.allManifests()
-            .contains { $0.presetID == manifest.presetID && $0.roomID == manifest.roomID }
+        animationStore.manifest(id: manifest.id) != nil
     }
 
     func testStartingARoomPreservesASiblingRoomsBridgeAnimation() async {
@@ -929,7 +1140,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         // Room B has no previous animation: this is a first start, not a replacement.
         await orchestrator.testCleanupBridgeStoredForReplacement(
-            roomID: "p2-sibling-b", v1Client: bridgeA.v1Spy)
+            roomID: "p2-sibling-b", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
 
         XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty,
                       "starting one room must delete nothing belonging to another room")
@@ -952,7 +1163,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         )
 
         await orchestrator.testCleanupBridgeStoredForReplacement(
-            roomID: "p2-replace-b", v1Client: bridgeA.v1Spy)
+            roomID: "p2-replace-b", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
 
         XCTAssertEqual(Set(bridgeA.v1Spy.deletedResources), expectedDeletes(for: replaced),
                        "replacement deletes exactly the replaced room's recorded resources — no more, no less")
@@ -979,7 +1190,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         )
 
         await orchestrator.testCleanupBridgeStoredForReplacement(
-            roomID: "p2-multi-b", v1Client: bridgeA.v1Spy)
+            roomID: "p2-multi-b", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
 
         XCTAssertEqual(Set(bridgeA.v1Spy.deletedResources),
                        expectedDeletes(for: firstOld).union(expectedDeletes(for: secondOld)),
@@ -1005,7 +1216,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         )
 
         await orchestrator.testCleanupBridgeStoredForReplacement(
-            roomID: "p2-room-shared", v1Client: bridgeA.v1Spy)
+            roomID: "p2-room-shared", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
 
         XCTAssertEqual(Set(bridgeA.v1Spy.deletedResources), expectedDeletes(for: onBridgeA),
                        "only the manifest recorded on THIS bridge is owned by this cleanup")
@@ -1025,7 +1236,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         )
 
         await orchestrator.testCleanupBridgeStoredForReplacement(
-            roomID: "p2-traffic-shared", v1Client: bridgeA.v1Spy)
+            roomID: "p2-traffic-shared", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
 
         XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty,
                       "a cleanup on bridge A must issue no deletes on bridge B")
@@ -1041,7 +1252,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         )
 
         await orchestrator.testCleanupBridgeStoredForReplacement(
-            roomID: "p2-noenum-b", v1Client: bridgeA.v1Spy)
+            roomID: "p2-noenum-b", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
 
         XCTAssertTrue(bridgeA.v1Spy.fetchCalls.isEmpty,
                       """
@@ -1100,7 +1311,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         )
 
         await orchestrator.testCleanupBridgeStoredForReplacement(
-            roomID: "p2-order-b", v1Client: bridgeA.v1Spy)
+            roomID: "p2-order-b", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
 
         let deletes = bridgeA.v1Spy.deletedResources
         func position(_ entry: String) throws -> Int {
@@ -1128,7 +1339,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         )
 
         await orchestrator.testCleanupBridgeStoredForReplacement(
-            roomID: "p2-nolink-b", v1Client: bridgeA.v1Spy)
+            roomID: "p2-nolink-b", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
 
         XCTAssertEqual(Set(bridgeA.v1Spy.deletedResources), expectedDeletes(for: noLink))
         XCTAssertFalse(bridgeA.v1Spy.deletedResources.contains { $0.hasPrefix("resourcelink:") },
@@ -1144,7 +1355,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         )
 
         await orchestrator.testCleanupBridgeStoredForReplacement(
-            roomID: "p2-sparse-b", v1Client: bridgeA.v1Spy)
+            roomID: "p2-sparse-b", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
 
         XCTAssertEqual(Set(bridgeA.v1Spy.deletedResources), ["schedule:sched", "sensor:sen"])
         XCTAssertEqual(expectedDeletes(for: sparse), ["schedule:sched", "sensor:sen"])
@@ -5545,4 +5756,1156 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "a rollback arriving after commit must never stop the installed session")
         XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"))
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 8: bridge-stored animations survive a relaunch
+    // ──────────────────────────────────────────────
+    //
+    // A bridge-stored look runs on the bridge's own firmware, so it keeps
+    // running after a force-quit. Nothing used to read the persisted manifests
+    // back at launch, so the animation cycled on while the app showed nothing
+    // running and offered no way to stop it.
+    //
+    // Every test here is about ORDER, PRESENCE and RESOURCE IDENTITY, never
+    // elapsed time: no sleeps, no waiters, no timeouts. `RestGate`
+    // continuations do all the sequencing. (Guards 8 and 10 enforce this.)
+
+    /// Stage a bridge's inventory so a manifest reads back as LIVE.
+    private func stageLive(_ spy: RoutingSpyV1Client, _ manifests: [BridgeAnimationManifest]) {
+        var schedules: [String: [String: Any]] = [:]
+        var rules: [String: [String: Any]] = [:]
+        var sensors: [String: [String: Any]] = [:]
+        var links: [String: [String: Any]] = [:]
+        for m in manifests {
+            schedules[m.scheduleID] = ["status": "enabled"]
+            for r in m.ruleIDs { rules[r] = [:] }
+            sensors[m.sensorID] = [:]
+            if let rl = m.resourcelinkID { links[rl] = [:] }
+        }
+        spy.stageInventory("fetchSchedules", schedules)
+        spy.stageInventory("fetchRules", rules)
+        spy.stageInventory("fetchSensors", sensors)
+        spy.stageInventory("fetchResourcelinks", links)
+    }
+
+    private func recoveredEntries() -> [ActiveEffectEntry] {
+        orchestrator.activeEffectEntries.filter { $0.recovered != nil }
+    }
+
+    private func recoveredKey(_ m: BridgeAnimationManifest, _ bridgeID: String)
+        -> UnifiedOrchestrator.RecoveredBridgeAnimationKey {
+        .init(bridgeID: bridgeID, manifestID: m.id)
+    }
+
+    // ── 1-4: restore, read-only, idempotence, ordering ──────────────────
+
+    func testP8AVerifiedLiveManifestRestoresTransportNowPlayingAndStudio() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              presetName: "Sunset Drift",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1", resourcelinkID: "L1")
+        stageLive(bridgeA.v1Spy, [m])
+        let vm = makeStudioVM()
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "room-1"), .bridgeStored)
+        XCTAssertEqual(recoveredEntries().count, 1)
+        let entry = recoveredEntries()[0]
+        XCTAssertEqual(entry.effectName, "Sunset Drift")
+        XCTAssertEqual(entry.roomID, "room-1")
+        XCTAssertFalse(entry.isAppDriven, "no app task exists behind a bridge-stored animation")
+        XCTAssertEqual(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(m, "bridge-a")]?.bridgeID,
+                       "bridge-a")
+        XCTAssertEqual(vm.runningEffects["room-1"]?.recovered, recoveredKey(m, "bridge-a"))
+        XCTAssertTrue(storeStillHolds(m))
+    }
+
+    func testP8ReconcilingAVerifiedAnimationSendsZeroMutatingRequests() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1", resourcelinkID: "L1")
+        stageLive(bridgeA.v1Spy, [m])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty, "a live animation is never mutated")
+        XCTAssertTrue(bridgeA.v1Spy.creations.isEmpty)
+        XCTAssertTrue(bridgeA.groupedEffectIDs.isEmpty)
+        XCTAssertTrue(bridgeA.groupedPowerIDs.isEmpty)
+        XCTAssertTrue(bridgeA.v1EffectPuts.isEmpty)
+        XCTAssertTrue(bridgeA.entertainmentActions.isEmpty)
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty)
+    }
+
+    func testP8RepeatedReconciliationIsIdempotent() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1", resourcelinkID: "L1")
+        stageLive(bridgeA.v1Spy, [m])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        let first = orchestrator.testRecoveredBridgeAnimations()
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertEqual(orchestrator.testRecoveredBridgeAnimations(), first)
+        XCTAssertEqual(recoveredEntries().count, 1, "no duplicate Now Playing row")
+        XCTAssertEqual(Set(orchestrator.activeEffectEntries.map(\.id)).count,
+                       orchestrator.activeEffectEntries.count)
+        XCTAssertTrue(storeStillHolds(m))
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty, "no repeated cleanup")
+        // ONE batched read per bridge per pass — four categories, three passes.
+        XCTAssertEqual(bridgeA.v1Spy.fetchCalls.count, 12,
+                       "reads are batched per bridge, never issued per manifest")
+    }
+
+    func testP8StudioConfiguredBeforeAndAfterReconciliationSeeTheSameState() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1", resourcelinkID: "L1")
+        stageLive(bridgeA.v1Spy, [m])
+
+        let early = StudioViewModel()          // configure BEFORE load
+        early.configure(orchestrator: orchestrator)
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        let late = StudioViewModel()           // configure AFTER load
+        late.configure(orchestrator: orchestrator)
+
+        let key = recoveredKey(m, "bridge-a")
+        XCTAssertEqual(early.runningEffects["room-1"]?.recovered, key,
+                       "the push path restores a view model that was already alive")
+        XCTAssertEqual(late.runningEffects["room-1"]?.recovered, key,
+                       "the pull path restores a view model created afterwards")
+        XCTAssertEqual(early.runningEffects.mapValues(\.cardID), late.runningEffects.mapValues(\.cardID))
+        XCTAssertEqual(early.runningEffects["room-1"]?.room.bridgeID, "bridge-a")
+        XCTAssertEqual(recoveredEntries().count, 1, "a second configure must not double-publish")
+
+        // StudioView.onAppear re-runs configure on every appearance.
+        late.configure(orchestrator: orchestrator)
+        late.configure(orchestrator: orchestrator)
+        XCTAssertEqual(recoveredEntries().count, 1)
+        XCTAssertEqual(late.runningEffects.count, 1)
+    }
+
+    /// A recovered row must not imply an in-memory render loop.
+    func testP8ReconciliationCreatesNoRuntimeState() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1", resourcelinkID: "L1")
+        stageLive(bridgeA.v1Spy, [m])
+        let vm = makeStudioVM()
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertTrue(orchestrator.testAllDayRestSenderBridgeKeys().isEmpty)
+        XCTAssertFalse(orchestrator.testHasComposerTelemetrySession(roomID: "room-1", bridgeID: "bridge-a"))
+        XCTAssertNil(orchestrator.studioEntClients["bridge-a"])
+        let effect = vm.runningEffects["room-1"]
+        XCTAssertEqual(effect?.card.params.count, 0, "no sliders: there is nothing to drive")
+        XCTAssertNil(effect?.card.compositionLayerActivity, "no layer chips")
+        XCTAssertEqual(effect?.card.requiresForeground, false, "no keep-app-open chrome")
+        XCTAssertEqual(effect?.isEntertainment, false)
+        XCTAssertTrue(effect?.lightIDs.isEmpty ?? false)
+        XCTAssertNotEqual(effect?.cardID, "comp_\(m.presetID.uuidString)",
+                          "the preset's own grid card must not read as running")
+    }
+
+    // ── 5-8: stop semantics ─────────────────────────────────────────────
+
+    func testP8DashboardStopRemovesExactResourcesAndClearsStateOnlyAfterSuccess() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1", resourcelinkID: "L1")
+        stageLive(bridgeA.v1Spy, [m])
+        let vm = makeStudioVM()
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        await orchestrator.requestNowPlayingStop(recoveredEntries()[0])
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.succeededDeletes), expectedDeletes(for: m))
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty)
+        XCTAssertFalse(storeStillHolds(m))
+        XCTAssertNil(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(m, "bridge-a")])
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: "room-1"))
+        XCTAssertTrue(recoveredEntries().isEmpty)
+        XCTAssertNil(vm.runningEffects["room-1"])
+        // Mirrors a live .composition stop: the resolved room goes off.
+        XCTAssertEqual(bridgeA.groupedPowerIDs, ["gl-room-1:false"])
+    }
+
+    func testP8StudioStopRemovesExactResourcesAndClearsTheSameState() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1", resourcelinkID: "L1")
+        stageLive(bridgeA.v1Spy, [m])
+        let vm = makeStudioVM()
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        await vm.stopFromNowPlaying(roomID: "room-1")
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.succeededDeletes), expectedDeletes(for: m),
+                       "both surfaces converge on one exact teardown")
+        XCTAssertFalse(storeStillHolds(m))
+        XCTAssertTrue(recoveredEntries().isEmpty)
+        XCTAssertNil(vm.runningEffects["room-1"])
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: "room-1"))
+    }
+
+    func testP8StopAllStopsEveryRestoredAnimationWithNoCrossBridgeBleed() async {
+        orchestrator.allRooms = [
+            allDayRoom("room-1", bridge: "bridge-a"),
+            allDayRoom("room-2", bridge: "bridge-a"),
+            allDayRoom("room-3", bridge: "bridge-b"),
+        ]
+        let m1 = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                               sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let m2 = stageManifest(roomID: "room-2", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                               sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        let m3 = stageManifest(roomID: "room-3", bridgeIP: "192.0.2.2", bridgeID: "bridge-b",
+                               sensorID: "S3", ruleIDs: ["R3"], scheduleID: "SC3")
+        stageLive(bridgeA.v1Spy, [m1, m2])
+        stageLive(bridgeB.v1Spy, [m3])
+        let vm = makeStudioVM()
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        XCTAssertEqual(recoveredEntries().count, 3)
+
+        for entry in orchestrator.activeEffectEntries {
+            await orchestrator.requestNowPlayingStop(entry)
+        }
+
+        let onA = Set(bridgeA.v1Spy.succeededDeletes)
+        let onB = Set(bridgeB.v1Spy.succeededDeletes)
+        XCTAssertEqual(onA, expectedDeletes(for: m1).union(expectedDeletes(for: m2)))
+        XCTAssertEqual(onB, expectedDeletes(for: m3))
+        XCTAssertTrue(onA.isDisjoint(with: onB))
+        XCTAssertFalse(storeStillHolds(m1))
+        XCTAssertFalse(storeStillHolds(m2))
+        XCTAssertFalse(storeStillHolds(m3))
+        XCTAssertTrue(recoveredEntries().isEmpty)
+        XCTAssertTrue(vm.runningEffects.isEmpty)
+    }
+
+    func testP8AFailedStopRetainsTheManifestOwnershipAndTheVisibleEntry() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        bridgeA.v1Spy.stageDeleteFailures(["rule:R1"])
+
+        await orchestrator.requestNowPlayingStop(recoveredEntries()[0])
+
+        XCTAssertTrue(Set(bridgeA.v1Spy.deletedResources).isSuperset(of: expectedDeletes(for: m)),
+                      "every step is attempted; teardown does not abort at the first failure")
+        XCTAssertFalse(bridgeA.v1Spy.succeededDeletes.contains("rule:R1"))
+        XCTAssertTrue(storeStillHolds(m), "evidence is retained for retry")
+        XCTAssertNotNil(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(m, "bridge-a")])
+        XCTAssertEqual(recoveredEntries().count, 1,
+                       "a stop that did not happen must not look like one that did")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "room-1"), .bridgeStored)
+        XCTAssertNotNil(orchestrator.toastMessage)
+        XCTAssertTrue(bridgeA.groupedPowerIDs.isEmpty, "a failed stop never powers the room off")
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(bridgeID: "bridge-a", roomID: "room-1"),
+                       "ownership that suppresses All-Day must survive a failed stop")
+    }
+
+    /// The manifest's bridge is not registered right now. That is the normal
+    /// transient state at launch, and it is not evidence about anything.
+    func testP8AStopWithNoRegisteredBridgeRetainsEverything() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        orchestrator.injectForTesting(clients: ["bridge-b": bridgeB])
+
+        let stopped = await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(m, "bridge-a"))
+
+        XCTAssertFalse(stopped)
+        XCTAssertTrue(storeStillHolds(m))
+        XCTAssertEqual(recoveredEntries().count, 1)
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty)
+        XCTAssertNotNil(orchestrator.toastMessage)
+    }
+
+    // ── 9-11: read failure, pruning, partial presence ───────────────────
+
+    /// The headline pair. Same manifest, same code path — the ONLY difference
+    /// is whether the bridge answered, and that difference decides everything.
+    func testP8AnUnreadableInventoryRetainsWhileAnEmptyOneProves() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        bridgeA.v1Spy.stageInventoryFailure(["fetchRules"])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertTrue(storeStillHolds(m), "a read failure is UNKNOWN, never absence")
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty, "zero destructive writes")
+        XCTAssertTrue(recoveredEntries().isEmpty, "and no claim that it is running either")
+
+        // Now let the bridge actually answer, reporting nothing.
+        bridgeA.v1Spy.stageInventoryFailure([])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        XCTAssertFalse(storeStillHolds(m), "a successful empty read DOES prove absence")
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty,
+                      "nothing remained, so nothing needed deleting")
+    }
+
+    /// v1 answers a refusal with HTTP 200 and an error envelope. Before packet
+    /// 8 that decoded to `[:]` and read as "this bridge has nothing".
+    func testP8AnErrorEnvelopeIsNotAnEmptyInventory() async {
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        bridgeA.v1Spy.stageInventoryErrorEnvelope(
+            "fetchRules", #"[{"error":{"type":1,"address":"/rules","description":"unauthorized user"}}]"#)
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertTrue(storeStillHolds(m))
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+    }
+
+    func testP8AStaleManifestIsPrunedWithoutTouchingUnrelatedResources() async {
+        orchestrator.allRooms = [
+            allDayRoom("room-1", bridge: "bridge-a"), allDayRoom("room-2", bridge: "bridge-a"),
+        ]
+        let stale = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                  sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let live = stageManifest(roomID: "room-2", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                 sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        // Only the live manifest's ids, plus foreign CG_-named resources.
+        bridgeA.v1Spy.stageInventory("fetchSchedules", ["SC2": ["status": "enabled"],
+                                                        "SC9": ["status": "enabled", "name": "CG_other"]])
+        bridgeA.v1Spy.stageInventory("fetchRules", ["R2": [:], "R9": ["name": "CG_other"]])
+        bridgeA.v1Spy.stageInventory("fetchSensors", ["S2": [:], "S9": ["name": "CG_other"]])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertFalse(storeStillHolds(stale))
+        XCTAssertTrue(storeStillHolds(live))
+        let deleted = Set(bridgeA.v1Spy.deletedResources)
+        XCTAssertTrue(deleted.isDisjoint(with: ["schedule:SC9", "rule:R9", "sensor:S9"]),
+                      "a CG_ name is not an ownership claim")
+        XCTAssertTrue(deleted.isDisjoint(with: expectedDeletes(for: live)))
+        XCTAssertEqual(recoveredEntries().map(\.roomID), ["room-2"])
+    }
+
+    func testP8APartiallyPresentManifestCleansOnlyItsOwnListedResources() async {
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1", "R2"], scheduleID: "SC1")
+        // Structurally incomplete: R2 is gone, so the chain cannot run.
+        bridgeA.v1Spy.stageInventory("fetchSchedules", ["SC1": ["status": "enabled"]])
+        bridgeA.v1Spy.stageInventory("fetchRules", ["R1": [:], "R9": ["name": "CG_other"]])
+        bridgeA.v1Spy.stageInventory("fetchSensors", ["S1": [:]])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        let deleted = Set(bridgeA.v1Spy.deletedResources)
+        XCTAssertEqual(deleted, ["schedule:SC1", "rule:R1", "sensor:S1"],
+                       "only this manifest's still-present ids — never R2, never R9")
+        XCTAssertFalse(storeStillHolds(m))
+        XCTAssertTrue(recoveredEntries().isEmpty)
+    }
+
+    func testP8APartialCleanupFailureRetainsTheEvidence() async {
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1", "R2"], scheduleID: "SC1")
+        bridgeA.v1Spy.stageInventory("fetchSchedules", ["SC1": ["status": "enabled"]])
+        bridgeA.v1Spy.stageInventory("fetchRules", ["R1": [:]])
+        bridgeA.v1Spy.stageInventory("fetchSensors", ["S1": [:]])
+        bridgeA.v1Spy.stageDeleteFailures(["sensor:S1"])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertTrue(storeStillHolds(m), "a partial cleanup keeps the record for a later retry")
+        XCTAssertTrue(recoveredEntries().isEmpty)
+    }
+
+    // ── 12-15: independence and identity ────────────────────────────────
+
+    func testP8TwoRoomsOnOneBridgeRestoreIndependently() async {
+        orchestrator.allRooms = [
+            allDayRoom("room-1", bridge: "bridge-a"), allDayRoom("room-2", bridge: "bridge-a"),
+        ]
+        let m1 = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                               sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let m2 = stageManifest(roomID: "room-2", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                               sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        stageLive(bridgeA.v1Spy, [m1, m2])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        XCTAssertEqual(Set(recoveredEntries().map(\.roomID)), ["room-1", "room-2"])
+
+        await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(m1, "bridge-a"))
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.succeededDeletes), expectedDeletes(for: m1))
+        XCTAssertTrue(Set(bridgeA.v1Spy.succeededDeletes).isDisjoint(with: expectedDeletes(for: m2)))
+        XCTAssertTrue(storeStillHolds(m2))
+        XCTAssertEqual(recoveredEntries().map(\.roomID), ["room-2"])
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "room-2"), .bridgeStored)
+    }
+
+    func testP8OneBridgesReadFailureNeitherBlocksNorMutatesTheOther() async {
+        orchestrator.allRooms = [
+            allDayRoom("room-1", bridge: "bridge-a"), allDayRoom("room-2", bridge: "bridge-b"),
+        ]
+        let onA = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let onB = stageManifest(roomID: "room-2", bridgeIP: "192.0.2.2", bridgeID: "bridge-b",
+                                sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        bridgeA.v1Spy.stageInventoryFailure(["fetchSensors"])
+        stageLive(bridgeB.v1Spy, [onB])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertTrue(storeStillHolds(onA))
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+        XCTAssertNotNil(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(onB, "bridge-b")],
+                        "bridge B completes despite bridge A failing")
+
+        await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(onB, "bridge-b"))
+        XCTAssertEqual(Set(bridgeB.v1Spy.succeededDeletes), expectedDeletes(for: onB))
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(storeStillHolds(onA))
+    }
+
+    /// The test the old `presetID_roomID` store key made impossible to write:
+    /// saving the second manifest silently destroyed the first.
+    func testP8SamePresetAndRoomOnTwoBridgesDoNotCollide() async {
+        orchestrator.allRooms = [
+            allDayRoom("shared-room", bridge: "bridge-a"),
+            allDayRoom("shared-room", bridge: "bridge-b"),
+        ]
+        let sharedPreset = UUID()
+        let onA = stageManifest(roomID: "shared-room", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                presetID: sharedPreset, sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let onB = stageManifest(roomID: "shared-room", bridgeIP: "192.0.2.2", bridgeID: "bridge-b",
+                                presetID: sharedPreset, sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        XCTAssertEqual(animationStore.allManifests()
+            .filter { $0.presetID == sharedPreset && $0.roomID == "shared-room" }.count, 2)
+        stageLive(bridgeA.v1Spy, [onA])
+        stageLive(bridgeB.v1Spy, [onB])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        XCTAssertEqual(recoveredEntries().count, 2, "two bridges, two independently stoppable rows")
+
+        await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(onA, "bridge-a"))
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.succeededDeletes), expectedDeletes(for: onA))
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(storeStillHolds(onB))
+        XCTAssertEqual(recoveredEntries().count, 1)
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored,
+                       "bridge B's live animation keeps the label")
+    }
+
+    /// The exact-selection rule, at the normal stop path.
+    func testP8StopCompositionModeTouchesOnlyTheNamedBridgesManifest() async {
+        let onA = stageManifest(roomID: "shared-room", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let onB = stageManifest(roomID: "shared-room", bridgeIP: "192.0.2.2", bridgeID: "bridge-b",
+                                sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        orchestrator.allRooms = [allDayRoom("shared-room", bridge: "bridge-b")]
+        stageLive(bridgeA.v1Spy, [onA])
+        stageLive(bridgeB.v1Spy, [onB])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertEqual(orchestrator.testExactManifestIDs(bridgeID: "bridge-a", roomID: "shared-room"),
+                       [onA.id])
+        await orchestrator.stopCompositionMode(roomID: "shared-room", bridgeID: "bridge-a")
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.succeededDeletes), expectedDeletes(for: onA))
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty)
+        XCTAssertFalse(storeStillHolds(onA))
+        XCTAssertTrue(storeStillHolds(onB), "the other bridge's manifest survives")
+        XCTAssertNotNil(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(onB, "bridge-b")])
+        XCTAssertEqual(recoveredEntries().count, 1)
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored)
+    }
+
+    /// A legacy IP-only manifest whose IP matches two registered bridges names
+    /// no bridge at all, so nothing may be stopped on its behalf.
+    ///
+    /// The twins sit on their own TEST-NET-2 host so the ambiguity under test
+    /// is the only reason selection comes back empty — bridge A's host is
+    /// registered exactly once and would resolve cleanly.
+    func testP8AnAmbiguousLegacyIdentityStopsNothing() async {
+        let twinX = RoutingSpyClient(bridgeID: "bridge-x", bridgeName: "X", ip: "198.51.100.1")
+        let twinY = RoutingSpyClient(bridgeID: "bridge-y", bridgeName: "Y", ip: "198.51.100.1")
+        orchestrator.injectForTesting(clients: [
+            "bridge-a": bridgeA, "bridge-x": twinX, "bridge-y": twinY,
+        ])
+        let legacy = stageManifest(roomID: "ambiguous-room", bridgeIP: "198.51.100.1", bridgeID: nil,
+                                   sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+
+        // The caller's own bridge DOES carry that host — the ambiguity is that
+        // a second registered bridge carries it too.
+        XCTAssertTrue(
+            orchestrator.testExactManifestIDs(bridgeID: "bridge-x", roomID: "ambiguous-room").isEmpty,
+            "an IP that resolves to two bridges names neither of them")
+        await orchestrator.stopCompositionMode(roomID: "ambiguous-room", bridgeID: "bridge-x")
+
+        XCTAssertTrue(twinX.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(twinY.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(storeStillHolds(legacy))
+        XCTAssertNil(animationStore.manifest(id: legacy.id)?.bridgeID,
+                     "no bridge id is guessed")
+    }
+
+    func testP8ANewManifestStaysResolvableAfterItsBridgeChangesIP() async {
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        // Same bridge, new DHCP lease.
+        let moved = RoutingSpyClient(bridgeID: "bridge-a", bridgeName: "A", ip: "192.0.2.77")
+        orchestrator.injectForTesting(clients: ["bridge-a": moved, "bridge-b": bridgeB])
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        stageLive(moved.v1Spy, [m])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertNotNil(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(m, "bridge-a")],
+                        "bridgeID is authoritative, so a dead IP cannot strand the manifest")
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(bridgeID: "bridge-a", roomID: "room-1"),
+                       "All-Day suppression must survive the IP change too")
+
+        await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(m, "bridge-a"))
+        XCTAssertEqual(Set(moved.v1Spy.succeededDeletes), expectedDeletes(for: m))
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty)
+    }
+
+    // ── 16-17: legacy migration ─────────────────────────────────────────
+
+    func testP8ALegacyManifestUpgradesOnlyOnAUniqueIPMatch() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let legacy = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: nil,
+                                   sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [legacy])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertEqual(animationStore.manifest(id: legacy.id)?.bridgeID, "bridge-a",
+                       "the upgrade is persisted, not just held in memory")
+        XCTAssertEqual(animationStore.manifest(id: legacy.id)?.id, legacy.id,
+                       "the identity teardown depends on is unchanged")
+        XCTAssertNotNil(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(legacy, "bridge-a")])
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+    }
+
+    func testP8AnAmbiguousLegacyManifestIsRetainedWithoutMutation() async {
+        let twin = RoutingSpyClient(bridgeID: "bridge-a2", bridgeName: "A2", ip: "192.0.2.1")
+        orchestrator.injectForTesting(clients: ["bridge-a": bridgeA, "bridge-a2": twin])
+        let legacy = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: nil,
+                                   sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertNil(animationStore.manifest(id: legacy.id)?.bridgeID)
+        XCTAssertTrue(storeStillHolds(legacy))
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(twin.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(recoveredEntries().isEmpty)
+    }
+
+    /// An unmapped manifest is not a licence to poll every registered bridge
+    /// looking for a home for it.
+    func testP8AnUnmappedLegacyManifestIsRetainedAndReadsNothing() async {
+        let legacy = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.99", bridgeID: nil,
+                                   sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertTrue(storeStillHolds(legacy))
+        XCTAssertNil(animationStore.manifest(id: legacy.id)?.bridgeID)
+        XCTAssertTrue(bridgeA.v1Spy.fetchCalls.isEmpty)
+        XCTAssertTrue(bridgeB.v1Spy.fetchCalls.isEmpty)
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+    }
+
+    // ── 18-19: missing preset, missing room ─────────────────────────────
+
+    func testP8AMissingPresetStillShowsItsPersistedNameAndStopsCleanly() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        // presetID belongs to no CompositionStore preset.
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              presetID: UUID(), presetName: "Sunset Drift",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        _ = makeStudioVM()
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertEqual(recoveredEntries().first?.effectName, "Sunset Drift",
+                       "the manifest's own persisted name, never a lookup that fails to nil")
+        XCTAssertFalse(recoveredEntries().first?.effectIcon.isEmpty ?? true)
+
+        await orchestrator.requestNowPlayingStop(recoveredEntries()[0])
+        XCTAssertEqual(Set(bridgeA.v1Spy.succeededDeletes), expectedDeletes(for: m))
+        XCTAssertFalse(storeStillHolds(m))
+    }
+
+    func testP8AMissingRoomKeepsAVisibleEntryAndStopsByExactManifest() async {
+        // Only a DECOY room resolves — nothing may be guessed onto it.
+        orchestrator.allRooms = [allDayRoom("room-other", bridge: "bridge-a")]
+        let gone = stageManifest(roomID: "room-gone", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                 presetName: "Ghost Look", roomName: "Old Study",
+                                 sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let other = stageManifest(roomID: "room-other", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                  sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        stageLive(bridgeA.v1Spy, [gone, other])
+        let vm = makeStudioVM()
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        let ghost = recoveredEntries().first { $0.roomID == "room-gone" }
+        XCTAssertEqual(ghost?.roomName, "Old Study", "the persisted room name keeps it identifiable")
+        XCTAssertEqual(ghost?.effectName, "Ghost Look")
+        XCTAssertNil(ghost?.groupedLightID, "there is no trustworthy grouped light to name")
+        XCTAssertNil(vm.runningEffects["room-gone"], "no room ⇒ no Studio row, and no room guessing")
+        XCTAssertNotNil(vm.runningEffects["room-other"])
+
+        await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(gone, "bridge-a"))
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.succeededDeletes), expectedDeletes(for: gone))
+        XCTAssertTrue(Set(bridgeA.v1Spy.succeededDeletes).isDisjoint(with: expectedDeletes(for: other)))
+        XCTAssertTrue(storeStillHolds(other))
+        XCTAssertTrue(bridgeA.groupedPowerIDs.isEmpty,
+                      "an unresolved room is never powered off — there is nothing safe to address")
+        XCTAssertEqual(recoveredEntries().map(\.roomID), ["room-other"])
+    }
+
+    // ── 20 + amendment 4: stale stop, generation-safe power-off ─────────
+
+    /// A stop parked mid-cleanup while a replacement takes the same room. The
+    /// old stop may retire its OWN manifest and nothing else — and it must not
+    /// darken a room that is now legitimately playing.
+    func testP8AStaleStopCannotEraseAReplacementOrPowerOffItsRoom() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let old = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                presetName: "Old Look", sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [old])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        let gate = RestGate()
+        bridgeA.v1Spy.stageDeleteGate("schedule:SC1", gate)
+        let stopTask = Task { await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(old, "bridge-a")) }
+        await gate.waitUntilStarted()
+
+        // A replacement lands on the same bridge + room while the stop is parked.
+        let replacement = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                        presetName: "New Look", sensorID: "S9", ruleIDs: ["R9"],
+                                        scheduleID: "SC9")
+        orchestrator.testPublishRecovered(manifest: replacement, bridgeID: "bridge-a")
+
+        await gate.release()
+        _ = await stopTask.value
+
+        XCTAssertFalse(storeStillHolds(old), "the old stop retires its own manifest")
+        XCTAssertTrue(storeStillHolds(replacement), "and cannot touch the replacement's")
+        XCTAssertTrue(Set(bridgeA.v1Spy.deletedResources)
+            .isDisjoint(with: expectedDeletes(for: replacement)))
+        XCTAssertNotNil(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(replacement, "bridge-a")])
+        XCTAssertEqual(recoveredEntries().count, 1)
+        XCTAssertEqual(recoveredEntries().first?.effectName, "New Look")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "room-1"), .bridgeStored)
+        XCTAssertTrue(bridgeA.groupedPowerIDs.isEmpty,
+                      "the room is playing again — a stale stop must not turn it off")
+    }
+
+    /// The inverse control for the power-off guard: with no replacement, a
+    /// successful recovered stop sends exactly one room-off request.
+    func testP8ASuccessfulRecoveredStopSendsExactlyOneRoomOff() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(m, "bridge-a"))
+
+        XCTAssertEqual(bridgeA.groupedPowerIDs, ["gl-room-1:false"])
+    }
+
+    /// Siri's promise is "the lights stay as they are".
+    func testP8ASiriStyleStopNeverPowersTheRoomOff() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        await orchestrator.requestNowPlayingStop(recoveredEntries()[0], turnOffLights: false)
+
+        XCTAssertFalse(storeStillHolds(m))
+        XCTAssertTrue(bridgeA.groupedPowerIDs.isEmpty)
+    }
+
+    // ── Amendment 3: freshness ──────────────────────────────────────────
+
+    /// The user stops and removes a manifest while a pass holds its snapshot.
+    /// Publishing the stale decision would resurrect a row for an animation
+    /// that is genuinely gone.
+    func testP8APassCannotRepublishAManifestRemovedDuringIt() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+
+        let gate = RestGate()
+        bridgeA.v1Spy.stageInventoryGate("fetchSchedules", gate)
+        let pass = Task { await orchestrator.testReconcileBridgeStoredAnimations() }
+        await gate.waitUntilStarted()
+        animationStore.remove(id: m.id)   // the user stopped it
+        await gate.release()
+        await pass.value
+
+        XCTAssertTrue(recoveredEntries().isEmpty, "a stale snapshot must not be published")
+        XCTAssertFalse(storeStillHolds(m))
+    }
+
+    /// A manifest saved AFTER the pass began is absent from its input through
+    /// no fault of its own. Sweeping "everything this answering bridge did not
+    /// report" would destroy it.
+    func testP8AManifestSavedDuringAPassSurvivesAndIsNotSwept() async {
+        orchestrator.allRooms = [
+            allDayRoom("room-1", bridge: "bridge-a"), allDayRoom("room-2", bridge: "bridge-a"),
+        ]
+        let existing = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                     sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [existing])
+
+        let gate = RestGate()
+        bridgeA.v1Spy.stageInventoryGate("fetchSchedules", gate)
+        let pass = Task { await orchestrator.testReconcileBridgeStoredAnimations() }
+        await gate.waitUntilStarted()
+        let newcomer = stageManifest(roomID: "room-2", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                     presetName: "Newcomer", sensorID: "S2", ruleIDs: ["R2"],
+                                     scheduleID: "SC2")
+        orchestrator.testPublishRecovered(manifest: newcomer, bridgeID: "bridge-a")
+        await gate.release()
+        await pass.value
+
+        XCTAssertTrue(storeStillHolds(newcomer))
+        XCTAssertNotNil(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(newcomer, "bridge-a")],
+                        "a manifest created after the pass began must survive it")
+        XCTAssertEqual(Set(recoveredEntries().map(\.roomID)), ["room-1", "room-2"])
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+    }
+
+    /// A legacy upgrade that lands during the await must not be reverted by the
+    /// pass's pre-upgrade snapshot.
+    func testP8ALegacyUpgradeDuringAPassIsNotOverwrittenByTheStaleValue() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let legacy = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.99", bridgeID: nil,
+                                   sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let live = stageManifest(roomID: "room-2", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                 sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        stageLive(bridgeA.v1Spy, [live])
+
+        let gate = RestGate()
+        bridgeA.v1Spy.stageInventoryGate("fetchSchedules", gate)
+        let pass = Task { await orchestrator.testReconcileBridgeStoredAnimations() }
+        await gate.waitUntilStarted()
+        animationStore.adoptBridgeID("bridge-b", forManifestID: legacy.id)
+        await gate.release()
+        await pass.value
+
+        XCTAssertEqual(animationStore.manifest(id: legacy.id)?.bridgeID, "bridge-b",
+                       "the concurrent upgrade stands; the stale pre-upgrade value never wins")
+        XCTAssertTrue(storeStillHolds(legacy))
+    }
+
+    // ── Amendment 2: replacement is blocked until cleanup is complete ───
+
+    func testP8AReplacementIsRefusedWhenTheOldScheduleDeleteFails() async {
+        let old = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        bridgeA.v1Spy.stageDeleteFailures(["schedule:SC1"])
+
+        let readiness = await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "room-1", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
+
+        guard case .blocked(_, let retained) = readiness else {
+            return XCTFail("a refused delete must block the replacement")
+        }
+        XCTAssertEqual(retained, [old.id])
+        XCTAssertTrue(storeStillHolds(old))
+        XCTAssertTrue(bridgeA.v1Spy.creations.isEmpty, "zero new create requests")
+        XCTAssertTrue(bridgeA.v1Spy.fetchCalls.isEmpty, "and still no enumeration (packet 2)")
+    }
+
+    func testP8AReplacementIsRefusedWhenOneOldRuleDeleteFails() async {
+        let old = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                sensorID: "S1", ruleIDs: ["R1", "R2"], scheduleID: "SC1")
+        bridgeA.v1Spy.stageDeleteFailures(["rule:R2"])
+
+        let readiness = await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "room-1", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
+
+        guard case .blocked = readiness else { return XCTFail("expected blocked") }
+        XCTAssertTrue(storeStillHolds(old))
+        XCTAssertTrue(bridgeA.v1Spy.creations.isEmpty)
+    }
+
+    func testP8AReplacementIsRefusedWhenTheBridgeIsUnreadable() async {
+        let old = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        bridgeA.v1Spy.stageInventoryFailure([])   // reads are irrelevant here
+        bridgeA.v1Spy.stageDeleteFailures([])
+        // Every delete fails at transport level.
+        bridgeA.v1Spy.stageDeleteFailures([])
+        bridgeA.v1Spy.stageAlreadyAbsentDeletes([])
+        bridgeA.v1Spy.stageDeleteFailures(["schedule:SC1", "rule:R1", "sensor:S1"])
+
+        let readiness = await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "room-1", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
+
+        guard case .blocked = readiness else { return XCTFail("expected blocked") }
+        XCTAssertTrue(storeStillHolds(old))
+        XCTAssertTrue(bridgeA.v1Spy.creations.isEmpty)
+    }
+
+    func testP8EveryExactOldManifestIsRemovedBeforeAReplacementIsAllowed() async {
+        let first = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                  sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let second = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                   sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        let sibling = stageManifest(roomID: "room-2", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                    sensorID: "S3", ruleIDs: ["R3"], scheduleID: "SC3")
+
+        let readiness = await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "room-1", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
+
+        XCTAssertEqual(readiness, .clear)
+        XCTAssertEqual(Set(bridgeA.v1Spy.succeededDeletes),
+                       expectedDeletes(for: first).union(expectedDeletes(for: second)))
+        XCTAssertFalse(storeStillHolds(first))
+        XCTAssertFalse(storeStillHolds(second))
+        XCTAssertTrue(storeStillHolds(sibling), "another room is never touched")
+    }
+
+    func testP8ABlockedReplacementOnOneBridgeDoesNotBlockTheOther() async {
+        let onA = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let onB = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.2", bridgeID: "bridge-b",
+                                sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        bridgeA.v1Spy.stageDeleteFailures(["sensor:S1"])
+
+        let blocked = await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "room-1", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
+        let clear = await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "room-1", bridgeID: "bridge-b", v1Client: bridgeB.v1Spy)
+
+        guard case .blocked = blocked else { return XCTFail("bridge A must be blocked") }
+        XCTAssertEqual(clear, .clear, "bridge B proceeds independently")
+        XCTAssertTrue(storeStillHolds(onA))
+        XCTAssertFalse(storeStillHolds(onB))
+    }
+
+    /// An already-absent resource is not a reason to refuse forever.
+    func testP8AnAlreadyAbsentOldManifestClearsTheReplacement() async {
+        let old = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        bridgeA.v1Spy.stageAlreadyAbsentDeletes(["schedule:SC1", "rule:R1", "sensor:S1"])
+
+        let readiness = await orchestrator.testCleanupBridgeStoredForReplacement(
+            roomID: "room-1", bridgeID: "bridge-a", v1Client: bridgeA.v1Spy)
+
+        XCTAssertEqual(readiness, .clear)
+        XCTAssertFalse(storeStillHolds(old))
+    }
+
+    // ── Amendment/packet interop: 6 and 2 stay intact ───────────────────
+
+    func testP8ALiveManifestStillSuppressesAllDayAndAPrunedOneStops() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(bridgeID: "bridge-a", roomID: "room-1"))
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(bridgeID: "bridge-b", roomID: "room-1"),
+                      "suppression is per exact bridge")
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(bridgeID: "bridge-a", roomID: "room-2"))
+
+        // Prove it absent, and the room becomes eligible again — otherwise
+        // All-Day would be dead in that room forever.
+        bridgeA.v1Spy.stageInventory("fetchSchedules", [:])
+        bridgeA.v1Spy.stageInventory("fetchRules", [:])
+        bridgeA.v1Spy.stageInventory("fetchSensors", [:])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        XCTAssertFalse(storeStillHolds(m))
+        XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(bridgeID: "bridge-a", roomID: "room-1"))
+    }
+
+    /// `stopStudioMode` sends no v1 delete, so it may not claim to have stopped
+    /// what is still running on a bridge.
+    func testP8StopStudioModeLeavesRecoveredRowsAndTheirResourcesAlone() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        await orchestrator.stopStudioMode()
+
+        XCTAssertEqual(recoveredEntries().count, 1)
+        XCTAssertTrue(storeStillHolds(m))
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+    }
+
+    // ── Source-shape guards (packet-2 pattern) ──────────────────────────
+
+    /// A shell grep cannot express ordering WITHIN a function body.
+    func testP8ReconciliationRunsInsideLoadAllAfterTheBridgeFetchAndRoomRebuild() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+        let body = try XCTUnwrap(functionBody(code, startingWith: "func loadAll(cacheContext:"))
+        let fetch = try XCTUnwrap(body.firstIndex { $0.contains("await fetchAndMergeAllBridges()") })
+        let rebuild = try XCTUnwrap(body.firstIndex { $0.contains("rebuildAllRooms()") })
+        let reconcile = try XCTUnwrap(
+            body.firstIndex { $0.contains("scheduleBridgeAnimationReconciliation()") })
+        XCTAssertLessThan(fetch, reconcile,
+                          "a manifest cannot be judged before its bridge is registered")
+        XCTAssertLessThan(rebuild, reconcile,
+                          "rooms must be authoritative before a recovered room is resolved")
+    }
+
+    /// Reconciliation restores presentation, never runtime.
+    func testP8TheReconcilerBodyStartsNoRuntime() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+        let body = try XCTUnwrap(
+            functionBody(code, startingWith: "func reconcileBridgeStoredAnimations()")).joined(separator: "\n")
+        XCTAssertFalse(body.isEmpty)
+        for banned in [".enqueue(", "startCompositionScheduler", "refreshCompositionMicDemand",
+                       "HueEntertainmentClient", "setGroupedLight", "AVAudio",
+                       "purgeAllChromaGlowResources"] {
+            XCTAssertFalse(body.contains(banned), "reconciliation must not reach \(banned)")
+        }
+    }
+
+    /// Destructive selection goes through ONE exact-identity funnel.
+    func testP8DestructiveManifestSelectionIsAlwaysBridgeExact() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+        for name in ["func stopCompositionMode(roomID:",
+                     "private func cleanupBridgeStoredAnimationForReplacement("] {
+            let body = try XCTUnwrap(functionBody(code, startingWith: name)).joined(separator: "\n")
+            XCTAssertFalse(body.isEmpty, "\(name) not found")
+            XCTAssertTrue(body.contains("exactManifests("),
+                          "\(name) must select through the exact-identity funnel")
+            XCTAssertFalse(body.contains("allManifests()"),
+                           "\(name) must not enumerate every manifest")
+            XCTAssertFalse(body.contains(".roomID == roomID"),
+                           "\(name) must not select destructively on a room id alone")
+        }
+    }
+
+    /// The replacement must be gated on the cleanup RESULT, before any create.
+    func testP8TheBridgeStoredStartIsGatedOnCleanupCompletion() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+        let body = try XCTUnwrap(functionBody(code, startingWith: "func startCompositionMode("))
+        let gate = try XCTUnwrap(body.firstIndex { $0.contains("case .blocked") })
+        let upload = try XCTUnwrap(body.firstIndex { $0.contains("bridgeAnimationEngine.upload(") })
+        XCTAssertLessThan(gate, upload,
+                          "nothing may be created until the old chain is provably gone")
+    }
+
+
+    // ── Follow-up corrections to packet 8 ───────────────────────────────
+
+    /// `runningEffects` is keyed by room id alone, so it cannot represent one
+    /// room id running on two bridges. Letting dictionary order pick a winner
+    /// would mean selecting bridge A and pressing Stop could tear down bridge
+    /// B's animation. Studio mirrors NEITHER; both stay exactly stoppable from
+    /// the Dashboard.
+    func testP8ADuplicateRoomIDAcrossBridgesIsMirroredForNeitherStudioRoom() async {
+        let roomOnA = allDayRoom("shared-room", bridge: "bridge-a")
+        let roomOnB = allDayRoom("shared-room", bridge: "bridge-b")
+        orchestrator.allRooms = [roomOnA, roomOnB]
+        let onA = stageManifest(roomID: "shared-room", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                presetName: "Look A", sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        let onB = stageManifest(roomID: "shared-room", bridgeIP: "192.0.2.2", bridgeID: "bridge-b",
+                                presetName: "Look B", sensorID: "S2", ruleIDs: ["R2"], scheduleID: "SC2")
+        stageLive(bridgeA.v1Spy, [onA])
+        stageLive(bridgeB.v1Spy, [onB])
+        let vm = makeStudioVM()
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertNil(vm.runningEffects["shared-room"],
+                     "an ambiguous room id must not be mirrored — dictionary order may not pick an owner")
+        XCTAssertEqual(recoveredEntries().count, 2, "both stay visible and exactly stoppable")
+
+        // Selecting either bridge's room can neither display nor stop the
+        // other's animation: there is nothing for Studio's roomID-keyed stop
+        // to act on at all.
+        for room in [roomOnA, roomOnB] {
+            vm.selectedRoom = room
+            XCTAssertNil(vm.currentRoomEffect)
+            await vm.stopFromNowPlaying(roomID: "shared-room")
+        }
+        XCTAssertTrue(bridgeA.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty)
+        XCTAssertTrue(storeStillHolds(onA))
+        XCTAssertTrue(storeStillHolds(onB))
+        XCTAssertEqual(recoveredEntries().count, 2)
+
+        // Each Dashboard row still stops exactly its own animation.
+        let rowForA = recoveredEntries().first { $0.recovered?.bridgeID == "bridge-a" }
+        await orchestrator.requestNowPlayingStop(try! XCTUnwrap(rowForA))
+
+        XCTAssertEqual(Set(bridgeA.v1Spy.succeededDeletes), expectedDeletes(for: onA))
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty, "the other bridge is untouched")
+        XCTAssertFalse(storeStillHolds(onA))
+        XCTAssertTrue(storeStillHolds(onB))
+        XCTAssertEqual(recoveredEntries().map { $0.recovered?.bridgeID }, ["bridge-b"])
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored,
+                       "bridge B's animation still owns the transport label")
+
+        // And with the ambiguity resolved, the survivor becomes mirrorable.
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        XCTAssertEqual(vm.runningEffects["shared-room"]?.recovered, recoveredKey(onB, "bridge-b"))
+    }
+
+    /// An idempotent republish re-confirms the SAME owner. Treating it as an
+    /// ownership change would make every routine reconciliation look like a
+    /// replacement and silently swallow the room-off of a stop in flight.
+    func testP8AnUnchangedRepublishDoesNotSuppressAParkedStopsRoomOff() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        let gate = RestGate()
+        bridgeA.v1Spy.stageDeleteGate("schedule:SC1", gate)
+        let stopTask = Task { await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(m, "bridge-a")) }
+        await gate.waitUntilStarted()
+
+        // A routine refresh lands mid-stop and re-publishes the same manifest.
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        await gate.release()
+        _ = await stopTask.value
+
+        XCTAssertFalse(storeStillHolds(m))
+        XCTAssertEqual(bridgeA.groupedPowerIDs, ["gl-room-1:false"],
+                       "exactly one room-off — an unchanged refresh is not a new owner")
+        XCTAssertTrue(recoveredEntries().isEmpty)
+    }
+
+    /// A display-name refresh is not an ownership change either.
+    func testP8ADisplayNameRefreshDoesNotMoveTheOwnershipGeneration() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        let generation = orchestrator.testRoomOwnershipGeneration(bridgeID: "bridge-a", roomID: "room-1")
+
+        orchestrator.refreshRecoveredDisplayName(key: recoveredKey(m, "bridge-a"), name: "Renamed")
+        XCTAssertEqual(orchestrator.testRoomOwnershipGeneration(bridgeID: "bridge-a", roomID: "room-1"),
+                       generation)
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        XCTAssertEqual(orchestrator.testRoomOwnershipGeneration(bridgeID: "bridge-a", roomID: "room-1"),
+                       generation, "re-confirming the same owner is not an acquisition")
+    }
+
+    /// The replacement control for the guard above: a genuinely new owner DOES
+    /// move the generation, and the parked stop must then send no room-off.
+    func testP8AGenuineReplacementStillSuppressesTheParkedStopsRoomOff() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let old = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                presetName: "Old Look", sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [old])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        let gate = RestGate()
+        bridgeA.v1Spy.stageDeleteGate("schedule:SC1", gate)
+        let stopTask = Task { await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(old, "bridge-a")) }
+        await gate.waitUntilStarted()
+
+        let replacement = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                        presetName: "New Look", sensorID: "S9", ruleIDs: ["R9"],
+                                        scheduleID: "SC9")
+        orchestrator.testPublishRecovered(manifest: replacement, bridgeID: "bridge-a")
+
+        await gate.release()
+        _ = await stopTask.value
+
+        XCTAssertFalse(storeStillHolds(old))
+        XCTAssertTrue(storeStillHolds(replacement))
+        XCTAssertTrue(bridgeA.groupedPowerIDs.isEmpty,
+                      "the room is playing again — no room-off may be sent")
+        XCTAssertEqual(recoveredEntries().first?.effectName, "New Look")
+    }
+
+    // ── Display name on both surfaces ───────────────────────────────────
+
+    /// A store on its own file, so a rename assertion never reads or writes the
+    /// developer's real `compositions.json`.
+    private func makeStudioVM(presets: [CompositionPreset]) -> StudioViewModel {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("p8-presets-\(UUID().uuidString).json")
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        let store = CompositionStore(fileURL: url, loadsSynchronously: true)
+        for preset in presets { store.save(preset) }
+        let vm = StudioViewModel()
+        vm.injectForTesting(compositionStore: store)
+        vm.configure(orchestrator: orchestrator)
+        return vm
+    }
+
+    private func renamedPreset(_ name: String) -> CompositionPreset {
+        var preset = CompositionStore.builtInPresets.first { !$0.reaction.requiresMic }!
+        preset.name = name
+        return preset
+    }
+
+    func testP8ARenamedPresetShowsItsCurrentNameOnBothSurfaces() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let preset = renamedPreset("Renamed Look")
+        // The manifest still carries the name recorded at upload time.
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              presetID: preset.id, presetName: "Name At Upload",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        let vm = makeStudioVM(presets: [preset])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertEqual(vm.runningEffects["room-1"]?.card.name, "Renamed Look",
+                       "Studio builds its card from the CURRENT preset name")
+        XCTAssertEqual(recoveredEntries().first?.effectName, "Renamed Look",
+                       "and the Dashboard row matches it")
+        XCTAssertEqual(recoveredEntries().count, 1, "no duplicate row from the refresh")
+
+        // Idempotent: a second pass changes neither surface nor the row count.
+        await orchestrator.testReconcileBridgeStoredAnimations()
+        XCTAssertEqual(vm.runningEffects["room-1"]?.card.name, "Renamed Look")
+        XCTAssertEqual(recoveredEntries().count, 1)
+    }
+
+    func testP8ADeletedPresetKeepsThePersistedNameOnBothSurfaces() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        // presetID matches nothing in the store — the preset was deleted.
+        let m = stageManifest(roomID: "room-1", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                              presetID: UUID(), presetName: "Name At Upload",
+                              sensorID: "S1", ruleIDs: ["R1"], scheduleID: "SC1")
+        stageLive(bridgeA.v1Spy, [m])
+        let vm = makeStudioVM(presets: [renamedPreset("Some Other Look")])
+
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertEqual(vm.runningEffects["room-1"]?.card.name, "Name At Upload")
+        XCTAssertEqual(recoveredEntries().first?.effectName, "Name At Upload")
+
+        // And it is still stoppable, which is the point of keeping the name.
+        await vm.stopFromNowPlaying(roomID: "room-1")
+        XCTAssertEqual(Set(bridgeA.v1Spy.succeededDeletes), expectedDeletes(for: m))
+        XCTAssertFalse(storeStillHolds(m))
+    }
+
 }
