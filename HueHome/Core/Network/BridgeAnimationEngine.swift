@@ -47,7 +47,15 @@ struct BridgeAnimationManifest: Codable, Identifiable {
 // MARK: - BridgeAnimationError
 
 enum BridgeAnimationError: LocalizedError {
-    case bridgeFull(BridgeResourceCapacity)
+    /// The bridge REPORTED less free capacity than this look measurably needs.
+    /// The only error permitted to tell the user the bridge is full.
+    case bridgeCapacityInsufficient(
+        required: BridgeStoredRequirement,
+        reported: BridgeReportedCapacity,
+        shortages: [BridgeStoredRequirement.Shortage])
+    /// Capacity could not be fetched or decoded. The app knows nothing, so it
+    /// says nothing about how full the bridge is.
+    case bridgeCapacityUnknown(reason: String)
     case noLightsResolved
     case noGroupFound
     case presetRequiresMic
@@ -55,8 +63,19 @@ enum BridgeAnimationError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .bridgeFull(let cap):
-            return "Bridge is almost full — this animation needs about 12 free rule slots and only \(cap.rulesAvailable) are left."
+        case .bridgeCapacityInsufficient(let required, let reported, let shortages):
+            // Five different resources can be short and only ONE of them is
+            // about rule slots, so a fixed "needs N free rule slots" sentence
+            // would be false four times out of five. Name the number only when
+            // rules alone fell short; otherwise stay accurate and general.
+            // (The full required-vs-reported picture for all five figures goes
+            // to the sanitized diagnostics at the throw site.)
+            if shortages == [.rules], let available = reported.rulesAvailable {
+                return "Bridge is almost full — this look needs \(required.ruleResources) free rule slots and only \(available) are left."
+            }
+            return "Bridge is almost full — it doesn't have enough free space to store this look."
+        case .bridgeCapacityUnknown:
+            return "Couldn't check the free space on this bridge."
         case .noLightsResolved:
             return "No lights found for this room."
         case .noGroupFound:
@@ -100,12 +119,6 @@ actor BridgeAnimationEngine {
             throw BridgeAnimationError.presetRequiresMic
         }
 
-        // ─── 0. Check bridge capacity ───
-        let capacity = try await v1Client.fetchResourceCapacity()
-        guard capacity.canFitOneAnimation else {
-            throw BridgeAnimationError.bridgeFull(capacity)
-        }
-
         // ─── 1. Calculate cycle timing ───
         let stepCount = calculateStepCount(for: preset)
         let cycleDuration = calculateCycleDuration(for: preset)
@@ -115,6 +128,51 @@ actor BridgeAnimationEngine {
         let transitionDeciSeconds = max(10, Int(Double(stepInterval) * 8.0))
 
         log.info("[BridgeAnim] Upload '\(preset.name)' → \(stepCount) steps, \(stepInterval)s/step, cycle=\(cycleDuration)s")
+
+        // ─── 1b. Capacity preflight — BEFORE any resource is created ───
+        //
+        // Packet 5. Two things changed. The requirement is now computed from
+        // the arithmetic the loops below actually execute, in aggregate:
+        // `steps × ceil(lights/7)` rules, twice that many conditions, and one
+        // action per light per step plus a sensor advance on every non-final
+        // step. The old gate asked for a flat 12 free rules — half of what a
+        // 20-light 8-step look really needs — so a bridge with 13 free slots
+        // passed and then threw partway through the rule loop, leaving
+        // orphans behind. Second, availability now comes from the BRIDGE
+        // (`/capabilities`) instead of being inferred from hard-coded totals.
+        //
+        // This is a point-in-time CHECK, not a reservation: nothing in v1 can
+        // hold capacity, so a later failure is not evidence of exhaustion and
+        // is never reported as such. What it does guarantee is that an upload
+        // already known not to fit never starts, and that we fail closed when
+        // we cannot tell.
+        let requirement = BridgeStoredRequirement(
+            lights: lightIDs.count, steps: stepCount)
+        let reported: BridgeReportedCapacity
+        do {
+            reported = try await v1Client.fetchReportedCapacity()
+        } catch {
+            log.error("[BridgeAnim] capability read failed: \(error.localizedDescription)")
+            throw BridgeAnimationError.bridgeCapacityUnknown(
+                reason: "capability read failed: \(error.localizedDescription)")
+        }
+        switch reported.verdict(for: requirement) {
+        case .fits:
+            log.info("[BridgeAnim] capacity OK — \(reported.diagnosticSummary(for: requirement))")
+        case .insufficient(let required, let capacity, let shortages):
+            // Every figure goes to the log, whichever single sentence the user
+            // ends up seeing.
+            log.error("""
+                [BridgeAnim] insufficient capacity \
+                (short: \(shortages.map(\.rawValue).joined(separator: ", "))) — \
+                \(capacity.diagnosticSummary(for: required))
+                """)
+            throw BridgeAnimationError.bridgeCapacityInsufficient(
+                required: required, reported: capacity, shortages: shortages)
+        case .unknown(let reason):
+            log.error("[BridgeAnim] capacity unknown — \(reason)")
+            throw BridgeAnimationError.bridgeCapacityUnknown(reason: reason)
+        }
 
         // ─── 2. Pre-render frames ───
         let paramBox = CompositionParamBox(preset: preset)
@@ -179,6 +237,20 @@ actor BridgeAnimationEngine {
             perStepLightStates.append(stepStates)
         }
         log.info("[BridgeAnim] Pre-computed \(perStepLightStates.count) step states for \(v1LightIDs.count) lights")
+
+        // Packet 5: no light may be silently missing from a step. The `20` cap
+        // is gone and the room is rendered in full, so every step must now
+        // carry a state for every light — the `lightIndex < frames.count`
+        // guard above can no longer drop one. This is the belt-and-braces
+        // check that the truncation cannot come back quietly: it is the same
+        // shape as the `actions.count <= 8` guard below, and it fires BEFORE
+        // any resource is created, so a violation costs nothing on the bridge.
+        for (step, stepStates) in perStepLightStates.enumerated()
+        where stepStates.count != v1LightIDs.count {
+            throw BridgeAnimationError.uploadFailed(
+                "step \(step) has \(stepStates.count) light states for \(v1LightIDs.count) lights "
+                + "— refusing to upload a silently truncated animation")
+        }
 
         // ─── 5. Create CLIP sensor (step counter) ───
         let sensorName = "CG_\(String(preset.name.prefix(16)))_ctr"

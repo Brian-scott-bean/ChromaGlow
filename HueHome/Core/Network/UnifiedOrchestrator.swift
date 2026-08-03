@@ -3608,6 +3608,31 @@ final class UnifiedOrchestrator {
                 return  // Don't start app-driven scheduler
             } catch {
                 debugLog("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
+                // Packet 5: carry the reason forward instead of dropping it in
+                // a DEBUG log. The three cases stay DISTINCT all the way to the
+                // sentence the user reads — "the bridge is full" is only ever
+                // said when capacity was actually MEASURED short. Unknown
+                // capacity means the app knows nothing, and a creation failure
+                // after a passing preflight is not evidence of exhaustion
+                // (preflight is a point-in-time check, not a reservation).
+                //
+                // Recorded against the session opened at the head of this
+                // function, and merged — `markComposerTelemetrySessionRESTActive`
+                // will add the large-room fact below without erasing this, and
+                // this does not erase that.
+                let reason: CompositionFallbackReason
+                switch error {
+                case BridgeAnimationError.bridgeCapacityInsufficient:
+                    reason = .bridgeCapacityInsufficient
+                case BridgeAnimationError.bridgeCapacityUnknown:
+                    reason = .bridgeCapacityUnknown
+                default:
+                    reason = .bridgeStoredUploadFailed
+                }
+                recordCompositionFallback(
+                    sessionKey: composerTelemetryKey,
+                    reason: reason,
+                    generation: nextGeneration)
                 // Fall through to the REST path, which records `.rest` below.
             }
         }
