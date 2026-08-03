@@ -97,12 +97,24 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
 
     override func makeV1Client() throws -> HueV1Client { v1Spy }
 
+    /// Packet 6: All-Day's tick issues exactly this PUT, one per room. Failing
+    /// a chosen grouped light proves a per-room error stays confined to its own
+    /// scope instead of abandoning the rest of the tick.
+    private var _failingGroupedEffectIDs: Set<String> = []
+    func stageGroupedEffectFailures(_ ids: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        _failingGroupedEffectIDs = ids
+    }
+
     override func setGroupedLightEffect(
         id: String, on: Bool?, brightness: Double?,
         xy: (Double, Double)?, mirek: Int?, duration: Int
     ) async throws {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         _groupedEffectIDs.append(id)
+        let failing = _failingGroupedEffectIDs.contains(id)
+        lock.unlock()
+        if failing { throw HueAPIError.httpError(500) }
     }
 
     override func fetchLightIDsForGroup(groupedLightID: String) async throws -> [String] { [] }
@@ -3006,5 +3018,576 @@ final class MultiBridgeRoutingTests: XCTestCase {
             eligibleOperationCount: p?.eligibleOperationCount ?? 0,
             hasCompletedInitialSuccessfulRotation: p?.completedSuccessfulRotation ?? true,
             cursor: p?.cursor ?? 0))
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 6: All-Day per-room delivery and lifecycle
+    //
+    // Before packet 6, All-Day owned ONE RestSender and ONE sentinel scope
+    // (`RestScope(roomID: "__allDay__", owner: .allDay)`), so every room in a
+    // tick overwrote the previous room's pending slot: with N rooms, N-2 were
+    // typically dropped without a trace. It also discarded the ValidityProbe,
+    // so a stop could not halt an executing closure, and NO teardown path —
+    // removeBridge, forgetAllBridges, stopStudioMode — could reach its mailbox.
+    //
+    // Everything below is proven by continuations, recorded event ORDER, and
+    // source shape. Nothing is proven by elapsed time — Guard 8 in
+    // hardening_guards.sh forbids timing waiters anywhere in this file.
+    // ──────────────────────────────────────────────
+
+    private func allDayScope(_ roomID: String) -> RestScope {
+        RestScope(roomID: roomID, owner: .allDay)
+    }
+
+    private func allDayAnchor() -> UnifiedOrchestrator.AllDayAnchor {
+        // Fixed instant + timezone: the curve is pure, so the tick's OUTPUT is
+        // irrelevant here — what matters is which rooms it reaches.
+        UnifiedOrchestrator.AllDayAnchor(
+            lat: 40.7128, lon: -74.0060, timeZoneID: "America/New_York",
+            updatedAt: Date(timeIntervalSince1970: 1_000_000))
+    }
+
+    private func allDayRoom(
+        _ id: String, bridge: String?, glID: String? = nil
+    ) -> RoomDisplayItem {
+        RoomDisplayItem(
+            id: id, name: "Room \(id)", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: glID ?? "gl-\(id)", lightCount: 2,
+            bridgeID: bridge,
+            childResourceRefs: [])
+    }
+
+    /// Run one production tick at the orchestrator's current generation, then
+    /// drain every All-Day mailbox it used so the assertions see settled state.
+    private func runAllDayTick(bridgeKeys: [String?] = ["bridge-a", "bridge-b"]) async {
+        let gen = orchestrator.testAllDayGeneration()
+        await orchestrator.testTickAllDayScenes(anchor: allDayAnchor(), generation: gen)
+        for key in bridgeKeys {
+            if let sender = orchestrator.testAllDayRestSender(for: key) {
+                await drainAllDay(sender)
+            }
+        }
+    }
+
+    /// Deterministic barrier on an All-Day sender — everything enqueued before
+    /// this has run. Mirrors `drain(_:)` but in the `.allDay` owner space so it
+    /// cannot collide with a Composer/Studio scope.
+    private func drainAllDay(_ sender: RestSender) async {
+        let done = RestGate()
+        await sender.enqueue(scope: allDayScope("__drain-allday__")) { _ in
+            done.signalStarted()
+        }
+        await done.waitUntilStarted()
+    }
+
+    /// Production source with comment-only lines stripped — a doc comment that
+    /// names a symbol is documentation, not a call site.
+    private func productionCode(_ relativePath: String) throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // HueHomeTests/
+            .deletingLastPathComponent()   // repo root
+        return try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+    }
+
+    /// The body of a top-level func in a Swift source, by brace depth.
+    private func functionBody(_ source: String, startingWith signature: String) -> [String]? {
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let start = lines.firstIndex(where: { $0.contains(signature) }) else { return nil }
+        var depth = 0
+        var started = false
+        var body: [String] = []
+        for line in lines[start...] {
+            for ch in line {
+                if ch == "{" { depth += 1; started = true }
+                if ch == "}" { depth -= 1 }
+            }
+            if started { body.append(line) }
+            if started && depth == 0 { return body }
+        }
+        return nil
+    }
+
+    // ── Delivery: every eligible room, every tick ────────────────────
+
+    // P6-1. Two eligible rooms on ONE bridge both dispatch in one tick.
+    func testOneTickDispatchesEveryEligibleRoomOnABridge() async {
+        orchestrator.allRooms = [
+            allDayRoom("room-1", bridge: "bridge-a"),
+            allDayRoom("room-2", bridge: "bridge-a"),
+        ]
+        await runAllDayTick()
+
+        XCTAssertEqual(Set(bridgeA.groupedEffectIDs), ["gl-room-1", "gl-room-2"], """
+            both rooms must receive their All-Day write — the sentinel scope \
+            used to let room-2's enqueue erase room-1's pending slot
+            """)
+    }
+
+    // P6-2. More rooms than the OLD single pending slot could hold are not
+    //       dropped. Five rooms, one bridge: five writes, no silent losses.
+    func testFiveRoomsInOneTickAreAllDelivered() async {
+        orchestrator.allRooms = (1...5).map { allDayRoom("r\($0)", bridge: "bridge-a") }
+        await runAllDayTick()
+
+        XCTAssertEqual(Set(bridgeA.groupedEffectIDs),
+            Set((1...5).map { "gl-r\($0)" }),
+            "every room gets exactly one attempt per tick, regardless of count")
+        XCTAssertEqual(bridgeA.groupedEffectIDs.count, 5,
+            "and exactly one — no duplicates from re-enqueue")
+    }
+
+    // P6-3. The SAME room id on two bridges dispatches independently: two
+    //       different sender instances, two scopes that never meet.
+    func testSameRoomIDOnTwoBridgesDispatchesIndependently() async {
+        orchestrator.allRooms = [
+            allDayRoom("shared", bridge: "bridge-a", glID: "gl-a"),
+            allDayRoom("shared", bridge: "bridge-b", glID: "gl-b"),
+        ]
+        await runAllDayTick()
+
+        XCTAssertEqual(bridgeA.groupedEffectIDs, ["gl-a"],
+            "bridge A writes its own room")
+        XCTAssertEqual(bridgeB.groupedEffectIDs, ["gl-b"], """
+            and bridge B writes its identically-named room — a roomID-only \
+            design would have collapsed these into one mailbox slot
+            """)
+        XCTAssertEqual(orchestrator.testAllDayRestSenderBridgeKeys(),
+            ["bridge-a", "bridge-b"],
+            "one All-Day mailbox per bridge")
+    }
+
+    // P6-18. A failing room does not prevent LATER rooms from being attempted —
+    //        separate scopes mean a thrown error is confined to its own closure.
+    func testAFailingRoomDoesNotPreventLaterRooms() async {
+        bridgeA.stageGroupedEffectFailures(["gl-r1"])
+        orchestrator.allRooms = (1...3).map { allDayRoom("r\($0)", bridge: "bridge-a") }
+        await runAllDayTick()
+
+        XCTAssertEqual(Set(bridgeA.groupedEffectIDs), ["gl-r1", "gl-r2", "gl-r3"], """
+            r1 threw, and r2/r3 were still attempted — All-Day swallows per-room \
+            failures (try?) and must not abandon the rest of the tick
+            """)
+    }
+
+    // P6-17. A newer tick replaces only the SAME exact bridge+room pending item.
+    func testANewerTickReplacesOnlyTheSameBridgeAndRoom() async {
+        let senderA = orchestrator.testAllDayRestSender(for: "bridge-a")!
+        let events = RestEventLog()
+
+        // Park the mailbox so later enqueues stay pending and observable.
+        let gate = RestGate()
+        await senderA.enqueue(scope: allDayScope("__park__")) { _ in
+            gate.signalStarted()
+            await gate.waitForRelease()
+        }
+        await gate.waitUntilStarted()
+
+        await senderA.enqueue(scope: allDayScope("room-1")) { _ in events.record("room-1 old") }
+        await senderA.enqueue(scope: allDayScope("room-2")) { _ in events.record("room-2") }
+        // Newer work for room-1 ONLY.
+        await senderA.enqueue(scope: allDayScope("room-1")) { _ in events.record("room-1 new") }
+
+        gate.release()
+        await drainAllDay(senderA)
+
+        XCTAssertFalse(events.entries.contains("room-1 old"),
+            "the superseded room-1 closure never runs")
+        XCTAssertTrue(events.entries.contains("room-1 new"),
+            "the newer room-1 value wins for its own scope")
+        XCTAssertTrue(events.entries.contains("room-2"), """
+            and room-2 is untouched — replacement is per scope, which is the \
+            whole reason rooms stopped erasing each other
+            """)
+    }
+
+    // ── Stop, generation, and retirement (A1) ────────────────────────
+
+    // P6-13. Stop invalidates PENDING work: nothing queued before the stop may
+    //        reach the bridge afterwards.
+    //
+    //        NOTE the barrier. `stopAllDayScenes` spawns its own cleanup over
+    //        the retired senders, so a drain SENTINEL enqueued after the stop
+    //        can be dropped by that cleanup — which hangs the test instead of
+    //        failing it. The barrier here is a `clearAll()` the test itself
+    //        awaits: idempotent, and impossible to swallow.
+    func testStopDropsPendingAllDayWork() async {
+        orchestrator.allRooms = [
+            allDayRoom("room-1", bridge: "bridge-a"),
+            allDayRoom("room-2", bridge: "bridge-a"),
+        ]
+        let sender = orchestrator.testAllDayRestSender(for: "bridge-a")!
+
+        // Park the mailbox so the tick's writes are still pending at stop time.
+        let parked = RestGate()
+        let parkFinished = RestGate()
+        await sender.enqueue(scope: allDayScope("__park__")) { _ in
+            parked.signalStarted()
+            await parked.waitForRelease()
+            parkFinished.signalStarted()
+        }
+        await parked.waitUntilStarted()
+
+        await orchestrator.testTickAllDayScenes(
+            anchor: allDayAnchor(), generation: orchestrator.testAllDayGeneration())
+
+        orchestrator.stopAllDayScenes()
+
+        XCTAssertTrue(orchestrator.testAllDayRestSenderBridgeKeys().isEmpty,
+            "the sender map is detached SYNCHRONOUSLY, not merely cleared")
+        XCTAssertFalse(orchestrator.testAllDayTaskIsRunning(),
+            "the 5-minute loop is cancelled and forgotten")
+
+        parked.release()
+        await parkFinished.waitUntilStarted()
+        _ = await sender.clearAll()
+
+        XCTAssertEqual(bridgeA.groupedEffectIDs, [], """
+            no write queued before the stop may land afterwards — either the \
+            retirement dropped it, or its generation guard rejected it
+            """)
+    }
+
+    // P6-14. Stop invalidates EXECUTING work at the next validity boundary.
+    //        All-Day used to discard the probe entirely, so this was impossible.
+    func testExecutingAllDayWorkStopsAtItsNextValidityBoundary() async {
+        let senderA = orchestrator.testAllDayRestSender(for: "bridge-a")!
+        let events = RestEventLog()
+        let batch1 = RestGate()
+        let finished = RestGate()
+
+        await senderA.enqueue(scope: allDayScope("room-1")) { stillCurrent in
+            for batch in 1...3 {
+                guard await stillCurrent() else { break }
+                events.record("batch\(batch)")
+                if batch == 1 {
+                    batch1.signalStarted()
+                    await batch1.waitForRelease()
+                }
+            }
+            finished.signalStarted()
+        }
+
+        await batch1.waitUntilStarted()
+        orchestrator.stopAllDayScenes()
+        batch1.release()
+        await finished.waitUntilStarted()
+
+        XCTAssertEqual(events.entries, ["batch1"], """
+            the already-dispatched batch may finish, but no LATER batch may \
+            begin — the probe All-Day now consumes is what makes this possible
+            """)
+    }
+
+    // P6-15. Generation replacement rejects old work: a tick staged under an
+    //        old generation performs no write once the generation moves on.
+    func testStaleGenerationAllDayWorkNeverWrites() async {
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        let staleGeneration = orchestrator.testAllDayGeneration()
+        orchestrator.testSetAllDayGeneration(staleGeneration + 1)
+
+        await orchestrator.testTickAllDayScenes(
+            anchor: allDayAnchor(), generation: staleGeneration)
+
+        XCTAssertEqual(bridgeA.groupedEffectIDs, [],
+            "a tick whose generation has been superseded writes nothing at all")
+    }
+
+    // A1-b. A restart swaps sender INSTANCES. This is what makes a retired
+    //       cleanup task harmless: it can only reach detached objects.
+    func testRestartingAllDayCreatesFreshSenderInstances() async {
+        let before = orchestrator.testAllDayRestSender(for: "bridge-a")!
+        orchestrator.stopAllDayScenes()
+        let after = orchestrator.testAllDayRestSender(for: "bridge-a")!
+
+        XCTAssertFalse(before === after, """
+            stop detaches the map, so the next resolution builds a NEW sender — \
+            if it reused the old instance, the retired clearAll below could \
+            erase work belonging to the new generation
+            """)
+    }
+
+    // A1-a. THE retirement race. Park a retired sender's cleanup, restart
+    //       All-Day, enqueue on the new generation, then release the cleanup:
+    //       the new generation's work must survive.
+    func testRetiredAllDaySenderCleanupCannotClearANewGeneration() async {
+        let events = RestEventLog()
+        let retired = orchestrator.testAllDayRestSender(for: "bridge-a")!
+
+        // Occupy the retired sender so its clearAll has something to race with.
+        let parked = RestGate()
+        await retired.enqueue(scope: allDayScope("__park__")) { _ in
+            parked.signalStarted()
+            await parked.waitForRelease()
+        }
+        await parked.waitUntilStarted()
+
+        // Stop detaches the map and spawns cleanup over the retired snapshot.
+        orchestrator.stopAllDayScenes()
+
+        // The new generation resolves a FRESH sender and queues real work.
+        let fresh = orchestrator.testAllDayRestSender(for: "bridge-a")!
+        XCTAssertFalse(retired === fresh, "precondition: the instance was swapped")
+        await fresh.enqueue(scope: allDayScope("room-1")) { _ in
+            events.record("new-generation write")
+        }
+
+        // Now let the retired cleanup run. Awaiting clearAll on the RETIRED
+        // sender is the deterministic form of "the retirement cleanup has
+        // happened" — a drain sentinel there could be swallowed by that very
+        // cleanup. `fresh` is not in the retired snapshot, so draining it is safe.
+        parked.release()
+        _ = await retired.clearAll()
+        await drainAllDay(fresh)
+
+        XCTAssertEqual(events.entries, ["new-generation write"], """
+            the retired sender's asynchronous clearAll must not reach the new \
+            generation's mailbox — clearAll bumps epochs on whatever sender it \
+            holds, so ONLY detachment (not a generation guard) can prevent this
+            """)
+    }
+
+    // ── Bridge removal, tombstones, and the forget-all gate (A3) ─────
+
+    // P6-16. Bridge removal clears only THAT bridge's All-Day work.
+    func testBridgeRemovalClearsOnlyThatBridgesAllDaySender() async {
+        let senderA = orchestrator.testAllDayRestSender(for: "bridge-a")!
+        let senderB = orchestrator.testAllDayRestSender(for: "bridge-b")!
+        let events = RestEventLog()
+
+        let gateA = RestGate(), gateB = RestGate()
+        await senderA.enqueue(scope: allDayScope("__park-a__")) { _ in
+            gateA.signalStarted(); await gateA.waitForRelease()
+        }
+        await senderB.enqueue(scope: allDayScope("__park-b__")) { _ in
+            gateB.signalStarted(); await gateB.waitForRelease()
+        }
+        await gateA.waitUntilStarted()
+        await gateB.waitUntilStarted()
+        await senderA.enqueue(scope: allDayScope("room-a")) { _ in events.record("A") }
+        await senderB.enqueue(scope: allDayScope("room-b")) { _ in events.record("B") }
+
+        await orchestrator.removeBridge(id: "bridge-a")
+
+        gateA.release(); gateB.release()
+        await drainAllDay(senderA)
+        await drainAllDay(senderB)
+
+        XCTAssertEqual(events.entries, ["B"],
+            "only bridge A's queued All-Day work was invalidated")
+        XCTAssertFalse(orchestrator.testAllDayRestSenderBridgeKeys().contains("bridge-a"),
+            "bridge A's All-Day mailbox is detached")
+        XCTAssertTrue(orchestrator.testAllDayRestSenderBridgeKeys().contains("bridge-b"),
+            "bridge B's survives untouched")
+    }
+
+    // A3-a. A tombstoned bridge cannot have a sender RECREATED for it. This is
+    //       the protection that detachment alone does not provide: while
+    //       removeBridge is suspended, clients[id] and allRooms still exist, so
+    //       a concurrent tick would otherwise lazily rebuild the mailbox.
+    func testATickCannotRecreateAnAllDaySenderForARemovedBridge() async {
+        _ = orchestrator.testAllDayRestSender(for: "bridge-a")
+        await orchestrator.removeBridge(id: "bridge-a")
+
+        XCTAssertTrue(orchestrator.testAllDayBlockedBridgeKeys().contains("bridge-a"),
+            "removal leaves a persistent tombstone, not just a detached sender")
+        XCTAssertNil(orchestrator.testAllDayRestSender(for: "bridge-a"), """
+            the accessor REFUSES structurally — a non-optional lazily-creating \
+            accessor could not express this, and every caller would have to \
+            remember the check
+            """)
+
+        // A tick still holding the removed bridge's rooms creates nothing.
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+        await runAllDayTick(bridgeKeys: ["bridge-b"])
+
+        XCTAssertEqual(bridgeA.groupedEffectIDs, [],
+            "no write reaches the removed bridge")
+        XCTAssertFalse(orchestrator.testAllDayRestSenderBridgeKeys().contains("bridge-a"),
+            "and no mailbox was resurrected for it")
+    }
+
+    // A3-c. Bridge B stays fully operational while bridge A is blocked.
+    func testBridgeBKeepsDeliveringWhileBridgeAIsBlocked() async {
+        orchestrator.testBlockAllDayBridge("bridge-a")
+        orchestrator.allRooms = [
+            allDayRoom("room-a", bridge: "bridge-a"),
+            allDayRoom("room-b", bridge: "bridge-b"),
+        ]
+        await runAllDayTick()
+
+        XCTAssertEqual(bridgeA.groupedEffectIDs, [], "the blocked bridge is skipped")
+        XCTAssertEqual(bridgeB.groupedEffectIDs, ["gl-room-b"], """
+            and an unrelated bridge is unaffected — one bridge's teardown may \
+            never suppress another's delivery
+            """)
+    }
+
+    // A3-d. Re-adding a bridge clears ONLY that bridge's tombstone, through the
+    //       same production helper both registration paths call.
+    func testReAddingABridgeClearsOnlyThatBridgesTombstone() async {
+        orchestrator.testBlockAllDayBridge("bridge-a")
+        orchestrator.testBlockAllDayBridge("bridge-b")
+
+        orchestrator.testClearAllDayBridgeTombstone("bridge-a")
+
+        XCTAssertEqual(orchestrator.testAllDayBlockedBridgeKeys(), ["bridge-b"],
+            "only the re-registered bridge is unblocked")
+        XCTAssertNotNil(orchestrator.testAllDayRestSender(for: "bridge-a"),
+            "bridge A can hold an All-Day mailbox again")
+        XCTAssertNil(orchestrator.testAllDayRestSender(for: "bridge-b"),
+            "bridge B stays blocked")
+    }
+
+    // A3-b. A start attempted while forget-all is in flight leaves NOTHING
+    //       behind: no task, no sender, and no later write.
+    func testAStartDuringForgetAllCreatesNoTaskOrSenderAndWritesNothing() async {
+        orchestrator.testSetAllDayTeardownInProgress(true)
+        orchestrator.allRooms = [allDayRoom("room-1", bridge: "bridge-a")]
+
+        orchestrator.startAllDayScenes(anchor: allDayAnchor())
+        orchestrator.startAllDayScenesIfNeeded()
+
+        XCTAssertFalse(orchestrator.testAllDayTaskIsRunning(),
+            "no 5-minute loop may survive a start made during forget-all")
+        XCTAssertTrue(orchestrator.testAllDayRestSenderBridgeKeys().isEmpty,
+            "and no sender may be built outside the retired snapshot")
+
+        // Even a tick forced at the current generation writes nothing.
+        await runAllDayTick()
+        XCTAssertEqual(bridgeA.groupedEffectIDs, [],
+            "the gate refuses at target selection AND at dispatch")
+    }
+
+    // A3-b (cont). Forget-all itself leaves All-Day fully retired, gate down,
+    //              and deliberately does NOT restart it.
+    func testForgetAllRetiresAllDayAndDoesNotRestartIt() async {
+        _ = orchestrator.testAllDayRestSender(for: "bridge-a")
+        let generationBefore = orchestrator.testAllDayGeneration()
+
+        await orchestrator.forgetAllBridges()
+
+        XCTAssertFalse(orchestrator.testAllDayTeardownInProgress(),
+            "the gate is dropped once teardown completes")
+        XCTAssertGreaterThan(orchestrator.testAllDayGeneration(), generationBefore,
+            "the generation moved, so any in-flight tick is stale")
+        XCTAssertFalse(orchestrator.testAllDayTaskIsRunning(),
+            "the loop is gone")
+        XCTAssertTrue(orchestrator.testAllDayRestSenderBridgeKeys().isEmpty,
+            "every All-Day mailbox is detached")
+        XCTAssertFalse(orchestrator.allDayScenesEnabled,
+            "and All-Day is NOT auto-restarted — the user re-enables it")
+    }
+
+    // ── Source guards ────────────────────────────────────────────────
+
+    // P6-22. The global sentinel scope must never come back. Behavior tests
+    //        above would all still pass if someone reintroduced it alongside
+    //        the per-room scopes, so pin its absence directly.
+    func testAllDayUsesNoGlobalSentinelScope() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+
+        XCTAssertFalse(code.contains("__allDay__"), """
+            the sentinel room id is gone: one scope for the whole feature is \
+            exactly what made later rooms erase earlier ones
+            """)
+        XCTAssertFalse(code.contains("allDayRestScope"), """
+            and so is the single shared scope property — All-Day scopes are \
+            built per room at the enqueue site now
+            """)
+    }
+
+    // A3 guard. The sender accessor must stay refusal-capable, and no call site
+    //           may force-unwrap its way past a tombstone.
+    func testAllDaySenderAccessorRemainsOptionalAndIsNeverForceUnwrapped() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+
+        XCTAssertTrue(
+            code.contains("private func allDayRestSender(for bridgeID: String?) -> RestSender?"),
+            """
+            refusal is structural: a non-optional lazily-creating accessor \
+            cannot say "this bridge is being removed", and every caller would \
+            have to remember to check the tombstone first
+            """)
+        XCTAssertFalse(code.contains("allDayRestSender(for: target.bridgeID)!"),
+            "the tick must not force-unwrap past a refusal")
+        XCTAssertFalse(code.contains("allDayRestSender(for: bridgeID)!"),
+            "nor may any other production caller")
+    }
+
+    // A1-c / A1-d / A3 guard. The invalidating steps must run BEFORE each
+    // teardown function's first suspension. A behavior test cannot see this
+    // window — the whole defect is that state is reachable while suspended.
+    func testAllDayTeardownStepsPrecedeTheFirstAwait() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+
+        func indexOfFirst(_ needle: String, in body: [String]) -> Int? {
+            body.firstIndex { $0.contains(needle) }
+        }
+
+        // removeBridge: tombstone + detach before `await stopEffectsForRemovedGroups`.
+        let remove = try XCTUnwrap(
+            functionBody(code, startingWith: "func removeBridge(id: String) async"),
+            "removeBridge must be findable")
+        let removeFirstAwait = try XCTUnwrap(indexOfFirst("await ", in: remove),
+            "removeBridge must contain an await")
+        let tombstone = try XCTUnwrap(indexOfFirst("allDayBlockedBridgeKeys.insert(id)", in: remove),
+            "removeBridge must tombstone the bridge for All-Day")
+        let detach = try XCTUnwrap(
+            indexOfFirst("allDayRestSendersByBridge.removeValue(forKey: id)", in: remove),
+            "removeBridge must detach the bridge's All-Day sender")
+        XCTAssertLessThan(tombstone, removeFirstAwait, """
+            the tombstone must be set before removeBridge suspends: while it is \
+            parked, clients[id] and allRooms still exist, so a concurrent tick \
+            would recreate the sender it just detached
+            """)
+        XCTAssertLessThan(detach, removeFirstAwait,
+            "and the detach must precede the suspension for the same reason")
+
+        // forgetAllBridges: gate + generation + detach before `await stopStudioMode()`.
+        let forget = try XCTUnwrap(
+            functionBody(code, startingWith: "func forgetAllBridges() async"),
+            "forgetAllBridges must be findable")
+        let forgetFirstAwait = try XCTUnwrap(indexOfFirst("await ", in: forget),
+            "forgetAllBridges must contain an await")
+        for needle in [
+            "allDayTeardownInProgress = true",
+            "allDayGeneration &+= 1",
+            "allDayTask?.cancel()",
+            "allDayRestSendersByBridge.removeAll()",
+        ] {
+            let idx = try XCTUnwrap(indexOfFirst(needle, in: forget),
+                "forgetAllBridges must perform `\(needle)`")
+            XCTAssertLessThan(idx, forgetFirstAwait, """
+                `\(needle)` must run before forget-all suspends — a start \
+                arriving during the suspension would otherwise build a task and \
+                senders outside the retired snapshot
+                """)
+        }
+    }
+
+    // A3-d guard. BOTH legitimate registration paths must lift the tombstone.
+    // configure() is the LAUNCH path, so clearing only in addBridge would leave
+    // a re-paired bridge permanently blocked after the next relaunch.
+    func testBothBridgeRegistrationPathsClearTheAllDayTombstone() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+
+        let configure = try XCTUnwrap(
+            functionBody(code, startingWith: "func configure(bridges: [BridgeRecord]"),
+            "configure must be findable")
+        XCTAssertTrue(configure.contains { $0.contains("clearAllDayBridgeTombstone(bridge.id)") }, """
+            configure() is the launch registration path — HueHomeApp calls it \
+            immediately before startAllDayScenesIfNeeded, so a bridge re-paired \
+            before a relaunch would stay blocked forever without this
+            """)
+
+        let add = try XCTUnwrap(
+            functionBody(code, startingWith: "func addBridge(_ record: BridgeRecord)"),
+            "addBridge must be findable")
+        XCTAssertTrue(add.contains { $0.contains("clearAllDayBridgeTombstone(record.id)") },
+            "addBridge is the in-session registration path and must lift it too")
     }
 }

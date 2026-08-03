@@ -123,14 +123,68 @@ final class UnifiedOrchestrator {
     // sunrise/sunset locally. Updates are grouped_light-only and low cadence.
     private var allDayTask: Task<Void, Never>? = nil
     private var allDayGeneration: Int = 0
-    /// All-Day keeps its OWN dedicated sender — it is deliberately not part of
+
+    /// All-Day keeps its OWN dedicated senders — deliberately not part of
     /// `restSendersByBridge`. Its cadence, ownership, and stop path are entirely
-    /// separate from Composer/Studio playback, and routing it through the shared
-    /// per-bridge senders would let a Composer stop drop an All-Day tick.
-    private let allDayRestSender = RestSender()
-    /// One sentinel scope for the whole All-Day feature. Deliberately NOT keyed
-    /// by room — see the limitation recorded at the enqueue site.
-    private let allDayRestScope = RestScope(roomID: "__allDay__", owner: .allDay)
+    /// separate from Composer/Studio playback: `stopStudioMode` clears every
+    /// scope on every one of those senders, so sharing them would let a Studio
+    /// stop-all drop an All-Day tick, and All-Day's 1.2 s grouped fades would
+    /// interleave into Composer's FIFO order and delay composition frames.
+    ///
+    /// Packet 6: one sender PER BRIDGE, one scope PER ROOM inside it. Before
+    /// packet 6 this was a single sender with a single sentinel scope, so every
+    /// room in a tick overwrote the previous room's pending slot and in the
+    /// general case only the last room survived.
+    @ObservationIgnored
+    private var allDayRestSendersByBridge: [String: RestSender] = [:]
+
+    /// Bridges All-Day may not touch. Inserted SYNCHRONOUSLY by `removeBridge`
+    /// before its first `await`, and deliberately NOT cleared when removal
+    /// finishes: a tick captured before the removal can still hold that bridge's
+    /// targets, and without a persistent tombstone it would recreate the sender
+    /// long afterwards. Cleared only when the bridge is legitimately registered
+    /// again — `configure(bridges:modelContext:)` and `addBridge(_:)`, BOTH of
+    /// which assign into `clients`.
+    @ObservationIgnored
+    private var allDayBlockedBridgeKeys: Set<String> = []
+
+    /// Set for the duration of `forgetAllBridges`. Detaching the senders up
+    /// front is not sufficient on its own: forget-all suspends at its first
+    /// `await`, and a `startAllDayScenes` arriving in that window would build a
+    /// fresh task and fresh senders OUTSIDE the retired snapshot.
+    @ObservationIgnored
+    private var allDayTeardownInProgress = false
+
+    /// The All-Day mailbox for a bridge, or nil when All-Day may not write to
+    /// it. Optional on purpose: a lazily-creating non-optional accessor cannot
+    /// express refusal, so every call site would have to remember to check the
+    /// tombstone first — and one that forgot would recreate a sender for a
+    /// bridge that is mid-removal. Refusal is structural here instead.
+    private func allDayRestSender(for bridgeID: String?) -> RestSender? {
+        guard isAllDayBridgeEligible(bridgeID) else { return nil }
+        let key = bridgeID ?? "legacy"
+        if let sender = allDayRestSendersByBridge[key] { return sender }
+        let sender = RestSender()
+        allDayRestSendersByBridge[key] = sender
+        return sender
+    }
+
+    /// May All-Day touch this bridge at all? Deliberately SEPARATE from
+    /// `isAllDayWriteAllowed`, which answers the different question of whether a
+    /// ROOM is currently under playback. Folding the two together would let a
+    /// later edit to the ownership rule silently reopen the recreation race.
+    private func isAllDayBridgeEligible(_ bridgeID: String?) -> Bool {
+        !allDayTeardownInProgress && !allDayBlockedBridgeKeys.contains(bridgeID ?? "legacy")
+    }
+
+    /// Lift the All-Day tombstone for a bridge that is legitimately registered
+    /// again. One helper, called from BOTH paths that assign into `clients`
+    /// (`configure(bridges:modelContext:)` and `addBridge(_:)`) — a third
+    /// registration path that forgot to call it would silently disable All-Day
+    /// for that bridge forever, which is why a source guard pins both callers.
+    private func clearAllDayBridgeTombstone(_ bridgeID: String) {
+        allDayBlockedBridgeKeys.remove(bridgeID)
+    }
 
     private enum AllDayKeys {
         static let enabled = "allDayScenes.enabled"
@@ -173,11 +227,18 @@ final class UnifiedOrchestrator {
     }
 
     func startAllDayScenesIfNeeded() {
+        guard !allDayTeardownInProgress else { return }
         guard allDayScenesEnabled, let anchor = loadAllDayAnchor() else { return }
         startAllDayScenes(anchor: anchor)
     }
 
     func startAllDayScenes(anchor: AllDayAnchor) {
+        // Refuse outright while forget-all is in flight. A start accepted here
+        // would outlive the teardown with its own task and its own senders, both
+        // outside the snapshot forget-all detached before it suspended.
+        // Forget-all does NOT restart All-Day afterwards — the user re-enables
+        // it, or the next launch's `startAllDayScenesIfNeeded` does.
+        guard !allDayTeardownInProgress else { return }
         stopAllDayScenes()
         allDayScenesEnabled = true
 
@@ -198,11 +259,25 @@ final class UnifiedOrchestrator {
     }
 
     func stopAllDayScenes() {
+        // Order is load-bearing, and every invalidating step is SYNCHRONOUS.
+        //
+        // This method cannot become async — it is called from a SwiftUI Toggle
+        // setter (SettingsView) that cannot await — while `clearAll()` is async,
+        // and `startAllDayScenes` calls us and then IMMEDIATELY starts the next
+        // generation. So the sender map is detached (steps 4-5) BEFORE any
+        // cleanup is spawned: a retired `clearAll()` landing on a sender the new
+        // generation had reused would erase the new generation's pending work,
+        // and no generation guard can catch that — `clearAll` bumps epochs on a
+        // live sender regardless of which generation queued the closures.
         allDayScenesEnabled = false
         allDayGeneration &+= 1
         allDayTask?.cancel()
         allDayTask = nil
-        Task { [allDayRestScope] in await allDayRestSender.clear(scope: allDayRestScope) }
+        let retiredSenders = Array(allDayRestSendersByBridge.values)
+        allDayRestSendersByBridge.removeAll()
+        // Hygiene only. The generation bump above is the correctness boundary;
+        // a fresh start now builds new sender instances this cannot reach.
+        Task { for sender in retiredSenders { await sender.clearAll() } }
     }
 
     private func tickAllDayScenes(anchor: AllDayAnchor, generation: Int) async {
@@ -215,21 +290,35 @@ final class UnifiedOrchestrator {
 
         // Apply to every room grouped_light with a smooth transition.
         // M-18 class: route each PUT to the room's OWN bridge, not the first.
-        let targets = allRooms.compactMap { room -> (glID: String, bridgeID: String?)? in
+        // Packet 6 carries the ROOM ID through as well: it is the key every
+        // ownership table uses, and it is what scopes this room's mailbox slot.
+        let targets = allRooms.compactMap { room -> (roomID: String, glID: String, bridgeID: String?)? in
             guard let glID = room.groupedLightID else { return nil }
-            return (glID, room.bridgeID)
+            guard isAllDayBridgeEligible(room.bridgeID) else { return nil }
+            return (room.id, glID, room.bridgeID)
         }
 
         for target in targets {
-            // KNOWN LIMITATION (packet 3, deferred to packet 6):
-            // The single pending slot does not guarantee delivery to every room
-            // in one All-Day tick; later room enqueues may overwrite earlier
-            // pending work.
-            // Per-room delivery and playback suppression are packet 6's remit —
-            // packet 3 only scopes the mailbox, it does not change this cadence.
-            await allDayRestSender.enqueue(scope: allDayRestScope) { [weak self] _ in
+            // One scope PER ROOM, on that room's OWN bridge sender. Latest-wins
+            // is per scope, so a later room can no longer erase an earlier one,
+            // and `order` (FIFO across scopes) guarantees every one of them is
+            // dispatched. Identical room IDs on two bridges land in two
+            // different sender instances and never meet.
+            //
+            // A nil sender means the bridge is tombstoned or forget-all is in
+            // flight — skip the room rather than resurrect its mailbox.
+            guard let sender = allDayRestSender(for: target.bridgeID) else { continue }
+            await sender.enqueue(
+                scope: RestScope(roomID: target.roomID, owner: .allDay)
+            ) { [weak self] stillCurrent in
                 guard let self else { return }
+                // All-Day used to discard this probe, so `clear`/`clearAll`
+                // could not stop an executing closure. It consumes it now.
+                guard await stillCurrent() else { return }
                 guard self.allDayGeneration == generation else { return }
+                // Re-check at DISPATCH, not only at enqueue: a bridge may have
+                // been removed while this sat pending.
+                guard self.isAllDayBridgeEligible(target.bridgeID) else { return }
                 guard let api = self.hueClient(for: target.bridgeID) else { return }
                 // grouped_light supports on/dimming/ct/color; we do CT + brightness here.
                 try? await api.setGroupedLightEffect(
@@ -626,6 +715,13 @@ final class UnifiedOrchestrator {
             )
             wireAuthorizationSignal(client)
             clients[bridge.id] = client
+            // This bridge is legitimately registered again — lift any All-Day
+            // tombstone `removeBridge` left for it. BOTH registration paths must
+            // do this: `configure` is the LAUNCH path (HueHomeApp calls it right
+            // before `startAllDayScenesIfNeeded`), so clearing only in
+            // `addBridge` would leave a re-paired bridge permanently blocked
+            // from All-Day after the next relaunch.
+            clearAllDayBridgeTombstone(bridge.id)
             connectionStatus[bridge.id] = .connecting
             widgetBridgeCreds[bridge.id] = WidgetBridgeCredentials(
                 bridgeID: bridge.id,
@@ -676,6 +772,9 @@ final class UnifiedOrchestrator {
         )
         wireAuthorizationSignal(client)
         clients[record.id] = client
+        // Legitimate re-registration lifts this bridge's All-Day tombstone —
+        // see the matching clear in `configure(bridges:modelContext:)`.
+        clearAllDayBridgeTombstone(record.id)
         connectionStatus[record.id] = .connecting
         publishWidgetBridgeCredentials()
         // A just-granted bridge coming online can flip the guest-only shell.
@@ -686,12 +785,26 @@ final class UnifiedOrchestrator {
     /// Remove a bridge — stops its running effects, cancels SSE, clears
     /// rooms AND zones, wipes credentials + TLS pin.
     func removeBridge(id: String) async {
+        // ── All-Day, SYNCHRONOUSLY, before this function's first `await` ──
+        //
+        // Detaching alone is not enough. While we are suspended in
+        // `stopEffectsForRemovedGroups` below, `clients[id]` and this bridge's
+        // `allRooms` entries BOTH still exist (they are dropped further down),
+        // so a concurrent All-Day tick resolving a sender would lazily create a
+        // fresh one for the bridge we are removing — resurrecting exactly the
+        // state we just detached. The tombstone makes that structurally
+        // impossible, and it OUTLIVES this call: a tick captured before removal
+        // can dispatch long afterwards.
+        allDayBlockedBridgeKeys.insert(id)
+        let retiredAllDaySender = allDayRestSendersByBridge.removeValue(forKey: id)
+
         // Stop running effects on this bridge's groups BEFORE dropping the
         // client, so teardown/no_effect PUTs can still reach the bridge.
         // Previously these were orphaned: a dead Now-Playing entry pointed at
         // a removed bridge while its render loop kept erroring against it.
         let doomedGroups = ((roomsByBridge[id] ?? []) + (zonesByBridge[id] ?? [])).map(\.id)
         await stopEffectsForRemovedGroups(doomedGroups)
+        await retiredAllDaySender?.clearAll()
         sseTasks[id]?.cancel()
         sseTasks.removeValue(forKey: id)
         // Packet 3: invalidate and drop ONLY this bridge's REST mailbox. Every
@@ -2939,6 +3052,73 @@ final class UnifiedOrchestrator {
     func testCleanupBridgeStoredForReplacement(roomID: String, v1Client: HueV1Client) async {
         await cleanupBridgeStoredAnimationForReplacement(roomID: roomID, v1Client: v1Client)
     }
+
+    // ── All-Day seams (packet 6) ─────────────────────────────────────────
+    //
+    // Same rule as the mailbox seams above: readers and thin pass-throughs to
+    // the PRODUCTION helpers, never parallel implementations. In particular
+    // `testAllDayRestSender(for:)` returns the same Optional the production
+    // accessor does — a seam that force-unwrapped it would hide exactly the
+    // refusal these tests exist to prove.
+
+    /// The All-Day mailbox for a bridge, or nil when All-Day may not write.
+    func testAllDayRestSender(for bridgeID: String?) -> RestSender? {
+        allDayRestSender(for: bridgeID)
+    }
+
+    /// Which bridges currently hold an All-Day mailbox. Read-only — asking does
+    /// not create one (contrast the accessor above).
+    func testAllDayRestSenderBridgeKeys() -> Set<String> {
+        Set(allDayRestSendersByBridge.keys)
+    }
+
+    func testAllDayBlockedBridgeKeys() -> Set<String> {
+        allDayBlockedBridgeKeys
+    }
+
+    func testAllDayTeardownInProgress() -> Bool {
+        allDayTeardownInProgress
+    }
+
+    func testAllDayGeneration() -> Int {
+        allDayGeneration
+    }
+
+    func testAllDayTaskIsRunning() -> Bool {
+        allDayTask != nil
+    }
+
+    func testIsAllDayBridgeEligible(_ bridgeID: String?) -> Bool {
+        isAllDayBridgeEligible(bridgeID)
+    }
+
+    /// Drive exactly one All-Day tick, deterministically — the production tick,
+    /// not a copy, so what these tests prove is what the 5-minute loop runs.
+    func testTickAllDayScenes(anchor: AllDayAnchor, generation: Int) async {
+        await tickAllDayScenes(anchor: anchor, generation: generation)
+    }
+
+    /// Stage the generation a tick must match without spinning up the loop.
+    func testSetAllDayGeneration(_ generation: Int) {
+        allDayGeneration = generation
+    }
+
+    /// Tombstone a bridge exactly as `removeBridge` does, without running the
+    /// whole removal (which needs credentials and SwiftData).
+    func testBlockAllDayBridge(_ bridgeID: String) {
+        allDayBlockedBridgeKeys.insert(bridgeID)
+    }
+
+    /// Lift it exactly as the two registration paths do — the PRODUCTION
+    /// helper, so a test cannot prove a clear the real paths do not perform.
+    func testClearAllDayBridgeTombstone(_ bridgeID: String) {
+        clearAllDayBridgeTombstone(bridgeID)
+    }
+
+    /// Stage the forget-all gate without running forget-all itself.
+    func testSetAllDayTeardownInProgress(_ inProgress: Bool) {
+        allDayTeardownInProgress = inProgress
+    }
     #endif
 
     // MARK: Bridge-Stored Animation (v1 API)
@@ -5043,6 +5223,21 @@ final class UnifiedOrchestrator {
     /// a forget-all. Also clears the room/zone snapshots so a later re-pair
     /// cannot resurrect stale bridge ids through the SwiftData preload.
     func forgetAllBridges() async {
+        // ── All-Day, SYNCHRONOUSLY, before this function's first `await` ──
+        //
+        // `await stopStudioMode()` below is the very first statement of the
+        // original body, and it suspends. Without the gate, a `startAllDayScenes`
+        // arriving in that window would build a fresh task and fresh senders
+        // outside the snapshot we take here, and they would outlive the teardown
+        // that was supposed to have removed them.
+        allDayTeardownInProgress = true
+        allDayScenesEnabled = false
+        allDayGeneration &+= 1
+        allDayTask?.cancel()
+        allDayTask = nil
+        let retiredAllDaySenders = Array(allDayRestSendersByBridge.values)
+        allDayRestSendersByBridge.removeAll()
+
         await stopStudioMode()
         stopSSE()
         compositionSchedulerTask?.cancel()
@@ -5082,6 +5277,10 @@ final class UnifiedOrchestrator {
         allZones = []
         globalScenes = []
         hasLoadedScenesOnce = false
+        for sender in retiredAllDaySenders { await sender.clearAll() }
+        // Drop the gate last. All-Day is deliberately NOT restarted here: the
+        // user re-enables it, or the next launch does.
+        allDayTeardownInProgress = false
         log.info("Forget-all: cleared clients, snapshots, and sessions")
     }
 
