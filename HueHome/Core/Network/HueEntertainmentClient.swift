@@ -71,6 +71,242 @@ final class ContinuationGate: @unchecked Sendable {
     }
 }
 
+// MARK: - Entertainment session ownership (packet 7)
+
+/// Non-secret evidence that ChromaGlow started a specific Entertainment
+/// session. Deliberately carries no token, client key, username, IP, or light
+/// data — it exists only so a later launch can tell "our session, orphaned by
+/// a force-quit" apart from "somebody else's show".
+struct EntertainmentOwnershipRecord: Codable, Equatable, Sendable {
+    let bridgeID: String
+    let configID: String
+    let startedAt: Date
+}
+
+/// The exact identity of an Entertainment session. Keyed by BRIDGE plus
+/// configuration: a configuration UUID alone is not ownership, because the
+/// same UUID observed on bridge B says nothing about the session we started
+/// on bridge A.
+struct EntertainmentSessionKey: Hashable, Sendable {
+    let bridgeID: String
+    let configID: String
+}
+
+/// The outcome of releasing one current-process reference.
+///
+/// Two live ChromaGlow clients can legitimately hold the same bridge +
+/// configuration (a Studio card and a composition). Only the LAST of them may
+/// send `action=stop`; an earlier release that stopped the session would kill
+/// a stream its owner still believes is running.
+struct EntertainmentProcessRelease: Equatable, Sendable {
+    /// True when this release dropped the final current-process reference —
+    /// the only case permitted to stop the session on the bridge.
+    let wasFinalOwner: Bool
+    /// References still held after this release. `> 0` means another live
+    /// ChromaGlow client is streaming this exact bridge + configuration.
+    let remaining: Int
+}
+
+/// Two-layer ownership for Entertainment sessions.
+///
+/// A. **Current process** — reference-counted, keyed by exact bridge +
+///    configuration. Protects a live stream from this app's own cleanup.
+/// B. **Persisted** — non-secret evidence that survives termination, so a
+///    later launch can clean up a session this app left active without ever
+///    touching a session it did not start.
+///
+/// `nonisolated` + `NSLock` on purpose: the `HueEntertainmentClient` actor and
+/// the `@MainActor` cleanup pass both need it without an isolation hop.
+final class EntertainmentSessionOwnership: @unchecked Sendable {
+
+    static let shared = EntertainmentSessionOwnership()
+
+    /// Bounded so a pathological run cannot grow the blob without limit; the
+    /// oldest record is dropped first.
+    private static let maxPersistedRecords = 32
+    private static let defaultsKey = "castchroma.entertainmentOwnership.v1"
+
+    private let lock = NSLock()
+    private let defaults: UserDefaults
+
+    private var processRefCounts: [EntertainmentSessionKey: Int] = [:]
+    private var persisted: [EntertainmentOwnershipRecord] = []
+    /// Exclusive destructive rights held by an in-flight cleanup stop.
+    private var cleanupClaims: [EntertainmentSessionKey: UUID] = [:]
+
+    /// `defaults` is injectable for tests only.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        if let data = defaults.data(forKey: Self.defaultsKey),
+           let decoded = try? JSONDecoder().decode([EntertainmentOwnershipRecord].self, from: data) {
+            persisted = decoded
+        }
+    }
+
+    // MARK: A — current-process ownership
+
+    /// Whether a start may proceed to `action=start`.
+    enum ProcessRegistration: Equatable {
+        case registered
+        /// Cleanup holds a destructive claim on this exact bridge +
+        /// configuration. Starting now would race its `action=stop`.
+        case blockedByCleanup
+    }
+
+    @discardableResult
+    func registerProcess(bridgeID: String, configID: String) -> ProcessRegistration {
+        let key = EntertainmentSessionKey(bridgeID: bridgeID, configID: configID)
+        lock.lock()
+        defer { lock.unlock() }
+        // A claim is an exclusive right to destroy this session. Registering
+        // underneath one would produce an owner that cleanup has already
+        // decided to stop — the two would then race, and the loser is a live
+        // show going dark for no reason anyone can see.
+        guard cleanupClaims[key] == nil else { return .blockedByCleanup }
+        processRefCounts[key, default: 0] += 1
+        return .registered
+    }
+
+    /// Drops one reference and reports whether the caller was the final owner.
+    ///
+    /// Releasing something never registered reports `wasFinalOwner: false` —
+    /// an unbalanced release must never authorize a stop.
+    @discardableResult
+    func releaseProcess(bridgeID: String, configID: String) -> EntertainmentProcessRelease {
+        let key = EntertainmentSessionKey(bridgeID: bridgeID, configID: configID)
+        lock.lock()
+        defer { lock.unlock() }
+        guard let count = processRefCounts[key] else {
+            return EntertainmentProcessRelease(wasFinalOwner: false, remaining: 0)
+        }
+        if count <= 1 {
+            processRefCounts.removeValue(forKey: key)
+            return EntertainmentProcessRelease(wasFinalOwner: true, remaining: 0)
+        }
+        processRefCounts[key] = count - 1
+        return EntertainmentProcessRelease(wasFinalOwner: false, remaining: count - 1)
+    }
+
+    /// True when THIS app process is currently streaming that exact bridge +
+    /// configuration.
+    func isProcessOwned(bridgeID: String, configID: String) -> Bool {
+        let key = EntertainmentSessionKey(bridgeID: bridgeID, configID: configID)
+        lock.lock()
+        defer { lock.unlock() }
+        return processRefCounts[key] != nil
+    }
+
+    func processOwnedConfigIDs(onBridge bridgeID: String) -> Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+        return Set(processRefCounts.keys.filter { $0.bridgeID == bridgeID }.map(\.configID))
+    }
+
+    // MARK: A' — the stale-cleanup claim
+    //
+    // Asking "is it still recorded?" and "does it have an owner?" as two
+    // separate questions, then awaiting a network stop, is not an
+    // authorization — it is two facts that were true at some point, followed
+    // by a suspension during which either can stop being true. The claim makes
+    // the decision and the exclusive right to act on it one indivisible step.
+
+    /// An exclusive right to stop one exact bridge + configuration.
+    struct StaleCleanupClaim: Equatable, Sendable {
+        let bridgeID: String
+        let configID: String
+        let token: UUID
+    }
+
+    /// Atomically verify that this session is genuinely stale ChromaGlow state
+    /// and take the exclusive right to stop it. Returns nil when it is not
+    /// ours to destroy — no record, a live owner, or another claim in flight.
+    ///
+    /// The lock is held for the decision only; the caller awaits the network
+    /// afterwards, protected by the claim rather than by the lock.
+    func beginStaleCleanup(bridgeID: String, configID: String) -> StaleCleanupClaim? {
+        let key = EntertainmentSessionKey(bridgeID: bridgeID, configID: configID)
+        lock.lock()
+        defer { lock.unlock() }
+        guard persisted.contains(where: { $0.bridgeID == bridgeID && $0.configID == configID }),
+              processRefCounts[key] == nil,
+              cleanupClaims[key] == nil
+        else { return nil }
+
+        let claim = StaleCleanupClaim(bridgeID: bridgeID, configID: configID, token: UUID())
+        cleanupClaims[key] = claim.token
+        return claim
+    }
+
+    /// Release the claim, whether the stop succeeded or failed. Releasing a
+    /// superseded claim is a no-op.
+    func endStaleCleanup(_ claim: StaleCleanupClaim) {
+        let key = EntertainmentSessionKey(bridgeID: claim.bridgeID, configID: claim.configID)
+        lock.lock()
+        defer { lock.unlock() }
+        guard cleanupClaims[key] == claim.token else { return }
+        cleanupClaims.removeValue(forKey: key)
+    }
+
+    /// TEST SEAM: is this exact key claimed right now?
+    func hasCleanupClaim(bridgeID: String, configID: String) -> Bool {
+        let key = EntertainmentSessionKey(bridgeID: bridgeID, configID: configID)
+        lock.lock()
+        defer { lock.unlock() }
+        return cleanupClaims[key] != nil
+    }
+
+    // MARK: B — persisted ownership evidence
+
+    func recordPersisted(bridgeID: String, configID: String, startedAt: Date = Date()) {
+        lock.lock()
+        defer { lock.unlock() }
+        persisted.removeAll { $0.bridgeID == bridgeID && $0.configID == configID }
+        persisted.append(EntertainmentOwnershipRecord(bridgeID: bridgeID,
+                                                      configID: configID,
+                                                      startedAt: startedAt))
+        if persisted.count > Self.maxPersistedRecords {
+            persisted.removeFirst(persisted.count - Self.maxPersistedRecords)
+        }
+        writeLocked()
+    }
+
+    func forgetPersisted(bridgeID: String, configID: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        let before = persisted.count
+        persisted.removeAll { $0.bridgeID == bridgeID && $0.configID == configID }
+        guard persisted.count != before else { return }
+        writeLocked()
+    }
+
+    func isPersisted(bridgeID: String, configID: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return persisted.contains { $0.bridgeID == bridgeID && $0.configID == configID }
+    }
+
+    func persistedConfigIDs(onBridge bridgeID: String) -> Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+        return Set(persisted.filter { $0.bridgeID == bridgeID }.map(\.configID))
+    }
+
+    /// TEST SEAM: drop every record so an isolated suite starts empty.
+    func resetForTesting() {
+        lock.lock()
+        defer { lock.unlock() }
+        processRefCounts = [:]
+        persisted = []
+        cleanupClaims = [:]
+        writeLocked()
+    }
+
+    private func writeLocked() {
+        guard let data = try? JSONEncoder().encode(persisted) else { return }
+        defaults.set(data, forKey: Self.defaultsKey)
+    }
+}
+
 // MARK: - HueEntertainmentClient
 
 /// Manages a DTLS streaming session to a Hue Bridge.
@@ -85,6 +321,7 @@ actor HueEntertainmentClient {
     private var sequenceNumber: UInt8 = 0
 
     // MARK: Config
+    private let bridgeID: String         // stable bridge identity (never the IP)
     private let bridgeIP: String
     private let username: String         // PSK identity
     private let clientKeyHex: String     // 32-char hex string
@@ -105,49 +342,34 @@ actor HueEntertainmentClient {
 
     private let log = Logger(subsystem: "com.lightshade.app", category: "Entertainment")
 
-    // MARK: - App-owned session registry (M-06)
+    // MARK: - Session ownership (M-06, rebuilt in packet 7)
     //
-    // Every entertainment configuration this app is actively using, so the
-    // orchestrator's stuck-session cleanup can never stop the app's own
-    // Studio/Composer/Sync session mid-show. Reference-counted: two client
-    // instances can target the same configuration (Sync engine + Studio), and
-    // one instance stopping must not expose the other's live session to the
-    // cleanup pass.
-    private static let activeSessionsLock = NSLock()
-    nonisolated(unsafe) private static var activeSessionRefCounts: [String: Int] = [:]
-
-    static func registerActiveSession(configID: String) {
-        activeSessionsLock.lock()
-        defer { activeSessionsLock.unlock() }
-        activeSessionRefCounts[configID, default: 0] += 1
-    }
-
-    static func unregisterActiveSession(configID: String) {
-        activeSessionsLock.lock()
-        defer { activeSessionsLock.unlock() }
-        guard let count = activeSessionRefCounts[configID] else { return }
-        if count <= 1 {
-            activeSessionRefCounts.removeValue(forKey: configID)
-        } else {
-            activeSessionRefCounts[configID] = count - 1
-        }
-    }
-
-    /// True when THIS app process owns an active streaming session for the
-    /// given entertainment configuration.
-    static func isAppOwnedSession(configID: String) -> Bool {
-        activeSessionsLock.lock()
-        defer { activeSessionsLock.unlock() }
-        return activeSessionRefCounts[configID] != nil
-    }
+    // Ownership moved out of a process-global `[configID: Int]` and into
+    // `EntertainmentSessionOwnership`, for two reasons the old registry could
+    // not address:
+    //
+    //  1. A configuration UUID alone is not an identity. The same UUID seen on
+    //     another bridge authorized stopping a session we never started.
+    //  2. A process-only refcount dies with the process. After an unclean
+    //     termination the bridge still reports OUR configuration active, with
+    //     nothing to distinguish it from a third party's show — so cleanup
+    //     either evicted strangers or leaked our own sessions forever.
+    private let ownership: EntertainmentSessionOwnership
 
     // MARK: Init
 
-    init(bridgeIP: String, username: String, clientKeyHex: String, restClient: HueAPIClient) {
+    init(bridgeID: String,
+         bridgeIP: String,
+         username: String,
+         clientKeyHex: String,
+         restClient: HueAPIClient,
+         ownership: EntertainmentSessionOwnership = .shared) {
+        self.bridgeID = bridgeID
         self.bridgeIP = bridgeIP
         self.username = username
         self.clientKeyHex = clientKeyHex
         self.restClient = restClient
+        self.ownership = ownership
     }
 
     // MARK: - Session Lifecycle
@@ -165,7 +387,23 @@ actor HueEntertainmentClient {
         // "active" the moment action=start lands, and a concurrent loadAll
         // cleanup pass must already see it as app-owned — otherwise it can
         // stop our own session during the (up to 10s) DTLS handshake window.
-        Self.registerActiveSession(configID: configID)
+        //
+        // Both layers are installed here. The persisted record is what lets a
+        // LATER LAUNCH recognise this session as ours if this process dies
+        // before it can stop cleanly.
+        //
+        // Cleanup may already hold the exclusive right to stop this exact
+        // session. Registering underneath that claim would create an owner
+        // whose `action=stop` is already in flight, so refuse rather than race
+        // it. The window is one PUT wide, and the caller's honest response is
+        // its normal room-mode fallback.
+        guard ownership.registerProcess(bridgeID: bridgeID, configID: configID) == .registered else {
+            self.configID = ""
+            state = .error("Entertainment session is being cleaned up")
+            log.warning("Refusing to start \(configID) — stale cleanup holds a claim on it")
+            throw EntertainmentError.cleanupInProgress
+        }
+        ownership.recordPersisted(bridgeID: bridgeID, configID: configID)
 
         // Step 1: Activate the entertainment config via REST
         do {
@@ -177,7 +415,24 @@ actor HueEntertainmentClient {
             )
             log.info("Entertainment config activated via REST")
         } catch {
-            Self.unregisterActiveSession(configID: configID)
+            // The activation did not land. Drop OUR reference — but only the
+            // final owner may retract the shared evidence: when another live
+            // client still holds this exact bridge + configuration, forgetting
+            // the persisted record would strip the protection its session is
+            // relying on.
+            let release = ownership.releaseProcess(bridgeID: bridgeID, configID: configID)
+            if release.wasFinalOwner {
+                // Classify by TYPE, never by error text. An HTTP/bridge error
+                // means the bridge answered and did not activate — definitively
+                // nothing to clean up. Anything else (transport failure) leaves
+                // the outcome unknown, so the record is retained and a later
+                // launch can retry.
+                if Self.isDefinitiveActivationFailure(error) {
+                    ownership.forgetPersisted(bridgeID: bridgeID, configID: configID)
+                } else {
+                    log.warning("Entertainment activate outcome unknown — keeping ownership record for later cleanup")
+                }
+            }
             self.configID = ""
             state = .error("Failed to activate: \(error.localizedDescription)")
             log.error("REST activate failed: \(error.localizedDescription)")
@@ -219,25 +474,58 @@ actor HueEntertainmentClient {
         sequenceNumber = 0
     }
 
-    /// Shared session teardown: unregister from the app-owned registry,
-    /// best-effort `action=stop` on the bridge, reset configID. Used by
-    /// stopSession, the failed-open rollback (L-11), and reconnect
+    /// Shared session teardown: release this client's ownership reference and,
+    /// when it was the last one, best-effort `action=stop` on the bridge. Used
+    /// by stopSession, the failed-open rollback (L-11), and reconnect
     /// abandonment (M-10) so the teardown protocol cannot drift.
+    ///
+    /// Only the FINAL current-process owner sends the stop. Two ChromaGlow
+    /// clients can legitimately stream the same bridge + configuration (a
+    /// Studio card and a composition); an earlier release that stopped the
+    /// session would black out a stream whose owner still believes it is
+    /// running — and, for a failed DTLS open, would do it as "rollback".
     private func sendBestEffortStop() async {
         guard !configID.isEmpty else { return }
-        Self.unregisterActiveSession(configID: configID)
+        let stoppingConfigID = configID
+        let release = ownership.releaseProcess(bridgeID: bridgeID, configID: stoppingConfigID)
+        configID = ""
+
+        guard release.wasFinalOwner else {
+            log.info("Entertainment session \(stoppingConfigID) still held by \(release.remaining) other client(s) — not stopping")
+            return
+        }
+
         do {
             let (ip, token) = try restClient.credentials()
             let body: [String: Any] = ["action": "stop"]
             _ = try await restClient.put(
-                path: "/clip/v2/resource/entertainment_configuration/\(configID)",
+                path: "/clip/v2/resource/entertainment_configuration/\(stoppingConfigID)",
                 body: body, ip: ip, token: token
             )
             log.info("Entertainment action=stop sent")
+            // The bridge confirmed the stop, so the evidence has done its job.
+            // A FAILED stop deliberately keeps the record: the configuration
+            // may still be active, and a later launch must be able to retry.
+            ownership.forgetPersisted(bridgeID: bridgeID, configID: stoppingConfigID)
         } catch {
             log.warning("action=stop failed (bridge inactivity timeout will recover): \(error.localizedDescription)")
         }
-        configID = ""
+    }
+
+    /// True when the bridge answered and refused to activate — a definitive
+    /// "nothing was started". Transport-level failures leave the outcome
+    /// genuinely unknown and must NOT be treated as definitive.
+    ///
+    /// Typed classification on purpose: inferring this from an error's English
+    /// description is how ownership decisions start depending on wording.
+    private static func isDefinitiveActivationFailure(_ error: Error) -> Bool {
+        switch error {
+        case HueAPIError.httpError, HueAPIError.bridgeError, HueAPIError.missingCredentials,
+             HueAPIError.badURL:
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: - Send Light Data
@@ -426,11 +714,12 @@ actor HueEntertainmentClient {
         await sendBestEffortStop()
     }
 
-    /// TEST SEAM: seeds an owned session (configID + registry entry) without
+    /// TEST SEAM: seeds an owned session (configID + ownership records) without
     /// a DTLS socket so unit tests can exercise the terminal-failure teardown.
     func seedSessionForTesting(configID: String) {
         self.configID = configID
-        Self.registerActiveSession(configID: configID)
+        ownership.registerProcess(bridgeID: bridgeID, configID: configID)
+        ownership.recordPersisted(bridgeID: bridgeID, configID: configID)
     }
 
     private func attemptReconnect() async {
@@ -520,6 +809,7 @@ enum EntertainmentError: LocalizedError {
     case connectionFailed
     case dtlsFailed(NWError)
     case timeout
+    case cleanupInProgress
 
     var errorDescription: String? {
         switch self {
@@ -528,6 +818,7 @@ enum EntertainmentError: LocalizedError {
         case .connectionFailed:   return "Entertainment connection failed."
         case .dtlsFailed(let e):  return "DTLS handshake failed: \(e.localizedDescription)"
         case .timeout:            return "Entertainment connection timed out (10s)."
+        case .cleanupInProgress:  return "This lighting session is being cleaned up. Try again in a moment."
         }
     }
 }

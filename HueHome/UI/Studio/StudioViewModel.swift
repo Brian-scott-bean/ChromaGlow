@@ -521,6 +521,39 @@ final class StudioViewModel {
         let preferEntertainmentOverride: Bool?
     }
 
+    /// A pending THIRD-PARTY takeover awaiting the user's answer (packet 7).
+    ///
+    /// Deliberately separate from `EntertainmentHandoffPrompt` above. That one
+    /// is ChromaGlow handing a session between its own surfaces; this one is
+    /// asking to replace another app entirely. Collapsing them into one flag
+    /// would make "is this ours?" unanswerable at the point it matters most.
+    ///
+    /// Non-nil means: a start was requested, another controller owns the
+    /// bridge, and NOTHING has been mutated.
+    var foreignTakeoverRequest: ForeignTakeoverRequest? = nil
+
+    /// Everything needed to replay the original request unchanged, plus the
+    /// immutable identity of what was observed when the question was asked.
+    struct ForeignTakeoverRequest: Identifiable {
+        /// Unique per request, so a double-confirm cannot execute twice.
+        let id = UUID()
+        /// The frozen, validated way this room streams — bridge, room, target
+        /// area, and the channel ids the render loop drives. Carrying the plan
+        /// rather than just an id is what lets confirmation notice that the
+        /// area was deleted or re-scoped while the prompt was open, instead of
+        /// stopping someone else's show and then having nowhere to put ours.
+        let plan: EntertainmentTakeoverPlan
+        /// The session observed at prompt time. Never displayed.
+        let foreignConfigID: String
+        let card: StudioCard
+        let room: RoomDisplayItem
+        let preferEntertainmentOverride: Bool?
+
+        var bridgeID: String { plan.bridgeID }
+        var roomID: String { plan.roomID }
+        var targetConfigID: String { plan.targetConfigID }
+    }
+
     /// The running effect on the CURRENTLY SELECTED room.
     /// Drives card grid running indicators and mixer tray content.
     var currentRoomEffect: RunningEffect? {
@@ -556,8 +589,18 @@ final class StudioViewModel {
 
     /// True if iOS "Reduce Motion" is enabled — strobe should be blocked.
     var isReduceMotionEnabled: Bool {
-        UIAccessibility.isReduceMotionEnabled
+        #if DEBUG
+        if let forced = forcedReduceMotionForTesting { return forced }
+        #endif
+        return UIAccessibility.isReduceMotionEnabled
     }
+
+    #if DEBUG
+    /// TEST SEAM: the system setting cannot be toggled from a unit test, and
+    /// the refusal it drives is exactly what must happen before anything is
+    /// prepared or torn down.
+    var forcedReduceMotionForTesting: Bool?
+    #endif
 
     /// True if iOS "Dim Flashing Lights" is enabled — strobe brightness capped
     /// at 30%. The accommodation lives in MediaAccessibility (iOS 16.4+), not
@@ -1063,11 +1106,47 @@ final class StudioViewModel {
         await apply(card, roomOverride: nil, preferEntertainmentOverride: nil)
     }
 
+    /// Would this card ask for Entertainment? One rule, asked in two places —
+    /// the takeover preflight above the mutations, and the composition branch
+    /// that actually starts. Two copies could disagree, and the disagreement
+    /// would show up as either a missing prompt or a pointless one.
+    func requestsEntertainment(_ card: StudioCard,
+                               preferEntertainmentOverride: Bool?) -> Bool {
+        switch card.strategy {
+        case .appDriven(let engineKey):
+            // Only the streaming engines open a session; the rest never can.
+            return UnifiedOrchestrator.studioEngineStreams(engineKey)
+
+        case .composition(let presetID):
+            guard let preset = compositionStore.presets.first(where: { $0.id == presetID }) else {
+                return false
+            }
+            // A bridgeOptimized preset is a single one-shot PUT — it never
+            // streams, so another app's session cannot conflict with it.
+            let tier = preset.capabilityTier
+            guard tier != .bridgeOptimized else { return false }
+            let presetPreferEntertainment: Bool?
+            switch preset.preferredTransport {
+            case .roomOnly:          presetPreferEntertainment = false
+            case .entertainmentArea: presetPreferEntertainment = true
+            case nil:                presetPreferEntertainment = nil
+            }
+            return preferEntertainmentOverride
+                ?? presetPreferEntertainment
+                ?? preferredEntertainmentForCompositionTier(tier)
+
+        default:
+            return false
+        }
+    }
+
     /// Apply using a captured room snapshot to avoid room-selection races
     /// when taps and room-swipes happen close together.
     func apply(_ card: StudioCard, roomOverride: RoomDisplayItem?,
                preferEntertainmentOverride: Bool?,
-               skipHandoffConfirmation: Bool = false) async {
+               skipHandoffConfirmation: Bool = false,
+               foreignConsent: EntertainmentConsent? = nil,
+               consentedPlan: EntertainmentTakeoverPlan? = nil) async {
         debugLog("[Studio] apply '\(card.name)' — selectedRoom: \(selectedRoom?.name ?? "nil")")
         guard let room = roomOverride ?? selectedRoom else {
             statusMessage = "⚠ Select a room first"
@@ -1088,6 +1167,37 @@ final class StudioViewModel {
             return
         }
         debugLog("[Studio] ✅ All guards passed — groupedLightID: \(groupedLightID), bridgeID: \(room.bridgeID ?? "nil"), strategy: \(card.strategy)")
+
+        // ── Refusals FIRST ───────────────────────────────────────────
+        //
+        // A card that cannot run must say so before anything is prepared or
+        // torn down. Refusing later was a real leak: Strobe under Reduce
+        // Motion prepared an Entertainment session — process-owned, persisted,
+        // and live on the bridge — then returned without committing it, so
+        // nothing in the app pointed at it and the app's own cleanup would
+        // skip it forever as "owned". The previous look could already be gone
+        // by then too.
+        if case .appDriven(let engineKey) = card.strategy,
+           engineKey == "strobe", isReduceMotionEnabled {
+            statusMessage = "⚠ Strobe disabled — 'Reduce Motion' is enabled in iOS Settings"
+            return
+        }
+
+        // Any candidate prepared below but never committed is stopped on the
+        // way out. A defer rather than a return-by-return audit: enumerating
+        // today's early exits would not protect the next one added.
+        //
+        // Scoped to THIS apply's candidate. `apply` is reentrant — it suspends
+        // on every bridge read — so two taps can be in flight together, and a
+        // rollback of "whatever is currently pending" would stop the other
+        // one's session. The defer reads the variable at scope exit, naming
+        // whatever this call actually prepared.
+        var outstandingCandidateID: UUID?
+        defer {
+            if let outstandingCandidateID {
+                orchestrator.rollbackUncommittedEntertainment(candidateID: outstandingCandidateID)
+            }
+        }
 
         // ── Cross-surface conflict: Composer owns this bridge's session ──
         //
@@ -1120,6 +1230,116 @@ final class StudioViewModel {
             )
             debugLog("[Handoff] '\(card.name)' needs bridge \(bridgeID); room \(owningRoomID)'s composition owns it — asking first")
             return
+        }
+
+        // ── Third-party conflict: another APP owns this bridge's session ──
+        //
+        // Same principle as the app-owned check above, one step further out:
+        // everything below is destructive, so the question has to be asked
+        // before any of it. The difference is who we are interrupting — this
+        // is somebody else's show, and the default is to leave it alone.
+        //
+        // Every outcome is named, because the honest failures (several
+        // controllers at once, an unreadable bridge) must stop here too. An
+        // optional answer collapsed those into "carry on", which meant failing
+        // OPEN into the teardown below and destroying whatever was playing.
+        var preparedEntertainment: UnifiedOrchestrator.EntertainmentPreparation?
+        if foreignConsent == nil {
+            let preflight = await orchestrator.foreignTakeoverPreflight(
+                for: room,
+                requestsEntertainment: requestsEntertainment(
+                    card, preferEntertainmentOverride: preferEntertainmentOverride))
+
+            switch preflight {
+            case .notRequested, .noStreamableArea:
+                // Nowhere to stream, so no third party can be in the way and
+                // the existing honest room-mode fallback is correct.
+                break
+
+            case .clear(let plan):
+                // Bridge is free — acquire the session NOW, while the current
+                // look is still playing and every scope, task, and registry
+                // entry is intact. A controller that claims the bridge between
+                // this preflight and the acquisition therefore surfaces as a
+                // question, with nothing of the user's already destroyed.
+                let preparation = await orchestrator.prepareEntertainment(
+                    for: room, requestsEntertainment: true, plan: plan, consent: nil)
+                switch preparation {
+                case .needsForeignConsent(let snapshot, let targetConfigID):
+                    guard snapshot.foreign.count == 1,
+                          let foreignConfigID = snapshot.foreign.first,
+                          targetConfigID == plan.targetConfigID else {
+                        statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
+                        return
+                    }
+                    foreignTakeoverRequest = ForeignTakeoverRequest(
+                        plan: plan,
+                        foreignConfigID: foreignConfigID,
+                        card: card,
+                        room: room,
+                        preferEntertainmentOverride: preferEntertainmentOverride
+                    )
+                    debugLog("[Handoff] Bridge \(plan.bridgeID) was claimed during the start — asking, nothing torn down")
+                    return
+                case .failed(let message):
+                    statusMessage = "⚠ \(message)"
+                    return
+                case .prepared(let candidate):
+                    outstandingCandidateID = candidate.id
+                    preparedEntertainment = preparation
+                case .notNeeded, .unavailable:
+                    preparedEntertainment = preparation
+                }
+
+            case .conflict(let plan, let foreignConfigID):
+                foreignTakeoverRequest = ForeignTakeoverRequest(
+                    plan: plan,
+                    foreignConfigID: foreignConfigID,
+                    card: card,
+                    room: room,
+                    preferEntertainmentOverride: preferEntertainmentOverride
+                )
+                debugLog("[Handoff] '\(card.name)' needs bridge \(plan.bridgeID), which another app is using — asking first")
+                return
+
+            case .ambiguous:
+                // Several controllers are streaming. There is no single
+                // session to name, so there is no honest question to ask —
+                // and certainly no licence to guess which one to evict.
+                statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
+                debugLog("[Handoff] Several third-party sessions on \(room.bridgeID ?? "?") — failing closed")
+                return
+
+            case .unreadable:
+                // Unknown is not "free".
+                statusMessage = "⚠ \(EntertainmentConsentCopy.bridgeUnreadable)"
+                debugLog("[Handoff] Could not read \(room.bridgeID ?? "?") — refusing rather than guessing")
+                return
+            }
+        }
+
+        // After consent the frozen plan is authoritative: acquire with it
+        // directly rather than re-selecting, so the replay cannot stream a
+        // different area than the one that was agreed to.
+        if let foreignConsent, preparedEntertainment == nil {
+            let preparation = await orchestrator.prepareEntertainment(
+                for: room,
+                requestsEntertainment: requestsEntertainment(
+                    card, preferEntertainmentOverride: preferEntertainmentOverride),
+                plan: consentedPlan,
+                consent: foreignConsent)
+            if case .failed(let message) = preparation {
+                statusMessage = "⚠ \(message)"
+                return
+            }
+            if case .needsForeignConsent = preparation {
+                statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
+                return
+            }
+            if case .prepared(let candidate) = preparation {
+                outstandingCandidateID = candidate.id
+            }
+            preparedEntertainment = preparation
         }
 
         // ── Stop any effect already running on THIS room ─────────────
@@ -1307,11 +1527,9 @@ final class StudioViewModel {
             }
 
         case .appDriven(let engineKey):
-            if engineKey == "strobe" && isReduceMotionEnabled {
-                statusMessage = "⚠ Strobe disabled — 'Reduce Motion' is enabled in iOS Settings"
-                return
-            }
-
+            // The Reduce Motion refusal lives at the very top of `apply` now —
+            // refusing here would already have prepared a session and torn the
+            // previous look down.
             var flatValues = paramValues[card.id] ?? [:]
             let flatColors = paramColors[card.id] ?? [:]
 
@@ -1319,10 +1537,18 @@ final class StudioViewModel {
                 flatValues["brightness"] = min(flatValues["brightness"] ?? 100, 30)
             }
 
-            await orchestrator.startStudioMode(
+            let outcome = await orchestrator.startStudioMode(
                 key: engineKey, room: room,
-                params: flatValues, colors: flatColors
+                params: flatValues, colors: flatColors,
+                capturedPlan: consentedPlan,
+                consent: foreignConsent,
+                preparedEntertainment: preparedEntertainment
             )
+            if await handleStartOutcome(outcome, card: card, room: room,
+                                  preferEntertainmentOverride: preferEntertainmentOverride,
+                                  hadConsent: foreignConsent != nil) {
+                return
+            }
             let isEnt = orchestrator.studioEntClients[room.bridgeID ?? ""] != nil
             runningEffects[room.id] = RunningEffect(
                 cardID: card.id, card: card, room: room,
@@ -1398,19 +1624,26 @@ final class StudioViewModel {
                 case nil:
                     presetPreferEntertainment = nil
                 }
-                let requestedEntertainment = preferEntertainmentOverride
-                    ?? presetPreferEntertainment
-                    ?? preferredEntertainmentForCompositionTier(tier)
+                let requestedEntertainment = requestsEntertainment(
+                    card, preferEntertainmentOverride: preferEntertainmentOverride)
                 let requestedTransport: CompositionPreferredTransport = requestedEntertainment ? .entertainmentArea : .roomOnly
 
-                await orchestrator.startCompositionMode(
+                let outcome = await orchestrator.startCompositionMode(
                     room: room,
                     paramBox: box,
                     gamutOverride: activeCompositionGamut,
                     preferEntertainment: requestedEntertainment,
                     tier: tier,
-                    preset: preset
+                    preset: preset,
+                    capturedPlan: consentedPlan,
+                    consent: foreignConsent,
+                    preparedEntertainment: preparedEntertainment
                 )
+                if await handleStartOutcome(outcome, card: card, room: room,
+                                      preferEntertainmentOverride: preferEntertainmentOverride,
+                                      hadConsent: foreignConsent != nil) {
+                    return
+                }
                 let isEnt = orchestrator.studioEntClients[room.bridgeID ?? ""] != nil
                 runningEffects[room.id] = RunningEffect(
                     cardID: card.id, card: card, room: room,
@@ -1557,6 +1790,133 @@ final class StudioViewModel {
                     roomOverride: prompt.room,
                     preferEntertainmentOverride: prompt.preferEntertainmentOverride,
                     skipHandoffConfirmation: true)
+    }
+
+    // ── Third-party takeover consent (packet 7) ───────────────────
+
+    /// React to a start that did not begin playback. Returns true when `apply`
+    /// must stop here — the start never happened.
+    ///
+    /// A foreign conflict discovered mid-start is a real possibility: another
+    /// app can begin streaming between the preflight and the acquisition. It
+    /// gets the same answer as the preflight — ask, never fall back quietly.
+    @discardableResult
+    private func handleStartOutcome(_ outcome: PlaybackStartOutcome,
+                                    card: StudioCard,
+                                    room: RoomDisplayItem,
+                                    preferEntertainmentOverride: Bool?,
+                                    hadConsent: Bool) async -> Bool {
+        switch outcome {
+        case .started:
+            return false
+
+        case .failed(let message):
+            statusMessage = "⚠ \(message)"
+            return true
+
+        case .needsForeignConsent(let snapshot, let targetConfigID):
+            guard let bridgeID = room.bridgeID,
+                  snapshot.foreign.count == 1,
+                  let foreignConfigID = snapshot.foreign.first else {
+                // Several controllers, or none we can name: fail closed rather
+                // than guess which one the user meant to replace.
+                statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
+                return true
+            }
+            guard !hadConsent else {
+                // We already asked once and the answer no longer applies —
+                // the owner changed underneath us. Say so instead of looping
+                // the prompt.
+                statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
+                return true
+            }
+            // Re-derive the frozen plan for the request we are about to raise.
+            // Falling back to a bare id here would reintroduce exactly what
+            // the plan exists to prevent.
+            guard case .conflict(let plan, _) = await orchestrator?.foreignTakeoverPreflight(
+                    for: room,
+                    requestsEntertainment: requestsEntertainment(
+                        card, preferEntertainmentOverride: preferEntertainmentOverride))
+            else {
+                statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
+                return true
+            }
+            guard plan.targetConfigID == targetConfigID else {
+                statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
+                return true
+            }
+            _ = bridgeID
+            foreignTakeoverRequest = ForeignTakeoverRequest(
+                plan: plan,
+                foreignConfigID: foreignConfigID,
+                card: card,
+                room: room,
+                preferEntertainmentOverride: preferEntertainmentOverride
+            )
+            return true
+        }
+    }
+
+    /// Keep Existing. The request was raised before anything was touched, so
+    /// forgetting it IS the whole undo: no stop was sent, no session opened,
+    /// no playback bookkeeping changed. The other app keeps playing.
+    func cancelForeignTakeover() {
+        guard let request = foreignTakeoverRequest else { return }
+        debugLog("[Handoff] User kept the other app's session on bridge \(request.bridgeID) — nothing touched")
+        foreignTakeoverRequest = nil
+    }
+
+    /// Take Over. Re-check the bridge, stop exactly the session the user
+    /// agreed to replace, and only then replay the original request.
+    func confirmForeignTakeover() async {
+        // Consumed before the first await, so a double-tap while the takeover
+        // is in flight finds nil and returns instead of stopping or starting
+        // twice.
+        guard let request = foreignTakeoverRequest else { return }
+        foreignTakeoverRequest = nil
+        guard let orchestrator else { return }
+
+        let resolution = await orchestrator.resolveForeignTakeover(
+            requestID: request.id,
+            plan: request.plan,
+            room: request.room,
+            foreignConfigID: request.foreignConfigID
+        )
+
+        switch resolution {
+        case .failed(let message):
+            // Never claim a takeover that did not happen.
+            statusMessage = "⚠ \(message)"
+
+        case .changedOwner(let snapshot):
+            // A different controller is streaming now. The user consented to
+            // replacing one specific session, not to whatever came next.
+            guard snapshot.foreign.count == 1,
+                  let foreignConfigID = snapshot.foreign.first else {
+                statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
+                return
+            }
+            debugLog("[Handoff] Owner changed before confirmation — asking again")
+            foreignTakeoverRequest = ForeignTakeoverRequest(
+                plan: request.plan,
+                foreignConfigID: foreignConfigID,
+                card: request.card,
+                room: request.room,
+                preferEntertainmentOverride: request.preferEntertainmentOverride
+            )
+
+        case .resolved(let consent):
+            // The bridge is clear. Replay the original request exactly once,
+            // through the normal production path, carrying the token — so it
+            // cannot prompt again and cannot start twice. The choke point
+            // spends the token when it accepts it.
+            await apply(request.card,
+                        roomOverride: request.room,
+                        preferEntertainmentOverride: request.preferEntertainmentOverride,
+                        skipHandoffConfirmation: true,
+                        foreignConsent: consent,
+                        consentedPlan: request.plan)
+        }
     }
 
     /// Explicit stop — called when user taps the stop button directly.
