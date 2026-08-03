@@ -377,6 +377,164 @@ struct CompositionSendLedger {
     }
 }
 
+// ──────────────────────────────────────────────────────────────
+// MARK: - Rolling-subset rotation (Composer 2 packet 5)
+// ──────────────────────────────────────────────────────────────
+
+/// The pure arithmetic behind fair rolling delivery for rooms with more
+/// eligible REST operations than one sweep may dispatch.
+///
+/// Pure and parameterised so ordering, partitioning and no-starvation are
+/// provable without an orchestrator, a clock, or a network. `limit` is a
+/// parameter ONLY so small examples stay readable in tests — production
+/// always uses `maxOperationsPerSweep`, and there is deliberately no runtime
+/// override anywhere.
+enum CompositionRotationPlan {
+
+    /// Concurrent operations dispatched per batch. Matches the Composer REST
+    /// closures' existing `batchSize`.
+    static let batchSize = 5
+
+    /// Batches one sweep runs before the frame is replaced. Matches what the
+    /// closures already do for a full 20-light room (four batches, 80 ms
+    /// apart).
+    static let maxBatchesPerSweep = 4
+
+    /// The most REST operations one Composer sweep may dispatch.
+    ///
+    /// DERIVED, not chosen: holding `batchSize × maxBatchesPerSweep` constant
+    /// keeps per-sweep bridge load byte-identical to pre-packet-5 behaviour
+    /// for every room that works today, so rooms of 1…20 operations are
+    /// completely unaffected and only larger rooms begin to rotate.
+    ///
+    /// This is a COMPATIBILITY bound, not a bridge-capability bound. The
+    /// repo's own stated sustainable budget is ~10 commands/sec
+    /// (`RestSender`, `BridgeCommandGate`), which 20-per-sweep already
+    /// exceeds; right-sizing it against a real token bucket belongs to the
+    /// later scheduler work, not here.
+    static let maxOperationsPerSweep = batchSize * maxBatchesPerSweep   // 20
+
+    /// One sweep's contiguous, NON-WRAPPING window into the eligible list.
+    struct Slice: Equatable {
+        let start: Int
+        let count: Int
+        var range: Range<Int> { start ..< (start + count) }
+    }
+
+    /// The window this sweep should dispatch, or nil when there is nothing
+    /// eligible.
+    ///
+    /// Never wraps. A sweep stops at the rotation boundary and the next sweep
+    /// resumes from 0, so each rotation is an exact ordered partition of
+    /// `[0, n)`: 21 operations go 20 then 1, 64 go 20, 20, 20, 4. Wrapping
+    /// would repeat the head of the list before the tail had ever been
+    /// served, which is what makes "every operation exactly once per
+    /// rotation" — and therefore quiescence on a static look — provable.
+    static func slice(
+        cursor: Int,
+        eligibleCount n: Int,
+        limit: Int = maxOperationsPerSweep
+    ) -> Slice? {
+        guard n > 0, limit > 0 else { return nil }
+        let start = cursor >= 0 && cursor < n ? cursor : 0
+        return Slice(start: start, count: min(limit, n - start))
+    }
+
+    /// Where the cursor lands after `attemptedOperations` were dispatched, and
+    /// whether that crossed a rotation boundary.
+    ///
+    /// Under the non-wrapping invariant `cursor + attempted` can only reach
+    /// `n`, never exceed it; `>=` is a defensive fold, never a wrap.
+    struct Advance: Equatable {
+        let cursor: Int
+        let crossedRotationBoundary: Bool
+    }
+
+    static func advance(
+        cursor: Int,
+        eligibleCount n: Int,
+        attemptedOperations: Int
+    ) -> Advance {
+        guard n > 0 else { return Advance(cursor: 0, crossedRotationBoundary: false) }
+        let next = cursor + max(0, attemptedOperations)
+        return next >= n
+            ? Advance(cursor: 0, crossedRotationBoundary: true)
+            : Advance(cursor: next, crossedRotationBoundary: false)
+    }
+
+    /// Whether rolling delivery must hold the delta gate OPEN — i.e. the room
+    /// has not yet earned the right to quiesce.
+    ///
+    /// True mid-rotation (`cursor != 0`: the remaining lights still need their
+    /// turn) and until one rotation has fully DELIVERED (`hasCompleted…`
+    /// false: attempted-but-failed is not delivered).
+    ///
+    /// An EMPTY eligible set is trivially complete, never incomplete. That is
+    /// the grouped fallback — no per-light IDs resolved, so rotation state is
+    /// armed with a count of 0, the grouped closure never reports a rotation
+    /// advance, and the flag could never rise. Without this short-circuit the
+    /// gate would be held open forever and a static grouped room would re-send
+    /// an identical PUT every tick instead of going quiet.
+    static func deliveryIncomplete(
+        eligibleOperationCount: Int,
+        hasCompletedInitialSuccessfulRotation: Bool,
+        cursor: Int
+    ) -> Bool {
+        eligibleOperationCount > 0
+            && (!hasCompletedInitialSuccessfulRotation || cursor != 0)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// MARK: - Transport degradation (Composer 2 packet 5)
+// ──────────────────────────────────────────────────────────────
+//
+// These two types live here, beside CompositionSendLedger, for the same
+// reason it does: the HueHome target is not file-system-synchronized, so a
+// new .swift file means a hand-edited project.pbxproj and avoidable
+// build-breakage risk. They are module-internal on purpose — the mixer tray
+// reads them, and the tray must not depend on a private UnifiedOrchestrator
+// implementation type.
+
+/// Why a composition is NOT on the transport it asked for.
+///
+/// Deliberately separate from the large-room fact below: a bridge that
+/// couldn't store a look for a 60-light room is BOTH "we couldn't store this"
+/// and "lights take turns", and neither statement may erase the other.
+enum CompositionFallbackReason: Equatable, Sendable {
+    /// Streaming was requested or preferred but is not available.
+    case entertainmentUnavailable
+    /// The bridge REPORTED less free capacity than this look measurably needs.
+    /// This is the only reason permitted to say the bridge is full.
+    case bridgeCapacityInsufficient
+    /// Capacity could not be fetched or decoded, so bridge-stored failed
+    /// closed. The app does NOT know the bridge is full — it knows nothing.
+    case bridgeCapacityUnknown
+    /// A resource creation failed after a passing preflight (or for any other
+    /// non-capacity reason). Deliberately generic: preflight is a
+    /// point-in-time check, not a reservation, and a later failure is not
+    /// evidence of exhaustion.
+    case bridgeStoredUploadFailed
+}
+
+/// Immutable read model handed to the UI.
+///
+/// Carries no generation and no keys — the caller already named the exact
+/// room and bridge to obtain it. The mutable state behind it stays private
+/// to `UnifiedOrchestrator`.
+struct CompositionDegradationSnapshot: Equatable, Sendable {
+    /// nil when the composition is on its intended transport.
+    let fallbackReason: CompositionFallbackReason?
+    /// Non-nil when the room has more eligible REST operations than one sweep
+    /// may dispatch, i.e. its lights are being served in rotation.
+    let largeRoomEligibleOperations: Int?
+
+    var isLargeRoom: Bool { largeRoomEligibleOperations != nil }
+
+    /// Nothing worth telling the user about.
+    var isEmpty: Bool { fallbackReason == nil && largeRoomEligibleOperations == nil }
+}
+
 #if DEBUG
 extension CompositionSendLedger {
     /// Test-only introspection for the bounded-memory contract. Matches the

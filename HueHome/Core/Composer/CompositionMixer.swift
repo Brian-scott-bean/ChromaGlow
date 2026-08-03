@@ -96,9 +96,11 @@ enum CompositionMixer {
     private static let d65 = (x: 0.3127, y: 0.3290)
 
     /// Drop-in replacement for CompositionEngine.render at both transports.
+    /// `channelIDs` are RENDER channel indices, not DTLS ids — see
+    /// `LightFrame.channelID` (Composer 2 packet 5).
     static func renderMixed(
         time: Double,
-        channelIDs: [UInt8],
+        channelIDs: [Int],
         mix: PerformanceMixBox,
         features: AudioFeatures = .silent,
         beat: BeatSnapshot = .none,

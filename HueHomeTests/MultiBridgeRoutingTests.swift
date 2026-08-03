@@ -149,6 +149,14 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return _lightEffectIDs
     }
+    /// Packet 5: brightness per dispatched PUT, in order. Proves a subset's
+    /// lights receive THEIR OWN frames — the frame↔light alignment that
+    /// absolute indices exist to guarantee.
+    private var _lightEffectBrightnesses: [Double] = []
+    var lightEffectBrightnesses: [Double] {
+        lock.lock(); defer { lock.unlock() }
+        return _lightEffectBrightnesses
+    }
     private var _failingLightEffectIDs: Set<String> = []
     func stageLightEffectFailures(_ ids: Set<String>) {
         lock.lock(); defer { lock.unlock() }
@@ -160,6 +168,7 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
     ) async throws {
         lock.lock()
         _lightEffectIDs.append(id)
+        if let brightness { _lightEffectBrightnesses.append(brightness) }
         let failing = _failingLightEffectIDs.contains(id)
         lock.unlock()
         if failing { throw HueAPIError.httpError(500) }
@@ -1667,12 +1676,13 @@ final class MultiBridgeRoutingTests: XCTestCase {
     /// Packet-4 shorthand: begin a session and install a deterministic clock.
     private func stageTelemetrySession(
         room: String, bridge: String?, generation: Int = 1,
-        restActive: Bool = true, clock: TelemetryTestClock
+        restActive: Bool = true, clock: TelemetryTestClock,
+        eligibleOperations: Int = 0
     ) {
         orchestrator.testSetCompositionTelemetryClock(clock.now)
         orchestrator.testBeginComposerTelemetrySession(
             roomID: room, bridgeID: bridge, generation: generation,
-            isRESTActive: restActive)
+            isRESTActive: restActive, eligibleOperations: eligibleOperations)
     }
 
     /// One fully successful single-operation item, terminal at `finishAt`.
@@ -2262,58 +2272,100 @@ final class MultiBridgeRoutingTests: XCTestCase {
     }
 
     // 33. Brian correction (round 3): attemptedOperations counts only requests
-    //     the task groups actually dispatched — never entries.count or
-    //     lightIDs.count.
+    //     the task groups actually dispatched — never the room's size.
+    //
+    //     Packet 5 rewrote the SCENARIO while keeping the invariant. This used
+    //     to prove the point with frameless entries (the closures skipped an
+    //     entry whose channel range fell past a truncated frame array). That
+    //     path is now unreachable by construction — the whole room is always
+    //     rendered — and is an assertionFailure if it ever happens again,
+    //     because a batch dispatching fewer operations than its slice would
+    //     pin the rotation cursor and stall the room forever. The honest
+    //     modern scenario is the one the scheduler actually produces: a room
+    //     larger than one sweep hands the closure a SUBSET.
     func testAttemptedOperationsCountOnlyDispatchedRequests() async {
         let clock = TelemetryTestClock(100)
         stageTelemetrySession(room: "room-g", bridge: "bridge-a", clock: clock)
         stageTelemetrySession(room: "room-p", bridge: "bridge-a", clock: clock)
         let sender = orchestrator.testRestSender(for: "bridge-a")
-        let frames = [
-            LightFrame(channelID: 0, x: 0.4, y: 0.35, brightness: 0.5),
-            LightFrame(channelID: 1, x: 0.45, y: 0.30, brightness: 0.6),
-        ]
 
-        // GRADIENT: three entries, only ONE has a frame. The frameless flat
-        // entry and the frameless gradient strip `continue` before dispatch.
-        let map = GradientChannelMap(entries: [
-            .init(lightID: "L1", channelStart: 0, channelCount: 1),
-            .init(lightID: "L2", channelStart: 5, channelCount: 1),
-            .init(lightID: "L3", channelStart: 6, channelCount: 3),
-        ])
+        // A four-light room rendered in full…
+        let frames = (0..<4).map {
+            LightFrame(channelID: $0, x: 0.4, y: 0.35, brightness: 0.5)
+        }
         let orch = orchestrator!
+
+        // …of which this sweep dispatches only the first two entries.
+        let allEntries: [GradientChannelMap.Entry] = [
+            .init(lightID: "L1", channelStart: 0, channelCount: 1),
+            .init(lightID: "L2", channelStart: 1, channelCount: 1),
+            .init(lightID: "L3", channelStart: 2, channelCount: 2),
+        ]
         _ = await orchestrator.testEnqueueComposerWork(
             roomID: "room-g", bridgeID: "bridge-a", generation: 1
         ) { token in
             orch.testMakeComposerGradientWork(
-                token: token, map: map, frames: frames, api: self.bridgeA,
-                gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
+                token: token, entries: Array(allEntries.prefix(2)), frames: frames,
+                api: self.bridgeA, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
         }
         await drain(sender)
 
         let gradientSnap = telemetrySnap("room-g", "bridge-a")
-        XCTAssertEqual(gradientSnap.attemptedOperations, 1, """
-            entries.count is 3, but only one entry had a frame to dispatch — \
+        XCTAssertEqual(gradientSnap.attemptedOperations, 2, """
+            the room has 3 entries but this sweep was handed 2 — \
             attemptedOperations reports what the task group actually ran
             """)
 
-        // PER-LIGHT: four lights, two frames — two dispatches.
+        // PER-LIGHT: a four-light room, two of them in this sweep's subset.
         _ = await orchestrator.testEnqueueComposerWork(
             roomID: "room-p", bridgeID: "bridge-a", generation: 1
         ) { token in
             orch.testMakeComposerPerLightWork(
-                token: token, lightIDs: ["P1", "P2", "P3", "P4"], frames: frames,
+                token: token,
+                targets: [(frameIndex: 0, lightID: "P1"), (frameIndex: 1, lightID: "P2")],
+                frames: frames,
                 api: self.bridgeA, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
         }
         await drain(sender)
 
         let perLightSnap = telemetrySnap("room-p", "bridge-a")
         XCTAssertEqual(perLightSnap.attemptedOperations, 2, """
-            lightIDs.count is 4, but only two lights had frames — the loop \
-            `continue`s past the rest before addTask
+            the room has 4 lights but this sweep was handed 2 — never the \
+            room's size
             """)
-        XCTAssertEqual(Set(bridgeA.lightEffectIDs), ["L1", "P1", "P2"],
+        XCTAssertEqual(Set(bridgeA.lightEffectIDs), ["L1", "L2", "P1", "P2"],
             "exactly the dispatched requests reached the API")
+    }
+
+    // 33b. Packet 5: a subset's ABSOLUTE frame indices are what pair a light
+    //      with its colour. Dispatching the tail of a room must send the
+    //      tail's frames — not frames 0…n re-read from the top.
+    func testSubsetDispatchUsesAbsoluteFrameIndices() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-t", bridge: "bridge-a", clock: clock)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+
+        // Six lights, each with a distinguishable brightness.
+        let frames = (0..<6).map {
+            LightFrame(channelID: $0, x: 0.4, y: 0.35, brightness: Double($0) / 10.0)
+        }
+        let orch = orchestrator!
+        // The second sweep of a rotation: lights 4 and 5.
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-t", bridgeID: "bridge-a", generation: 1
+        ) { token in
+            orch.testMakeComposerPerLightWork(
+                token: token,
+                targets: [(frameIndex: 4, lightID: "L4"), (frameIndex: 5, lightID: "L5")],
+                frames: frames,
+                api: self.bridgeA, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
+        }
+        await drain(sender)
+
+        XCTAssertEqual(bridgeA.lightEffectIDs, ["L4", "L5"])
+        // brightness is sent as a percentage with a 1% floor: frame 4 → 40, 5 → 50.
+        XCTAssertEqual(bridgeA.lightEffectBrightnesses, [40, 50],
+            "each light must receive ITS OWN frame, addressed absolutely")
     }
 
     // 34. The REAL closures still probe before the FIRST batch (packet 3), and
@@ -2332,7 +2384,8 @@ final class MultiBridgeRoutingTests: XCTestCase {
         await drain(sender)
 
         let work = orchestrator.testMakeComposerPerLightWork(
-            token: token, lightIDs: ["P1", "P2"],
+            token: token,
+            targets: [(frameIndex: 0, lightID: "P1"), (frameIndex: 1, lightID: "P2")],
             frames: [LightFrame(channelID: 0, x: 0.4, y: 0.35, brightness: 0.5),
                      LightFrame(channelID: 1, x: 0.45, y: 0.30, brightness: 0.6)],
             api: bridgeA, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
@@ -2470,5 +2523,488 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(telemetrySnap("ent-room", "bridge-ent"), .empty)
         XCTAssertEqual(orchestrator.testRestSenderBridgeKeys(), keysBefore,
             "the sweep must not create a sender for bridge-ent")
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - Composer 2 packet 5 — rolling subsets, honest degradation
+    // ──────────────────────────────────────────────────────────
+    //
+    // Everything below is proven by recorded state and event ORDER. Nothing is
+    // proven by elapsed time: no Task.sleep as evidence, no waiter, no
+    // timeout, no clock arithmetic standing in for a guarantee.
+
+    /// Run one sweep's worth of per-light work through the PRODUCTION factory,
+    /// so what these tests exercise is exactly what the scheduler builds.
+    @discardableResult
+    private func runSweep(
+        room: String, bridge: String?, generation: Int = 1,
+        cursor: Int, count: Int, totalLights: Int,
+        failing: Set<String> = []
+    ) async -> CompositionSendLedger.Token {
+        let frames = (0..<totalLights).map {
+            LightFrame(channelID: $0, x: 0.4, y: 0.35, brightness: Double($0 % 10) / 10.0)
+        }
+        let targets = (cursor..<(cursor + count)).map {
+            (frameIndex: $0, lightID: "L\($0)")
+        }
+        bridgeA.stageLightEffectFailures(failing)
+        let orch = orchestrator!
+        let api = bridge == "bridge-b" ? bridgeB! : bridgeA!
+        let token = await orchestrator.testEnqueueComposerWork(
+            roomID: room, bridgeID: bridge, generation: generation
+        ) { token in
+            orch.testMakeComposerPerLightWork(
+                token: token, targets: targets, frames: frames,
+                api: api, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
+        }
+        await drain(orchestrator.testRestSender(for: bridge))
+        return token
+    }
+
+    private func rotation(
+        _ room: String, _ bridge: String?
+    ) -> (cursor: Int, eligibleOperationCount: Int,
+          hadFailure: Bool, completedSuccessfulRotation: Bool)? {
+        orchestrator.testCompositionRotationState(roomID: room, bridgeID: bridge)
+    }
+
+    // P5-1. A room at or under the sweep budget completes its rotation in one
+    //       sweep and becomes eligible to quiesce.
+    func testSmallRoomCompletesItsRotationInASingleSweep() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "small", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 20)
+        await runSweep(room: "small", bridge: "bridge-a",
+                       cursor: 0, count: 20, totalLights: 20)
+
+        let r = rotation("small", "bridge-a")
+        XCTAssertEqual(r?.cursor, 0, "a 20-light room is back at the boundary")
+        XCTAssertEqual(r?.completedSuccessfulRotation, true)
+        XCTAssertEqual(bridgeA.lightEffectIDs.count, 20)
+    }
+
+    // P5-2. 21 lights: sweep 1 dispatches 0…19, sweep 2 dispatches ONLY 20.
+    //       No wraparound — that is what makes "exactly once per rotation"
+    //       true and lets a static look go quiet.
+    func testTwentyOneLightsRotateTwentyThenOneWithoutWrapping() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "big", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 21)
+
+        await runSweep(room: "big", bridge: "bridge-a",
+                       cursor: 0, count: 20, totalLights: 21)
+        XCTAssertEqual(rotation("big", "bridge-a")?.cursor, 20)
+        XCTAssertEqual(rotation("big", "bridge-a")?.completedSuccessfulRotation, false,
+            "mid-rotation: the room has not been fully delivered yet")
+
+        await runSweep(room: "big", bridge: "bridge-a",
+                       cursor: 20, count: 1, totalLights: 21)
+        XCTAssertEqual(rotation("big", "bridge-a")?.cursor, 0)
+        XCTAssertEqual(rotation("big", "bridge-a")?.completedSuccessfulRotation, true)
+
+        // Operations WITHIN a batch run concurrently, so their completion
+        // order is not defined — the guarantees are coverage and partitioning,
+        // not intra-batch sequence.
+        let served = bridgeA.lightEffectIDs
+        XCTAssertEqual(served.count, 21, "no light served twice in one rotation")
+        XCTAssertEqual(Set(served), Set((0..<21).map { "L\($0)" }),
+            "every light served exactly once per rotation")
+        XCTAssertEqual(served.last, "L20",
+            "the second sweep carried ONLY light 20 — the partition did not wrap")
+        XCTAssertEqual(Set(served.prefix(20)), Set((0..<20).map { "L\($0)" }),
+            "the first sweep carried exactly lights 0…19")
+    }
+
+    // P5-3. Failed attempts still advance the cursor — they were attempted —
+    //       and attemptedOperations agrees, because both read the same
+    //       outcomes array.
+    func testFailedAttemptsAdvanceTheCursorAndAreCountedAsAttempted() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "f", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 21)
+
+        await runSweep(room: "f", bridge: "bridge-a",
+                       cursor: 0, count: 5, totalLights: 21,
+                       failing: ["L1", "L3"])
+
+        XCTAssertEqual(rotation("f", "bridge-a")?.cursor, 5,
+            "5 attempted → cursor 5, whatever the outcomes were")
+        let snap = telemetrySnap("f", "bridge-a")
+        XCTAssertEqual(snap.attemptedOperations, 5)
+        XCTAssertEqual(snap.failures, 2)
+        XCTAssertEqual(snap.successfulOperations, 3)
+        XCTAssertEqual(rotation("f", "bridge-a")?.hadFailure, true,
+            "the rotation is tainted even though the cursor moved")
+    }
+
+    // P5-4. A failure ANYWHERE in a rotation withholds quiescence, so the room
+    //       re-rotates and retries. This is the defect the amendment closed:
+    //       completion-only bookkeeping already refuses to record a partially
+    //       failed sweep, and the gate must not overrule it.
+    func testAFailureEarlyInARotationPreventsQuiescence() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "e", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 21)
+
+        await runSweep(room: "e", bridge: "bridge-a",
+                       cursor: 0, count: 20, totalLights: 21, failing: ["L7"])
+        await runSweep(room: "e", bridge: "bridge-a",
+                       cursor: 20, count: 1, totalLights: 21)
+
+        let r = rotation("e", "bridge-a")
+        XCTAssertEqual(r?.cursor, 0, "the rotation still closed")
+        XCTAssertEqual(r?.completedSuccessfulRotation, false,
+            "but it did not DELIVER, so the room may not go quiet")
+        XCTAssertEqual(r?.hadFailure, false, "the taint resets for the next rotation")
+    }
+
+    func testAFailureInTheFinalBatchPreventsQuiescence() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "l", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 21)
+
+        await runSweep(room: "l", bridge: "bridge-a",
+                       cursor: 0, count: 20, totalLights: 21)
+        await runSweep(room: "l", bridge: "bridge-a",
+                       cursor: 20, count: 1, totalLights: 21, failing: ["L20"])
+
+        XCTAssertEqual(rotation("l", "bridge-a")?.completedSuccessfulRotation, false)
+    }
+
+    // P5-5. The retry actually happens, and a clean rotation then earns
+    //       quiescence.
+    func testTheNextRotationRetriesAndACleanRotationEarnsQuiescence() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "r", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 21)
+
+        await runSweep(room: "r", bridge: "bridge-a",
+                       cursor: 0, count: 20, totalLights: 21, failing: ["L7"])
+        await runSweep(room: "r", bridge: "bridge-a",
+                       cursor: 20, count: 1, totalLights: 21)
+        XCTAssertEqual(rotation("r", "bridge-a")?.completedSuccessfulRotation, false)
+
+        // Second rotation, nothing failing: L7 is dispatched again…
+        bridgeA.stageLightEffectFailures([])
+        let before = bridgeA.lightEffectIDs.filter { $0 == "L7" }.count
+        await runSweep(room: "r", bridge: "bridge-a",
+                       cursor: 0, count: 20, totalLights: 21)
+        await runSweep(room: "r", bridge: "bridge-a",
+                       cursor: 20, count: 1, totalLights: 21)
+
+        XCTAssertEqual(bridgeA.lightEffectIDs.filter { $0 == "L7" }.count, before + 1,
+            "the previously failed light gets another turn")
+        XCTAssertEqual(rotation("r", "bridge-a")?.completedSuccessfulRotation, true,
+            "…and once a rotation delivers cleanly, quiescence becomes eligible")
+    }
+
+    // P5-6. Superseded work never starts, so it advances nothing — the same
+    //       slice is simply re-selected next pass with a fresh frame.
+    func testSupersededWorkAdvancesTheCursorByZero() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "s", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 40)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let events = RestEventLog()
+
+        // Park the sender elsewhere so this room's slot stays pending.
+        let gate = await park(sender, events: events)
+        let frames = (0..<40).map {
+            LightFrame(channelID: $0, x: 0.4, y: 0.35, brightness: 0.5)
+        }
+        let orch = orchestrator!
+        for _ in 0..<2 {
+            _ = await orchestrator.testEnqueueComposerWork(
+                roomID: "s", bridgeID: "bridge-a", generation: 1
+            ) { token in
+                orch.testMakeComposerPerLightWork(
+                    token: token,
+                    targets: [(frameIndex: 0, lightID: "L0")],
+                    frames: frames, api: self.bridgeA, gamut: .c,
+                    sentX: 0.4, sentY: 0.35, sentBri: 50)
+            }
+        }
+        XCTAssertEqual(rotation("s", "bridge-a")?.cursor, 0,
+            "nothing has STARTED yet, so nothing has advanced")
+
+        gate.release()
+        await drain(sender)
+
+        let snap = telemetrySnap("s", "bridge-a")
+        XCTAssertEqual(snap.supersededItems, 1, "the first enqueue was replaced")
+        XCTAssertEqual(rotation("s", "bridge-a")?.cursor, 1,
+            "only the surviving sweep's single operation moved the cursor")
+    }
+
+    // P5-7. A probe-cancelled batch dispatches nothing and advances nothing,
+    //       so cancellation can never skip an operation.
+    func testAProbeCancelledSweepAdvancesTheCursorByZero() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "c", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 40)
+        let token = await orchestrator.testEnqueueComposerWork(
+            roomID: "c", bridgeID: "bridge-a", generation: 1
+        ) { _ in { _ in } }
+        await drain(orchestrator.testRestSender(for: "bridge-a"))
+
+        let work = orchestrator.testMakeComposerPerLightWork(
+            token: token,
+            targets: [(frameIndex: 0, lightID: "L0"), (frameIndex: 1, lightID: "L1")],
+            frames: [LightFrame(channelID: 0, x: 0.4, y: 0.35, brightness: 0.5),
+                     LightFrame(channelID: 1, x: 0.4, y: 0.35, brightness: 0.5)],
+            api: bridgeA, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
+        await work({ false })
+
+        XCTAssertEqual(rotation("c", "bridge-a")?.cursor, 0)
+    }
+
+    // P5-8. Two rooms sharing an ID on different bridges hold two INDEPENDENT
+    //       rotation states at the same time — the exact-key requirement that
+    //       a roomID-keyed dictionary could not have satisfied.
+    func testSameRoomIDOnTwoBridgesKeepsIndependentRotations() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "shared", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 40)
+        stageTelemetrySession(room: "shared", bridge: "bridge-b", clock: clock,
+                              eligibleOperations: 40)
+
+        await runSweep(room: "shared", bridge: "bridge-a",
+                       cursor: 0, count: 20, totalLights: 40)
+
+        XCTAssertEqual(rotation("shared", "bridge-a")?.cursor, 20)
+        XCTAssertEqual(rotation("shared", "bridge-b")?.cursor, 0,
+            "bridge B's identically-named room is untouched")
+
+        await runSweep(room: "shared", bridge: "bridge-b",
+                       cursor: 0, count: 5, totalLights: 40)
+        XCTAssertEqual(rotation("shared", "bridge-a")?.cursor, 20)
+        XCTAssertEqual(rotation("shared", "bridge-b")?.cursor, 5)
+    }
+
+    // P5-9. A replacement start resets the rotation and rejects the old
+    //       generation's in-flight advances.
+    func testReplacementResetsRotationAndRejectsTheOldGeneration() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "rep", bridge: "bridge-a", generation: 1,
+                              clock: clock, eligibleOperations: 40)
+        let staleToken = await runSweep(room: "rep", bridge: "bridge-a",
+                                        generation: 1, cursor: 0, count: 20,
+                                        totalLights: 40)
+        XCTAssertEqual(rotation("rep", "bridge-a")?.cursor, 20)
+
+        // Replacement: new generation, blank slate.
+        stageTelemetrySession(room: "rep", bridge: "bridge-a", generation: 2,
+                              clock: clock, eligibleOperations: 40)
+        XCTAssertEqual(rotation("rep", "bridge-a")?.cursor, 0,
+            "the new session starts at the boundary")
+
+        // The old closure reports a batch in late — it must move nothing.
+        orchestrator.testReportComposerRotationAdvanced(
+            token: staleToken, attemptedOperations: 5, failures: 0)
+        XCTAssertEqual(rotation("rep", "bridge-a")?.cursor, 0,
+            "a generation-1 advance cannot move generation 2's cursor")
+    }
+
+    // P5-10. Stop clears rotation AND degradation together, for that key only.
+    func testStopClearsRotationAndDegradationForThatSessionOnly() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "x", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 40)
+        stageTelemetrySession(room: "y", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 40)
+        orchestrator.testRecordCompositionFallback(
+            roomID: "x", bridgeID: "bridge-a", generation: 1,
+            reason: .bridgeCapacityInsufficient)
+        XCTAssertNotNil(rotation("x", "bridge-a"))
+        XCTAssertNotNil(orchestrator.testCompositionDegradation(roomID: "x", bridgeID: "bridge-a"))
+
+        await orchestrator.stopCompositionMode(roomID: "x", bridgeID: "bridge-a")
+
+        XCTAssertNil(rotation("x", "bridge-a"))
+        XCTAssertNil(orchestrator.testCompositionDegradation(roomID: "x", bridgeID: "bridge-a"))
+        XCTAssertNotNil(rotation("y", "bridge-a"), "the sibling room is untouched")
+    }
+
+    // ── Degradation: two independent facts ──────────────────────
+
+    // P5-11. A capacity refusal into a large room is BOTH true. Neither write
+    //        may erase the other, in either order.
+    func testCapacityFallbackAndLargeRoomBothSurvive() {
+        let clock = TelemetryTestClock(100)
+        // markRESTActive records the large-room fact first…
+        stageTelemetrySession(room: "combo", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 60)
+        // …then the bridge-stored catch records why we are here at all.
+        orchestrator.testRecordCompositionFallback(
+            roomID: "combo", bridgeID: "bridge-a", generation: 1,
+            reason: .bridgeCapacityInsufficient)
+
+        let snap = orchestrator.testCompositionDegradation(
+            roomID: "combo", bridgeID: "bridge-a")
+        XCTAssertEqual(snap?.fallbackReason, .bridgeCapacityInsufficient)
+        XCTAssertEqual(snap?.largeRoomEligibleOperations, 60)
+        XCTAssertEqual(snap?.isLargeRoom, true)
+
+        XCTAssertEqual(
+            TransportVocabulary.roomModeStatus(
+                fallback: snap?.fallbackReason, largeRoom: true, liveSeconds: nil),
+            "This bridge couldn't store this look, so Room mode is playing; lights take turns updating",
+            "the sentence must name BOTH facts")
+    }
+
+    func testEntertainmentFallbackAndLargeRoomBothSurvive() {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "ent", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 45)
+        orchestrator.testRecordCompositionFallback(
+            roomID: "ent", bridgeID: "bridge-a", generation: 1,
+            reason: .entertainmentUnavailable)
+
+        let snap = orchestrator.testCompositionDegradation(roomID: "ent", bridgeID: "bridge-a")
+        XCTAssertEqual(snap?.fallbackReason, .entertainmentUnavailable)
+        XCTAssertEqual(snap?.largeRoomEligibleOperations, 45)
+    }
+
+    // P5-12. Unknown capacity is NOT "the bridge is full" — the app knows
+    //        nothing, and must not claim otherwise.
+    func testUnknownCapacityNeverClaimsTheBridgeIsFull() {
+        let insufficient = TransportVocabulary.roomModeStatus(
+            fallback: .bridgeCapacityInsufficient, largeRoom: false, liveSeconds: nil)
+        let unknown = TransportVocabulary.roomModeStatus(
+            fallback: .bridgeCapacityUnknown, largeRoom: false, liveSeconds: nil)
+
+        XCTAssertNotEqual(insufficient, unknown)
+        XCTAssertTrue(insufficient.contains("doesn't have room"))
+        XCTAssertFalse(unknown.contains("doesn't have room"),
+            "unknown capacity must never assert the bridge is out of space")
+        XCTAssertTrue(unknown.contains("Couldn't check"))
+    }
+
+    // P5-13. A room at or under the budget shows no rotation warning; a larger
+    //        one does.
+    func testRotationWarningAppearsOnlyForRoomsAboveTheSweepBudget() {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "atBudget", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: CompositionRotationPlan.maxOperationsPerSweep)
+        XCTAssertNil(
+            orchestrator.testCompositionDegradation(roomID: "atBudget", bridgeID: "bridge-a"),
+            "a 20-operation room is not degraded and says nothing new")
+
+        stageTelemetrySession(room: "overBudget", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: CompositionRotationPlan.maxOperationsPerSweep + 1)
+        XCTAssertEqual(
+            orchestrator.testCompositionDegradation(
+                roomID: "overBudget", bridgeID: "bridge-a")?.largeRoomEligibleOperations,
+            21)
+    }
+
+    // P5-14. Degradation is exact-keyed: same room ID, two bridges, two
+    //        independent reasons.
+    func testDegradationIsIndependentPerBridgeForTheSameRoomID() {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "dual", bridge: "bridge-a", clock: clock,
+                              eligibleOperations: 5)
+        stageTelemetrySession(room: "dual", bridge: "bridge-b", clock: clock,
+                              eligibleOperations: 5)
+        orchestrator.testRecordCompositionFallback(
+            roomID: "dual", bridgeID: "bridge-a", generation: 1,
+            reason: .bridgeCapacityUnknown)
+
+        XCTAssertEqual(
+            orchestrator.testCompositionDegradation(roomID: "dual", bridgeID: "bridge-a")?
+                .fallbackReason, .bridgeCapacityUnknown)
+        XCTAssertNil(
+            orchestrator.testCompositionDegradation(roomID: "dual", bridgeID: "bridge-b"),
+            "bridge B's identically-named room carries no reason of its own")
+    }
+
+    // P5-15. A restart inherits nothing, and a stale generation cannot
+    //        republish an old reason.
+    func testRestartCarriesNoOldReasonAndStaleGenerationsCannotRepublish() {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "z", bridge: "bridge-a", generation: 1,
+                              clock: clock, eligibleOperations: 5)
+        orchestrator.testRecordCompositionFallback(
+            roomID: "z", bridgeID: "bridge-a", generation: 1,
+            reason: .entertainmentUnavailable)
+        XCTAssertNotNil(orchestrator.testCompositionDegradation(roomID: "z", bridgeID: "bridge-a"))
+
+        stageTelemetrySession(room: "z", bridge: "bridge-a", generation: 2,
+                              clock: clock, eligibleOperations: 5)
+        XCTAssertNil(orchestrator.testCompositionDegradation(roomID: "z", bridgeID: "bridge-a"),
+            "the new session starts clean")
+
+        // A late event from the superseded run must not resurrect it.
+        orchestrator.testRecordCompositionFallback(
+            roomID: "z", bridgeID: "bridge-a", generation: 1,
+            reason: .entertainmentUnavailable)
+        XCTAssertNil(orchestrator.testCompositionDegradation(roomID: "z", bridgeID: "bridge-a"))
+    }
+
+    // P5-16. `roomModeStatus` is total and jargon-free for every combination.
+    func testRoomModeStatusIsTotalAndJargonFree() {
+        let reasons: [CompositionFallbackReason?] = [
+            nil, .entertainmentUnavailable, .bridgeCapacityInsufficient,
+            .bridgeCapacityUnknown, .bridgeStoredUploadFailed,
+        ]
+        let banned = ["REST", "Transport", "transport", "DTLS", "SSE",
+                      "ENT AREA", "grouped light", "rate-capped"]
+        var seen = Set<String>()
+
+        for reason in reasons {
+            for largeRoom in [false, true] {
+                for seconds in [nil, 1.2] as [Double?] {
+                    let text = TransportVocabulary.roomModeStatus(
+                        fallback: reason, largeRoom: largeRoom, liveSeconds: seconds)
+                    XCTAssertFalse(text.isEmpty)
+                    for word in banned {
+                        XCTAssertFalse(text.contains(word),
+                            "'\(word)' leaked into: \(text)")
+                    }
+                    XCTAssertNil(try? /\d+ lights?\b/.firstMatch(in: text),
+                        "no sentence may state a light count: \(text)")
+                    seen.insert(text)
+                }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(seen.count, 10,
+            "each (reason, largeRoom) pair needs its own sentence")
+    }
+
+    // P5-17. The grouped fallback (no per-light IDs) arms rotation state with
+    //        an eligible count of ZERO, and the grouped closure never reports
+    //        a rotation advance — so `hasCompletedInitialSuccessfulRotation`
+    //        can never rise for it. That exact state must read as trivially
+    //        complete at the delta gate, or a static grouped room would
+    //        re-send an identical PUT every tick forever instead of going
+    //        quiet.
+    func testAGroupedSessionNeverHoldsTheDeltaGateOpen() {
+        orchestrator.testStageRESTComposition(
+            roomID: "grouped", bridgeID: "bridge-a", api: bridgeA)
+        // The default stage is the grouped shape: lightIDs empty.
+
+        let r = rotation("grouped", "bridge-a")
+        XCTAssertEqual(r?.eligibleOperationCount, 0)
+        XCTAssertEqual(r?.completedSuccessfulRotation, false,
+            "nothing ever advances a zero-count rotation, so the flag stays down…")
+
+        // …and the gate consults this exact state through the predicate.
+        XCTAssertFalse(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: r?.eligibleOperationCount ?? -1,
+            hasCompletedInitialSuccessfulRotation: r?.completedSuccessfulRotation ?? true,
+            cursor: r?.cursor ?? -1),
+            "an empty eligible set is trivially complete — the delta gate may quiesce")
+
+        // A real per-light session with the same flags down IS incomplete:
+        // the exemption is about emptiness, not a general loosening.
+        orchestrator.testStageRESTComposition(
+            roomID: "perlight", bridgeID: "bridge-a", api: bridgeA,
+            lightIDs: (0..<3).map { "L\($0)" })
+        let p = rotation("perlight", "bridge-a")
+        XCTAssertEqual(p?.eligibleOperationCount, 3)
+        XCTAssertTrue(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: p?.eligibleOperationCount ?? 0,
+            hasCompletedInitialSuccessfulRotation: p?.completedSuccessfulRotation ?? true,
+            cursor: p?.cursor ?? 0))
     }
 }

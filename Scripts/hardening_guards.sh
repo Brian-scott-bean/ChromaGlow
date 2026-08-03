@@ -24,6 +24,9 @@
 #   6. Round C terminology — banned user-facing jargon literals.
 #   7. Composer 2 packet 4 — CompositionRoomPriorityScorerTests must stay
 #              deterministic: no Task.sleep, XCTWaiter, or wait(for:timeout:).
+#   8. Composer 2 packet 5 — no re-introduced light/channel cap: the render
+#              and bridge-stored paths must not clamp a room to a literal
+#              count, and `channelBudget` must stay gone.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -199,6 +202,44 @@ LEDGER_TESTS="HueHomeTests/CompositionRoomPriorityScorerTests.swift"
 wait_hits=$(grep -nE 'Task\.sleep|XCTWaiter|wait\(for:' "$LEDGER_TESTS" 2>/dev/null || true)
 if [[ -n "$wait_hits" ]]; then
     fail "composer-p4" $'timing wait in the pure ledger/scorer tests:\n'"$wait_hits"
+fi
+
+# ──────────────────────────────────────────────────────────────
+# Guard 8 (Composer 2 packet 5): the phantom 20-light cap must not come back.
+#
+# It was one literal copied to three places, and every copy existed only to
+# keep the trapping `UInt8(_:)` initialiser safe on a render-channel index.
+# With `LightFrame.channelID` an Int there is no reason to clamp a room to a
+# count anywhere, so any `UInt8(min(` or `channelBudget` in these files is a
+# regression — including a well-meaning "safety" clamp, which is exactly how
+# the original arrived.
+# ──────────────────────────────────────────────────────────────
+
+CAP_FILES=(
+    "HueHome/Core/Network/UnifiedOrchestrator.swift"
+    "HueHome/Core/Network/BridgeAnimationEngine.swift"
+    "HueHome/Core/Composer/GradientChannelMap.swift"
+)
+
+for f in "${CAP_FILES[@]}"; do
+    [[ -f "$f" ]] || continue
+    # Strip comment-only lines so the explanatory history above each fix
+    # (which necessarily quotes the old expression) does not trip the guard.
+    cap_hits=$(grep -nE 'UInt8\(min\(|channelBudget' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    if [[ -n "$cap_hits" ]]; then
+        fail "composer-p5" $'re-introduced light/channel cap in '"$f"$':\n'"$cap_hits"
+    fi
+done
+
+# The pure rotation arithmetic lives in the ledger/scorer test file, which
+# Guard 7 already keeps free of timing waits — extend the same rule to the
+# packet-5 orchestrator tests, whose fairness claims must never rest on a
+# sleep either.
+ROTATION_TESTS="HueHomeTests/MultiBridgeRoutingTests.swift"
+rot_wait_hits=$(grep -nE 'XCTWaiter|wait\(for:' "$ROTATION_TESTS" 2>/dev/null || true)
+if [[ -n "$rot_wait_hits" ]]; then
+    fail "composer-p5" $'timing waiter in the composer routing tests:\n'"$rot_wait_hits"
 fi
 
 # ──────────────────────────────────────────────────────────────

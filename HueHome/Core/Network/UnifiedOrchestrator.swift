@@ -2478,6 +2478,76 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private var composerTokenSequence: UInt64 = 0
 
+    // ── Rolling-subset rotation (packet 5) ───────────────────────
+    //
+    // A room with more eligible REST operations than one sweep may dispatch
+    // is served in rotation instead of being truncated. The cursor walks the
+    // eligible list in NON-WRAPPING partitions, so each rotation is an exact
+    // ordered partition of [0, n) and no sweep straddles a boundary.
+
+    private struct CompositionRotationState {
+        let generation: Int
+        /// Index of the next eligible operation to dispatch; 0 ≤ cursor < n.
+        var cursor: Int
+        /// n, captured when the state was created. Immutable for the session's
+        /// life because `CompositionRuntime.lightIDs` is a `let` and
+        /// `gradientMap` is assigned once — a mismatch means something broke
+        /// that invariant, and the rotation resets rather than misbehaving.
+        var eligibleOperationCount: Int
+        /// Any failure seen in the rotation currently in progress. Cleared at
+        /// each boundary.
+        var currentRotationHadFailure: Bool
+        /// Set ONCE, at the first boundary reached with zero failures anywhere
+        /// in that rotation, and sticky thereafter.
+        ///
+        /// A rotation that merely ATTEMPTED every operation is not a rotation
+        /// that delivered to every light: completion-only bookkeeping (packet
+        /// 4) correctly withholds `lastSentX/Y/Bri` for a partially failed
+        /// sweep, and if the delta gate were told "rotation complete" anyway
+        /// it could quiesce a static look with a light still stranded. So the
+        /// gate consults THIS, not the cursor alone.
+        var hasCompletedInitialSuccessfulRotation: Bool
+    }
+
+    /// Rotation state, keyed EXACTLY like the telemetry sessions — never by
+    /// roomID alone, so two rooms sharing an ID on different bridges hold two
+    /// independent states at the same time. Internal scheduler state that no
+    /// view reads, hence observation-ignored (contrast the degradation store).
+    @ObservationIgnored
+    private var compositionRotationStates: [ComposerTelemetrySessionKey: CompositionRotationState] = [:]
+
+    // ── Transport degradation (packet 5) ─────────────────────────
+
+    /// Private mutable state behind `CompositionDegradationSnapshot`. Fallback
+    /// cause and rolling delivery are INDEPENDENT fields: writers set only
+    /// their own, so neither can erase the other's truth.
+    private struct CompositionDegradationState: Equatable {
+        let generation: Int
+        var fallbackReason: CompositionFallbackReason?
+        var largeRoomEligibleOperations: Int?
+
+        var snapshot: CompositionDegradationSnapshot {
+            .init(fallbackReason: fallbackReason,
+                  largeRoomEligibleOperations: largeRoomEligibleOperations)
+        }
+    }
+
+    /// Deliberately NOT `@ObservationIgnored`.
+    ///
+    /// The tray's status sentence is a product requirement of this packet, so
+    /// a degradation-only change has to invalidate `MixerTrayView` on its own.
+    /// An ignored store read through an accessor would leave the sentence
+    /// stale until some unrelated transport or cadence mutation happened to
+    /// refresh the view. Reading this property inside
+    /// `compositionDegradation(roomID:bridgeID:)` from a view body is what
+    /// registers the Observation dependency.
+    ///
+    /// Trade-off accepted: invalidation is whole-property, so a write for one
+    /// bridge re-evaluates a view reading another. Degradation writes happen
+    /// at start, fallback and stop only — and the VALUE each key returns is
+    /// still exactly its own.
+    private var compositionDegradationStates: [ComposerTelemetrySessionKey: CompositionDegradationState] = [:]
+
     /// The ONE clock every telemetry event and publication refresh samples.
     /// A seam, not a convenience: tests inject a deterministic clock here, so
     /// cadence expiry is provable without a single wall-clock sleep.
@@ -2530,7 +2600,13 @@ final class UnifiedOrchestrator {
     /// reproduces production exactly: the nonoptional field takes `?? ""`, the
     /// mailbox identity keeps the original optional. Existing callers passing a
     /// plain `String` still compile.
-    func testStageRESTComposition(roomID: String, bridgeID: String?, api: HueAPIClient, generation: Int = 1) {
+    /// `lightIDs` defaults to empty (the grouped-fallback shape existing
+    /// callers stage); pass a real list to arm the packet-5 rotation with a
+    /// realistic eligible-operation count.
+    func testStageRESTComposition(
+        roomID: String, bridgeID: String?, api: HueAPIClient, generation: Int = 1,
+        lightIDs: [String] = []
+    ) {
         compositionTransportByRoom[roomID] = .rest
         compositionRuntimes[roomID] = CompositionRuntime(
             roomID: roomID,
@@ -2539,7 +2615,7 @@ final class UnifiedOrchestrator {
             restBridgeIdentity: bridgeID,
             api: api,
             groupedLightID: "grouped-\(roomID)",
-            lightIDs: [],
+            lightIDs: lightIDs,
             paramBox: CompositionParamBox(
                 palette: PaletteConfig(), motion: MotionConfig(),
                 envelope: EnvelopeConfig(), reaction: ReactionConfig()
@@ -2566,7 +2642,8 @@ final class UnifiedOrchestrator {
             bridgeKey: bridgeID ?? "legacy",
             scope: RestScope(roomID: roomID, owner: .composer))
         beginComposerTelemetrySession(sessionKey: sessionKey, generation: generation)
-        markComposerTelemetrySessionRESTActive(sessionKey: sessionKey)
+        markComposerTelemetrySessionRESTActive(
+            sessionKey: sessionKey, eligibleOperations: lightIDs.count)
     }
 
     /// Run the PRODUCTION startup prime for a staged room, as issued by a
@@ -2683,14 +2760,53 @@ final class UnifiedOrchestrator {
 
     /// Begin a telemetry session exactly as `startCompositionMode` does at its
     /// head; `isRESTActive: true` additionally stages the REST-runtime mark.
-    func testBeginComposerTelemetrySession(roomID: String, bridgeID: String?, generation: Int, isRESTActive: Bool) {
+    /// `eligibleOperations` arms the packet-5 rotation exactly as production
+    /// does; it is ignored unless `isRESTActive`.
+    func testBeginComposerTelemetrySession(
+        roomID: String, bridgeID: String?, generation: Int, isRESTActive: Bool,
+        eligibleOperations: Int = 0
+    ) {
         let sessionKey = ComposerTelemetrySessionKey(
             bridgeKey: bridgeID ?? "legacy",
             scope: RestScope(roomID: roomID, owner: .composer))
         beginComposerTelemetrySession(sessionKey: sessionKey, generation: generation)
         if isRESTActive {
-            markComposerTelemetrySessionRESTActive(sessionKey: sessionKey)
+            markComposerTelemetrySessionRESTActive(
+                sessionKey: sessionKey, eligibleOperations: eligibleOperations)
         }
+    }
+
+    /// Rotation state for one exact (bridge, room) Composer session.
+    func testCompositionRotationState(
+        roomID: String, bridgeID: String?
+    ) -> (cursor: Int, eligibleOperationCount: Int,
+          hadFailure: Bool, completedSuccessfulRotation: Bool)? {
+        let key = ComposerTelemetrySessionKey(
+            bridgeKey: bridgeID ?? "legacy",
+            scope: RestScope(roomID: roomID, owner: .composer))
+        guard let s = compositionRotationStates[key] else { return nil }
+        return (s.cursor, s.eligibleOperationCount,
+                s.currentRotationHadFailure, s.hasCompletedInitialSuccessfulRotation)
+    }
+
+    /// The SAME immutable read model the tray consumes — never the private
+    /// mutable state.
+    func testCompositionDegradation(
+        roomID: String, bridgeID: String?
+    ) -> CompositionDegradationSnapshot? {
+        compositionDegradation(roomID: roomID, bridgeID: bridgeID)
+    }
+
+    /// Record a fallback reason exactly as the production catch does.
+    func testRecordCompositionFallback(
+        roomID: String, bridgeID: String?, generation: Int,
+        reason: CompositionFallbackReason
+    ) {
+        recordCompositionFallback(
+            sessionKey: ComposerTelemetrySessionKey(
+                bridgeKey: bridgeID ?? "legacy",
+                scope: RestScope(roomID: roomID, owner: .composer)),
+            reason: reason, generation: generation)
     }
 
     /// The production enqueue sequence against the REAL sender for this bridge.
@@ -2711,22 +2827,23 @@ final class UnifiedOrchestrator {
     /// Production closure factories — the closure a test enqueues is the
     /// closure the scheduler enqueues.
     func testMakeComposerGradientWork(
-        token: CompositionSendLedger.Token, map: GradientChannelMap,
+        token: CompositionSendLedger.Token, entries: [GradientChannelMap.Entry],
         frames: [LightFrame], api: HueAPIClient, gamut: HueColorUtils.Gamut,
         sentX: Double, sentY: Double, sentBri: Double
     ) -> RestSender.Work {
         makeComposerGradientWork(
-            token: token, map: map, frames: frames, api: api, gamut: gamut,
+            token: token, entries: entries, frames: frames, api: api, gamut: gamut,
             sentX: sentX, sentY: sentY, sentBri: sentBri)
     }
 
     func testMakeComposerPerLightWork(
-        token: CompositionSendLedger.Token, lightIDs: [String],
+        token: CompositionSendLedger.Token,
+        targets: [(frameIndex: Int, lightID: String)],
         frames: [LightFrame], api: HueAPIClient, gamut: HueColorUtils.Gamut,
         sentX: Double, sentY: Double, sentBri: Double
     ) -> RestSender.Work {
         makeComposerPerLightWork(
-            token: token, lightIDs: lightIDs, frames: frames, api: api,
+            token: token, targets: targets, frames: frames, api: api,
             gamut: gamut, sentX: sentX, sentY: sentY, sentBri: sentBri)
     }
 
@@ -2761,6 +2878,16 @@ final class UnifiedOrchestrator {
         composerWorkTerminated(
             token: token, kind: .cancelled,
             attemptedOperations: attemptedOperations, failures: failures)
+    }
+
+    /// The production rotation advance, so a test can prove the fences
+    /// (generation, exact key, REST-active) reject a stale report without
+    /// staging a whole closure.
+    func testReportComposerRotationAdvanced(
+        token: CompositionSendLedger.Token, attemptedOperations: Int, failures: Int
+    ) {
+        composerRotationAdvanced(
+            token: token, attemptedOperations: attemptedOperations, failures: failures)
     }
 
     // Entertainment-area selection seams (packet 1b). Selection reads three
@@ -3481,6 +3608,31 @@ final class UnifiedOrchestrator {
                 return  // Don't start app-driven scheduler
             } catch {
                 debugLog("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
+                // Packet 5: carry the reason forward instead of dropping it in
+                // a DEBUG log. The three cases stay DISTINCT all the way to the
+                // sentence the user reads — "the bridge is full" is only ever
+                // said when capacity was actually MEASURED short. Unknown
+                // capacity means the app knows nothing, and a creation failure
+                // after a passing preflight is not evidence of exhaustion
+                // (preflight is a point-in-time check, not a reservation).
+                //
+                // Recorded against the session opened at the head of this
+                // function, and merged — `markComposerTelemetrySessionRESTActive`
+                // will add the large-room fact below without erasing this, and
+                // this does not erase that.
+                let reason: CompositionFallbackReason
+                switch error {
+                case BridgeAnimationError.bridgeCapacityInsufficient:
+                    reason = .bridgeCapacityInsufficient
+                case BridgeAnimationError.bridgeCapacityUnknown:
+                    reason = .bridgeCapacityUnknown
+                default:
+                    reason = .bridgeStoredUploadFailed
+                }
+                recordCompositionFallback(
+                    sessionKey: composerTelemetryKey,
+                    reason: reason,
+                    generation: nextGeneration)
                 // Fall through to the REST path, which records `.rest` below.
             }
         }
@@ -3498,6 +3650,23 @@ final class UnifiedOrchestrator {
             )
             if let map = compositionGradientMap {
                 debugLog("[Composer][Gradient] 🌈 \(map.entries.filter(\.isGradient).count) strip(s) → \(map.totalChannels) channels")
+                // Packet 5: the spatial/radial/angular arrays above were built
+                // in PHYSICAL-LIGHT order, but `render` indexes them by
+                // RENDER-CHANNEL index. Those coincide only while every light
+                // owns exactly one channel; the moment a strip expands, every
+                // light after it reads a neighbour's geometry. Re-index now,
+                // repeating each light's value across the channels it owns, so
+                // frames[k] and spatialPositions[k] describe the same physical
+                // light. (The flat path never reaches here, and the DTLS
+                // branch already returned with its own channel-order values.)
+                paramBox.spatialPositions = CompositionEngine.expandToRenderChannels(
+                    paramBox.spatialPositions, map: map)
+                paramBox.targetSpatialPositions = CompositionEngine.expandToRenderChannels(
+                    paramBox.targetSpatialPositions, map: map)
+                paramBox.radialPositions = CompositionEngine.expandToRenderChannels(
+                    paramBox.radialPositions, map: map)
+                paramBox.angularPositions = CompositionEngine.expandToRenderChannels(
+                    paramBox.angularPositions, map: map)
             }
         }
 
@@ -3534,7 +3703,14 @@ final class UnifiedOrchestrator {
         // Packet 4: this composition is genuinely REST — its telemetry session
         // becomes refresh-eligible. The Entertainment and bridge-stored returns
         // above never reach this line, so their sessions stay inactive.
-        markComposerTelemetrySessionRESTActive(sessionKey: composerTelemetryKey)
+        // Packet 5: this is also where the rotation is armed with the room's
+        // real eligible-operation count (one per physical light / REST
+        // operation — a strip is ONE, not one per point), and where a room too
+        // large for a single sweep records that fact for the tray.
+        markComposerTelemetrySessionRESTActive(
+            sessionKey: composerTelemetryKey,
+            eligibleOperations: compositionGradientMap?.entries.count
+                ?? compositionLightIDs.count)
 
         // Prime immediately so newly started rooms visibly turn on without
         // waiting for the next round-robin scheduler slot.
@@ -3614,6 +3790,11 @@ final class UnifiedOrchestrator {
         // Note: paramBox cleanup is handled by stopCompositionMode (keyed by bridgeID).
         let frameInterval: UInt64 = 40_000_000  // 40ms = 25fps
         let startTime = CFAbsoluteTimeGetCurrent()
+        // Packet 5: the renderer now speaks render-channel INDICES (Int), not
+        // one-byte DTLS ids. The wire ids stay in `channelIDs` and are never
+        // re-derived from render output, so the retype introduces no new
+        // conversion that could fail on this path.
+        let renderChannelIDs = channelIDs.map(Int.init)
 
         while !Task.isCancelled {
             // Mid-session DTLS failure: once the client's bounded reconnect
@@ -3629,7 +3810,7 @@ final class UnifiedOrchestrator {
             if let mix = activePerformanceMix, mix.deckA === paramBox {
                 frames = CompositionMixer.renderMixed(
                     time: elapsed,
-                    channelIDs: channelIDs,
+                    channelIDs: renderChannelIDs,
                     mix: mix,
                     features: AudioAnalysisEngine.latestFeatures(),
                     beat: BeatClock.snapshot(),
@@ -3638,7 +3819,7 @@ final class UnifiedOrchestrator {
             } else {
                 frames = CompositionEngine.render(
                     time: elapsed,
-                    channelIDs: channelIDs,
+                    channelIDs: renderChannelIDs,
                     params: paramBox,
                     features: AudioAnalysisEngine.latestFeatures(),
                     beat: BeatClock.snapshot(),
@@ -3646,10 +3827,28 @@ final class UnifiedOrchestrator {
                 )
             }
 
-            // Convert to entertainment send format
-            let channels = frames.map { frame in
+            // ── DTLS BOUNDARY (packet 5) ──
+            // The wire ids are the ones the BRIDGE reported, validated
+            // ALL-OR-NOTHING by EntertainmentAreaSelector.validatedChannelIDs
+            // (`UInt8(exactly:)` on every channel, plus a uniqueness check)
+            // before this plan was ever accepted: an area carrying a
+            // channel_id outside UInt8, or a duplicate, yields nil there and
+            // the room falls back to Room mode without opening a session.
+            // They are deliberately NOT reconstructed from `frame.channelID`.
+            //
+            // Alignment is positional and must be exact — render emits one
+            // frame per channel, in order. If that ever stops holding, send
+            // NOTHING this frame rather than a partial or misaligned stream.
+            guard frames.count == channelIDs.count else {
+                assertionFailure(
+                    "render returned \(frames.count) frames for \(channelIDs.count) channels")
+                try? await Task.sleep(nanoseconds: frameInterval)
+                continue
+            }
+            let channels = zip(channelIDs, frames).map { pair in
+                let (id, frame) = pair
                 let xy = HueColorUtils.clampXYToGamut(x: frame.x, y: frame.y, gamut: gamut)
-                return (id: frame.channelID, x: xy.x, y: xy.y, brightness: frame.brightness)
+                return (id: id, x: xy.x, y: xy.y, brightness: frame.brightness)
             }
             await entClient.send(channels: channels)
 
@@ -3703,6 +3902,21 @@ final class UnifiedOrchestrator {
             tier: tier,
             preset: nil
         )
+        // Packet 5: record WHY this room is on Room mode, against the session
+        // the re-entry above just opened. Written after the start (the start
+        // clears any prior reason) and generation-fenced, so a late event from
+        // a superseded run cannot republish. Unlike `transportFallback` — an
+        // apply-time snapshot that is never re-set — this survives a
+        // mid-session failover, which is the case that previously flipped the
+        // badge to ROOM with no explanation at all.
+        if let generation = compositionGenerations[roomID] {
+            recordCompositionFallback(
+                sessionKey: ComposerTelemetrySessionKey(
+                    bridgeKey: room.bridgeID ?? "legacy",
+                    scope: RestScope(roomID: roomID, owner: .composer)),
+                reason: .entertainmentUnavailable,
+                generation: generation)
+        }
     }
 
     /// Composition render loop via REST — group-level color + brightness.
@@ -3741,6 +3955,12 @@ final class UnifiedOrchestrator {
         compositionSendLedger.beginSession(
             bridgeKey: sessionKey.bridgeKey, scope: sessionKey.scope, generation: generation)
         removeComposerCadencePublication(sessionKey: sessionKey)
+        // Packet 5: a new start inherits NOTHING from the old one. Rotation
+        // restarts at cursor 0 with both flags down (it is re-created with the
+        // real eligible count when REST activates), and no stale degradation
+        // reason may survive into a session that has not earned it.
+        compositionRotationStates.removeValue(forKey: sessionKey)
+        compositionDegradationStates.removeValue(forKey: sessionKey)
         composerTelemetrySessions[sessionKey] =
             ComposerTelemetrySession(generation: generation, isRESTActive: false)
     }
@@ -3748,10 +3968,85 @@ final class UnifiedOrchestrator {
     /// Flip the exact session to REST-active. Called only when
     /// `startCompositionMode` actually installs a REST runtime — Entertainment
     /// and bridge-stored sessions stay false and are never refresh-eligible.
+    /// Packet 5 rides along: REST activation is also where the rotation is
+    /// armed with the room's real eligible-operation count, and where a room
+    /// too large for one sweep records that fact for the tray.
     private func markComposerTelemetrySessionRESTActive(
-        sessionKey: ComposerTelemetrySessionKey
+        sessionKey: ComposerTelemetrySessionKey,
+        eligibleOperations: Int
     ) {
+        guard let session = composerTelemetrySessions[sessionKey] else { return }
         composerTelemetrySessions[sessionKey]?.isRESTActive = true
+
+        compositionRotationStates[sessionKey] = CompositionRotationState(
+            generation: session.generation,
+            cursor: 0,
+            eligibleOperationCount: max(0, eligibleOperations),
+            currentRotationHadFailure: false,
+            hasCompletedInitialSuccessfulRotation: false)
+
+        if eligibleOperations > CompositionRotationPlan.maxOperationsPerSweep {
+            recordCompositionLargeRoom(
+                sessionKey: sessionKey,
+                eligibleOperations: eligibleOperations,
+                generation: session.generation)
+        }
+    }
+
+    // ── Degradation reads and writes (packet 5) ──────────────────
+
+    /// The room's current transport-degradation truth, or nil when there is
+    /// nothing to say. `bridgeID` is the room's ORIGINAL optional identity and
+    /// normalizes nil → "legacy", exactly like `restSender(for:)` and
+    /// `activeRESTCadence(roomID:bridgeID:)` — callers must pass the selected
+    /// room's real bridge, never a global default.
+    ///
+    /// Returns the immutable snapshot; the mutable state stays private.
+    func compositionDegradation(
+        roomID: String, bridgeID: String?
+    ) -> CompositionDegradationSnapshot? {
+        let key = ComposerTelemetrySessionKey(
+            bridgeKey: bridgeID ?? "legacy",
+            scope: RestScope(roomID: roomID, owner: .composer))
+        guard let state = compositionDegradationStates[key], !state.snapshot.isEmpty else {
+            return nil
+        }
+        return state.snapshot
+    }
+
+    /// Record WHY this composition is not on its intended transport, without
+    /// disturbing the large-room fact. Generation-fenced: a stale completion
+    /// or a late fallback event from a superseded run cannot republish.
+    private func recordCompositionFallback(
+        sessionKey: ComposerTelemetrySessionKey,
+        reason: CompositionFallbackReason,
+        generation: Int
+    ) {
+        guard composerTelemetrySessions[sessionKey]?.generation == generation else { return }
+        var state = compositionDegradationStates[sessionKey]
+            ?? CompositionDegradationState(generation: generation,
+                                           fallbackReason: nil,
+                                           largeRoomEligibleOperations: nil)
+        guard state.generation == generation else { return }
+        state.fallbackReason = reason      // only this field — merge, never replace
+        compositionDegradationStates[sessionKey] = state
+    }
+
+    /// Record that this room is served in rotation, without disturbing any
+    /// fallback reason already recorded for the same generation.
+    private func recordCompositionLargeRoom(
+        sessionKey: ComposerTelemetrySessionKey,
+        eligibleOperations: Int,
+        generation: Int
+    ) {
+        guard composerTelemetrySessions[sessionKey]?.generation == generation else { return }
+        var state = compositionDegradationStates[sessionKey]
+            ?? CompositionDegradationState(generation: generation,
+                                           fallbackReason: nil,
+                                           largeRoomEligibleOperations: nil)
+        guard state.generation == generation else { return }
+        state.largeRoomEligibleOperations = eligibleOperations   // only this field
+        compositionDegradationStates[sessionKey] = state
     }
 
     /// Deactivate one exact session, in the approved order:
@@ -3778,6 +4073,11 @@ final class UnifiedOrchestrator {
         composerTelemetrySessions.removeValue(forKey: sessionKey)
         composerPendingTokens.removeValue(forKey: sessionKey)
         removeComposerCadencePublication(sessionKey: sessionKey)
+        // Packet 5: rotation and degradation share this session's lifetime
+        // exactly. Both fields of the degradation state clear together — there
+        // is no partial teardown that could leave half a truth on screen.
+        compositionRotationStates.removeValue(forKey: sessionKey)
+        compositionDegradationStates.removeValue(forKey: sessionKey)
     }
 
     /// Publication refresh for one exact session: sample the clock, snapshot,
@@ -3816,6 +4116,100 @@ final class UnifiedOrchestrator {
         if activeRESTCadenceByBridgeRoom[sessionKey.bridgeKey]?.isEmpty == true {
             activeRESTCadenceByBridgeRoom.removeValue(forKey: sessionKey.bridgeKey)
         }
+    }
+
+    /// This session's rotation cursor, arming or repairing the state first
+    /// (packet 5).
+    ///
+    /// The eligible set is immutable for a session's life —
+    /// `CompositionRuntime.lightIDs` is a `let` and `gradientMap` is assigned
+    /// once at start — which is what makes the no-starvation argument a closed
+    /// proof rather than a hope. `eligibleOperationCount` is stored so that
+    /// invariant is *checked* rather than trusted: if it ever disagrees with
+    /// the live count, the rotation restarts cleanly instead of slicing with a
+    /// stale bound.
+    private func rotationState(
+        sessionKey: ComposerTelemetrySessionKey,
+        generation: Int,
+        eligibleOperationCount: Int
+    ) -> Int {
+        if let existing = compositionRotationStates[sessionKey],
+           existing.generation == generation,
+           existing.eligibleOperationCount == eligibleOperationCount {
+            return existing.cursor
+        }
+        #if DEBUG
+        if let existing = compositionRotationStates[sessionKey],
+           existing.generation == generation,
+           existing.eligibleOperationCount != eligibleOperationCount {
+            print("""
+            [Composer][Rotation] ⚠ eligible count changed mid-session for \
+            room=\(sessionKey.scope.roomID) bridge=\(sessionKey.bridgeKey): \
+            \(existing.eligibleOperationCount) → \(eligibleOperationCount); restarting rotation
+            """)
+        }
+        #endif
+        compositionRotationStates[sessionKey] = CompositionRotationState(
+            generation: generation,
+            cursor: 0,
+            eligibleOperationCount: eligibleOperationCount,
+            currentRotationHadFailure: false,
+            hasCompletedInitialSuccessfulRotation: false)
+        return 0
+    }
+
+    /// One batch finished dispatching — advance the rotation by exactly what
+    /// it attempted, and remember whether any of it failed (packet 5).
+    ///
+    /// Called from inside the Composer closures, right after the batch's task
+    /// group returns and BEFORE the inter-batch sleep, with the same
+    /// `outcomes` array the telemetry accumulation uses. One source of
+    /// evidence, two consumers: the cursor and `attemptedOperations` can never
+    /// disagree about what was dispatched.
+    ///
+    /// Failed attempts DO advance the cursor — they were attempted, and the
+    /// light gets its next turn on the next rotation rather than blocking the
+    /// ones behind it — but they taint the rotation so the delta gate cannot
+    /// quiesce a room that has not actually been delivered to (§ the
+    /// `hasCompletedInitialSuccessfulRotation` doc).
+    ///
+    /// Rejected — mutating nothing — when the session is gone, is no longer
+    /// REST-active, or when the generation no longer matches: exact key plus
+    /// generation, never roomID alone, so an old closure on bridge A cannot
+    /// move bridge B's cursor even for an identical room ID.
+    private func composerRotationAdvanced(
+        token: CompositionSendLedger.Token,
+        attemptedOperations: Int,
+        failures: Int
+    ) {
+        guard attemptedOperations > 0 else { return }
+        let sessionKey = ComposerTelemetrySessionKey(
+            bridgeKey: token.bridgeKey, scope: token.scope)
+        guard let session = composerTelemetrySessions[sessionKey],
+              session.isRESTActive,
+              session.generation == token.generation,
+              var state = compositionRotationStates[sessionKey],
+              state.generation == token.generation,
+              state.eligibleOperationCount > 0
+        else { return }
+
+        if failures > 0 { state.currentRotationHadFailure = true }
+
+        let advance = CompositionRotationPlan.advance(
+            cursor: state.cursor,
+            eligibleCount: state.eligibleOperationCount,
+            attemptedOperations: attemptedOperations)
+        state.cursor = advance.cursor
+        if advance.crossedRotationBoundary {
+            // Quiescence requires a rotation that DELIVERED, not one that
+            // merely attempted. A tainted rotation leaves the flag down, so
+            // the gate stays open and the next rotation retries the room.
+            if !state.currentRotationHadFailure {
+                state.hasCompletedInitialSuccessfulRotation = true
+            }
+            state.currentRotationHadFailure = false
+        }
+        compositionRotationStates[sessionKey] = state
     }
 
     private func mintComposerToken(
@@ -3953,9 +4347,14 @@ final class UnifiedOrchestrator {
     //   • `sentX/Y/Bri` ride along so an accepted fully-successful completion
     //     can install the frame proxy as delta-gate state.
 
+    /// `entries` is this SWEEP's subset of the room's gradient entries, in
+    /// rotation order, each still carrying its ABSOLUTE `channelRange` into
+    /// the full-room `frames` array (packet 5). One entry is one physical
+    /// light and one REST operation, whether it is a single bulb or a
+    /// five-point strip.
     private func makeComposerGradientWork(
         token: CompositionSendLedger.Token,
-        map: GradientChannelMap,
+        entries: [GradientChannelMap.Entry],
         frames: [LightFrame],
         api: HueAPIClient,
         gamut: HueColorUtils.Gamut,
@@ -3966,8 +4365,7 @@ final class UnifiedOrchestrator {
             var attempted = 0
             var failures = 0
 
-            let batchSize = 5
-            let entries = map.entries
+            let batchSize = CompositionRotationPlan.batchSize
             for batchStart in stride(from: 0, to: entries.count, by: batchSize) {
                 guard await stillCurrent() else {
                     self?.composerWorkTerminated(
@@ -3981,7 +4379,17 @@ final class UnifiedOrchestrator {
                         let entryFrames = entry.channelRange.compactMap { idx in
                             idx < frames.count ? frames[idx] : nil
                         }
-                        guard let first = entryFrames.first else { continue }
+                        // Unreachable since packet 5: the whole room is
+                        // rendered, so frames.count == map.totalChannels and
+                        // every absolute channelRange is in bounds. It must
+                        // stay unreachable — a batch that dispatched fewer
+                        // operations than its slice would pin the cursor and
+                        // stall the rotation forever.
+                        guard let first = entryFrames.first else {
+                            assertionFailure(
+                                "gradient entry \(entry.lightID) has no frames in a \(frames.count)-frame render")
+                            continue
+                        }
                         group.addTask {
                             do {
                                 if entry.isGradient {
@@ -4019,8 +4427,18 @@ final class UnifiedOrchestrator {
                     for await outcome in group { results.append(outcome) }
                     return results
                 }
-                attempted += outcomes.count
-                failures += outcomes.lazy.filter { !$0 }.count
+                // Packet 5: ONE piece of evidence, three consumers — telemetry
+                // accumulation, the rotation cursor, and the rotation's
+                // failure taint. Advanced here, after the group returns and
+                // before the inter-batch sleep, never from a planned size.
+                let attemptedThisBatch = outcomes.count
+                let failuresThisBatch = outcomes.lazy.filter { !$0 }.count
+                attempted += attemptedThisBatch
+                failures += failuresThisBatch
+                self?.composerRotationAdvanced(
+                    token: token,
+                    attemptedOperations: attemptedThisBatch,
+                    failures: failuresThisBatch)
                 if batchEnd < entries.count {
                     try? await Task.sleep(for: .milliseconds(80))
                 }
@@ -4035,9 +4453,14 @@ final class UnifiedOrchestrator {
         }
     }
 
+    /// `targets` is this SWEEP's subset of the room's lights, in rotation
+    /// order, each paired with its ABSOLUTE index into the full-room `frames`
+    /// array (packet 5). Carrying the absolute index is what keeps
+    /// frame↔light alignment an identity rather than an assumption once the
+    /// dispatched set is no longer the whole room.
     private func makeComposerPerLightWork(
         token: CompositionSendLedger.Token,
-        lightIDs: [String],
+        targets: [(frameIndex: Int, lightID: String)],
         frames: [LightFrame],
         api: HueAPIClient,
         gamut: HueColorUtils.Gamut,
@@ -4050,20 +4473,30 @@ final class UnifiedOrchestrator {
 
             // Send each light its unique color — batched with concurrent
             // sends (bridge handles ~10/sec individual)
-            let batchSize = 5  // safe concurrent limit
-            for batchStart in stride(from: 0, to: lightIDs.count, by: batchSize) {
+            let batchSize = CompositionRotationPlan.batchSize
+            for batchStart in stride(from: 0, to: targets.count, by: batchSize) {
                 guard await stillCurrent() else {
                     self?.composerWorkTerminated(
                         token: token, kind: .cancelled,
                         attemptedOperations: attempted, failures: failures)
                     return
                 }
-                let batchEnd = min(batchStart + batchSize, lightIDs.count)
+                let batchEnd = min(batchStart + batchSize, targets.count)
                 let outcomes = await withTaskGroup(of: Bool.self) { group -> [Bool] in
-                    for i in batchStart..<batchEnd {
-                        guard i < frames.count else { continue }
-                        let lightID = lightIDs[i]
-                        let frame = frames[i]
+                    for target in targets[batchStart..<batchEnd] {
+                        // Unreachable since packet 5: the whole room is
+                        // rendered, so frames.count == lightIDs.count and
+                        // every absolute index is in bounds. It must stay
+                        // unreachable — a batch that dispatched fewer
+                        // operations than its slice would pin the cursor and
+                        // stall the rotation forever.
+                        guard target.frameIndex < frames.count else {
+                            assertionFailure(
+                                "light \(target.lightID) at index \(target.frameIndex) beyond a \(frames.count)-frame render")
+                            continue
+                        }
+                        let lightID = target.lightID
+                        let frame = frames[target.frameIndex]
                         let xy = HueColorUtils.clampXYToGamut(
                             x: frame.x, y: frame.y, gamut: gamut
                         )
@@ -4087,10 +4520,18 @@ final class UnifiedOrchestrator {
                     for await outcome in group { results.append(outcome) }
                     return results
                 }
-                attempted += outcomes.count
-                failures += outcomes.lazy.filter { !$0 }.count
+                // Packet 5: same single piece of evidence as the gradient path
+                // — telemetry, cursor, and failure taint all derive from it.
+                let attemptedThisBatch = outcomes.count
+                let failuresThisBatch = outcomes.lazy.filter { !$0 }.count
+                attempted += attemptedThisBatch
+                failures += failuresThisBatch
+                self?.composerRotationAdvanced(
+                    token: token,
+                    attemptedOperations: attemptedThisBatch,
+                    failures: failuresThisBatch)
                 // Small gap between batches if more remain
-                if batchEnd < lightIDs.count {
+                if batchEnd < targets.count {
                     try? await Task.sleep(for: .milliseconds(80))
                 }
             }
@@ -4300,15 +4741,25 @@ final class UnifiedOrchestrator {
             let lightCount = runtime.lightIDs.count
             let usePerLight = lightCount > 0
 
-            // Build channel IDs: one per light for per-light mode, or [0] for
-            // grouped. A gradient map expands strips into extra channels so
-            // motion travels ALONG them (Round 3 F).
-            let channelIDs: [UInt8] = {
+            // Build render channel indices: one per light for per-light mode,
+            // or [0] for grouped. A gradient map expands strips into extra
+            // channels so motion travels ALONG them (Round 3 F).
+            //
+            // Packet 5: the WHOLE room is always rendered, even when this
+            // sweep will only dispatch part of it. `render` normalises each
+            // light's spatial position by the channel count, so rendering 20
+            // of 60 would tell light #43 it is light #3 of 20 and destroy
+            // every wave, cascade and spatial pattern in the room. Render
+            // full, dispatch partial. (These are Int render indices, never
+            // DTLS channel ids — the old `UInt8(min(…, 20))` clamp existed
+            // only to keep the trapping UInt8 initialiser safe, and that is
+            // where the phantom 20-light limit came from.)
+            let channelIDs: [Int] = {
                 guard usePerLight else { return [0] }
                 if let map = runtime.gradientMap {
-                    return (0..<UInt8(min(map.totalChannels, 20))).map { $0 }
+                    return Array(0..<map.totalChannels)
                 }
-                return (0..<UInt8(min(lightCount, 20))).map { $0 }
+                return Array(0..<lightCount)
             }()
 
             let frames: [LightFrame]
@@ -4338,32 +4789,6 @@ final class UnifiedOrchestrator {
                 continue
             }
 
-            // Check if anything changed visually (use first frame as proxy)
-            let firstFrame = frames[0]
-            let firstXY = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: runtime.gamut)
-            let firstBri = max(1, firstFrame.brightness * 100.0)
-            let colorDelta: Double = {
-                guard let lx = runtime.lastSentX, let ly = runtime.lastSentY else { return .greatestFiniteMagnitude }
-                return hypot(firstXY.x - lx, firstXY.y - ly)
-            }()
-            let briDelta = abs(firstBri - (runtime.lastSentBri ?? -999))
-            // triggerRESTBurst's designed consumer (6d4e105's doc described
-            // this read; it was never implemented — audit R9, F2). The gate
-            // proxies "did anything change" through frame[0] alone, so a
-            // user edit that barely moves light 0 (album colors / harmony /
-            // revert on a static look) was skipped forever while every
-            // other light stayed wrong. During the post-edit burst window,
-            // send regardless. Same epoch on both sides: CFAbsoluteTime ==
-            // seconds since 2001 == timeIntervalSinceReferenceDate.
-            let userEditBurstActive = runtime.paramBox.forceRESTBurstUntil > now
-            if !userEditBurstActive && colorDelta < 0.003 && briDelta < 1.0 {
-                try? await Task.sleep(for: tickInterval)
-                continue
-            }
-
-            // Capture values for the closure
-            let capturedAPI = runtime.api
-            let capturedGamut = runtime.gamut
             // Packet 3: this room's own mailbox slot, on its OWN bridge. The
             // bridge comes from the runtime (recorded at start), never from a
             // possibly-stale `allRooms` lookup.
@@ -4382,34 +4807,108 @@ final class UnifiedOrchestrator {
             let sessionKey = ComposerTelemetrySessionKey(
                 bridgeKey: runtime.restBridgeIdentity ?? "legacy",
                 scope: composerScope)
+
+            // Check if anything changed visually (use first frame as proxy)
+            let firstFrame = frames[0]
+            let firstXY = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: runtime.gamut)
+            let firstBri = max(1, firstFrame.brightness * 100.0)
+            let colorDelta: Double = {
+                guard let lx = runtime.lastSentX, let ly = runtime.lastSentY else { return .greatestFiniteMagnitude }
+                return hypot(firstXY.x - lx, firstXY.y - ly)
+            }()
+            let briDelta = abs(firstBri - (runtime.lastSentBri ?? -999))
+            // triggerRESTBurst's designed consumer (6d4e105's doc described
+            // this read; it was never implemented — audit R9, F2). The gate
+            // proxies "did anything change" through frame[0] alone, so a
+            // user edit that barely moves light 0 (album colors / harmony /
+            // revert on a static look) was skipped forever while every
+            // other light stayed wrong. During the post-edit burst window,
+            // send regardless. Same epoch on both sides: CFAbsoluteTime ==
+            // seconds since 2001 == timeIntervalSinceReferenceDate.
+            let userEditBurstActive = runtime.paramBox.forceRESTBurstUntil > now
+            // Packet 5: the gate may only suppress a pass once the room has
+            // been FULLY DELIVERED at least once, and only at a rotation
+            // boundary. Mid-rotation (cursor != 0) the remaining lights still
+            // need their turn; and a rotation that contained any failure
+            // leaves `hasCompletedInitialSuccessfulRotation` down, so the room
+            // re-rotates and retries instead of going quiet with a light
+            // stranded — the case completion-only bookkeeping already refuses
+            // to record, and which the gate must not overrule.
+            //
+            // For rooms of ≤ maxOperationsPerSweep the cursor is back at 0
+            // after every sweep, so this is identical to the old behaviour
+            // from the second pass onward.
+            //
+            // An EMPTY eligible set (the grouped fallback — no per-light IDs
+            // resolved) is trivially complete: there is no rotation to finish,
+            // `makeComposerGroupedWork` never reports a rotation advance, and
+            // the flag could therefore never rise — see the predicate's doc.
+            let rotation = compositionRotationStates[sessionKey]
+            let rotationIncomplete = rotation.map {
+                CompositionRotationPlan.deliveryIncomplete(
+                    eligibleOperationCount: $0.eligibleOperationCount,
+                    hasCompletedInitialSuccessfulRotation: $0.hasCompletedInitialSuccessfulRotation,
+                    cursor: $0.cursor)
+            } ?? false
+            if !userEditBurstActive && !rotationIncomplete
+                && colorDelta < 0.003 && briDelta < 1.0 {
+                try? await Task.sleep(for: tickInterval)
+                continue
+            }
+
+            // Capture values for the closure
+            let capturedAPI = runtime.api
+            let capturedGamut = runtime.gamut
             let sentX = firstXY.x
             let sentY = firstXY.y
             let sentBri = firstBri
 
-            if usePerLight, let map = runtime.gradientMap {
+            // Packet 5: which eligible operations this sweep dispatches. The
+            // eligible list is one entry per PHYSICAL LIGHT / REST operation —
+            // never a flattened render-channel index — so a five-point strip
+            // is one slot costing one PUT, exactly as it costs one operation.
+            // The slice is contiguous and does not wrap, so each rotation is
+            // an exact ordered partition of the room.
+            let eligibleCount = usePerLight
+                ? (runtime.gradientMap.map { $0.entries.count } ?? lightCount)
+                : 0
+            let rotationCursor = rotationState(
+                sessionKey: sessionKey,
+                generation: runtime.generation,
+                eligibleOperationCount: eligibleCount)
+            let sweepSlice = CompositionRotationPlan.slice(
+                cursor: rotationCursor, eligibleCount: eligibleCount)
+
+            if usePerLight, let map = runtime.gradientMap, let slice = sweepSlice {
                 // ── GRADIENT-AWARE PER-LIGHT MODE (Round 3 F) ──
                 // Strips get ONE gradient.points PUT carrying their whole
                 // channel range; flat lights keep the per-light PUT. Same
                 // mailbox, same pacing profile as the flat path.
+                // Entries keep their ABSOLUTE channelRange into `frames`.
+                let subset = Array(map.entries[slice.range])
                 await enqueueComposerWork(
                     sessionKey: sessionKey, generation: runtime.generation,
                     sender: composerSender
                 ) { token in
                     makeComposerGradientWork(
-                        token: token, map: map, frames: frames,
+                        token: token, entries: subset, frames: frames,
                         api: capturedAPI, gamut: capturedGamut,
                         sentX: sentX, sentY: sentY, sentBri: sentBri)
                 }
-            } else if usePerLight {
+            } else if usePerLight, let slice = sweepSlice {
                 // ── PER-LIGHT MODE ──
                 // Each light gets its own color. Cascade/wave patterns visible.
                 // Bridge handles ~10 PUTs/sec for individual lights.
+                // Each target carries its ABSOLUTE index into `frames`.
+                let subset = slice.range.map {
+                    (frameIndex: $0, lightID: runtime.lightIDs[$0])
+                }
                 await enqueueComposerWork(
                     sessionKey: sessionKey, generation: runtime.generation,
                     sender: composerSender
                 ) { token in
                     makeComposerPerLightWork(
-                        token: token, lightIDs: runtime.lightIDs, frames: frames,
+                        token: token, targets: subset, frames: frames,
                         api: capturedAPI, gamut: capturedGamut,
                         sentX: sentX, sentY: sentY, sentBri: sentBri)
                 }

@@ -384,33 +384,95 @@ final class HueCapabilityFoundationTests: XCTestCase {
         XCTAssertEqual(map?.entries.first?.channelCount, 3)
     }
 
-    func testGradientMapBudgetNeverStarvesLaterLights() {
-        // 17 bulbs + strip + 2 bulbs = 20 lights: after reserving one
-        // channel for every light, nothing is left for the strip to expand
-        // into (20 − 17 − 2 = 1) — it stays flat, so the map is nil and the
-        // room takes the plain per-light path.
+    // The two tests below replace `testGradientMapBudgetNeverStarvesLaterLights`
+    // and `testGradientMapBudgetTrimsStrip`, which pinned the accidental
+    // `channelBudget = 20` as if it were a contract: they asserted that a
+    // 20-light room with a strip produced a NIL map (strip silently flat), and
+    // that a strip in a 17-light room was trimmed to 3 of its 5 points. Both
+    // behaviours were the bug packet 5 removes, so the tests go with it.
+
+    func testGradientMapNeverStarvesAStripInALargeRoom() throws {
+        // 17 bulbs + strip + 2 bulbs = 20 lights. Under the old global budget
+        // the strip was left 1 channel, `hasGradient` went false, and the room
+        // silently lost its gradient entirely. A strip's resolution is its own
+        // reported capability — no other light can take it away.
         var ids = (0..<17).map { "b\($0)" }
         ids.append("strip")
         ids.append(contentsOf: ["t1", "t2"])
         var lights = ids.map { light(id: $0) }
         lights[17] = light(id: "strip", gradientPoints: 5)
 
-        XCTAssertNil(GradientChannelMap.build(orderedLightIDs: ids, lights: lights))
+        let map = try XCTUnwrap(GradientChannelMap.build(orderedLightIDs: ids, lights: lights))
+        XCTAssertEqual(map.entries.count, 20, "every light keeps an entry")
+        XCTAssertEqual(map.entries[17].channelCount, 5, "the strip keeps all five points")
+        XCTAssertEqual(map.totalChannels, 24, "19 flat lights + 5 strip channels")
     }
 
-    func testGradientMapBudgetTrimsStrip() throws {
-        // 16 bulbs + strip + 1 bulb: strip can expand into 20-16-1 = 3 channels.
-        var ids = (0..<16).map { "b\($0)" }
+    func testGradientMapCoversEveryLightPastTwenty() throws {
+        // 24 bulbs + a strip = 25 lights. `prefix(20)` used to drop lights 21+
+        // from the map outright, and the scheduler then never wrote to them.
+        var ids = (0..<24).map { "b\($0)" }
         ids.append("strip")
-        ids.append("tail")
         var lights = ids.map { light(id: $0) }
-        lights[16] = light(id: "strip", gradientPoints: 5)
+        lights[24] = light(id: "strip", gradientPoints: 5)
 
         let map = try XCTUnwrap(GradientChannelMap.build(orderedLightIDs: ids, lights: lights))
-        XCTAssertEqual(map.entries[16].channelCount, 3)
-        XCTAssertEqual(map.entries[17].channelCount, 1)
-        XCTAssertEqual(map.totalChannels, 20)
-        XCTAssertLessThanOrEqual(map.totalChannels, GradientChannelMap.channelBudget)
+        XCTAssertEqual(map.entries.map(\.lightID), ids, "no light is dropped, order preserved")
+        XCTAssertEqual(map.entries.last?.channelCount, 5)
+        XCTAssertEqual(map.totalChannels, 29)
+        // Absolute ranges stay contiguous and gap-free — the property the
+        // rolling-subset dispatch relies on to index the full-room frame array.
+        var expectedStart = 0
+        for entry in map.entries {
+            XCTAssertEqual(entry.channelStart, expectedStart)
+            expectedStart += entry.channelCount
+        }
+        XCTAssertEqual(expectedStart, map.totalChannels)
+    }
+
+    // MARK: - Render-channel metadata expansion (packet 5)
+
+    func testExpandToRenderChannelsKeepsEachLightWithItsOwnGeometry() throws {
+        // 3 bulbs, a 5-point strip, then 2 more bulbs. Before packet 5 the
+        // per-light arrays were indexed by RENDER CHANNEL, so every light
+        // after the strip read a neighbour's position.
+        var ids = (0..<3).map { "b\($0)" }
+        ids.append("strip")
+        ids.append(contentsOf: ["t0", "t1"])
+        var lights = ids.map { light(id: $0) }
+        lights[3] = light(id: "strip", gradientPoints: 5)
+        let map = try XCTUnwrap(GradientChannelMap.build(orderedLightIDs: ids, lights: lights))
+        XCTAssertEqual(map.totalChannels, 10)   // 5 flat + 5 strip channels
+
+        // One distinctive value per physical light.
+        let perLight = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+        let expanded = CompositionEngine.expandToRenderChannels(perLight, map: map)
+
+        XCTAssertEqual(expanded.count, map.totalChannels)
+        // The strip's five channels all carry the STRIP's value…
+        XCTAssertEqual(Array(expanded[3..<8]), [0.3, 0.3, 0.3, 0.3, 0.3])
+        // …and the light after it carries its OWN, not a shifted index.
+        XCTAssertEqual(expanded[8], 0.4)
+        XCTAssertEqual(expanded[9], 0.5)
+        // Every channel resolves back to its owning light.
+        for (lightIndex, entry) in map.entries.enumerated() {
+            for channel in entry.channelRange {
+                XCTAssertEqual(expanded[channel], perLight[lightIndex],
+                               "channel \(channel) must belong to light \(entry.lightID)")
+            }
+        }
+    }
+
+    func testExpandToRenderChannelsFailsSafeRatherThanMisaligning() throws {
+        let lights = [light(id: "strip", gradientPoints: 3), light(id: "b")]
+        let map = try XCTUnwrap(GradientChannelMap.build(
+            orderedLightIDs: ["strip", "b"], lights: lights))
+
+        // Nothing to expand → empty, which makes render use its index
+        // fallback. An empty array is safe; a misaligned one is not.
+        XCTAssertEqual(CompositionEngine.expandToRenderChannels([], map: map), [])
+        // Too few per-light values to cover the map → empty, never partial.
+        XCTAssertEqual(CompositionEngine.expandToRenderChannels([0.5], map: map), [])
     }
 
     func testGradientBodyWithFrameExtras() {

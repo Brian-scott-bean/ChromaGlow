@@ -141,13 +141,18 @@ final class PresetCatalogTests: XCTestCase {
 
     // MARK: - Render
 
-    /// A room may have one bulb or twenty. Neither may produce NaN, a colour
-    /// outside CIE space, or a light that is simply off.
+    /// A room may have one bulb or sixty. None of them may produce NaN, a
+    /// colour outside CIE space, or a light that is simply off.
+    ///
+    /// Packet 5 widened this past 20. The old list stopped exactly at the
+    /// phantom cap, and the loop itself could not have gone further: it built
+    /// `(0..<UInt8(lightCount))`, which traps above 255 — the same `UInt8`
+    /// assumption that produced the cap in production.
     func testEveryPresetRendersLegalFramesAtEveryRoomSize() {
         for preset in catalog {
-            for lightCount in [1, 5, 20] {
+            for lightCount in [1, 5, 20, 21, 64, 300] {
                 let box = CompositionParamBox(preset: preset)
-                let channels = (0..<UInt8(lightCount)).map { $0 }
+                let channels = Array(0..<lightCount)
 
                 for step in 0..<25 {
                     let frames = CompositionEngine.render(
@@ -188,7 +193,7 @@ final class PresetCatalogTests: XCTestCase {
             else { continue }
 
             let box = CompositionParamBox(preset: preset)
-            let channels: [UInt8] = [0, 1, 2, 3, 4]
+            let channels: [Int] = [0, 1, 2, 3, 4]
             var previous: [Double] = []
 
             for step in 0..<50 {
@@ -224,7 +229,7 @@ final class PresetCatalogTests: XCTestCase {
 
         for preset in catalog where preset.reaction.source == .none {
             let box = CompositionParamBox(preset: preset)
-            let channels: [UInt8] = [0, 1, 2, 3, 4]
+            let channels: [Int] = [0, 1, 2, 3, 4]
 
             var series: [[Double]] = Array(repeating: [], count: channels.count)
             for step in 0..<Int(duration * fps) {
@@ -260,7 +265,7 @@ final class PresetCatalogTests: XCTestCase {
     func testMovingPresetsSpreadAcrossLights() {
         for preset in catalog where preset.motion.pattern != .static {
             let box = CompositionParamBox(preset: preset)
-            let channels = (0..<UInt8(8)).map { $0 }
+            let channels = Array(0..<8)
 
             // Sample a full second: at some point the lights must differ.
             var everDiffered = false

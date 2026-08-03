@@ -14,32 +14,149 @@
 import Foundation
 import OSLog
 
-// MARK: - Bridge Resource Capacity
+// MARK: - Bridge-stored resource requirement (Composer 2 packet 5)
 
-struct BridgeResourceCapacity {
-    let rulesUsed: Int
-    let rulesTotal: Int       // ~250
-    let sensorsUsed: Int
-    let sensorsTotal: Int     // ~250
-    let schedulesUsed: Int
-    let schedulesTotal: Int   // ~100
-    let scenesUsed: Int
-    let scenesTotal: Int      // ~200
+/// Exactly what one bridge-stored animation costs, derived from the arithmetic
+/// `BridgeAnimationEngine.upload` actually executes.
+///
+/// Rule CONDITIONS and rule ACTIONS are counted in aggregate, bridge-wide —
+/// they are resources the bridge allocates across every rule, not per-rule
+/// maxima. (The separate per-rule ceiling of 8 actions is a *shape* check on
+/// one rule, validated before every POST in the uploader; it is not a
+/// substitute for having enough total actions available, and neither replaces
+/// the other.)
+///
+/// All integer arithmetic: no `Double` rounding anywhere in capacity maths.
+struct BridgeStoredRequirement: Equatable {
+    /// Every light in the room — no longer clamped (packet 5).
+    let lights: Int
+    let steps: Int
 
-    var rulesAvailable: Int { rulesTotal - rulesUsed }
-    var sensorsAvailable: Int { sensorsTotal - sensorsUsed }
-    var schedulesAvailable: Int { schedulesTotal - schedulesUsed }
-    var scenesAvailable: Int { scenesTotal - scenesUsed }
+    /// Integer ceiling division. `ceilDiv(l, 7) == (l + 6) / 7`.
+    static func ceilDiv(_ a: Int, _ b: Int) -> Int {
+        guard b > 0 else { return 0 }
+        return (a + b - 1) / b
+    }
 
-    /// Whether there's room for at least one 8-step animation
-    /// (needs ~10 rules, 1 sensor, 1 schedule). Scene capacity deliberately
-    /// does not gate: the rules-chain uploader drives light states directly
-    /// and creates zero scenes, so requiring free scene slots produced false
-    /// "bridge full" refusals on scene-heavy bridges (audit L-04).
-    var canFitOneAnimation: Bool {
-        rulesAvailable >= 12 &&
-        sensorsAvailable >= 2 &&
-        schedulesAvailable >= 2
+    /// One rule per ≤7-light chunk, per step.
+    var ruleResources: Int { steps * Self.ceilDiv(lights, 7) }
+
+    /// Every rule carries the same two conditions (status `eq`, `lastupdated dx`).
+    var ruleConditions: Int { ruleResources * 2 }
+
+    /// Every light contributes one action in every step, plus one
+    /// sensor-advance action on the final chunk of every NON-final step — the
+    /// last step advances nothing and waits for the schedule.
+    var ruleActions: Int { (steps * lights) + max(0, steps - 1) }
+
+    var sensors: Int { 1 }
+    var schedules: Int { 1 }
+    /// The rules-chain uploader drives light states directly (audit L-04).
+    var scenes: Int { 0 }
+
+    /// Which reported resource fell short. Drives honest copy: only a
+    /// rules-ONLY shortage may claim the bridge is out of *rule slots*.
+    enum Shortage: String, CaseIterable, Equatable, Sendable {
+        case rules, ruleConditions, ruleActions, sensors, schedules
+    }
+}
+
+// MARK: - Bridge-reported capacity
+
+/// What the bridge itself says is free, decoded from `GET /api/<key>/capabilities`.
+///
+/// Every field is optional and every absence means UNKNOWN — never zero, never
+/// a default. Packet 5 deleted the previous `BridgeResourceCapacity`, whose
+/// totals (`250`/`250`/`100`/`200`) were hard-coded guesses: it fetched
+/// `/config` purely as a reachability probe, threw the body away, then counted
+/// existing resources with four more GETs and subtracted from constants. A
+/// preflight built on assumed totals cannot honestly be called a measurement,
+/// so nothing here claims a number the bridge did not report.
+///
+/// Only `available` is modelled. `total` is not required — the preflight never
+/// needs it — and inventing a field the verified response may not carry would
+/// reintroduce exactly the kind of assumption this replaces.
+struct BridgeReportedCapacity: Equatable, Sendable {
+    let rulesAvailable: Int?
+    /// Nested under `rules` in the v1 capabilities response, when present.
+    let ruleConditionsAvailable: Int?
+    let ruleActionsAvailable: Int?
+    let sensorsAvailable: Int?
+    let schedulesAvailable: Int?
+
+    static let unknown = BridgeReportedCapacity(
+        rulesAvailable: nil, ruleConditionsAvailable: nil,
+        ruleActionsAvailable: nil, sensorsAvailable: nil, schedulesAvailable: nil)
+}
+
+/// The preflight verdict.
+///
+/// **This is a point-in-time check, not a reservation.** The capabilities read
+/// is a snapshot; another controller, a bridge routine, or a second app can
+/// consume slots between the read and the last `createRule`, and the v1 API
+/// offers no way to hold capacity. So: it prevents uploads already known not
+/// to fit, unknown capacity fails closed, and a creation failure AFTER a
+/// passing preflight is never re-labelled a capacity problem.
+enum BridgeCapacityVerdict: Equatable, Sendable {
+    case fits
+    case insufficient(
+        required: BridgeStoredRequirement,
+        reported: BridgeReportedCapacity,
+        shortages: [BridgeStoredRequirement.Shortage])
+    /// Fetch failed, or a required field was absent/undecodable.
+    case unknown(reason: String)
+}
+
+extension BridgeReportedCapacity {
+
+    /// Compare against a requirement, using ONLY values the bridge reported.
+    /// A missing required field is `unknown`, never an optimistic pass.
+    func verdict(for need: BridgeStoredRequirement) -> BridgeCapacityVerdict {
+        var missing: [String] = []
+        func value(_ v: Int?, _ name: String) -> Int? {
+            if v == nil { missing.append(name) }
+            return v
+        }
+        let rules = value(rulesAvailable, "rules.available")
+        let conditions = value(ruleConditionsAvailable, "rules.conditions.available")
+        let actions = value(ruleActionsAvailable, "rules.actions.available")
+        let sensors = value(sensorsAvailable, "sensors.available")
+        let schedules = value(schedulesAvailable, "schedules.available")
+
+        guard let rules, let conditions, let actions, let sensors, let schedules else {
+            return .unknown(reason: "bridge did not report " + missing.joined(separator: ", "))
+        }
+
+        var shortages: [BridgeStoredRequirement.Shortage] = []
+        if rules < need.ruleResources { shortages.append(.rules) }
+        if conditions < need.ruleConditions { shortages.append(.ruleConditions) }
+        if actions < need.ruleActions { shortages.append(.ruleActions) }
+        if sensors < need.sensors { shortages.append(.sensors) }
+        if schedules < need.schedules { shortages.append(.schedules) }
+
+        // Scene capacity deliberately does not gate: the uploader creates zero
+        // scenes, so requiring free scene slots produced false "bridge full"
+        // refusals on scene-heavy bridges (audit L-04). Resourcelinks do not
+        // gate either — the uploader already treats that failure as non-fatal.
+        return shortages.isEmpty
+            ? .fits
+            : .insufficient(required: need, reported: self, shortages: shortages)
+    }
+
+    /// Every required figure, for diagnostics. The user-facing sentence names
+    /// at most one resource; the log always carries all five, so the real
+    /// shortage is recoverable without ever being guessed at in the UI.
+    func diagnosticSummary(for need: BridgeStoredRequirement) -> String {
+        func pair(_ label: String, _ required: Int, _ available: Int?) -> String {
+            "\(label) need \(required)/have \(available.map(String.init) ?? "?")"
+        }
+        return [
+            pair("rules", need.ruleResources, rulesAvailable),
+            pair("conditions", need.ruleConditions, ruleConditionsAvailable),
+            pair("actions", need.ruleActions, ruleActionsAvailable),
+            pair("sensors", need.sensors, sensorsAvailable),
+            pair("schedules", need.schedules, schedulesAvailable),
+        ].joined(separator: ", ")
     }
 }
 
@@ -49,10 +166,33 @@ enum HueV1ClientError: LocalizedError {
     /// A v2 light ID could not be mapped to a v1 numeric ID via `id_v1` (M-04).
     case unresolvedLightID(String)
 
+    /// The v1 API answered HTTP 200 with an error envelope
+    /// (`[{"error":{"type":…,"address":…,"description":…}}]`) — packet 5.
+    ///
+    /// v1 signals most resource failures this way, so `execute`'s non-2xx check
+    /// never fired and the body fell through to `extractCreatedID`, surfacing a
+    /// genuine API error as `decodingFailed("Cannot extract v1 resource ID
+    /// from: …")`. Fields are optional because the envelope is only as
+    /// complete as the bridge made it.
+    ///
+    /// Deliberately NOT classified here. Callers must not infer capacity
+    /// exhaustion from `description` text: it is brittle, potentially
+    /// localized, and no captured hardware response justifies a specific
+    /// discriminator yet. The measured preflight is the only place the app
+    /// knows a bridge is full.
+    case apiError(type: Int?, address: String?, description: String?)
+
     var errorDescription: String? {
         switch self {
         case .unresolvedLightID(let id):
             return "HueV1Client: no id_v1 mapping for v2 light \(id) — cannot target v1 API safely."
+        case .apiError(let type, let address, let description):
+            let parts = [
+                type.map { "type \($0)" },
+                address.map { "at \($0)" },
+                description,
+            ].compactMap { $0 }
+            return "Hue bridge rejected the request (" + parts.joined(separator: ", ") + ")"
         }
     }
 }
@@ -422,33 +562,55 @@ class HueV1Client: @unchecked Sendable {
     // MARK: - Resource Capacity
     // ──────────────────────────────────────────────
 
-    /// Fetch current resource usage to check if the bridge has room
-    /// for another animation rule chain.
-    func fetchResourceCapacity() async throws -> BridgeResourceCapacity {
-        // v1 /config endpoint includes resource counts (fetched as a reachability
-        // probe; the counts below come from the per-resource endpoints).
-        _ = try await get(path: "/config")
-        // Also count existing resources
-        let rulesData = try await get(path: "/rules")
-        let sensorsData = try await get(path: "/sensors")
-        let schedulesData = try await get(path: "/schedules")
-        let scenesData = try await get(path: "/scenes")
+    /// Ask the BRIDGE what is free (packet 5).
+    ///
+    /// One authenticated `GET /api/<key>/capabilities` replaces the five GETs
+    /// this used to make, and — more importantly — replaces four hard-coded
+    /// totals. The old version fetched `/config` as a reachability probe,
+    /// discarded the body, counted existing rules/sensors/schedules/scenes, and
+    /// subtracted from constants. That is an assumption dressed as a
+    /// measurement; on a bridge with different capacities it was wrong in both
+    /// directions.
+    ///
+    /// Throws on transport failure; the caller turns that into `.unknown` and
+    /// fails closed. A body that parses but omits a required figure is also
+    /// unknown — see `decodeReportedCapacity`.
+    func fetchReportedCapacity() async throws -> BridgeReportedCapacity {
+        let data = try await get(path: "/capabilities")
+        return Self.decodeReportedCapacity(data)
+    }
 
-        let rulesCount = countTopLevelKeys(in: rulesData)
-        let sensorsCount = countTopLevelKeys(in: sensorsData)
-        let schedulesCount = countTopLevelKeys(in: schedulesData)
-        let scenesCount = countTopLevelKeys(in: scenesData)
-
-        return BridgeResourceCapacity(
-            rulesUsed: rulesCount,
-            rulesTotal: 250,
-            sensorsUsed: sensorsCount,
-            sensorsTotal: 250,
-            schedulesUsed: schedulesCount,
-            schedulesTotal: 100,
-            scenesUsed: scenesCount,
-            scenesTotal: 200
-        )
+    /// Decode the v1 capabilities body.
+    ///
+    /// Shape (per the documented v1 `/capabilities` response): each resource is
+    /// an object carrying `available`, and `rules` additionally nests
+    /// `conditions` and `actions` objects of the same shape.
+    ///
+    /// Every field is read defensively and independently. A missing or
+    /// non-numeric figure stays nil, which the verdict treats as UNKNOWN and
+    /// fails closed on — it is never defaulted, and it never falls back to the
+    /// deleted constants. Any structural surprise therefore degrades to "we
+    /// don't know", which is the honest answer and the safe one.
+    ///
+    /// The fixtures in `BridgeAnimationCorrectnessTests` exercise this against
+    /// a documented-shape body plus four malformed variants; a synthetic body
+    /// proves the PARSER, and is not evidence about a real bridge. The
+    /// device checklist captures a real response so this can be tightened.
+    static func decodeReportedCapacity(_ data: Data) -> BridgeReportedCapacity {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .unknown
+        }
+        func available(_ node: Any?) -> Int? {
+            guard let dict = node as? [String: Any] else { return nil }
+            return dict["available"] as? Int
+        }
+        let rules = root["rules"] as? [String: Any]
+        return BridgeReportedCapacity(
+            rulesAvailable: available(rules),
+            ruleConditionsAvailable: available(rules?["conditions"]),
+            ruleActionsAvailable: available(rules?["actions"]),
+            sensorsAvailable: available(root["sensors"]),
+            schedulesAvailable: available(root["schedules"]))
     }
 
     // ──────────────────────────────────────────────
@@ -696,18 +858,37 @@ class HueV1Client: @unchecked Sendable {
                     return String(components.last ?? Substring(firstValue))
                 }
             }
+            // Packet 5: v1 answers HTTP 200 with an error ENVELOPE for most
+            // resource failures, so `execute`'s status check never fires and
+            // a real API error used to surface here as a decode failure.
+            // Recognise it and throw a TYPED error instead — still without
+            // interpreting what it means.
+            if let apiError = Self.parsedAPIError(from: data) {
+                log.error("V1 API error: \(self.sanitizedForLog(apiError.localizedDescription))")
+                throw apiError
+            }
             let raw = String(data: data, encoding: .utf8) ?? "?"
             throw HueAPIError.decodingFailed("Cannot extract v1 resource ID from: \(raw)")
         }
         return id
     }
 
-    /// Count top-level keys in a v1 dict response (used for capacity check).
-    private func countTopLevelKeys(in data: Data) -> Int {
-        guard let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return 0
-        }
-        return dict.count
+    /// Parse `[{"error":{"type":…,"address":…,"description":…}}]`, or nil when
+    /// the body is not an error envelope.
+    ///
+    /// Extracts, never classifies. Deciding that a given error means "the
+    /// bridge is full" requires a documented or captured discriminator, and
+    /// none exists yet — so callers treat every one of these as a generic
+    /// upload failure. Matching on the English `description` would be brittle
+    /// and possibly localized, and is deliberately not done anywhere.
+    static func parsedAPIError(from data: Data) -> HueV1ClientError? {
+        guard let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let error = array.first?["error"] as? [String: Any]
+        else { return nil }
+        return .apiError(
+            type: error["type"] as? Int,
+            address: error["address"] as? String,
+            description: error["description"] as? String)
     }
 }
 

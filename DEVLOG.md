@@ -419,6 +419,224 @@
 
 ---
 
+## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 5 — honest light limits
+
+### Branch
+- `fix/composer-honest-light-limits`, cut from `main` (`b0337fb`, the Packet 4 merge, PR #54).
+- Rollback tag: `checkpoint/pre-composer-packet-5` (at `b0337fb`). No data-format or
+  persistence change, so `git reset --hard checkpoint/pre-composer-packet-5` is a total rollback.
+- **No version or build bump** — not an install build. Two commits.
+
+### The defect — one literal, three copies, none of them Entertainment
+The "20-light limit" was never a Hue constraint. Its root is
+`LightFrame.channelID: UInt8` — a HueStream wire detail that leaked into the
+shared pure renderer. Because `render` took `[UInt8]`, every non-DTLS caller had
+to synthesize UInt8 indices, and to keep the trapping `UInt8(_:)` initialiser
+safe each clamped with `min(…, 20)`:
+
+- `UnifiedOrchestrator:4309/4311` (REST per-light and gradient)
+- `BridgeAnimationEngine:121` (bridge-stored v1 rules chain)
+- `GradientChannelMap:36/43` (`channelBudget`, self-documented as existing only
+  to "match the render loop's channel cap")
+
+The user-visible result was not a graceful cap but a **silent black hole**:
+lights 21+ were `continue`d past before `addTask`, so they were never written,
+never counted in `attemptedOperations`, never logged, and never mentioned in the
+UI. A 30-light room had ten bulbs frozen for the entire life of the composition
+while the tray reported a healthy cadence.
+
+Four constraint domains were being conflated. Separated for the record:
+
+| Domain | Real limit | Verdict |
+|---|---|---|
+| Entertainment / DTLS | bridge-side; `channel_id` is one byte (255), and an area is capped at 10 lights by the bridge | **no 20 in our code at all** — `validatedChannelIDs` already validates the whole ordered set all-or-nothing |
+| REST | ~10 cmd/s pacing; nothing caps light COUNT | 20 was accidental |
+| Gradient channels | `points_capable` per strip (≤5) | the global budget was accidental |
+| Bridge-stored v1 | 8 actions/rule; per-resource capacity the bridge reports | 20 was accidental |
+
+### Commit 1 — remove the caps, roll REST delivery fairly
+- `LightFrame.channelID` and `render`/`renderMixed` now take **Int** render
+  indices. The DTLS boundary zips the already-validated `[UInt8]` positionally
+  and sends **nothing** rather than a partial or misaligned frame; wire ids are
+  never reconstructed from render output, so the retype adds no failure mode.
+- `GradientChannelMap.channelBudget` deleted. Every light keeps an entry and a
+  strip expands to its own `points_capable`. Previously an 18-bulb room left a
+  5-point strip 2 points, and at 19 bulbs it fell to 1, `hasGradient` went false
+  and the strip silently rendered one flat colour.
+- **Rolling subsets.** Rooms with more eligible operations than one sweep can
+  dispatch now rotate. Partitions are contiguous and **non-wrapping**, so each
+  rotation is an exact ordered partition — 21 lights go 20 then 1, 64 go
+  20/20/20/4 — and every eligible operation is served exactly once per rotation.
+  The eligible list is one entry per PHYSICAL LIGHT (a five-point strip is one
+  slot costing one PUT), never a flattened channel index.
+- **The cursor advances from actual attempt evidence** — `outcomes.count` after
+  each task group returns, the same array Packet 4's telemetry reads. One
+  source, three consumers (telemetry, cursor, failure taint), so they cannot
+  disagree about what was dispatched. Failed attempts advance; probe-cancelled
+  and superseded work advance nothing.
+- **Quiescence requires DELIVERY, not attempt.** A rotation containing any
+  failure leaves `hasCompletedInitialSuccessfulRotation` false, so the delta gate
+  stays open and the room re-rotates. Without this, completion-only bookkeeping
+  (which correctly withholds `lastSentX/Y/Bri` for a partially failed sweep)
+  would have been overruled by a gate told the rotation was "complete", and a
+  transiently failed light could have been stranded on a static look.
+- **Gradient metadata re-indexed.** `spatialPositions`/`radialPositions`/
+  `angularPositions` were built per physical light but indexed by render
+  channel. They coincide only while every light owns one channel; once a strip
+  expands, every light after it read a neighbour's geometry. Masked before only
+  because the deleted budget kept totals small.
+- Per-sweep bridge load is **unchanged**: the budget is
+  `restBatchSize (5) × maxBatchesPerSweep (4) = 20` **operations**, derived so
+  rooms of 1–20 behave byte-identically to build 28.
+
+### Commit 2 — measure bridge capacity, refuse honestly
+- Requirement computed from the arithmetic the uploader executes, in **integer**
+  arithmetic, and in **aggregate**:
+  `rules = steps × ceilDiv(lights,7)`, `conditions = rules × 2`,
+  `actions = (steps × lights) + max(0, steps − 1)`.
+  20×8 → 24/48/**167**; 25×8 → 32/64/**207**; 6×8 → 8/16/**55**.
+  Conditions and actions are bridge-wide resources, not per-rule maxima —
+  reading the nested capability numbers as per-rule limits would have compared
+  8 against 8 and always passed, missing a bridge with free rules but no free
+  actions. The per-rule 8-action guard is a separate shape check and stays.
+- Availability now comes from the **bridge**: one `GET /capabilities` replaces
+  five GETs and, more importantly, replaces four hard-coded totals
+  (250/250/100/200). The old `canFitOneAnimation` asked for a flat 12 free
+  rules — half what a 20-light 8-step look needs — so a bridge with 13 free
+  slots passed and then threw partway through the rule loop, leaving orphans.
+- **Fail closed on unknown.** Any required figure missing or undecodable is
+  UNKNOWN, never zero, never a default, and never a fallback to the deleted
+  constants. Unknown refuses bridge-stored **before any resource is created**.
+- **Preflight is a point-in-time check, not a reservation.** Nothing in v1 can
+  hold capacity, so a creation failure after a passing preflight is never
+  re-labelled a capacity problem.
+- v1's HTTP-200 error envelope now throws a typed
+  `HueV1ClientError.apiError(type:address:description:)` instead of surfacing as
+  `decodingFailed("Cannot extract v1 resource ID…")`.
+
+### What is deliberately NOT claimed
+- **No wall-clock guarantee.** The fairness bound is `⌈n/20⌉` *started sweep
+  opportunities*, not milliseconds. The scheduler is best-effort (120 ms tick,
+  one room per tick, one item in flight per bridge, supersession under load) and
+  the code provides nothing stronger to build on.
+- **A persistently failing light keeps a static large room rotating.** No
+  quiescence is claimed in that case. Bounding the retry with backoff is later
+  scheduler work.
+- **Residual:** a transient failure appearing *after* an initial fully
+  successful rotation is not retried, because the delta gate is a `frames[0]`
+  colour/brightness proxy, not a per-light delivery ledger. Packet 5 guarantees
+  a room never *reaches* quiescence until it has been fully delivered once,
+  which is the case that strands lights today.
+- **Residual:** no compensating rollback on partial upload. Preflight removes the
+  predictable capacity class of failure; a race or a network drop mid-upload
+  still leaks resources with no manifest recording them.
+- **No verified v1 capacity discriminator exists**, so every creation error
+  surfaces the generic "couldn't be stored on the bridge" sentence and the
+  "bridge is almost full" wording is reserved for the MEASURED verdict alone.
+  Classification from the English `description` was explicitly rejected as
+  brittle and possibly localized. The conditional verified-envelope test was
+  therefore not written; §S items 10–11 capture what would justify it.
+- **The roomID-keyed limitation is pre-existing and NOT solved here.**
+  `compositionRuntimes`, `compositionGenerations`, `compositionOrder` and
+  `compositionTransportByRoom` are still keyed by roomID alone. Packet 5
+  guarantees only that its OWN new state (rotation, degradation) is keyed by the
+  exact `(bridgeKey, scope)` identity Packet 4 established.
+
+### The bridge-stored branch is currently unreachable
+`startCompositionMode` has two production callers: the DTLS→REST failover
+(passes `preset: nil`) and `StudioViewModel:1368`, which sits in the **else** of
+`if tier == .bridgeOptimized` — that branch fires a grouped one-shot and returns
+without calling the orchestrator. So `preset.capabilityTier == .bridgeOptimized`
+at `:3423` can never be true in the shipping app, and `.bridgeStored` is set only
+by tests. Commit 2 is therefore **correctness-in-waiting**, tested at engine
+level. Packet 5 deliberately does **not** re-enable the route — that is a product
+change.
+
+### Transport honesty
+- `TransportVocabulary.roomModeStatus(fallback:largeRoom:liveSeconds:)` is pure
+  and **total** over both facts. A single enum was insufficient: a capacity
+  refusal into a 60-light room is *both* "couldn't store this" and "lights take
+  turns", and whichever write landed second would have erased a true statement.
+  Fallback cause and rolling delivery are stored as independent fields with
+  merge-not-replace mutators.
+- `bridgeCapacityInsufficient` and `bridgeCapacityUnknown` stay distinct —
+  unknown capacity never says "this bridge doesn't have room".
+- Insufficiency copy names rule slots **only** when rules alone fell short; the
+  other four shortages, and any multi-field shortage, get an accurate general
+  sentence. All five required-vs-reported figures always go to sanitized
+  diagnostics.
+- Degradation state is **observable** (not `@ObservationIgnored`) so the tray
+  refreshes when only the reason changes; the accessor returns the immutable
+  `CompositionDegradationSnapshot`, never the private mutable state.
+- Two user-facing "REST" leaks fixed: `StudioParamControls` (known) and
+  **"🔌 REST" in the Perform header** — found by the source-inspection guard
+  added here, which both existing guards had missed.
+
+### Files changed
+| File | Change |
+|---|---|
+| `HueHome/UI/Studio/CompositionEngine.swift` | `channelID`/`render` → Int; `expandToRenderChannels` |
+| `HueHome/Core/Composer/CompositionMixer.swift` | `renderMixed` → Int channels |
+| `HueHome/Core/Composer/CompositionRoomPriorityScorer.swift` | `CompositionRotationPlan`, `CompositionFallbackReason`, `CompositionDegradationSnapshot` appended (no new file, no pbxproj edit — the packet-4 precedent) |
+| `HueHome/Core/Composer/GradientChannelMap.swift` | `channelBudget` deleted |
+| `HueHome/Core/Network/UnifiedOrchestrator.swift` | rotation + degradation state, subset selection, per-batch advance, delta gate, metadata expansion, DTLS boundary, fallback recording |
+| `HueHome/Core/Network/HueV1Client.swift` | requirement/capacity/verdict types, `/capabilities`, typed `apiError` |
+| `HueHome/Core/Network/BridgeAnimationEngine.swift` | cap removed, aggregate preflight, shortage-aware copy, no-truncation assertion |
+| `HueHome/UI/Components/TransportVocabulary.swift` | `roomModeStatus`; F1/F2 rewrites |
+| `HueHome/UI/Studio/MixerTrayView.swift`, `StudioParamControls.swift`, `HueHome/UI/Performance/PerformanceView.swift` | exact-bridge status wiring; jargon fixes |
+| `Scripts/hardening_guards.sh` | Guard 8 |
+| `HueHomeTests/…` | rotation arithmetic ×15, orchestrator integration ×16, bridge-stored ×21, copy guards ×3, plus rewrites of the two characterization-of-bug gradient tests |
+
+**No new source file, no `.pbxproj` edit, no version bump.**
+
+### Tests
+`xcodebuild test … -scheme "HueHome 1"`, read via `xcresulttool`:
+- Commit 1 full suite: **1033/1033 passed, 0 failed.**
+- Commit 2 full suite: **1054/1054 passed, 0 failed.**
+- `hardening_guards.sh`: all guards passed, including new Guard 8 — which was
+  verified against a deliberate regression (re-adding `channelBudget` fails the
+  build) rather than assumed to work.
+
+Two existing tests were rewritten rather than repaired, because they pinned the
+bug: `testGradientMapBudgetNeverStarvesLaterLights` asserted that a 20-light room
+with a strip produced a **nil** map, and `testGradientMapBudgetTrimsStrip`
+asserted a 5-point strip was trimmed to 3. `testAttemptedOperationsCountOnlyDispatchedRequests`
+kept its invariant but changed scenario — it proved the point with frameless
+entries, a path that is now unreachable by construction and an `assertionFailure`
+if it recurs, since a batch dispatching fewer operations than its slice would pin
+the cursor and stall the rotation.
+
+No `Task.sleep` as proof, no `XCTWaiter`, no `wait(for:timeout:)`, no
+elapsed-time assertions anywhere in the new tests. One assertion was corrected
+during the run: an initial version demanded a fixed dispatch ORDER across a
+rotation, which is wrong — operations within a batch run concurrently, so only
+coverage and partitioning are guaranteed, not intra-batch sequence.
+
+### What still needs hardware
+§S of `docs/ios/master-on-device-checklist.md` — headline items: a 30-light room
+animating **every** bulb; the rotation sentence on a large room and its absence
+on a 20-light one; a static 21-light room going quiet after one pass; an
+unplugged bulb keeping the room rotating rather than going quiet; a gradient
+strip in a large room keeping its points while its neighbours keep their own
+motion. Plus two captures (§S 10–11) that would let the capability decoder and
+the v1 error classifier be tightened from documented to verified.
+
+### Review amendment (2026-08-02, pre-merge)
+PR #55 review found one defect in the new delta gate: rotation state is armed
+for EVERY REST session, including the grouped fallback, whose eligible count is
+0 — and nothing can ever complete a zero-count rotation (the grouped closure
+reports no rotation advance, and `composerRotationAdvanced` guards on a
+positive count). `rotationIncomplete` was therefore permanently true for
+grouped rooms, and a static grouped room re-sent an identical PUT every 120 ms
+tick forever instead of delta-gating to quiet. Fixed by extracting the gate
+predicate into `CompositionRotationPlan.deliveryIncomplete`, which treats an
+empty eligible set as trivially complete; covered by two pure predicate tests
+plus P5-17 (`testAGroupedSessionNeverHoldsTheDeltaGateOpen`) against the
+production-staged grouped shape. Suite after amendment: **1057 passed, 0
+failed**; all guards pass.
+
+---
+
 ## 2026-08-02 - [Claude] Composer 2 / Phase 0 / Packet 4 — honest completion-based REST telemetry
 
 ### Branch

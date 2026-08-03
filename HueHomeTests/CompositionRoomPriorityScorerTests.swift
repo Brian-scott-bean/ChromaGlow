@@ -674,3 +674,185 @@ final class CompositionRoomPriorityScorerTests: XCTestCase {
         ledger.completed(t, at: finishedAt, attemptedOperations: 1, failures: 0)
     }
 }
+
+// ──────────────────────────────────────────────────────────────
+// MARK: - Rolling-subset rotation (Composer 2 packet 5)
+// ──────────────────────────────────────────────────────────────
+//
+// Pure arithmetic: no orchestrator, no clock, no network, and — per the
+// hardening guard on this file — not one timing wait. `limit` is passed
+// explicitly so small examples stay readable; the integration tests in
+// MultiBridgeRoutingTests exercise the real production value with ≥21
+// operations.
+
+@MainActor
+final class CompositionRotationPlanTests: XCTestCase {
+
+    private let S = CompositionRotationPlan.maxOperationsPerSweep
+
+    /// Walk a whole rotation, returning the indices each sweep dispatched.
+    /// Assumes every attempt lands, which is what "fully executed" means.
+    private func sweeps(
+        eligibleCount n: Int, limit: Int, rotations: Int = 1
+    ) -> [[Int]] {
+        var cursor = 0
+        var out: [[Int]] = []
+        var boundaries = 0
+        while boundaries < rotations {
+            guard let slice = CompositionRotationPlan.slice(
+                cursor: cursor, eligibleCount: n, limit: limit) else { break }
+            out.append(Array(slice.range))
+            let advance = CompositionRotationPlan.advance(
+                cursor: cursor, eligibleCount: n, attemptedOperations: slice.count)
+            cursor = advance.cursor
+            if advance.crossedRotationBoundary { boundaries += 1 }
+        }
+        return out
+    }
+
+    // MARK: Derivation
+
+    func testSweepBudgetIsDerivedFromTheBatchShapeNotAMagicNumber() {
+        XCTAssertEqual(CompositionRotationPlan.batchSize, 5)
+        XCTAssertEqual(CompositionRotationPlan.maxBatchesPerSweep, 4)
+        XCTAssertEqual(S, 20,
+            "per-sweep load must stay identical to pre-packet-5 behaviour")
+    }
+
+    // MARK: Non-wrapping partitions
+
+    func testTwentyOneOperationsGoTwentyThenOne() {
+        XCTAssertEqual(sweeps(eligibleCount: 21, limit: S),
+                       [Array(0..<20), [20]])
+    }
+
+    func testSixtyFourOperationsGoTwentyTwentyTwentyFour() {
+        let s = sweeps(eligibleCount: 64, limit: S)
+        XCTAssertEqual(s.map(\.count), [20, 20, 20, 4])
+        XCTAssertEqual(s.flatMap { $0 }, Array(0..<64))
+    }
+
+    func testRoomsAtOrUnderTheBudgetTakeExactlyOneSweep() {
+        for n in [1, 5, 19, 20] {
+            XCTAssertEqual(sweeps(eligibleCount: n, limit: S), [Array(0..<n)],
+                           "\(n) operations must still be one unrotated sweep")
+        }
+    }
+
+    func testNoSweepEverCrossesARotationBoundary() {
+        for n in [1, 19, 20, 21, 39, 40, 41, 64] {
+            var cursor = 0
+            for _ in 0..<(3 * ((n + S - 1) / S)) {
+                guard let slice = CompositionRotationPlan.slice(
+                    cursor: cursor, eligibleCount: n, limit: S) else { break }
+                XCTAssertLessThanOrEqual(slice.start + slice.count, n,
+                    "n=\(n): slice \(slice.range) runs past the end of the rotation")
+                cursor = CompositionRotationPlan.advance(
+                    cursor: cursor, eligibleCount: n,
+                    attemptedOperations: slice.count).cursor
+            }
+        }
+    }
+
+    // MARK: Fairness
+
+    func testThreeRotationsDispatchEveryIndexExactlyThreeTimes() {
+        for n in [7, 21, 40, 64] {
+            let dispatched = sweeps(eligibleCount: n, limit: S, rotations: 3).flatMap { $0 }
+            let counts = Dictionary(grouping: dispatched, by: { $0 }).mapValues(\.count)
+            XCTAssertEqual(counts.count, n, "n=\(n): not every index was served")
+            XCTAssertEqual(Set(counts.values), [3],
+                "n=\(n): some index was served \(Set(counts.values)) times, not exactly 3")
+        }
+    }
+
+    func testEveryIndexAppearsInEveryRotationWindow() {
+        let n = 64
+        let perRotation = (n + S - 1) / S
+        let all = sweeps(eligibleCount: n, limit: S, rotations: 3)
+        for window in stride(from: 0, to: all.count, by: perRotation) {
+            let served = Set(all[window..<min(window + perRotation, all.count)].flatMap { $0 })
+            XCTAssertEqual(served, Set(0..<n),
+                "a window of \(perRotation) sweeps left some light unserved")
+        }
+    }
+
+    func testARotationCompletesWithinCeilingOfNOverTheLimit() {
+        for n in [1, 20, 21, 64, 137] {
+            let expected = (n + S - 1) / S
+            XCTAssertEqual(sweeps(eligibleCount: n, limit: S).count, expected,
+                "n=\(n) should take \(expected) started sweeps")
+        }
+    }
+
+    func testOrderingIsDeterministicAcrossRepeatedRuns() {
+        let first = sweeps(eligibleCount: 47, limit: S, rotations: 2)
+        for _ in 0..<10 {
+            XCTAssertEqual(sweeps(eligibleCount: 47, limit: S, rotations: 2), first)
+        }
+    }
+
+    // MARK: Boundary folding
+
+    func testAdvanceFoldsToZeroExactlyAtTheBoundary() {
+        // 21 lights: 20 → cursor 20, mid-rotation; +1 → boundary, cursor 0.
+        let mid = CompositionRotationPlan.advance(
+            cursor: 0, eligibleCount: 21, attemptedOperations: 20)
+        XCTAssertEqual(mid, .init(cursor: 20, crossedRotationBoundary: false))
+
+        let end = CompositionRotationPlan.advance(
+            cursor: 20, eligibleCount: 21, attemptedOperations: 1)
+        XCTAssertEqual(end, .init(cursor: 0, crossedRotationBoundary: true))
+    }
+
+    func testAdvanceIsByAttemptedOperationsNotBySliceSize() {
+        // A batch that dispatched 3 of a 5-wide batch moves the cursor 3.
+        XCTAssertEqual(
+            CompositionRotationPlan.advance(
+                cursor: 10, eligibleCount: 64, attemptedOperations: 3).cursor,
+            13)
+        // Zero attempts move nothing — a probe-cancelled batch loses no ground.
+        XCTAssertEqual(
+            CompositionRotationPlan.advance(
+                cursor: 10, eligibleCount: 64, attemptedOperations: 0).cursor,
+            10)
+    }
+
+    // MARK: Degenerate inputs
+
+    func testEmptyOrNonsenseInputsYieldNoSlice() {
+        XCTAssertNil(CompositionRotationPlan.slice(cursor: 0, eligibleCount: 0, limit: S))
+        XCTAssertNil(CompositionRotationPlan.slice(cursor: 0, eligibleCount: 5, limit: 0))
+    }
+
+    func testAnOutOfRangeCursorRestartsRatherThanSlicingOutOfBounds() {
+        let slice = CompositionRotationPlan.slice(cursor: 99, eligibleCount: 10, limit: S)
+        XCTAssertEqual(slice, .init(start: 0, count: 10))
+    }
+
+    func testDeliveryIncompleteMidRotationOrBeforeFirstFullDelivery() {
+        // Mid-rotation: the remaining lights still need their turn.
+        XCTAssertTrue(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: 21,
+            hasCompletedInitialSuccessfulRotation: true, cursor: 20))
+        // At the boundary but never fully delivered: no quiescence yet.
+        XCTAssertTrue(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: 21,
+            hasCompletedInitialSuccessfulRotation: false, cursor: 0))
+        // Boundary reached after a clean rotation: eligible to quiesce.
+        XCTAssertFalse(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: 21,
+            hasCompletedInitialSuccessfulRotation: true, cursor: 0))
+    }
+
+    func testAnEmptyEligibleSetIsNeverIncomplete() {
+        // The grouped fallback arms rotation state with a count of 0, and the
+        // grouped closure never reports a rotation advance — so the completed
+        // flag can never rise. An empty set must therefore read as trivially
+        // complete, or the delta gate would be held open forever and a static
+        // grouped room would re-send an identical PUT every tick.
+        XCTAssertFalse(CompositionRotationPlan.deliveryIncomplete(
+            eligibleOperationCount: 0,
+            hasCompletedInitialSuccessfulRotation: false, cursor: 0))
+    }
+}

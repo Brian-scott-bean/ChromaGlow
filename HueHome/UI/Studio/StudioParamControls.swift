@@ -118,7 +118,9 @@ struct StudioParamRow: View {
         VStack(alignment: .leading, spacing: 3) {
             control
             if showsEntOnlyHint {
-                Text("STREAMING ONLY — INACTIVE OVER REST")
+                // "REST" is a developer word the transport vocabulary bans;
+                // this string sat outside both guards and said it anyway.
+                Text("STREAMING ONLY — INACTIVE IN ROOM MODE")
                     .font(HueFont.stageTag)
                     .tracking(0.8)
                     .foregroundStyle(HuePalette.amber.opacity(0.65))

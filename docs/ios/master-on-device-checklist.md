@@ -389,6 +389,54 @@ completion-based, per bridge × room, and expires when completions stop.
       light recovers when it returns — partial failures must not freeze the delta gate
       (completion-only bookkeeping keeps the frame eligible for re-send).
 
+## S. Composer 2 — honest light limits [packet 5]
+
+Simulator tests prove the arithmetic, the fairness and the refusals; only
+hardware proves what a real 30-light room and a real saturated bridge do.
+§O–§R stay open and are NOT superseded.
+
+Before packet 5 a composition silently drove only the first 20 lights on every
+non-streaming transport: lights 21+ received no write at all, were not counted,
+and nothing on screen said so. The cap was never a Hue limit.
+
+- [ ] 1. Room with MORE than 20 lights, Room mode. Expected: **every** bulb
+      animates. Before this build, bulbs 21+ sat frozen at whatever the prime
+      frame left them.
+- [ ] 2. Same room: the tray reads "…this room is large, so its lights take
+      turns updating". Per-light refresh is visibly slower than a small room —
+      that is the honest trade, not a bug.
+- [ ] 3. A 20-light-or-smaller room: unchanged from build 28 in both motion and
+      wording. No rotation sentence.
+- [ ] 4. 21-light room, STATIC look (no motion, no mic): the lights settle and
+      the room goes quiet after one pass. It must not keep pulsing forever.
+- [ ] 5. Unplug ONE bulb in a 30-light room mid-composition. Expected: the room
+      KEEPS rotating rather than going quiet, and the bulb rejoins when it
+      returns. (Quiescence requires a rotation that fully delivered.)
+- [ ] 6. Stop a 30-light room mid-rotation: lights halt within one already
+      dispatched batch, as in §Q.
+- [ ] 7. Two bridges, one large room each: they rotate independently, and each
+      card's sentence describes its OWN room.
+- [ ] 8. Gradient strip in a room of 20+ lights: the strip still shows a full
+      multi-point gradient (it used to collapse to one flat colour), and the
+      bulbs on either side of it keep their own positions in the wave — no
+      shifted or mirrored motion.
+- [ ] 9. Perform header: the transport badge reads "AREA"/"ROOM", never "REST".
+- [ ] 10. **Capture for the record:** with a bridge reachable, grab
+      `GET /api/<key>/capabilities` (any REST client) and attach the body. The
+      capability decoder is currently pinned to the documented shape, not a
+      captured one, and this is what lets us tighten it.
+- [ ] 11. **Capture for the record:** if you can saturate a bridge (many rules),
+      attempt a bridge-stored look and capture the raw v1 error body. Today
+      every creation error surfaces the generic "couldn't be stored" sentence
+      because no verified capacity discriminator exists; this capture is what
+      would let us classify it.
+
+> Note: the bridge-stored branch is not reachable from the shipping UI — the
+> `.bridgeOptimized` tier fires a one-shot instead of calling the orchestrator.
+> Items 10–11 are therefore captures, not pass/fail tests, and the capacity
+> work they inform is correctness-in-waiting for Phase 6.
+
+
 ## Parked-agent "Left" register (tracked, not device QA)
 
 | Owner | Item | Status |

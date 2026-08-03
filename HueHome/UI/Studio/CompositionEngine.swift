@@ -93,7 +93,24 @@ final class CompositionParamBox: @unchecked Sendable {
 
 /// Output for a single light in a single render frame.
 struct LightFrame {
-    let channelID: UInt8
+    /// The RENDER channel index this frame belongs to — **not** a DTLS
+    /// channel id (Composer 2 packet 5).
+    ///
+    /// This field used to be `UInt8` because the first consumer was the
+    /// HueStream wire format, whose `channel_id` really is one byte. That
+    /// leaked a transport detail into the shared pure renderer: every
+    /// non-DTLS caller then had to synthesize `UInt8` indices, and to keep
+    /// the trapping `UInt8(_:)` initialiser from crashing they each clamped
+    /// with `min(…, 20)` — which is where the REST and bridge-stored
+    /// "20-light limit" came from. Neither transport ever had such a limit.
+    ///
+    /// It is `Int` so a room may have as many render channels as it has
+    /// lights (and gradient strips may expand beyond that). Conversion to
+    /// the one-byte wire id happens ONLY at the DTLS boundary, from channel
+    /// ids the bridge itself reported and that
+    /// `EntertainmentAreaSelector.validatedChannelIDs` already validated
+    /// all-or-nothing.
+    let channelID: Int
     let x: Double       // CIE 1931 x
     let y: Double       // CIE 1931 y
     let brightness: Double  // 0.0–1.0
@@ -164,6 +181,40 @@ enum CompositionEngine {
         }
 
         return normalizeProjections(projections)
+    }
+
+    /// Re-index per-PHYSICAL-LIGHT metadata into RENDER-CHANNEL order
+    /// (Composer 2 packet 5).
+    ///
+    /// `computeSpatialPositions` / `computeRadialAngular` return one value per
+    /// physical light, but `render` indexes `spatialPositions` and friends by
+    /// render-channel index. Those two are the same thing only when every
+    /// light owns exactly one channel. As soon as a gradient strip expands
+    /// into several channels the arrays skew, and every light after the first
+    /// strip reads a neighbour's geometry. (Removing `GradientChannelMap`'s
+    /// old 20-channel budget widens that skew, so it has to be fixed here.)
+    ///
+    /// Each entry repeats its owning light's value once per channel it owns,
+    /// so every virtual channel points back at the correct physical light.
+    /// Repeating the owner's position is deliberate and deterministic for this
+    /// packet — real per-segment geometry belongs to the Phase 3 capability
+    /// snapshot and is NOT invented here.
+    ///
+    /// Returns `[]` (letting `render` fall back to index-derived positions)
+    /// when there is nothing to expand or the result would not line up — an
+    /// empty array is safe, a misaligned one is not.
+    static func expandToRenderChannels(
+        _ perLight: [Double],
+        map: GradientChannelMap
+    ) -> [Double] {
+        guard !perLight.isEmpty else { return [] }
+        var out: [Double] = []
+        out.reserveCapacity(map.totalChannels)
+        for (lightIndex, entry) in map.entries.enumerated() {
+            guard lightIndex < perLight.count else { break }
+            for _ in 0 ..< entry.channelCount { out.append(perLight[lightIndex]) }
+        }
+        return out.count == map.totalChannels ? out : []
     }
 
     /// Radial (distance-from-centroid) + angular (bearing) positions for the
@@ -251,7 +302,11 @@ enum CompositionEngine {
     ///
     /// - Parameters:
     ///   - time: Elapsed seconds since composition started (monotonic).
-    ///   - channelIDs: Entertainment API channel IDs for each light.
+    ///   - channelIDs: One render channel index per light, in render order.
+    ///     These are NOT DTLS channel ids — see `LightFrame.channelID`. The
+    ///     count is what matters: the renderer emits exactly one frame per
+    ///     entry and normalises spatial position by it, so callers must pass
+    ///     the WHOLE room even when they intend to dispatch only part of it.
     ///   - params: Live composition parameters (read each frame for slider responsiveness).
     ///   - features: Current audio features (AGC bands, onsets) from AudioAnalysisEngine.
     ///   - beat: Shared BeatClock snapshot — beat phase is extrapolated per frame.
@@ -260,7 +315,7 @@ enum CompositionEngine {
     /// - Returns: Array of LightFrame, one per channel.
     static func render(
         time: Double,
-        channelIDs: [UInt8],
+        channelIDs: [Int],
         params: CompositionParamBox,
         features: AudioFeatures = .silent,
         beat: BeatSnapshot = .none,

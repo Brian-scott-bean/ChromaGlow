@@ -279,7 +279,14 @@ struct PerformanceView: View {
             Text(viewModel.room.name.uppercased())
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(.white)
-            Text(viewModel.isStreaming ? "⚡ STREAMING" : "🔌 REST")
+            // Packet 5: this badge read "🔌 REST" — a developer word, in the
+            // Perform header, in front of the user. It sat outside both
+            // existing guards; the source-inspection test added with this
+            // packet is what found it. Same vocabulary as every other
+            // transport badge in the app now.
+            Text(viewModel.isStreaming
+                 ? "⚡ \(TransportVocabulary.badgeStreaming)"
+                 : "🔌 \(TransportVocabulary.badgeRoom)")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundStyle(viewModel.isStreaming ? HuePalette.Noir.success : .white.opacity(0.6))
                 .padding(.horizontal, 7).padding(.vertical, 3)

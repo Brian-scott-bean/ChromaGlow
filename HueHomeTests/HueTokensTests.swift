@@ -47,16 +47,90 @@ final class HueTokensTests: XCTestCase {
             TransportVocabulary.fallbackStatus,
             TransportVocabulary.roomModeCadenceStatus(liveSeconds: nil),
             TransportVocabulary.roomModeCadenceStatus(liveSeconds: 1.2),
+            TransportVocabulary.roomModeRotationStatus,
             TransportVocabulary.toastStreaming,
             TransportVocabulary.toastRoomMode,
             TransportVocabulary.toastOneShot,
-        ]
+        ] + packet5RoomModeStatuses
         for s in strings {
             for b in banned {
                 XCTAssertFalse(s.contains(b),
                                "vocabulary string \"\(s)\" contains banned word \"\(b)\"")
             }
         }
+    }
+
+    /// Every sentence `roomModeStatus` can produce — the packet-5 copy is a
+    /// function, so the guard has to cover its whole output set, not a
+    /// constant.
+    private var packet5RoomModeStatuses: [String] {
+        let reasons: [CompositionFallbackReason?] = [
+            nil, .entertainmentUnavailable, .bridgeCapacityInsufficient,
+            .bridgeCapacityUnknown, .bridgeStoredUploadFailed,
+        ]
+        return reasons.flatMap { reason in
+            [false, true].flatMap { large in
+                [nil, 1.2].map { (seconds: Double?) in
+                    TransportVocabulary.roomModeStatus(
+                        fallback: reason, largeRoom: large, liveSeconds: seconds)
+                }
+            }
+        }
+    }
+
+    /// Packet 5: the transport vocabulary must never state a light count. The
+    /// one honest light limit in the product is the bridge-enforced
+    /// entertainment-area size shown in EntertainmentConfigBuilderView, and the
+    /// bridge-reported capacity figure in the bridge-stored error — neither
+    /// lives here, and a "20 lights" sentence would be wrong in every domain.
+    func testTransportVocabularyStatesNoLightCount() {
+        let all = packet5RoomModeStatuses + [
+            TransportVocabulary.roomModeRotationStatus,
+            TransportVocabulary.bridgeStoredStatus,
+            TransportVocabulary.fallbackStatus,
+            TransportVocabulary.choosePlayMessage,
+            TransportVocabulary.saveSheetFooter,
+        ]
+        for s in all {
+            XCTAssertNil(try? /\d+ lights?\b/.firstMatch(in: s),
+                         "vocabulary string states a light count: \"\(s)\"")
+        }
+    }
+
+    /// Packet 5: a bare "REST" in the UI layer escaped BOTH existing guards —
+    /// this test only iterated TransportVocabulary members, and
+    /// hardening_guards.sh Guard 6 greps for "(REST)"/"[REST"/"Runtime-only
+    /// REST", none of which matched `STREAMING ONLY — INACTIVE OVER REST`.
+    /// Source-inspection closes the gap for every user-facing string literal.
+    func testNoBareRESTInUserFacingUIStrings() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // HueHomeTests
+            .deletingLastPathComponent()   // repo root
+            .appendingPathComponent("HueHome/UI")
+
+        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" } ?? []
+        XCTAssertFalse(files.isEmpty, "found no UI sources to inspect")
+
+        var offenders: [String] = []
+        for file in files {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            for (lineNumber, line) in text.components(separatedBy: .newlines).enumerated() {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("//") || trimmed.hasPrefix("///") { continue }
+                // Only string literals reach the user.
+                guard line.contains("\"") else { continue }
+                for match in line.matches(of: /"[^"]*"/) {
+                    if match.output.contains("REST") {
+                        offenders.append("\(file.lastPathComponent):\(lineNumber + 1) \(match.output)")
+                    }
+                }
+            }
+        }
+        XCTAssertTrue(offenders.isEmpty,
+            "\"REST\" is a developer word and must not reach the user:\n"
+            + offenders.joined(separator: "\n"))
     }
 
     // MARK: - Color Hex Init
