@@ -118,7 +118,15 @@ actor BridgeAnimationEngine {
 
         // ─── 2. Pre-render frames ───
         let paramBox = CompositionParamBox(preset: preset)
-        let channelIDs: [UInt8] = (0..<UInt8(min(lightIDs.count, 20))).map { $0 }
+        // Packet 5: one render channel per light in the room — no cap. The old
+        // `min(lightIDs.count, 20)` was a copy of the REST scheduler's clamp,
+        // which was itself a workaround for `LightFrame.channelID` being
+        // `UInt8`. Nothing in the v1 API caps a rules chain at 20 lights; the
+        // real v1 limits are 8 actions per rule (chunked below) and the
+        // bridge's reported resource capacity (preflighted before any create).
+        // With the cap gone `frames.count == lightIDs.count`, so the
+        // `lightIndex < frames.count` guards below can no longer drop a light.
+        let channelIDs: [Int] = Array(0..<lightIDs.count)
         var renderedFrames: [[LightFrame]] = []
 
         for step in 0..<stepCount {

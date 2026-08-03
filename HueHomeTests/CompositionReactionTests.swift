@@ -72,7 +72,7 @@ final class CompositionReactionTests: XCTestCase {
         return box
     }
 
-    private let channels: [UInt8] = [0, 1, 2]
+    private let channels: [Int] = [0, 1, 2]
 
     // ──────────────────────────────────────────────
     // MARK: - spread (previously dead)

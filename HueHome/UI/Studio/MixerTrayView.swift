@@ -512,8 +512,22 @@ struct MixerTrayView: View {
         )
     }
 
-    private func runtimeOnlyCadenceText() -> String {
-        TransportVocabulary.roomModeCadenceStatus(
+    /// The Room-mode sentence for this room: the measured cadence combined
+    /// with whatever transport degradation the orchestrator recorded for this
+    /// EXACT room on this EXACT bridge (packet 5).
+    ///
+    /// `effect.room.bridgeID` — never a default — for the same reason packet 4
+    /// deleted the global cadence fallback: two rooms can share an ID on
+    /// different bridges, and showing one's reason under the other's card is
+    /// exactly the dishonesty this is meant to remove. Reading the store here
+    /// is also what registers the Observation dependency, so the sentence
+    /// refreshes when only the reason changes.
+    private func roomModeStatusText(for effect: RunningEffect) -> String {
+        let degradation = orchestrator.compositionDegradation(
+            roomID: effect.room.id, bridgeID: effect.room.bridgeID)
+        return TransportVocabulary.roomModeStatus(
+            fallback: degradation?.fallbackReason,
+            largeRoom: degradation?.isLargeRoom ?? false,
             liveSeconds: vm.activeRESTCadenceForSelectedRoom)
     }
 
@@ -530,12 +544,24 @@ struct MixerTrayView: View {
             return (TransportVocabulary.bridgeStoredStatus,
                     HuePalette.amber.opacity(0.9))
         }
+        // Packet 5: the exact-keyed degradation state is the authority when it
+        // has something to say — it survives a mid-session failover, it keeps
+        // the fallback cause and the rolling-delivery fact as separate truths,
+        // and it is generation-fenced. `transportFallback` stays as the
+        // apply-time snapshot for the streaming case it already covered.
+        let degradation = orchestrator.compositionDegradation(
+            roomID: effect.room.id, bridgeID: effect.room.bridgeID)
+        if let degradation, degradation.fallbackReason != nil {
+            return (roomModeStatusText(for: effect), HuePalette.amber.opacity(0.75))
+        }
         if effect.transportFallback {
             return (TransportVocabulary.fallbackStatus,
                     HuePalette.amber.opacity(0.75))
         }
         if !effect.isEntertainment, card.compositionTier == .runtimeOnly {
-            return (runtimeOnlyCadenceText(), .white.opacity(0.48))
+            // Covers both the plain cadence sentence and the large-room
+            // rotation sentence — `roomModeStatus` picks between them.
+            return (roomModeStatusText(for: effect), .white.opacity(0.48))
         }
         return nil
     }

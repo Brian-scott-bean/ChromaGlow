@@ -183,7 +183,7 @@ final class BeatMathTests: XCTestCase {
 final class CompositionMixerTests: XCTestCase {
 
     private let snap120 = BeatSnapshot(bpm: 120, beatEpoch: 0, beatsPerBar: 4)
-    private let channels: [UInt8] = [0, 1, 2]
+    private let channels: [Int] = [0, 1, 2]
 
     private func box(hueShift: Double = 0) -> CompositionParamBox {
         let box = CompositionParamBox(
