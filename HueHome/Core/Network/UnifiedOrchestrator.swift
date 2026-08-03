@@ -702,6 +702,12 @@ final class UnifiedOrchestrator {
         clients = testClients
     }
 
+    /// Point Entertainment ownership at an isolated store so a suite never
+    /// reads or writes the real user's persisted records.
+    func injectForTesting(ownership store: EntertainmentSessionOwnership) {
+        entertainmentOwnership = store
+    }
+
     func testResolveCompositionGamut(
         for room: RoomDisplayItem,
         api: HueAPIClient
@@ -2538,6 +2544,12 @@ final class UnifiedOrchestrator {
     /// Entertainment clients keyed by bridgeID — one per concurrent bridge session.
     /// Internal access so StudioViewModel can report transport mode in debug.
     var studioEntClients: [String: HueEntertainmentClient] = [:]
+
+    /// Which Entertainment sessions belong to ChromaGlow (packet 7) — the
+    /// evidence that lets automatic cleanup stop our own orphaned sessions
+    /// without ever touching a third party's. `var` only so a test suite can
+    /// swap in an isolated store.
+    @ObservationIgnored var entertainmentOwnership: EntertainmentSessionOwnership = .shared
 
     /// Which Studio scope currently owns REST, and on which bridge (packet 3).
     ///
@@ -5564,10 +5576,12 @@ final class UnifiedOrchestrator {
         do {
             let (ip, token) = try api.credentials()
             let entClient = HueEntertainmentClient(
+                bridgeID: bridgeID,
                 bridgeIP: ip,
                 username: token,
                 clientKeyHex: clientKey,
-                restClient: api
+                restClient: api,
+                ownership: entertainmentOwnership
             )
             try await entClient.startSession(configID: config.id)
             let bid = room.bridgeID ?? ""
@@ -6546,47 +6560,150 @@ final class UnifiedOrchestrator {
 
 // MARK: - Entertainment Session Cleanup
 
+/// Every ACTIVE Entertainment configuration on one bridge, partitioned by who
+/// owns it (packet 7).
+///
+/// The whole set is represented on purpose. Reducing a bridge to "the active
+/// configuration" is what let one arbitrary entry stand in for a mixed reality
+/// — our stale session and a stranger's live show, indistinguishable.
+struct EntertainmentActivitySnapshot: Equatable, Sendable {
+    let bridgeID: String
+    /// Active and streamed by THIS process right now. Never touch.
+    let processOwned: Set<String>
+    /// Active, recorded as ChromaGlow's, but not owned by this process —
+    /// left behind by an unclean termination. Eligible for cleanup.
+    let persistedOwned: Set<String>
+    /// Active and not recorded by ChromaGlow at all: another app, a Sync Box,
+    /// another controller. Never stopped without explicit user consent.
+    let foreign: Set<String>
+
+    var isQuiet: Bool { processOwned.isEmpty && persistedOwned.isEmpty && foreign.isEmpty }
+}
+
 extension UnifiedOrchestrator {
-    /// Deactivate any stuck entertainment sessions on all bridges.
-    /// Entertainment sessions lock the bridge and throttle REST calls.
-    /// Called on every loadAll() to ensure clean state.
+
+    /// Read one bridge's active Entertainment configurations and classify each.
+    ///
+    /// Returns nil when the bridge could not be read — "unknown", which is NOT
+    /// the same as "nothing is running" and must never authorize stopping
+    /// anything.
+    func entertainmentActivity(onBridge bridgeID: String) async -> EntertainmentActivitySnapshot? {
+        guard let client = clients[bridgeID] else { return nil }
+        do {
+            let (ip, token) = try client.credentials()
+            let data = try await client.get(
+                path: "/clip/v2/resource/entertainment_configuration",
+                ip: ip, token: token
+            )
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let items = json["data"] as? [[String: Any]] else { return nil }
+
+            var processOwned: Set<String> = []
+            var persistedOwned: Set<String> = []
+            var foreign: Set<String> = []
+
+            for config in items {
+                guard let id = config["id"] as? String,
+                      let status = config["status"] as? String,
+                      status == "active" else { continue }
+
+                if entertainmentOwnership.isProcessOwned(bridgeID: bridgeID, configID: id) {
+                    processOwned.insert(id)
+                } else if entertainmentOwnership.isPersisted(bridgeID: bridgeID, configID: id) {
+                    persistedOwned.insert(id)
+                } else {
+                    foreign.insert(id)
+                }
+            }
+
+            return EntertainmentActivitySnapshot(
+                bridgeID: bridgeID,
+                processOwned: processOwned,
+                persistedOwned: persistedOwned,
+                foreign: foreign
+            )
+        } catch {
+            log.warning("Entertainment state read failed on \(bridgeID): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Clean up Entertainment sessions **ChromaGlow itself left active**.
+    ///
+    /// This runs unattended from `loadAll` on every launch, foreground, and
+    /// state refresh, so it is the one path that must never surprise anyone.
+    /// It used to stop EVERY active configuration that this process had not
+    /// registered — which silently evicted a Hue Sync Box, another Hue app, or
+    /// any other controller, without the user having asked for anything.
+    ///
+    /// Three classes, three behaviours:
+    ///  - owned by this process  → skip; it is a live show
+    ///  - persisted ChromaGlow   → ours, orphaned by an unclean exit; stop it
+    ///  - foreign                → leave it completely alone. No stop, no
+    ///    prompt, and not even a "stuck" warning: it is not stuck, it is
+    ///    somebody else's.
     func deactivateStuckEntertainmentSessions() async {
         for (bridgeID, client) in clients {
-            do {
-                let (ip, token) = try client.credentials()
-                let data = try await client.get(
-                    path: "/clip/v2/resource/entertainment_configuration",
-                    ip: ip, token: token
-                )
-                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let items = json["data"] as? [[String: Any]] else { continue }
+            guard let snapshot = await entertainmentActivity(onBridge: bridgeID) else {
+                // Unreadable bridge: keep every persisted record for this
+                // bridge so a later pass can retry, and never infer anything
+                // about the other bridges from this one's failure.
+                continue
+            }
 
-                for config in items {
-                    guard let id = config["id"] as? String,
-                          let status = config["status"] as? String,
-                          status == "active" else { continue }
+            for id in snapshot.processOwned {
+                log.info("Entertainment session \(id) is app-owned and active — skipping cleanup")
+            }
 
-                    // M-06: never stop the app's OWN active session — loadAll
-                    // runs on every launch/foreground/state-refresh, and this
-                    // cleanup used to kill a running Studio/Composer/Sync show
-                    // mid-stream (lights froze; the loop kept sending into a
-                    // dead session).
-                    if HueEntertainmentClient.isAppOwnedSession(configID: id) {
-                        log.info("Entertainment session \(id) is app-owned and active — skipping cleanup")
-                        continue
-                    }
+            // Each stale ID is handled independently: one failing stop must not
+            // skip the rest.
+            for id in snapshot.persistedOwned.sorted() {
+                // The snapshot is a photograph, and the bridge read that
+                // produced it suspended. Asking "still recorded?" and "no owner
+                // yet?" as two separate questions and THEN awaiting a stop is
+                // not an authorization — it is two facts that were briefly
+                // true, with a suspension in between during which a start can
+                // complete.
+                //
+                // The claim makes the decision and the exclusive right to act
+                // on it one indivisible step: while it is held, a start for
+                // this exact bridge + configuration is refused rather than
+                // silently created underneath an in-flight stop.
+                guard let claim = entertainmentOwnership.beginStaleCleanup(
+                    bridgeID: bridgeID, configID: id) else {
+                    log.info("Not claiming \(id) on \(bridgeID) — it is owned, unrecorded, or already being cleaned up")
+                    continue
+                }
+                defer { entertainmentOwnership.endStaleCleanup(claim) }
 
-                    // This session is stuck active — deactivate it
-                    log.warning("Found stuck entertainment session \(id) on bridge \(bridgeID) — deactivating")
+                log.warning("Found stale ChromaGlow entertainment session \(id) on bridge \(bridgeID) — deactivating")
+                do {
+                    let (ip, token) = try client.credentials()
                     let body: [String: Any] = ["action": "stop"]
                     _ = try await client.put(
                         path: "/clip/v2/resource/entertainment_configuration/\(id)",
                         body: body, ip: ip, token: token
                     )
-                    log.info("Deactivated stuck entertainment session \(id)")
+                    // Only a CONFIRMED stop retires the record. If the stop
+                    // failed the configuration may still be active, so the
+                    // evidence is kept for the next launch to retry.
+                    entertainmentOwnership.forgetPersisted(bridgeID: bridgeID, configID: id)
+                    log.info("Deactivated stale entertainment session \(id)")
+                } catch {
+                    log.warning("Stale entertainment stop failed for \(id) on \(bridgeID) — keeping ownership record: \(error.localizedDescription)")
                 }
-            } catch {
-                log.warning("Entertainment cleanup failed on \(bridgeID): \(error.localizedDescription)")
+            }
+
+            // Prune records the bridge has proved are no longer active: the
+            // configuration is inactive or absent entirely, so there is
+            // nothing to stop and nothing left to remember.
+            let stillActive = snapshot.processOwned
+                .union(snapshot.persistedOwned)
+                .union(snapshot.foreign)
+            for id in entertainmentOwnership.persistedConfigIDs(onBridge: bridgeID)
+            where !stillActive.contains(id) {
+                entertainmentOwnership.forgetPersisted(bridgeID: bridgeID, configID: id)
+                log.info("Pruned ownership record for inactive entertainment config \(id) on \(bridgeID)")
             }
         }
     }

@@ -59,8 +59,21 @@ private final class EntertainmentSpyClient: BridgeAPIClient, @unchecked Sendable
         _actions = []
     }
 
+    /// Runs once, AFTER a GET has captured its answer — the deterministic way
+    /// to model "the world moved on between the read and what the reader does
+    /// with it", with no timing at all.
+    private var _onGetOnce: (() -> Void)?
+    func onGetOnce(_ block: @escaping () -> Void) {
+        lock.lock(); _onGetOnce = block; lock.unlock()
+    }
+
     override func get(path: String, ip: String, token: String) async throws -> Data {
-        lock.lock(); _getPaths.append(path); lock.unlock()
+        lock.lock()
+        _getPaths.append(path)
+        let after = _onGetOnce
+        _onGetOnce = nil
+        lock.unlock()
+        defer { after?() }
         if path.contains("entertainment_configuration") {
             if configsShouldFail { throw HueAPIError.httpError(500) }
             return Data(stubConfigsJSON.utf8)
@@ -80,14 +93,43 @@ private final class EntertainmentSpyClient: BridgeAPIClient, @unchecked Sendable
         return stubLights
     }
 
+    // Packet 7 ownership seams. Ownership decisions turn on whether a PUT
+    // actually SUCCEEDED, so a test needs to fail one precisely — all PUTs, a
+    // typed transport error rather than an HTTP one, or the stop for one exact
+    // configuration while its neighbour's still succeeds.
+    var putShouldFail = false
+    /// When set, thrown instead of `HueAPIError.httpError` — an unknown
+    /// outcome rather than a definitive refusal.
+    var putError: Error?
+    /// `action=stop` fails for exactly these configuration ids.
+    var failStopsFor: Set<String> = []
+    /// Observed at the network boundary, before the action is recorded, so a
+    /// test can ask what ownership looked like at that exact instant.
+    var onPut: ((_ configID: String, _ action: String) -> Void)?
+    /// Fires once, INSIDE the PUT — i.e. while cleanup still holds its claim
+    /// and the stop is in flight. That is the only window in which the race
+    /// this guards against can actually happen.
+    private var _onPutOnce: ((String, String) -> Void)?
+    func onPutOnce(_ block: @escaping (String, String) -> Void) {
+        lock.lock(); _onPutOnce = block; lock.unlock()
+    }
+
     override func put(path: String, body: [String: Any], ip: String, token: String) async throws -> Data {
         if path.contains("entertainment_configuration/"),
            let action = body["action"] as? String,
            let configID = path.split(separator: "/").last.map(String.init) {
+            onPut?(configID, action)
+            lock.lock(); let once = _onPutOnce; _onPutOnce = nil; lock.unlock()
+            once?(configID, action)
             lock.lock()
             _actions.append((configID, action))
+            let failThisStop = action == "stop" && failStopsFor.contains(configID)
             lock.unlock()
+            if putShouldFail || failThisStop {
+                throw putError ?? HueAPIError.httpError(500)
+            }
         }
+        if putShouldFail { throw putError ?? HueAPIError.httpError(500) }
         return Data("{}".utf8)
     }
 
@@ -119,6 +161,47 @@ private final class EntertainmentSpyClient: BridgeAPIClient, @unchecked Sendable
 
 final class EntertainmentRobustnessTests: XCTestCase {
 
+    /// Ownership lives in an isolated suite: these tests must never read or
+    /// write the real user's persisted records, and each test must start from
+    /// a known-empty registry rather than whatever the previous one left.
+    private var ownership: EntertainmentSessionOwnership!
+    private let suiteName = "EntertainmentRobustnessTests"
+
+    override func setUp() {
+        super.setUp()
+        UserDefaults().removePersistentDomain(forName: suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        ownership = EntertainmentSessionOwnership(defaults: defaults)
+        ownership.resetForTesting()
+    }
+
+    override func tearDown() {
+        ownership.resetForTesting()
+        ownership = nil
+        UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        super.tearDown()
+    }
+
+    /// A client wired to this test's isolated ownership store. The client key
+    /// is deliberately non-hex, so `decodePSK` refuses before any socket
+    /// exists — the DTLS handshake is never reached, while the REST activation
+    /// the ordering assertions read still runs for real.
+    private func makeClient(bridgeID: String = "bridge-1",
+                            spy: EntertainmentSpyClient) -> HueEntertainmentClient {
+        HueEntertainmentClient(bridgeID: bridgeID,
+                               bridgeIP: "192.0.2.1",
+                               username: "user",
+                               clientKeyHex: "ZZ-not-hex",
+                               restClient: spy,
+                               ownership: ownership)
+    }
+
+    private func spyClient(bridgeID: String = "bridge-1",
+                           ip: String = "192.0.2.1") -> EntertainmentSpyClient {
+        EntertainmentSpyClient(bridgeID: bridgeID, bridgeName: "Test", ip: ip, token: "t")
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - M-09: continuation resumes exactly once
     // ──────────────────────────────────────────────
@@ -144,14 +227,10 @@ final class EntertainmentRobustnessTests: XCTestCase {
     // ──────────────────────────────────────────────
 
     func testFailedDTLSOpenIssuesCompensatingStop() async {
-        let spy = EntertainmentSpyClient(bridgeID: "bridge-1", bridgeName: "Test",
-                                         ip: "192.0.2.1", token: "t")
+        let spy = spyClient()
         // Invalid (non-hex) client key → openDTLSConnection throws before any
         // network I/O, exercising the failed-open path deterministically.
-        let client = HueEntertainmentClient(bridgeIP: "192.0.2.1",
-                                            username: "user",
-                                            clientKeyHex: "ZZ-not-hex",
-                                            restClient: spy)
+        let client = makeClient(spy: spy)
 
         do {
             try await client.startSession(configID: "cfg-fail")
@@ -164,7 +243,7 @@ final class EntertainmentRobustnessTests: XCTestCase {
         XCTAssertEqual(actions.map(\.action), ["start", "stop"],
             "a failed open must roll back with action=stop (L-11)")
         XCTAssertEqual(Set(actions.map(\.configID)), ["cfg-fail"])
-        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-fail"),
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-fail"),
             "a failed session must not stay registered as app-owned")
     }
 
@@ -174,8 +253,7 @@ final class EntertainmentRobustnessTests: XCTestCase {
 
     @MainActor
     func testStuckCleanupSkipsAppOwnedSessionAndStopsStaleOne() async {
-        let spy = EntertainmentSpyClient(bridgeID: "bridge-1", bridgeName: "Test",
-                                         ip: "192.0.2.1", token: "t")
+        let spy = spyClient()
         spy.stubConfigsJSON = """
         {"data": [
             {"id": "cfg-ours",  "status": "active"},
@@ -185,9 +263,13 @@ final class EntertainmentRobustnessTests: XCTestCase {
         """
         let orchestrator = UnifiedOrchestrator()
         orchestrator.injectForTesting(clients: ["bridge-1": spy])
+        orchestrator.injectForTesting(ownership: ownership)
 
-        HueEntertainmentClient.registerActiveSession(configID: "cfg-ours")
-        defer { HueEntertainmentClient.unregisterActiveSession(configID: "cfg-ours") }
+        ownership.registerProcess(bridgeID: "bridge-1", configID: "cfg-ours")
+        // "Stale" now means something specific: recorded by ChromaGlow, not
+        // owned by this process. An unrecorded active config is FOREIGN and is
+        // covered by the packet 7 tests below.
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-stale")
 
         await orchestrator.deactivateStuckEntertainmentSessions()
 
@@ -197,26 +279,37 @@ final class EntertainmentRobustnessTests: XCTestCase {
     }
 
     func testSessionRegistryRegisterUnregister() {
-        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-x"))
-        HueEntertainmentClient.registerActiveSession(configID: "cfg-x")
-        XCTAssertTrue(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-x"))
-        HueEntertainmentClient.unregisterActiveSession(configID: "cfg-x")
-        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-x"))
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "b1", configID: "cfg-x"))
+        ownership.registerProcess(bridgeID: "b1", configID: "cfg-x")
+        XCTAssertTrue(ownership.isProcessOwned(bridgeID: "b1", configID: "cfg-x"))
+        ownership.releaseProcess(bridgeID: "b1", configID: "cfg-x")
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "b1", configID: "cfg-x"))
     }
 
     func testSessionRegistryIsRefCounted() {
         // Two client instances can stream the same configuration (Sync +
         // Studio) — one stopping must not expose the other to the cleanup.
-        HueEntertainmentClient.registerActiveSession(configID: "cfg-rc")
-        HueEntertainmentClient.registerActiveSession(configID: "cfg-rc")
-        HueEntertainmentClient.unregisterActiveSession(configID: "cfg-rc")
-        XCTAssertTrue(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-rc"),
+        ownership.registerProcess(bridgeID: "b1", configID: "cfg-rc")
+        ownership.registerProcess(bridgeID: "b1", configID: "cfg-rc")
+
+        let first = ownership.releaseProcess(bridgeID: "b1", configID: "cfg-rc")
+        XCTAssertFalse(first.wasFinalOwner,
+            "the first of two owners is not the final owner and may not stop the session")
+        XCTAssertEqual(first.remaining, 1)
+        XCTAssertTrue(ownership.isProcessOwned(bridgeID: "b1", configID: "cfg-rc"),
             "one remaining owner must keep the session protected")
-        HueEntertainmentClient.unregisterActiveSession(configID: "cfg-rc")
-        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-rc"))
-        // Extra unregister must not underflow into protecting ghosts.
-        HueEntertainmentClient.unregisterActiveSession(configID: "cfg-rc")
-        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-rc"))
+
+        let second = ownership.releaseProcess(bridgeID: "b1", configID: "cfg-rc")
+        XCTAssertTrue(second.wasFinalOwner, "the last owner out may stop the session")
+        XCTAssertEqual(second.remaining, 0)
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "b1", configID: "cfg-rc"))
+
+        // Extra release must not underflow into protecting ghosts — nor claim
+        // final ownership, which would authorize stopping someone else's work.
+        let extra = ownership.releaseProcess(bridgeID: "b1", configID: "cfg-rc")
+        XCTAssertFalse(extra.wasFinalOwner,
+            "an unbalanced release must never authorize a stop")
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "b1", configID: "cfg-rc"))
     }
 
     // ──────────────────────────────────────────────
@@ -224,12 +317,8 @@ final class EntertainmentRobustnessTests: XCTestCase {
     // ──────────────────────────────────────────────
 
     func testTerminalFailureTearsDownFlagsAndResetsOnRestart() async {
-        let spy = EntertainmentSpyClient(bridgeID: "bridge-1", bridgeName: "Test",
-                                         ip: "192.0.2.1", token: "t")
-        let client = HueEntertainmentClient(bridgeIP: "192.0.2.1",
-                                            username: "user",
-                                            clientKeyHex: "ZZ-not-hex",
-                                            restClient: spy)
+        let spy = spyClient()
+        let client = makeClient(spy: spy)
         await client.seedSessionForTesting(configID: "cfg-term")
 
         await client.noteTerminalFailure()
@@ -239,7 +328,7 @@ final class EntertainmentRobustnessTests: XCTestCase {
             "terminal failure must be observable so owning render loops can fail over to REST")
         XCTAssertEqual(spy.actions.map(\.action), ["stop"],
             "abandonment must best-effort stop the configuration on the bridge")
-        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-term"),
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-term"),
             "a terminally failed session must leave the registry — the stuck-session cleanup would skip an 'owned' dead config forever")
 
         // The next startSession clears the flag before opening (this one
@@ -253,14 +342,10 @@ final class EntertainmentRobustnessTests: XCTestCase {
         // The cleanup race (loadAll during the DTLS handshake) is closed by
         // registering BEFORE action=start. The failed-open path must still
         // end unregistered.
-        let spy = EntertainmentSpyClient(bridgeID: "bridge-1", bridgeName: "Test",
-                                         ip: "192.0.2.1", token: "t")
-        let client = HueEntertainmentClient(bridgeIP: "192.0.2.1",
-                                            username: "user",
-                                            clientKeyHex: "ZZ-not-hex",
-                                            restClient: spy)
+        let spy = spyClient()
+        let client = makeClient(spy: spy)
         _ = try? await client.startSession(configID: "cfg-race")
-        XCTAssertFalse(HueEntertainmentClient.isAppOwnedSession(configID: "cfg-race"),
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-race"),
             "a failed startSession must leave the registry balanced")
     }
 
@@ -281,6 +366,652 @@ final class EntertainmentRobustnessTests: XCTestCase {
         XCTAssertNil(HueEntertainmentClient.decodePSK(String(repeating: "AB", count: 17)))  // 34 chars
         XCTAssertNil(HueEntertainmentClient.decodePSK(String(repeating: "A", count: 31)))   // odd length
         XCTAssertNil(HueEntertainmentClient.decodePSK(String(repeating: "ZZ", count: 16)))  // non-hex
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MARK: - Composer 2 packet 7: ChromaGlow yields to third-party sessions
+// ═══════════════════════════════════════════════════════════════════════
+//
+// The defect: automatic cleanup treated EVERY active entertainment
+// configuration this process had not registered as "stuck" and sent
+// action=stop. It runs from loadAll on launch, foreground, and every state
+// refresh — so a Hue Sync Box or another Hue app streaming on the bridge was
+// silently evicted although the ChromaGlow user never asked for playback.
+//
+// Two things were missing, and a process-only refcount could supply neither:
+//   1. bridge identity — a configuration UUID recorded on bridge A said
+//      nothing about the same UUID on bridge B, yet authorized stopping it;
+//   2. survival — a refcount dies with the process, so a session ChromaGlow
+//      left active after an unclean termination was indistinguishable from a
+//      stranger's.
+//
+// Everything here is proved by observing recorded PUTs and registry state, in
+// an isolated UserDefaults suite. No sleeps, no waiters, no elapsed time.
+//
+// Review: docs/ios/composer2-architecture-review-2026-08-01.md (K1 / N4).
+
+final class EntertainmentOwnershipTests: XCTestCase {
+
+    private var ownership: EntertainmentSessionOwnership!
+    private let suiteName = "EntertainmentOwnershipTests"
+
+    override func setUp() {
+        super.setUp()
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        ownership = EntertainmentSessionOwnership(defaults: defaults)
+        ownership.resetForTesting()
+    }
+
+    override func tearDown() {
+        ownership.resetForTesting()
+        ownership = nil
+        UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        super.tearDown()
+    }
+
+    // MARK: Fixtures
+
+    private func spy(bridgeID: String = "bridge-1",
+                     ip: String = "192.0.2.1") -> EntertainmentSpyClient {
+        EntertainmentSpyClient(bridgeID: bridgeID, bridgeName: "Test", ip: ip, token: "t")
+    }
+
+    private func client(bridgeID: String = "bridge-1",
+                        spy: EntertainmentSpyClient) -> HueEntertainmentClient {
+        HueEntertainmentClient(bridgeID: bridgeID,
+                               bridgeIP: "192.0.2.1",
+                               username: "user",
+                               clientKeyHex: "ZZ-not-hex",
+                               restClient: spy,
+                               ownership: ownership)
+    }
+
+    private func activeJSON(_ ids: [String], inactive: [String] = []) -> String {
+        let active = ids.map { #"{"id": "\#($0)", "status": "active"}"# }
+        let idle = inactive.map { #"{"id": "\#($0)", "status": "inactive"}"# }
+        return #"{"data": [\#((active + idle).joined(separator: ", "))]}"#
+    }
+
+    @MainActor
+    private func orchestrator(_ clients: [String: EntertainmentSpyClient]) -> UnifiedOrchestrator {
+        let o = UnifiedOrchestrator()
+        o.injectForTesting(clients: clients)
+        o.injectForTesting(ownership: ownership)
+        return o
+    }
+
+    private func stops(_ spy: EntertainmentSpyClient) -> [String] {
+        spy.actions.filter { $0.action == "stop" }.map(\.configID)
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Automatic cleanup never disturbs a foreign session
+    // ──────────────────────────────────────────────
+
+    /// P7-01
+    @MainActor
+    func testAutomaticCleanupLeavesAForeignActiveConfigurationUntouched() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON(["cfg-someone-else"])
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertTrue(stops(bridge).isEmpty,
+            "an active configuration ChromaGlow never recorded belongs to another controller — cleanup must not stop it")
+    }
+
+    /// P7-02 — a background pass must be entirely read-only over a foreign
+    /// session: no stop, and equally no start. (That it also raises no consent
+    /// prompt is locked once the prompt exists — see P7-25.)
+    @MainActor
+    func testAutomaticCleanupWritesNothingAtAllForAForeignSession() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON(["cfg-someone-else"])
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertTrue(bridge.actions.isEmpty,
+            "cleanup may only READ a bridge whose active session belongs to someone else")
+    }
+
+    /// P7-03
+    @MainActor
+    func testAutomaticCleanupStopsAPersistedChromaGlowOwnedStaleConfiguration() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON(["cfg-ours-stale", "cfg-foreign"])
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-ours-stale")
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertEqual(stops(bridge), ["cfg-ours-stale"],
+            "only the session ChromaGlow recorded as its own may be cleaned up")
+    }
+
+    /// P7-04 — the whole reason ownership is keyed by bridge AND configuration.
+    @MainActor
+    func testAPersistedRecordOnBridgeACannotAuthorizeStoppingTheSameIDOnBridgeB() async {
+        let a = spy(bridgeID: "bridge-a", ip: "192.0.2.1")
+        let b = spy(bridgeID: "bridge-b", ip: "192.0.2.2")
+        // The SAME configuration id is active on both bridges; only bridge A's
+        // is ours.
+        a.stubConfigsJSON = activeJSON(["cfg-shared"])
+        b.stubConfigsJSON = activeJSON(["cfg-shared"])
+        ownership.recordPersisted(bridgeID: "bridge-a", configID: "cfg-shared")
+        let orchestrator = orchestrator(["bridge-a": a, "bridge-b": b])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertEqual(stops(a), ["cfg-shared"], "bridge A's session is ours")
+        XCTAssertTrue(stops(b).isEmpty,
+            "the same configuration id on another bridge is a different session, and this one is a stranger's")
+    }
+
+    /// P7-05
+    @MainActor
+    func testACurrentlyProcessOwnedConfigurationIsSkipped() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON(["cfg-live"])
+        ownership.registerProcess(bridgeID: "bridge-1", configID: "cfg-live")
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-live")
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertTrue(stops(bridge).isEmpty,
+            "cleanup used to kill the app's own running show mid-stream")
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-live"),
+            "a live session keeps its record")
+    }
+
+    /// P7-06
+    @MainActor
+    func testAnInactivePersistedRecordIsPrunedWithoutSendingStop() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON([], inactive: ["cfg-done"])
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-done")
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertTrue(stops(bridge).isEmpty,
+            "the bridge already reports it inactive — stopping it again is a pointless write")
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-done"),
+            "proved inactive means the evidence has done its job")
+    }
+
+    /// P7-06b — a record whose configuration the bridge no longer lists at all.
+    @MainActor
+    func testAPersistedRecordForAnAbsentConfigurationIsPruned() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON([])
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-deleted")
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertTrue(stops(bridge).isEmpty)
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-deleted"))
+    }
+
+    /// P7-07
+    @MainActor
+    func testABridgeFetchFailureRetainsThePersistedRecordForRetry() async {
+        let bridge = spy()
+        bridge.configsShouldFail = true
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-ours")
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertTrue(stops(bridge).isEmpty, "an unreadable bridge authorizes nothing")
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-ours"),
+            "unknown is not 'gone' — the record must survive for a later launch to retry")
+    }
+
+    /// P7-07b — one bridge failing must not blind the others.
+    @MainActor
+    func testOneBridgesFailureDoesNotPreventClassificationOfOtherBridges() async {
+        let a = spy(bridgeID: "bridge-a", ip: "192.0.2.1")
+        let b = spy(bridgeID: "bridge-b", ip: "192.0.2.2")
+        a.configsShouldFail = true
+        b.stubConfigsJSON = activeJSON(["cfg-b-stale"])
+        ownership.recordPersisted(bridgeID: "bridge-a", configID: "cfg-a-ours")
+        ownership.recordPersisted(bridgeID: "bridge-b", configID: "cfg-b-stale")
+        let orchestrator = orchestrator(["bridge-a": a, "bridge-b": b])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertEqual(stops(b), ["cfg-b-stale"],
+            "bridge B is readable and its stale session must still be cleaned up")
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-a", configID: "cfg-a-ours"))
+    }
+
+    /// P7-08
+    @MainActor
+    func testASuccessfulStopRemovesPersistedOwnership() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON(["cfg-ours-stale"])
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-ours-stale")
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertEqual(stops(bridge), ["cfg-ours-stale"])
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-ours-stale"),
+            "a confirmed stop retires the record")
+    }
+
+    /// P7-09
+    @MainActor
+    func testAFailedStopRetainsPersistedOwnership() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON(["cfg-ours-stale"])
+        bridge.putShouldFail = true
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-ours-stale")
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-ours-stale"),
+            "the configuration may still be active — dropping the record would strand it forever")
+    }
+
+    /// P7-38 — one failing stop must not skip the rest of the stale set.
+    @MainActor
+    func testEveryPersistedStaleIDIsHandledIndependently() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON(["cfg-a", "cfg-b", "cfg-foreign"])
+        bridge.failStopsFor = ["cfg-a"]
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-a")
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-b")
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertEqual(Set(stops(bridge)), ["cfg-a", "cfg-b"],
+            "cfg-a's failure must not abort the pass before cfg-b")
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-a"))
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-b"))
+    }
+
+    /// P7-39 — the real race is not "after the initial GET", it is "after
+    /// cleanup has taken the right to destroy". The gate therefore opens on
+    /// the PUT: cleanup has claimed the session and is about to stop it, and a
+    /// brand-new client tries to start that exact session right then.
+    @MainActor
+    func testAClientCannotStartASessionCleanupHasClaimed() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON(["cfg-ours"])
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-ours")
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        let attempt = StartAttemptProbe()
+        // Fires while the claim is held and the stop is in flight.
+        bridge.onPutOnce { [ownership] configID, action in
+            guard action == "stop", configID == "cfg-ours" else { return }
+            attempt.record(
+                claimHeld: ownership!.hasCleanupClaim(bridgeID: "bridge-1", configID: "cfg-ours"),
+                registration: ownership!.registerProcess(bridgeID: "bridge-1", configID: "cfg-ours"))
+        }
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertEqual(attempt.claimHeld, true,
+            "cleanup must hold an exclusive claim while its stop is in flight")
+        XCTAssertEqual(attempt.registration, .blockedByCleanup,
+            "a start may not register underneath a claim — that is the owner cleanup is about to black out")
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-ours"),
+            "and so no owner exists for cleanup to have destroyed")
+        XCTAssertEqual(stops(bridge), ["cfg-ours"], "the claimed stale session is stopped exactly once")
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-ours"))
+    }
+
+    /// P7-39b — a blocked registration must not reach action=start. The client
+    /// refuses rather than racing the stop.
+    func testAStartRefusesWhileCleanupHoldsTheClaim() async {
+        let bridge = spy()
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-claimed")
+        XCTAssertNotNil(ownership.beginStaleCleanup(bridgeID: "bridge-1", configID: "cfg-claimed"),
+            "cleanup takes the exclusive right to stop this session")
+
+        let client = client(spy: bridge)
+        do {
+            try await client.startSession(configID: "cfg-claimed")
+            XCTFail("a start must refuse while cleanup holds the claim")
+        } catch {
+            // expected
+        }
+
+        XCTAssertTrue(bridge.actions.isEmpty,
+            "no action=start may be sent — refusing means touching nothing")
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-claimed"))
+    }
+
+    /// P7-39c — the claim is exclusive and released afterwards, so ordinary
+    /// starts resume immediately.
+    @MainActor
+    func testAfterTheClaimIsReleasedANewStartProceedsNormally() async {
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-x")
+        let first = ownership.beginStaleCleanup(bridgeID: "bridge-1", configID: "cfg-x")
+        XCTAssertNotNil(first, "the first claimant wins")
+        XCTAssertNil(ownership.beginStaleCleanup(bridgeID: "bridge-1", configID: "cfg-x"),
+            "a second cleanup may not claim the same session concurrently")
+        XCTAssertEqual(ownership.registerProcess(bridgeID: "bridge-1", configID: "cfg-x"),
+                       .blockedByCleanup)
+
+        ownership.endStaleCleanup(first!)
+
+        XCTAssertFalse(ownership.hasCleanupClaim(bridgeID: "bridge-1", configID: "cfg-x"))
+        XCTAssertEqual(ownership.registerProcess(bridgeID: "bridge-1", configID: "cfg-x"),
+                       .registered, "with the claim gone, a start proceeds normally")
+    }
+
+    /// P7-39d — a claim on one key leaves every other key alone.
+    func testACleanupClaimIsScopedToItsExactBridgeAndConfiguration() {
+        ownership.recordPersisted(bridgeID: "bridge-a", configID: "cfg-shared")
+        let claim = ownership.beginStaleCleanup(bridgeID: "bridge-a", configID: "cfg-shared")
+        XCTAssertNotNil(claim)
+
+        XCTAssertEqual(ownership.registerProcess(bridgeID: "bridge-b", configID: "cfg-shared"),
+                       .registered, "same configuration id, different bridge — independent")
+        XCTAssertEqual(ownership.registerProcess(bridgeID: "bridge-a", configID: "cfg-other"),
+                       .registered, "same bridge, different configuration — independent")
+    }
+
+    /// P7-40 — a live owner and a missing record are both refusals of the
+    /// claim itself, so authorization is one operation rather than two facts
+    /// with a gap between them.
+    func testTheClaimRefusesAnOwnedOrUnrecordedSession() {
+        // Owned: not stale, whatever the snapshot said.
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-live")
+        ownership.registerProcess(bridgeID: "bridge-1", configID: "cfg-live")
+        XCTAssertNil(ownership.beginStaleCleanup(bridgeID: "bridge-1", configID: "cfg-live"),
+            "a session with a live owner is not stale state")
+
+        // Unrecorded: an active configuration ChromaGlow never recorded is
+        // foreign, and foreign is never ours to stop.
+        XCTAssertNil(ownership.beginStaleCleanup(bridgeID: "bridge-1", configID: "cfg-stranger"),
+            "without evidence there is no authorization to destroy anything")
+    }
+
+    /// P7-40b — cleanup cannot stop a session that registered before the claim.
+    @MainActor
+    func testCleanupCannotStopAnOwnerThatRegisteredFirst() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON(["cfg-ours"])
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-ours")
+        // The owner wins the race by registering before cleanup runs at all.
+        XCTAssertEqual(ownership.registerProcess(bridgeID: "bridge-1", configID: "cfg-ours"),
+                       .registered)
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertTrue(stops(bridge).isEmpty, "a registered owner is never stale")
+        XCTAssertTrue(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-ours"))
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-ours"))
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Registration lifecycle
+    // ──────────────────────────────────────────────
+
+    /// P7-10 — the bridge reports a configuration active the moment
+    /// action=start lands, so ownership must already be installed by then or a
+    /// concurrent cleanup can stop our own session during the handshake.
+    func testRegistrationIsInstalledBeforeActionStartIsObservable() async {
+        let bridge = spy()
+        let recorded = ActionOwnershipProbe()
+        bridge.onPut = { [ownership] configID, action in
+            guard action == "start" else { return }
+            recorded.record(
+                process: ownership!.isProcessOwned(bridgeID: "bridge-1", configID: configID),
+                persisted: ownership!.isPersisted(bridgeID: "bridge-1", configID: configID))
+        }
+        let client = client(spy: bridge)
+
+        _ = try? await client.startSession(configID: "cfg-order")
+
+        XCTAssertEqual(recorded.snapshot?.process, true,
+            "process ownership must be visible to a concurrent cleanup before action=start")
+        XCTAssertEqual(recorded.snapshot?.persisted, true,
+            "persisted ownership must land before activation too — a crash one instruction later still leaves OUR session active")
+    }
+
+    /// P7-11 — the bridge answered and refused: nothing was activated, so both
+    /// layers must balance.
+    func testADefinitiveActivationFailureBalancesOwnership() async {
+        let bridge = spy()
+        bridge.putShouldFail = true          // HueAPIError.httpError — typed, definitive
+        let client = client(spy: bridge)
+
+        _ = try? await client.startSession(configID: "cfg-refused")
+
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-refused"))
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-refused"),
+            "a definitive refusal leaves nothing on the bridge to clean up later")
+    }
+
+    /// P7-11b — an unknown outcome is NOT a refusal. Keep the evidence.
+    func testAnIndefiniteActivationFailureRetainsPersistedOwnership() async {
+        let bridge = spy()
+        bridge.putShouldFail = true
+        bridge.putError = URLError(.timedOut)   // transport — outcome unknown
+        let client = client(spy: bridge)
+
+        _ = try? await client.startSession(configID: "cfg-maybe")
+
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-maybe"),
+            "this client is not streaming, so it holds no process reference")
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-maybe"),
+            "the activation may have landed — a later launch must be able to find and stop it")
+    }
+
+    /// P7-12 — a failed DTLS open runs the compensating stop; the record's fate
+    /// follows whether that stop succeeded.
+    func testAFailedDTLSOpenCompensatingStopSucceeded() async {
+        let bridge = spy()
+        let client = client(spy: bridge)
+
+        _ = try? await client.startSession(configID: "cfg-dtls")
+
+        XCTAssertEqual(bridge.actions.map(\.action), ["start", "stop"])
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-dtls"))
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-dtls"),
+            "the compensating stop was confirmed, so nothing is left to remember")
+    }
+
+    /// P7-12b
+    func testAFailedDTLSOpenWhoseCompensatingStopFailedKeepsTheRecord() async {
+        let bridge = spy()
+        bridge.failStopsFor = ["cfg-dtls"]
+        let client = client(spy: bridge)
+
+        _ = try? await client.startSession(configID: "cfg-dtls")
+
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-dtls"))
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-dtls"),
+            "the configuration was activated and the stop failed — it is still ours to clean up")
+    }
+
+    /// P7-13
+    func testReferenceCountingIsExactForTwoClientsOnOneBridgeAndConfiguration() {
+        ownership.registerProcess(bridgeID: "b", configID: "cfg")
+        ownership.registerProcess(bridgeID: "b", configID: "cfg")
+
+        XCTAssertEqual(ownership.releaseProcess(bridgeID: "b", configID: "cfg"),
+                       EntertainmentProcessRelease(wasFinalOwner: false, remaining: 1))
+        XCTAssertTrue(ownership.isProcessOwned(bridgeID: "b", configID: "cfg"))
+        XCTAssertEqual(ownership.releaseProcess(bridgeID: "b", configID: "cfg"),
+                       EntertainmentProcessRelease(wasFinalOwner: true, remaining: 0))
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "b", configID: "cfg"))
+    }
+
+    /// P7-14
+    func testSameConfigurationIDOnTwoBridgesIsIndependent() {
+        ownership.registerProcess(bridgeID: "bridge-a", configID: "cfg-shared")
+        ownership.recordPersisted(bridgeID: "bridge-a", configID: "cfg-shared")
+
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-b", configID: "cfg-shared"),
+            "ownership on one bridge says nothing about another")
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "bridge-b", configID: "cfg-shared"))
+        XCTAssertEqual(ownership.persistedConfigIDs(onBridge: "bridge-a"), ["cfg-shared"])
+        XCTAssertTrue(ownership.persistedConfigIDs(onBridge: "bridge-b").isEmpty)
+
+        // Releasing bridge A's reference must leave bridge B's untouched.
+        ownership.registerProcess(bridgeID: "bridge-b", configID: "cfg-shared")
+        ownership.releaseProcess(bridgeID: "bridge-a", configID: "cfg-shared")
+        XCTAssertTrue(ownership.isProcessOwned(bridgeID: "bridge-b", configID: "cfg-shared"))
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Final-owner stop semantics
+    // ──────────────────────────────────────────────
+
+    /// P7-29 — two live ChromaGlow clients, same bridge + configuration. The
+    /// first one out must not black out the second one's stream.
+    func testTheFirstOfTwoOwnersStoppingSendsNoActionStop() async {
+        let bridge = spy()
+        let first = client(spy: bridge)
+        let second = client(spy: bridge)
+        await first.seedSessionForTesting(configID: "cfg-shared")
+        await second.seedSessionForTesting(configID: "cfg-shared")
+
+        await first.stopSession()
+
+        XCTAssertTrue(bridge.actions.filter { $0.action == "stop" }.isEmpty,
+            "the other client is still streaming this exact configuration")
+        XCTAssertTrue(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-shared"),
+            "the surviving owner keeps the session protected from cleanup")
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-shared"),
+            "persisted ownership must remain while any process owner exists")
+    }
+
+    /// P7-30
+    func testTheFinalOwnerSendsExactlyOneActionStop() async {
+        let bridge = spy()
+        let first = client(spy: bridge)
+        let second = client(spy: bridge)
+        await first.seedSessionForTesting(configID: "cfg-shared")
+        await second.seedSessionForTesting(configID: "cfg-shared")
+
+        await first.stopSession()
+        await second.stopSession()
+
+        XCTAssertEqual(bridge.actions.filter { $0.action == "stop" }.map(\.configID),
+                       ["cfg-shared"],
+            "exactly one stop, sent by the last owner out")
+        XCTAssertFalse(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-shared"))
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-shared"))
+    }
+
+    /// P7-31
+    func testASecondOwnersActivationFailurePreservesTheFirstOwner() async {
+        let bridge = spy()
+        let live = client(spy: bridge)
+        await live.seedSessionForTesting(configID: "cfg-shared")
+
+        let failing = client(spy: bridge)
+        bridge.putShouldFail = true
+        _ = try? await failing.startSession(configID: "cfg-shared")
+
+        XCTAssertTrue(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-shared"),
+            "the live client's reference must survive the other client's failure")
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-shared"),
+            "a second owner's failure may not strip the evidence protecting a live session")
+        XCTAssertTrue(bridge.actions.filter { $0.action == "stop" }.isEmpty,
+            "and it certainly may not stop the live session")
+    }
+
+    /// P7-32
+    func testASecondOwnersDTLSFailureDoesNotStopTheSharedLiveConfiguration() async {
+        let bridge = spy()
+        let live = client(spy: bridge)
+        await live.seedSessionForTesting(configID: "cfg-shared")
+
+        // Non-hex key: activation succeeds, the DTLS open fails, and the
+        // compensating stop runs — as a NON-final release, so it must not fire.
+        let failing = client(spy: bridge)
+        _ = try? await failing.startSession(configID: "cfg-shared")
+
+        XCTAssertEqual(bridge.actions.map(\.action), ["start"],
+            "the compensating rollback must never terminate another live ChromaGlow client's stream")
+        XCTAssertTrue(ownership.isProcessOwned(bridgeID: "bridge-1", configID: "cfg-shared"))
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-shared"))
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - The old rule must not come back
+    // ──────────────────────────────────────────────
+
+    /// P7-26 — behavioural tests above would all still pass if someone
+    /// reintroduced a configID-only ownership question alongside the scoped
+    /// one, so pin the absence of the old rule directly.
+    func testNoProductionPathRetainsActiveAndNotProcessOwnedMeansStop() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // HueHomeTests/
+            .deletingLastPathComponent()   // repo root
+
+        func code(_ relativePath: String) throws -> String {
+            try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+        }
+
+        let orchestrator = try code("HueHome/Core/Network/UnifiedOrchestrator.swift")
+        let client = try code("HueHome/Core/Network/HueEntertainmentClient.swift")
+
+        for symbol in ["isAppOwnedSession", "registerActiveSession", "unregisterActiveSession"] {
+            XCTAssertFalse(orchestrator.contains(symbol),
+                "\(symbol) keyed ownership by configuration alone — bridge-scoped ownership replaced it")
+            XCTAssertFalse(client.contains(symbol),
+                "\(symbol) keyed ownership by configuration alone — bridge-scoped ownership replaced it")
+        }
+
+        XCTAssertTrue(orchestrator.contains("entertainmentOwnership.isProcessOwned(bridgeID:"),
+            "cleanup must ask the bridge-scoped question")
+        XCTAssertTrue(orchestrator.contains("entertainmentOwnership.isPersisted(bridgeID:"),
+            "and must be able to recognise its own orphaned sessions")
+    }
+}
+
+/// Actor-safe recorder for a start attempted while a cleanup claim is held.
+private final class StartAttemptProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _claimHeld: Bool?
+    private var _registration: EntertainmentSessionOwnership.ProcessRegistration?
+
+    func record(claimHeld: Bool,
+                registration: EntertainmentSessionOwnership.ProcessRegistration) {
+        lock.lock(); defer { lock.unlock() }
+        if _claimHeld == nil { _claimHeld = claimHeld; _registration = registration }
+    }
+    var claimHeld: Bool? { lock.lock(); defer { lock.unlock() }; return _claimHeld }
+    var registration: EntertainmentSessionOwnership.ProcessRegistration? {
+        lock.lock(); defer { lock.unlock() }; return _registration
+    }
+}
+
+/// Actor-safe one-shot recorder for "what did ownership look like at the exact
+/// moment the bridge saw action=start?".
+private final class ActionOwnershipProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: (process: Bool, persisted: Bool)?
+
+    func record(process: Bool, persisted: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        if value == nil { value = (process, persisted) }
+    }
+
+    var snapshot: (process: Bool, persisted: Bool)? {
+        lock.lock(); defer { lock.unlock() }
+        return value
     }
 }
 

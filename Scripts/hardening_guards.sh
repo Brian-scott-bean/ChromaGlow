@@ -243,6 +243,65 @@ if [[ -n "$rot_wait_hits" ]]; then
 fi
 
 # ──────────────────────────────────────────────────────────────
+# Guard 9 (Composer 2 packet 7): ChromaGlow yields to third-party
+# Entertainment sessions.
+#
+# The old rule was "active and not owned by this process means stop", which
+# ran unattended from loadAll and evicted a Sync Box or another Hue app the
+# user was actively watching. Ownership is now keyed by bridge AND
+# configuration, and persisted, so cleanup can recognise its OWN orphaned
+# sessions without touching anyone else's.
+#
+# A configuration id on its own is not an identity — any return of the
+# configID-only registry is the defect coming back.
+# ──────────────────────────────────────────────────────────────
+
+OWNERSHIP_FILES=(
+    "HueHome/Core/Network/UnifiedOrchestrator.swift"
+    "HueHome/Core/Network/HueEntertainmentClient.swift"
+)
+
+for f in "${OWNERSHIP_FILES[@]}"; do
+    [[ -f "$f" ]] || continue
+    # Strip comment-only lines: the history above each fix necessarily names
+    # the old symbols.
+    own_hits=$(grep -nE 'isAppOwnedSession|registerActiveSession|unregisterActiveSession' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    if [[ -n "$own_hits" ]]; then
+        fail "composer-p7" $'configID-only entertainment ownership re-introduced in '"$f"$':\n'"$own_hits"
+    fi
+done
+
+# The consent prompt is the one place a third-party session is ever stopped,
+# so its copy must stay free of transport/protocol jargon. Guard 6 covers the
+# fixed literals; these are the packet-7 additions the prompt could leak.
+P7_UI_FILES=(
+    "HueHome/UI/Studio/StudioView.swift"
+    "HueHome/UI/Studio/StudioViewModel.swift"
+)
+
+for f in "${P7_UI_FILES[@]}"; do
+    [[ -f "$f" ]] || continue
+    # Comment-only lines and developer diagnostics are excluded: debugLog and
+    # os_log never reach a user, and naming the transport there is how the
+    # next reader learns what the code actually does.
+    jargon_hits=$(grep -nE '"[^"]*(DTLS|entertainment_configuration|configuration ID|session registry)[^"]*"' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' \
+        | grep -vE 'debugLog\(|log\.(info|warning|error|debug)|print\(' || true)
+    if [[ -n "$jargon_hits" ]]; then
+        fail "composer-p7" $'protocol jargon in a user-facing string in '"$f"$':\n'"$jargon_hits"
+    fi
+done
+
+# Packet 7's ownership claims are about ORDER and PRESENCE — never elapsed
+# time. Same rule Guards 7/8 apply to the packets before it.
+OWNERSHIP_TESTS="HueHomeTests/EntertainmentRobustnessTests.swift"
+own_wait_hits=$(grep -nE 'Task\.sleep|XCTWaiter|wait\(for:' "$OWNERSHIP_TESTS" 2>/dev/null || true)
+if [[ -n "$own_wait_hits" ]]; then
+    fail "composer-p7" $'timing wait in the entertainment ownership tests:\n'"$own_wait_hits"
+fi
+
+# ──────────────────────────────────────────────────────────────
 
 if [[ $FAILURES -gt 0 ]]; then
     echo "hardening_guards: $FAILURES guard(s) failed." >&2
