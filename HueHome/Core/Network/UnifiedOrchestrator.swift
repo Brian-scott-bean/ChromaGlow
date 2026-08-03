@@ -2846,6 +2846,22 @@ final class UnifiedOrchestrator {
     /// silently satisfying a "Switch" that was never asked, or the reverse.
     @ObservationIgnored var consumedStudioHandoffRequests: Set<UUID> = []
 
+    /// Foreign-takeover REQUESTS already acted on (hardware convergence A).
+    ///
+    /// A THIRD ledger, and it does not overlap either of the two above.
+    /// `consumedEntertainmentConsents` records that a consent token bought a
+    /// session — it is spent late, at the moment a session actually opens, so
+    /// that a legitimate replay is not rejected before it can start. This one
+    /// records that a specific "Take Over" tap was acted on at all, and is
+    /// spent before the first await: `resolveForeignTakeover` suspends several
+    /// times before reaching the stop, so two confirmations in flight together
+    /// would otherwise both pass and both send one, the second landing on
+    /// whatever had started in between.
+    ///
+    /// Kept apart from `consumedStudioHandoffRequests` for the reason that one
+    /// already gives: a token spendable by the wrong question is not a token.
+    @ObservationIgnored var consumedForeignTakeoverRequests: Set<UUID> = []
+
     /// Which Studio scope currently owns REST, and on which bridge (packet 3).
     ///
     /// `activeStudioTask` above is ONE global slot: starting Studio in room B
@@ -4684,7 +4700,11 @@ final class UnifiedOrchestrator {
             // Try entertainment first for crisp on/off, fall back to REST
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
-                    Task { await self.runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox) }
+                    Task {
+                        await self.runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.reconcileStudioSessionAfterLoop(
+                            entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
+                    }
                 },
                 rest: {
                     Task { await self.runStrobeREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox) }
@@ -4694,7 +4714,11 @@ final class UnifiedOrchestrator {
         case "party":
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
-                    Task { await self.runPartyEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox) }
+                    Task {
+                        await self.runPartyEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.reconcileStudioSessionAfterLoop(
+                            entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
+                    }
                 },
                 rest: {
                     Task { await self.runPartyREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox) }
@@ -4704,7 +4728,11 @@ final class UnifiedOrchestrator {
         case "thunderstorm":
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
-                    Task { await self.runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox) }
+                    Task {
+                        await self.runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.reconcileStudioSessionAfterLoop(
+                            entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
+                    }
                 },
                 rest: {
                     Task { await self.runThunderstormREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox) }
@@ -6781,20 +6809,121 @@ final class UnifiedOrchestrator {
                 ownership: entertainmentOwnership
             )
             try await entClient.startSession(configID: config.id)
+
+            // Verify, do not assume. `startSession` returning means the REST
+            // activate was accepted and the handshake reported ready; this asks
+            // the session itself whether it is actually streaming. Without it a
+            // takeover could stop another app's show, fail to open its own, and
+            // still publish ownership — which is exactly what the hardware pass
+            // saw. Tear down rather than leave a half-open session behind.
+            guard await entClient.hasStartedSession() else {
+                debugLog("[Studio] Entertainment session never reached a usable state — refusing to claim it")
+                await entClient.stopSession()
+                noteTakeoverEvent(.chromaGlowSessionNotUsable, bridgeID: bridgeID, configID: config.id)
+                return .unavailable(reason: .streamingFailed)
+            }
+            noteTakeoverEvent(.chromaGlowSessionUsable, bridgeID: bridgeID, configID: config.id)
+
             // Deliberately NOT installed into studioEntClients here. The
             // caller commits it once it has decided the start is going ahead,
             // so a conflict discovered on the way out costs nothing.
             //
-            // The takeover has now actually produced a session, so the token is
-            // spent. Spending it earlier would reject the very replay it was
-            // issued for; spending it later would let a replay start twice.
+            // The takeover has now actually produced a VERIFIED session, so the
+            // token is spent. Spending it earlier would reject the very replay
+            // it was issued for; spending it later would let a replay start
+            // twice; spending it on an unverified start would burn the user's
+            // consent on nothing.
             if let consent { consumeEntertainmentConsent(consent) }
             return .started(entClient)
         } catch {
             debugLog("[Studio] Entertainment start failed: \(error.localizedDescription) — falling back to REST")
+            noteTakeoverEvent(.chromaGlowStartRequestFailed, bridgeID: bridgeID, configID: config.id)
             return .unavailable(reason: .streamingFailed)
         }
     }
+
+    /// One of our streaming engines just stopped looping. If the session died
+    /// rather than being cancelled, stop claiming it is playing.
+    ///
+    /// The composition path has always failed over here; the three Studio
+    /// engines had no equivalent, so when the official Hue app reacquired the
+    /// area their loops kept writing into a dead socket while Now Playing, the
+    /// AREA badge and `studioOwningEntertainment` all went on reporting a live
+    /// ChromaGlow stream. That is the "Take Over looked like it worked and then
+    /// Hue took it straight back" symptom, seen from the inside.
+    ///
+    /// Deliberately narrow: it corrects what the app CLAIMS. It does not
+    /// re-acquire, re-prompt, or arbitrate — that is Phase 2's job.
+    private func reconcileStudioSessionAfterLoop(
+        entClient: HueEntertainmentClient,
+        bridgeID: String?,
+        roomID: String
+    ) async {
+        guard await entClient.isTerminallyFailed, let bridgeID else { return }
+        // Only if this exact client is still the installed owner. A loop that
+        // ends after its session was already replaced must not tear down its
+        // successor.
+        guard studioEntClients[bridgeID] === entClient else { return }
+
+        debugLog("[Takeover] Studio session on \(bridgeID) was lost — correcting the UI rather than claiming it still streams")
+        noteTakeoverEvent(.sessionLostAfterOwnership, bridgeID: bridgeID,
+                          configID: studioEntOwnerByBridge[bridgeID]?.configID)
+
+        studioEntClients.removeValue(forKey: bridgeID)
+        studioEntOwnerByBridge.removeValue(forKey: bridgeID)
+        await entClient.stopSession()
+
+        // The look is no longer streaming, so the row must stop saying it is.
+        removeActiveEffect(roomID: roomID)
+        noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+        toastMessage = EntertainmentConsentCopy.controllerResumed
+    }
+
+    // MARK: - Takeover instrumentation (hardware convergence slice A)
+    //
+    // Brian's device pass could tell that Take Over did not work, but not WHY:
+    // the exact stop may have failed, the stop may have succeeded and Hue
+    // reacquired, our own start may have failed, or ownership may simply have
+    // been published too early. Those four have different fixes and the app
+    // emitted nothing that separated them.
+    //
+    // Only observable facts are recorded. CLIP v2 does not name the controller
+    // holding a configuration, so nothing here invents a foreign owner — the
+    // vocabulary is limited to configuration activity, our own session state,
+    // and the order the transitions were seen in.
+
+    enum TakeoverEvent: String {
+        case foreignStopRequestFailed
+        case foreignConfigurationRemainedActive
+        case foreignConfigurationStopped
+        /// The SAME configuration went inactive and came back before we
+        /// committed. Hue Sync reclaiming what it just lost is the ordinary
+        /// case, not the exotic one.
+        case foreignConfigurationReacquiredSameConfig
+        /// A DIFFERENT configuration became active before we committed.
+        case foreignConfigurationReacquiredOtherConfig
+        case chromaGlowStartRequestFailed
+        case chromaGlowSessionNotUsable
+        case chromaGlowSessionUsable
+        case ownershipPublished
+        case sessionLostAfterOwnership
+        case nowPlayingWithheld
+    }
+
+    func noteTakeoverEvent(_ event: TakeoverEvent, bridgeID: String, configID: String?) {
+        let target = configID.map { " config \($0)" } ?? ""
+        debugLog("[Takeover] \(event.rawValue) — bridge \(bridgeID)\(target)")
+        #if DEBUG
+        takeoverEventLog.append(event)
+        #endif
+    }
+
+    #if DEBUG
+    /// Ordered, in-process record of the takeover transitions above. Lets a
+    /// test assert WHICH failure happened, not merely that one did.
+    private(set) var takeoverEventLog: [TakeoverEvent] = []
+    func testResetTakeoverEventLog() { takeoverEventLog.removeAll() }
+    #endif
 
     /// What the choke point decided about a foreign owner.
     private enum ForeignConflictVerdict {
@@ -6912,6 +7041,10 @@ final class UnifiedOrchestrator {
         let frameInterval: UInt64 = 20_000_000  // 20ms = 50fps
 
         while !Task.isCancelled {
+            // The session can die under us — the official Hue app reclaiming
+            // the area is the ordinary way. Without this the loop streamed
+            // into a dead socket forever while the UI kept claiming AREA.
+            if await entClient.isTerminallyFailed { break }
             let p = paramBox.values
             let speed       = p["speed"]          ?? 50
             let peakBri     = (p["brightness"]    ?? 100) / 100.0
@@ -7032,6 +7165,10 @@ final class UnifiedOrchestrator {
         var colorIndex = 0
 
         while !Task.isCancelled {
+            // The session can die under us — the official Hue app reclaiming
+            // the area is the ordinary way. Without this the loop streamed
+            // into a dead socket forever while the UI kept claiming AREA.
+            if await entClient.isTerminallyFailed { break }
             let p = paramBox.values
             let speed       = p["speed"]          ?? 60
             let peakBri     = (p["brightness"]    ?? 90) / 100.0
@@ -7168,6 +7305,10 @@ final class UnifiedOrchestrator {
         let ambientXY = (x: 0.1548, y: 0.1220)
 
         while !Task.isCancelled {
+            // The session can die under us — the official Hue app reclaiming
+            // the area is the ordinary way. Without this the loop streamed
+            // into a dead socket forever while the UI kept claiming AREA.
+            if await entClient.isTerminallyFailed { break }
             let p = paramBox.values
             let frequency      = (p["frequency"]       ?? 50) / 100.0  // 0–1
             let flashIntensity = (p["flash_intensity"]  ?? 90) / 100.0
@@ -8063,6 +8204,10 @@ enum EntertainmentConsentCopy {
     static let takeOver      = "Take Over"
     static let takeoverFailed = "Couldn't take over these lights. The other app is still in control."
     static let bridgeUnreadable = "Couldn't reach your bridge, so nothing was changed."
+    /// The session was ours and then it wasn't. Says what the user can see —
+    /// their lights answering to something else — without naming an app the
+    /// bridge never identified.
+    static let controllerResumed = "Another app is controlling these lights again."
 }
 
 /// User-facing copy for ChromaGlow's own looks trading places on a bridge.
@@ -8537,6 +8682,22 @@ extension UnifiedOrchestrator {
         foreignConfigID: String
     ) async -> ForeignTakeoverResolution {
         let bridgeID = plan.bridgeID
+
+        // 1. Spend the REQUEST token before the first await.
+        //
+        // Its own ledger, deliberately — a third one. `consumedEntertainmentConsents`
+        // is spent much later, when a session actually opens, which is correct
+        // for what it guards but useless here: this method suspends several
+        // times before reaching it, so two confirmations in flight together
+        // would both sail past and both send a stop, the second landing on
+        // whatever started in between. Sharing a set with the Studio handoff
+        // would let one kind of answer spend the other's token.
+        guard !consumedForeignTakeoverRequests.contains(requestID) else {
+            debugLog("[Handoff] Foreign takeover \(requestID) was already acted on — refusing to replay it")
+            return .failed(message: EntertainmentConsentCopy.takeoverFailed)
+        }
+        consumedForeignTakeoverRequests.insert(requestID)
+
         guard let client = clients[bridgeID] else {
             return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
         }
@@ -8582,8 +8743,52 @@ extension UnifiedOrchestrator {
         } catch {
             // Never claim a takeover that did not happen.
             debugLog("[Handoff] Takeover stop failed: \(error.localizedDescription)")
+            noteTakeoverEvent(.foreignStopRequestFailed, bridgeID: bridgeID, configID: foreignConfigID)
             return .failed(message: EntertainmentConsentCopy.takeoverFailed)
         }
+
+        // ── Verify the stop actually released the area ──────────────
+        //
+        // Sending a stop is not proof that stopping worked. The PUT returning
+        // 2xx says the bridge accepted the request, not that the other
+        // controller let go — and on hardware it frequently had not: Hue Sync
+        // stayed in control, or took the area straight back. Publishing
+        // ownership on the strength of the PUT is how ChromaGlow came to claim
+        // a takeover the user could see had not happened.
+        guard let after = await entertainmentActivity(onBridge: bridgeID) else {
+            // Unknown is not "released". Refuse rather than start on top of a
+            // session we cannot see.
+            debugLog("[Handoff] Bridge unreadable immediately after the stop — claiming nothing")
+            return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+        }
+
+        if after.foreign.contains(foreignConfigID) {
+            // Two different situations share this shape, and both mean "start
+            // nothing": the stop never released it, or it released and the
+            // other controller reclaimed the SAME configuration before we could
+            // act. Either way the consent the user gave has been spent on an
+            // area somebody else still holds, and a fresh question is the only
+            // honest next step.
+            debugLog("[Handoff] \(foreignConfigID) is still active after its stop — starting nothing")
+            noteTakeoverEvent(.foreignConfigurationRemainedActive,
+                              bridgeID: bridgeID, configID: foreignConfigID)
+            noteTakeoverEvent(.foreignConfigurationReacquiredSameConfig,
+                              bridgeID: bridgeID, configID: foreignConfigID)
+            return .changedOwner(after)
+        }
+
+        noteTakeoverEvent(.foreignConfigurationStopped, bridgeID: bridgeID, configID: foreignConfigID)
+
+        // A DIFFERENT controller arrived in the gap. The user agreed to replace
+        // one specific session; this is not that session, and old consent may
+        // not reach it.
+        if !after.foreign.isEmpty {
+            debugLog("[Handoff] A different session claimed \(bridgeID) after the stop — old consent stops nothing")
+            noteTakeoverEvent(.foreignConfigurationReacquiredOtherConfig,
+                              bridgeID: bridgeID, configID: after.foreign.first)
+            return .changedOwner(after)
+        }
+
         return .resolved(consent)
     }
 

@@ -453,6 +453,21 @@ actor HueEntertainmentClient {
         reconnectAttempts = 0
     }
 
+    /// Did this session actually reach a usable streaming state?
+    ///
+    /// `startSession` returning is not proof on its own — it means the REST
+    /// activate was accepted and the DTLS handshake reported ready, which is
+    /// two of the three things that have to be true. This is the third: the
+    /// actor committed `.streaming` and nothing has terminally failed it since.
+    ///
+    /// Creating a client is not streaming, and the hardware pass is what made
+    /// the difference matter: ChromaGlow reported a successful takeover while
+    /// Hue Sync was still visibly in control of the lights.
+    func hasStartedSession() -> Bool {
+        guard case .streaming = state else { return false }
+        return !isTerminallyFailed
+    }
+
     /// Stop the streaming session.
     /// 1. Close DTLS connection
     /// 2. PUT /entertainment_configuration/{id} action=stop via REST
@@ -622,8 +637,16 @@ actor HueEntertainmentClient {
                 switch newState {
                 case .ready:
                     guard gate.tryResume() else { return }
-                    Task { await self.setStreaming(conn) }
-                    continuation.resume()
+                    // The resume happens INSIDE the same task that commits the
+                    // streaming state, not beside it. Detached, the two raced:
+                    // `startSession` could return while `state` was still
+                    // `.connecting`, so "the call returned" was not evidence
+                    // that a session existed — and every caller was reading it
+                    // as exactly that before publishing ownership.
+                    Task {
+                        await self.setStreaming(conn)
+                        continuation.resume()
+                    }
 
                 case .failed(let error):
                     guard gate.tryResume() else { return }
@@ -718,6 +741,11 @@ actor HueEntertainmentClient {
     /// a DTLS socket so unit tests can exercise the terminal-failure teardown.
     func seedSessionForTesting(configID: String) {
         self.configID = configID
+        // A seeded session stands in for one that really opened, so it has to
+        // satisfy the same "did this reach a usable state?" question the
+        // production start path now asks. Leaving it `.disconnected` would make
+        // every seeded owner look like a failed start.
+        state = .streaming
         ownership.registerProcess(bridgeID: bridgeID, configID: configID)
         ownership.recordPersisted(bridgeID: bridgeID, configID: configID)
     }

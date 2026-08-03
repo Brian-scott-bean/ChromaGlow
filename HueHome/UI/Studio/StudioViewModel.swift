@@ -2070,7 +2070,14 @@ final class StudioViewModel {
                                   hadConsent: foreignConsent != nil) {
                 return
             }
-            let isEnt = orchestrator.studioEntClients[room.bridgeID ?? ""] != nil
+            // The transport the start ACTUALLY used, from the outcome itself.
+            //
+            // This used to peek at `studioEntClients` and infer streaming from
+            // a client being installed. A client installed is not a session
+            // streaming — that inference is precisely what let ChromaGlow show
+            // AREA while Hue Sync still owned the lights. The outcome is the
+            // only value that knows which branch ran.
+            let isEnt = outcome.startedStreaming
             runningEffects[room.id] = RunningEffect(
                 cardID: card.id, card: card, room: room,
                 lightIDs: newLightIDs, isEntertainment: isEnt,
@@ -2165,7 +2172,9 @@ final class StudioViewModel {
                                       hadConsent: foreignConsent != nil) {
                     return
                 }
-                let isEnt = orchestrator.studioEntClients[room.bridgeID ?? ""] != nil
+                // Same rule as the app-driven arm above: the transport comes
+                // from what the start returned, never from a registry peek.
+                let isEnt = outcome.startedStreaming
                 runningEffects[room.id] = RunningEffect(
                     cardID: card.id, card: card, room: room,
                     lightIDs: newLightIDs, isEntertainment: isEnt,

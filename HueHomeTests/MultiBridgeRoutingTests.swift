@@ -8582,4 +8582,260 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"])
         XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id])
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Hardware convergence B: verified takeover
+    // ──────────────────────────────────────────────
+    //
+    // On hardware, Take Over was tapped, the stop was sent, and Hue Sync
+    // either stayed in control or reclaimed the area immediately — while
+    // ChromaGlow reported success. The pending look only appeared once Hue
+    // Sync was manually disabled.
+    //
+    // The cause was that a 2xx on the stop PUT was treated as proof the other
+    // controller had let go, and `startSession` returning was treated as proof
+    // a session existed. Neither is true. These pin the verification, and pin
+    // WHICH failure is reported, so the next device pass can tell the four
+    // candidate causes apart instead of guessing.
+
+    /// Raise a real foreign-takeover prompt on bridge B and hand it back.
+    private func stagedForeignPrompt(_ vm: StudioViewModel) async throws
+        -> StudioViewModel.ForeignTakeoverRequest {
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        return try XCTUnwrap(vm.foreignTakeoverRequest,
+            "precondition: a third party holds the bridge, so the prompt must be up")
+    }
+
+    /// HCT-01 — a stop the bridge accepted but that did NOT release the area
+    /// starts nothing. This is the exact hardware symptom.
+    func testAStopThatDidNotReleaseTheAreaStartsNothingAndClaimsNothing() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        _ = try await stagedForeignPrompt(vm)
+        orchestrator.testResetTakeoverEventLog()
+
+        // The PUT succeeds — and the configuration stays active anyway, which
+        // is precisely what Hue Sync did on the device.
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(foreignStops(bridgeB, "cfg-someone-else"), ["cfg-someone-else"],
+            "the consented stop was still sent exactly once")
+        XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
+            "but nothing of ours was started on top of a session that never let go")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+            "and no Now Playing row claims a look that is not streaming")
+        XCTAssertTrue(orchestrator.takeoverEventLog.contains(.foreignConfigurationRemainedActive),
+            "the instrumentation names WHICH failure this was: \(orchestrator.takeoverEventLog)")
+        XCTAssertFalse(orchestrator.takeoverEventLog.contains(.ownershipPublished))
+    }
+
+    /// HCT-02 — the same configuration reacquired after a verified stop is a
+    /// NEW conflict. Hue Sync reclaiming what it just lost is the ordinary
+    /// case, not the exotic one, and old consent may not authorise it.
+    func testTheSameConfigurationComingBackAfterTheStopRequiresFreshConsent() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let first = try await stagedForeignPrompt(vm)
+
+        // Stop lands, the area goes quiet — and the other controller takes the
+        // very same configuration straight back.
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: ["cfg-someone-else"])
+        }
+        await vm.confirmForeignTakeover()
+
+        XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
+            "we do not start over a session that came back")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id], "and publish no false ownership")
+        let second = try XCTUnwrap(vm.foreignTakeoverRequest,
+            "the honest next step is to ask again, not to fail silently")
+        XCTAssertNotEqual(second.id, first.id,
+            "with a FRESH request id — the old consent was spent and does not reach this session")
+    }
+
+    /// HCT-03 — a DIFFERENT controller arriving in the gap is also a new
+    /// conflict, and the old consent stops nothing.
+    func testADifferentConfigurationArrivingAfterTheStopStopsNothingMore() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        _ = try await stagedForeignPrompt(vm)
+
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: ["cfg-a-third-party"])
+        }
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(foreignStops(bridgeB, "cfg-a-third-party"), [],
+            "the newcomer was never named by any consent, so it is never stopped")
+        XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty)
+        XCTAssertNotNil(vm.foreignTakeoverRequest, "ask about the session that is actually there")
+    }
+
+    /// HCT-04 — a verified release is followed by exactly one start attempt,
+    /// in that order.
+    ///
+    /// Note what this test can and cannot prove. The harness pairs bridge B
+    /// with a deliberately non-hex client key, so `decodePSK` refuses before a
+    /// socket is ever opened — no DTLS handshake can succeed in the simulator,
+    /// on any run. A genuinely STABLE takeover is therefore hardware-only, and
+    /// is listed as such. What is provable here is the ordering and the
+    /// arithmetic of the attempt, which is where the defect actually lived.
+    func testAVerifiedReleaseIsFollowedByExactlyOneStartAttemptInOrder() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        _ = try await stagedForeignPrompt(vm)
+        orchestrator.testResetTakeoverEventLog()
+
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(foreignStops(bridgeB, "cfg-someone-else"), ["cfg-someone-else"],
+            "the consented session, stopped exactly once")
+        XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"],
+            "then one start attempt, on the area the request named")
+
+        let log = orchestrator.takeoverEventLog
+        XCTAssertTrue(log.contains(.foreignConfigurationStopped),
+            "the release was OBSERVED, not inferred from the PUT returning: \(log)")
+        XCTAssertLessThan(
+            log.firstIndex(of: .foreignConfigurationStopped) ?? .max,
+            log.firstIndex(of: .chromaGlowStartRequestFailed) ?? .max,
+            "and it was observed BEFORE we tried to start — verify, then act")
+    }
+
+    /// HCT-05 — the transport truth, which is the other half of the hardware
+    /// symptom: ChromaGlow said it was streaming when it was not.
+    ///
+    /// The simulator cannot complete a DTLS handshake, so this start really
+    /// does fail to reach a usable state — which makes it the exact case that
+    /// must never be published as streaming.
+    func testASessionThatNeverBecameUsableIsNeverLabelledStreaming() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        _ = try await stagedForeignPrompt(vm)
+        orchestrator.testResetTakeoverEventLog()
+
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.isEntertainment, false,
+            "the badge follows the transport the START RETURNED — a client that was created "
+            + "but never reached a usable state is not a stream")
+        XCTAssertNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-b"),
+            "and no Entertainment ownership is recorded for a session that did not open")
+        XCTAssertFalse(orchestrator.takeoverEventLog.contains(.chromaGlowSessionUsable),
+            "nothing claimed usability: \(orchestrator.takeoverEventLog)")
+    }
+
+    /// HCT-06 — one Take Over tap authorises at most one stop, even if the
+    /// confirmation is replayed while it is still in flight.
+    func testAReplayedConfirmationCannotSendASecondStop() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let request = try await stagedForeignPrompt(vm)
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+
+        // Straight at the orchestrator with the SAME request id — the shape a
+        // double confirmation takes once the VM slot has already been cleared.
+        _ = await orchestrator.resolveForeignTakeover(
+            requestID: request.id, plan: request.plan,
+            room: streamRoomOnB(), foreignConfigID: request.foreignConfigID)
+        let replay = await orchestrator.resolveForeignTakeover(
+            requestID: request.id, plan: request.plan,
+            room: streamRoomOnB(), foreignConfigID: request.foreignConfigID)
+
+        XCTAssertEqual(foreignStops(bridgeB, "cfg-someone-else"), ["cfg-someone-else"],
+            "the request ledger is spent before the first await, so the replay stops nothing")
+        guard case .failed = replay else {
+            return XCTFail("a spent request may not resolve again; got \(replay)")
+        }
+    }
+
+    /// HCT-07 — the three ledgers stay disjoint. A "Take Over" tapped once may
+    /// not satisfy a "Switch" that was never asked.
+    func testTheForeignTakeoverRequestLedgerIsItsOwn() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let request = try await stagedForeignPrompt(vm)
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+
+        _ = await orchestrator.resolveForeignTakeover(
+            requestID: request.id, plan: request.plan,
+            room: streamRoomOnB(), foreignConfigID: request.foreignConfigID)
+
+        XCTAssertTrue(orchestrator.consumedForeignTakeoverRequests.contains(request.id),
+            "the request token is spent in its own ledger")
+        XCTAssertFalse(orchestrator.consumedStudioHandoffRequests.contains(request.id),
+            "and never in the Studio-handoff ledger — one answer, one question")
+    }
+
+    /// HCT-08 — Keep Existing is one request only. It must not become a
+    /// standing refusal that quietly blocks the next attempt.
+    func testKeepExistingDoesNotBlockALaterTakeOver() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let first = try await stagedForeignPrompt(vm)
+        let writesBefore = writeSnapshot(bridgeB)
+
+        vm.cancelForeignTakeover()
+        XCTAssertEqual(writeSnapshot(bridgeB), writesBefore, "Keep Existing mutates nothing at all")
+        XCTAssertTrue(orchestrator.consumedForeignTakeoverRequests.isEmpty,
+            "and spends no token — declining is not acting")
+
+        // The user tries again. The prompt must come back, and must work.
+        let second = try await stagedForeignPrompt(vm)
+        XCTAssertNotEqual(second.id, first.id, "a fresh question, not the stale one")
+
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"],
+            "Take Over is fully reachable after a Keep Existing")
+        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    /// HCT-09 — the other bridge is untouched throughout a takeover.
+    func testATakeoverNeverReachesTheOtherBridge() async throws {
+        stageStreamableBridge(bridgeA)
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        _ = try await stagedForeignPrompt(vm)
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+
+        await vm.confirmForeignTakeover()
+
+        XCTAssertTrue(bridgeA.entertainmentActions.isEmpty,
+            "bridge A was never started, stopped, or otherwise addressed")
+    }
+
+    /// HCT-10 — an explicit Streaming request that cannot stream refuses. It
+    /// does NOT quietly become Room mode underneath the other app's show.
+    func testAFailedTakeoverNeverFallsBackToRoomModeSilently() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        _ = try await stagedForeignPrompt(vm)
+
+        await vm.confirmForeignTakeover()   // stop lands, area stays active
+
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+            "no Room-mode consolation prize — the user asked to stream")
+        XCTAssertTrue(bridgeB.groupedEffectIDs.isEmpty,
+            "and no REST writes landed underneath the session that is still running")
+        XCTAssertNotNil(vm.studioNotice ?? vm.foreignTakeoverRequest.map { _ in
+            StudioViewModel.StudioNotice(message: "asked again") },
+            "the refusal is visible — either explained or re-asked")
+    }
 }
