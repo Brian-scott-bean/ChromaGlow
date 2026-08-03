@@ -78,7 +78,13 @@ private final class AnimationSpyV1Client: HueV1Client, @unchecked Sendable {
         name: String, description: String, links: [String]
     ) async throws -> String { "88" }
 
-    override func setSensorStatus(id: String, status: Int) async throws {}
+    /// Recorded, because "did anything START?" is now a question the tests ask.
+    /// Setting the sensor to 0 is the exact moment the user's lights begin
+    /// moving, so its presence or absence is the whole durable-before-running
+    /// guarantee.
+    override func setSensorStatus(id: String, status: Int) async throws {
+        lock.lock(); _creations.append("sensorStatus:\(id):\(status)"); lock.unlock()
+    }
 }
 
 // MARK: - Tests
@@ -918,5 +924,112 @@ final class BridgeAnimationPacket8Tests: XCTestCase {
         XCTAssertEqual(result, .removed)
         XCTAssertEqual(spy.attempted, ["sensor:S1"])
         XCTAssertTrue(spy.fetchCalls.isEmpty)
+    }
+
+    // ── Durable before running (hardware convergence slice C) ───────────
+    //
+    // On hardware, effects were seen still running after a force-close with no
+    // recovered row and no Stop anywhere. `upload` used to start the chain
+    // itself, BEFORE returning the manifest its caller persists — so there was
+    // a real window in which resources were running on the bridge with nothing
+    // on disk naming them. Anything that can run must first be nameable.
+
+    /// HCP-01 — uploading creates resources but starts nothing.
+    func testUploadDoesNotStartTheChainItCreates() async throws {
+        let spy = AnimationSpyV1Client(ip: "192.0.2.1", token: "t")
+
+        _ = try? await BridgeAnimationEngine().upload(
+            preset: makeBridgePreset(), room: makeBridgeRoom(),
+            lightIDs: ["L1"], v2Lights: [], gamut: .c, v1Client: spy)
+
+        XCTAssertFalse(spy.creations.contains { $0.hasPrefix("sensorStatus:") },
+            "upload must not fire the sensor — that is the moment the lights start moving, "
+            + "and it may not happen before the manifest is durable: \(spy.creations)")
+    }
+
+    /// HCP-02 — activation is a separate, explicit step.
+    func testActivateIsWhatStartsTheChain() async throws {
+        let spy = AnimationSpyV1Client(ip: "192.0.2.1", token: "t")
+        let m = manifest()
+
+        try await BridgeAnimationEngine().activate(manifest: m, v1Client: spy)
+
+        XCTAssertTrue(spy.creations.contains("sensorStatus:S1:0"),
+            "activate sets exactly this manifest's sensor to 0: \(spy.creations)")
+    }
+
+    // ── Purge reports what it proved (hardware convergence slice C) ─────
+
+    private func report(
+        schedules: Set<String> = [], rules: Set<String> = [],
+        sensors: Set<String> = [], scenes: Set<String> = [],
+        failed: Int = 0, unreadable: [String] = []
+    ) -> BridgeAnimationEngine.PurgeReport {
+        var r = BridgeAnimationEngine.PurgeReport()
+        r.deletedSchedules = schedules; r.deletedRules = rules
+        r.deletedSensors = sensors; r.deletedScenes = scenes
+        r.failedDeletes = failed; r.unreadableCategories = unreadable
+        return r
+    }
+
+    /// HCP-03 — every named resource confirmed gone proves removal.
+    func testAManifestIsProvenRemovedOnlyWhenEveryNamedResourceWasDeleted() {
+        let m = manifest(sceneIDs: ["SC-a"])
+        let complete = report(schedules: ["SC1"], rules: ["R1", "R2"],
+                              sensors: ["S1"], scenes: ["SC-a"])
+
+        XCTAssertTrue(complete.provesFullyRemoved(m))
+    }
+
+    /// HCP-04 — one surviving rule is enough to keep the manifest.
+    ///
+    /// The manifest is the ONLY record that could stop what remains, so
+    /// anything short of proof retains it. Forgetting on partial evidence is
+    /// exactly how an unstoppable resource set is created.
+    func testAPartiallyDeletedManifestIsNotProvenRemoved() {
+        let m = manifest()
+        XCTAssertFalse(report(schedules: ["SC1"], rules: ["R1"], sensors: ["S1"])
+            .provesFullyRemoved(m), "R2 was never confirmed deleted")
+        XCTAssertFalse(report(rules: ["R1", "R2"], sensors: ["S1"])
+            .provesFullyRemoved(m), "the schedule was never confirmed deleted")
+        XCTAssertFalse(report(schedules: ["SC1"], rules: ["R1", "R2"])
+            .provesFullyRemoved(m), "the sensor was never confirmed deleted")
+    }
+
+    /// HCP-05 — a resourcelink is non-critical at creation, so it is not
+    /// required as proof at teardown either.
+    func testAnUndeletedResourcelinkDoesNotBlockProofOfRemoval() {
+        XCTAssertTrue(
+            report(schedules: ["SC1"], rules: ["R1", "R2"], sensors: ["S1"])
+                .provesFullyRemoved(manifest(resourcelinkID: "L1")),
+            "the link is decoration; the chain that drives the lights is gone")
+    }
+
+    /// HCP-06 — an incomplete sweep never reports itself as complete.
+    func testAPurgeIsCompleteOnlyWhenEveryCategoryWasReadableAndEveryDeleteLanded() {
+        XCTAssertTrue(report(sensors: ["S1"]).isComplete)
+        XCTAssertFalse(report(sensors: ["S1"], failed: 1).isComplete,
+            "a refused delete means something may remain")
+        XCTAssertFalse(report(sensors: ["S1"], unreadable: ["scenes"]).isComplete,
+            "a category we could not list is unknown, not empty")
+    }
+
+    private func makeBridgePreset() -> CompositionPreset {
+        CompositionPreset(
+            id: UUID(), name: "Sunset Drift", icon: "sun.max", accentColorHex: "#FFB340",
+            isBuiltIn: false, category: .myCreations, seasonMonths: nil,
+            palette: PaletteConfig(), motion: MotionConfig(),
+            envelope: EnvelopeConfig(), reaction: ReactionConfig(),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            preferredTransport: nil)
+    }
+
+    private func makeBridgeRoom() -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .room, id: "room-1", name: "Living Room", archetype: nil,
+            isOn: true, brightness: 50, groupedLightID: "gl-1", lightCount: 1,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "L1", rtype: "light")])
     }
 }

@@ -3854,7 +3854,7 @@ final class UnifiedOrchestrator {
                 case .notRunning(let residue) where residue.isEmpty:
                     // The bridge PROVED every named resource is absent.
                     guard stillCurrent(manifest) else { complete = false; continue }
-                    bridgeAnimationStore.remove(id: manifest.id)
+                    forgetManifestRecord(id: manifest.id)
                     decided[key] = .some(nil)
 
                 case .notRunning(let residue):
@@ -4189,7 +4189,7 @@ final class UnifiedOrchestrator {
                 debugLog("[Composer] Manifest \(manifest.id) changed during cleanup — leaving the newer record alone")
                 return false
             }
-            bridgeAnimationStore.remove(id: manifest.id)
+            forgetManifestRecord(id: manifest.id)
             forgetRecoveredBridgeAnimation(manifestID: manifest.id)
             return true
         }
@@ -5069,11 +5069,44 @@ final class UnifiedOrchestrator {
                     gamut: compositionGamut,
                     v1Client: v1Client
                 )
+                // ── Durable BEFORE running ────────────────────────
+                //
                 // Stamp the stable bridge identity here, where it is exact. The
                 // engine only ever sees a client, which knows its host but not
                 // which BridgeRecord it is — and an IP alone strands the
                 // manifest the moment DHCP moves the bridge.
-                bridgeAnimationStore.save(manifest.adoptingBridgeID(bridgeID))
+                let owned = manifest.adoptingBridgeID(bridgeID)
+
+                // The manifest is the only thing that can name these resources
+                // later, so it goes to disk before they are allowed to run. A
+                // write that failed used to be indistinguishable from one that
+                // worked, and the animation started regardless — which is how a
+                // bridge ends up running a look the app cannot see or stop.
+                guard bridgeAnimationStore.save(owned) else {
+                    debugLog("[Composer] Manifest for '\(preset.name)' did not persist — removing the resources it named")
+                    let cleanup = await bridgeAnimationEngine.stop(manifest: owned, v1Client: v1Client)
+                    forgetManifestRecord(id: owned.id)
+                    deactivateComposerTelemetrySession(
+                        sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                    return .failed(message: cleanup == .removed
+                        ? BridgeSaveCopy.saveFailedNothingRecorded
+                        : BridgeSaveCopy.saveFailedResourcesRemain)
+                }
+
+                // Only now may it start.
+                do {
+                    try await bridgeAnimationEngine.activate(manifest: owned, v1Client: v1Client)
+                } catch {
+                    // The resources exist AND are tracked, but nothing is
+                    // running. Keep the manifest — it is the exact evidence
+                    // that makes them stoppable and recoverable — and say so
+                    // rather than claiming the look is playing.
+                    debugLog("[Composer] '\(preset.name)' persisted but did not start: \(error.localizedDescription)")
+                    compositionTransportByRoom[roomID] = .bridgeStored
+                    noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
+                    return .failed(message: BridgeSaveCopy.savedNotConfirmedRunning)
+                }
+
                 compositionTransportByRoom[roomID] = .bridgeStored
                 noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
                 debugLog("[Composer] ⚡ Bridge-stored animation active! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s/step")
@@ -7555,6 +7588,53 @@ final class UnifiedOrchestrator {
         clients[bridgeID]?.bridgeName
     }
 
+    /// The ONE place a manifest record is dropped from the store.
+    ///
+    /// Packet 8's rule is that manifest evidence may only ever be destroyed
+    /// through an exact-identity funnel, because a manifest is the sole record
+    /// that can stop what it names. Every caller has already earned the right
+    /// to forget — proved absence, a confirmed teardown, a purge report, or a
+    /// write that never landed — and this keeps that right expressed in one
+    /// place rather than scattered across four.
+    private func forgetManifestRecord(id: UUID) {
+        bridgeAnimationStore.remove(id: id)
+    }
+
+    /// Every bridge this app can actually reach, in stable id order.
+    var registeredBridgeIDs: [String] { clients.keys.sorted() }
+
+    /// After a bridge sweep, forget only the manifests it PROVED it removed.
+    ///
+    /// The purge used to leave every manifest on disk, so the next
+    /// reconciliation pass found their resources absent and pruned them as a
+    /// side effect. Doing it here, from proof, keeps the ownership store honest
+    /// at the moment of the deletion — and, more importantly, keeps the
+    /// manifests whose resources may still exist. A refused delete or an
+    /// unreadable category means something might still be running, and the
+    /// manifest is the only thing that could ever stop it.
+    ///
+    /// Bridge-exact by construction: manifests are selected by resolved bridge
+    /// id, so a sweep on one bridge can never forget another's records.
+    @discardableResult
+    func forgetManifestsProvenRemoved(
+        by report: BridgeAnimationEngine.PurgeReport,
+        onBridge bridgeID: String
+    ) -> Int {
+        var forgotten = 0
+        for manifest in bridgeAnimationStore.allManifests() {
+            guard resolvedBridgeID(for: manifest) == bridgeID else { continue }
+            guard report.provesFullyRemoved(manifest) else {
+                debugLog("[Settings] Retaining manifest \(manifest.id) — its resources were not proven removed")
+                continue
+            }
+            forgetManifestRecord(id: manifest.id)
+            forgetRecoveredBridgeAnimation(
+                RecoveredBridgeAnimationKey(bridgeID: bridgeID, manifestID: manifest.id))
+            forgotten += 1
+        }
+        return forgotten
+    }
+
     /// A bridge label that is always safe to show a person.
     ///
     /// Never falls back to the IP. An address identifies a route, not a box on
@@ -8268,6 +8348,39 @@ enum EntertainmentAreaChoiceCopy {
     }
     static let staleSelection =
         "That Entertainment Area isn't available for this room any more, so nothing was changed."
+}
+
+/// User-facing copy for saving a look onto the bridge.
+///
+/// Four outcomes, kept distinct because they oblige the user to do four
+/// different things. On hardware, effects were seen still running after a
+/// force-close with no recovered row and no Stop anywhere — the app had no
+/// vocabulary for "this is on the bridge now" versus "this stops when you
+/// close me", so the user could not tell which state they were in.
+///
+/// No manifest ids, no resource ids, no REST or DTLS. A person who saved a
+/// look wants to know where it lives and how to stop it.
+enum BridgeSaveCopy {
+    static let savedAndRunning = TransportVocabulary.bridgeRunTruth
+    /// Resources exist and are tracked, but the chain did not start. NOT a
+    /// success: claiming "running" here would send the user looking for lights
+    /// that are not moving.
+    static let savedNotConfirmedRunning =
+        "Saved to your bridge, but it isn't confirmed running. You can stop it from the room's Now Playing row."
+    static let saveFailedNothingRecorded =
+        "Couldn't save that look to your bridge. Nothing was left behind."
+    /// The honest worst case: creation partly succeeded and cleanup did not
+    /// finish. Naming it is what makes it recoverable — silence here is what
+    /// produces a resource set the user cannot find.
+    static let saveFailedResourcesRemain =
+        "Couldn't finish saving that look, and some of it may still be on your bridge. Use Clean Bridge Resources in Settings."
+    /// A native Hue dynamic scene. Genuinely bridge-run — and genuinely NOT
+    /// something ChromaGlow can stop, because no ownership manifest exists for
+    /// it. Promising a Stop we cannot deliver is worse than saying so.
+    static let savedAsSceneNotStoppable =
+        "Saved to your bridge as a scene. It keeps playing with the app closed — start or stop it from Scenes, or in the Hue app."
+    static let noLocalPreset =
+        "This lives on your bridge only — no copy was added to My Creations."
 }
 
 /// Safety refusals shared between Studio and Perform.

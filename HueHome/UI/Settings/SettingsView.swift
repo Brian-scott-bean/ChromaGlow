@@ -28,6 +28,7 @@ struct SettingsView: View {
     @State private var showForgetAlert = false
     @State private var isCleaningBridge = false
     @State private var cleanBridgeResult: String? = nil
+    @State private var showCleanBridgeConfirm = false
 
     private let glowColor = Color(red: 1.0, green: 0.76, blue: 0.2)
 
@@ -286,8 +287,14 @@ struct SettingsView: View {
             Divider().background(Color.white.opacity(0.08))
 
             // ── Clean Bridge Resources ───────────────────────────────
+            //
+            // Confirm first, and name the exact bridge. This sweeps every
+            // ChromaGlow-created resource on that one bridge — including other
+            // rooms' saved looks that are currently running — so a single
+            // unguarded tap was too much power for a row whose subtitle said
+            // only "tidy up".
             Button {
-                Task { await cleanBridgeResources() }
+                showCleanBridgeConfirm = true
             } label: {
                 HStack(spacing: 12) {
                     iconCircle("trash.circle", color: Color(red: 1.0, green: 0.55, blue: 0.25))
@@ -309,6 +316,18 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .disabled(isCleaningBridge || orchestrator.isDemoMode)
             .opacity(orchestrator.isDemoMode ? 0.4 : 1.0)
+            .confirmationDialog(
+                "Clean \(orchestrator.bridgeLabel(for: cleanBridgeTargetID ?? ""))?",
+                isPresented: $showCleanBridgeConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Remove ChromaGlow Data", role: .destructive) {
+                    Task { await cleanBridgeResources() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes every look ChromaGlow saved to this bridge, including any that are running right now in other rooms. Looks on your other bridges aren't touched.")
+            }
         }
     }
 
@@ -541,23 +560,65 @@ struct SettingsView: View {
                      : String(raw.prefix(6)) + "••••••" + String(raw.suffix(4))
     }
 
+    /// The bridge this action will actually affect.
+    ///
+    /// Resolved from the registry, not from `HueAPIClient.shared`. The shared
+    /// client is whichever one happened to be configured last, which on a
+    /// two-bridge home is not necessarily the one the user is looking at — and
+    /// a destructive sweep that cannot name its target must not run at all.
+    private var cleanBridgeTargetID: String? {
+        orchestrator.registeredBridgeIDs.first
+    }
+
     @MainActor
     private func cleanBridgeResources() async {
         isCleaningBridge = true
         cleanBridgeResult = nil
         defer { isCleaningBridge = false }
 
+        // Fail closed on an unresolvable target. "Which bridge?" has to have an
+        // answer before anything is deleted.
+        guard let bridgeID = cleanBridgeTargetID,
+              let api = orchestrator.hueClient(for: bridgeID) else {
+            cleanBridgeResult = "✗ Couldn't tell which bridge to clean — nothing was removed"
+            return
+        }
+        let label = orchestrator.bridgeLabel(for: bridgeID)
+
         do {
-            let api = HueAPIClient.shared
             let v1Client = try api.makeV1Client()
             let engine = BridgeAnimationEngine()
-            await engine.purgeAllChromaGlowResources(v1Client: v1Client)
-            cleanBridgeResult = "✓ Cleaned successfully"
+            let report = await engine.purgeAllChromaGlowResources(v1Client: v1Client)
 
-            // Auto-clear the success message after a few seconds
-            Task {
-                try? await Task.sleep(for: .seconds(4))
-                cleanBridgeResult = nil
+            // Forget ONLY the manifests whose resources are provably gone.
+            // A manifest for something that may still be running is the only
+            // record that could stop it later, so anything short of proof is
+            // retained — the same rule the reconciler follows for an
+            // unreadable bridge.
+            let removed = orchestrator.forgetManifestsProvenRemoved(by: report, onBridge: bridgeID)
+
+            if report.isComplete {
+                cleanBridgeResult = report.totalDeleted == 0
+                    ? "✓ Nothing left to clean on \(label)"
+                    : "✓ Removed \(report.totalDeleted) item\(report.totalDeleted == 1 ? "" : "s") from \(label)"
+            } else if report.failedDeletes > 0 {
+                cleanBridgeResult =
+                    "⚠ Removed \(report.totalDeleted) from \(label); \(report.failedDeletes) couldn't be removed"
+            } else {
+                // Something could not be listed, so its contents are unknown.
+                // Claiming "nothing was removed" would be as wrong as claiming
+                // success.
+                cleanBridgeResult =
+                    "⚠ Removed \(report.totalDeleted) from \(label); some items couldn't be checked"
+            }
+            _ = removed
+
+            // Auto-clear only a clean result. A warning stays until it is read.
+            if report.isComplete {
+                Task {
+                    try? await Task.sleep(for: .seconds(4))
+                    cleanBridgeResult = nil
+                }
             }
         } catch {
             cleanBridgeResult = "✗ \(error.localizedDescription)"

@@ -808,6 +808,62 @@ final class EntertainmentAreaSelectorTests: XCTestCase {
             "a selection that no longer names a candidate resolves to nothing — never to a substitute")
     }
 
+    /// HC-11 — the save vocabulary keeps four outcomes distinct, and none of
+    /// them leaks protocol words.
+    ///
+    /// The device pass found effects running after a force-close with no
+    /// recovered row and no Stop. The app knew which transport it had used; it
+    /// had no words for it. These are those words.
+    func testBridgeSaveCopyKeepsItsFourOutcomesDistinctAndJargonFree() {
+        let outcomes = [
+            BridgeSaveCopy.savedAndRunning,
+            BridgeSaveCopy.savedNotConfirmedRunning,
+            BridgeSaveCopy.saveFailedNothingRecorded,
+            BridgeSaveCopy.saveFailedResourcesRemain,
+            BridgeSaveCopy.savedAsSceneNotStoppable,
+        ]
+        XCTAssertEqual(Set(outcomes).count, outcomes.count,
+            "outcomes that oblige the user to do different things may not share a sentence")
+
+        // The one deliberate alias: "saved and running" IS the bridge-run
+        // sentence. One meaning, one literal, so the two surfaces cannot drift.
+        XCTAssertEqual(BridgeSaveCopy.savedAndRunning, TransportVocabulary.bridgeRunTruth,
+            "the save result and the transport badge must say the same thing")
+
+        let all = outcomes + [BridgeSaveCopy.noLocalPreset,
+                              TransportVocabulary.appDrivenTruth]
+
+        let jargon = ["manifest", "configuration ID", "entertainment_configuration",
+                      "REST", "DTLS", "resourcelink", "sensor", "UUID", "registry"]
+        for sentence in all {
+            for word in jargon {
+                XCTAssertFalse(sentence.lowercased().contains(word.lowercased()),
+                    "'\(word)' leaked into user-facing copy: \(sentence)")
+            }
+        }
+    }
+
+    /// HC-12 — the two transports are stated as opposites, and the one thing
+    /// the user most needs is in both: does closing the app stop the lights?
+    func testTheTwoTransportSentencesAnswerTheForceCloseQuestion() {
+        XCTAssertTrue(TransportVocabulary.appDrivenTruth.lowercased().contains("closes"),
+            "app-driven must say the lights stop when the app closes: \(TransportVocabulary.appDrivenTruth)")
+        XCTAssertTrue(TransportVocabulary.bridgeRunTruth.lowercased().contains("bridge"),
+            "bridge-run must name the bridge: \(TransportVocabulary.bridgeRunTruth)")
+        XCTAssertNotEqual(TransportVocabulary.appDrivenTruth, TransportVocabulary.bridgeRunTruth)
+    }
+
+    /// HC-13 — a Hue dynamic scene is bridge-run but NOT ChromaGlow-stoppable.
+    /// Promising a Stop we cannot deliver sends the user hunting for a control
+    /// that does not exist.
+    func testTheDynamicSceneSentenceNeverPromisesAChromaGlowStop() {
+        let copy = BridgeSaveCopy.savedAsSceneNotStoppable
+        XCTAssertTrue(copy.contains("Scenes"),
+            "it must say where the scene actually lives: \(copy)")
+        XCTAssertNotEqual(copy, BridgeSaveCopy.savedAndRunning,
+            "a scene and a manifest-backed look are not the same promise")
+    }
+
     /// HC-10 — a selection may not buy its way into another room.
     func testAnExplicitSelectionCannotNameAnAreaThatDoesNotTouchThisRoom() {
         XCTAssertEqual(

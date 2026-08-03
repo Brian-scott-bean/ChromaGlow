@@ -484,11 +484,15 @@ actor BridgeAnimationEngine {
             resourcelinkID = nil
         }
 
-        // ─── 10. Kick off the chain ───
-        // Sensor starts at 99, setting to 0 triggers dx + eq 0 → rule 0 fires → chain starts
-        try await v1Client.setSensorStatus(id: sensorID, status: 0)
-        log.info("[BridgeAnim] ⚡ Animation started! \(stepCount) steps, \(stepInterval)s each, \(cycleTotalSeconds)s cycle")
-
+        // ─── 10. Build the manifest — but do NOT start the chain ───
+        //
+        // The chain used to be kicked off right here, before this function had
+        // returned the manifest its caller persists. That left a real window in
+        // which resources were RUNNING on the bridge with nothing on disk
+        // naming them: one crash or one failed write and the user had lights
+        // animating that the app could neither show nor stop. Starting is now
+        // `activate(manifest:v1Client:)`, called only once the manifest is
+        // durable — so anything running is always something we can name.
         let manifest = BridgeAnimationManifest(
             id: UUID(),
             presetID: preset.id,
@@ -512,6 +516,20 @@ actor BridgeAnimationEngine {
         )
 
         return manifest
+    }
+
+    /// Start a manifest's chain on the bridge.
+    ///
+    /// The second half of what `upload` used to do in one step. Split so the
+    /// ownership manifest can be made durable BEFORE anything begins running:
+    /// the sensor going to 0 is the moment the user's lights start moving, and
+    /// nothing should start moving that the app cannot afterwards name or stop.
+    ///
+    /// Sensor starts at 99; setting it to 0 triggers dx + eq 0 → rule 0 fires →
+    /// the chain runs.
+    func activate(manifest: BridgeAnimationManifest, v1Client: HueV1Client) async throws {
+        try await v1Client.setSensorStatus(id: manifest.sensorID, status: 0)
+        log.info("[BridgeAnim] ⚡ Animation started! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s each, \(manifest.cycleDurationSeconds)s cycle")
     }
 
     /// Stop a bridge-stored animation and clean up its resources, REPORTING
@@ -713,59 +731,96 @@ actor BridgeAnimationEngine {
 
     /// Nuclear cleanup: find and delete ALL ChromaGlow (CG_) resources on the bridge.
     /// Use this to clean up orphaned resources from failed/interrupted uploads.
-    func purgeAllChromaGlowResources(v1Client: HueV1Client) async {
+    /// What a purge actually managed to do.
+    ///
+    /// The purge used to return `Void` and swallow every error with `try?`, so
+    /// the UI said "✓ Cleaned successfully" whether it had deleted everything,
+    /// something, or nothing at all — and the manifests for the resources it
+    /// DID delete stayed on disk regardless. Reporting per-resource outcomes is
+    /// what lets the caller prune exactly the manifests whose resources are
+    /// provably gone and keep the rest.
+    struct PurgeReport: Equatable, Sendable {
+        var deletedSchedules: Set<String> = []
+        var deletedRules: Set<String> = []
+        var deletedSensors: Set<String> = []
+        var deletedScenes: Set<String> = []
+        var deletedResourcelinks: Set<String> = []
+        /// Deletes the bridge refused. Non-zero means something may remain.
+        var failedDeletes = 0
+        /// Categories that could not be listed at all. Unknown is not "empty":
+        /// resources here may exist and simply were not seen.
+        var unreadableCategories: [String] = []
+
+        var totalDeleted: Int {
+            deletedSchedules.count + deletedRules.count + deletedSensors.count
+                + deletedScenes.count + deletedResourcelinks.count
+        }
+        /// True only when every category was readable and every delete landed.
+        var isComplete: Bool { failedDeletes == 0 && unreadableCategories.isEmpty }
+
+        /// Are ALL the resources this manifest names provably gone?
+        ///
+        /// Every named resource must appear in the confirmed-deleted sets.
+        /// Anything less and the manifest is retained — it is the only record
+        /// that could still stop what remains. The resourcelink is excluded
+        /// because it is optional and non-critical at creation time too.
+        func provesFullyRemoved(_ m: BridgeAnimationManifest) -> Bool {
+            deletedSensors.contains(m.sensorID)
+                && deletedSchedules.contains(m.scheduleID)
+                && Set(m.ruleIDs).isSubset(of: deletedRules)
+                && Set(m.sceneIDs).isSubset(of: deletedScenes)
+        }
+    }
+
+    @discardableResult
+    func purgeAllChromaGlowResources(v1Client: HueV1Client) async -> PurgeReport {
         log.info("[BridgeAnim] 🧹 Purging ALL ChromaGlow resources from bridge...")
+        var report = PurgeReport()
 
-        // Delete schedules with CG_ prefix
-        if let schedules = try? await v1Client.fetchSchedules() {
-            for (id, schedule) in schedules {
-                if let name = schedule["name"] as? String, name.hasPrefix("CG_") {
-                    try? await v1Client.deleteSchedule(id: id)
-                    log.info("[BridgeAnim] 🧹 Deleted schedule \(id): \(name)")
+        /// One category: list it, delete every `CG_` member, record what landed.
+        func sweep(
+            _ label: String,
+            fetch: () async throws -> [String: [String: Any]],
+            delete: (String) async throws -> Void,
+            into keyPath: WritableKeyPath<PurgeReport, Set<String>>
+        ) async {
+            guard let items = try? await fetch() else {
+                report.unreadableCategories.append(label)
+                log.warning("[BridgeAnim] 🧹 Could not list \(label) — claiming nothing about it")
+                return
+            }
+            for (id, item) in items {
+                guard let name = item["name"] as? String, name.hasPrefix("CG_") else { continue }
+                do {
+                    try await delete(id)
+                    report[keyPath: keyPath].insert(id)
+                    log.info("[BridgeAnim] 🧹 Deleted \(label) \(id): \(name)")
+                } catch {
+                    report.failedDeletes += 1
+                    log.warning("[BridgeAnim] 🧹 Could not delete \(label) \(id): \(error.localizedDescription)")
                 }
             }
         }
 
-        // Delete rules with CG_ prefix
-        if let rules = try? await v1Client.fetchRules() {
-            for (id, rule) in rules {
-                if let name = rule["name"] as? String, name.hasPrefix("CG_") {
-                    try? await v1Client.deleteRule(id: id)
-                    log.info("[BridgeAnim] 🧹 Deleted rule \(id): \(name)")
-                }
-            }
-        }
+        // Order matters: schedules and rules stop firing before the sensor and
+        // scenes they drive are removed.
+        await sweep("schedules", fetch: { try await v1Client.fetchSchedules() },
+                    delete: { try await v1Client.deleteSchedule(id: $0) },
+                    into: \.deletedSchedules)
+        await sweep("rules", fetch: { try await v1Client.fetchRules() },
+                    delete: { try await v1Client.deleteRule(id: $0) },
+                    into: \.deletedRules)
+        await sweep("sensors", fetch: { try await v1Client.fetchSensors() },
+                    delete: { try await v1Client.deleteSensor(id: $0) },
+                    into: \.deletedSensors)
+        await sweep("scenes", fetch: { try await v1Client.fetchScenes() },
+                    delete: { try await v1Client.deleteScene(id: $0) },
+                    into: \.deletedScenes)
+        await sweep("resourcelinks", fetch: { try await v1Client.fetchResourcelinks() },
+                    delete: { try await v1Client.deleteResourcelink(id: $0) },
+                    into: \.deletedResourcelinks)
 
-        // Delete sensors with CG_ prefix
-        if let sensors = try? await v1Client.fetchSensors() {
-            for (id, sensor) in sensors {
-                if let name = sensor["name"] as? String, name.hasPrefix("CG_") {
-                    try? await v1Client.deleteSensor(id: id)
-                    log.info("[BridgeAnim] 🧹 Deleted sensor \(id): \(name)")
-                }
-            }
-        }
-
-        // Delete scenes with CG_ prefix
-        if let scenes = try? await v1Client.fetchScenes() {
-            for (id, scene) in scenes {
-                if let name = scene["name"] as? String, name.hasPrefix("CG_") {
-                    try? await v1Client.deleteScene(id: id)
-                    log.info("[BridgeAnim] 🧹 Deleted scene \(id): \(name)")
-                }
-            }
-        }
-
-        // Delete resourcelinks with CG_ prefix
-        if let links = try? await v1Client.fetchResourcelinks() {
-            for (id, link) in links {
-                if let name = link["name"] as? String, name.hasPrefix("CG_") {
-                    try? await v1Client.deleteResourcelink(id: id)
-                    log.info("[BridgeAnim] 🧹 Deleted resourcelink \(id): \(name)")
-                }
-            }
-        }
-
-        log.info("[BridgeAnim] 🧹 Purge complete")
+        log.info("[BridgeAnim] 🧹 Purge complete — \(report.totalDeleted) removed, \(report.failedDeletes) refused")
+        return report
     }
 }

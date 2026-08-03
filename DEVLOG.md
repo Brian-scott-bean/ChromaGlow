@@ -13,19 +13,44 @@
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
   (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **46**).
-- **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
-  hardware.** Branch `fix/packet7-device-followups`, rollback tag
-  `checkpoint/pre-packet7-device-followups` (at `3c5f377`), PR open and **unmerged**. Brian's
-  device pass found the "Entertainment Area (Streaming)" row greyed out by a *cached* verdict that
-  only a tap on that same row could refresh — so §U items 4 failed and 5/6/9/10 were BLOCKED, not
-  failed. Also: a streaming composition started over our own Strobe opened a second session and
-  was silently demoted to REST underneath it, and the Reduce Motion refusal said nothing. The row
-  is now always tappable and re-reads the bridge before answering; app-driven ownership is a
-  question with its own third handoff prompt (separate type, slot, alert and token ledger from
-  third-party consent); and both Strobe surfaces now explain the Reduce Motion refusal — the
-  Perform pad, which never checked at all, now refuses. Suite 1291/1291 green (xcresulttool),
-  Guard 11 added. **Packet 7 hardware validation is NOT complete — Brian must run §U-R** in
+- **HARDWARE CONVERGENCE SLICE A (2026-08-03): exact area targeting, verified takeover, and
+  bridge-run truth.** Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+  `checkpoint/pre-hardware-convergence-entertainment-targeting` (at `3479243`), PR open and
+  **unmerged**. Brian's device pass on merged PR #59 confirmed the row fix, the reachable
+  takeover prompt and non-destructive Keep Existing — and found four new defects. (1) A bridge
+  with an area over *bedroom+bathroom* and another over *bedroom+hallway* reported "no compatible
+  Entertainment Area" for hallway and bathroom: the selector was right to refuse to guess, the UI
+  was wrong to render that refusal as absence. There is now a typed decision in which every
+  eligible configuration stays its own named candidate — identical light sets are never collapsed
+  — and a chooser sheet showing area name, bridge label, rooms covered, light counts and an
+  expanded-scope warning. (2) Take Over reported success while Hue Sync kept control: a 2xx on the
+  stop PUT was read as proof of release, and `startSession` returning as proof of a session (it
+  was not even true internally — the DTLS `.ready` handler resumed beside the task that commits
+  `.streaming`). Both are now verified, same-configuration reacquisition counts as a new conflict,
+  and Take Over has its own request ledger. (3) The three Studio engine loops never checked
+  `isTerminallyFailed`, so a reclaimed area kept publishing a dead stream. (4) The room wheel was
+  covered by the effect panel because a room change forced the tray open. Bridge saves now persist
+  the manifest **before** activating anything, and the save result states which bridge, which
+  room, whether it is bridge-run, whether a local preset exists and whether Stop survives a
+  relaunch. Suite 1335/1335 green (xcresulttool), Guard 12 added. **Neither Packet 7 nor Packet 8
+  hardware validation is complete — Brian must run §V** in
   `docs/ios/master-on-device-checklist.md`. Entry below.
+- **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
+  hardware. MERGED — PR #59, merge `3479243`, and this is the build Brian tested.** Branch
+  `fix/packet7-device-followups`, rollback tag `checkpoint/pre-packet7-device-followups`
+  (at `3c5f377`). Brian's device pass found the "Entertainment Area (Streaming)" row greyed out
+  by a *cached* verdict that only a tap on that same row could refresh — so §U items 4 failed and
+  5/6/9/10 were BLOCKED, not failed. Also: a streaming composition started over our own Strobe
+  opened a second session and was silently demoted to REST underneath it, and the Reduce Motion
+  refusal said nothing. The row is now always tappable and re-reads the bridge before answering;
+  app-driven ownership is a question with its own third handoff prompt (separate type, slot, alert
+  and token ledger from third-party consent); and both Strobe surfaces now explain the Reduce
+  Motion refusal — the Perform pad, which never checked at all, now refuses. Suite 1291/1291 green
+  (xcresulttool), Guard 11 added. **Hardware verdicts from Brian's pass on this build: §U-R tests
+  1, 3, 4 PASS · test 2 UNPROVEN for the original exact-room scenario, with the overlapping-area
+  targeting defect CONFIRMED · test 5 FAIL pending instrumented root-cause distinction · test 6
+  BLOCKED · tests 7, 8, 9 UNPROVEN · test 10 Studio PASS, Perform UNPROVEN · tests 11, 12
+  UNPROVEN. Packet 7 hardware validation is NOT complete.** Entry below.
 - **COMPOSER 2 / PHASE 0 / PACKET 7 (2026-08-03): ChromaGlow now YIELDS to third-party
   Entertainment sessions.** Branch `fix/third-party-entertainment-consent`, rollback tag
   `checkpoint/pre-composer-packet-7` (at `446fd49`), PR open and **unmerged**. Automatic
@@ -442,6 +467,154 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-03 - [Claude] Hardware Convergence Slice A — exact targeting, verified takeover, bridge-run truth
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-entertainment-targeting` (at `3479243`), PR open and
+**unmerged**. Three commits. No new source file, no `project.pbxproj` change, no version or build
+bump. Baseline: merge `3479243` (PR #59), which is the build Brian physically tested.
+
+### What the device pass found
+
+PR #59's fixes held: the cached-unavailable Streaming row is tappable (test 1 PASS), the exact
+copy appeared, external area edits were visible without a relaunch, the foreign takeover prompt
+is reachable (test 3 PASS), and Keep Existing preserved the Hue session without permanently
+blocking a later request (test 4 PASS).
+
+Four new defects, and one non-defect worth recording.
+
+**A. Overlapping areas could not be targeted.** Brian's bridge has an Entertainment Area spanning
+bedroom+bathroom and another spanning bedroom+hallway. Bedroom resolved to one area; hallway and
+bathroom both reported "There's no compatible Entertainment Area for that room". That sentence was
+false — there were two, and no surface let him say which he meant.
+`EntertainmentAreaSelector.select` was doing the right thing (three deliberate `return nil` sites);
+the UI was collapsing "I refuse to guess between several" into "there are none".
+
+**B. Take Over did not produce trustworthy ownership.** Take Over was tapped, Hue Sync stayed in
+control or reclaimed it immediately, ChromaGlow never visibly established control, and the pending
+look only applied once Hue Sync was manually disabled. Two assumptions were responsible, and the
+prompt was right to insist they be distinguished rather than blamed on "stronger Hue permissions":
+a 2xx on the stop PUT was treated as proof the other controller had let go, and `startSession`
+returning was treated as proof a session existed. The second was not even true internally — the
+DTLS `.ready` handler resumed its continuation *beside* the task that commits `.streaming`, so the
+call could return while the actor was still `.connecting`.
+
+**C. App-driven versus bridge-run was invisible.** Effects were observed continuing after a
+force-close, with no recovered Dashboard or Studio row and no exact Stop; other attempts stopped
+with the app, proving those were app-driven. The UI never stated which was which.
+
+**D. The Composer room/zone wheel was obstructed** by the active-effect panel, which could also
+appear and collapse immediately.
+
+### Commit 1 — exact area choice
+
+`EntertainmentAreaSelector.decide` returns a typed decision (`exact` / `choiceRequired` /
+`noCompatible`) alongside the untouched `select`, which still backs the cached availability verdict
+and its ~35 pinned tests. **Every eligible configuration stays its own candidate** under its own
+name and id: two areas over identical lights are two areas to the person who named them, and
+`min(by: id)` picking one is a hidden choice — indistinguishable from a wrong one. Sorting is
+display order only; array order, dictionary order, name, max-overlap and majority membership decide
+nothing, and a tie is escalated rather than broken.
+
+At the orchestrator, `ExactTargetDecision` names six outcomes an optional plan had collapsed into
+nil, and separates two silences that had become one: a bridge that did not answer is
+`unreadableBridge` and fails closed, while a bridge that answered "no areas" is the honest
+Room-mode fallback. Each candidate freezes a whole `EntertainmentTakeoverPlan`, so confirming a
+choice compares against what was on screen rather than replaying a bare configuration id — a
+re-scoped area fails closed instead of streaming somewhere nobody was shown.
+
+The chooser is a sheet (`EntertainmentAreaChooserSheet`, in-file on `StudioView`): area name,
+bridge label — never the IP — rooms covered, light counts, and an amber warning when selecting it
+also controls lights outside the requested room. Choosing an area is target fidelity only: it
+carries no token and authorises no takeover. Direct Streaming, saved Streaming presets, Party and
+Thunderstorm all reach it through the one preflight.
+
+### Commit 2 — verified takeover
+
+`resolveForeignTakeover` now: spends a request token before the first await (a **third** ledger,
+disjoint from the consent and Studio-handoff ledgers) → revalidates the frozen plan → re-reads
+activity → confirms the consented configuration is still the conflict → stops it once → **re-reads
+and verifies it actually went inactive** → and only then resolves. Reacquisition explicitly
+includes the *same* configuration coming back, because Hue Sync reclaiming what it just lost is the
+ordinary case; old consent does not reach it, and a fresh request id is minted.
+
+`HueEntertainmentClient` resumes its `.ready` continuation inside the task that commits
+`.streaming`, and gained `hasStartedSession()`. `acquireEntertainment` gates on it before spending
+consent or claiming anything. Studio's Now Playing badge reads `PlaybackStartOutcome.transport`
+instead of inferring streaming from a client being installed — a client installed is not a session
+streaming, which is precisely how AREA was displayed while Hue Sync held the lights.
+
+The three Studio engine loops (`strobe`/`party`/`thunderstorm`) now check `isTerminallyFailed` the
+way the composition loop always has, and a lost session downgrades ownership and Now Playing with
+an honest notice instead of streaming into a dead socket. New `TakeoverEvent` instrumentation
+separates the four candidate causes the device pass could not tell apart.
+
+Keep Existing is unchanged: zero awaits, zero writes, no token spent, and a later request raises a
+fresh prompt — now covered by a production-path regression test.
+
+### Commit 3 — bridge-run truth and the selector collision
+
+**Investigated before changing anything.** There are two unrelated bridge-save features and the app
+conflated them in the user's mind. The packet-8 *bridge-stored animation* is manifest-backed,
+reconciled and exactly stoppable — but had **no user-facing entry point at all**, being chosen
+implicitly inside `startCompositionMode`. "Save as Hue dynamic scene", buried under Palette → +N
+more, creates a native Hue **scene** that packet 8 never reconciles and ChromaGlow can never stop.
+Both survive a force-close; only one is recoverable. Reconciliation was therefore **not** altered
+speculatively — see the Packet 8 status below.
+
+`BridgeAnimationEngine.upload` no longer starts the chain it creates; `activate(manifest:)` does,
+and it runs only after `BridgeAnimationStore.save` — now `@discardableResult -> Bool`, because
+`persist()` swallowed its error — confirms the manifest reached disk. A failed persist deletes
+exactly the resources the manifest names; a failure to start keeps the manifest as ownership
+evidence and reports "saved but not confirmed running" rather than claiming playback. Every
+manifest removal in the orchestrator now goes through one `forgetManifestRecord` funnel (Guard 10
+caught the two new sites — the fix was to consolidate, not to relax the guard).
+
+The bridge save is a first-class action in the mixer tray, on the **manifest-backed** path, with
+the dynamic-scene export kept as a secondary route that now states its real limitation. The result
+sheet names the bridge, the room, whether it is bridge-run, whether a local preset exists, and
+whether Stop survives a relaunch. Two new `TransportVocabulary` constants carry the distinction.
+
+Clean Bridge Resources gained a confirmation naming the exact bridge and disclosing that it removes
+other rooms' running looks; it resolves the exact bridge client and **fails closed** if it cannot;
+`purgeAllChromaGlowResources` reports what it confirmed deleted; and only manifests whose resources
+are *provably* gone are forgotten — anything refused or unreadable is retained, because the
+manifest is the only record that could still stop what remains.
+
+Part D: `StudioMixerPresentation` holds two pure rules. A room change leaves the tray **collapsed**
+(it used to force it open, and the open tray's full-screen scrim then swallowed the next drag on
+the wheel — both the covering and the appear/collapse flicker came from that one line), and the
+wheel is unmounted only when a streaming look's tray is actually on screen.
+
+### Hardware status — neither packet is complete
+
+Packet 7 follow-up verdicts from Brian's pass on merge `3479243`: tests 1, 3, 4 **PASS** · test 2
+**UNPROVEN** for the original exact-room scenario, with the overlapping-area targeting defect
+**CONFIRMED** · test 5 **FAIL pending instrumented root-cause distinction** · test 6 **BLOCKED** ·
+tests 7, 8, 9 **UNPROVEN** · test 10 Studio **PASS**, Perform **UNPROVEN** · tests 11, 12
+**UNPROVEN**.
+
+Packet 8: the app-driven versus bridge-run setup was not visible enough to interpret what was seen;
+physical effects were observed continuing after force-close with no recovered UI and no Stop; and
+an exact manifest-backed reproduction still needs deterministic confirmation. Treated as a Packet 8
+**trust defect** unless instrumentation proves the affected resources were not manifest-backed —
+which the two-feature finding above makes a live possibility, not a conclusion. **Packet 8 hardware
+validation is NOT complete.**
+
+**Simulator limit, stated plainly:** the test harness pairs bridges with a deliberately non-hex
+client key, so `decodePSK` refuses before a socket is ever opened and **no DTLS handshake can
+succeed in the simulator on any run**. A genuinely stable takeover is therefore hardware-only. What
+is pinned deterministically is ordering, arithmetic, and the refusal to claim a session that did
+not open.
+
+### Validation
+
+Suite **1335/1335** green (xcresulttool). `MultiBridgeRoutingTests` 290/290. All 12 hardening
+guards pass, including new Guard 12 `composer-hardware-convergence`. No `project.pbxproj` change,
+no version or build bump. Retest checklist: §V of `docs/ios/master-on-device-checklist.md`.
 
 ---
 

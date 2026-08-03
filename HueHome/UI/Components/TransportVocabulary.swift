@@ -47,6 +47,16 @@ enum TransportVocabulary {
     // 3 s/step, so "lights keep going" alone oversells it (packet 5).
     static let bridgeStoredStatus = "Running on bridge — close the app, lights keep going, with simpler motion"
     static let fallbackStatus     = "Streaming isn't available right now — playing in Room mode"
+
+    // ── Who is actually running the show ─────────────────────
+    //
+    // The distinction the app never made plainly, and the one Brian's device
+    // pass turned up: some looks stop when the app closes and some keep going
+    // on the bridge, and nothing on screen said which was which. A user who
+    // cannot tell them apart cannot know whether force-quitting will stop the
+    // lights — and if it does not, has no idea where to go to stop them.
+    static let appDrivenTruth = "Running from ChromaGlow — stops when the app closes."
+    static let bridgeRunTruth = "Saved and running on the bridge."
     static func roomModeCadenceStatus(liveSeconds: Double?) -> String {
         guard let liveSeconds else { return "Playing in Room mode — updates a little slower" }
         return "Playing in Room mode — updates about every \(String(format: "%.1f", liveSeconds))s"

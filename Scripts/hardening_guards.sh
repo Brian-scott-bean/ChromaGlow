@@ -40,6 +40,12 @@
 #              and the third-party consent stay two concepts with two token
 #              ledgers; no unattended surface asks the ownership question; and
 #              the Reduce Motion refusal has exactly one literal.
+#  12. composer-hardware-convergence — the exact-target decision may not
+#              re-collapse into a silent pick, the three consent ledgers stay
+#              disjoint, a stop is never treated as proof of release, the
+#              bridge-save action stays reachable outside Palette → More, the
+#              room wheel is not force-covered by the effect panel, and the
+#              new suites carry no timing waits.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -526,6 +532,136 @@ p7f_wait_hits=$(grep -nE 'Task\.sleep|XCTWaiter|wait\(for:' "$P7F_TESTS" 2>/dev/
 if [[ -n "$p7f_wait_hits" ]]; then
     fail "composer-p7-followup" $'timing wait in the availability tests:\n'"$p7f_wait_hits"
 fi
+
+# ──────────────────────────────────────────────────────────────
+# Guard 12 (composer-hardware-convergence): the hardware pass's four defects
+# stay fixed.
+#
+# Brian's device pass on merged PR #59 found:
+#
+#  (a) A bridge with an area over bedroom+bathroom and another over
+#      bedroom+hallway reported "no compatible Entertainment Area" for the
+#      hallway and the bathroom. The selector was right to refuse to guess; the
+#      UI was wrong to render that refusal as absence. The fix is a typed
+#      decision in which every eligible configuration stays its own candidate —
+#      so the tie-break that must never come back is `min(by: id)` inside
+#      `decide`. Sorting is display order; it may not choose or hide a target.
+#
+#  (b) Take Over reported success while Hue Sync kept control. A 2xx on the
+#      stop PUT was read as proof the other controller had let go, and
+#      `startSession` returning was read as proof a session existed. Both
+#      verifications must stay present, and the takeover request ledger must
+#      stay disjoint from the other two.
+#
+#  (c) Effects kept running after a force-close with no recovered row and no
+#      Stop. The manifest must be durable BEFORE anything is activated, and the
+#      bridge-save action must be reachable without Palette → +N more.
+#
+#  (d) Scrolling the room wheel onto a room with a running effect threw the
+#      customization panel open over it. The room-change handler may not force
+#      the tray open.
+#
+# Behavioural proof lives in the suites; these are the source invariants that
+# would let the behaviour quietly regress.
+
+HC_ORCH="HueHome/Core/Network/UnifiedOrchestrator.swift"
+HC_VM="HueHome/UI/Studio/StudioViewModel.swift"
+HC_VIEW="HueHome/UI/Studio/StudioView.swift"
+HC_SELECTOR="HueHome/Core/Network/EntertainmentConfigManager.swift"
+
+# (a) The decision exists, and never breaks a tie by lowest id.
+for sym in 'static func decide(' 'case choiceRequired(' 'struct ExactAreaCandidate'; do
+    if ! grep -q "$sym" "$HC_SELECTOR"; then
+        fail "composer-hardware-convergence" "'$sym' is missing from $HC_SELECTOR — the exact-target decision collapsed back into an optional"
+    fi
+done
+
+hc_decide_body=$(awk '/static func decide\(/,/^    }$/' "$HC_SELECTOR" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_decide_body" | grep -qE 'min\(by:|\.min \{|\.first \{'; then
+    fail "composer-hardware-convergence" $'decide() breaks a tie instead of escalating it — identical light sets must stay separate candidates:\n'"$(echo "$hc_decide_body" | grep -nE 'min\(by:|\.min \{|\.first \{')"
+fi
+
+for sym in 'case choiceRequired(' 'case staleSelection' 'case unreadableBridge' \
+           'case noCompatiblePlan' 'case ambiguousOwnership' 'func exactTargetDecision('; do
+    if ! grep -q "$sym" "$HC_ORCH"; then
+        fail "composer-hardware-convergence" "'$sym' is missing from $HC_ORCH — a named outcome was folded back into another"
+    fi
+done
+
+# The chooser is target fidelity only. It must never mint a consent token.
+hc_choice_body=$(awk '/func confirmAreaChoice\(/,/^    }$/' "$HC_VM" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_choice_body" | grep -qE 'EntertainmentConsent\(|consumedEntertainmentConsents|consumedForeignTakeoverRequests'; then
+    fail "composer-hardware-convergence" "confirmAreaChoice mints or spends a consent token — choosing WHERE is not agreeing to replace anyone"
+fi
+
+# (b) Verification present, and the three ledgers stay disjoint.
+for sym in 'func hasStartedSession('; do
+    if ! grep -q "$sym" "HueHome/Core/Network/HueEntertainmentClient.swift"; then
+        fail "composer-hardware-convergence" "'$sym' is missing — 'startSession returned' would again be treated as proof a session exists"
+    fi
+done
+if ! grep -q 'consumedForeignTakeoverRequests' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the foreign-takeover request ledger is missing from $HC_ORCH"
+fi
+
+hc_takeover_body=$(awk '/func resolveForeignTakeover\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+hc_activity_reads=$(echo "$hc_takeover_body" | grep -cE 'entertainmentActivity\(onBridge:' || echo 0)
+if [[ "$hc_activity_reads" -lt 2 ]]; then
+    fail "composer-hardware-convergence" "resolveForeignTakeover reads bridge activity $hc_activity_reads time(s): it must read once BEFORE the stop and again AFTER it — sending a stop is not proof of release"
+fi
+
+# One answer may not spend another question's token.
+hc_ledger_mix=$(grep -nE '(consumedForeignTakeoverRequests.*consumedStudioHandoffRequests|consumedStudioHandoffRequests.*consumedForeignTakeoverRequests|consumedForeignTakeoverRequests.*consumedEntertainmentConsents|consumedEntertainmentConsents.*consumedForeignTakeoverRequests)' \
+    "$HC_ORCH" 2>/dev/null | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_ledger_mix" ]]; then
+    fail "composer-hardware-convergence" $'two consent ledgers are used on one line — a token spendable by the wrong question is not a token:\n'"$hc_ledger_mix"
+fi
+
+# (c) Durable before running, and reachable outside Palette → More.
+if ! grep -q 'func activate(manifest:' "HueHome/Core/Network/BridgeAnimationEngine.swift"; then
+    fail "composer-hardware-convergence" "BridgeAnimationEngine.activate is missing — upload would again start the chain before the manifest is durable"
+fi
+hc_upload_body=$(awk '/func upload\(/,/^    }$/' "HueHome/Core/Network/BridgeAnimationEngine.swift" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_upload_body" | grep -q 'setSensorStatus'; then
+    fail "composer-hardware-convergence" "upload() starts the chain itself — resources would run before the manifest that names them is on disk"
+fi
+if ! grep -q 'func saveActiveLookToBridge(' "$HC_VM"; then
+    fail "composer-hardware-convergence" "the first-class bridge-save action is missing from $HC_VM"
+fi
+hc_save_entry=$(grep -rln 'saveActiveLookToBridge' HueHome/UI 2>/dev/null \
+    | grep -v 'StudioViewModel.swift' || true)
+if [[ -z "$hc_save_entry" ]]; then
+    fail "composer-hardware-convergence" "no UI surface invokes saveActiveLookToBridge — the bridge save would be reachable only through Palette → More again"
+fi
+
+# (d) Landing on a room may not force the effect panel open over the wheel.
+if ! grep -q 'static let collapsedOnRoomChange = true' "$HC_VIEW"; then
+    fail "composer-hardware-convergence" "the room-change collapse rule is missing or inverted in $HC_VIEW — the tray would cover the room wheel mid-scroll again"
+fi
+hc_roomchange=$(awk '/onChange\(of: vm.selectedRoom\?.id\)/,/^        }$/' "$HC_VIEW" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_roomchange" | grep -qE 'isMixerCollapsed = false'; then
+    fail "composer-hardware-convergence" "the room-change handler forces the mixer open — that is the selector collision"
+fi
+
+# No timing waits in the suites that carry this slice's behaviour.
+HC_TESTS=(
+    "HueHomeTests/MultiBridgeRoutingTests.swift"
+    "HueHomeTests/EntertainmentAvailabilityTests.swift"
+    "HueHomeTests/BridgeAnimationCorrectnessTests.swift"
+)
+for f in "${HC_TESTS[@]}"; do
+    [[ -f "$f" ]] || continue
+    hc_wait_hits=$(grep -nE 'Task\.sleep|XCTWaiter|wait\(for:' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    if [[ -n "$hc_wait_hits" ]]; then
+        fail "composer-hardware-convergence" $'timing wait in a hardware-convergence suite: '"$f"$':\n'"$hc_wait_hits"
+    fi
+done
 
 # ──────────────────────────────────────────────────────────────
 

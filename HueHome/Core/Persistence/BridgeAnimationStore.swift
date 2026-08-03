@@ -56,11 +56,25 @@ final class BridgeAnimationStore {
 
     // MARK: - CRUD
 
-    func save(_ manifest: BridgeAnimationManifest) {
+    /// Save a manifest, reporting whether it actually reached disk.
+    ///
+    /// The result is load-bearing, not decoration. A manifest is the ONLY thing
+    /// that makes bridge resources nameable and stoppable after a relaunch, so
+    /// "saved and running on the bridge" is a claim about this write having
+    /// succeeded. `persist()` swallowed its error, which made an in-memory
+    /// manifest and a failed write indistinguishable to every caller — and the
+    /// caller went on to start the animation either way.
+    @discardableResult
+    func save(_ manifest: BridgeAnimationManifest) -> Bool {
         manifests[manifest.id] = manifest
         revision &+= 1
-        persist()
-        log.info("[BridgeAnimStore] Saved manifest '\(manifest.presetName)' on '\(manifest.roomName)'")
+        let persisted = persist()
+        if persisted {
+            log.info("[BridgeAnimStore] Saved manifest '\(manifest.presetName)' on '\(manifest.roomName)'")
+        } else {
+            log.error("[BridgeAnimStore] Manifest '\(manifest.presetName)' did NOT reach disk")
+        }
+        return persisted
     }
 
     /// Exact lookup. The manifest id is the only identity that cannot collide
@@ -135,12 +149,15 @@ final class BridgeAnimationStore {
         return try JSONDecoder().decode([BridgeAnimationManifest].self, from: data)
     }
 
-    private func persist() {
+    @discardableResult
+    private func persist() -> Bool {
         do {
             let data = try JSONEncoder().encode(Array(manifests.values))
             try data.write(to: fileURL, options: .atomic)
+            return true
         } catch {
             log.error("[BridgeAnimStore] Failed to persist: \(error.localizedDescription)")
+            return false
         }
     }
 

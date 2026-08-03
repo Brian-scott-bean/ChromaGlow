@@ -182,7 +182,15 @@ struct StudioView: View {
 
                 VStack(spacing: 0) {
                     // ── Zone A: Inline two-axis room/zone rolodex ─
-                    if !isEntertainmentRunning {
+                    //
+                    // Hidden only while a streaming look is ACTUALLY on screen,
+                    // not merely running. Keyed on `isEntertainmentRunning`
+                    // alone, scrolling the wheel onto a streaming room deleted
+                    // the wheel mid-gesture — the selector destroyed by the
+                    // very selection it was making.
+                    if !StudioMixerPresentation.rolodexHidden(
+                        isEntertainmentRunning: isEntertainmentRunning,
+                        mixerVisible: mixerVisible) {
                         roomRolodex
                             .padding(.horizontal, HueSpacing.lg)
                             .padding(.vertical, HueSpacing.xs)
@@ -292,8 +300,18 @@ struct StudioView: View {
                 withAnimation(.easeIn(duration: 0.4)) { blurReady = true }
             }
         }
+        // Landing on a room does NOT throw its editor open.
+        //
+        // This used to set `isMixerCollapsed = false`, which made the tray
+        // appear the instant the wheel touched a room with a running effect.
+        // The tray takes up to 92% of the screen and mounts a full-screen
+        // invisible scrim, so the next drag on the wheel hit the scrim and
+        // collapsed the tray instead — the panel flashing open and shut while
+        // the selector became unusable. Arriving collapsed keeps the wheel
+        // free; the "Live Controls" pill is right there when the editor is
+        // what the user actually wants.
         .onChange(of: vm.selectedRoom?.id) { _, _ in
-            isMixerCollapsed = false
+            isMixerCollapsed = StudioMixerPresentation.collapsedOnRoomChange
             isMixerExpanded = false
         }
         // Coverage badges for Deck 0 — refires on room switch, auto-cancels
@@ -426,6 +444,7 @@ struct StudioView: View {
         .modifier(StudioEntertainmentHandoffAlert(vm: vm))
         .modifier(ForeignTakeoverAlert(vm: vm))
         .modifier(EntertainmentAreaChooserSheet(vm: vm))
+        .modifier(BridgeSaveResultSheet(vm: vm))
         .modifier(StudioNoticeAlert(vm: vm))
         .confirmationDialog(
             TransportVocabulary.choosePlayTitle,
@@ -1992,6 +2011,103 @@ private struct ForeignTakeoverAlert: ViewModifier {
         // is streaming, not which room the other controller is lighting — so
         // any sentence naming a room would be asserting something we cannot
         // actually know.
+    }
+}
+
+/// "Where did that look actually go?" — the bridge-save result.
+///
+/// Brian's device pass found effects still running after a force-close with no
+/// recovered row and no Stop anywhere. The app knew which transport it had
+/// used; it simply never said. Every line here answers a question the user
+/// could not otherwise answer: which bridge, which room, is it running there,
+/// is there a local copy, and will Stop still exist after a relaunch.
+private struct BridgeSaveResultSheet: ViewModifier {
+    let vm: StudioViewModel
+
+    func body(content: Content) -> some View {
+        content.sheet(
+            item: Binding(
+                get: { vm.bridgeSaveResult },
+                set: { if $0 == nil { vm.bridgeSaveResult = nil } }
+            )
+        ) { result in
+            StageSheetScaffold(title: "Saved") {
+                StageCard(icon: result.isRunningOnBridge
+                          ? "externaldrive.badge.checkmark" : "iphone",
+                          title: result.lookName) {
+                    VStack(alignment: .leading, spacing: HueSpacing.md) {
+                        // The headline IS the distinction: running from the app
+                        // and stopping with it, or living on the bridge.
+                        Text(result.headline)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        factRow("Room", result.roomName)
+                        factRow("Bridge", result.bridgeLabel)
+                        factRow("Local copy", result.createdLocalPreset
+                                ? "In My Creations" : "None")
+                        factRow("After you reopen ChromaGlow",
+                                result.stopSurvivesRelaunch
+                                ? "You can still stop it here"
+                                : "It will already have stopped")
+
+                        if !result.createdLocalPreset {
+                            Text(BridgeSaveCopy.noLocalPreset)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.white.opacity(0.6))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func factRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: HueSpacing.sm) {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.5))
+                .frame(width: 132, alignment: .leading)
+            Text(value)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.9))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The two mixer-vs-selector layout rules, as plain values.
+///
+/// Extracted for the same reason `StudioMusicWiring.barSuppressed` was: a rule
+/// buried in a view body is only checkable by rendering, and the defect here is
+/// a rule, not a pixel. Brian's report was that scrolling the room wheel onto a
+/// room with a running effect made the customization panel cover the wheel —
+/// and that the panel could "appear and collapse immediately", which is the
+/// scrim eating the very next drag.
+enum StudioMixerPresentation {
+
+    /// Arriving on a new room leaves the tray CLOSED.
+    ///
+    /// The editor is not lost — `hasCurrentRoomEffect && isMixerCollapsed`
+    /// shows the "Live Controls" pill that opens it. What is gained is that the
+    /// wheel keeps working: no tray over it, and no full-screen scrim between
+    /// the finger and the next scroll.
+    static let collapsedOnRoomChange = true
+
+    /// The wheel is unmounted only when a streaming look's tray is actually on
+    /// screen — never merely because a streaming look exists.
+    ///
+    /// Both conditions matter. `isEntertainmentRunning` alone removed the
+    /// selector the moment the wheel landed on a streaming room, destroying the
+    /// gesture in progress; dropping the check entirely would put the wheel
+    /// underneath a full-height tray.
+    static func rolodexHidden(isEntertainmentRunning: Bool, mixerVisible: Bool) -> Bool {
+        isEntertainmentRunning && mixerVisible
     }
 }
 

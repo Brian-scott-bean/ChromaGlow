@@ -81,4 +81,43 @@ final class MixerTrayMetricsTests: XCTestCase {
             + MixerTrayMetrics.moreRowHeight
         XCTAssertGreaterThanOrEqual(MixerTrayMetrics.compactHeightCap, needed)
     }
+
+    // ── Selector vs effect panel (hardware convergence slice D) ─────────
+    //
+    // Reported from the device: scrolling the room/zone wheel onto a room with
+    // a running effect made the customization panel appear over it, and the
+    // panel could "appear and collapse immediately". Both symptoms come from
+    // one line — the room-change handler opening the tray — because an open
+    // tray also mounts a full-screen invisible scrim that then swallows the
+    // next drag on the wheel.
+
+    /// HCD-01 — arriving on a room leaves the editor closed.
+    func testLandingOnARoomDoesNotThrowTheEffectPanelOpen() {
+        XCTAssertTrue(StudioMixerPresentation.collapsedOnRoomChange,
+            "a room change must leave the tray COLLAPSED — an auto-opened tray covers the "
+            + "wheel and its scrim eats the next scroll, which is the reported collision")
+    }
+
+    /// HCD-02 — the wheel survives landing on a streaming room.
+    func testTheRoomWheelStaysMountedWhileTheTrayIsCollapsed() {
+        XCTAssertFalse(
+            StudioMixerPresentation.rolodexHidden(isEntertainmentRunning: true,
+                                                  mixerVisible: false),
+            "a streaming look with its tray closed must NOT remove the selector — that "
+            + "deleted the wheel mid-gesture, destroying the very selection being made")
+
+        XCTAssertFalse(
+            StudioMixerPresentation.rolodexHidden(isEntertainmentRunning: false,
+                                                  mixerVisible: true),
+            "a non-streaming look's tray never hides the wheel either")
+    }
+
+    /// HCD-03 — the one case that legitimately hides it: a streaming look whose
+    /// full-height tray is actually on screen.
+    func testTheWheelIsHiddenOnlyWhenAStreamingTrayIsActuallyShowing() {
+        XCTAssertTrue(
+            StudioMixerPresentation.rolodexHidden(isEntertainmentRunning: true,
+                                                  mixerVisible: true),
+            "both conditions together are what reclaims the space")
+    }
 }

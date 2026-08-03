@@ -711,6 +711,107 @@ final class StudioViewModel {
                     selectedConfigID: choice.configID)
     }
 
+    // ── Saving a look onto the bridge ─────────────────────────────
+
+    /// Could the look currently being edited actually live on the bridge?
+    ///
+    /// A bridge chain is pre-rendered steps driven by a schedule; it has no
+    /// microphone and no per-frame render loop. Reactive looks therefore
+    /// cannot be stored, and saying so up front beats uploading something that
+    /// would play back as a still image.
+    var canSaveActiveLookToBridge: Bool {
+        guard let box = activeCompositionBox else { return false }
+        return !box.reaction.requiresMic
+    }
+
+    /// Save the running look onto the bridge, on the MANIFEST-BACKED path.
+    ///
+    /// Deliberately not the "Save as Hue dynamic scene" action buried under
+    /// Palette → +N more. That one creates a native Hue scene: genuinely
+    /// bridge-run, but with no ownership manifest, so ChromaGlow can never
+    /// show it or stop it afterwards. This one goes through
+    /// `startCompositionMode(tier: .bridgeOptimized)`, which creates the
+    /// resources, persists the manifest BEFORE anything starts, and leaves a
+    /// row with an exact Stop that survives a relaunch.
+    ///
+    /// Every outcome is reported honestly, including the two that are neither
+    /// success nor plain failure: saved-but-not-confirmed-running, and
+    /// partially-created-and-not-fully-cleaned.
+    func saveActiveLookToBridge(_ card: StudioCard) async {
+        guard let room = selectedRoom else {
+            studioNotice = StudioNotice(message: "Select a room first.")
+            return
+        }
+        guard let box = activeCompositionBox else { return }
+        guard canSaveActiveLookToBridge else {
+            studioNotice = StudioNotice(message:
+                "Looks that react to sound can't be stored on the bridge — the bridge has no microphone. This one keeps running from ChromaGlow instead.")
+            return
+        }
+        guard let orchestrator else { return }
+
+        // A local preset is what gives the bridge copy a name and a room to be
+        // recovered under, so it is created first and reported separately: the
+        // user is told whether a copy landed in My Creations or not.
+        let preset = compositionStore.presets.first { $0.id == runningPresetID(for: card) }
+            ?? saveActiveComposition(name: card.name, icon: card.icon,
+                                     preferredTransport: nil)
+        guard let preset else {
+            studioNotice = StudioNotice(message: BridgeSaveCopy.saveFailedNothingRecorded)
+            return
+        }
+
+        let outcome = await orchestrator.startCompositionMode(
+            room: room, paramBox: box, gamutOverride: activeCompositionGamut,
+            preferEntertainment: false, tier: .bridgeOptimized, preset: preset,
+            capturedPlan: nil, consent: nil, preparedEntertainment: nil
+        )
+
+        switch outcome {
+        case .started:
+            let onBridge = orchestrator.compositionTransportByRoom[room.id] == .bridgeStored
+            bridgeSaveResult = BridgeSaveResult(
+                lookName: preset.name,
+                roomName: room.name,
+                bridgeLabel: orchestrator.bridgeLabel(for: room.bridgeID ?? ""),
+                isRunningOnBridge: onBridge,
+                createdLocalPreset: true,
+                stopSurvivesRelaunch: onBridge,
+                headline: onBridge ? BridgeSaveCopy.savedAndRunning
+                                   : TransportVocabulary.appDrivenTruth
+            )
+        case .failed(let message):
+            // Covers the honest middles: the manifest failed to persist and
+            // its resources were removed, or it persisted but did not start.
+            studioNotice = StudioNotice(message: message)
+        default:
+            studioNotice = StudioNotice(message: BridgeSaveCopy.saveFailedNothingRecorded)
+        }
+    }
+
+    private func runningPresetID(for card: StudioCard) -> UUID? {
+        if case .composition(let presetID) = card.strategy { return presetID }
+        return nil
+    }
+
+    /// What a completed bridge save actually produced, in the user's terms.
+    ///
+    /// Every field answers a question the device pass proved the user could not
+    /// otherwise answer: which bridge, which room, is it running there, is
+    /// there a local copy, and will Stop still be there after a relaunch.
+    struct BridgeSaveResult: Identifiable, Equatable {
+        let id = UUID()
+        let lookName: String
+        let roomName: String
+        let bridgeLabel: String
+        let isRunningOnBridge: Bool
+        let createdLocalPreset: Bool
+        let stopSurvivesRelaunch: Bool
+        let headline: String
+    }
+
+    var bridgeSaveResult: BridgeSaveResult? = nil
+
     /// Dismissed without choosing. Nothing was mutated to raise this prompt and
     /// nothing is mutated to drop it.
     func cancelAreaChoice() {

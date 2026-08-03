@@ -580,14 +580,35 @@ explanation at all (UX **FAIL**). Starting a streaming composition in a space
 where Strobe already owned Entertainment did not apply and produced no handoff or
 refusal — a **provisional FAIL** for the Studio-to-composition direction.
 
-The follow-up branch `fix/packet7-device-followups` corrects all three. Packet 7
-hardware validation is **not** complete: re-run §U-R below on real bridges.
+The follow-up branch `fix/packet7-device-followups` corrects all three. **It is now
+MERGED — PR #59, merge `3479243` — and that is the build Brian tested in the §U-R
+pass recorded below.** Packet 7 hardware validation is **not** complete.
 
-### U-R. Packet 7 hardware follow-up — retest
+### U-R. Packet 7 hardware follow-up — retest (RESULTS RECORDED)
 
-Branch `fix/packet7-device-followups`; rollback tag
-`checkpoint/pre-packet7-device-followups`. No build bump — run this on a build
-made from that branch.
+Run against merge `3479243`. Verdicts from Brian's pass:
+
+| Test | Verdict | Note |
+| --- | --- | --- |
+| 1 — cached unavailable row is tappable | **PASS** | Exact copy appeared |
+| 2 — exact-room targeting | **UNPROVEN** | Original exact-room scenario not exercised; see the confirmed defect below |
+| — overlapping / mixed-room targeting | **CONFIRMED DEFECT** | Bedroom resolved; hallway and bathroom reported "no compatible area" |
+| 3 — foreign takeover prompt reachable | **PASS** | |
+| 4 — Keep Existing preserves the Hue session | **PASS** | Did not block a later request |
+| 5 — Take Over gives stable ownership | **FAIL** pending instrumented root-cause distinction | Hue kept or reclaimed control; the look applied only once Hue Sync was disabled |
+| 6 | **BLOCKED** | |
+| 7 | **UNPROVEN** | |
+| 8 | **UNPROVEN** | |
+| 9 | **UNPROVEN** | |
+| 10 — Studio | **PASS** | |
+| 10 — Perform | **UNPROVEN** | |
+| 11 | **UNPROVEN** | |
+| 12 | **UNPROVEN** | |
+
+The overlapping-area defect and the takeover failure are addressed in §V below;
+re-run this section too once §V has been exercised.
+
+**Original §U-R instructions follow.**
 
 **What changed:** the Streaming row can no longer be greyed out by a stale cache;
 tapping it re-reads the bridge before answering. A ChromaGlow look that already
@@ -772,6 +793,58 @@ succeeded · what the lights actually did.**
 | Elmo | ~80 historic test-target concurrency warnings (~15 test files) | Backlog (own round) |
 | Helena | Build-28 tour device pass; 3 minor unverified UI findings were pre-fixed | In progress (Brian) |
 | All | Builds 18–26 checklists | This document |
+
+### V. Hardware Convergence Slice A — retest
+
+Branch `fix/hardware-convergence-entertainment-targeting`; rollback tag
+`checkpoint/pre-hardware-convergence-entertainment-targeting` (at `3479243`).
+No build bump — build from that branch.
+
+**What changed.** A room that several Entertainment Areas could serve now asks
+which one instead of reporting that none exists. Take Over verifies that the
+other controller actually released the area, and that our own session actually
+opened, before claiming anything. Bridge saves persist their ownership record
+before anything starts running, and the app now states whether a look is running
+from ChromaGlow or from the bridge. The room wheel is no longer covered by the
+effect panel.
+
+**Read the guarantee before judging a result.** "Nothing started, and here is
+why" is a **PASS** wherever the app cannot prove it is safe to act. A refusal
+with an explanation is the designed answer; a silent no-op is not.
+
+| # | Test | Expected | Result |
+| --- | --- | --- | --- |
+| 1 | Room served by exactly one area → start Streaming | Starts with no chooser | |
+| 2 | Room served by two areas → start Streaming | Chooser lists BOTH by name | |
+| 3 | Pick the area spanning bedroom+hallway for the hallway | Row warns it also controls lights outside the hallway, before you tap | |
+| 4 | Read the chooser rows | Bridge label shown (never an IP); rooms and light counts correct | |
+| 5 | Open the chooser, delete that area in the Hue app, then choose it | Nothing starts; honest message | |
+| 6 | Take Over while Hue Sync refuses to release | Nothing starts; no Now Playing row; message or a fresh prompt | |
+| 7 | Take Over, then let Hue Sync reclaim immediately | Treated as a NEW conflict — fresh prompt, no false ownership | |
+| 8 | Take Over succeeds but ChromaGlow cannot open its session | No ownership, no Now Playing, no silent Room-mode fallback | |
+| 9 | Take Over with Hue Sync closed | ChromaGlow takes control and holds it; badge says AREA | |
+| 10 | Keep Existing, then request Streaming again | Take Over is reachable and works the second time | |
+| 11 | Start an app-driven look, force-close | Lights stop; the app said it would | |
+| 12 | Save a look to the bridge, read the result sheet | Names bridge, room, bridge-run, local preset, Stop-after-relaunch | |
+| 13 | Force-close after a bridge save, relaunch | The row comes back with a working Stop | |
+| 14 | Stop that recovered row | Exactly that look stops; nothing else changes | |
+| 15 | Bridge save where the manifest cannot be written | Never says "saved and running"; no untracked resources left | |
+| 16 | Two bridge-run looks in two rooms | Both recover; stopping one leaves the other running | |
+| 17 | Clean Bridge Resources | Confirmation names the exact bridge; result states what was removed and what was not | |
+| 18 | Scroll the room wheel onto a room with a running effect | Wheel stays visible and usable; the panel does not cover it or flicker | |
+
+Items 6, 7 and 8 need a second controller (Hue Sync or the Hue app) and cannot be
+produced in the simulator — the test harness deliberately cannot complete a DTLS
+handshake, so a genuinely stable takeover is hardware-only. Leave any
+bridge-disconnection or multi-controller case **BLOCKED** or **UNPROVEN** until
+physically executed.
+
+**Packet 8 is still open.** Item 15 in particular needs a reproduction where a
+manifest definitely persisted. Note that "Save as Hue dynamic scene" (Palette →
++N more) creates a Hue *scene*, which is bridge-run but has no ownership record
+and can only be stopped from Scenes or the Hue app — if that is what produced the
+original unstoppable effect, the symptom is real but is not a reconciliation bug.
+Record which action was used.
 
 ## Supersession notes
 
