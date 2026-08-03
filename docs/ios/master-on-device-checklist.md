@@ -563,6 +563,107 @@ Entertainment Area.
 > ones. Items 5, 9, and 10 are the honesty checks: the app must never claim a
 > takeover that did not happen, and must never touch a session you declined.
 
+## V. Composer 2 — bridge-stored animation relaunch reconciliation [packet 8]
+
+Branch `fix/bridge-animation-relaunch-reconciliation`; rollback tag
+`checkpoint/pre-composer-packet-8`. No build bump — run this on a build made from
+that branch. Nothing in §T is superseded: firmware Studio cards (Candle, Fire)
+are still not restored at launch, and that is later work. This section is only
+about Composer looks you chose to store **on the bridge**.
+
+**What changed:** a bridge-stored look keeps running on the bridge after you
+force-quit ChromaGlow — that is the whole point of it. But nothing brought it
+back into the app at launch, so there was no entry to stop and **no way to stop
+it from inside the app at all**. The only escape was Settings → Clean Bridge
+Resources, which wipes every ChromaGlow resource on that bridge, including looks
+running in other rooms. ChromaGlow now reads each bridge once at launch, checks
+each stored look against what the bridge actually reports, and restores the ones
+still running into Now Playing and Studio so Stop works normally. A look it can
+prove is gone is quietly retired; a look it **cannot check** — offline bridge,
+unreadable bridge — is kept, not guessed at.
+
+**Read the guarantee before judging a result.** Nothing is deleted from a bridge
+during the launch check itself: reconciling a running look is read-only. "I can't
+stop it because the bridge is offline" is a **PASS** — the honest answers are
+"try again when the bridge is back" and a row that stays visible. A row that
+silently vanishes while the bulbs keep cycling is a FAIL. The check runs once per
+launch and once per foreground refresh, not continuously.
+
+**You need:** at least one Composer preset that runs on the bridge (a
+`bridgeOptimized` look — static motion, steady envelope), and for items 4–5 a
+second room and a second bridge.
+
+For every item record: **app build · bridge IDs or labels · bridge firmware ·
+room names · look names · what Now Playing showed at launch · whether Stop
+succeeded · what the lights actually did.**
+
+- [ ] 1. Start a bridge-stored look in one room and confirm the lights are
+      cycling. Force-quit ChromaGlow (swipe it away) and wait a full minute with
+      the app dead. Expected: the lights **keep cycling**. Relaunch. Expected:
+      the look reappears in Now Playing under its own name during the first
+      load, and tapping Stop actually stops it — the lights stop cycling and the
+      room goes off. (Before this build there was no Stop to tap: the animation
+      ran until the bridge was purged.)
+- [ ] 2. Repeat item 1 but stop from the **Dashboard** Now Playing bar without
+      ever opening Studio. Expected: identical result. Then repeat once more and
+      stop from **Studio**. Expected: identical again. Also check the restored
+      Studio row shows no sliders and no layer chips — there is no live render
+      loop behind it, and the controls must not pretend otherwise.
+- [ ] 3. Repeat item 1, but open the **Studio tab before the first load
+      finishes** (launch, then immediately tap Studio). Expected: the restored
+      look appears there too. The order you visit screens in must not change
+      what you see.
+- [ ] 4. **Two rooms, one bridge.** Start a bridge-stored look in room A and a
+      different one in room B, force-quit, relaunch. Expected: **both** appear
+      in Now Playing, with the right names against the right rooms. Stop room A
+      only. Expected: room A stops and **room B keeps running**, with its row
+      still visible. Then stop room B. Expected: it stops too.
+- [ ] 5. **Two bridges.** Start a bridge-stored look in a room on each bridge,
+      force-quit, relaunch. Expected: both are restored. Stop one. Expected:
+      only that bridge's room stops; the other bridge's look is completely
+      untouched — watch the bulbs, not just the UI.
+- [ ] 6. **Bridge offline at relaunch.** Start a bridge-stored look, force-quit,
+      unplug that bridge, then relaunch. Expected: the app does **not** claim
+      the look is gone and does **not** silently drop it. Plug the bridge back
+      in and pull to refresh (or background and foreground). Expected: the look
+      is recognised again and Stop works. (A regression looks like the row
+      vanishing while the bulbs keep cycling — the exact state this packet
+      exists to end.)
+- [ ] 7. **Resources removed externally.** Start a bridge-stored look in room A
+      and another in room B, force-quit, then use Settings → Clean Bridge
+      Resources or the official Hue app to delete the ChromaGlow resources while
+      ChromaGlow is closed. Relaunch. Expected: no phantom running row for the
+      deleted look, no error, and any room whose look is genuinely still running
+      is untouched and still stoppable.
+- [ ] 8. **Preset renamed.** Start a bridge-stored look, force-quit, relaunch and
+      confirm the row appears. Now rename that Composer preset, force-quit again,
+      relaunch. Expected: a row still appears and Stop still works, showing the
+      **current** preset name.
+- [ ] 9. **Preset deleted.** Start a bridge-stored look, force-quit, delete the
+      preset from Composer, force-quit, relaunch. Expected: the row is still
+      there with a sensible name (not blank, not "Untitled" — it falls back to
+      the name recorded when the look was uploaded), and Stop still removes the
+      animation from the bridge. A look you can see running but cannot stop is
+      the failure this packet exists to prevent.
+- [ ] 10. **Room deleted or recreated.** Start a bridge-stored look, force-quit,
+      then delete or recreate that room in the Hue app. Relaunch. Expected: a
+      recovered entry is still listed under the room name recorded at upload
+      time, **no other room is shown as running**, and Stop still removes the
+      resources from the bridge. Nothing may be powered off in a room the app
+      cannot identify.
+- [ ] 11. **Failed stop.** Start a bridge-stored look, force-quit, relaunch, then
+      put the bridge out of reach (unplug it or drop Wi-Fi) and tap Stop.
+      Expected: an honest error, the row **stays visible**, and the look is
+      still listed after a refresh. Restore the bridge and tap Stop again.
+      Expected: it now succeeds and the row clears. At no point may the app
+      report a stop that did not happen.
+
+> If item 1, 2, 4, 5, or 9 fails, stop and report — those are the trust-critical
+> ones: they are the difference between a look you can stop and a look that runs
+> on your bridge forever. Items 6, 7, 10, and 11 are the honesty checks: the app
+> must never claim a look is gone because it could not reach the bridge, never
+> claim a stop that did not happen, and never guess a room.
+
 
 ## Parked-agent "Left" register (tracked, not device QA)
 

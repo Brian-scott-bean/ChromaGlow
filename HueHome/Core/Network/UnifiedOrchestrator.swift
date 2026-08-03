@@ -46,13 +46,59 @@ struct BulkWriteFailure: Equatable {
 }
 
 struct ActiveEffectEntry: Identifiable, Equatable {
-    let id: String           // RoomDisplayItem.id (used as the stable key)
+    /// Presentation key. For a live Studio effect this is still the room id,
+    /// unchanged. For a recovered bridge-stored animation (packet 8) it is
+    /// derived from the MANIFEST id, so two bridges running the same room id
+    /// produce two rows instead of one silently overwriting the other in
+    /// `addActiveEffect`.
+    let id: String
+    /// The room this row is about. Equals `id` for live effects; for a
+    /// recovered row it is the manifest's room id, which may resolve to no
+    /// room at all.
+    let roomID: String
     let roomName: String
     let groupedLightID: String?   // needed to stop bridge-native effects
     let effectID: String          // HueEffect.id
     let effectName: String        // display name
     let effectIcon: String        // SF Symbol
     let isAppDriven: Bool         // true → engine loop must keep running
+    /// Non-nil = a bridge-stored animation recovered at launch (packet 8).
+    /// Carries the exact identity every stop path must use; the room id alone
+    /// cannot say which bridge.
+    let recovered: UnifiedOrchestrator.RecoveredBridgeAnimationKey?
+
+    /// Live effect. Every pre-packet-8 call site keeps compiling verbatim.
+    init(id: String, roomName: String, groupedLightID: String?, effectID: String,
+         effectName: String, effectIcon: String, isAppDriven: Bool) {
+        self.id = id
+        self.roomID = id
+        self.roomName = roomName
+        self.groupedLightID = groupedLightID
+        self.effectID = effectID
+        self.effectName = effectName
+        self.effectIcon = effectIcon
+        self.isAppDriven = isAppDriven
+        self.recovered = nil
+    }
+
+    /// Recovered bridge-stored animation.
+    init(recovered animation: UnifiedOrchestrator.RecoveredBridgeAnimation) {
+        self.id = Self.recoveredID(manifestID: animation.manifest.id)
+        self.roomID = animation.manifest.roomID
+        self.roomName = animation.roomName
+        self.groupedLightID = animation.room?.groupedLightID
+        self.effectID = "comp_\(animation.manifest.presetID.uuidString)"
+        self.effectName = animation.displayName
+        self.effectIcon = "externaldrive.connected.to.line.below"
+        // No app task exists behind this row, so it must never draw the
+        // "keep app open" chrome that an app-driven effect does.
+        self.isAppDriven = false
+        self.recovered = animation.key
+    }
+
+    static func recoveredID(manifestID: UUID) -> String {
+        "cg-recovered:\(manifestID.uuidString)"
+    }
 }
 
 // MARK: - String + Hue UUID Detection
@@ -227,7 +273,36 @@ final class UnifiedOrchestrator {
         bridgeNativeOwnershipSequence &+= 1
         let key = BridgeNativeOwnershipKey(bridgeKey: bridgeID ?? "legacy", roomID: roomID)
         bridgeNativeOwners[key] = bridgeNativeOwnershipSequence
+        noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
         return BridgeNativeOwnershipToken(key: key, generation: bridgeNativeOwnershipSequence)
+    }
+
+    // ── Per-exact-bridge+room ownership generation (packet 8) ────────────
+    //
+    // A recovered stop suspends between "the bridge confirmed the resources are
+    // gone" and "turn the room off". Something else can take that exact bridge
+    // and room in the gap, and an off PUT landing then would darken a room that
+    // is legitimately playing. The generation is captured when the stop begins
+    // and re-checked immediately before the off, exactly as
+    // `BridgeNativeOwnershipToken` guards its own release.
+
+    @ObservationIgnored
+    private var roomOwnershipGenerations: [BridgeNativeOwnershipKey: Int] = [:]
+    @ObservationIgnored
+    private var roomOwnershipSequence: Int = 0
+
+    /// Called by EVERY owner takeover of an exact bridge + room.
+    func noteRoomOwnershipChange(bridgeID: String?, roomID: String) {
+        roomOwnershipSequence &+= 1
+        roomOwnershipGenerations[
+            BridgeNativeOwnershipKey(bridgeKey: bridgeID ?? "legacy", roomID: roomID)
+        ] = roomOwnershipSequence
+    }
+
+    func roomOwnershipGeneration(bridgeID: String?, roomID: String) -> Int {
+        roomOwnershipGenerations[
+            BridgeNativeOwnershipKey(bridgeKey: bridgeID ?? "legacy", roomID: roomID)
+        ] ?? 0
     }
 
     /// Release ownership — but only if this token still holds it. A stop that
@@ -281,9 +356,19 @@ final class UnifiedOrchestrator {
         //    a previous session is still genuinely running on the bridge.
         //    Manifests record the bridge by IP, so resolve this bridge's IP the
         //    same way `hueClient(for:)` does and match on both fields.
-        if let ip = bridgeIPForAllDayOwnership(bridgeID),
-           bridgeAnimationStore.allManifests().contains(
-               where: { $0.roomID == roomID && $0.bridgeIP == ip }) {
+        //    Packet 8: the stable bridgeID is authoritative when the manifest
+        //    carries one, because an IP is a route — a DHCP move would
+        //    otherwise silently un-suppress a look that is still running, and
+        //    All-Day would stomp it every tick. The IP arm remains for legacy
+        //    manifests written before packet 8, so this is a strict superset of
+        //    the previous behaviour.
+        let ownershipIP = bridgeIPForAllDayOwnership(bridgeID)
+        if bridgeAnimationStore.allManifests().contains(where: { manifest in
+            guard manifest.roomID == roomID else { return false }
+            if let recorded = manifest.bridgeID { return recorded == legacyKey }
+            guard let ownershipIP else { return false }
+            return manifest.bridgeIP == ownershipIP
+        }) {
             return false
         }
 
@@ -508,8 +593,20 @@ final class UnifiedOrchestrator {
     }
 
     /// Removes one room's active effect entry.
+    ///
+    /// Matches on the presentation key, which for a live effect IS the room id.
+    /// A recovered bridge-stored row keys off its manifest instead, so this
+    /// structurally cannot erase one — correct, because stopping a live effect
+    /// in a room must not silently retire a different bridge's running
+    /// animation that happens to share the room id.
     func removeActiveEffect(roomID: String) {
         activeEffectEntries.removeAll { $0.id == roomID }
+    }
+
+    /// Removes one entry by its exact presentation key. The only way to clear a
+    /// recovered bridge-stored row.
+    func removeActiveEffect(id: String) {
+        activeEffectEntries.removeAll { $0.id == id }
     }
 
     /// Removes all active effect entries (Stop All).
@@ -522,6 +619,26 @@ final class UnifiedOrchestrator {
     /// surface would leave the loop running underneath. @ObservationIgnored:
     /// installed once from StudioViewModel.configure, never read by views.
     @ObservationIgnored var studioStopHandler: (@MainActor (String, Bool) async -> Void)?
+
+    /// Studio mirrors the reconciled bridge-stored registry into
+    /// `runningEffects` for rooms that resolve. Installed once from
+    /// `StudioViewModel.configure` and called by `publishRecovered`.
+    /// @ObservationIgnored: infrastructure, never read by views.
+    @ObservationIgnored var studioRecoveredHydrationHandler: (@MainActor () -> Void)?
+
+    /// Stop from a non-Studio surface, routing on the ENTRY rather than a bare
+    /// room id.
+    ///
+    /// A recovered bridge-stored row carries an exact manifest identity and
+    /// must not go through the roomID handler: a room id cannot say which
+    /// bridge, and Studio has no engine to tear down for one of these.
+    func requestNowPlayingStop(_ entry: ActiveEffectEntry, turnOffLights: Bool = true) async {
+        if let key = entry.recovered {
+            await stopRecoveredBridgeAnimation(key, turnOffLights: turnOffLights)
+            return
+        }
+        await requestNowPlayingStop(roomID: entry.roomID, turnOffLights: turnOffLights)
+    }
 
     /// Stop an effect from a non-Studio surface (Dashboard Now-Playing bar,
     /// Siri). `turnOffLights: true` is explicit-stop semantics — the room
@@ -1203,6 +1320,11 @@ final class UnifiedOrchestrator {
             Task { [weak self] in await self?.loadAllScenes() }
         }
         scheduleEntertainmentCleanup()
+        // Packet 8: after `rebuildAllRooms()`, so a recovered animation can be
+        // matched to the room it is actually running in. Throttled and
+        // detached for the same reason the Entertainment cleanup is — this runs
+        // on every load, and `scheduleStateRefresh` drives loads every ~1.5 s.
+        scheduleBridgeAnimationReconciliation()
         if let ctx = cacheContext {
             let __cacheStart = Date()
             writeCache(to: ctx)
@@ -3254,8 +3376,59 @@ final class UnifiedOrchestrator {
     /// Packet 2: the exact pre-upload cleanup the bridge-stored start path runs.
     /// Exposes the decision, not the store — tests stage manifests through the
     /// store's own public API and assert on what reaches each bridge's client.
-    func testCleanupBridgeStoredForReplacement(roomID: String, v1Client: HueV1Client) async {
-        await cleanupBridgeStoredAnimationForReplacement(roomID: roomID, v1Client: v1Client)
+    @discardableResult
+    func testCleanupBridgeStoredForReplacement(
+        roomID: String, bridgeID: String?, v1Client: HueV1Client
+    ) async -> BridgeStoredReplacementReadiness {
+        await cleanupBridgeStoredAnimationForReplacement(
+            roomID: roomID, bridgeID: bridgeID, v1Client: v1Client)
+    }
+
+    // ── Bridge-stored reconciliation seams (packet 8) ────────────────────
+
+    /// Drive one reconciliation pass deterministically — the PRODUCTION pass,
+    /// with no throttle and no detached task in the way.
+    func testReconcileBridgeStoredAnimations() async {
+        await reconcileBridgeStoredAnimations()
+    }
+
+    /// Swap in an isolated store so a suite never reads or writes the real
+    /// user's persisted animations — and so one test cannot clear another's.
+    func injectForTesting(bridgeAnimationStore store: BridgeAnimationStore) {
+        bridgeAnimationStore = store
+    }
+
+    /// Wait out any pass `loadAll` scheduled.
+    ///
+    /// `BridgeAnimationStore.shared` is a process-wide singleton, so a detached
+    /// pass that outlives the test which started it would keep mutating the
+    /// store while the NEXT test asserts on it. Draining is a continuation
+    /// handshake, not a timed wait.
+    func testDrainBridgeAnimationReconciliation() async {
+        let inFlight = bridgeAnimationReconcileTask
+        bridgeAnimationReconcileTask = nil
+        await inFlight?.value
+    }
+
+    func testRecoveredBridgeAnimations() -> [RecoveredBridgeAnimationKey: RecoveredBridgeAnimation] {
+        recoveredBridgeAnimations
+    }
+
+    /// Publish a recovered animation without a bridge read — for staging a
+    /// "replacement already took this room" state inside a parked stop.
+    func testPublishRecovered(manifest: BridgeAnimationManifest, bridgeID: String) {
+        publishRecovered(decided: [
+            RecoveredBridgeAnimationKey(bridgeID: bridgeID, manifestID: manifest.id):
+                makeRecovered(manifest, bridgeID: bridgeID)
+        ])
+    }
+
+    func testExactManifestIDs(bridgeID: String?, roomID: String) -> Set<UUID> {
+        Set(exactManifests(bridgeID: bridgeID, roomID: roomID).map(\.id))
+    }
+
+    func testRoomOwnershipGeneration(bridgeID: String?, roomID: String) -> Int {
+        roomOwnershipGeneration(bridgeID: bridgeID, roomID: roomID)
     }
 
     // ── All-Day seams (packet 6) ─────────────────────────────────────────
@@ -3339,7 +3512,372 @@ final class UnifiedOrchestrator {
 
     // MARK: Bridge-Stored Animation (v1 API)
     private let bridgeAnimationEngine = BridgeAnimationEngine()
-    private let bridgeAnimationStore = BridgeAnimationStore.shared
+    private var bridgeAnimationStore = BridgeAnimationStore.shared
+
+    // ── Recovered bridge-stored animations (Composer 2 packet 8) ─────────
+    //
+    // A bridge-stored look runs on the bridge's own firmware, so it survives a
+    // force-quit — that is the transport's whole point. But nothing used to
+    // read the persisted manifests back at launch, so the animation kept
+    // cycling while the app showed nothing running and offered no way to stop
+    // it. The only escape was the Settings purge, which wipes every CG_
+    // resource on the bridge including other rooms' live looks.
+
+    /// Exact identity of one recovered animation. NEVER a room id alone — the
+    /// same room id can be running on two bridges at once, and each must stay
+    /// independently visible and independently stoppable.
+    struct RecoveredBridgeAnimationKey: Hashable, Sendable {
+        let bridgeID: String
+        let manifestID: UUID
+    }
+
+    /// One manifest the BRIDGE ITSELF confirmed is still running.
+    struct RecoveredBridgeAnimation: Identifiable, Equatable, Sendable {
+        let manifest: BridgeAnimationManifest
+        let bridgeID: String
+        /// The live room, or nil when this room id no longer resolves on this
+        /// bridge. nil is a first-class state, not an error: the animation is
+        /// still running and must stay stoppable without guessing a room.
+        let room: RoomDisplayItem?
+        /// `room?.name` when the room resolves, else the manifest's persisted
+        /// name — a deleted room must not make the row nameless.
+        let roomName: String
+        /// The current preset name when Studio has upgraded it, else the
+        /// manifest's persisted name. A deleted preset must not make the
+        /// running animation impossible to identify or stop.
+        let displayName: String
+
+        var key: RecoveredBridgeAnimationKey {
+            RecoveredBridgeAnimationKey(bridgeID: bridgeID, manifestID: manifest.id)
+        }
+        var id: RecoveredBridgeAnimationKey { key }
+    }
+
+    /// THE authoritative reconciled registry. Written only by reconciliation
+    /// and by the exact-identity stop. StudioViewModel mirrors it; it never
+    /// decides liveness for itself.
+    private(set) var recoveredBridgeAnimations: [RecoveredBridgeAnimationKey: RecoveredBridgeAnimation] = [:]
+
+    /// Bumped on every publish. The ordering primitive: a Studio hydrate that
+    /// ran before the first reconcile is re-driven by the publish, and one that
+    /// already saw this generation is a no-op.
+    private(set) var bridgeAnimationReconcileGeneration: Int = 0
+
+    @ObservationIgnored private var bridgeAnimationReconcileTask: Task<Void, Never>?
+    @ObservationIgnored private var lastBridgeAnimationReconcileAt: Date = .distantPast
+    private static let bridgeAnimationReconcileInterval: TimeInterval = 60
+    /// After an INCOMPLETE pass (a bridge did not answer, or a decision went
+    /// stale) the clock backs off to 15 s rather than a full minute — "retry
+    /// later" for an unreadable bridge should be soon, without becoming the
+    /// ~1.5 s cadence `scheduleStateRefresh` drives `loadAll` at.
+    private static let bridgeAnimationRetryInterval: TimeInterval = 15
+
+    /// Throttled launch/foreground/refresh entry point. Mirrors
+    /// `scheduleEntertainmentCleanup`, including the "already running" guard —
+    /// two overlapping passes would read the same bridge twice.
+    private func scheduleBridgeAnimationReconciliation() {
+        guard bridgeAnimationReconcileTask == nil,
+              // Zero cost for the overwhelming majority of users, who have
+              // never uploaded a bridge-stored look.
+              !bridgeAnimationStore.allManifests().isEmpty,
+              Date().timeIntervalSince(lastBridgeAnimationReconcileAt)
+                  > Self.bridgeAnimationReconcileInterval else { return }
+        lastBridgeAnimationReconcileAt = Date()
+        bridgeAnimationReconcileTask = Task(priority: .utility) { [weak self] in
+            await self?.reconcileBridgeStoredAnimations()
+            self?.bridgeAnimationReconcileTask = nil
+        }
+    }
+
+    /// Reconcile every persisted manifest against what its OWN bridge reports.
+    ///
+    /// Read-only for anything still running: a verified live animation is never
+    /// mutated here. Internal rather than private so tests drive the production
+    /// pass directly, with no throttle and no task scheduling in the way.
+    func reconcileBridgeStoredAnimations() async {
+        let manifests = bridgeAnimationStore.allManifests()
+        guard !manifests.isEmpty else {
+            publishRecovered(decided: [:])
+            return
+        }
+
+        // ── 1. Resolve each manifest to an EXACT registered bridge ────────
+        var byBridge: [String: [BridgeAnimationManifest]] = [:]
+        var complete = true
+        for manifest in manifests {
+            guard let bridgeID = resolvedBridgeID(for: manifest) else {
+                // Unresolved or ambiguous: retain, no verdict, no entry, and
+                // notably NO read — an unmapped manifest is not a licence to
+                // poll every bridge looking for a home for it.
+                complete = false
+                continue
+            }
+            // ── 2. Legacy upgrade, only on a UNIQUE resolution ────────────
+            let stamped = manifest.bridgeID == nil
+                ? (bridgeAnimationStore.adoptBridgeID(bridgeID, forManifestID: manifest.id) ?? manifest)
+                : manifest
+            byBridge[bridgeID, default: []].append(stamped)
+        }
+
+        // ── 3. ONE batched read per bridge, bridges concurrent ────────────
+        struct BridgeRead: Sendable {
+            let bridgeID: String
+            let inventory: BridgeAnimationInventory?
+        }
+        var reads: [String: BridgeAnimationInventory] = [:]
+        await withTaskGroup(of: BridgeRead.self) { group in
+            for (bridgeID, bridgeManifests) in byBridge {
+                guard let api = hueClient(for: bridgeID),
+                      let v1Client = try? api.makeV1Client() else {
+                    complete = false
+                    continue
+                }
+                let needScenes = bridgeManifests.contains { !$0.sceneIDs.isEmpty }
+                let needLinks = bridgeManifests.contains { $0.resourcelinkID != nil }
+                group.addTask {
+                    // Each child swallows its OWN error. One offline bridge must
+                    // never cancel, fail or delay another bridge's read.
+                    let inventory = try? await v1Client.fetchAnimationInventory(
+                        includeScenes: needScenes, includeResourcelinks: needLinks)
+                    return BridgeRead(bridgeID: bridgeID, inventory: inventory)
+                }
+            }
+            for await read in group {
+                if let inventory = read.inventory { reads[read.bridgeID] = inventory }
+            }
+        }
+
+        // ── 4. Verdict per manifest against its OWN bridge's snapshot ─────
+        var decided: [RecoveredBridgeAnimationKey: RecoveredBridgeAnimation?] = [:]
+        for (bridgeID, bridgeManifests) in byBridge {
+            guard let inventory = reads[bridgeID] else {
+                // UNKNOWN: retain every manifest on this bridge, claim nothing,
+                // delete nothing, and try again on a later load or refresh.
+                complete = false
+                continue
+            }
+            for manifest in bridgeManifests {
+                let key = RecoveredBridgeAnimationKey(bridgeID: bridgeID, manifestID: manifest.id)
+                switch BridgeAnimationEngine.liveness(of: manifest, in: inventory) {
+                case .live:
+                    // Strictly read-only. Nothing below this line mutates the
+                    // bridge for a manifest that is still running.
+                    guard stillCurrent(manifest) else { complete = false; continue }
+                    decided[key] = makeRecovered(manifest, bridgeID: bridgeID)
+
+                case .indeterminate(let reason):
+                    debugLog("[Composer] Manifest \(manifest.id) indeterminate: \(reason)")
+                    complete = false
+
+                case .notRunning(let residue) where residue.isEmpty:
+                    // The bridge PROVED every named resource is absent.
+                    guard stillCurrent(manifest) else { complete = false; continue }
+                    bridgeAnimationStore.remove(id: manifest.id)
+                    decided[key] = .some(nil)
+
+                case .notRunning(let residue):
+                    // Structurally incomplete: clean up ONLY the resources this
+                    // manifest names and the bridge still holds. Never the
+                    // global CG_ purge, which would tear down other rooms.
+                    guard stillCurrent(manifest),
+                          let api = hueClient(for: bridgeID),
+                          let v1Client = try? api.makeV1Client() else {
+                        complete = false
+                        continue
+                    }
+                    let result = await bridgeAnimationEngine.stop(
+                        manifest: manifest, v1Client: v1Client, only: residue)
+                    if retireManifest(manifest, after: result) {
+                        decided[key] = .some(nil)
+                    } else {
+                        complete = false
+                    }
+                }
+            }
+        }
+
+        // ── 5. Publish ────────────────────────────────────────────────────
+        publishRecovered(decided: decided)
+        if !complete {
+            lastBridgeAnimationReconcileAt = Date().addingTimeInterval(
+                -(Self.bridgeAnimationReconcileInterval - Self.bridgeAnimationRetryInterval))
+        }
+    }
+
+    private func makeRecovered(
+        _ manifest: BridgeAnimationManifest,
+        bridgeID: String
+    ) -> RecoveredBridgeAnimation {
+        // Only a room on THIS bridge may be adopted. A room id that matches on
+        // another bridge is a different room that happens to share an id.
+        let room = allRooms.first { $0.id == manifest.roomID && $0.bridgeID == bridgeID }
+        // Always the PERSISTED name here. Studio holds the CompositionStore and
+        // upgrades this to the live preset's name during the hydrate that
+        // `publishRecovered` triggers, so a rename shows through immediately.
+        // Carrying a previously-upgraded name forward instead would mean a
+        // preset that was renamed and then DELETED kept displaying the old
+        // preset's name rather than falling back to what the manifest recorded.
+        return RecoveredBridgeAnimation(
+            manifest: manifest,
+            bridgeID: bridgeID,
+            room: room,
+            roomName: room?.name ?? manifest.roomName,
+            displayName: manifest.presetName)
+    }
+
+    /// Apply this pass's decisions.
+    ///
+    /// A RECONCILE, not a rebuild, and it merges by exact manifest identity.
+    /// It deliberately does NOT sweep entries the pass did not cover: a
+    /// manifest saved AFTER the pass began is absent from the pass's input
+    /// through no fault of its own, and dropping it would destroy the record of
+    /// a look that is genuinely running. The only removals are decisions this
+    /// pass actually reached, plus entries whose manifest is gone from the
+    /// store right now — which is a fact read at apply time, not an inference
+    /// about what the pass happened to see.
+    private func publishRecovered(
+        decided: [RecoveredBridgeAnimationKey: RecoveredBridgeAnimation?]
+    ) {
+        for (key, value) in decided {
+            if let animation = value {
+                let wasAlreadyOwner = recoveredBridgeAnimations[key] != nil
+                recoveredBridgeAnimations[key] = animation
+                // `addActiveEffect` replaces same-id rows, so re-publishing an
+                // unchanged animation cannot produce a duplicate row.
+                addActiveEffect(ActiveEffectEntry(recovered: animation))
+                compositionTransportByRoom[animation.manifest.roomID] = .bridgeStored
+                // ONLY on genuine acquisition. The generation is what a parked
+                // stop compares against before powering the room off, so an
+                // idempotent refresh that re-confirms the SAME owner must not
+                // move it — that would make every routine reconciliation look
+                // like a replacement and silently suppress the room-off.
+                // A replacement carries a new manifest id, hence a new key,
+                // hence a genuine insert here.
+                if !wasAlreadyOwner {
+                    noteRoomOwnershipChange(bridgeID: key.bridgeID, roomID: animation.manifest.roomID)
+                }
+            } else {
+                forgetRecoveredBridgeAnimation(key)
+            }
+        }
+        for (key, animation) in recoveredBridgeAnimations
+        where bridgeAnimationStore.manifest(id: key.manifestID) == nil {
+            _ = animation
+            forgetRecoveredBridgeAnimation(key)
+        }
+
+        bridgeAnimationReconcileGeneration &+= 1
+        studioRecoveredHydrationHandler?()
+    }
+
+    /// Drop one recovered animation's app-side state. Never touches the bridge
+    /// and never touches another key.
+    private func forgetRecoveredBridgeAnimation(_ key: RecoveredBridgeAnimationKey) {
+        guard let animation = recoveredBridgeAnimations.removeValue(forKey: key) else { return }
+        removeActiveEffect(id: ActiveEffectEntry.recoveredID(manifestID: key.manifestID))
+        clearBridgeStoredTransportIfUnowned(roomID: animation.manifest.roomID)
+        // The registry moved, so Studio's mirror is stale. Bumping the
+        // generation is what lets its guarded hydrate run again — without it a
+        // stopped animation keeps a Studio row that nothing can clear.
+        bridgeAnimationReconcileGeneration &+= 1
+        studioRecoveredHydrationHandler?()
+    }
+
+    /// Same, addressed by manifest id — used by the removal funnel, which knows
+    /// the manifest but not necessarily which bridge resolved for it.
+    private func forgetRecoveredBridgeAnimation(manifestID: UUID) {
+        // Materialized first: `forgetRecoveredBridgeAnimation(_:)` mutates the
+        // dictionary this iterates.
+        let matching = recoveredBridgeAnimations.keys.filter { $0.manifestID == manifestID }
+        for key in matching { forgetRecoveredBridgeAnimation(key) }
+    }
+
+    /// Clear the `.bridgeStored` label only when nothing else still claims this
+    /// room id. Bridge B's live animation must not be un-labelled because
+    /// bridge A's copy of the same room id was cleaned.
+    private func clearBridgeStoredTransportIfUnowned(roomID: String) {
+        guard compositionTransportByRoom[roomID] == .bridgeStored else { return }
+        let stillRecovered = recoveredBridgeAnimations.values.contains { $0.manifest.roomID == roomID }
+        let stillStored = bridgeAnimationStore.allManifests().contains { $0.roomID == roomID }
+        guard !stillRecovered && !stillStored else { return }
+        compositionTransportByRoom.removeValue(forKey: roomID)
+    }
+
+    /// Studio upgrades a recovered row's name once it can resolve the preset.
+    /// The orchestrator holds no `CompositionStore`, so it publishes the
+    /// manifest's persisted name first and this replaces it in place.
+    func refreshRecoveredDisplayName(key: RecoveredBridgeAnimationKey, name: String) {
+        guard let existing = recoveredBridgeAnimations[key], existing.displayName != name else { return }
+        let updated = RecoveredBridgeAnimation(
+            manifest: existing.manifest, bridgeID: existing.bridgeID, room: existing.room,
+            roomName: existing.roomName, displayName: name)
+        recoveredBridgeAnimations[key] = updated
+        addActiveEffect(ActiveEffectEntry(recovered: updated))
+    }
+
+    /// Stop EXACTLY one recovered bridge-stored animation on EXACTLY its bridge.
+    /// Returns true only when the bridge confirmed the resources are gone.
+    ///
+    /// Stale-stop protection is structural: the key carries the MANIFEST id,
+    /// which `upload` regenerates on every start. A stop that began before a
+    /// replacement was uploaded names an id the registry and store no longer
+    /// hold, so it cannot touch the replacement's manifest, registry entry,
+    /// Now-Playing row or Studio row.
+    @discardableResult
+    func stopRecoveredBridgeAnimation(
+        _ key: RecoveredBridgeAnimationKey,
+        turnOffLights: Bool = true
+    ) async -> Bool {
+        guard let animation = recoveredBridgeAnimations[key] else { return false }
+        guard let manifest = bridgeAnimationStore.manifest(id: key.manifestID) else {
+            // Nothing left to clean — the evidence is already gone.
+            forgetRecoveredBridgeAnimation(key)
+            return true
+        }
+        guard let api = hueClient(for: key.bridgeID), let v1Client = try? api.makeV1Client() else {
+            // The manifest's bridge is not registered right now. RETAIN
+            // everything: this manifest is the only record of live bridge
+            // resources, the animation is still running, and dropping the
+            // ownership state here would let All-Day start writing over it.
+            toastMessage = "Couldn't stop \(animation.displayName) — its bridge isn't connected"
+            return false
+        }
+
+        // Capture the exact ownership generation BEFORE the cleanup await.
+        let token = RecoveredStopToken(
+            bridgeID: key.bridgeID,
+            roomID: manifest.roomID,
+            manifestID: manifest.id,
+            ownershipGeneration: roomOwnershipGeneration(bridgeID: key.bridgeID, roomID: manifest.roomID))
+
+        let result = await bridgeAnimationEngine.stop(manifest: manifest, v1Client: v1Client)
+        guard result == .removed else {
+            toastMessage = "Couldn't stop \(animation.displayName) — the bridge didn't confirm"
+            return false
+        }
+        guard retireManifest(manifest, after: result) else { return false }
+        studioRecoveredHydrationHandler?()
+
+        // Power-off is generation-safe. Between the cleanup and here, a
+        // replacement or any other owner can have taken this exact bridge and
+        // room; darkening it then would kill playback the user just started.
+        guard turnOffLights, let groupedLightID = animation.room?.groupedLightID else { return true }
+        guard roomOwnershipGeneration(bridgeID: key.bridgeID, roomID: manifest.roomID) == token.ownershipGeneration,
+              isAllDayWriteAllowed(bridgeID: key.bridgeID, roomID: manifest.roomID) else {
+            debugLog("[Composer] Skipping room-off for \(manifest.roomID) — a newer owner holds it")
+            return true
+        }
+        try? await api.setGroupedLight(id: groupedLightID, on: false)
+        return true
+    }
+
+    /// The exact identity a recovered stop carries across its awaits.
+    struct RecoveredStopToken: Equatable {
+        let bridgeID: String
+        let roomID: String
+        let manifestID: UUID
+        let ownershipGeneration: Int
+    }
 
     /// Remove ONLY the bridge-stored animations `roomID` owns on the bridge that
     /// `v1Client` talks to, using each manifest's recorded resource IDs as the
@@ -3354,19 +3892,135 @@ final class UnifiedOrchestrator {
     /// existed. The global purge is a recovery operation and now reaches the
     /// bridge only through the explicit Settings maintenance action.
     ///
-    /// The bridge identity comes from `v1Client.bridgeIP` rather than a caller-
-    /// supplied string on purpose: it makes cleaning one bridge's manifests
-    /// against another bridge's client structurally impossible.
+    /// The bridge identity is stated by the caller and cross-checked against
+    /// `v1Client.bridgeIP`: cleaning one bridge's manifests against another
+    /// bridge's client stays structurally impossible.
+    ///
+    /// Packet 8 makes the result TYPED. A refused or unreachable delete used to
+    /// be indistinguishable from a clean teardown, so the replacement uploaded
+    /// a second sensor/rule-chain/schedule on top of a chain that was still
+    /// firing — two recurring animations fighting over one room, with the app
+    /// holding a record of only one of them.
     private func cleanupBridgeStoredAnimationForReplacement(
         roomID: String,
+        bridgeID: String?,
         v1Client: HueV1Client
-    ) async {
-        let bridgeIP = v1Client.bridgeIP
-        for oldManifest in bridgeAnimationStore.ownedManifests(roomID: roomID, bridgeIP: bridgeIP) {
+    ) async -> BridgeStoredReplacementReadiness {
+        var retained: [UUID] = []
+        var reason = ""
+        for oldManifest in exactManifests(bridgeID: bridgeID, roomID: roomID)
+        where oldManifest.bridgeIP == v1Client.bridgeIP || oldManifest.bridgeID != nil {
             debugLog("[Composer] Cleaning up previous bridge animation '\(oldManifest.presetName)' for room=\(roomID)")
-            await bridgeAnimationEngine.stop(manifest: oldManifest, v1Client: v1Client)
-            bridgeAnimationStore.remove(presetID: oldManifest.presetID, roomID: oldManifest.roomID)
+            let result = await bridgeAnimationEngine.stop(manifest: oldManifest, v1Client: v1Client)
+            if !retireManifest(oldManifest, after: result) {
+                retained.append(oldManifest.id)
+                reason = result == .removed ? "cleanup raced a change" : "the bridge didn't confirm cleanup"
+            }
         }
+        return retained.isEmpty ? .clear : .blocked(reason: reason, retained: retained)
+    }
+
+    /// Whether a bridge-stored replacement may be created.
+    enum BridgeStoredReplacementReadiness: Equatable {
+        /// Every exact old manifest for this bridge + room is removed or was
+        /// already absent.
+        case clear
+        case blocked(reason: String, retained: [UUID])
+    }
+
+    // ── Exact manifest selection (packet 8) ──────────────────────────────
+
+    /// The bridge-stored manifests that EXACTLY this bridge and room own.
+    ///
+    /// The sole destructive-selection authority. `compositionTransportByRoom`
+    /// and every other roomID-only structure are explicitly NOT ownership: the
+    /// same room id exists on two bridges, and after the store rekey the same
+    /// preset legitimately has two manifests in one room id.
+    ///
+    /// - a recorded `bridgeID` is authoritative;
+    /// - a legacy IP-only manifest matches only when its IP resolves UNIQUELY
+    ///   to the caller's bridge;
+    /// - ambiguous or unresolved identity yields nothing — retained, untouched;
+    /// - a manifest on another bridge is never selected for sharing a room id.
+    ///
+    /// A `nil` caller `bridgeID` follows `hueClient(for:)`'s rule: it names the
+    /// single bridge in a one-bridge home and names NOTHING when several are
+    /// registered. Failing closed there is the point — a stop that cannot say
+    /// which bridge must not delete on a guess.
+    private func exactManifests(bridgeID: String?, roomID: String) -> [BridgeAnimationManifest] {
+        guard let callerBridgeID = resolvedCallerBridgeID(bridgeID) else {
+            debugLog("[Composer] No exact bridge identity for room=\(roomID) — retaining every manifest")
+            return []
+        }
+        let callerIP = (try? clients[callerBridgeID]?.credentials())?.ip
+        return bridgeAnimationStore.allManifests().filter { manifest in
+            guard manifest.roomID == roomID else { return false }
+            if let recorded = manifest.bridgeID { return recorded == callerBridgeID }
+            // Legacy: the IP must resolve to exactly one registered bridge AND
+            // that bridge must be the caller's.
+            guard let callerIP, manifest.bridgeIP == callerIP else { return false }
+            return clients.values.filter { (try? $0.credentials())?.ip == manifest.bridgeIP }.count == 1
+        }
+    }
+
+    /// Normalize the caller's own bridge identity, or nil when it is not exact.
+    private func resolvedCallerBridgeID(_ bridgeID: String?) -> String? {
+        if let bridgeID { return clients[bridgeID] != nil ? bridgeID : nil }
+        return clients.count == 1 ? clients.keys.first : nil
+    }
+
+    /// The bridge a manifest belongs to, or nil when the app cannot say WHICH.
+    ///
+    /// A recorded id must still be registered; a legacy IP resolves only on
+    /// EXACTLY ONE match. Ambiguous fails closed: no upgrade, no verdict, no
+    /// cleanup, no claim about whether the animation is running.
+    private func resolvedBridgeID(for manifest: BridgeAnimationManifest) -> String? {
+        if let recorded = manifest.bridgeID { return clients[recorded] != nil ? recorded : nil }
+        let matches = clients.filter { (try? $0.value.credentials())?.ip == manifest.bridgeIP }
+        guard matches.count == 1 else { return nil }
+        return matches.first?.key
+    }
+
+    /// THE single manifest-removal funnel. Returns true only when the evidence
+    /// was actually retired.
+    ///
+    /// Evidence may be dropped only once the bridge proved the resources are
+    /// gone. `.partial` and `.bridgeUnreadable` are reasons to WAIT — before
+    /// packet 8 an unresolvable client was treated as a reason to FORGET, which
+    /// permanently destroyed the only record of an animation that keeps looping.
+    @discardableResult
+    private func retireManifest(
+        _ manifest: BridgeAnimationManifest,
+        after result: BridgeAnimationCleanupResult
+    ) -> Bool {
+        switch result {
+        case .partial:
+            debugLog("[Composer] Bridge refused part of the cleanup for manifest \(manifest.id) — retaining")
+            return false
+        case .bridgeUnreadable:
+            debugLog("[Composer] Bridge unreadable during cleanup of manifest \(manifest.id) — retaining for retry")
+            return false
+        case .removed:
+            // Freshness: a replacement may have taken this id's place while the
+            // deletes were in flight. Only retire the exact value we cleaned.
+            guard stillCurrent(manifest) else {
+                debugLog("[Composer] Manifest \(manifest.id) changed during cleanup — leaving the newer record alone")
+                return false
+            }
+            bridgeAnimationStore.remove(id: manifest.id)
+            forgetRecoveredBridgeAnimation(manifestID: manifest.id)
+            return true
+        }
+    }
+
+    /// May a decision computed BEFORE an await still be applied?
+    ///
+    /// The manifest value is the fingerprint — it covers the id, both bridge
+    /// identities and the complete named resource set, so a removal, a
+    /// replacement or a different legacy upgrade all fail this check. A miss
+    /// skips the decision and lets a later pass redo it; it never guesses.
+    private func stillCurrent(_ snapshot: BridgeAnimationManifest) -> Bool {
+        bridgeAnimationStore.manifest(id: snapshot.id) == snapshot
     }
 
     /// Which transport is driving each room's composition right now.
@@ -3734,6 +4388,7 @@ final class UnifiedOrchestrator {
             bridgeKey: studioBridgeID ?? "legacy",
             scope: RestScope(roomID: studioRoomID, owner: .studio)
         )
+        noteRoomOwnershipChange(bridgeID: studioBridgeID, roomID: studioRoomID)
 
         // Create live param box (engine loop reads from this; ViewModel updates it)
         let paramBox = StudioParamBox(values: params, colors: colors)
@@ -3931,6 +4586,7 @@ final class UnifiedOrchestrator {
             scope: RestScope(roomID: roomID, owner: .composer))
         beginComposerTelemetrySession(
             sessionKey: composerTelemetryKey, generation: nextGeneration)
+        noteRoomOwnershipChange(bridgeID: room.bridgeID, roomID: roomID)
         let startNeedsMic = paramBox.reaction.needsMicNow(
             serviceDriven: BeatClock.shared.isServiceDriven)
         let compositionGamut: HueColorUtils.Gamut
@@ -4034,6 +4690,7 @@ final class UnifiedOrchestrator {
                 paramBox.radialPositions = entGeometry.radial
                 paramBox.angularPositions = entGeometry.angular
                 compositionEntRoomByBridge[bridgeID] = roomID
+                noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
                 compositionTransportByRoom[roomID] = .entertainment
                 compositionEntParamBoxes[bridgeID] = paramBox
                 compositionEntTasks[bridgeID]?.cancel()
@@ -4077,8 +4734,23 @@ final class UnifiedOrchestrator {
             do {
                 let v1Client = try api.makeV1Client()
 
-                // Clean up only what THIS room owns on THIS bridge (packet 2).
-                await cleanupBridgeStoredAnimationForReplacement(roomID: roomID, v1Client: v1Client)
+                // Clean up only what THIS room owns on THIS bridge (packet 2),
+                // and REFUSE TO CREATE until that cleanup is provably complete
+                // (packet 8). Two recurring rule chains driving one room is not
+                // an accumulation risk to tidy up later — both keep firing, they
+                // fight over every light, and the app has a record of only the
+                // newer one.
+                let readiness = await cleanupBridgeStoredAnimationForReplacement(
+                    roomID: roomID, bridgeID: bridgeID, v1Client: v1Client)
+                if case .blocked(let reason, let retained) = readiness {
+                    debugLog("[Composer] ⚠ Refusing bridge-stored upload for room=\(roomID): \(reason) (retained \(retained.count) manifest(s))")
+                    // Close the session this start opened, exactly as a stop
+                    // would — nothing was created, so nothing may be claimed.
+                    deactivateComposerTelemetrySession(
+                        sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                    return .failed(
+                        message: "Couldn't start \(preset.name) — the previous look is still on the bridge. Try again in a moment.")
+                }
 
                 debugLog("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
                 // M-04: the engine maps v2 UUIDs → v1 numeric ids via id_v1
@@ -4101,8 +4773,13 @@ final class UnifiedOrchestrator {
                     gamut: compositionGamut,
                     v1Client: v1Client
                 )
-                bridgeAnimationStore.save(manifest)
+                // Stamp the stable bridge identity here, where it is exact. The
+                // engine only ever sees a client, which knows its host but not
+                // which BridgeRecord it is — and an IP alone strands the
+                // manifest the moment DHCP moves the bridge.
+                bridgeAnimationStore.save(manifest.adoptingBridgeID(bridgeID))
                 compositionTransportByRoom[roomID] = .bridgeStored
+                noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
                 debugLog("[Composer] ⚡ Bridge-stored animation active! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s/step")
                 debugLog("[Composer] ⚡ Close the app — lights will keep going!")
 
@@ -5128,19 +5805,30 @@ final class UnifiedOrchestrator {
         // M-07: tear down against the manifest's OWN bridge, never the
         // nondeterministic first client — a second bridge's animation would
         // otherwise loop forever while its manifest is dropped locally.
-        for manifest in bridgeAnimationStore.allManifests() where manifest.roomID == roomID {
-            if let api = hueClient(forBridgeIP: manifest.bridgeIP),
-               let v1Client = try? api.makeV1Client() {
-                await bridgeAnimationEngine.stop(manifest: manifest, v1Client: v1Client)
-            } else {
-                // The manifest's bridge is no longer registered — no client can
-                // ever clean it up, so drop the manifest instead of leaking it.
-                // (Bridge-side CG_ leftovers age out via the purge path.)
-                debugLog("[Handoff] ⚠ No registered client for bridge \(manifest.bridgeIP) — dropping manifest without bridge cleanup")
+        // Packet 8: selection is EXACT — this bridge and this room, never every
+        // manifest that happens to share the room id. `exactManifests` is the
+        // sole destructive authority; `compositionTransportByRoom` is roomID-
+        // keyed and is deliberately not consulted for ownership.
+        for manifest in exactManifests(bridgeID: bridgeID, roomID: roomID) {
+            guard let api = hueClient(for: bridgeID) ?? hueClient(forBridgeIP: manifest.bridgeIP),
+                  let v1Client = try? api.makeV1Client() else {
+                // Packet 8: RETAIN. "No registered client right now" is the
+                // normal transient state at launch — the bridge may be asleep,
+                // moved, or its fetch still in flight. The old code dropped the
+                // manifest here, permanently destroying the only record of
+                // resources that keep looping on that bridge.
+                debugLog("[Handoff] ⚠ No registered client for manifest \(manifest.id) — retaining it")
+                continue
             }
-            bridgeAnimationStore.remove(presetID: manifest.presetID, roomID: roomID)
+            let result = await bridgeAnimationEngine.stop(manifest: manifest, v1Client: v1Client)
+            if !retireManifest(manifest, after: result) {
+                debugLog("[Handoff] ⚠ Bridge did not confirm teardown of \(manifest.id) — retaining for retry")
+            }
         }
-        compositionTransportByRoom.removeValue(forKey: roomID)
+        clearBridgeStoredTransportIfUnowned(roomID: roomID)
+        if compositionTransportByRoom[roomID] != .bridgeStored {
+            compositionTransportByRoom.removeValue(forKey: roomID)
+        }
         // Packet 3: clear ONLY this room's Composer scope. Packet 4: on the
         // bridge the CALLER named — the same identity the scheduler enqueues
         // on — never a bridge recovered from `allRooms`, manifests,
@@ -5693,7 +6381,12 @@ final class UnifiedOrchestrator {
 
         // Also notify any mic engines
         NotificationCenter.default.post(name: .studioStopAll, object: nil)
-        activeEffectEntries.removeAll()
+        // Packet 8: recovered bridge-stored rows survive. This teardown stops
+        // what the APP is driving; it sends no v1 delete, so those animations
+        // are still running on their bridges and clearing their rows would be
+        // a claim this function did not earn. They stop through the exact
+        // manifest path, which is still reachable from Dashboard and Studio.
+        activeEffectEntries.removeAll { $0.recovered == nil }
         // Stop-everything includes the firmware effects Studio started, so their
         // All-Day claims go with them.
         bridgeNativeOwners.removeAll()

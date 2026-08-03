@@ -20,13 +20,33 @@ import OSLog
 
 /// All v1 resource IDs created for a single bridge-stored animation.
 /// Persisted to disk so we can find and clean up bridge resources later.
-struct BridgeAnimationManifest: Codable, Identifiable {
+///
+/// Equatable/Hashable on every stored property is load-bearing, not a
+/// convenience: reconciliation computes decisions from a snapshot taken BEFORE
+/// a network await, and the whole value IS the freshness fingerprint it
+/// re-checks against the store before applying anything (packet 8). A field
+/// added here is automatically covered by that check.
+struct BridgeAnimationManifest: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     let presetID: UUID
     let presetName: String
     let roomID: String
     let roomName: String
+
+    /// The bridge's LAN host at upload time. Historic identity: an IP is a
+    /// ROUTE, not an identity — DHCP moves it and two homes can reuse it.
     let bridgeIP: String
+
+    /// The registered `BridgeRecord.id` this animation lives on (packet 8).
+    ///
+    /// Optional because manifests written before packet 8 recorded only the
+    /// host, and those files must keep decoding. Swift's SYNTHESIZED decoder
+    /// emits `decodeIfPresent` for an optional stored property, so a legacy
+    /// `bridge_animations.json` decodes to nil with no custom code — and a
+    /// hand-written `init(from:)` that forgot that would throw, `load()` would
+    /// swallow it, and every manifest on disk would be lost. Never back-filled
+    /// by guessing: see `UnifiedOrchestrator.resolvedBridgeID(for:)`.
+    let bridgeID: String?
 
     // v1 resource IDs
     let sensorID: String
@@ -40,8 +60,86 @@ struct BridgeAnimationManifest: Codable, Identifiable {
     let cycleDurationSeconds: Double
     let createdAt: Date
 
-    /// Composite key for lookup
-    var key: String { "\(presetID.uuidString)_\(roomID)" }
+    /// The same manifest stamped with a resolved bridge id.
+    ///
+    /// Value-returning so a legacy upgrade is always a deliberate store write
+    /// with a new fingerprint, never an in-place mutation that a concurrent
+    /// reconciliation pass could not notice.
+    func adoptingBridgeID(_ resolved: String) -> BridgeAnimationManifest {
+        BridgeAnimationManifest(
+            id: id, presetID: presetID, presetName: presetName,
+            roomID: roomID, roomName: roomName,
+            bridgeIP: bridgeIP, bridgeID: resolved,
+            sensorID: sensorID, ruleIDs: ruleIDs, scheduleID: scheduleID,
+            sceneIDs: sceneIDs, resourcelinkID: resourcelinkID,
+            stepCount: stepCount, intervalSeconds: intervalSeconds,
+            cycleDurationSeconds: cycleDurationSeconds, createdAt: createdAt)
+    }
+}
+
+// MARK: - Liveness (Composer 2 packet 8)
+
+/// The subset of ONE bridge's v1 inventory that bridge-stored animations name.
+///
+/// Read once per bridge and every manifest on that bridge is judged against
+/// this single snapshot — never one inventory read per manifest.
+struct BridgeAnimationInventory: Sendable, Equatable {
+    /// scheduleID → `status == "enabled"`. An absent key means the schedule
+    /// is gone; a present-but-false value means it exists and drives nothing.
+    let schedules: [String: Bool]
+    let rules: Set<String>
+    let sensors: Set<String>
+    /// nil = NOT READ, because no manifest on this bridge named a scene.
+    /// Deliberately distinct from "read and empty": only the latter is
+    /// evidence, and only evidence may authorise a delete.
+    let scenes: Set<String>?
+    let resourcelinks: Set<String>?
+}
+
+/// Exactly what the bridge still holds for one manifest. Cleanup deletes this
+/// and nothing else — never a `CG_` name sweep, which is a shared prefix and
+/// not an ownership claim (packet 2).
+struct BridgeAnimationResidue: Equatable, Sendable {
+    var scheduleID: String?
+    var ruleIDs: [String] = []
+    var sensorID: String?
+    var sceneIDs: [String] = []
+    var resourcelinkID: String?
+
+    /// True when the bridge proved every resource this manifest names is gone.
+    var isEmpty: Bool {
+        scheduleID == nil && ruleIDs.isEmpty && sensorID == nil
+            && sceneIDs.isEmpty && resourcelinkID == nil
+    }
+}
+
+enum BridgeAnimationLiveness: Equatable, Sendable {
+    /// Schedule exists AND is enabled, sensor exists, every recorded rule
+    /// exists, and every recorded scene exists when `sceneIDs` is non-empty.
+    ///
+    /// The resourcelink is deliberately NOT part of the verdict: `upload`
+    /// treats its creation as allowed to fail, so requiring it would declare
+    /// healthy animations dead.
+    case live
+    /// The bridge answered and this animation is not running.
+    /// `residue.isEmpty` means the bridge PROVED total absence.
+    case notRunning(residue: BridgeAnimationResidue)
+    /// The inventory needed to judge this manifest was not read. Retain the
+    /// manifest, do nothing, retry later. Never a stand-in for "absent".
+    case indeterminate(reason: String)
+}
+
+/// What a teardown actually achieved. Replaces the pre-packet-8 `Void` return,
+/// which reported completion unconditionally and so could not stop a caller
+/// from dropping the only record of resources that are still on the bridge.
+enum BridgeAnimationCleanupResult: Equatable, Sendable {
+    /// Every targeted resource is gone: each delete was accepted, or the bridge
+    /// answered "resource not available". Safe to drop the manifest.
+    case removed
+    /// The bridge answered and refused at least one delete. Retain and retry.
+    case partial(remaining: BridgeAnimationResidue)
+    /// No delete reached the bridge at all. Retain and retry.
+    case bridgeUnreadable(remaining: BridgeAnimationResidue)
 }
 
 // MARK: - BridgeAnimationError
@@ -398,6 +496,10 @@ actor BridgeAnimationEngine {
             roomID: room.id,
             roomName: room.name,
             bridgeIP: v1Client.bridgeIP,
+            // The engine holds a client, and a client knows its host but not
+            // which BridgeRecord it belongs to. The orchestrator stamps the
+            // stable id at save time, where that identity is already exact.
+            bridgeID: nil,
             sensorID: sensorID,
             ruleIDs: ruleIDs,
             scheduleID: scheduleID,
@@ -412,38 +514,160 @@ actor BridgeAnimationEngine {
         return manifest
     }
 
-    /// Stop a bridge-stored animation and clean up ALL resources.
-    func stop(manifest: BridgeAnimationManifest, v1Client: HueV1Client) async {
+    /// Stop a bridge-stored animation and clean up its resources, REPORTING
+    /// what actually happened.
+    ///
+    /// `only` narrows the deletes to exactly what a fresh inventory read said
+    /// the bridge still holds (reconciliation). `nil` targets every id the
+    /// manifest names — byte-for-byte the pre-packet-8 delete set and order,
+    /// which the replacement path and packet 2's ordering tests rely on.
+    ///
+    /// Issues ZERO reads, whichever mode. Verifying by enumeration here would
+    /// break packet 2's guarantee that a normal replacement never enumerates
+    /// the bridge, so the residue is computed by the reconciler and passed in.
+    ///
+    /// Every step is attempted even after a failure: aborting early would leave
+    /// a partially-torn-down chain whose surviving rules keep firing.
+    @discardableResult
+    func stop(
+        manifest: BridgeAnimationManifest,
+        v1Client: HueV1Client,
+        only residue: BridgeAnimationResidue? = nil
+    ) async -> BridgeAnimationCleanupResult {
         log.info("[BridgeAnim] Stopping animation '\(manifest.presetName)' on '\(manifest.roomName)'")
+
+        let target = residue ?? Self.fullResidue(of: manifest)
+        var remaining = BridgeAnimationResidue()
+        var bridgeAnswered = false
+        var anyFailure = false
+
+        /// Classify one delete. A `HueV1ClientError.apiError` means the bridge
+        /// answered and refused; anything else (HTTP status, bad URL, URLError)
+        /// never reached it. That difference is what separates "retry later,
+        /// the bridge is unreachable" from "this bridge is refusing us".
+        func attempt(_ label: String, _ work: () async throws -> Void) async -> Bool {
+            do {
+                try await work()
+                bridgeAnswered = true
+                return true
+            } catch {
+                anyFailure = true
+                if error is HueV1ClientError { bridgeAnswered = true }
+                log.warning("[BridgeAnim] Failed to delete \(label): \(error.localizedDescription)")
+                return false
+            }
+        }
 
         // Delete in reverse order of dependency:
         // 1. Schedule (stops the timer)
-        do { try await v1Client.deleteSchedule(id: manifest.scheduleID) }
-        catch { log.warning("[BridgeAnim] Failed to delete schedule \(manifest.scheduleID): \(error.localizedDescription)") }
+        if let scheduleID = target.scheduleID {
+            if await attempt("schedule \(scheduleID)", { try await v1Client.deleteSchedule(id: scheduleID) }) == false {
+                remaining.scheduleID = scheduleID
+            }
+        }
 
         // 2. Rules (stops the chain)
-        for ruleID in manifest.ruleIDs {
-            do { try await v1Client.deleteRule(id: ruleID) }
-            catch { log.warning("[BridgeAnim] Failed to delete rule \(ruleID): \(error.localizedDescription)") }
+        for ruleID in target.ruleIDs {
+            if await attempt("rule \(ruleID)", { try await v1Client.deleteRule(id: ruleID) }) == false {
+                remaining.ruleIDs.append(ruleID)
+            }
         }
 
         // 3. Sensor (removes the counter)
-        do { try await v1Client.deleteSensor(id: manifest.sensorID) }
-        catch { log.warning("[BridgeAnim] Failed to delete sensor \(manifest.sensorID): \(error.localizedDescription)") }
+        if let sensorID = target.sensorID {
+            if await attempt("sensor \(sensorID)", { try await v1Client.deleteSensor(id: sensorID) }) == false {
+                remaining.sensorID = sensorID
+            }
+        }
 
         // 4. Scenes (removes the stored states)
-        for sceneID in manifest.sceneIDs {
-            do { try await v1Client.deleteScene(id: sceneID) }
-            catch { log.warning("[BridgeAnim] Failed to delete scene \(sceneID): \(error.localizedDescription)") }
+        for sceneID in target.sceneIDs {
+            if await attempt("scene \(sceneID)", { try await v1Client.deleteScene(id: sceneID) }) == false {
+                remaining.sceneIDs.append(sceneID)
+            }
         }
 
         // 5. Resourcelink (removes the grouping)
-        if let rlID = manifest.resourcelinkID {
-            do { try await v1Client.deleteResourcelink(id: rlID) }
-            catch { log.warning("[BridgeAnim] Failed to delete resourcelink \(rlID): \(error.localizedDescription)") }
+        if let rlID = target.resourcelinkID {
+            if await attempt("resourcelink \(rlID)", { try await v1Client.deleteResourcelink(id: rlID) }) == false {
+                remaining.resourcelinkID = rlID
+            }
         }
 
-        log.info("[BridgeAnim] ✅ Cleanup complete for '\(manifest.presetName)'")
+        guard anyFailure else {
+            log.info("[BridgeAnim] ✅ Cleanup complete for '\(manifest.presetName)'")
+            return .removed
+        }
+        if bridgeAnswered {
+            log.warning("[BridgeAnim] ⚠ Partial cleanup for '\(manifest.presetName)' — retaining evidence")
+            return .partial(remaining: remaining)
+        }
+        log.warning("[BridgeAnim] ⚠ Bridge unreadable during cleanup of '\(manifest.presetName)' — retaining evidence")
+        return .bridgeUnreadable(remaining: remaining)
+    }
+
+    // MARK: - Liveness (pure, packet 8)
+
+    /// Every resource id this manifest names, whether or not the bridge still
+    /// has it. The delete set when no inventory narrowed it.
+    nonisolated static func fullResidue(of m: BridgeAnimationManifest) -> BridgeAnimationResidue {
+        BridgeAnimationResidue(
+            scheduleID: m.scheduleID,
+            ruleIDs: m.ruleIDs,
+            sensorID: m.sensorID,
+            sceneIDs: m.sceneIDs,
+            resourcelinkID: m.resourcelinkID)
+    }
+
+    /// What this bridge STILL holds of the manifest's named resources.
+    ///
+    /// A category the inventory did not read contributes nothing: the caller
+    /// must treat that manifest as indeterminate rather than delete a partial
+    /// set (see `liveness(of:in:)`).
+    nonisolated static func residue(
+        of m: BridgeAnimationManifest,
+        in inv: BridgeAnimationInventory
+    ) -> BridgeAnimationResidue {
+        var residue = BridgeAnimationResidue()
+        if inv.schedules[m.scheduleID] != nil { residue.scheduleID = m.scheduleID }
+        residue.ruleIDs = m.ruleIDs.filter { inv.rules.contains($0) }
+        if inv.sensors.contains(m.sensorID) { residue.sensorID = m.sensorID }
+        if let scenes = inv.scenes {
+            residue.sceneIDs = m.sceneIDs.filter { scenes.contains($0) }
+        }
+        if let rlID = m.resourcelinkID, let links = inv.resourcelinks, links.contains(rlID) {
+            residue.resourcelinkID = rlID
+        }
+        return residue
+    }
+
+    /// Is this manifest's animation still running on this bridge?
+    ///
+    /// Fails closed in both directions: a category the reconciler did not read
+    /// yields `.indeterminate` rather than a verdict, because claiming absence
+    /// from an unread inventory is how a live animation gets torn down, and
+    /// claiming presence from one is how a phantom row appears.
+    nonisolated static func liveness(
+        of m: BridgeAnimationManifest,
+        in inv: BridgeAnimationInventory
+    ) -> BridgeAnimationLiveness {
+        if !m.sceneIDs.isEmpty && inv.scenes == nil {
+            return .indeterminate(reason: "manifest names scenes but scenes were not read")
+        }
+        if m.resourcelinkID != nil && inv.resourcelinks == nil {
+            return .indeterminate(reason: "manifest names a resourcelink but resourcelinks were not read")
+        }
+
+        let scheduleEnabled = inv.schedules[m.scheduleID] == true
+        let sensorPresent = inv.sensors.contains(m.sensorID)
+        let allRulesPresent = m.ruleIDs.allSatisfy { inv.rules.contains($0) }
+        let allScenesPresent = m.sceneIDs.isEmpty
+            || (inv.scenes.map { scenes in m.sceneIDs.allSatisfy { scenes.contains($0) } } ?? false)
+
+        if scheduleEnabled && sensorPresent && allRulesPresent && allScenesPresent {
+            return .live
+        }
+        return .notRunning(residue: residue(of: m, in: inv))
     }
 
     // MARK: - Timing Calculation

@@ -354,7 +354,7 @@ struct AppRootView: View {
                             for entry in orchestrator.activeEffectEntries {
                                 // turnOffLights: false — the Siri shortcut promises
                                 // "lights stay on at their current state".
-                                await orchestrator.requestNowPlayingStop(roomID: entry.id,
+                                await orchestrator.requestNowPlayingStop(entry,
                                                                          turnOffLights: false)
                             }
                         }

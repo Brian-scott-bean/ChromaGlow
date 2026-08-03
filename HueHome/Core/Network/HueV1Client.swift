@@ -429,7 +429,23 @@ class HueV1Client: @unchecked Sendable {
 
     /// Delete a sensor.
     func deleteSensor(id: String) async throws {
-        _ = try await delete(path: "/sensors/\(id)")
+        try Self.throwUnlessDeleted(try await delete(path: "/sensors/\(id)"))
+    }
+
+    /// A v1 DELETE answers HTTP *200* with an error envelope when it refuses,
+    /// so `execute`'s status check never fires and the old `_ = try await`
+    /// read every refusal as a success. Packet 8 needs the difference: a stop
+    /// may only drop the manifest once the resources are genuinely gone.
+    ///
+    /// Type 3 ("resource not available") is the one code that means the
+    /// delete's GOAL is already met — a user who removed the resource by hand
+    /// must not leave the manifest permanently unprunable. That is a numeric
+    /// protocol code, not the English `description` this file deliberately
+    /// refuses to classify on (see `parsedAPIError`).
+    static func throwUnlessDeleted(_ data: Data) throws {
+        guard let apiError = parsedAPIError(from: data) else { return }
+        if case .apiError(let type, _, _) = apiError, type == 3 { return }
+        throw apiError
     }
 
     // ──────────────────────────────────────────────
@@ -455,7 +471,7 @@ class HueV1Client: @unchecked Sendable {
 
     /// Delete a rule.
     func deleteRule(id: String) async throws {
-        _ = try await delete(path: "/rules/\(id)")
+        try Self.throwUnlessDeleted(try await delete(path: "/rules/\(id)"))
     }
 
     // ──────────────────────────────────────────────
@@ -500,7 +516,7 @@ class HueV1Client: @unchecked Sendable {
 
     /// Delete a schedule.
     func deleteSchedule(id: String) async throws {
-        _ = try await delete(path: "/schedules/\(id)")
+        try Self.throwUnlessDeleted(try await delete(path: "/schedules/\(id)"))
     }
 
     // ──────────────────────────────────────────────
@@ -528,7 +544,7 @@ class HueV1Client: @unchecked Sendable {
 
     /// Delete a scene.
     func deleteScene(id: String) async throws {
-        _ = try await delete(path: "/scenes/\(id)")
+        try Self.throwUnlessDeleted(try await delete(path: "/scenes/\(id)"))
     }
 
     // ──────────────────────────────────────────────
@@ -555,7 +571,7 @@ class HueV1Client: @unchecked Sendable {
 
     /// Delete a resourcelink (does NOT delete linked resources).
     func deleteResourcelink(id: String) async throws {
-        _ = try await delete(path: "/resourcelinks/\(id)")
+        try Self.throwUnlessDeleted(try await delete(path: "/resourcelinks/\(id)"))
     }
 
     // ──────────────────────────────────────────────
@@ -682,29 +698,72 @@ class HueV1Client: @unchecked Sendable {
     // MARK: - Fetch All (for purge/cleanup)
     // ──────────────────────────────────────────────
 
+    /// Decode a v1 collection body as `id → resource`.
+    ///
+    /// The old `(try? JSONSerialization…) ?? [:]` made a v1 error envelope
+    /// (which v1 returns with HTTP *200*, so `execute`'s status check never
+    /// fires) indistinguishable from "this bridge has none" — and that exact
+    /// difference is the question launch-time reconciliation asks before it is
+    /// allowed to delete anything. A genuinely empty collection answers `{}`,
+    /// which still decodes to `[:]`; anything that is not a resource map is a
+    /// failure and THROWS.
+    static func decodeResourceMap(_ data: Data, path: String) throws -> [String: [String: Any]] {
+        if let apiError = parsedAPIError(from: data) { throw apiError }
+        guard let map = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else {
+            throw HueAPIError.decodingFailed("v1 \(path) did not decode as a resource map")
+        }
+        return map
+    }
+
     func fetchSchedules() async throws -> [String: [String: Any]] {
-        let data = try await get(path: "/schedules")
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+        return try Self.decodeResourceMap(try await get(path: "/schedules"), path: "/schedules")
     }
 
     func fetchRules() async throws -> [String: [String: Any]] {
-        let data = try await get(path: "/rules")
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+        return try Self.decodeResourceMap(try await get(path: "/rules"), path: "/rules")
     }
 
     func fetchSensors() async throws -> [String: [String: Any]] {
-        let data = try await get(path: "/sensors")
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+        return try Self.decodeResourceMap(try await get(path: "/sensors"), path: "/sensors")
     }
 
     func fetchScenes() async throws -> [String: [String: Any]] {
-        let data = try await get(path: "/scenes")
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+        return try Self.decodeResourceMap(try await get(path: "/scenes"), path: "/scenes")
     }
 
     func fetchResourcelinks() async throws -> [String: [String: Any]] {
-        let data = try await get(path: "/resourcelinks")
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+        return try Self.decodeResourceMap(try await get(path: "/resourcelinks"), path: "/resourcelinks")
+    }
+
+    /// ONE pass over the inventories a bridge-stored animation names, issued per
+    /// BRIDGE rather than per manifest (packet 8).
+    ///
+    /// Sequential on purpose. Five GETs happen once per bridge per reconcile
+    /// pass, and a deterministic call ORDER is what lets a test assert "this
+    /// bridge was read exactly once" without waiting on anything. Parallelism
+    /// belongs at the bridge level, where the reconciler puts it.
+    ///
+    /// Scenes and resourcelinks are read only when some manifest on this bridge
+    /// actually names one, so an unread category stays `nil` — "I did not look"
+    /// must never collapse into "there is nothing there".
+    func fetchAnimationInventory(
+        includeScenes: Bool,
+        includeResourcelinks: Bool
+    ) async throws -> BridgeAnimationInventory {
+        let schedulesRaw = try await fetchSchedules()
+        let rulesRaw = try await fetchRules()
+        let sensorsRaw = try await fetchSensors()
+        let scenes = includeScenes ? Set(try await fetchScenes().keys) : nil
+        let links = includeResourcelinks ? Set(try await fetchResourcelinks().keys) : nil
+        return BridgeAnimationInventory(
+            // v1 reports a disabled schedule as status "disabled". A schedule
+            // that exists but is not enabled is not driving anything, so the
+            // enabled flag travels with the id rather than being inferred later.
+            schedules: schedulesRaw.mapValues { ($0["status"] as? String) == "enabled" },
+            rules: Set(rulesRaw.keys),
+            sensors: Set(sensorsRaw.keys),
+            scenes: scenes,
+            resourcelinks: links)
     }
 
     // ──────────────────────────────────────────────

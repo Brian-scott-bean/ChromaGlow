@@ -27,6 +27,14 @@
 #   8. Composer 2 packet 5 — no re-introduced light/channel cap: the render
 #              and bridge-stored paths must not clamp a room to a literal
 #              count, and `channelBudget` must stay gone.
+#   9. Composer 2 packet 7 — no configID-only Entertainment ownership, no
+#              protocol jargon in Studio's user-facing strings, and no timing
+#              waits in the ownership tests.
+#  10. Composer 2 packet 8 — bridge-stored manifest evidence may be destroyed
+#              only through one exact-identity funnel: no roomID-only removal,
+#              no global CG_ purge on the launch path, no dropping a manifest
+#              because its bridge client is momentarily unavailable, and no
+#              timing waits in the reconciliation tests.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -300,6 +308,116 @@ own_wait_hits=$(grep -nE 'Task\.sleep|XCTWaiter|wait\(for:' "$OWNERSHIP_TESTS" 2
 if [[ -n "$own_wait_hits" ]]; then
     fail "composer-p7" $'timing wait in the entertainment ownership tests:\n'"$own_wait_hits"
 fi
+
+
+# ──── Guard 10 (composer-p8): manifest evidence is destroyed only on proof ────
+# A bridge-stored animation runs on the bridge's own firmware, so the persisted
+# manifest is the ONLY app-side record of resources that keep firing after a
+# force-quit. Four shapes destroy that record, and every one of them is
+# invisible to a green suite that never staged the exact situation:
+#
+#   (a) removing a manifest by roomID — or by presetID+roomID, the pre-packet-8
+#       key. The same room id exists on two bridges, and after the rekey the
+#       same preset legitimately has two manifests in one room. Exact identity
+#       (`remove(id:`) is the only sanctioned spelling.
+#   (b) reaching `purgeAllChromaGlowResources` from the launch path. That is
+#       packet 2's cross-room destruction defect re-entering through the one
+#       door packet 2 never had: a reconciler that runs on every launch.
+#   (c) dropping a manifest because its bridge client is not registered YET. At
+#       launch that is the NORMAL state — the bridge may be asleep, moved, or
+#       its fetch still in flight. Forgetting it there is permanent, and it is
+#       exactly what the code did before this packet. Structural fix: removal
+#       has ONE funnel, and that funnel returns early unless the typed cleanup
+#       result says the resources are actually gone.
+#   (d) proving any of the above with elapsed time. Same rule Guards 7/8/9
+#       apply to the packets before it.
+#
+# Two packet-8 rules are function-scoped rather than file-scoped and live in
+# the suite instead, using packet 2's source-shape pattern: that the reconciler
+# is called from `loadAll` AFTER the bridge fetch and room rebuild, and that
+# destructive selection inside `stopCompositionMode` /
+# `cleanupBridgeStoredAnimationForReplacement` always goes through
+# `exactManifests(`. A grep cannot express ordering or containment within one
+# function body.
+# ──────────────────────────────────────────────────────────────
+
+P8_SOURCES=(
+    "HueHome/Core/Network/UnifiedOrchestrator.swift"
+    "HueHome/Core/Persistence/BridgeAnimationStore.swift"
+    "HueHome/UI/Studio/StudioViewModel.swift"
+)
+
+# (a) The roomID-only / preset+room destructive API stays gone. Comment-only
+#     lines are stripped: the history above each fix necessarily names the old
+#     call, and deleting documentation to satisfy a grep is backwards.
+for f in "${P8_SOURCES[@]}"; do
+    [[ -f "$f" ]] || continue
+    p8_key_hits=$(grep -nE 'remove\(presetID:|remove\(roomID:|removeManifests\(roomID:|isRunningOnBridge\(presetID:|ownedManifests\(roomID: [^,)]+\)' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    if [[ -n "$p8_key_hits" ]]; then
+        fail "composer-p8" $'roomID-only destructive manifest removal in '"$f"$':\n'"$p8_key_hits"
+    fi
+done
+
+# (b) The launch path may not reach the global CG_ purge. Deliberately the
+#     shell twin of testGlobalBridgeAnimationPurgeIsWiredOnlyToExplicitMaintenance:
+#     this still reports when the test target does not build, which is exactly
+#     when someone is mid-refactor of these APIs.
+p8_purge_hits=$(grep -nE 'purgeAllChromaGlowResources' \
+    "HueHome/Core/Network/UnifiedOrchestrator.swift" 2>/dev/null \
+    | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+if [[ -n "$p8_purge_hits" ]]; then
+    fail "composer-p8" $'the launch reconciler can reach the global CG_ purge:\n'"$p8_purge_hits"
+fi
+
+# (c) ONE removal funnel, gated on the cleanup RESULT, and no second call site
+#     to bypass it. Before this packet there were two, one of which removed the
+#     manifest in the else-branch of a failed client lookup.
+P8_STORE_OWNER="HueHome/Core/Network/UnifiedOrchestrator.swift"
+
+if ! grep -q 'private func retireManifest(' "$P8_STORE_OWNER"; then
+    fail "composer-p8" "the single manifest-removal funnel (retireManifest) is missing from $P8_STORE_OWNER"
+fi
+
+if ! grep -q 'private func exactManifests(bridgeID:' "$P8_STORE_OWNER"; then
+    fail "composer-p8" "the exact-identity manifest selector (exactManifests) is missing from $P8_STORE_OWNER"
+fi
+
+p8_remove_sites=$(grep -cE 'bridgeAnimationStore\.remove\(' "$P8_STORE_OWNER" 2>/dev/null || echo 0)
+if [[ "$p8_remove_sites" -gt 2 ]]; then
+    fail "composer-p8" "expected at most 2 bridgeAnimationStore.remove( call sites (the funnel and the proved-absent prune), found $p8_remove_sites in $P8_STORE_OWNER"
+fi
+
+p8_unreadable_hits=$(grep -nE 'case \.bridgeUnreadable' "$P8_STORE_OWNER" 2>/dev/null \
+    | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+if [[ -z "$p8_unreadable_hits" ]]; then
+    fail "composer-p8" "retireManifest must handle .bridgeUnreadable explicitly — an unreadable bridge is a reason to WAIT, never a reason to forget"
+fi
+
+# A client that cannot be resolved right now is not evidence about the bridge.
+# The pre-packet-8 code logged exactly this sentence while dropping the manifest.
+p8_drop_hits=$(grep -rnE 'dropping manifest without bridge cleanup' "${P8_SOURCES[@]}" 2>/dev/null || true)
+if [[ -n "$p8_drop_hits" ]]; then
+    fail "composer-p8" $'a manifest is dropped because its bridge client is unavailable:\n'"$p8_drop_hits"
+fi
+
+# (d) Packet 8's claims are about ORDER, PRESENCE and RESOURCE IDENTITY — never
+#     elapsed time. Comment-only lines are stripped so the rule's own prose
+#     (MultiBridgeRoutingTests.swift names Task.sleep in a comment, and must
+#     keep doing so) does not trip the guard that describes it.
+P8_TESTS=(
+    "HueHomeTests/MultiBridgeRoutingTests.swift"
+    "HueHomeTests/BridgeAnimationCorrectnessTests.swift"
+)
+
+for f in "${P8_TESTS[@]}"; do
+    [[ -f "$f" ]] || continue
+    p8_wait_hits=$(grep -nE 'Task\.sleep|XCTWaiter|wait\(for:' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    if [[ -n "$p8_wait_hits" ]]; then
+        fail "composer-p8" $'timing wait in the bridge-stored reconciliation tests: '"$f"$':\n'"$p8_wait_hits"
+    fi
+done
 
 # ──────────────────────────────────────────────────────────────
 
