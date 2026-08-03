@@ -416,6 +416,7 @@ struct StudioView: View {
         ))
         .modifier(StudioMusicWiring(vm: vm))
         .modifier(EntertainmentHandoffAlert(vm: vm))
+        .modifier(ForeignTakeoverAlert(vm: vm))
         .confirmationDialog(
             TransportVocabulary.choosePlayTitle,
             isPresented: $showCompositionTransportPrompt,
@@ -1905,6 +1906,42 @@ private struct EntertainmentHandoffAlert: ViewModifier {
         } message: { prompt in
             Text("“\(prompt.runningLookName)” is using Entertainment on this bridge. Stop it and start “\(prompt.requestedLookName)”?")
         }
+    }
+}
+
+/// The third-party takeover prompt (packet 7).
+///
+/// Separate from the handoff alert above on purpose: that one moves a session
+/// between ChromaGlow's own surfaces, this one asks to replace another app.
+/// The copy names no configuration, no protocol, and no third-party app — the
+/// bridge does not tell us who the other controller is, and a guess would be
+/// worse than "another app".
+private struct ForeignTakeoverAlert: ViewModifier {
+    let vm: StudioViewModel
+
+    func body(content: Content) -> some View {
+        content.alert(
+            EntertainmentConsentCopy.takeoverTitle,
+            isPresented: Binding(
+                get: { vm.foreignTakeoverRequest != nil },
+                // Swipe-away is a decline, and declining leaves the other
+                // app's show exactly as it was.
+                set: { if !$0 { vm.cancelForeignTakeover() } }
+            ),
+            presenting: vm.foreignTakeoverRequest
+        ) { _ in
+            Button(EntertainmentConsentCopy.keepExisting, role: .cancel) {
+                vm.cancelForeignTakeover()
+            }
+            Button(EntertainmentConsentCopy.takeOver) {
+                HapticManager.shared.light()
+                Task { await vm.confirmForeignTakeover() }
+            }
+        }
+        // No message body on purpose. The bridge reports THAT a configuration
+        // is streaming, not which room the other controller is lighting — so
+        // any sentence naming a room would be asserting something we cannot
+        // actually know.
     }
 }
 

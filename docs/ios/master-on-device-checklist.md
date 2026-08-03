@@ -504,6 +504,66 @@ how long until a freed room resumed.**
 > next tick. Launch-time playback reconciliation is separate, later work.
 
 
+## U. Composer 2 — third-party Entertainment consent [packet 7]
+
+Branch `fix/third-party-entertainment-consent`; rollback tag
+`checkpoint/pre-composer-packet-7`. No build bump — run this on a build made from
+that branch.
+
+**What changed:** ChromaGlow used to stop *any* Entertainment session it did not
+recognise, on every launch, foreground, and refresh. It now yields: it only ever
+cleans up sessions it recorded as its own, and it replaces another controller
+only after you explicitly start a streaming look **and** tap Take Over.
+
+**You need:** a second controller on the same bridge — a Hue Sync Box, the
+official Hue app's Entertainment/sync mode, or any other app that streams. Item 7
+also needs a second bridge. A "streaming look" below means Party, Strobe,
+Thunderstorm, or a Composer look set to Streaming, in a room that has an
+Entertainment Area.
+
+- [ ] 1. Start the other controller's show, then launch ChromaGlow cold and wait
+      through the initial load (give it a full minute). Expected: **the other
+      show continues uninterrupted and no prompt appears.** (The old build killed
+      it within seconds of launch.)
+- [ ] 2. With that show still running, background ChromaGlow and foreground it
+      again, twice. Expected: still uninterrupted, still no prompt.
+- [ ] 3. Pull to refresh on the Dashboard (and toggle a light to trigger a state
+      refresh). Expected: the other show remains uninterrupted.
+- [ ] 4. While the other show runs, explicitly start a ChromaGlow streaming look
+      in a room on that bridge. Expected: the takeover prompt appears —
+      **"Another app was controlling these lights — take over?"** — and the other
+      show is **still running** at that moment. Nothing may stop before you answer.
+- [ ] 5. Choose **Keep Existing**. Expected: the other show continues, and the
+      ChromaGlow look does **not** start. Repeat once by swiping the alert away
+      instead of tapping — same result.
+- [ ] 6. Repeat item 4 and choose **Take Over**. Expected: the other show stops
+      first, then ChromaGlow starts. The lights must not flicker back to the other
+      app.
+- [ ] 7. **Two bridges.** Run the other controller's show on bridge A, then start
+      a ChromaGlow streaming look in a room on bridge B. Expected: **no prompt**,
+      bridge B starts normally, and bridge A's show is completely untouched.
+- [ ] 8. Force-quit ChromaGlow while it is streaming its own look, then relaunch.
+      Expected: its own leftover session is cleaned up (the room stops streaming
+      and behaves normally). Then repeat with the other controller's show running
+      too: expected: **only** ChromaGlow's own leftover session is cleaned up —
+      the other show survives the relaunch.
+- [ ] 9. **Failed takeover.** Start the other controller's show, tap a ChromaGlow
+      streaming look to raise the prompt, then pull the bridge off the network
+      (unplug its ethernet or power) and tap Take Over. Expected: an honest
+      failure message — ChromaGlow must **not** claim success and must not show
+      the look as playing. Plug the bridge back in and confirm the app recovers.
+- [ ] 10. **Owner changed under the prompt.** Start controller #1's show, tap a
+      ChromaGlow streaming look to raise the prompt, and — while the prompt is
+      still open — stop controller #1 and start a *different* controller (or the
+      same one on a different area). Then tap Take Over. Expected: the replacement
+      is **not** stopped; you are asked again (or told honestly). Stale consent
+      must never evict a session you did not agree to replace.
+
+> If item 1, 2, 3, or 7 fails, stop and report — those are the trust-critical
+> ones. Items 5, 9, and 10 are the honesty checks: the app must never claim a
+> takeover that did not happen, and must never touch a session you declined.
+
+
 ## Parked-agent "Left" register (tracked, not device QA)
 
 | Owner | Item | Status |

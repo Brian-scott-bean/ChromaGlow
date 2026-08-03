@@ -747,6 +747,39 @@ final class UnifiedOrchestrator {
 
     /// Awaits the deferred entertainment-cleanup task so tests can assert its GET
     /// deterministically (loadAll now schedules cleanup fire-and-forget).
+    /// Await an in-flight uncommitted-candidate rollback, so a test can
+    /// assert on ownership after it has actually completed.
+    func testAwaitEntertainmentRollback() async {
+        for task in entertainmentRollbackTasks.values { await task.value }
+    }
+
+    /// Is any prepared-but-uncommitted candidate outstanding right now?
+    func testHasPendingEntertainmentCandidate() -> Bool {
+        !outstandingEntertainmentCandidates.isEmpty
+    }
+
+    /// Exactly which candidates are still outstanding.
+    func testOutstandingCandidateIDs() -> Set<UUID> {
+        Set(outstandingEntertainmentCandidates.keys)
+    }
+
+    /// TEST SEAM: stage an outstanding candidate directly.
+    ///
+    /// A unit test cannot reach `.prepared` through `prepareEntertainment`,
+    /// because every client key in this suite is non-hex so the DTLS open
+    /// refuses before a socket exists. This stages the state that a real
+    /// successful prepare produces, so the rollback contract itself is
+    /// testable without a live handshake.
+    @discardableResult
+    func testStagePendingEntertainmentCandidate(
+        client: HueEntertainmentClient,
+        plan: EntertainmentTakeoverPlan
+    ) -> PreparedEntertainment {
+        let candidate = PreparedEntertainment(client: client, plan: plan)
+        outstandingEntertainmentCandidates[candidate.id] = candidate
+        return candidate
+    }
+
     func testAwaitEntertainmentCleanup() async {
         await entertainmentCleanupTask?.value
     }
@@ -2551,6 +2584,15 @@ final class UnifiedOrchestrator {
     /// swap in an isolated store.
     @ObservationIgnored var entertainmentOwnership: EntertainmentSessionOwnership = .shared
 
+    /// A session opened by `prepareEntertainment` that has not yet been
+    /// committed. Exactly one of commit or rollback must claim it.
+    @ObservationIgnored private var outstandingEntertainmentCandidates: [UUID: PreparedEntertainment] = [:]
+    @ObservationIgnored private var entertainmentRollbackTasks: [UUID: Task<Void, Never>] = [:]
+
+    /// Consent tokens already acted on. A takeover authorizes exactly one
+    /// start; without this a replayed confirmation could start a second time.
+    @ObservationIgnored var consumedEntertainmentConsents: Set<UUID> = []
+
     /// Which Studio scope currently owns REST, and on which bridge (packet 3).
     ///
     /// `activeStudioTask` above is ONE global slot: starting Studio in room B
@@ -3192,6 +3234,23 @@ final class UnifiedOrchestrator {
         studioEntClients[bridgeID] != nil
     }
 
+    /// Packet 7: the composition bookkeeping that a start which never happened
+    /// must leave completely alone.
+    func testCompositionGeneration(roomID: String) -> Int? {
+        compositionGenerations[roomID]
+    }
+
+    func testCompositionTransport(roomID: String) -> CompositionTransport? {
+        compositionTransportByRoom[roomID]
+    }
+
+    func testHasComposerTelemetrySession(roomID: String, bridgeID: String?) -> Bool {
+        let key = ComposerTelemetrySessionKey(
+            bridgeKey: bridgeID ?? "legacy",
+            scope: RestScope(roomID: roomID, owner: .composer))
+        return composerTelemetrySessions[key] != nil
+    }
+
     /// Packet 2: the exact pre-upload cleanup the bridge-stored start path runs.
     /// Exposes the decision, not the store — tests stage manifests through the
     /// store's own public API and assert on what reaches each bridge's client.
@@ -3578,31 +3637,94 @@ final class UnifiedOrchestrator {
         activeParamBox?.colors = colors
     }
 
+    /// Studio engine keys that stream over Entertainment. Only these can
+    /// collide with another controller; the rest never open a session.
+    static func studioEngineStreams(_ key: String) -> Bool {
+        key == "strobe" || key == "party" || key == "thunderstorm"
+    }
+
+    @discardableResult
     func startStudioMode(
         key: String,
         room: RoomDisplayItem,
         params: [String: Double],
-        colors: [String: Color]
-    ) async {
-        // 1. Cancel any previously running studio task first
+        colors: [String: Color],
+        capturedPlan: EntertainmentTakeoverPlan? = nil,
+        consent: EntertainmentConsent? = nil,
+        preparedEntertainment: EntertainmentPreparation? = nil
+    ) async -> PlaybackStartOutcome {
+        // Same net as `apply`, scoped to THIS transaction's candidate: a
+        // candidate that never reaches commit is stopped on the way out,
+        // whichever exit is taken, and a concurrent start's candidate is never
+        // touched. The defer reads the variable at scope exit, so it names
+        // whatever this transaction actually prepared.
+        var outstandingCandidateID: UUID?
+        defer {
+            if let outstandingCandidateID {
+                rollbackUncommittedEntertainment(candidateID: outstandingCandidateID)
+            }
+        }
+
+        // ── PREPARE ─────────────────────────────────────────────
+        //
+        // Resolve the room and acquire the session BEFORE touching anything.
+        // A guard is not destructive, and failing one after a teardown used to
+        // leave the user with the old look stopped and no new one started.
+        guard let api = hueClient(for: room.bridgeID),
+              let groupedLightID = room.groupedLightID else {
+            return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+        }
+
+        // The whole streaming acquisition happens here, while the previous
+        // look is still running and every scope, task, and registry entry is
+        // still intact. A third party discovered on the way out therefore
+        // costs the user nothing: we return and they keep watching what they
+        // were watching.
+        var prepared: PreparedEntertainment?
+        if Self.studioEngineStreams(key) {
+            let preparation: EntertainmentPreparation
+            if let preparedEntertainment {
+                preparation = preparedEntertainment
+            } else {
+                preparation = await prepareEntertainment(for: room,
+                                                         requestsEntertainment: true,
+                                                         plan: capturedPlan,
+                                                         consent: consent)
+            }
+            switch preparation {
+            case .prepared(let candidate):
+                prepared = candidate
+                outstandingCandidateID = candidate.id
+            case .needsForeignConsent(let snapshot, let targetConfigID):
+                debugLog("[Handoff] '\(key)' needs a bridge another app is using — nothing torn down")
+                return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
+            case .failed(let message):
+                return .failed(message: message)
+            case .notNeeded, .unavailable:
+                // No streamable area, or a genuine technical inability. Room
+                // mode is the honest answer and the teardown below is fine.
+                break
+            }
+        }
+
+        // ── COMMIT ──────────────────────────────────────────────
+        //
+        // Past this line the start is going ahead, so destruction is safe.
         activeStudioTask?.cancel()
         activeStudioTask = nil
-        // 2-3. Clear the PREVIOUSLY RECORDED Studio scope and forget it — even
-        // when the new card targets a different room or a different bridge.
+        // Clear the PREVIOUSLY RECORDED Studio scope and forget it — even when
+        // the new card targets a different room or a different bridge.
         // Clearing only the incoming room would be the bug: `activeStudioTask`
         // is one global slot, so a room A -> room B switch would leave room A's
         // epoch valid and its already-queued batches legal, and room A would
         // keep writing over room B.
         await clearActiveStudioRestScope()
         let stopBid = room.bridgeID ?? ""
-        if let entClient = studioEntClients[stopBid] {
+        if let entClient = studioEntClients[stopBid], entClient !== prepared?.client {
             await entClient.stopSession()
             studioEntClients.removeValue(forKey: stopBid)
         }
-
-        // 4. Resolve the new room.
-        guard let api = hueClient(for: room.bridgeID),
-              let groupedLightID = room.groupedLightID else { return }
+        if let prepared { commitEntertainment(prepared) }
 
         // 5. Record the new owner BEFORE its first REST enqueue, so any later
         // start/stop can find and invalidate it.
@@ -3628,56 +3750,69 @@ final class UnifiedOrchestrator {
             break
         }
 
+        // The streaming engines share one shape: try Entertainment, and fall
+        // back to REST only for a genuine technical inability. A foreign
+        // conflict surfacing here (someone started streaming during our own
+        // setup) must NOT become a quiet REST fallback — that would play over
+        // their show instead of asking.
+        // The session was acquired during PREPARE, so this only installs the
+        // render loop. There is no second selection here to disagree with the
+        // first: the channel ids come from the captured plan.
+        func startStreamingEngine(
+            entertainment: (HueEntertainmentClient, [UInt8]) -> Task<Void, Never>,
+            rest: () -> Task<Void, Never>
+        ) -> PlaybackStartOutcome {
+            if let prepared {
+                activeStudioTask = entertainment(prepared.client, prepared.channelIDs)
+                return .started(transport: .entertainment)
+            }
+            activeStudioTask = rest()
+            return .started(transport: .rest)
+        }
+
         switch key {
         case "strobe":
             // Try entertainment first for crisp on/off, fall back to REST
-            if let plan = entertainmentStartPlan(for: room),
-               let entClient = await tryStartEntertainment(room: room, config: plan.config) {
-                let channelIDs = plan.channelIDs
-                activeStudioTask = Task {
-                    await runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+            return startStreamingEngine(
+                entertainment: { entClient, channelIDs in
+                    Task { await self.runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox) }
+                },
+                rest: {
+                    Task { await self.runStrobeREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox) }
                 }
-            } else {
-                activeStudioTask = Task {
-                    await runStrobeREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
-                }
-            }
+            )
 
         case "party":
-            if let plan = entertainmentStartPlan(for: room),
-               let entClient = await tryStartEntertainment(room: room, config: plan.config) {
-                let channelIDs = plan.channelIDs
-                activeStudioTask = Task {
-                    await runPartyEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+            return startStreamingEngine(
+                entertainment: { entClient, channelIDs in
+                    Task { await self.runPartyEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox) }
+                },
+                rest: {
+                    Task { await self.runPartyREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox) }
                 }
-            } else {
-                activeStudioTask = Task {
-                    await runPartyREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
-                }
-            }
+            )
 
         case "thunderstorm":
-            if let plan = entertainmentStartPlan(for: room),
-               let entClient = await tryStartEntertainment(room: room, config: plan.config) {
-                let channelIDs = plan.channelIDs
-                activeStudioTask = Task {
-                    await runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+            return startStreamingEngine(
+                entertainment: { entClient, channelIDs in
+                    Task { await self.runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox) }
+                },
+                rest: {
+                    Task { await self.runThunderstormREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox) }
                 }
-            } else {
-                activeStudioTask = Task {
-                    await runThunderstormREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
-                }
-            }
+            )
 
         case "ambient":
             // Ambient is slow enough for REST (one change every few seconds)
             activeStudioTask = Task {
                 await runAmbientREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
             }
+            return .started(transport: .rest)
 
         default:
             let brightness = params["brightness"] ?? 80
             try? await api.setGroupedLightBrightness(id: groupedLightID, brightness: brightness)
+            return .started(transport: .oneShot)
         }
     }
 
@@ -3723,16 +3858,64 @@ final class UnifiedOrchestrator {
     ///   1. Bridge-stored (v1 rules chain) — if preset is eligible, upload to bridge. Close app, lights keep going.
     ///   2. Entertainment API (DTLS 25fps) — if entertainment area exists.
     ///   3. Per-light REST (~10 PUTs/sec) — fallback with per-light color variation.
+    @discardableResult
     func startCompositionMode(
         room: RoomDisplayItem,
         paramBox: CompositionParamBox,
         gamutOverride: HueColorUtils.Gamut? = nil,
         preferEntertainment: Bool = true,
         tier: CompositionTier = .runtimeOnly,
-        preset: CompositionPreset? = nil
-    ) async {
+        preset: CompositionPreset? = nil,
+        capturedPlan: EntertainmentTakeoverPlan? = nil,
+        consent: EntertainmentConsent? = nil,
+        preparedEntertainment: EntertainmentPreparation? = nil
+    ) async -> PlaybackStartOutcome {
+        // Scoped to THIS transaction's candidate — see startStudioMode.
+        var outstandingCandidateID: UUID?
+        defer {
+            if let outstandingCandidateID {
+                rollbackUncommittedEntertainment(candidateID: outstandingCandidateID)
+            }
+        }
+
         guard let api = hueClient(for: room.bridgeID),
-              let groupedLightID = room.groupedLightID else { return }
+              let groupedLightID = room.groupedLightID else {
+            return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+        }
+
+        // ── PREPARE ─────────────────────────────────────────────
+        //
+        // Acquire the session before ANY bookkeeping moves. Everything below —
+        // the generation bump, the telemetry session, microphone demand,
+        // spatial data, the parameter box — is state the user's current look
+        // depends on, so a composition that must ask first has to leave the
+        // room exactly as it found it.
+        var preparedComposition: PreparedEntertainment?
+        if preferEntertainment, let bridgeID = room.bridgeID,
+           canAcquireEntertainment(onBridge: bridgeID) {
+            let preparation: EntertainmentPreparation
+            if let preparedEntertainment {
+                preparation = preparedEntertainment
+            } else {
+                preparation = await prepareEntertainment(for: room,
+                                                         requestsEntertainment: true,
+                                                         plan: capturedPlan,
+                                                         consent: consent)
+            }
+            switch preparation {
+            case .prepared(let candidate):
+                preparedComposition = candidate
+                outstandingCandidateID = candidate.id
+            case .needsForeignConsent(let snapshot, let targetConfigID):
+                debugLog("[Handoff] Composition needs bridge \(bridgeID), which another app is using — nothing mutated")
+                return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
+            case .failed(let message):
+                return .failed(message: message)
+            case .notNeeded, .unavailable:
+                break
+            }
+        }
+
         let roomID = room.id
         let nextGeneration = (compositionGenerations[roomID] ?? 0) + 1
         compositionGenerations[roomID] = nextGeneration
@@ -3829,10 +4012,15 @@ final class UnifiedOrchestrator {
             // is opened. Opening first and checking channels afterwards used to leave
             // a live client parked in `studioEntClients` and the configuration left
             // started on the bridge whenever the area had no usable channels.
-            if let plan = entertainmentStartPlan(for: room),
-               let entClient = await tryStartEntertainment(room: room, config: plan.config) {
-                let entConfig = plan.config
-                let channelIDs = plan.channelIDs
+            // Acquired during PREPARE, above every mutation. Its captured
+            // configuration and channel order drive the render loop directly,
+            // so nothing re-selected here can disagree with what the user was
+            // shown and consented to.
+            if let prepared = preparedComposition {
+                commitEntertainment(prepared)
+                let entClient = prepared.client
+                let entConfig = prepared.config
+                let channelIDs = prepared.channelIDs
                 // Override with channel-ordered positions for DTLS transport
                 let entPositions = CompositionEngine.computeSpatialPositionsForEntertainment(
                     channels: entConfig.channels,
@@ -3871,7 +4059,7 @@ final class UnifiedOrchestrator {
                 }
                 await refreshCompositionMicDemand()
                 debugLog("[Composer] ⚡ Entertainment transport active for room='\(room.name)' bridge='\(bridgeID)'")
-                return
+                return .started(transport: .entertainment)
             }
         }
 
@@ -3942,7 +4130,7 @@ final class UnifiedOrchestrator {
                         debugLog("[Composer][BridgePrime] ⚠ Prime frame failed (bridge animation still active): \(error.localizedDescription)")
                     }
                 }
-                return  // Don't start app-driven scheduler
+                return .started(transport: .bridgeStored)  // Don't start app-driven scheduler
             } catch {
                 debugLog("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
                 // Packet 5: carry the reason forward instead of dropping it in
@@ -4063,6 +4251,7 @@ final class UnifiedOrchestrator {
         ensureCompositionSchedulerRunning()
         await refreshCompositionMicDemand()
         debugLog("[Composer] 📡 Scheduled room='\(room.name)' on global composition ticker")
+        return .started(transport: .rest)
     }
 
     /// The Composer startup prime — one direct grouped PUT so the room turns
@@ -5563,14 +5752,36 @@ final class UnifiedOrchestrator {
     /// second selection here to disagree with the first, and no way to open a
     /// session for a config the render loop cannot drive.
     /// Returns the client if successful, nil if the connection failed.
-    private func tryStartEntertainment(
+    private func acquireEntertainment(
         room: RoomDisplayItem,
-        config: EntertainmentConfig
-    ) async -> HueEntertainmentClient? {
+        plan: EntertainmentTakeoverPlan,
+        consent: EntertainmentConsent? = nil
+    ) async -> EntertainmentStartResult {
+        // The captured configuration, never a freshly selected one.
+        let config = plan.capturedConfig
         guard let bridgeID = room.bridgeID,
               let api = hueClient(for: bridgeID),
               let clientKey = KeychainManager.shared.loadClientKey(for: bridgeID) else {
-            return nil
+            return .unavailable(reason: .noBridgeCredentials)
+        }
+
+        // The choke point. Every Entertainment session in the app opens here,
+        // so this is the one place that cannot be bypassed by a caller that
+        // forgot to ask — including a future one.
+        switch foreignConflictCheck(bridgeID: bridgeID,
+                                    targetConfigID: config.id,
+                                    consent: consent,
+                                    snapshot: await entertainmentActivity(onBridge: bridgeID)) {
+        case .clear:
+            break
+        case .needsConsent(let snapshot):
+            // A foreign owner appeared between the caller's preflight and now.
+            // Nothing has been mutated and nothing may be: falling back to
+            // REST here would start playing over a show the user never agreed
+            // to replace, just more quietly.
+            return .needsForeignConsent(snapshot)
+        case .refuse(let message):
+            return .failed(message: message)
         }
 
         do {
@@ -5584,13 +5795,83 @@ final class UnifiedOrchestrator {
                 ownership: entertainmentOwnership
             )
             try await entClient.startSession(configID: config.id)
-            let bid = room.bridgeID ?? ""
-            studioEntClients[bid] = entClient
-            return entClient
+            // Deliberately NOT installed into studioEntClients here. The
+            // caller commits it once it has decided the start is going ahead,
+            // so a conflict discovered on the way out costs nothing.
+            //
+            // The takeover has now actually produced a session, so the token is
+            // spent. Spending it earlier would reject the very replay it was
+            // issued for; spending it later would let a replay start twice.
+            if let consent { consumeEntertainmentConsent(consent) }
+            return .started(entClient)
         } catch {
             debugLog("[Studio] Entertainment start failed: \(error.localizedDescription) — falling back to REST")
-            return nil
+            return .unavailable(reason: .streamingFailed)
         }
+    }
+
+    /// What the choke point decided about a foreign owner.
+    private enum ForeignConflictVerdict {
+        case clear
+        case needsConsent(EntertainmentActivitySnapshot)
+        case refuse(message: String)
+    }
+
+    /// Decide whether this start may proceed past a possible foreign owner.
+    ///
+    /// Consent is honoured only in the state that CAN follow a resolved
+    /// takeover. `confirmForeignTakeover` performs the re-read and the exact
+    /// stop, then hands over a token; by the time the token arrives here the
+    /// foreign set must be empty — which covers both "we stopped it" and "it
+    /// had already ended". Requiring the consented configuration to still be
+    /// active would make a successful takeover contradict itself.
+    private func foreignConflictCheck(
+        bridgeID: String,
+        targetConfigID: String,
+        consent: EntertainmentConsent?,
+        snapshot: EntertainmentActivitySnapshot?
+    ) -> ForeignConflictVerdict {
+        guard let snapshot else {
+            // Unknown is not "nothing is running". Fail honestly rather than
+            // evicting something we cannot see.
+            return .refuse(message: EntertainmentConsentCopy.bridgeUnreadable)
+        }
+
+        guard let consent else {
+            // No token: proceed only when nobody else is streaming.
+            return snapshot.foreign.isEmpty ? .clear : .needsConsent(snapshot)
+        }
+
+        // A token authorizes exactly one request, on one bridge, for one
+        // target area — and only once. A mismatched or spent token is not a
+        // reason to re-ask; it is a bug or a replay, and it gets an honest
+        // refusal rather than a second prompt that could loop.
+        guard consent.bridgeID == bridgeID,
+              consent.targetConfigID == targetConfigID else {
+            return .refuse(message: EntertainmentConsentCopy.takeoverFailed)
+        }
+        guard !consumedEntertainmentConsents.contains(consent.requestID) else {
+            debugLog("[Handoff] Consent \(consent.requestID) already spent — refusing to start twice")
+            return .refuse(message: EntertainmentConsentCopy.takeoverFailed)
+        }
+
+        // The takeover must actually be resolved by the time the token gets
+        // here. An empty foreign set is the only state that can follow one:
+        // either the confirmation stopped the consented session, or it had
+        // already ended on its own. Anything still streaming is something the
+        // user never agreed to replace — so stale consent stops nothing, and
+        // fresh consent is required.
+        guard snapshot.foreign.isEmpty else {
+            debugLog("[Handoff] Consent for \(consent.foreignConfigID) does not cover the \(snapshot.foreign.count) foreign session(s) now active — refusing")
+            return .needsConsent(snapshot)
+        }
+        return .clear
+    }
+
+    /// Marks a consent token spent. Called once the takeover it authorized has
+    /// been acted on, so a replayed confirm cannot start a second time.
+    func consumeEntertainmentConsent(_ consent: EntertainmentConsent) {
+        consumedEntertainmentConsents.insert(consent.requestID)
     }
 
     /// The Entertainment Area that safely belongs to this room, warming first.
@@ -6580,7 +6861,420 @@ struct EntertainmentActivitySnapshot: Equatable, Sendable {
     var isQuiet: Bool { processOwned.isEmpty && persistedOwned.isEmpty && foreign.isEmpty }
 }
 
+/// Why an Entertainment start could not proceed for an ordinary technical
+/// reason — never because of a foreign owner, which has its own result.
+enum EntertainmentUnavailableReason: Equatable, Sendable {
+    case noBridgeCredentials
+    case streamingFailed
+}
+
+/// The outcome of asking for an Entertainment session (packet 7).
+///
+/// Replaces an optional client. `nil` could not distinguish "streaming is not
+/// possible here, fall back to room mode" from "another controller owns this
+/// bridge" — so a foreign conflict silently became a REST fallback, which
+/// starts playing over the other app's show just more quietly.
+enum EntertainmentStartResult {
+    case started(HueEntertainmentClient)
+    /// A third party owns the bridge. NOTHING has been mutated.
+    case needsForeignConsent(EntertainmentActivitySnapshot)
+    case unavailable(reason: EntertainmentUnavailableReason)
+    case failed(message: String)
+
+    var client: HueEntertainmentClient? {
+        if case .started(let c) = self { return c }
+        return nil
+    }
+
+    /// True when a foreign owner blocks this start. Callers must not begin a
+    /// REST or bridge-stored fallback while this is unresolved.
+    var isForeignConflict: Bool {
+        if case .needsForeignConsent = self { return true }
+        return false
+    }
+}
+
+/// How a playback start ended (packet 7).
+///
+/// A start used to be `Void`: the caller inferred the transport by peeking at
+/// `studioEntClients` afterwards, and had no way at all to learn that another
+/// controller had blocked it. A non-interactive caller therefore could not
+/// refuse honestly — it just quietly did something else.
+enum PlaybackStartOutcome: Equatable {
+    enum Transport: Equatable { case entertainment, rest, bridgeStored, oneShot }
+
+    case started(transport: Transport)
+    /// A third party owns the bridge and the user has not been asked.
+    /// NOTHING was mutated. An interactive surface should prompt; a
+    /// non-interactive one must refuse and say so.
+    case needsForeignConsent(snapshot: EntertainmentActivitySnapshot, targetConfigID: String)
+    case failed(message: String)
+
+    var startedStreaming: Bool { self == .started(transport: .entertainment) }
+
+    var foreignConflict: (snapshot: EntertainmentActivitySnapshot, targetConfigID: String)? {
+        if case .needsForeignConsent(let s, let t) = self { return (s, t) }
+        return nil
+    }
+}
+
+/// The exact, validated way a specific room would stream — frozen at the
+/// moment the user was asked (packet 7).
+///
+/// A configuration id alone is not a plan. Between the prompt appearing and
+/// the answer arriving the area can be deleted, re-scoped to different lights,
+/// or lose the channels the render loop needs; replaying on the id alone would
+/// then stream somewhere the user never saw, or quietly drop to room mode
+/// after having stopped someone else's show. Freezing the whole plan makes
+/// those cases detectable and refusable.
+struct EntertainmentTakeoverPlan: Equatable, Sendable {
+
+    /// One channel, captured whole. Ids alone would let the SAME area drive
+    /// different lights, or drive them in a different place in the room —
+    /// both invisible in a comparison of ids, both very visible on the wall.
+    struct Channel: Equatable, Sendable {
+        let id: UInt8
+        /// The entertainment services this channel drives.
+        let members: [String]
+        let x: Double
+        let y: Double
+        let z: Double
+    }
+
+    let bridgeID: String
+    let roomID: String
+    let targetConfigID: String
+    /// Validated and ORDERED at capture time — the render loop drives exactly
+    /// these, in exactly this order.
+    let channelIDs: [UInt8]
+    /// Members and positions, so Composer's spatial mapping is frozen too.
+    let channels: [Channel]
+
+    init(bridgeID: String, roomID: String, config: EntertainmentConfig, channelIDs: [UInt8]) {
+        self.bridgeID = bridgeID
+        self.roomID = roomID
+        self.targetConfigID = config.id
+        self.channelIDs = channelIDs
+        self.channels = config.channels.map {
+            Channel(id: UInt8(clamping: $0.id),
+                    members: $0.lightServiceIDs,
+                    x: $0.position.x, y: $0.position.y, z: $0.position.z)
+        }
+    }
+
+    /// True when a freshly resolved plan still describes the same stream —
+    /// same area, same ordered channels, same members, same positions.
+    func matches(config: EntertainmentConfig, channelIDs: [UInt8]) -> Bool {
+        guard config.id == targetConfigID, channelIDs == self.channelIDs else { return false }
+        let fresh = config.channels.map {
+            Channel(id: UInt8(clamping: $0.id),
+                    members: $0.lightServiceIDs,
+                    x: $0.position.x, y: $0.position.y, z: $0.position.z)
+        }
+        return fresh == channels
+    }
+
+    /// The captured configuration, rebuilt for the render loop. Using this
+    /// rather than re-selecting is what stops a cache refresh between consent
+    /// and replay from quietly redirecting the stream.
+    var capturedConfig: EntertainmentConfig {
+        EntertainmentConfig(
+            id: targetConfigID,
+            name: "",
+            channels: channels.map {
+                EntertainmentChannel(id: Int($0.id),
+                                     lightServiceIDs: $0.members,
+                                     position: (x: $0.x, y: $0.y, z: $0.z))
+            }
+        )
+    }
+}
+
+/// One user decision to replace one third-party session.
+///
+/// Fully bound and single-use. Produced only by the confirmation flow, after
+/// it has stopped (or verified the absence of) the consented session.
+struct EntertainmentConsent: Equatable, Sendable {
+    let requestID: UUID
+    let bridgeID: String
+    /// The area the requested room will actually use.
+    let targetConfigID: String
+    /// The session the user agreed to replace.
+    let foreignConfigID: String
+}
+
+/// User-facing copy for the takeover flow.
+///
+/// Kept together so the words stay reviewable in one place, and deliberately
+/// free of protocol vocabulary: the person reading this owns lights, not a
+/// streaming stack. No configuration ids and no third-party app names — the
+/// bridge does not tell us who the other controller is, and guessing would be
+/// worse than saying "another app".
+enum EntertainmentConsentCopy {
+    static let takeoverTitle = "Another app was controlling these lights — take over?"
+    static let keepExisting  = "Keep Existing"
+    static let takeOver      = "Take Over"
+    static let takeoverFailed = "Couldn't take over these lights. The other app is still in control."
+    static let bridgeUnreadable = "Couldn't reach your bridge, so nothing was changed."
+}
+
 extension UnifiedOrchestrator {
+
+    /// The result of acting on the user's "Take Over".
+    enum ForeignTakeoverResolution: Equatable {
+        /// Clear to replay the original request with this token.
+        case resolved(EntertainmentConsent)
+        /// A different third-party session is now streaming; the user has not
+        /// agreed to replace THIS one. Nothing was stopped.
+        case changedOwner(EntertainmentActivitySnapshot)
+        case failed(message: String)
+    }
+
+    /// Would starting Entertainment for this room mean replacing another
+    /// controller? Purely a question — it mutates nothing.
+    ///
+    /// Every outcome is named. The first version answered with an optional,
+    /// which collapsed "not asking for streaming", "nowhere to stream",
+    /// "bridge is free", and "we could not read the bridge" into one `nil`
+    /// that every caller then had to guess at — and the honest failures
+    /// guessed wrong, falling through into destructive work.
+    enum ForeignTakeoverPreflight: Equatable {
+        /// This card never streams, so no third party can conflict with it.
+        case notRequested
+        /// No safely matching, streamable area for this room. The existing
+        /// honest room-mode fallback is correct and allowed.
+        case noStreamableArea
+        /// Nobody else is on this bridge. Carries the frozen plan so the start
+        /// and any later replay describe the same stream.
+        case clear(plan: EntertainmentTakeoverPlan)
+        /// Exactly one third-party session — the only shape that can be
+        /// consented to, because consent must name what it replaces.
+        case conflict(plan: EntertainmentTakeoverPlan, foreignConfigID: String)
+        /// Several third-party sessions at once: nothing to name, so nothing
+        /// to ask. Fail closed.
+        case ambiguous
+        /// The bridge could not be read. Unknown is not "free". Fail closed.
+        case unreadable
+    }
+
+    func foreignTakeoverPreflight(
+        for room: RoomDisplayItem,
+        requestsEntertainment: Bool
+    ) async -> ForeignTakeoverPreflight {
+        guard requestsEntertainment, let bridgeID = room.bridgeID else { return .notRequested }
+        await warmEntertainmentCaches(for: room, force: true)
+        guard let resolved = entertainmentStartPlan(for: room) else { return .noStreamableArea }
+
+        let plan = EntertainmentTakeoverPlan(
+            bridgeID: bridgeID,
+            roomID: room.id,
+            config: resolved.config,
+            channelIDs: resolved.channelIDs
+        )
+
+        guard let snapshot = await entertainmentActivity(onBridge: bridgeID) else {
+            return .unreadable
+        }
+        if snapshot.foreign.isEmpty { return .clear(plan: plan) }
+        guard snapshot.foreign.count == 1, let foreignConfigID = snapshot.foreign.first else {
+            return .ambiguous
+        }
+        return .conflict(plan: plan, foreignConfigID: foreignConfigID)
+    }
+
+    /// A started but NOT-YET-INSTALLED Entertainment session.
+    ///
+    /// The session exists on the bridge; nothing in the app points at it yet.
+    /// That gap is the whole point: it lets a caller learn that the start
+    /// succeeded — or that a third party blocked it — while its previous look
+    /// is still running and every piece of bookkeeping still intact.
+    struct PreparedEntertainment {
+        /// Identity of THIS transaction's candidate.
+        ///
+        /// `@MainActor` async methods are reentrant: two overlapping starts
+        /// each suspend at their bridge reads, so both are in flight at once.
+        /// A single "currently pending" slot let the second overwrite the
+        /// first, after which one transaction's commit silently cleared the
+        /// other's candidate — leaving a live session with nothing tracking
+        /// it. Every commit and rollback names the exact candidate instead.
+        let id = UUID()
+        let client: HueEntertainmentClient
+        let plan: EntertainmentTakeoverPlan
+        /// The captured configuration, not a freshly selected one.
+        var config: EntertainmentConfig { plan.capturedConfig }
+        var channelIDs: [UInt8] { plan.channelIDs }
+    }
+
+    /// The result of trying to prepare a session, before any commitment.
+    enum EntertainmentPreparation {
+        /// This start does not stream, or the room has no streamable area.
+        /// The existing honest room-mode path is correct.
+        case notNeeded
+        case prepared(PreparedEntertainment)
+        /// A third party owns the bridge. Nothing was mutated, on the bridge
+        /// or in the app.
+        case needsForeignConsent(snapshot: EntertainmentActivitySnapshot, targetConfigID: String)
+        /// Genuine technical inability — room mode is the honest answer.
+        case unavailable
+        case failed(message: String)
+    }
+
+    /// Prepare a session without committing to it (packet 7).
+    ///
+    /// This is the "prepare" half of prepare/start/commit. Callers run it
+    /// BEFORE they tear anything down, so a foreign owner or a failed start
+    /// costs the user nothing: the previous look keeps playing, generations do
+    /// not advance, telemetry does not open, and no candidate is installed.
+    func prepareEntertainment(
+        for room: RoomDisplayItem,
+        requestsEntertainment: Bool,
+        plan capturedPlan: EntertainmentTakeoverPlan? = nil,
+        consent: EntertainmentConsent? = nil
+    ) async -> EntertainmentPreparation {
+        guard requestsEntertainment, room.bridgeID != nil else { return .notNeeded }
+
+        // After consent, the frozen plan IS the plan. Re-selecting here is
+        // exactly how a replay could end up streaming a different area than
+        // the one the user agreed to take over.
+        let plan: EntertainmentTakeoverPlan
+        if let capturedPlan {
+            plan = capturedPlan
+        } else {
+            await warmEntertainmentCaches(for: room, force: true)
+            guard let resolved = entertainmentStartPlan(for: room) else { return .notNeeded }
+            plan = EntertainmentTakeoverPlan(bridgeID: room.bridgeID!, roomID: room.id,
+                                             config: resolved.config,
+                                             channelIDs: resolved.channelIDs)
+        }
+
+        switch await acquireEntertainment(room: room, plan: plan, consent: consent) {
+        case .started(let client):
+            let candidate = PreparedEntertainment(client: client, plan: plan)
+            // Outstanding until it is committed or rolled back.
+            outstandingEntertainmentCandidates[candidate.id] = candidate
+            return .prepared(candidate)
+        case .needsForeignConsent(let snapshot):
+            return .needsForeignConsent(snapshot: snapshot, targetConfigID: plan.targetConfigID)
+        case .failed(let message):
+            return .failed(message: message)
+        case .unavailable:
+            return .unavailable
+        }
+    }
+
+    /// Install a prepared session — the "commit" half. Only called once the
+    /// caller has decided the start is definitely going ahead.
+    ///
+    /// Committing is also what marks the candidate no longer outstanding: a
+    /// session is either installed here exactly once, or stopped by the
+    /// rollback below. There is no third outcome in which it stays live with
+    /// nothing pointing at it.
+    func commitEntertainment(_ prepared: PreparedEntertainment) {
+        // Only THIS candidate. Clearing "whatever is pending" would discard a
+        // concurrent transaction's candidate and leak its session.
+        outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
+        studioEntClients[prepared.plan.bridgeID] = prepared.client
+    }
+
+    /// Stop a session that was prepared but never committed.
+    ///
+    /// An uncommitted candidate is the worst kind of leak: live on the bridge,
+    /// process-owned AND persisted, but absent from `studioEntClients` — so
+    /// nothing drives it, nothing stops it, and the app's own cleanup skips it
+    /// forever precisely because it looks owned. Stopping it here balances
+    /// both ownership layers through the normal teardown.
+    ///
+    /// Safe to call unconditionally: after a successful commit there is
+    /// nothing outstanding, so this is a no-op.
+    func rollbackUncommittedEntertainment(candidateID: UUID) {
+        // Claiming by removal is what makes this exactly-once: a second
+        // rollback, or one that races a commit, finds nothing and does
+        // nothing.
+        guard let candidate = outstandingEntertainmentCandidates.removeValue(forKey: candidateID)
+        else { return }
+        debugLog("[Handoff] Rolling back an uncommitted Entertainment candidate on \(candidate.plan.bridgeID)")
+        entertainmentRollbackTasks[candidateID] = Task { [weak self] in
+            await candidate.client.stopSession()
+            self?.entertainmentRollbackTasks.removeValue(forKey: candidateID)
+        }
+    }
+
+    /// Re-resolve this room's start plan and confirm it still describes the
+    /// stream the user was shown. Used immediately before a takeover stop.
+    ///
+    /// Deliberately re-selects WITHOUT preferring the captured id: the question
+    /// is whether that area still safely and uniquely serves this room, and
+    /// forcing the preference would answer a different, easier question.
+    func revalidateTakeoverPlan(_ plan: EntertainmentTakeoverPlan,
+                                room: RoomDisplayItem) async -> Bool {
+        await warmEntertainmentCaches(for: room, force: true)
+        guard let resolved = entertainmentStartPlan(for: room) else { return false }
+        return plan.matches(config: resolved.config, channelIDs: resolved.channelIDs)
+    }
+
+    /// Stop exactly the session the user consented to replace, and nothing
+    /// else.
+    ///
+    /// This is the only place a third-party session is ever stopped, and it
+    /// happens only after an explicit "Take Over". The bridge is re-read
+    /// first, because the world may have moved between the prompt appearing
+    /// and the user answering it.
+    func resolveForeignTakeover(
+        requestID: UUID,
+        plan: EntertainmentTakeoverPlan,
+        room: RoomDisplayItem,
+        foreignConfigID: String
+    ) async -> ForeignTakeoverResolution {
+        let bridgeID = plan.bridgeID
+        guard let client = clients[bridgeID] else {
+            return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+        }
+
+        // Revalidate BEFORE stopping anything. If the area the user was shown
+        // has been deleted, re-scoped away from this room, or lost the channels
+        // the render loop needs, then taking over would stop someone else's
+        // show and have nowhere to put ours — the worst possible trade.
+        guard await revalidateTakeoverPlan(plan, room: room) else {
+            debugLog("[Handoff] Captured start plan no longer valid for room \(plan.roomID) — refusing to stop anything")
+            return .failed(message: EntertainmentConsentCopy.takeoverFailed)
+        }
+
+        guard let snapshot = await entertainmentActivity(onBridge: bridgeID) else {
+            return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+        }
+
+        let consent = EntertainmentConsent(requestID: requestID,
+                                           bridgeID: bridgeID,
+                                           targetConfigID: plan.targetConfigID,
+                                           foreignConfigID: foreignConfigID)
+
+        // Already gone. Nothing to stop — sending a redundant stop would be a
+        // write nobody asked for.
+        if snapshot.foreign.isEmpty {
+            debugLog("[Handoff] Foreign session ended before confirmation — no stop needed")
+            return .resolved(consent)
+        }
+
+        // More than one, or a different one: fail closed. Consent named ONE
+        // session; it cannot be spread over whatever is streaming now.
+        guard snapshot.foreign == [foreignConfigID] else {
+            debugLog("[Handoff] Foreign owner changed before confirmation — stale consent stops nothing")
+            return .changedOwner(snapshot)
+        }
+
+        do {
+            let (ip, token) = try client.credentials()
+            _ = try await client.put(
+                path: "/clip/v2/resource/entertainment_configuration/\(foreignConfigID)",
+                body: ["action": "stop"], ip: ip, token: token
+            )
+        } catch {
+            // Never claim a takeover that did not happen.
+            debugLog("[Handoff] Takeover stop failed: \(error.localizedDescription)")
+            return .failed(message: EntertainmentConsentCopy.takeoverFailed)
+        }
+        return .resolved(consent)
+    }
 
     /// Read one bridge's active Entertainment configurations and classify each.
     ///

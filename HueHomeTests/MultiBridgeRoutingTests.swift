@@ -225,6 +225,144 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
         lock.unlock()
         if failing { throw HueAPIError.httpError(500) }
     }
+
+    // ── Packet 7: Entertainment ownership over the raw REST surface ──
+    //
+    // The consent flow reads entertainment_configuration and writes
+    // action=stop directly, so these tests need the raw get/put the other
+    // packets never touched. Recording both is what makes "nothing was
+    // mutated before the user answered" an observable claim rather than an
+    // assertion about code shape.
+
+    /// What the bridge reports for `entertainment_configuration`.
+    private var _entertainmentConfigsJSON = #"{"data": []}"#
+    func stageEntertainmentConfigs(_ json: String) {
+        lock.lock(); _entertainmentConfigsJSON = json; lock.unlock()
+    }
+
+    /// Convenience: mark these configuration ids active.
+    func stageActiveEntertainment(_ ids: [String]) {
+        let items = ids.map { #"{"id": "\#($0)", "status": "active"}"# }
+        stageEntertainmentConfigs(#"{"data": [\#(items.joined(separator: ", "))]}"#)
+    }
+
+    var entertainmentConfigsShouldFail = false
+    /// `action=stop` fails for exactly these configuration ids.
+    private var _failingStopIDs: Set<String> = []
+    func stageEntertainmentStopFailures(_ ids: Set<String>) {
+        lock.lock(); _failingStopIDs = ids; lock.unlock()
+    }
+
+    /// Change what the bridge reports AFTER the next read observes the
+    /// current state — the deterministic way to model "the world moved on
+    /// between two reads" with no timing at all.
+    ///
+    /// One-shot on purpose: the world changes once, at a named point, and a
+    /// later read must see the result rather than trigger it again.
+    private var _onEntertainmentRead: (() -> Void)?
+    func onEntertainmentReadOnce(_ block: @escaping () -> Void) {
+        lock.lock(); _onEntertainmentRead = block; lock.unlock()
+    }
+
+    /// Fires after EVERY entertainment_configuration read, so a test can count
+    /// reads and act on a specific one. Counting beats guessing: the preflight
+    /// performs its own reads, and a "next read" hook fires inside it rather
+    /// than at the acquisition that actually matters.
+    private var _onEntertainmentReadEach: (() -> Void)?
+    func onEntertainmentReadEach(_ block: @escaping () -> Void) {
+        lock.lock(); _onEntertainmentReadEach = block; lock.unlock()
+    }
+
+    private var _entertainmentActions: [(configID: String, action: String)] = []
+    /// Every entertainment_configuration action this bridge was asked for.
+    var entertainmentActions: [(configID: String, action: String)] {
+        lock.lock(); defer { lock.unlock() }
+        return _entertainmentActions
+    }
+    var entertainmentStops: [String] {
+        entertainmentActions.filter { $0.action == "stop" }.map(\.configID)
+    }
+    var entertainmentStarts: [String] {
+        entertainmentActions.filter { $0.action == "start" }.map(\.configID)
+    }
+
+    /// `/resource/entertainment` — the service→device half of the join the
+    /// area selector needs before it can call any area streamable.
+    private var _entertainmentServicesJSON = #"{"data": []}"#
+    func stageEntertainmentServices(_ json: String) {
+        lock.lock(); _entertainmentServicesJSON = json; lock.unlock()
+    }
+
+    override func get(path: String, ip: String, token: String) async throws -> Data {
+        if path.contains("entertainment_configuration") {
+            lock.lock()
+            let fail = entertainmentConfigsShouldFail
+            let json = _entertainmentConfigsJSON
+            let onRead = _onEntertainmentRead
+            _onEntertainmentRead = nil          // one-shot
+            let onEach = _onEntertainmentReadEach
+            lock.unlock()
+            if fail { throw HueAPIError.httpError(500) }
+            // Fires AFTER this read has captured its answer, so the caller
+            // sees the state it asked about and the NEXT reader sees the
+            // change.
+            onRead?()
+            onEach?()
+            return Data(json.utf8)
+        }
+        if path.contains("resource/entertainment") {
+            lock.lock(); let json = _entertainmentServicesJSON; lock.unlock()
+            return Data(json.utf8)
+        }
+        return Data("{}".utf8)
+    }
+
+    /// Rewrites the staged configuration list once a stop lands — what a real
+    /// bridge does the moment `action=stop` is accepted. Modelling it here lets
+    /// the takeover tests observe the true post-stop state instead of staging
+    /// it by hand at a guessed moment in the read sequence.
+    private var _deactivateOnStop: ((String) -> String)?
+    func stageDeactivationOnStop(_ rewrite: @escaping (String) -> String) {
+        lock.lock(); _deactivateOnStop = rewrite; lock.unlock()
+    }
+
+    override func put(path: String, body: [String: Any], ip: String, token: String) async throws -> Data {
+        if path.contains("entertainment_configuration/"),
+           let action = body["action"] as? String,
+           let configID = path.split(separator: "/").last.map(String.init) {
+            lock.lock()
+            _entertainmentActions.append((configID, action))
+            let failing = action == "stop" && _failingStopIDs.contains(configID)
+            let rewrite = _deactivateOnStop
+            lock.unlock()
+            if failing { throw HueAPIError.httpError(500) }
+            if action == "stop", let rewrite {
+                let updated = rewrite(configID)
+                lock.lock(); _entertainmentConfigsJSON = updated; lock.unlock()
+            }
+        }
+        return Data("{}".utf8)
+    }
+}
+
+/// Counts reads so a test can act on the Nth one rather than on "the next
+/// one", which is only well-defined if you already know the read sequence.
+final class ReadCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen = 0
+    private var fired = false
+    private let threshold: Int
+
+    init(threshold: Int) { self.threshold = threshold }
+
+    /// True exactly once, on the first read past the threshold.
+    func advancePastThreshold() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        seen += 1
+        guard !fired, seen > threshold else { return false }
+        fired = true
+        return true
+    }
 }
 
 /// Deterministic clock for the packet-4 telemetry seam: tests advance it
@@ -4222,5 +4360,1189 @@ final class MultiBridgeRoutingTests: XCTestCase {
             never reached registration — enumerating today's early returns would \
             not protect the next one added
             """)
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Composer 2 packet 7: consent before replacing another controller
+    // ──────────────────────────────────────────────
+    //
+    // ChromaGlow yields to third-party Entertainment sessions. Automatic
+    // cleanup never touches one (EntertainmentOwnershipTests covers that); the
+    // question is only ever asked when an EXPLICIT user playback action needs
+    // the bridge a stranger is already using.
+    //
+    // What these lock is that nothing is mutated before the user answers, that
+    // "Take Over" stops exactly the one session they agreed to replace, and
+    // that a start blocked by a foreign owner never quietly becomes room mode
+    // — which would play over the other app's show instead of asking.
+    //
+    // Ordering and presence only. No sleeps, no waiters.
+
+    /// A room on bridge B whose lights are L1/L2 — the members of `area-b`.
+    private func streamRoomOnB(id: String = "room-b") -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .room,
+            id: id, name: "Bedroom B", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-\(id)", lightCount: 2,
+            bridgeID: "bridge-b",
+            childResourceRefs: [(rid: "L1", rtype: "light"), (rid: "L2", rtype: "light")]
+        )
+    }
+
+    private func streamRoomOnA(id: String = "room-a") -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .room,
+            id: id, name: "Bedroom A", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-\(id)", lightCount: 2,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "L1", rtype: "light"), (rid: "L2", rtype: "light")]
+        )
+    }
+
+    private func p7Light(_ id: String, device: String) -> HueLight {
+        HueLight(
+            id: id,
+            metadata: LightMetadata(name: id, archetype: nil),
+            on: OnState(on: true),
+            dimming: DimmingState(brightness: 100),
+            color: nil,
+            color_temperature: nil,
+            owner: ResourceRef(rid: device, rtype: "device")
+        )
+    }
+
+    /// One streamable area (`area-b`, channels over L1/L2) plus whatever else
+    /// is active on the bridge. `active` lists the configuration ids the
+    /// bridge reports streaming right now.
+    private func stageStreamableBridge(_ spy: RoutingSpyClient,
+                                       areaID: String = "area-b",
+                                       active: [String] = []) {
+        spy.stageLights([p7Light("L1", device: "D1"), p7Light("L2", device: "D2")])
+        spy.stageEntertainmentServices(
+            #"{"data":[{"id":"E1","owner":{"rid":"D1","rtype":"device"}},"# +
+            #"{"id":"E2","owner":{"rid":"D2","rtype":"device"}}]}"#)
+        spy.stageEntertainmentConfigs(Self.configsJSON(areaID: areaID, active: active))
+    }
+
+    /// `area-b` always present (so the room HAS somewhere to stream), with the
+    /// listed ids marked active.
+    private static func configsJSON(areaID: String, active: [String]) -> String {
+        let channels = #"{"channel_id":0,"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"E1","rtype":"entertainment"}}]},"# +
+                       #"{"channel_id":1,"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"E2","rtype":"entertainment"}}]}"#
+        var items = [
+            #"{"id":"\#(areaID)","metadata":{"name":"Bedroom"},"status":"\#(active.contains(areaID) ? "active" : "inactive")","channels":[\#(channels)]}"#
+        ]
+        for id in active where id != areaID {
+            items.append(#"{"id":"\#(id)","metadata":{"name":"Other"},"status":"active","channels":[]}"#)
+        }
+        return #"{"data":[\#(items.joined(separator: ","))]}"#
+    }
+
+    /// A Studio VM on the shared orchestrator, with an isolated ownership
+    /// store so nothing here reads or writes the real user's records.
+    ///
+    /// Credentials are real Keychain writes because the entertainment cache
+    /// warm refuses to run for a bridge with no client key — and the takeover
+    /// preflight resolves its target area through that same production warm,
+    /// deliberately, so the area it names is the area that gets streamed. The
+    /// key is non-hex, so `decodePSK` refuses before any socket exists.
+    private func makeP7VM() -> StudioViewModel {
+        for (id, ip) in [("bridge-a", "192.0.2.1"), ("bridge-b", "192.0.2.2")] {
+            try? KeychainManager.shared.saveCredentials(
+                ip: ip, token: "t", clientKey: "ZZ-not-hex", for: id)
+            addTeardownBlock { KeychainManager.shared.deleteCredentials(for: id) }
+        }
+        let suite = "MultiBridgeRoutingTests.p7"
+        UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        let store = EntertainmentSessionOwnership(defaults: UserDefaults(suiteName: suite)!)
+        store.resetForTesting()
+        orchestrator.injectForTesting(ownership: store)
+        ownershipStore = store
+        addTeardownBlock {
+            store.resetForTesting()
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        }
+        let vm = StudioViewModel()
+        vm.configure(orchestrator: orchestrator)
+        return vm
+    }
+
+    /// The isolated ownership store `makeP7VM` installed, so a test can assert
+    /// on what a start actually recorded.
+    private var ownershipStore: EntertainmentSessionOwnership!
+
+    /// Stops of the third-party session specifically. A ChromaGlow start whose
+    /// DTLS open fails sends its OWN compensating stop for its OWN area
+    /// (L-11) — correct, and unrelated to the takeover.
+    private func foreignStops(_ spy: RoutingSpyClient, _ configID: String) -> [String] {
+        spy.entertainmentStops.filter { $0 == configID }
+    }
+
+    /// The Party card streams, so it is the surface that can collide with
+    /// another controller.
+    private func streamingCard(_ vm: StudioViewModel) throws -> StudioCard {
+        try XCTUnwrap(vm.liveModeCards.first { $0.id == "party" })
+    }
+
+    // ── The prompt appears only for an explicit start ─────────
+
+    /// P7-15
+    func testAnExplicitStartOverAForeignOwnerAsksBeforeAnyMutation() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        let request = try XCTUnwrap(vm.foreignTakeoverRequest,
+            "an explicit start over another app's session must ask first")
+        XCTAssertEqual(request.bridgeID, "bridge-b")
+        XCTAssertEqual(request.foreignConfigID, "cfg-someone-else")
+        XCTAssertEqual(request.targetConfigID, "area-b",
+            "the request must name the area this room would actually stream")
+        XCTAssertTrue(bridgeB.entertainmentActions.isEmpty,
+            "no stop, no start, and no DTLS may precede the user's answer")
+        XCTAssertTrue(bridgeB.groupedStateIDs.isEmpty && bridgeB.groupedEffectIDs.isEmpty,
+            "and no playback bookkeeping may be partially mutated either")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+            "the requested look must not be running")
+    }
+
+    /// P7-16
+    func testCancelPerformsZeroNetworkWritesAndDoesNotStart() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertNotNil(vm.foreignTakeoverRequest)
+
+        vm.cancelForeignTakeover()
+
+        XCTAssertNil(vm.foreignTakeoverRequest, "the request is consumed")
+        XCTAssertTrue(bridgeB.entertainmentActions.isEmpty,
+            "Keep Existing means the other app's show is never touched")
+        XCTAssertTrue(bridgeB.groupedStateIDs.isEmpty && bridgeB.groupedEffectIDs.isEmpty)
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+            "and the requested look does not start")
+    }
+
+    /// P7-17
+    func testConfirmStopsTheExactConsentedSessionThenStartsTheOriginalRequest() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        // Taking over clears the bridge, exactly as the real one would.
+        // Stopping the foreign session deactivates it, as a real bridge would.
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(foreignStops(bridgeB, "cfg-someone-else"), ["cfg-someone-else"],
+            "exactly the one session the user agreed to replace, stopped exactly once")
+        XCTAssertEqual(bridgeB.entertainmentActions.first.map { [$0.configID, $0.action] },
+                       ["cfg-someone-else", "stop"],
+            "and the stop comes FIRST — the takeover is resolved before we ask for the bridge")
+        XCTAssertTrue(bridgeB.entertainmentStarts.contains("area-b"),
+            "then the original request starts, on the area the request named")
+        XCTAssertNil(vm.foreignTakeoverRequest, "no second prompt")
+        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id],
+            "the original request must actually play after a successful takeover")
+    }
+
+    /// P7-18
+    func testDoubleConfirmCannotStopOrStartTwice() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        // Stopping the foreign session deactivates it, as a real bridge would.
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+
+        await vm.confirmForeignTakeover()
+        await vm.confirmForeignTakeover()
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(foreignStops(bridgeB, "cfg-someone-else"), ["cfg-someone-else"],
+            "the request is consumed before the first await — a replayed confirm finds nothing")
+        XCTAssertEqual(vm.runningEffects.count, 1)
+    }
+
+    /// P7-19
+    func testAForeignSessionThatEndedBeforeConfirmationNeedsNoStop() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        // The other app stopped on its own while the prompt was up.
+        bridgeB.stageEntertainmentConfigs(Self.configsJSON(areaID: "area-b", active: []))
+        await vm.confirmForeignTakeover()
+
+        XCTAssertTrue(foreignStops(bridgeB, "cfg-someone-else").isEmpty,
+            "there is nothing to stop — a redundant stop is a write nobody asked for")
+        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id],
+            "and the requested look still starts")
+    }
+
+    /// P7-20
+    func testStaleConsentCannotStopADifferentForeignSession() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-first"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertEqual(vm.foreignTakeoverRequest?.foreignConfigID, "cfg-first")
+
+        // A DIFFERENT controller took the bridge while the prompt was open.
+        bridgeB.stageEntertainmentConfigs(Self.configsJSON(areaID: "area-b", active: ["cfg-second"]))
+        await vm.confirmForeignTakeover()
+
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "consent named one session; it may not be spread onto its replacement")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+            "and playback must not begin over a session nobody consented to replace")
+        XCTAssertEqual(vm.foreignTakeoverRequest?.foreignConfigID, "cfg-second",
+            "a fresh decision is required, with its own identity")
+        XCTAssertNotEqual(vm.foreignTakeoverRequest?.foreignConfigID, "cfg-first")
+    }
+
+    /// P7-37 — several controllers at once is ambiguous; fail closed.
+    func testMultipleForeignSessionsFailClosedAndStopNone() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-one", "cfg-two"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        XCTAssertNil(vm.foreignTakeoverRequest,
+            "there is no single session to name, so there is no honest question to ask")
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty, "and nothing may be stopped")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    /// P7-21
+    func testATakeoverStopFailureDoesNotStartPlayback() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        bridgeB.stageEntertainmentStopFailures(["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(foreignStops(bridgeB, "cfg-someone-else"), ["cfg-someone-else"],
+            "it was attempted")
+        XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
+            "never claim a takeover that did not happen — no session may be opened")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertTrue(vm.statusMessage.contains("take over"),
+            "the failure must be said out loud, not swallowed")
+    }
+
+    /// P7-24 — an unreadable bridge is "unknown", which authorizes nothing.
+    func testAnUnreadableBridgeRefusesHonestlyWithoutMutation() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertNotNil(vm.foreignTakeoverRequest)
+
+        bridgeB.entertainmentConfigsShouldFail = true
+        await vm.confirmForeignTakeover()
+
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "we cannot see what is running, so we may not evict anything")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertFalse(vm.statusMessage.isEmpty, "and it must say so")
+    }
+
+    /// P7-24b — a start that carries no consent refuses rather than treating
+    /// its own invocation as agreement. This is what a non-interactive caller
+    /// gets, and it must not silently fall back to room mode.
+    func testANonInteractiveStartRefusesForeignTakeoverWithoutMutation() async {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        _ = makeP7VM()
+
+        let outcome = await orchestrator.startStudioMode(
+            key: "party", room: streamRoomOnB(), params: [:], colors: [:])
+
+        guard case .needsForeignConsent = outcome else {
+            return XCTFail("a start with no consent must refuse, not proceed: \(outcome)")
+        }
+        XCTAssertTrue(bridgeB.entertainmentActions.isEmpty,
+            "refusing means touching nothing at all")
+        XCTAssertTrue(bridgeB.groupedStateIDs.isEmpty && bridgeB.groupedEffectIDs.isEmpty,
+            "and REST fallback is NOT the answer to a foreign conflict — that plays over their show quietly")
+    }
+
+    /// P7-22
+    func testAConflictOnBridgeADoesNotBlockOrStopPlaybackOnBridgeB() async throws {
+        stageStreamableBridge(bridgeA, active: ["cfg-a-foreign"])
+        stageStreamableBridge(bridgeB, active: [])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        XCTAssertNil(vm.foreignTakeoverRequest,
+            "bridge A's owner may not gate playback on bridge B")
+        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id], "bridge B starts normally")
+        XCTAssertTrue(bridgeA.entertainmentActions.isEmpty,
+            "and bridge A is left completely untouched")
+        _ = streamRoomOnA()
+    }
+
+    /// P7-33 — a room with nowhere to stream was heading for room mode anyway,
+    /// so another app's session is irrelevant to it.
+    func testARoomWithNoStreamableAreaNeverPromptsAndFallsBackHonestly() async throws {
+        // Lights that belong to no entertainment area on this bridge.
+        bridgeB.stageLights([p7Light("L9", device: "D9")])
+        bridgeB.stageEntertainmentServices(#"{"data":[]}"#)
+        bridgeB.stageEntertainmentConfigs(
+            #"{"data":[{"id":"cfg-someone-else","metadata":{"name":"Other"},"status":"active","channels":[]}]}"#)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        XCTAssertNil(vm.foreignTakeoverRequest,
+            "asking to take over a bridge this room could never stream on is a lie")
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty)
+        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id],
+            "the room still plays, in room mode")
+    }
+
+    /// P7-23 — the ChromaGlow-to-ChromaGlow handoff is untouched by all this.
+    func testAnAppOwnedConflictStillFollowsTheExistingHandoffBehavior() async throws {
+        let (vm, _) = makeVMWithComposerOwningBridgeB()
+        let ambient = try liveModeCard(vm, "ambient")
+
+        await vm.apply(ambient, roomOverride: roomOnBridgeB(), preferEntertainmentOverride: nil)
+
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt,
+            "an app-owned conflict still raises the app-owned prompt")
+        XCTAssertNil(vm.foreignTakeoverRequest,
+            "and must NOT be mistaken for a third-party takeover — the two stay distinct")
+    }
+
+    /// P7-25 — the prompt answers a user action, never a background pass.
+    func testLoadAllSchedulingDoesNotCreateTheConsentPrompt() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        stageStreamableBridge(bridgeA, active: ["cfg-also-foreign"])
+        let vm = makeP7VM()
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertNil(vm.foreignTakeoverRequest,
+            "launch, foreground, and refresh must never ask about somebody else's show")
+        XCTAssertTrue(bridgeA.entertainmentActions.isEmpty && bridgeB.entertainmentActions.isEmpty,
+            "and must never touch it")
+    }
+
+    /// P7-34 — one selection, start to finish.
+    func testTheCapturedTargetAreaIsTheOneThatGetsStreamed() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let captured = try XCTUnwrap(vm.foreignTakeoverRequest?.targetConfigID)
+
+        // Stopping the foreign session deactivates it, as a real bridge would.
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(captured, "area-b")
+        XCTAssertEqual(Set(bridgeB.entertainmentStarts), [captured],
+            "the area named in the request is the only area ever started — one selection, no drift")
+    }
+
+    /// P7-36 — a consent token is bound and single-use.
+    func testAConsentTokenCannotBeReused() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let request = try XCTUnwrap(vm.foreignTakeoverRequest)
+        // Stopping the foreign session deactivates it, as a real bridge would.
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+        await vm.confirmForeignTakeover()
+        let startsAfterFirst = bridgeB.entertainmentStarts.count
+
+        // Replay the very same token by hand.
+        let spent = EntertainmentConsent(requestID: request.id,
+                                         bridgeID: request.bridgeID,
+                                         targetConfigID: request.targetConfigID,
+                                         foreignConfigID: request.foreignConfigID)
+        bridgeB.stageEntertainmentConfigs(Self.configsJSON(areaID: "area-b", active: ["cfg-someone-else"]))
+        let outcome = await orchestrator.startStudioMode(
+            key: "party", room: streamRoomOnB(), params: [:], colors: [:],
+            capturedPlan: request.plan, consent: spent)
+
+        if case .started = outcome {
+            XCTFail("a spent consent token must not authorize a second start")
+        }
+        XCTAssertEqual(bridgeB.entertainmentStarts.count, startsAfterFirst,
+            "no second start")
+        XCTAssertEqual(foreignStops(bridgeB, "cfg-someone-else"), ["cfg-someone-else"],
+            "and no second stop")
+    }
+
+    /// P7-36b — a token issued for one bridge may not act on another.
+    func testAConsentTokenIsBoundToItsBridgeAndTargetArea() async {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        _ = makeP7VM()
+
+        let wrongBridge = EntertainmentConsent(requestID: UUID(),
+                                               bridgeID: "bridge-a",
+                                               targetConfigID: "area-b",
+                                               foreignConfigID: "cfg-someone-else")
+        let outcome = await orchestrator.startStudioMode(
+            key: "party", room: streamRoomOnB(), params: [:], colors: [:],
+            capturedPlan: nil, consent: wrongBridge)
+
+        if case .started = outcome {
+            XCTFail("a token bound to another bridge must not authorize this start")
+        }
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty)
+    }
+
+    // ── Copy honesty ──────────────────────────────────────────
+
+    /// P7-27
+    func testNoUserFacingStringLeaksProtocolVocabulary() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        func code(_ relativePath: String) throws -> String {
+            try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+        }
+
+        // The copy itself, checked as values rather than by grepping for the
+        // words — this is what the user actually reads.
+        let strings = [
+            EntertainmentConsentCopy.takeoverTitle,
+            EntertainmentConsentCopy.keepExisting,
+            EntertainmentConsentCopy.takeOver,
+            EntertainmentConsentCopy.takeoverFailed,
+            EntertainmentConsentCopy.bridgeUnreadable,
+        ]
+        for banned in ["REST", "DTLS", "API", "configuration ID", "session registry",
+                       "entertainment_configuration", "refcount"] {
+            for string in strings {
+                XCTAssertFalse(string.contains(banned),
+                    "user-facing copy must not say “\(banned)”: \(string)")
+            }
+        }
+
+        XCTAssertEqual(EntertainmentConsentCopy.takeoverTitle,
+                       "Another app was controlling these lights — take over?")
+        XCTAssertEqual(EntertainmentConsentCopy.keepExisting, "Keep Existing")
+        XCTAssertEqual(EntertainmentConsentCopy.takeOver, "Take Over")
+
+        // And the prompt must not name the other app or its configuration —
+        // the bridge never told us who it is, so any name would be a guess.
+        let view = try code("HueHome/UI/Studio/StudioView.swift")
+        XCTAssertTrue(view.contains("EntertainmentConsentCopy.takeoverTitle"),
+            "the alert must use the reviewed copy, not an inline duplicate")
+        XCTAssertFalse(view.contains("foreignConfigID)"),
+            "the configuration id is diagnostic, never something the user reads")
+    }
+
+    /// P7-26 heir — the consent gate must stay at the choke point, not be
+    /// re-implemented per card. Behaviour tests would still pass if someone
+    /// added a second, subtly different copy, so pin the shape.
+    func testTheConsentGateLivesAtTheSharedChokePoint() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let orchestratorSource = try String(
+            contentsOf: repoRoot.appendingPathComponent("HueHome/Core/Network/UnifiedOrchestrator.swift"),
+            encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+
+        XCTAssertTrue(orchestratorSource.contains("func acquireEntertainment("),
+            "every session still opens through one function")
+        XCTAssertTrue(orchestratorSource.contains("foreignConflictCheck("),
+            "and that function asks the consent question")
+        XCTAssertFalse(orchestratorSource.contains("-> HueEntertainmentClient? {"),
+            "the optional-client return could not distinguish a foreign conflict from a technical failure — that is how a conflict became a silent REST fallback")
+
+        // Acquisition must stay separate from installation. Installing inside
+        // the acquire would put a live candidate into studioEntClients before
+        // the caller had decided the start was going ahead — and a conflict
+        // discovered afterwards would then be reported with the previous look
+        // already replaced.
+        let acquireBody = try XCTUnwrap(
+            functionBody(orchestratorSource, startingWith: "func acquireEntertainment("))
+        XCTAssertFalse(acquireBody.joined(separator: "\n").contains("studioEntClients["),
+            "the candidate may not be installed until the transaction commits")
+        XCTAssertTrue(orchestratorSource.contains("func commitEntertainment("),
+            "installation is its own, explicitly named step")
+    }
+
+    // ── Fail closed, and never at the cost of what is already playing ──
+    //
+    // The first version answered the preflight with an optional, so "several
+    // controllers at once" and "could not read the bridge" both arrived as
+    // nil — indistinguishable from "all clear". `apply` then carried on into
+    // the teardown below it and destroyed the running look on the strength of
+    // an answer that was really a shrug.
+
+    /// Stage a room on bridge B that is ALREADY playing, so every fail-closed
+    /// path can be checked against something it could destroy.
+    private func stageRunningEffectOnB(_ vm: StudioViewModel) throws -> StudioCard {
+        stageStreamableBridge(bridgeB, active: [])
+        let party = try streamingCard(vm)
+        return party
+    }
+
+    /// P7-41
+    func testMultipleForeignSessionsPreserveAnAlreadyRunningEffect() async throws {
+        stageStreamableBridge(bridgeB, active: [])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+
+        // Something is already playing in this room.
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id])
+        let actionsBefore = bridgeB.entertainmentActions.count
+
+        // Now two other controllers appear, and the user taps again.
+        bridgeB.stageEntertainmentConfigs(
+            Self.configsJSON(areaID: "area-b", active: ["cfg-one", "cfg-two"]))
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        XCTAssertNil(vm.foreignTakeoverRequest,
+            "there is no single session to name, so there is no honest question")
+        XCTAssertTrue(bridgeB.entertainmentStops.filter { $0 == "cfg-one" || $0 == "cfg-two" }.isEmpty,
+            "and no licence to guess which one to evict")
+        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+            "failing closed must not cost the user the look that was already playing")
+        XCTAssertEqual(bridgeB.entertainmentActions.count, actionsBefore,
+            "nothing was written at all")
+        XCTAssertFalse(vm.statusMessage.isEmpty, "and it says so")
+    }
+
+    /// P7-42
+    func testAnUnreadableBridgeAtPreflightPreservesAnAlreadyRunningEffect() async throws {
+        stageStreamableBridge(bridgeB, active: [])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id])
+
+        bridgeB.entertainmentConfigsShouldFail = true
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        XCTAssertNil(vm.foreignTakeoverRequest)
+        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+            "unknown is not a reason to tear down what is playing")
+        XCTAssertFalse(vm.statusMessage.isEmpty)
+    }
+
+    /// P7-35 — a foreign owner appearing between the first preflight and the
+    /// final pre-teardown check. The decision must be taken while the previous
+    /// look is still intact, and must NOT become a quiet room-mode fallback.
+    func testAForeignOwnerAppearingAfterThePreflightDestroysNothingAndDoesNotFallBack() async throws {
+        stageStreamableBridge(bridgeB, active: [])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id])
+        let startsBefore = bridgeB.entertainmentStarts.count
+
+        // The first read of this attempt sees a clear bridge; a controller
+        // claims it straight afterwards, before the start can tear anything
+        // down. (Counts of grouped/per-light writes are deliberately NOT
+        // asserted here: the already-running REST look keeps writing on its
+        // own task, so any such count is a race rather than a fact.)
+        bridgeB.onEntertainmentReadOnce { [weak bridgeB] in
+            bridgeB?.stageEntertainmentConfigs(
+                Self.configsJSON(areaID: "area-b", active: ["cfg-late"]))
+        }
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        XCTAssertTrue(bridgeB.entertainmentStops.filter { $0 == "cfg-late" }.isEmpty,
+            "the late arrival must not be stopped without consent")
+        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+            "and the previous look must survive — the conflict is decided before teardown")
+        XCTAssertEqual(bridgeB.entertainmentStarts.count, startsBefore,
+            "no session may be opened over the late arrival, and no REST fallback may stand in for one")
+        XCTAssertNotNil(vm.foreignTakeoverRequest,
+            "the conflict is surfaced as a question, not silently absorbed")
+    }
+
+    /// P7-43 — and cancelling that prompt is still zero mutation.
+    func testCancelAfterALateConflictPromptIsZeroMutation() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertNotNil(vm.foreignTakeoverRequest)
+        let actionsBefore = bridgeB.entertainmentActions.count
+
+        vm.cancelForeignTakeover()
+
+        XCTAssertNil(vm.foreignTakeoverRequest)
+        XCTAssertEqual(bridgeB.entertainmentActions.count, actionsBefore,
+            "declining touches nothing")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    // ── The frozen start plan ─────────────────────────────────
+    //
+    // A configuration id alone is not a plan. Between the prompt and the answer
+    // the area can be deleted, re-scoped to other lights, or lose the channels
+    // the render loop needs — and replaying on the id alone would stop someone
+    // else's show and then have nowhere to put ours.
+
+    /// P7-44 — target area deleted while the prompt is open.
+    func testATargetAreaRemovedWhileThePromptIsOpenStopsNothing() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertNotNil(vm.foreignTakeoverRequest)
+
+        // area-b is gone; only the stranger's session remains.
+        bridgeB.stageEntertainmentConfigs(
+            #"{"data":[{"id":"cfg-someone-else","metadata":{"name":"Other"},"status":"active","channels":[]}]}"#)
+        await vm.confirmForeignTakeover()
+
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "stopping their show with nowhere to put ours is the worst possible trade")
+        XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty, "and nothing is started")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertFalse(vm.statusMessage.isEmpty, "the refusal is stated")
+    }
+
+    /// P7-45 — the area survives but no longer serves this room's lights.
+    func testATargetAreaThatNoLongerMatchesTheRoomStopsNothing() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertNotNil(vm.foreignTakeoverRequest)
+
+        // area-b now covers a completely different device, so it no longer
+        // safely serves this room.
+        bridgeB.stageLights([p7Light("L9", device: "D9")])
+        bridgeB.stageEntertainmentServices(
+            #"{"data":[{"id":"E9","owner":{"rid":"D9","rtype":"device"}}]}"#)
+        bridgeB.stageEntertainmentConfigs(
+            #"{"data":[{"id":"area-b","metadata":{"name":"Bedroom"},"status":"inactive","channels":[{"channel_id":0,"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"E9","rtype":"entertainment"}}]}]},"# +
+            #"{"id":"cfg-someone-else","metadata":{"name":"Other"},"status":"active","channels":[]}]}"#)
+        await vm.confirmForeignTakeover()
+
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "the captured area no longer describes this room's stream")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    /// P7-46 — the area still matches, but its channels are no longer usable.
+    func testAnUnusableChannelPlanStopsNothing() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let captured = try XCTUnwrap(vm.foreignTakeoverRequest?.plan)
+        XCTAssertEqual(captured.channelIDs, [0, 1], "two channels were validated at capture time")
+
+        // area-b keeps one channel: same area, different stream.
+        bridgeB.stageEntertainmentConfigs(
+            #"{"data":[{"id":"area-b","metadata":{"name":"Bedroom"},"status":"inactive","channels":[{"channel_id":0,"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"E1","rtype":"entertainment"}}]}]},"# +
+            #"{"id":"cfg-someone-else","metadata":{"name":"Other"},"status":"active","channels":[]}]}"#)
+        await vm.confirmForeignTakeover()
+
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "the render loop would drive a channel map the user never consented to")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    /// P7-47 — the happy path uses the exact captured plan.
+    func testASuccessfulConfirmationUsesTheExactCapturedPlan() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let captured = try XCTUnwrap(vm.foreignTakeoverRequest?.plan)
+
+        // Stopping the foreign session deactivates it, as a real bridge would.
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(captured.targetConfigID, "area-b")
+        XCTAssertEqual(captured.channelIDs, [0, 1])
+        XCTAssertEqual(captured.roomID, streamRoomOnB().id)
+        XCTAssertEqual(captured.bridgeID, "bridge-b")
+        XCTAssertEqual(Set(bridgeB.entertainmentStarts), [captured.targetConfigID],
+            "the replay streams the captured area and only that one")
+        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    // ── The late-conflict transaction ─────────────────────────
+    //
+    // The gate below opens on the ACQUISITION read — the one that happens
+    // after the ViewModel's preflight has fully completed. A "next
+    // entertainment read" hook was not good enough: it can fire during
+    // warmEntertainmentCaches inside the preflight itself, which tests an
+    // earlier and easier moment than the one that actually matters.
+
+    /// Arms a controller to appear on the read that follows a completed
+    /// preflight, by counting reads rather than guessing at one.
+    private func armForeignOwnerAfterPreflight(_ spy: RoutingSpyClient,
+                                               skipping reads: Int,
+                                               configID: String = "cfg-late") {
+        let counter = ReadCounter(threshold: reads)
+        spy.onEntertainmentReadEach { [weak spy] in
+            guard counter.advancePastThreshold() else { return }
+            spy?.stageEntertainmentConfigs(
+                Self.configsJSON(areaID: "area-b", active: [configID]))
+        }
+    }
+
+    /// P7-48 (app-driven Studio) — a controller claims the bridge after the
+    /// preflight has completed and before the acquisition commits.
+    func testALateForeignOwnerLeavesAppDrivenStudioBookkeepingUntouched() async throws {
+        stageStreamableBridge(bridgeB, active: [])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id])
+        let startsBefore = bridgeB.entertainmentStarts.count
+        let effectsBefore = vm.runningEffects.count
+
+        // The preflight makes two configuration reads (its cache warm, then
+        // its activity check). Arming after the second means the ACQUISITION
+        // read — the one that follows a fully completed preflight — is the
+        // first to see the stranger.
+        armForeignOwnerAfterPreflight(bridgeB, skipping: 1)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        XCTAssertNotNil(vm.foreignTakeoverRequest, "the prompt is raised, exactly once")
+        XCTAssertEqual(vm.foreignTakeoverRequest?.foreignConfigID, "cfg-late")
+        XCTAssertTrue(bridgeB.entertainmentStops.filter { $0 == "cfg-late" }.isEmpty,
+            "the late arrival is not stopped without consent")
+        XCTAssertEqual(bridgeB.entertainmentStarts.count, startsBefore,
+            "no session opened, and no REST fallback stood in for one")
+        XCTAssertEqual(vm.runningEffects.count, effectsBefore,
+            "Now-Playing bookkeeping is untouched")
+        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+            "and the previous look is still the one running")
+
+        // Declining still costs the user nothing.
+        vm.cancelForeignTakeover()
+        XCTAssertNil(vm.foreignTakeoverRequest)
+        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+            "cancel leaves the prior effect running")
+    }
+
+    /// P7-49 (composition) — the same, for the path that advances generations,
+    /// opens telemetry, moves microphone demand, and rewrites spatial data.
+    func testALateForeignOwnerLeavesCompositionBookkeepingUntouched() async throws {
+        stageStreamableBridge(bridgeB, active: [])
+        let vm = makeP7VM()
+        let preset = makePreset(named: "Aurora Drift")
+        vm.compositionStore.save(preset)
+        addTeardownBlock { @MainActor in vm.compositionStore.delete(preset) }
+        let card = vm.studioCard(for: preset)
+        let room = streamRoomOnB()
+
+        await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true)
+        let running = try XCTUnwrap(vm.runningEffects[room.id],
+            "the composition must actually be playing before the late conflict")
+        let generationBefore = orchestrator.testCompositionGeneration(roomID: room.id)
+        let transportBefore = orchestrator.testCompositionTransport(roomID: room.id)
+        let ownerBefore = orchestrator.compositionOwningEntertainment(onBridge: "bridge-b")
+        let telemetryBefore = orchestrator.testHasComposerTelemetrySession(
+            roomID: room.id, bridgeID: "bridge-b")
+        let startsBefore = bridgeB.entertainmentStarts.count
+
+        armForeignOwnerAfterPreflight(bridgeB, skipping: 1)
+        await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true)
+
+        XCTAssertNotNil(vm.foreignTakeoverRequest, "the prompt is raised, exactly once")
+        XCTAssertTrue(bridgeB.entertainmentStops.filter { $0 == "cfg-late" }.isEmpty)
+        XCTAssertEqual(bridgeB.entertainmentStarts.count, startsBefore,
+            "no session opened and no REST fallback started")
+        XCTAssertEqual(orchestrator.testCompositionGeneration(roomID: room.id), generationBefore,
+            "the generation must not advance for a start that never happened")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), transportBefore,
+            "nor may the room's transport be rewritten")
+        XCTAssertEqual(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"), ownerBefore,
+            "nor Entertainment ownership")
+        XCTAssertEqual(orchestrator.testHasComposerTelemetrySession(
+            roomID: room.id, bridgeID: "bridge-b"), telemetryBefore,
+            "nor may a telemetry session be opened")
+        XCTAssertEqual(vm.runningEffects[room.id]?.cardID, running.cardID,
+            "and the previous composition keeps playing")
+
+        vm.cancelForeignTakeover()
+        XCTAssertEqual(vm.runningEffects[room.id]?.cardID, running.cardID,
+            "cancel leaves the prior effect running")
+    }
+
+    // ── The frozen plan reaches the render loop ───────────────
+
+    /// P7-50 — positions moved, ids unchanged. Invisible to an id comparison,
+    /// very visible on the wall.
+    func testChangedChannelPositionsRefuseTheTakeover() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertNotNil(vm.foreignTakeoverRequest)
+
+        bridgeB.stageEntertainmentConfigs(
+            #"{"data":[{"id":"area-b","metadata":{"name":"Bedroom"},"status":"inactive","channels":["# +
+            #"{"channel_id":0,"position":{"x":0.9,"y":0.9,"z":0},"members":[{"service":{"rid":"E1","rtype":"entertainment"}}]},"# +
+            #"{"channel_id":1,"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"E2","rtype":"entertainment"}}]}]},"# +
+            #"{"id":"cfg-someone-else","metadata":{"name":"Other"},"status":"active","channels":[]}]}"#)
+        await vm.confirmForeignTakeover()
+
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "the room would be lit in a different shape than the one consented to")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    /// P7-51 — members swapped, ids unchanged: the same area would drive
+    /// different lights.
+    func testChangedChannelMembersRefuseTheTakeover() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertNotNil(vm.foreignTakeoverRequest)
+
+        // E1/E2 both still resolve to this room's lights, so selection still
+        // matches — but channel 0 now drives the other one.
+        bridgeB.stageEntertainmentConfigs(
+            #"{"data":[{"id":"area-b","metadata":{"name":"Bedroom"},"status":"inactive","channels":["# +
+            #"{"channel_id":0,"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"E2","rtype":"entertainment"}}]},"# +
+            #"{"channel_id":1,"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"E1","rtype":"entertainment"}}]}]},"# +
+            #"{"id":"cfg-someone-else","metadata":{"name":"Other"},"status":"active","channels":[]}]}"#)
+        await vm.confirmForeignTakeover()
+
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "same ids, different lights — the consented mapping no longer holds")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+    }
+
+    /// P7-52 — after a successful stop, a cache refresh that reorders or
+    /// re-points the configuration cannot change what the replay streams.
+    func testARefreshAfterTheStopCannotRedirectTheReplay() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let captured = try XCTUnwrap(vm.foreignTakeoverRequest?.plan)
+
+        // The stop clears the stranger AND introduces a rival area that a
+        // fresh selection might prefer.
+        bridgeB.stageDeactivationOnStop { _ in
+            #"{"data":[{"id":"area-b","metadata":{"name":"Bedroom"},"status":"inactive","channels":["# +
+            #"{"channel_id":0,"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"E1","rtype":"entertainment"}}]},"# +
+            #"{"channel_id":1,"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"E2","rtype":"entertainment"}}]}]},"# +
+            #"{"id":"area-rival","metadata":{"name":"Rival"},"status":"inactive","channels":["# +
+            #"{"channel_id":0,"position":{"x":0,"y":0,"z":0},"members":[{"service":{"rid":"E1","rtype":"entertainment"}}]}]}]}"#
+        }
+        await vm.confirmForeignTakeover()
+
+        XCTAssertEqual(Set(bridgeB.entertainmentStarts), [captured.targetConfigID],
+            "the replay streams the captured area — a rival that appeared later cannot claim it")
+        XCTAssertFalse(bridgeB.entertainmentStarts.contains("area-rival"))
+        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id],
+            "and the replay must not silently drop to room mode because selection moved")
+    }
+
+    /// P7-53 — the captured configuration, channel order, positions, and
+    /// members are exactly what a takeover carries forward.
+    func testTheCapturedPlanCarriesOrderPositionsAndMembers() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        let plan = try XCTUnwrap(vm.foreignTakeoverRequest?.plan)
+
+        XCTAssertEqual(plan.channelIDs, [0, 1], "ordered, not just present")
+        XCTAssertEqual(plan.channels.map(\.id), [0, 1])
+        XCTAssertEqual(plan.channels.map(\.members), [["E1"], ["E2"]],
+            "which services each channel drives is part of the plan")
+        XCTAssertEqual(plan.channels.map(\.x), [0, 0])
+        XCTAssertEqual(plan.capturedConfig.id, "area-b")
+        XCTAssertEqual(plan.capturedConfig.channels.map(\.id), [0, 1],
+            "and the render loop is handed exactly that, rebuilt from the capture")
+    }
+
+    // ── A prepared candidate never survives an aborted start ──
+    //
+    // Preparing opens a REAL session: live on the bridge, process-owned, and
+    // persisted. A refusal that happens after preparing therefore leaves a
+    // session nothing points at — and because it looks owned, the app's own
+    // cleanup skips it forever. Refusals must come first, and anything
+    // prepared but not committed must be stopped.
+
+    /// P7-54 — Strobe under Reduce Motion refuses before it prepares anything.
+    func testAStrobeRefusedForReduceMotionPreparesAndDestroysNothing() async throws {
+        stageStreamableBridge(bridgeB, active: [])
+        let vm = makeP7VM()
+        let room = streamRoomOnB()
+
+        // Something is already playing, so a premature teardown would show.
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: room, preferEntertainmentOverride: true)
+        let running = try XCTUnwrap(vm.runningEffects[room.id])
+        let nowPlayingBefore = orchestrator.activeEffectEntries
+        let actionsBefore = bridgeB.entertainmentActions
+        let clientBefore = orchestrator.testHasEntertainmentClient(forBridge: "bridge-b")
+
+        vm.forcedReduceMotionForTesting = true
+        let strobe = try XCTUnwrap(vm.liveModeCards.first { $0.id == "strobe" })
+        await vm.apply(strobe, roomOverride: room, preferEntertainmentOverride: true)
+        await orchestrator.testAwaitEntertainmentRollback()
+
+        XCTAssertEqual(bridgeB.entertainmentActions.count, actionsBefore.count,
+            "a refused card must send no action=start and no action=stop at all")
+        XCTAssertFalse(orchestrator.testHasPendingEntertainmentCandidate(),
+            "nothing may be left prepared and uncommitted")
+        XCTAssertEqual(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+                       clientBefore,
+            "and no prepared client may be installed")
+
+        // Ownership: the refusal must not have created any.
+        XCTAssertFalse(ownershipStore.isProcessOwned(bridgeID: "bridge-b", configID: "area-b"),
+            "a refused start owns nothing")
+        XCTAssertFalse(ownershipStore.isPersisted(bridgeID: "bridge-b", configID: "area-b"),
+            "and records nothing — a persisted entry here would outlive the app")
+
+        // The previous look is untouched.
+        XCTAssertEqual(vm.runningEffects[room.id]?.cardID, running.cardID,
+            "the running effect must survive a card that was never going to start")
+        XCTAssertEqual(orchestrator.activeEffectEntries.count, nowPlayingBefore.count,
+            "and Now Playing with it")
+        XCTAssertTrue(vm.statusMessage.contains("Reduce Motion"),
+            "the refusal is stated plainly")
+    }
+
+    /// P7-55 — an explicitly abandoned candidate is stopped and balances both
+    /// ownership layers.
+    ///
+    /// The candidate is staged rather than produced by a real prepare: every
+    /// client key in this suite is non-hex, so the DTLS open refuses before a
+    /// socket exists and `.prepared` is unreachable here. What is under test
+    /// is the rollback contract, and this is exactly the state a successful
+    /// prepare leaves behind.
+    func testAnAbandonedPreparedCandidateIsStoppedAndOwnsNothing() async throws {
+        stageStreamableBridge(bridgeB, active: [])
+        _ = makeP7VM()
+
+        let client = HueEntertainmentClient(
+            bridgeID: "bridge-b", bridgeIP: "192.0.2.2",
+            username: "t", clientKeyHex: "ZZ-not-hex",
+            restClient: bridgeB, ownership: ownershipStore)
+        // Exactly what a real prepare installs: live session, both ownership
+        // layers recorded.
+        await client.seedSessionForTesting(configID: "area-b")
+        XCTAssertTrue(ownershipStore.isProcessOwned(bridgeID: "bridge-b", configID: "area-b"))
+        XCTAssertTrue(ownershipStore.isPersisted(bridgeID: "bridge-b", configID: "area-b"))
+
+        let plan = EntertainmentTakeoverPlan(
+            bridgeID: "bridge-b", roomID: streamRoomOnB().id,
+            config: EntertainmentConfig(id: "area-b", name: "Bedroom", channels: []),
+            channelIDs: [0, 1])
+        let candidate = orchestrator.testStagePendingEntertainmentCandidate(
+            client: client, plan: plan)
+        XCTAssertTrue(orchestrator.testHasPendingEntertainmentCandidate(),
+            "it is outstanding until committed or rolled back")
+
+        // Abandon it without committing.
+        orchestrator.rollbackUncommittedEntertainment(candidateID: candidate.id)
+        await orchestrator.testAwaitEntertainmentRollback()
+
+        XCTAssertEqual(bridgeB.entertainmentStops, ["area-b"],
+            "an uncommitted candidate is stopped, not left live with nothing pointing at it")
+        XCTAssertFalse(orchestrator.testHasPendingEntertainmentCandidate())
+        XCTAssertFalse(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+            "and it was never installed")
+        XCTAssertFalse(ownershipStore.isProcessOwned(bridgeID: "bridge-b", configID: "area-b"),
+            "process ownership is balanced")
+        XCTAssertFalse(ownershipStore.isPersisted(bridgeID: "bridge-b", configID: "area-b"),
+            "and the confirmed stop retires the persisted record")
+    }
+
+    /// P7-56 — a committed candidate is never stopped by the rollback net.
+    func testACommittedCandidateIsNotStoppedByRollback() async throws {
+        stageStreamableBridge(bridgeB, active: [])
+        let vm = makeP7VM()
+        let room = streamRoomOnB()
+        let party = try streamingCard(vm)
+
+        await vm.apply(party, roomOverride: room, preferEntertainmentOverride: true)
+        await orchestrator.testAwaitEntertainmentRollback()
+
+        XCTAssertFalse(orchestrator.testHasPendingEntertainmentCandidate(),
+            "committing clears the outstanding candidate")
+        // The DTLS open fails on the non-hex key, so this look legitimately
+        // falls back to room mode — what matters is that the rollback net did
+        // not fire a SECOND stop at whatever the start left behind.
+        XCTAssertLessThanOrEqual(bridgeB.entertainmentStops.count, 1,
+            "the rollback must not stop anything a successful commit owns")
+        XCTAssertNotNil(vm.runningEffects[room.id])
+    }
+
+    // ── Two transactions in flight at once ────────────────────
+    //
+    // `apply` and both start paths are @MainActor async, and every one of them
+    // suspends on a bridge read. That makes them REENTRANT: a second tap runs
+    // its prepare while the first is still parked. With one "currently
+    // pending" slot the second candidate overwrote the first, and then the
+    // first transaction's commit cleared the second's entry — leaving a live
+    // session with nothing tracking it, which the app's own cleanup then
+    // skipped forever because it looked owned.
+    //
+    // The interleaving here is expressed by call ORDER, which is exact: the
+    // staging seam is synchronous, so there is no timing involved at all.
+    // (`.prepared` is unreachable through a real prepare in this suite —
+    // every client key is non-hex, so the DTLS open refuses before a socket
+    // exists — and this stages precisely the registry state a real prepare
+    // leaves behind.)
+
+    /// A candidate wired to `bridge`, seeded so both ownership layers are
+    /// recorded exactly as a real prepare would leave them.
+    private func stageCandidate(on spy: RoutingSpyClient,
+                                bridgeID: String,
+                                configID: String,
+                                roomID: String) async -> UnifiedOrchestrator.PreparedEntertainment {
+        let client = HueEntertainmentClient(
+            bridgeID: bridgeID, bridgeIP: "192.0.2.9",
+            username: "t", clientKeyHex: "ZZ-not-hex",
+            restClient: spy, ownership: ownershipStore)
+        await client.seedSessionForTesting(configID: configID)
+        let plan = EntertainmentTakeoverPlan(
+            bridgeID: bridgeID, roomID: roomID,
+            config: EntertainmentConfig(id: configID, name: "Area", channels: []),
+            channelIDs: [0])
+        return orchestrator.testStagePendingEntertainmentCandidate(client: client, plan: plan)
+    }
+
+    /// P7-57 — commit A while B is still outstanding.
+    func testCommittingOneTransactionLeavesAnotherCandidateOutstanding() async throws {
+        _ = makeP7VM()
+
+        // Transaction A prepares, then suspends before committing.
+        let a = await stageCandidate(on: bridgeA, bridgeID: "bridge-a",
+                                     configID: "area-a", roomID: "room-a")
+        // Transaction B prepares while A is parked.
+        let b = await stageCandidate(on: bridgeB, bridgeID: "bridge-b",
+                                     configID: "area-b", roomID: "room-b")
+        XCTAssertEqual(orchestrator.testOutstandingCandidateIDs(), [a.id, b.id],
+            "both transactions are in flight")
+
+        // A resumes and commits.
+        orchestrator.commitEntertainment(a)
+
+        XCTAssertEqual(orchestrator.testOutstandingCandidateIDs(), [b.id],
+            "committing A must remove ONLY A — B is another transaction's candidate")
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "and must not stop it either")
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-a"),
+            "A is installed")
+        XCTAssertFalse(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+            "B is not — it was never committed")
+
+        // B is abandoned.
+        orchestrator.rollbackUncommittedEntertainment(candidateID: b.id)
+        await orchestrator.testAwaitEntertainmentRollback()
+
+        XCTAssertEqual(bridgeB.entertainmentStops, ["area-b"],
+            "B stops exactly once")
+        XCTAssertTrue(bridgeA.entertainmentStops.isEmpty,
+            "and A, which committed, is never stopped")
+        XCTAssertTrue(orchestrator.testOutstandingCandidateIDs().isEmpty)
+
+        // Ownership balances per candidate, independently.
+        XCTAssertTrue(ownershipStore.isProcessOwned(bridgeID: "bridge-a", configID: "area-a"),
+            "A is still streaming, so it still owns its session")
+        XCTAssertTrue(ownershipStore.isPersisted(bridgeID: "bridge-a", configID: "area-a"))
+        XCTAssertFalse(ownershipStore.isProcessOwned(bridgeID: "bridge-b", configID: "area-b"),
+            "B released both layers on rollback")
+        XCTAssertFalse(ownershipStore.isPersisted(bridgeID: "bridge-b", configID: "area-b"))
+    }
+
+    /// P7-58 — the inverse ordering: roll back A, then commit B.
+    func testRollingBackOneTransactionLeavesAnotherFreeToCommit() async throws {
+        _ = makeP7VM()
+
+        let a = await stageCandidate(on: bridgeA, bridgeID: "bridge-a",
+                                     configID: "area-a", roomID: "room-a")
+        let b = await stageCandidate(on: bridgeB, bridgeID: "bridge-b",
+                                     configID: "area-b", roomID: "room-b")
+
+        orchestrator.rollbackUncommittedEntertainment(candidateID: a.id)
+        await orchestrator.testAwaitEntertainmentRollback()
+
+        XCTAssertEqual(orchestrator.testOutstandingCandidateIDs(), [b.id],
+            "rolling back A must not claim B")
+        XCTAssertEqual(bridgeA.entertainmentStops, ["area-a"], "A alone stops")
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty)
+
+        orchestrator.commitEntertainment(b)
+
+        XCTAssertTrue(orchestrator.testOutstandingCandidateIDs().isEmpty)
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+            "B alone installs")
+        XCTAssertFalse(orchestrator.testHasEntertainmentClient(forBridge: "bridge-a"),
+            "A was rolled back, so it is not installed")
+        XCTAssertEqual(bridgeB.entertainmentStops, [],
+            "and committing never stops the thing it installs")
+
+        XCTAssertFalse(ownershipStore.isProcessOwned(bridgeID: "bridge-a", configID: "area-a"))
+        XCTAssertFalse(ownershipStore.isPersisted(bridgeID: "bridge-a", configID: "area-a"))
+        XCTAssertTrue(ownershipStore.isProcessOwned(bridgeID: "bridge-b", configID: "area-b"))
+        XCTAssertTrue(ownershipStore.isPersisted(bridgeID: "bridge-b", configID: "area-b"))
+    }
+
+    /// P7-59 — rollback is exactly-once and inert against a committed or
+    /// already-rolled-back candidate.
+    func testRollbackIsExactlyOnceAndInertAfterCommit() async throws {
+        _ = makeP7VM()
+
+        let a = await stageCandidate(on: bridgeA, bridgeID: "bridge-a",
+                                     configID: "area-a", roomID: "room-a")
+        orchestrator.rollbackUncommittedEntertainment(candidateID: a.id)
+        orchestrator.rollbackUncommittedEntertainment(candidateID: a.id)
+        orchestrator.rollbackUncommittedEntertainment(candidateID: a.id)
+        await orchestrator.testAwaitEntertainmentRollback()
+
+        XCTAssertEqual(bridgeA.entertainmentStops, ["area-a"],
+            "claiming by removal means a repeated rollback finds nothing to do")
+
+        let b = await stageCandidate(on: bridgeB, bridgeID: "bridge-b",
+                                     configID: "area-b", roomID: "room-b")
+        orchestrator.commitEntertainment(b)
+        orchestrator.rollbackUncommittedEntertainment(candidateID: b.id)
+        await orchestrator.testAwaitEntertainmentRollback()
+
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "a rollback arriving after commit must never stop the installed session")
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"))
     }
 }

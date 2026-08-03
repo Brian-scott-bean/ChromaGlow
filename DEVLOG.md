@@ -13,6 +13,19 @@
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
   (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **46**).
+- **COMPOSER 2 / PHASE 0 / PACKET 7 (2026-08-03): ChromaGlow now YIELDS to third-party
+  Entertainment sessions.** Branch `fix/third-party-entertainment-consent`, rollback tag
+  `checkpoint/pre-composer-packet-7` (at `446fd49`), PR open and **unmerged**. Automatic
+  cleanup used to `action=stop` every active configuration this process had not registered —
+  on every launch, foreground, and refresh — silently evicting a Sync Box or another Hue app.
+  Ownership is now keyed by exact bridge + configuration and **persisted** (non-secret: bridge
+  id, configuration id, timestamp), so cleanup stops only ChromaGlow's own orphaned sessions,
+  and a third party is replaced only after an explicit playback action **and** an explicit
+  "Take Over". Only the final process owner may send a stop; cleanup takes an exclusive claim
+  before it destroys anything; and playback starts as a prepare/start/commit transaction, so a
+  controller arriving mid-start costs the user nothing. Suite 1172/1172 green (xcresulttool). No new source file, no pbxproj change, no build bump. **Needs Brian's
+  two-controller device pass** — the packet-7 section of
+  `docs/ios/master-on-device-checklist.md`. Entry below.
 - **BUILD 46 (2026-08-01): mixer tray reclaims the ~200pt dead band above the Now Playing
   card** — the R8c double-count, finally closed for the tray. Rollback tag
   `checkpoint/mixer-tray-reclaim-band`. Entry below.
@@ -416,6 +429,254 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-03 - [Claude] Composer 2 / Phase 0 / Packet 7 — third-party Entertainment consent
+
+### Branch
+- `fix/third-party-entertainment-consent`, cut from `main` (`446fd49`, the Packet 6 merge, PR #56).
+- Worktree: `~/Desktop/chromaglow-p7`.
+- Rollback tag: `checkpoint/pre-composer-packet-7` (at `446fd49`).
+- **No source file added, no `project.pbxproj` change, no version or build bump.** Two commits.
+  PR opened, not merged.
+- One new persisted key is written (`castchroma.entertainmentOwnership.v1`, non-secret), so a
+  rollback should also clear it — see "Persisted ownership" below.
+
+### The defect (review decision K1, risk N4)
+`deactivateStuckEntertainmentSessions` treated **every** active Entertainment configuration
+that this process had not registered as "stuck" and sent `action=stop`. That pass runs from
+`loadAll` → `scheduleEntertainmentCleanup` on launch, on every foreground, and on every state
+refresh. A Hue Sync Box, another Hue app, or any other controller streaming on the bridge was
+therefore silently evicted although the ChromaGlow user had not asked for playback at all —
+the most direct kind of trust failure the app can commit, and an App Store liability.
+
+### Why the process-only refcount could not fix it
+`HueEntertainmentClient` kept ownership in a static `[configID: Int]` guarded by a lock. Two
+independent things were missing, and neither could be added to that shape:
+
+1. **No bridge identity.** The key was the configuration UUID alone. A configuration recorded
+   while streaming on bridge A authorized stopping the same UUID on bridge B — a different
+   session entirely, quite possibly a stranger's.
+2. **No survival.** A refcount dies with the process. After a force-quit mid-show the bridge
+   still reported *our* configuration active, with nothing left to say it was ours. The
+   cleanup pass could not distinguish that from a third party's session, so it had to choose
+   between evicting strangers (what it did) and leaking its own sessions forever.
+
+### Persisted ownership
+`EntertainmentSessionOwnership` (in `HueEntertainmentClient.swift`, no new file) holds two
+layers, both keyed by **exact bridge + configuration**:
+
+- **A — current process:** reference-counted. Two ChromaGlow clients can legitimately hold the
+  same bridge + configuration (a Studio card and a composition).
+- **B — persisted:** `{bridgeID, configID, startedAt}` as JSON under
+  `castchroma.entertainmentOwnership.v1`, injectable `UserDefaults`, load-in-init, `try?`-tolerant,
+  bounded to 32 records (oldest dropped). **No token, client key, username, IP, or light data.**
+
+Lifecycle:
+
+| Event | Process | Persisted |
+| --- | --- | --- |
+| `startSession`, before `action=start` | register | record |
+| activation refused by the bridge (typed `HueAPIError`) | release | forget (final owner only) |
+| activation failed at transport (outcome unknown) | release | **keep** — a later launch retries |
+| DTLS open failed | release | compensating stop; forget only if that stop succeeded |
+| `stopSession` / terminal failure, final owner | release | forget only on a confirmed stop |
+| `stopSession`, **not** the final owner | release | **keep** — another live client needs it |
+| automatic cleanup stopped a stale session | — | forget only on a confirmed stop |
+| bridge proves the configuration inactive/absent | — | prune, no stop sent |
+
+**Final-owner stop semantics.** `releaseProcess` returns `(wasFinalOwner, remaining)` and only
+the final owner sends `action=stop`. An earlier release that stopped the session would black
+out a stream whose owner still believed it was running — including as a failed-open "rollback",
+which is how a second client's DTLS failure could have killed the first client's live show.
+Failure classification is by **type**, never by error text.
+
+**Cleanup takes a claim, not a reading.** A bridge read suspends, so a start can complete
+between the classifying read and the stop that read authorized. Re-asking "still recorded?" and
+"no owner yet?" as two separate questions and *then* awaiting a PUT is not an authorization
+either — it is two facts that were briefly true with a suspension in between.
+`beginStaleCleanup(bridgeID:configID:)` verifies both under one lock and returns an exclusive
+claim; while it is held, `registerProcess` for that exact key returns `.blockedByCleanup` and
+`startSession` refuses rather than racing the stop. The claim is released whether the stop
+succeeds or fails, and the lock is never held across an await. Other bridges and other
+configurations are unaffected.
+
+### Automatic cleanup vs. explicit takeover — the distinction that matters
+These are now completely different code paths with different rights:
+
+- **Automatic cleanup** (`deactivateStuckEntertainmentSessions`, unattended, from `loadAll`)
+  builds an `EntertainmentActivitySnapshot` per bridge partitioning every active configuration
+  into `processOwned` / `persistedOwned` / `foreign`. It skips process-owned, best-effort stops
+  each persisted stale id **independently** (one failure does not skip the next), and leaves
+  foreign entries completely untouched — no stop, no prompt, and not even a "stuck" warning,
+  because they are not stuck. An unreadable bridge keeps all its records and never affects
+  another bridge's classification.
+- **Explicit takeover** is the only path that ever stops a third party, and only after the user
+  says so.
+
+### Explicit user takeover
+`tryStartEntertainment` no longer returns `HueEntertainmentClient?`. An optional could not tell
+"streaming is impossible here, use room mode" apart from "another controller owns this bridge",
+so a foreign conflict silently became a REST fallback — which plays over the other app's show,
+just more quietly. It now returns `.started` / `.needsForeignConsent` / `.unavailable` / `.failed`,
+and **no path starts a fallback while a foreign conflict is unresolved**.
+
+Playback now starts as a **prepare / start / commit** transaction. `prepareEntertainment`
+resolves the plan, runs the choke-point foreign check, and opens the session — returning a
+`PreparedEntertainment` candidate that is deliberately **not** installed into `studioEntClients`.
+Only after that succeeds does a caller cancel the old task, stop the old client, clear scopes,
+advance the composition generation, open telemetry, move microphone demand, rewrite spatial
+data, or publish a running effect. `startStudioMode`'s room guard was hoisted above its teardown
+too, so an unresolvable room no longer stops the previous look and then fails.
+
+The consequence is the one that matters: a third party claiming the bridge between the
+ViewModel's preflight and the acquisition surfaces as a **question**, with the previous look
+still playing and every piece of bookkeeping untouched — and never as a quiet REST fallback,
+which would play over the other app's show instead of asking about it.
+
+**Refusals come first, and the transaction rolls back.** Preparing opens a REAL session: live on
+the bridge, process-owned *and* persisted. A refusal that happened after preparing therefore
+left a session nothing pointed at — and because it looked owned, the app's own cleanup would
+skip it forever. Strobe under Reduce Motion was exactly that: it refused inside the `.appDriven`
+branch, well below the preflight, the prepare, and `stopEffect`. The refusal moved to the top of
+`apply`, above every mutation. Beyond it, a candidate is now either committed exactly once or
+stopped: `commitEntertainment` is what marks it no longer outstanding, and a `defer`-driven
+`rollbackUncommittedEntertainment()` in `apply`, `startStudioMode`, and `startCompositionMode`
+stops anything that never got there — a defer rather than a return-by-return audit, because
+enumerating today's early exits would not protect the next one added.
+
+Candidate ownership is **transaction-scoped**. `apply` and both start paths are `@MainActor`
+async and suspend on every bridge read, which makes them reentrant: a second tap prepares while
+the first is still parked. A single "currently pending" slot let the second candidate overwrite
+the first, after which the first transaction's commit cleared the second's entry — leaving a
+live session with nothing tracking it, which cleanup then skipped forever because it looked
+owned. Every `PreparedEntertainment` now carries its own id, the registry is keyed by that id,
+`commitEntertainment` removes and installs only that candidate, and
+`rollbackUncommittedEntertainment(candidateID:)` claims by removal so it is exactly-once and
+inert against a candidate that was already committed or rolled back. Each `defer` names the
+candidate its own transaction prepared.
+
+`foreignTakeoverPreflight` returns a **typed** result — `notRequested` / `noStreamableArea` /
+`clear` / `conflict` / `ambiguous` / `unreadable`. The first version answered with an optional,
+which collapsed "nowhere to stream", "bridge is free", "several controllers at once", and "we
+could not read the bridge" into one `nil`; `apply` then treated the honest failures as
+permission to continue and tore down whatever was playing. Ambiguous and unreadable now stop
+with an honest status and **preserve any effect already running**.
+
+The preflight resolves the target through the **production selection**
+(`warmEntertainmentCaches` + `entertainmentStartPlan`) and freezes it whole as an
+`EntertainmentTakeoverPlan`: bridge, room, target configuration, the **ordered validated channel
+ids**, and every channel's **members and position**. Ids alone would let the same area drive
+different lights, or drive them in a different place in the room — invisible to an id
+comparison, very visible on the wall. Confirmation revalidates every one of those fields
+**before** sending any stop and refuses without touching anything if it no longer holds.
+
+After consent the frozen plan is authoritative: it is passed intact into
+`prepareEntertainment` / `startStudioMode` / `startCompositionMode`, never reduced to a
+configuration id. The captured configuration is rebuilt for `startSession` and for the render
+loop, so a cache refresh or a re-ordered configuration arriving between the stop and the replay
+cannot redirect the stream or silently drop it to room mode. A room with no safely matching
+streamable area never prompts — it was heading for room mode regardless.
+
+Consent is a single-use token bound to `{requestID, bridgeID, targetConfigID, foreignConfigID}`.
+**One owner resolves the takeover:** `confirmForeignTakeover` re-reads the bridge and performs
+the exact stop, then the choke point accepts the token only when the foreign set is now empty —
+the one state that can follow a resolved takeover, whether we stopped the session or it had
+already ended. The two layers can never both stop it. The token is spent when the start actually
+succeeds.
+
+### Exact user-visible behavior
+- Launch / foreground / pull-to-refresh with another app streaming: **nothing happens**. The
+  other show continues; no prompt.
+- Explicitly starting a streaming look on that bridge: an alert,
+  **"Another app was controlling these lights — take over?"** with **Keep Existing** / **Take Over**.
+- **Keep Existing** (or swipe-away): zero network writes, the other app keeps playing, the
+  requested look does not start.
+- **Take Over**: the consented session is stopped first, then the requested look starts.
+- Foreign session already ended: starts with no redundant stop.
+- A *different* controller appeared while the prompt was open: nothing is stopped and a fresh
+  question is asked with a new identity.
+- Two or more foreign sessions, or an unreadable bridge: fail closed, stop nothing, say so.
+- Stop failed: "Couldn't take over these lights. The other app is still in control." — and
+  ChromaGlow does not start. Success is never claimed before playback actually begins.
+- Copy carries no REST/DTLS/API/configuration-id/registry vocabulary, and never names the other
+  app: the bridge does not tell us who it is, so any name would be a guess.
+
+### Tests
+All deterministic — recorded PUTs, ordering, and registry state; no `Task.sleep`, `XCTWaiter`,
+`wait(for:)`, or elapsed-time assertion anywhere. Isolated `UserDefaults` suites throughout.
+
+- `HueHomeTests/EntertainmentRobustnessTests.swift` — new `EntertainmentOwnershipTests`:
+  P7-01…P7-14, P7-26, final-owner semantics P7-29…P7-32, independent-stale-handling P7-38, and
+  and the cleanup-claim set P7-39/39b/39c/39d and P7-40/40b — the gate opens INSIDE the stop
+  PUT, i.e. while the claim is actually held, which is the only window in which the race can
+  happen.
+- `HueHomeTests/MultiBridgeRoutingTests.swift` — new packet-7 section: P7-15…P7-25, P7-27,
+  P7-33 (no streamable area → no prompt), P7-34 (one selection start to finish),
+  P7-36 (token single-use + bridge/target binding), P7-37 (multiple foreign → fail closed),
+  P7-35 (a foreign owner arriving after the preflight destroys nothing and does not fall back
+  to REST), P7-41 / P7-42 (ambiguous and unreadable preserve an already-running effect),
+  P7-43 (cancel after a late prompt is zero mutation), and the frozen-plan set P7-44…P7-47
+  (target deleted / no longer matching the room / channels unusable → stop nothing; the happy
+  path streams exactly the captured area and channel map).
+  P7-48 / P7-49 (a foreign owner arriving after a COMPLETED preflight leaves app-driven Studio
+  and composition bookkeeping — generation, telemetry, transport, ownership, Now-Playing —
+  entirely untouched, raises the prompt once, starts no REST fallback, and cancel leaves the
+  prior effect running), and the frozen-plan fidelity set P7-50…P7-53 (changed positions or
+  members refuse the takeover; a post-stop refresh cannot redirect the replay; order, positions,
+  and members all reach the render loop), plus the rollback set P7-54…P7-56 (a Strobe refused
+  for Reduce Motion sends no entertainment action at all, installs no client, creates no
+  ownership, and leaves the running effect and Now Playing untouched; an abandoned candidate is
+  stopped and balances both ownership layers; a committed candidate is never stopped by the
+  rollback), and the interleaving set P7-57…P7-59 (committing one transaction leaves another's
+  candidate outstanding and unstopped; the inverse ordering; and rollback is exactly-once and
+  inert after commit). P7-54 and P7-57 were each verified to FAIL against the defect they guard
+  before the fix landed.
+  The spy models a real bridge deactivating a configuration when `action=stop` lands, rather
+  than staging the post-stop state by hand at a guessed point in the read sequence, and a
+  read COUNTER arms the late-conflict gate — "the next read" is only well-defined if you
+  already know the read sequence, and it fires inside the preflight rather than after it.
+- P7-28: the packet-6 All-Day sections are unchanged and re-run green.
+- `Scripts/hardening_guards.sh` Guard 9: bans the configID-only registry symbols in the two
+  ownership files, bans protocol jargon in user-facing strings in the two Studio UI files
+  (diagnostics excluded), and bans timing waits in the ownership tests.
+
+Suite, xcresulttool-verified on iPhone 17 Pro:
+- after commit 1 — **1133 passed, 0 failed, 0 skipped**
+- after commit 2 — **1172 passed, 0 failed, 0 skipped**
+- `Scripts/hardening_guards.sh`: all guards passed, both commits.
+
+### Limitations and non-goals
+- **Not** the full `BridgeSessionArbiter` — this is a surgical Phase 0 fix. Studio-vs-Composer
+  ownership still lives in `compositionEntRoomByBridge` / `studioEntClients`, unchanged.
+- No SSE-based external-owner arbitration: a third party taking over *mid-stream* is still not
+  detected. Only start-time conflicts are covered.
+- No third-party application identification — the bridge exposes no trustworthy name, so the
+  copy says "another app".
+- Packet 8 (launch-time bridge-stored manifest reconciliation) is untouched.
+- The persisted registry is per-install and local; nothing is synced.
+- The consent prompt presents only in `StudioView`. Every production start path routes through
+  `StudioViewModel.apply` (verified by grep: `HueHome/Intents/`, widgets, watch, and automations
+  never reach `startStudioMode`/`startCompositionMode`), and any future non-interactive caller
+  receives `.needsForeignConsent` and must refuse honestly rather than treating its own
+  invocation as consent.
+- `foreignTakeoverPreflight` costs one extra `entertainment_configuration` GET per explicit
+  streaming start. That is the "re-check immediately before takeover" requirement, accepted.
+
+### Gotchas
+- `warmEntertainmentCaches` refuses to run for a bridge with no Keychain client key, so any test
+  exercising area selection must save credentials first (a non-hex key is enough — `decodePSK`
+  refuses before a socket exists).
+- A ChromaGlow start whose DTLS open fails sends its own compensating stop for its own area
+  (L-11). Assertions about "what did the takeover stop" must filter to the consented id.
+- `EntertainmentConsentCopy` is the single home for the takeover words; the alert references it
+  rather than duplicating the strings, and Guard 9 plus P7-27 keep it that way. The alert has
+  **no message body**: the bridge reports THAT a configuration is streaming, not which room the
+  other controller is lighting, so any sentence naming a room would assert something unknowable.
+- A REST look that is already running keeps writing on its own task, so assertions about
+  grouped/per-light write COUNTS are races, not facts. The packet-7 tests assert on
+  entertainment-level actions and on which effect survives instead.
 
 ---
 
