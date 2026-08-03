@@ -67,6 +67,126 @@ final class EntertainmentAvailabilityTests: XCTestCase {
         XCTAssertEqual(Availability.available(areaName: "Den"),
                        Availability.available(areaName: "Den"))
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // MARK: - Packet 7 follow-up: a cached "no" may not disable its own remedy
+    // ═══════════════════════════════════════════════════════════
+    //
+    // The on-device defect. `entertainmentAvailability` is a CACHE read, and
+    // the transport row was `.disabled(!availability.canStream)` against it —
+    // while tapping that very row was the only thing in the app that ever
+    // refreshed the cache. Create an Entertainment Area in the official Hue
+    // app and ChromaGlow answered "no area" until it was force-quit, which
+    // made packet 7's whole takeover prompt unreachable on real hardware.
+    //
+    // The behavioural half of this lives in `EntertainmentRobustnessTests`
+    // (invalidation, forced refresh, frozen plans). These two pin the SHAPE of
+    // the two surfaces, because the defect was a view modifier — no amount of
+    // orchestrator coverage can see it.
+
+    /// The comment-only lines are stripped first: the fix deliberately left a
+    /// prose explanation where the modifier used to be, and a source-shape test
+    /// that reads its own rationale as a violation would fail on the fix.
+    private func viewSource(_ relativePath: String) throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+    }
+
+    /// Both surfaces that offer streaming, so neither can regress alone.
+    private static let transportSurfaces = [
+        "HueHome/UI/Studio/StudioView.swift",
+        "HueHome/UI/Studio/MixerTrayView.swift",
+    ]
+
+    private func matches(_ pattern: String, in source: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        return regex.matches(in: source, range: range).compactMap {
+            Range($0.range, in: source).map { String(source[$0]) }
+        }
+    }
+
+    /// P7F-01
+    /// Pins the exact device defect: a cached verdict disabled the only control
+    /// that would have refreshed it, so the app could never learn it was wrong.
+    func testTheStreamingActionIsNeverDisabledByCachedAvailability() throws {
+        for path in Self.transportSurfaces {
+            let source = try viewSource(path)
+            let offenders = matches(#"\.disabled\([^)]*canStream[^)]*\)"#, in: source)
+            XCTAssertTrue(offenders.isEmpty, """
+                \(path) still gates a control on the cached streaming verdict: \
+                \(offenders.joined(separator: " | ")) — tapping that control is \
+                what refreshes the cache, so disabling it makes a stale "no" \
+                permanent until a force-quit
+                """)
+        }
+    }
+
+    /// P7F-02
+    /// The other half of the same fix, and the one that is easy to lose while
+    /// deleting the modifier: dropping the gate must not also drop the
+    /// explanation, or a streaming request that falls back to Room mode becomes
+    /// silent again.
+    func testACachedNoStillExplainsItselfOnBothTransportSurfaces() throws {
+        for path in Self.transportSurfaces {
+            let source = try viewSource(path)
+            XCTAssertTrue(source.contains("availability.reason"), """
+                \(path) no longer reads the availability reason — the row is \
+                tappable now, so this sentence is the ONLY thing telling the \
+                user why streaming is expected to fail
+                """)
+            XCTAssertTrue(source.contains("Section(reason)"), """
+                \(path) no longer renders the reason as a menu section footer
+                """)
+        }
+
+        // And the value side of the same contract: there is always something to
+        // render for a definite no, and never anything to render otherwise.
+        for availability in [Availability.noClientKey, .noArea, .noMatchingArea, .noBridge] {
+            XCTAssertNotNil(availability.reason,
+                            "\(availability) is a definite no with nothing to show in the footer")
+        }
+        XCTAssertNil(Availability.unknown.reason,
+                     "an unasked bridge has no complaint to render")
+        XCTAssertNil(Availability.available(areaName: "Den").reason,
+                     "a working area has no complaint to render")
+    }
+
+    /// P7F-03
+    /// The three refusals are the only words a user gets when an explicit
+    /// streaming request is not honoured. "There's no compatible Entertainment
+    /// Area" alone leaves the app playing something the user never chose and
+    /// never heard about — the transport change is the part that has to be said.
+    func testTheHonestAvailabilityAnswersNameTheirConsequence() {
+        XCTAssertTrue(EntertainmentAvailabilityCopy.noCompatibleArea.contains("Room mode"), """
+            the fallback answer must name Room mode: an explanation that omits \
+            the transport change is still an unexplained fallback
+            """)
+
+        let protocolVocabulary = [
+            "REST", "DTLS", "API", "configuration ID",
+            "entertainment_configuration", "session registry", "refcount",
+        ]
+        let strings: [(name: String, text: String)] = [
+            ("noCompatibleArea", EntertainmentAvailabilityCopy.noCompatibleArea),
+            ("noCompatibleAreaNothingChanged",
+             EntertainmentAvailabilityCopy.noCompatibleAreaNothingChanged),
+            ("couldNotCheck", EntertainmentAvailabilityCopy.couldNotCheck),
+            ("couldNotStart", EntertainmentAvailabilityCopy.couldNotStart),
+        ]
+        for (name, text) in strings {
+            XCTAssertFalse(text.isEmpty, "\(name) must actually say something")
+            for term in protocolVocabulary {
+                XCTAssertFalse(text.localizedCaseInsensitiveContains(term),
+                    "\(name) leaks protocol vocabulary '\(term)' — the reader owns lights, not a streaming stack: \(text)")
+            }
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -563,6 +563,104 @@ Entertainment Area.
 > ones. Items 5, 9, and 10 are the honesty checks: the app must never claim a
 > takeover that did not happen, and must never touch a session you declined.
 
+**Hardware run — what actually happened.** Items 1, 2 and 3 passed: the official
+Hue app's show survived cold launch, two foreground cycles and a pull-to-refresh
+untouched. Item 4 **FAILED** — "Entertainment Area (Streaming)" was shown greyed
+out and could not be tapped, so streaming could not be requested and no prompt
+was ever reachable. The area only became available after the Hue session was
+stopped, ChromaGlow was force-quit, and the app was relaunched. Because the
+prompt could not be reached, items **5, 6, 9 and 10 are BLOCKED, not failed** —
+Keep Existing, Take Over, failed takeover and changed-owner-under-the-prompt were
+never exercised. Item 7 **PASSED**: Hue drove an area on bridge A while
+ChromaGlow streamed on bridge B, and both continued independently. Item 8's
+normal termination behaviour **PASSED** and its foreign-session survival half
+(8B) **PASSED**; the persisted-orphan cleanup half is **still unproven**.
+Reduce Motion correctly blocked Strobe (functional safety **PASS**) but gave no
+explanation at all (UX **FAIL**). Starting a streaming composition in a space
+where Strobe already owned Entertainment did not apply and produced no handoff or
+refusal — a **provisional FAIL** for the Studio-to-composition direction.
+
+The follow-up branch `fix/packet7-device-followups` corrects all three. Packet 7
+hardware validation is **not** complete: re-run §U-R below on real bridges.
+
+### U-R. Packet 7 hardware follow-up — retest
+
+Branch `fix/packet7-device-followups`; rollback tag
+`checkpoint/pre-packet7-device-followups`. No build bump — run this on a build
+made from that branch.
+
+**What changed:** the Streaming row can no longer be greyed out by a stale cache;
+tapping it re-reads the bridge before answering. A ChromaGlow look that already
+owns a bridge's Entertainment session is now detected and asked about, instead of
+a second session being opened underneath it. And a Strobe refused for Reduce
+Motion now says so.
+
+**Read the guarantee before judging a result.** A row that is tappable but then
+explains that no compatible area exists is a **PASS** — the honest answers are
+"here is why" and an unchanged bridge, not a dead control. Room mode starting
+after that sentence is also a **PASS**; the sentence says it will. A silent tap
+that changes nothing is a FAIL.
+
+**You need:** a second controller on the same bridge (Hue Sync Box or the Hue
+app's Entertainment mode), a second bridge for item 11, and the ability to create
+and edit an Entertainment Area in the official Hue app while ChromaGlow stays
+open.
+
+For every item record: **app build · bridge IDs or labels · bridge firmware ·
+room names · look names · what the transport menu showed before and after the
+tap · what the lights actually did.**
+
+- [ ] 1. Put the transport menu into a stale state (open Studio for a room whose
+      bridge has no area yet), then confirm the **Entertainment Area (Streaming)**
+      row is **still tappable** and only explains itself underneath. Expected:
+      the row is never greyed out, whatever the cached answer says.
+- [ ] 2. With ChromaGlow open the whole time, create an Entertainment Area for
+      that room in the official Hue app, return to ChromaGlow and pull to refresh
+      (then re-enter Studio). Expected: **the new area becomes usable without
+      force-quitting.** This is the exact failure that blocked the last run.
+- [ ] 3. Start the Hue app's show on that bridge, then tap the Streaming row in
+      ChromaGlow. Expected: the takeover prompt appears — **"Another app was
+      controlling these lights — take over?"** — and the other show is **still
+      running** at that moment.
+- [ ] 4. Choose **Keep Existing**. Expected: the other show continues and the
+      ChromaGlow look does not start. Repeat once by swiping the alert away.
+- [ ] 5. Repeat item 3 and choose **Take Over**. Expected: the other show stops
+      first, then ChromaGlow starts, with no flicker back.
+- [ ] 6. **Failed takeover.** Raise the prompt, pull the bridge off the network,
+      then tap Take Over. Expected: an honest failure message; ChromaGlow must
+      not claim success or show the look as playing.
+- [ ] 7. **Owner changed under the prompt.** Raise the prompt, and while it is
+      open stop controller #1 and start a different controller (or the same one
+      on a different area). Tap Take Over. Expected: the replacement is **not**
+      stopped; you are asked again or told honestly.
+- [ ] 8. **Strobe → composition, cancel.** Start Strobe in a room with an
+      Entertainment Area, then start a Composer look set to Streaming on that
+      same bridge. Expected: **"Switch lighting modes?"** appears with Strobe
+      still running. Choose **Keep Playing**: Strobe keeps going and the
+      composition does not start. Repeat for Party and Thunderstorm.
+- [ ] 9. **Strobe → composition, confirm.** Repeat item 8 and choose **Switch**.
+      Expected: Strobe stops **first**, then the composition starts streaming
+      exactly once. The composition must not quietly play in Room mode
+      underneath a still-running Strobe — that was the old behaviour.
+- [ ] 10. **Reduce Motion.** Turn on Reduce Motion in iOS Settings, then request
+      Strobe from the Studio card and again from the Perform tab's STROBE pad.
+      Expected both times: **"Strobe is unavailable while Reduce Motion is on."**
+      and whatever was already playing keeps playing, untouched. Note that the
+      Perform pad now refuses where it previously flashed.
+- [ ] 11. **Bridge isolation.** With Strobe owning bridge A, start a streaming
+      composition in a room on bridge B. Expected: **no prompt**, bridge B
+      streams normally, and bridge A's Strobe is untouched. Then confirm a
+      handoff on A and check nothing on B changed.
+- [ ] 12. **Rapid overlapping requests.** Tap the Streaming row, a streaming card
+      and a Composer look in quick succession, and double-tap the confirm button
+      on each prompt. Expected: no double stop, no double start, no orphaned
+      session, and Now Playing matching what the lights are actually doing.
+
+> Items 2, 3 and 11 are the trust-critical ones — if any fails, stop and report.
+> Items 6, 7, 9 and 12 are the honesty checks: the app must never claim a switch
+> or a takeover that did not happen, and must never stop a session you did not
+> agree to replace.
+
 ## V. Composer 2 — bridge-stored animation relaunch reconciliation [packet 8]
 
 Branch `fix/bridge-animation-relaunch-reconciliation`; rollback tag

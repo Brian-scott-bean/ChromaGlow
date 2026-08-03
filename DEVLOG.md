@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-08-01)
+## Current Status Snapshot (updated 2026-08-03)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
@@ -13,6 +13,19 @@
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
   (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **46**).
+- **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
+  hardware.** Branch `fix/packet7-device-followups`, rollback tag
+  `checkpoint/pre-packet7-device-followups` (at `3c5f377`), PR open and **unmerged**. Brian's
+  device pass found the "Entertainment Area (Streaming)" row greyed out by a *cached* verdict that
+  only a tap on that same row could refresh — so §U items 4 failed and 5/6/9/10 were BLOCKED, not
+  failed. Also: a streaming composition started over our own Strobe opened a second session and
+  was silently demoted to REST underneath it, and the Reduce Motion refusal said nothing. The row
+  is now always tappable and re-reads the bridge before answering; app-driven ownership is a
+  question with its own third handoff prompt (separate type, slot, alert and token ledger from
+  third-party consent); and both Strobe surfaces now explain the Reduce Motion refusal — the
+  Perform pad, which never checked at all, now refuses. Suite 1291/1291 green (xcresulttool),
+  Guard 11 added. **Packet 7 hardware validation is NOT complete — Brian must run §U-R** in
+  `docs/ios/master-on-device-checklist.md`. Entry below.
 - **COMPOSER 2 / PHASE 0 / PACKET 7 (2026-08-03): ChromaGlow now YIELDS to third-party
   Entertainment sessions.** Branch `fix/third-party-entertainment-consent`, rollback tag
   `checkpoint/pre-composer-packet-7` (at `446fd49`), PR open and **unmerged**. Automatic
@@ -429,6 +442,94 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-03 - [Claude] Composer 2 / Phase 0 / Packet 7 HARDWARE FOLLOW-UP — the takeover prompt was unreachable
+
+Branch `fix/packet7-device-followups`, rollback tag `checkpoint/pre-packet7-device-followups`
+(at `3c5f377`), PR open and **unmerged**. One commit, no `project.pbxproj` change, no
+version/build bump. This corrects device-discovered gaps in packet 7; it is **not** a new packet.
+
+**What the hardware pass found.** Brian ran §U on real bridges with the official Hue app streaming
+an Entertainment Area. Items 1, 2 and 3 passed — the other controller's show survived cold launch,
+two foreground cycles and a pull-to-refresh untouched. **Item 4 failed:** "Entertainment Area
+(Streaming)" was greyed out and could not be tapped, so streaming could not be requested and the
+takeover prompt was never reachable. The area only appeared after the Hue session was stopped, the
+app force-quit, and relaunched. Items **5, 6, 9 and 10 are therefore BLOCKED, not failed** — Keep
+Existing, Take Over, failed takeover and changed-owner-under-the-prompt were never exercised. Item
+7 passed (Hue on bridge A, ChromaGlow on bridge B, both independent). Item 8's normal termination
+and its foreign-session-survival half both passed; the persisted-orphan cleanup half is still
+unproven. Reduce Motion blocked Strobe correctly but silently. And a streaming composition started
+where Strobe already owned Entertainment did nothing at all.
+
+**Three defects, three corrections.**
+
+*A — a cached "no" disabled the only action that could refresh it.* The transport row was
+`.disabled(!availability.canStream)` against a cache that nothing but an explicit Studio tap ever
+warmed: `loadAll`, foreground and pull-to-refresh never touched it, and `EntertainmentAreasView`
+create/rename/delete never invalidated it. So an area created in the Hue app stayed invisible until
+a force-quit — and because the row was dead, packet 7's whole prompt was unreachable. The three
+`.disabled` modifiers are gone (the `Section(reason)` footers stay: a cached no may explain itself,
+it may not disable its own remedy). `frozenStartPlan(for:)` is now the single plan-capture site and
+`foreignTakeoverPreflight` calls it, so an explicit request always re-reads configuration
+inventory, entertainment-service membership, room lights, the validated channel plan, active
+configurations and foreign ownership before answering. Each verdict now has one defined behaviour
+and says which: no compatible area names Room mode *and* starts it; unreadable and ambiguous
+preserve the running look and mutate nothing; an explicit Streaming request that cannot open a
+session refuses instead of quietly demoting to REST. `refreshEntertainmentAvailability(reason:)` is
+GET-only and splits `.periodic` (60 s-throttled, from `loadAll`) from `.userInitiated` (pull-to-
+refresh, foreground, Studio re-entry) — a throttle that cannot tell them apart eats the user's own
+gesture, which is the stale verdict surviving the thing that exists to clear it.
+
+*B — ChromaGlow collided with itself and called it a hardware limit.* Our own session is
+`processOwned`, so packet 7's foreign set is empty and its consent flow is a deliberate no-op
+against it; the existing app-owned handoff is gated to `.appDriven` cards hitting a *composition*
+owner; and `canAcquireEntertainment` never consulted `studioEntClients`. So a composition opened a
+**second** session on a bridge we were already streaming, and the failure came back as
+`.streamingFailed` — which every caller reads as licence to play REST underneath a live 25 fps DTLS
+stream. That is the "it does nothing". App-driven ownership is now a *question*
+(`studioOwningEntertainment(onBridge:)` over a `StudioEntertainmentOwner` keyed by exact bridge,
+room, engine and area), the choke point refuses a `.composition` requester that would collide
+(`.heldByAnotherChromaGlowLook` — a refusal, not an inability), and a **third** concept asks the
+user. It stays strictly separate from third-party consent: its own request type, its own slot, its
+own alert, its own token ledger. Confirm spends the token before the first await, revalidates the
+frozen plan before stopping anything, re-reads the owner by whole value, stops exactly that one
+session, **proves** it released, then starts the composition once; the replay still runs the
+foreign preflight in full with `foreignConsent: nil`, so a third party arriving mid-switch raises
+its own question rather than being evicted under a handoff the user gave for something else.
+
+*C — the Reduce Motion refusal was silent.* It wrote `statusMessage` and returned, and nothing in
+the app renders `statusMessage` (`MixerTrayView` says so in a comment). Both surfaces now state
+"Strobe is unavailable while Reduce Motion is on." from one shared literal — and the Perform tab's
+STROBE pad, which had **no** Reduce Motion check at all and only the 3 Hz clamp, now refuses before
+any mixer state or REST burst. That is a deliberate behaviour change, agreed with Brian.
+
+**Review pass caught eight more before commit**, all fixed here: the frozen plan was inert on the
+handoff replay (a re-derived plan could stream a different area than the one shown — now fail-closed
+on mismatch); a start failure after a confirmed stop was silent (`statusMessage` again — every
+dead end that returns without starting now renders); the gate's "Playing in Room mode instead"
+promised playback on a path where nothing starts (distinct sentence); the refresh throttle was
+stamped before the work was decided, so a foreground call with no rooms yet burned the window
+`loadAll` needed; `.userInitiated` was starved by any in-flight pass (now deferred and re-run, not
+dropped); the refused Perform pad still latched and fired `punchUp`; the released-owner fallback
+said "already streaming"; and four stacked alert modifiers could drop each other (a question now
+supersedes an explanation).
+
+Guard 11 (`composer-p7-followup`) pins all of it: no `.disabled(…canStream)` on either transport
+surface, both handoff concepts present in both layers with two ledgers that never touch, no
+ownership question outside the orchestrator and the Studio view model, exactly one Reduce Motion
+literal, and no timing waits in the availability tests.
+
+Suite **1291/1291 green** (xcresulttool), up from 1172 — 119 new tests, none using `Task.sleep`,
+`XCTWaiter`, `wait(for:)` or elapsed time. Guards pass. No new source file, no pbxproj change, no
+build bump.
+
+**Packet 7 hardware validation is NOT complete.** Brian must re-run **§U-R** in
+`docs/ios/master-on-device-checklist.md` on real bridges after merge — the 12-item retest covering
+the tappable row, external area creation without relaunch, the takeover prompt and its four
+answers, both directions of the Strobe↔composition handoff, the Reduce Motion explanation, bridge
+isolation and rapid overlapping requests.
 
 ---
 

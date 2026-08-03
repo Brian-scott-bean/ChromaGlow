@@ -304,7 +304,14 @@ struct StudioView: View {
         // Warms the entertainment-config cache so the transport menu can say
         // "no entertainment area" instead of hedging. One GET per bridge; the
         // orchestrator skips bridges it has already asked about.
+        //
+        // The room-scoped warm alone was not enough: it never re-asks a bridge
+        // it has already answered for, so an area created in the Hue app after
+        // launch stayed invisible until a force-quit. Re-entering the tab is a
+        // deliberate arrival, so it also forces a whole-home re-ask that the
+        // background throttle cannot swallow (packet 7 follow-up).
         .task(id: vm.selectedRoom?.bridgeID) {
+            orchestrator.refreshEntertainmentAvailability(reason: .userInitiated)
             await orchestrator.refreshEntertainmentConfigs(for: vm.selectedRoom)
         }
         .onChange(of: vm.runningCardID) { _, newValue in
@@ -416,7 +423,9 @@ struct StudioView: View {
         ))
         .modifier(StudioMusicWiring(vm: vm))
         .modifier(EntertainmentHandoffAlert(vm: vm))
+        .modifier(StudioEntertainmentHandoffAlert(vm: vm))
         .modifier(ForeignTakeoverAlert(vm: vm))
+        .modifier(StudioNoticeAlert(vm: vm))
         .confirmationDialog(
             TransportVocabulary.choosePlayTitle,
             isPresented: $showCompositionTransportPrompt,
@@ -1365,8 +1374,11 @@ struct StudioView: View {
             } label: {
                 Label("Entertainment Area (Streaming)", systemImage: "bolt.fill")
             }
-            .disabled(!availability.canStream)
-
+            // Deliberately NOT disabled (packet 7 follow-up). The verdict is a
+            // CACHED one, and tapping this row was the only thing that ever
+            // refreshed that cache — so a stale "no" disabled its own remedy and
+            // a force-quit was the only way out. Let the tap through: the start
+            // path re-warms, re-checks, and now says why if it still cannot.
             Button {
                 applyCompositionQuick(card, mode: .roomREST)
                 HapticManager.shared.light()
@@ -1380,8 +1392,9 @@ struct StudioView: View {
                 Label("Match Saved Preset", systemImage: "bookmark.fill")
             }
 
-            // Say why the option above is greyed out, rather than letting the
-            // user tap it and watch the effect quietly demote to REST.
+            // Say why streaming is expected to fail. Kept even though the row
+            // above is now tappable: a cached "no" may explain itself, it just
+            // may not disable the only action that would refresh it.
             if let reason = availability.reason {
                 Section(reason) { EmptyView() }
             }
@@ -1401,7 +1414,10 @@ struct StudioView: View {
                         Text(option.title)
                     }
                 }
-                .disabled(option == .entertainmentArea && !availability.canStream)
+                // Not disabled, same reason as the transport row above: this
+                // only records a PREFERENCE for later, so refusing to store it
+                // on a cached verdict is even less defensible than refusing the
+                // start itself (packet 7 follow-up).
             }
         } label: {
             Label(TransportVocabulary.preferredMenu, systemImage: "bolt.badge.automatic")
@@ -1889,7 +1905,7 @@ private struct EntertainmentHandoffAlert: ViewModifier {
 
     func body(content: Content) -> some View {
         content.alert(
-            "Switch lighting modes?",
+            EntertainmentHandoffCopy.switchTitle,
             isPresented: Binding(
                 get: { vm.entertainmentHandoffPrompt != nil },
                 // Swipe-away / system dismissal is a decline, and declining must
@@ -1898,13 +1914,46 @@ private struct EntertainmentHandoffAlert: ViewModifier {
             ),
             presenting: vm.entertainmentHandoffPrompt
         ) { _ in
-            Button("Keep Playing", role: .cancel) { vm.cancelEntertainmentHandoff() }
-            Button("Switch") {
+            Button(EntertainmentHandoffCopy.keepPlaying, role: .cancel) { vm.cancelEntertainmentHandoff() }
+            Button(EntertainmentHandoffCopy.switchLooks) {
                 HapticManager.shared.light()
                 Task { await vm.confirmEntertainmentHandoff() }
             }
         } message: { prompt in
             Text("“\(prompt.runningLookName)” is using Entertainment on this bridge. Stop it and start “\(prompt.requestedLookName)”?")
+        }
+    }
+}
+
+/// The mirror-direction handoff prompt: a composition asking for a bridge one
+/// of ChromaGlow's own app-driven looks is streaming (packet 7 hardware
+/// follow-up).
+///
+/// Same words as the alert above, because it is the same kind of question — two
+/// of the user's own looks trading places. A separate type, state slot, and
+/// pair of handlers, because the answer stops a different thing: that alert
+/// stops a composition, this one stops Strobe/Party/Thunderstorm.
+private struct StudioEntertainmentHandoffAlert: ViewModifier {
+    let vm: StudioViewModel
+
+    func body(content: Content) -> some View {
+        content.alert(
+            EntertainmentHandoffCopy.switchTitle,
+            isPresented: Binding(
+                get: { vm.studioHandoffRequest != nil },
+                // Swipe-away / system dismissal is a decline, and declining must
+                // be as mutation-free as tapping Keep Playing.
+                set: { if !$0 { vm.cancelStudioHandoff() } }
+            ),
+            presenting: vm.studioHandoffRequest
+        ) { _ in
+            Button(EntertainmentHandoffCopy.keepPlaying, role: .cancel) { vm.cancelStudioHandoff() }
+            Button(EntertainmentHandoffCopy.switchLooks) {
+                HapticManager.shared.light()
+                Task { await vm.confirmStudioHandoff() }
+            }
+        } message: { request in
+            Text("“\(request.runningLookName)” is using Entertainment on this bridge. Stop it and start “\(request.requestedLookName)”?")
         }
     }
 }
@@ -1942,6 +1991,41 @@ private struct ForeignTakeoverAlert: ViewModifier {
         // is streaming, not which room the other controller is lighting — so
         // any sentence naming a room would be asserting something we cannot
         // actually know.
+    }
+}
+
+/// The one rendered channel for "we did not do that, and here is why"
+/// (packet 7 follow-up).
+///
+/// `vm.statusMessage` is write-only — nothing displays it — so every refusal
+/// written there since it was added has reached the user as silence: a tap that
+/// did nothing, indistinguishable from a bug. This modifier is what turns those
+/// into a sentence.
+private struct StudioNoticeAlert: ViewModifier {
+    let vm: StudioViewModel
+
+    // Same reason the photosensitivity notice below is gated: an alert fired
+    // from an opacity-hidden tab is silently dropped by UIKit, and the dangling
+    // presentation swallows the NEXT one app-wide. But this notice is RETAINED
+    // rather than consumed while hidden — a refusal that fires while Studio is
+    // off screen (a Siri open-app start, a widget hand-off) is still owed to the
+    // user the moment the tab appears, and clearing it here would recreate the
+    // silence the notice exists to end.
+    @Environment(\.isTabActive) private var isTabActive
+
+    func body(content: Content) -> some View {
+        content.alert(
+            vm.studioNotice?.message ?? "",
+            isPresented: Binding(
+                get: { vm.studioNotice != nil && isTabActive },
+                set: { if !$0 && isTabActive { vm.clearStudioNotice() } }
+            )
+        ) {
+            Button("OK", role: .cancel) { vm.clearStudioNotice() }
+        }
+        // No message body, for the same reason as ForeignTakeoverAlert: the
+        // whole explanation is the sentence in the title, and a second line
+        // would have to invent detail we do not have.
     }
 }
 

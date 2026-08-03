@@ -210,7 +210,43 @@ final class PerformanceViewModel: Identifiable {
 
     // ── Punch pads ──
 
-    func punchDown(_ pad: PerformanceMixBox.PunchPad) {
+    /// Perform's own refusal channel. Perform is presented as a fullScreenCover
+    /// over Studio, and an alert from the presenting view is dropped while a
+    /// cover is up — so this surface has to state its own.
+    var strobeRefusalNotice: String? = nil
+
+    /// True if iOS "Reduce Motion" is enabled — strobe should be blocked.
+    var isReduceMotionEnabled: Bool {
+        #if DEBUG
+        if let forced = forcedReduceMotionForTesting { return forced }
+        #endif
+        return UIAccessibility.isReduceMotionEnabled
+    }
+
+    #if DEBUG
+    /// TEST SEAM — mirrors StudioViewModel's, for the same reason: the system
+    /// setting cannot be toggled from a unit test.
+    var forcedReduceMotionForTesting: Bool?
+    #endif
+
+    /// Returns true when the punch was actually engaged. A refusal must not
+    /// leave the pad looking held, and must not earn a matching `punchUp` —
+    /// releasing a punch that never engaged fires a release and a haptic for
+    /// something that never happened.
+    @discardableResult
+    func punchDown(_ pad: PerformanceMixBox.PunchPad) -> Bool {
+        // Deliberate behaviour change, confirmed with the product owner: the
+        // Perform STROBE pad used to flash under Reduce Motion with only the
+        // 3 Hz WCAG clamp for protection, because Perform never routes through
+        // `StudioViewModel.apply` and so never met Studio's refusal. It now
+        // refuses — and says why, which Studio's refusal never did either.
+        //
+        // First statement in the function on purpose: no mixer state engaged,
+        // no REST burst sent.
+        if pad == .strobe, isReduceMotionEnabled {
+            strobeRefusalNotice = StudioSafetyCopy.strobeReduceMotion
+            return false
+        }
         mix.engagePunch(pad)
         HapticManager.shared.medium()
         // REST tier: the mixer overlay only lands at scheduler cadence, so
@@ -226,6 +262,7 @@ final class PerformanceViewModel: Identifiable {
                     .punchBurst(room: room, a: colors.a, b: colors.b, durationMs: 1200)
             }
         }
+        return true
     }
 
     func punchUp() {
@@ -270,6 +307,18 @@ struct PerformanceView: View {
         .onDisappear { viewModel.end() }
         .sheet(isPresented: $showQueuePicker) { queuePicker }
         .sheet(isPresented: $showSequencer) { sequenceEditor }
+        // The STROBE pad's refusal, stated on the surface that refused. Same
+        // shape as StudioNoticeAlert: the whole explanation is the title, so
+        // there is no message body to add.
+        .alert(
+            viewModel.strobeRefusalNotice ?? "",
+            isPresented: Binding(
+                get: { viewModel.strobeRefusalNotice != nil },
+                set: { if !$0 { viewModel.strobeRefusalNotice = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { viewModel.strobeRefusalNotice = nil }
+        }
     }
 
     // ── Header ──
@@ -433,10 +482,14 @@ struct PerformanceView: View {
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
                     guard heldPad != pad else { return }
+                    // Latch only on acceptance. Assigning first made a refused
+                    // pad render fully held for the whole hold, and armed an
+                    // `.onEnded` release for a punch that never engaged.
+                    guard viewModel.punchDown(pad) else { return }
                     heldPad = pad
-                    viewModel.punchDown(pad)
                 }
                 .onEnded { _ in
+                    guard heldPad == pad else { return }
                     heldPad = nil
                     viewModel.punchUp()
                 }

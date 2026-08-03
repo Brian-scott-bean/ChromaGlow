@@ -237,6 +237,12 @@ struct EntertainmentAreasView: View {
         var result: [String: [EntertainmentConfig]] = [:]
         var failures: [String] = []
         for bridgeID in orchestrator.allBridgeIDs {
+            // This screen is where areas are created, renamed, and deleted, and
+            // it fetches its own inventory — so it is exactly where we know the
+            // orchestrator's cached one has gone wrong. Nothing invalidated it
+            // before: an area edited here was still answered from the pre-edit
+            // cache, and a force-quit was the only fix (packet 7 follow-up).
+            orchestrator.invalidateEntertainmentCaches(forBridge: bridgeID)
             guard let client = orchestrator.hueClient(for: bridgeID) else { continue }
             do {
                 result[bridgeID] = try await manager.fetchConfigs(client: client)
@@ -256,6 +262,10 @@ struct EntertainmentAreasView: View {
         guard let client = orchestrator.hueClient(for: target.bridgeID) else { return }
         do {
             try await manager.rename(configID: target.config.id, to: name, client: client)
+            // Invalidate at the mutation, not only inside `load()`: the rename
+            // has already landed on the bridge, so the cached inventory is
+            // provably stale even if the reload below fails.
+            orchestrator.invalidateEntertainmentCaches(forBridge: target.bridgeID)
             await load()
         } catch {
             errorMessage = "Rename failed: \(error.localizedDescription)"
@@ -266,6 +276,9 @@ struct EntertainmentAreasView: View {
         guard let client = orchestrator.hueClient(for: target.bridgeID) else { return }
         do {
             try await manager.delete(configID: target.config.id, client: client)
+            // Same reason as rename: the area is gone from the bridge, so any
+            // cached verdict still naming it is now a lie.
+            orchestrator.invalidateEntertainmentCaches(forBridge: target.bridgeID)
             await load()
         } catch {
             errorMessage = "Delete failed: \(error.localizedDescription)"

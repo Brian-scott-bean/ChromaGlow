@@ -1320,6 +1320,7 @@ final class UnifiedOrchestrator {
             Task { [weak self] in await self?.loadAllScenes() }
         }
         scheduleEntertainmentCleanup()
+        refreshEntertainmentAvailability(reason: .periodic)
         // Packet 8: after `rebuildAllRooms()`, so a recovered animation can be
         // matched to the room it is actually running in. Throttled and
         // detached for the same reason the Entertainment cleanup is — this runs
@@ -1350,6 +1351,116 @@ final class UnifiedOrchestrator {
             self?.entertainmentCleanupTask = nil
         }
     }
+
+    /// Why an availability refresh was asked for (packet 7 follow-up).
+    ///
+    /// The distinction exists because a throttle that cannot tell the two apart
+    /// is a throttle that silently eats the user's own pull-to-refresh: an
+    /// automatic load seconds earlier would make the deliberate gesture a no-op,
+    /// and the stale "Entertainment Area (Streaming)" verdict it was meant to
+    /// clear would survive the gesture that exists to clear it.
+    enum EntertainmentAvailabilityRefreshReason {
+        case periodic
+        case userInitiated
+    }
+
+    @ObservationIgnored private var entertainmentAvailabilityRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var lastEntertainmentAvailabilityRefreshAt: Date = .distantPast
+    /// A manual refresh that arrived while an automatic pass was already in
+    /// flight. Deferred, never dropped: the whole reason `.userInitiated`
+    /// exists is that the user's own gesture must not be eaten by a load that
+    /// happened to be running.
+    @ObservationIgnored private var pendingUserInitiatedRefresh = false
+
+    /// Re-ask every paired bridge what it can stream, so a cached verdict can
+    /// go stale on its own instead of only when someone taps the row it
+    /// disabled (packet 7 follow-up).
+    ///
+    /// The defect: `entertainmentAvailability` is cache-only, and nothing but
+    /// an explicit Studio transport tap ever warmed those caches. Create an
+    /// Entertainment Area in the Hue app while ChromaGlow is running and the
+    /// stale "no area" answer stood until a force-quit.
+    ///
+    /// **GETs ONLY.** This runs unattended — on load, on foreground, on a pull
+    /// — so it must never read foreign ownership, raise a prompt, stop a
+    /// session, start playback, or move any registry entry. It warms caches and
+    /// nothing else; every decision that could interrupt the user stays on the
+    /// attended start path.
+    func refreshEntertainmentAvailability(reason: EntertainmentAvailabilityRefreshReason) {
+        if entertainmentAvailabilityRefreshTask != nil {
+            // A pass is already running. An automatic one simply steps aside;
+            // a deliberate gesture is REMEMBERED instead, and re-run by the
+            // running pass's tail. Returning here would make pull-to-refresh
+            // and Studio re-entry silent no-ops for the length of whatever
+            // `loadAll` happened to schedule.
+            if reason == .userInitiated { pendingUserInitiatedRefresh = true }
+            return
+        }
+        if reason == .periodic,
+           Date().timeIntervalSince(lastEntertainmentAvailabilityRefreshAt) <= 60 { return }
+
+        // Snapshot on the main actor: the detached pass must not read
+        // `allRooms` while a rebuild is mutating it.
+        let rooms = allRooms
+        var seenBridges: Set<String> = []
+        let targets = rooms.filter { room in
+            guard let bridgeID = room.bridgeID else { return false }
+            return seenBridges.insert(bridgeID).inserted
+        }
+        guard !targets.isEmpty else { return }
+
+        // Stamped only once there is real work to do, and only for the reason
+        // that reads it. Stamping above the guard burned the throttle on the
+        // first-foreground call that fires before `loadAll` has any rooms —
+        // which then suppressed the `loadAll` pass that would have warmed
+        // every bridge, reopening the stale-verdict window.
+        if reason == .periodic { lastEntertainmentAvailabilityRefreshAt = Date() }
+
+        entertainmentAvailabilityRefreshTask = Task(priority: .utility) { [weak self] in
+            for room in targets {
+                // force: true — the whole point is to notice a change the
+                // caches already have a (wrong) answer for.
+                await self?.warmEntertainmentCaches(for: room, force: true)
+            }
+            guard let self else { return }
+            // Clear the handle FIRST, so the deferred re-run below is allowed
+            // to take the slot. It cannot loop: the flag is cleared before the
+            // re-run, and only a fresh `.userInitiated` call can set it again.
+            self.entertainmentAvailabilityRefreshTask = nil
+            if self.pendingUserInitiatedRefresh {
+                self.pendingUserInitiatedRefresh = false
+                self.refreshEntertainmentAvailability(reason: .userInitiated)
+            }
+        }
+    }
+
+    #if DEBUG
+    /// Wait out any pass a load or a refresh gesture scheduled, so one test's
+    /// detached warm cannot still be writing caches while the next asserts on
+    /// them. A continuation handshake, not a timed wait.
+    ///
+    /// Drains to genuine quiescence — no task AND no deferred gesture. Nilling
+    /// the slot before awaiting (as this used to) released the seat while the
+    /// old pass was still running, so a refresh started during the await raced
+    /// the one being awaited.
+    func testAwaitEntertainmentAvailabilityRefresh() async {
+        while true {
+            if let inFlight = entertainmentAvailabilityRefreshTask {
+                await inFlight.value
+                continue
+            }
+            if pendingUserInitiatedRefresh {
+                // Belt-and-braces: the running pass's tail normally consumes
+                // this without ever yielding, so this branch should be
+                // unreachable. Draining it here still terminates.
+                pendingUserInitiatedRefresh = false
+                refreshEntertainmentAvailability(reason: .userInitiated)
+                continue
+            }
+            return
+        }
+    }
+    #endif
 
     /// Per-bridge REST fetch + merge into `roomsByBridge` / `zonesByBridge` maps.
     /// Used by `loadAll` (may run concurrently with `deactivateStuckEntertainmentSessions`).
@@ -2700,6 +2811,16 @@ final class UnifiedOrchestrator {
     /// Internal access so StudioViewModel can report transport mode in debug.
     var studioEntClients: [String: HueEntertainmentClient] = [:]
 
+    /// WHICH app-driven look owns each bridge's Entertainment session (packet 7
+    /// hardware follow-up).
+    ///
+    /// The map above answers "is a session installed here?" and nothing more.
+    /// This one answers "whose is it?" — the question a composition has to ask
+    /// before it may refuse, and the one a handoff has to ask before it may
+    /// stop anything. Written only at the four install/teardown sites that
+    /// already move `studioEntClients`, so the two can never drift apart.
+    @ObservationIgnored private var studioEntOwnerByBridge: [String: StudioEntertainmentOwner] = [:]
+
     /// Which Entertainment sessions belong to ChromaGlow (packet 7) — the
     /// evidence that lets automatic cleanup stop our own orphaned sessions
     /// without ever touching a third party's. `var` only so a test suite can
@@ -2714,6 +2835,16 @@ final class UnifiedOrchestrator {
     /// Consent tokens already acted on. A takeover authorizes exactly one
     /// start; without this a replayed confirmation could start a second time.
     @ObservationIgnored var consumedEntertainmentConsents: Set<UUID> = []
+
+    /// Studio-handoff confirmations already acted on (packet 7 hardware
+    /// follow-up).
+    ///
+    /// Deliberately its OWN ledger rather than a reuse of the set above. That
+    /// one records permission to replace ANOTHER app's session; this one
+    /// records permission to stop one of OUR OWN looks. Sharing a set would let
+    /// one kind of answer spend the other's token — a "Take Over" tapped once
+    /// silently satisfying a "Switch" that was never asked, or the reverse.
+    @ObservationIgnored var consumedStudioHandoffRequests: Set<UUID> = []
 
     /// Which Studio scope currently owns REST, and on which bridge (packet 3).
     ///
@@ -2990,6 +3121,24 @@ final class UnifiedOrchestrator {
     /// to find out was to tear the session down and see what broke.
     func compositionOwningEntertainment(onBridge bridgeID: String) -> String? {
         compositionEntRoomByBridge[bridgeID]
+    }
+
+    /// Which app-driven Studio look owns this bridge's Entertainment session,
+    /// if any (packet 7 hardware follow-up).
+    ///
+    /// BOTH halves are required, and the client is the authority. A record that
+    /// outlived its session must be inert evidence, not authority to stop
+    /// something: answering from the record alone would let a stale entry send
+    /// the user a "stop Strobe and start this?" question about a look that
+    /// finished minutes ago, and then a stop nobody asked for.
+    ///
+    /// Returns nil for a Packet 8 recovered bridge-stored animation BY
+    /// CONSTRUCTION — those run on the bridge's own firmware and never install
+    /// a `studioEntClients` entry, so they can never be mistaken for a live
+    /// DTLS owner here.
+    func studioOwningEntertainment(onBridge bridgeID: String) -> StudioEntertainmentOwner? {
+        guard studioEntClients[bridgeID] != nil else { return nil }
+        return studioEntOwnerByBridge[bridgeID]
     }
 
     /// Whether a composition may take the Entertainment session on this bridge.
@@ -3354,6 +3503,23 @@ final class UnifiedOrchestrator {
     /// Whether this bridge currently holds a live Studio/Composer DTLS client.
     func testHasEntertainmentClient(forBridge bridgeID: String) -> Bool {
         studioEntClients[bridgeID] != nil
+    }
+
+    /// The production answer to "which app-driven look owns this bridge?",
+    /// asked exactly as `startCompositionMode` and the handoff gate ask it.
+    func testStudioEntertainmentOwner(onBridge bridgeID: String) -> StudioEntertainmentOwner? {
+        studioOwningEntertainment(onBridge: bridgeID)
+    }
+
+    /// Stage "Strobe owns bridge B" without a real DTLS handshake.
+    ///
+    /// Installs BOTH halves, because the production invariant is that they move
+    /// together — a seam that wrote only the record would let a test assert
+    /// against a state `studioOwningEntertainment` deliberately reports as nil.
+    func testInstallStudioEntertainmentOwner(_ owner: StudioEntertainmentOwner,
+                                             client: HueEntertainmentClient) {
+        studioEntClients[owner.bridgeID] = client
+        studioEntOwnerByBridge[owner.bridgeID] = owner
     }
 
     /// Packet 7: the composition bookkeeping that a start which never happened
@@ -4196,6 +4362,22 @@ final class UnifiedOrchestrator {
         await warmEntertainmentCaches(for: room)
     }
 
+    /// Forget everything we believe about one bridge's entertainment inventory
+    /// (packet 7 follow-up).
+    ///
+    /// The defect: creating, renaming, or deleting an area inside ChromaGlow's
+    /// own Entertainment Areas screen left these caches holding the inventory
+    /// from before the edit, and `entertainmentAvailability` answers from them
+    /// synchronously — so a freshly created area still read as "this bridge has
+    /// no entertainment area yet" and a force-quit was the only way to clear it.
+    /// Dropping all three keys returns the bridge to honest `.unknown`, which
+    /// still offers streaming and re-asks on the next warm.
+    func invalidateEntertainmentCaches(forBridge bridgeID: String) {
+        entertainmentConfigsByBridge.removeValue(forKey: bridgeID)
+        entertainmentMembershipByBridge.removeValue(forKey: bridgeID)
+        entertainmentConfigsFetchedBridges.remove(bridgeID)
+    }
+
     /// Fetch whatever this bridge's entertainment caches are missing.
     ///
     /// Three components complete independently — the config inventory, the
@@ -4343,7 +4525,8 @@ final class UnifiedOrchestrator {
                 preparation = await prepareEntertainment(for: room,
                                                          requestsEntertainment: true,
                                                          plan: capturedPlan,
-                                                         consent: consent)
+                                                         consent: consent,
+                                                         requester: .studio)
             }
             switch preparation {
             case .prepared(let candidate):
@@ -4354,6 +4537,13 @@ final class UnifiedOrchestrator {
                 return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
             case .failed(let message):
                 return .failed(message: message)
+            case .heldByAnotherLook:
+                // Structurally unreachable: `.studio` requesters are exempt
+                // from the self-conflict refusal, precisely because the COMMIT
+                // block below evicts this engine's own previous session.
+                // Handled exhaustively anyway — a future requester change must
+                // not silently fall into the room-mode arm.
+                return .failed(message: EntertainmentHandoffCopy.alreadyStreaming)
             case .notNeeded, .unavailable:
                 // No streamable area, or a genuine technical inability. Room
                 // mode is the honest answer and the teardown below is fine.
@@ -4377,8 +4567,28 @@ final class UnifiedOrchestrator {
         if let entClient = studioEntClients[stopBid], entClient !== prepared?.client {
             await entClient.stopSession()
             studioEntClients.removeValue(forKey: stopBid)
+            // The record dies with the session it described. Leaving it behind
+            // is what would let `studioOwningEntertainment` name a look that is
+            // no longer streaming.
+            studioEntOwnerByBridge.removeValue(forKey: stopBid)
         }
-        if let prepared { commitEntertainment(prepared) }
+        if let prepared {
+            commitEntertainment(prepared)
+            // Record WHOSE session this is, in the same breath as installing
+            // it. Written from the committed plan rather than a re-selection,
+            // so the recorded area is exactly the one that was opened.
+            studioEntOwnerByBridge[prepared.plan.bridgeID] = StudioEntertainmentOwner(
+                bridgeID: prepared.plan.bridgeID,
+                roomID: room.id,
+                engineKey: key,
+                configID: prepared.plan.targetConfigID
+            )
+        } else {
+            // No prepared session means the engine is running on REST. An
+            // engine on REST owns no Entertainment session, so any record
+            // naming it here would be a claim to something it does not hold.
+            studioEntOwnerByBridge.removeValue(forKey: stopBid)
+        }
 
         // 5. Record the new owner BEFORE its first REST enqueue, so any later
         // start/stop can find and invalidate it.
@@ -4555,7 +4765,8 @@ final class UnifiedOrchestrator {
                 preparation = await prepareEntertainment(for: room,
                                                          requestsEntertainment: true,
                                                          plan: capturedPlan,
-                                                         consent: consent)
+                                                         consent: consent,
+                                                         requester: .composition)
             }
             switch preparation {
             case .prepared(let candidate):
@@ -4566,6 +4777,14 @@ final class UnifiedOrchestrator {
                 return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
             case .failed(let message):
                 return .failed(message: message)
+            case .heldByAnotherLook:
+                // One of our own app-driven looks is streaming this bridge.
+                // Refuse the whole start rather than dropping to the room-mode
+                // path below: REST writes here would land underneath a live
+                // 25 fps stream and do nothing visible at all. Nothing has been
+                // mutated yet, so the running look is untouched.
+                debugLog("[Handoff] Composition refused bridge \(bridgeID) — a ChromaGlow look already streams it")
+                return .failed(message: EntertainmentHandoffCopy.alreadyStreaming)
             case .notNeeded, .unavailable:
                 break
             }
@@ -4690,6 +4909,11 @@ final class UnifiedOrchestrator {
                 paramBox.radialPositions = entGeometry.radial
                 paramBox.angularPositions = entGeometry.angular
                 compositionEntRoomByBridge[bridgeID] = roomID
+                // A composition now owns this bridge's session, so no
+                // app-driven look does. `commitEntertainment` above overwrote
+                // `studioEntClients[bridgeID]`; leaving the old record standing
+                // would point at a client that is gone.
+                studioEntOwnerByBridge.removeValue(forKey: bridgeID)
                 noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
                 compositionTransportByRoom[roomID] = .entertainment
                 compositionEntParamBoxes[bridgeID] = paramBox
@@ -6371,6 +6595,8 @@ final class UnifiedOrchestrator {
             _ = bid
         }
         studioEntClients.removeAll()
+        // Stop-everything: no session survives, so no ownership record may.
+        studioEntOwnerByBridge.removeAll()
         compositionEntTasks.values.forEach { $0.cancel() }
         compositionEntTasks.removeAll()
         compositionEntRoomByBridge.removeAll()
@@ -6432,6 +6658,12 @@ final class UnifiedOrchestrator {
            let entClient = studioEntClients[bid] {
             await entClient.stopSession()
             studioEntClients.removeValue(forKey: bid)
+            // Inside the SAME branch on purpose. A stop that did not release
+            // the session (a composition owns it, or there was no client) must
+            // keep the evidence — clearing the record unconditionally would
+            // make a still-running owner invisible to the very question that
+            // exists to protect it.
+            studioEntOwnerByBridge.removeValue(forKey: bid)
         }
         debugLog("[Handoff] App-driven teardown complete for roomID=\(roomID)")
     }
@@ -6448,7 +6680,8 @@ final class UnifiedOrchestrator {
     private func acquireEntertainment(
         room: RoomDisplayItem,
         plan: EntertainmentTakeoverPlan,
-        consent: EntertainmentConsent? = nil
+        consent: EntertainmentConsent? = nil,
+        requester: EntertainmentRequester = .studio
     ) async -> EntertainmentStartResult {
         // The captured configuration, never a freshly selected one.
         let config = plan.capturedConfig
@@ -6475,6 +6708,22 @@ final class UnifiedOrchestrator {
             return .needsForeignConsent(snapshot)
         case .refuse(let message):
             return .failed(message: message)
+        }
+
+        // The symmetric check (packet 7 hardware follow-up). The switch above
+        // guards other apps' sessions; this guards our own. Without it a
+        // composition opened a SECOND session on a bridge Strobe was already
+        // streaming to — which either threw and was misread as an ordinary
+        // technical failure (licensing a REST fallback under a live 25 fps
+        // stream), or succeeded and orphaned Strobe's client with no stop.
+        //
+        // Studio is exempt because it evicts its own single-slot session a few
+        // lines into its COMMIT block; a composition has no such slot and does
+        // no such eviction.
+        if requester == .composition,
+           let owner = studioOwningEntertainment(onBridge: bridgeID) {
+            debugLog("[Handoff] Composition wants bridge \(bridgeID), but '\(owner.engineKey)' in room \(owner.roomID) is streaming it — refusing rather than doubling up")
+            return .unavailable(reason: .heldByAnotherChromaGlowLook)
         }
 
         do {
@@ -7554,11 +7803,57 @@ struct EntertainmentActivitySnapshot: Equatable, Sendable {
     var isQuiet: Bool { processOwned.isEmpty && persistedOwned.isEmpty && foreign.isEmpty }
 }
 
+extension UnifiedOrchestrator {
+
+    /// WHICH ChromaGlow look owns a bridge's Entertainment session, and where it
+    /// is running (packet 7 hardware follow-up).
+    ///
+    /// The defect this closes: app-driven ownership was recorded only as a
+    /// VALUE in `studioEntClients[bridgeID]` — a live client and nothing else.
+    /// The snapshot above calls such a session `processOwned`, which is exactly
+    /// the classification that makes the foreign-consent flow a deliberate
+    /// no-op, so "is that session ours, and whose look is it?" had no answer
+    /// anywhere. A composition asking for the same bridge therefore opened a
+    /// SECOND session on top of Strobe's.
+    ///
+    /// `configID` is part of the identity on purpose: an owner that restarted on
+    /// a different area is a DIFFERENT owner, and a handoff the user authorized
+    /// against the first must not silently stop the second.
+    struct StudioEntertainmentOwner: Equatable, Sendable {
+        let bridgeID: String
+        let roomID: String
+        /// "strobe" | "party" | "thunderstorm"
+        let engineKey: String
+        let configID: String
+    }
+}
+
 /// Why an Entertainment start could not proceed for an ordinary technical
 /// reason — never because of a foreign owner, which has its own result.
 enum EntertainmentUnavailableReason: Equatable, Sendable {
     case noBridgeCredentials
     case streamingFailed
+    /// One of ChromaGlow's own app-driven looks is already streaming to this
+    /// bridge.
+    ///
+    /// Deliberately NOT lumped in with the technical reasons above. Every
+    /// caller reads those as licence to fall back to room mode — and room mode
+    /// here means REST writes landing underneath our own live 25 fps DTLS
+    /// stream, which is precisely the "I tapped it and nothing happened"
+    /// report. This is a refusal, not an inability.
+    case heldByAnotherChromaGlowLook
+}
+
+/// Who is asking the choke point for a session (packet 7 hardware follow-up).
+///
+/// The two are not interchangeable. `startStudioMode` legitimately replaces its
+/// OWN session on a bridge — app-driven engines share one global slot, so a
+/// room A → room B switch is one engine moving, and it evicts the previous
+/// client itself. A composition has no such slot and performs no such eviction,
+/// so for it a live app-driven session on the bridge is always a conflict.
+enum EntertainmentRequester: Equatable, Sendable {
+    case studio
+    case composition
 }
 
 /// The outcome of asking for an Entertainment session (packet 7).
@@ -7711,6 +8006,51 @@ enum EntertainmentConsentCopy {
     static let bridgeUnreadable = "Couldn't reach your bridge, so nothing was changed."
 }
 
+/// User-facing copy for ChromaGlow's own looks trading places on a bridge.
+///
+/// Deliberately NOT part of `EntertainmentConsentCopy`. Those words are about
+/// replacing ANOTHER app — a stranger's show, where the default is to leave it
+/// alone. These are about two of our own looks, where the user already owns
+/// both and the question is only which one plays. One shared vocabulary would
+/// make the more serious of the two questions read like the routine one.
+enum EntertainmentHandoffCopy {
+    static let switchTitle = "Switch lighting modes?"
+    static let keepPlaying = "Keep Playing"
+    static let switchLooks = "Switch"
+    static let alreadyStreaming = "Another look is already streaming to this bridge."
+    static let stopFailed = "Couldn't stop the look that's using this bridge, so nothing was changed."
+    static let handoffFailed = "Couldn't switch looks on this bridge. Nothing was changed."
+}
+
+/// Why an explicit streaming request could not be honoured (packet 7 follow-up).
+///
+/// `noCompatibleArea` names Room mode on purpose. The app does still start —
+/// but an explanation that omits the transport change is an unexplained
+/// fallback, which is exactly the silence this copy exists to end: the user
+/// asked for streaming, got something else, and was told nothing.
+enum EntertainmentAvailabilityCopy {
+    static let noCompatibleArea = "There's no compatible Entertainment Area for that room. Playing in Room mode instead."
+    /// The same missing area, on a path where Room mode is NOT a legal answer.
+    ///
+    /// The handoff gate refuses instead of falling back, because a Room-mode
+    /// start there would write to a bridge underneath our own live stream. The
+    /// sentence therefore may not promise Room mode: naming a fallback that
+    /// never happens is worse than naming none at all.
+    static let noCompatibleAreaNothingChanged =
+        "There's no compatible Entertainment Area for that room, so nothing was changed."
+    static let couldNotCheck = "Streaming availability could not be checked right now."
+    static let couldNotStart = "Streaming couldn't start for that room, so nothing was changed."
+}
+
+/// Safety refusals shared between Studio and Perform.
+///
+/// One literal, one home: two hand-typed copies of the same sentence drift the
+/// moment either surface is edited, and a safety refusal that words itself
+/// differently depending on where it fired reads like two different rules.
+enum StudioSafetyCopy {
+    static let strobeReduceMotion = "Strobe is unavailable while Reduce Motion is on."
+}
+
 extension UnifiedOrchestrator {
 
     /// The result of acting on the user's "Take Over".
@@ -7750,20 +8090,28 @@ extension UnifiedOrchestrator {
         case unreadable
     }
 
+    /// Warm, resolve, and freeze this room's stream in one place — or nil when
+    /// nothing safely matches.
+    ///
+    /// Extracted because two capture sites is exactly how the plan a user is
+    /// SHOWN stops being the plan that gets STREAMED: each site does its own
+    /// warm and its own selection, so a cache refresh landing between them lets
+    /// the prompt describe one area while the start opens another. One capture
+    /// site makes that divergence unrepresentable.
+    func frozenStartPlan(for room: RoomDisplayItem) async -> EntertainmentTakeoverPlan? {
+        guard let bridgeID = room.bridgeID else { return nil }
+        await warmEntertainmentCaches(for: room, force: true)
+        guard let resolved = entertainmentStartPlan(for: room) else { return nil }
+        return EntertainmentTakeoverPlan(bridgeID: bridgeID, roomID: room.id,
+                                         config: resolved.config, channelIDs: resolved.channelIDs)
+    }
+
     func foreignTakeoverPreflight(
         for room: RoomDisplayItem,
         requestsEntertainment: Bool
     ) async -> ForeignTakeoverPreflight {
         guard requestsEntertainment, let bridgeID = room.bridgeID else { return .notRequested }
-        await warmEntertainmentCaches(for: room, force: true)
-        guard let resolved = entertainmentStartPlan(for: room) else { return .noStreamableArea }
-
-        let plan = EntertainmentTakeoverPlan(
-            bridgeID: bridgeID,
-            roomID: room.id,
-            config: resolved.config,
-            channelIDs: resolved.channelIDs
-        )
+        guard let plan = await frozenStartPlan(for: room) else { return .noStreamableArea }
 
         guard let snapshot = await entertainmentActivity(onBridge: bridgeID) else {
             return .unreadable
@@ -7809,6 +8157,11 @@ extension UnifiedOrchestrator {
         case needsForeignConsent(snapshot: EntertainmentActivitySnapshot, targetConfigID: String)
         /// Genuine technical inability — room mode is the honest answer.
         case unavailable
+        /// One of ChromaGlow's own app-driven looks is streaming this bridge
+        /// (packet 7 hardware follow-up). Carries no payload: the current owner
+        /// must be re-read at the moment it is acted on, never taken from a
+        /// value that was true when the refusal was minted.
+        case heldByAnotherLook
         case failed(message: String)
     }
 
@@ -7822,7 +8175,8 @@ extension UnifiedOrchestrator {
         for room: RoomDisplayItem,
         requestsEntertainment: Bool,
         plan capturedPlan: EntertainmentTakeoverPlan? = nil,
-        consent: EntertainmentConsent? = nil
+        consent: EntertainmentConsent? = nil,
+        requester: EntertainmentRequester = .studio
     ) async -> EntertainmentPreparation {
         guard requestsEntertainment, room.bridgeID != nil else { return .notNeeded }
 
@@ -7840,7 +8194,8 @@ extension UnifiedOrchestrator {
                                              channelIDs: resolved.channelIDs)
         }
 
-        switch await acquireEntertainment(room: room, plan: plan, consent: consent) {
+        switch await acquireEntertainment(room: room, plan: plan, consent: consent,
+                                          requester: requester) {
         case .started(let client):
             let candidate = PreparedEntertainment(client: client, plan: plan)
             // Outstanding until it is committed or rolled back.
@@ -7850,7 +8205,11 @@ extension UnifiedOrchestrator {
             return .needsForeignConsent(snapshot: snapshot, targetConfigID: plan.targetConfigID)
         case .failed(let message):
             return .failed(message: message)
-        case .unavailable:
+        case .unavailable(let reason):
+            // Kept distinct all the way up. Collapsing our own live look into
+            // the generic `.unavailable` is exactly how the caller would read
+            // it as licence to start room mode underneath that look.
+            if reason == .heldByAnotherChromaGlowLook { return .heldByAnotherLook }
             return .unavailable
         }
     }
@@ -7967,6 +8326,79 @@ extension UnifiedOrchestrator {
             return .failed(message: EntertainmentConsentCopy.takeoverFailed)
         }
         return .resolved(consent)
+    }
+
+    /// The result of acting on the user's "Switch" for one of OUR OWN looks
+    /// (packet 7 hardware follow-up).
+    enum StudioHandoffResolution: Equatable {
+        case resolved
+        /// The look ended on its own before the answer arrived. Nothing to
+        /// stop — a redundant stop is a write nobody asked for.
+        case ownerGone
+        /// A DIFFERENT app-driven look owns the bridge now. NOTHING was
+        /// stopped: the user agreed to replace one specific look.
+        case changedOwner(StudioEntertainmentOwner)
+        case failed(message: String)
+    }
+
+    /// Stop exactly the ChromaGlow look the user agreed to replace, and nothing
+    /// else (packet 7 hardware follow-up).
+    ///
+    /// The mirror of `resolveForeignTakeover` above, in the same order and for
+    /// the same reasons — the only differences are whose session is being
+    /// stopped and which ledger spends the token.
+    func resolveStudioHandoff(requestID: UUID,
+                              plan: EntertainmentTakeoverPlan,
+                              room: RoomDisplayItem,
+                              owner: StudioEntertainmentOwner) async -> StudioHandoffResolution {
+        // 1. Spend the token BEFORE the first await. This method suspends
+        //    several times, so two confirmations can be in flight together; a
+        //    check performed after a suspension would let both pass and stop
+        //    the look twice — the second stop landing on whatever started in
+        //    between.
+        guard !consumedStudioHandoffRequests.contains(requestID) else {
+            debugLog("[Handoff] Studio handoff \(requestID) was already acted on — refusing to replay it")
+            return .failed(message: EntertainmentHandoffCopy.handoffFailed)
+        }
+        consumedStudioHandoffRequests.insert(requestID)
+
+        // 2. Revalidate the REQUESTED look's plan before stopping anything.
+        //    Stopping a live look and only then discovering there is nowhere to
+        //    put its replacement is the worst possible trade.
+        guard await revalidateTakeoverPlan(plan, room: room) else {
+            debugLog("[Handoff] Requested plan no longer valid for room \(plan.roomID) — refusing to stop anything")
+            return .failed(message: EntertainmentHandoffCopy.handoffFailed)
+        }
+
+        // 3. Re-read the owner. Whole-value equality, not just the bridge: an
+        //    owner that restarted on a different area, in a different room, or
+        //    as a different engine is a different look, and consent named one.
+        guard let current = studioOwningEntertainment(onBridge: plan.bridgeID) else {
+            debugLog("[Handoff] The look on \(plan.bridgeID) ended before confirmation — no stop needed")
+            return .ownerGone
+        }
+        guard current == owner else {
+            debugLog("[Handoff] A different ChromaGlow look owns \(plan.bridgeID) now — stale confirmation stops nothing")
+            return .changedOwner(current)
+        }
+
+        // 4. The official room-scoped teardown, given the OWNER's bridge — so
+        //    this cannot reach any other bridge's session.
+        await stopAppDrivenStudioEffect(roomID: owner.roomID, bridgeID: owner.bridgeID)
+
+        // 5. Prove it actually released. `stopSession` cannot throw, so its
+        //    return tells us nothing; the refcount is the only honest evidence
+        //    that the DTLS session is really gone. If it is not, starting the
+        //    replacement would put a second stream on the bridge — the exact
+        //    defect this whole correction exists to prevent — so start nothing.
+        guard studioEntClients[owner.bridgeID] == nil,
+              !entertainmentOwnership.isProcessOwned(bridgeID: owner.bridgeID,
+                                                     configID: owner.configID) else {
+            debugLog("[Handoff] '\(owner.engineKey)' still holds \(owner.bridgeID) after its stop — refusing to start on top of it")
+            return .failed(message: EntertainmentHandoffCopy.stopFailed)
+        }
+
+        return .resolved
     }
 
     /// Read one bridge's active Entertainment configurations and classify each.
