@@ -35,6 +35,11 @@
 #              no global CG_ purge on the launch path, no dropping a manifest
 #              because its bridge client is momentarily unavailable, and no
 #              timing waits in the reconciliation tests.
+#  11. Composer 2 packet 7 follow-up — cached availability may never disable
+#              the only action that refreshes it; the ChromaGlow-owned handoff
+#              and the third-party consent stay two concepts with two token
+#              ledgers; no unattended surface asks the ownership question; and
+#              the Reduce Motion refusal has exactly one literal.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -418,6 +423,109 @@ for f in "${P8_TESTS[@]}"; do
         fail "composer-p8" $'timing wait in the bridge-stored reconciliation tests: '"$f"$':\n'"$p8_wait_hits"
     fi
 done
+
+# ──────────────────────────────────────────────────────────────
+# Guard 11 (Composer 2 packet 7 follow-up): stale caches, self-collision,
+# silent refusals. Three device-discovered defects, one guard.
+#
+# (a) The Entertainment transport row was `.disabled(!availability.canStream)`
+#     against a CACHED verdict — and tapping that row was the only thing that
+#     would ever refresh the cache. An area created in the Hue app therefore
+#     stayed undiscoverable until the app was force-quit, which made packet 7's
+#     takeover prompt unreachable on real hardware. A cached no may explain
+#     itself; it may not disable its own remedy.
+#
+# (b) A ChromaGlow Strobe session is process-owned, so packet 7's foreign set
+#     is empty and its consent flow is deliberately a no-op against it. A
+#     streaming composition therefore opened a SECOND session on a bridge we
+#     were already streaming, and the failure was reported as a technical
+#     inability — which every caller reads as licence to play REST underneath
+#     a live 25 fps stream. The fix is a THIRD concept, not a widened second
+#     one: merging the two tokens would make "is this ours?" unanswerable
+#     again, which is the defect packet 7 existed to fix.
+#
+# (c) The Reduce Motion refusal wrote `statusMessage` and returned. Nothing in
+#     the app renders `statusMessage`, so the refusal was silent: the user
+#     tapped Strobe and nothing happened, with no explanation anywhere.
+# ──────────────────────────────────────────────────────────────
+
+# (a) Cached availability must not gate the action that refreshes it.
+P7F_AVAILABILITY_UI=(
+    "HueHome/UI/Studio/StudioView.swift"
+    "HueHome/UI/Studio/MixerTrayView.swift"
+)
+
+for f in "${P7F_AVAILABILITY_UI[@]}"; do
+    [[ -f "$f" ]] || continue
+    p7f_disabled_hits=$(grep -nE '\.disabled\([^)]*canStream' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    if [[ -n "$p7f_disabled_hits" ]]; then
+        fail "composer-p7-followup" $'cached Entertainment availability disables the only action that refreshes it in '"$f"$':\n'"$p7f_disabled_hits"
+    fi
+done
+
+# (b1) Both concepts must exist, separately, in both layers. A missing symbol
+#      here means one of them was folded into the other.
+P7F_VM="HueHome/UI/Studio/StudioViewModel.swift"
+P7F_ORCH="HueHome/Core/Network/UnifiedOrchestrator.swift"
+
+for sym in 'var studioHandoffRequest' 'var foreignTakeoverRequest' \
+           'func confirmStudioHandoff(' 'func cancelStudioHandoff(' \
+           'func confirmForeignTakeover(' 'func cancelForeignTakeover(' \
+           'func confirmEntertainmentHandoff('; do
+    if ! grep -q "$sym" "$P7F_VM"; then
+        fail "composer-p7-followup" "the handoff concepts collapsed into one: '$sym' is missing from $P7F_VM"
+    fi
+done
+
+for sym in 'func resolveStudioHandoff(' 'func resolveForeignTakeover(' \
+           'func studioOwningEntertainment(' 'func compositionOwningEntertainment(' \
+           'case heldByAnotherChromaGlowLook'; do
+    if ! grep -q "$sym" "$P7F_ORCH"; then
+        fail "composer-p7-followup" "'$sym' is missing from $P7F_ORCH — a ChromaGlow-owned collision would be misreported as a technical failure again"
+    fi
+done
+
+# (b2) The two ledgers may never touch. One authorizes replacing ANOTHER app's
+#      session; the other authorizes stopping our own look.
+p7f_token_hits=$(grep -nE 'consumedEntertainmentConsents.*[Ss]tudioHandoff|[Ss]tudioHandoff.*consumedEntertainmentConsents|consumedStudioHandoffRequests.*EntertainmentConsent' \
+    "$P7F_ORCH" "$P7F_VM" 2>/dev/null | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$p7f_token_hits" ]]; then
+    fail "composer-p7-followup" $'the ChromaGlow-owned handoff and the third-party consent share a token ledger:\n'"$p7f_token_hits"
+fi
+
+# (c) No unattended surface may ask the ownership question. Availability
+#     refreshes run from loadAll, foreground and pull-to-refresh; a prompt or a
+#     stop from there is something the user never asked for.
+p7f_unattended=$(grep -rnE 'foreignTakeoverPreflight\(|resolveForeignTakeover\(|resolveStudioHandoff\(|entertainmentActivity\(onBridge:' \
+    HueHome 2>/dev/null \
+    | grep -vE "^($P7F_ORCH|$P7F_VM):" \
+    | grep -vE ':[0-9]+:[[:space:]]*//' || true)
+if [[ -n "$p7f_unattended" ]]; then
+    fail "composer-p7-followup" $'an ownership question is asked outside the orchestrator and the Studio view model:\n'"$p7f_unattended"
+fi
+
+# (d) One literal for the Reduce Motion refusal, in the copy home, so Studio
+#     and Perform cannot drift apart.
+p7f_rm_home=$(grep -c 'Strobe is unavailable while Reduce Motion is on\.' "$P7F_ORCH" 2>/dev/null || echo 0)
+if [[ "$p7f_rm_home" -ne 1 ]]; then
+    fail "composer-p7-followup" "expected exactly 1 declaration of the Reduce Motion sentence in $P7F_ORCH, found $p7f_rm_home"
+fi
+
+p7f_rm_copies=$(grep -rn 'Strobe is unavailable while Reduce Motion is on\.' HueHome 2>/dev/null \
+    | grep -vE "^$P7F_ORCH:" | grep -vE ':[0-9]+:[[:space:]]*//' || true)
+if [[ -n "$p7f_rm_copies" ]]; then
+    fail "composer-p7-followup" $'the Reduce Motion sentence is duplicated instead of shared:\n'"$p7f_rm_copies"
+fi
+
+# (e) This follow-up's claims are about PRESENCE, IDENTITY and ORDER — never
+#     elapsed time. Same rule Guards 7/8/9/10 apply to the packets before it.
+P7F_TESTS="HueHomeTests/EntertainmentAvailabilityTests.swift"
+p7f_wait_hits=$(grep -nE 'Task\.sleep|XCTWaiter|wait\(for:' "$P7F_TESTS" 2>/dev/null \
+    | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+if [[ -n "$p7f_wait_hits" ]]; then
+    fail "composer-p7-followup" $'timing wait in the availability tests:\n'"$p7f_wait_hits"
+fi
 
 # ──────────────────────────────────────────────────────────────
 

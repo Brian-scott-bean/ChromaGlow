@@ -107,6 +107,13 @@ struct DashboardView: View {
         }
         .scrollIndicators(.hidden)
         .refreshable {
+            // A pull is the user asking, in as many words, for everything to be
+            // re-checked — including whether a room can stream. `loadAll` alone
+            // never touched the entertainment caches, so the gesture could not
+            // clear a stale verdict (packet 7 follow-up). `.userInitiated`
+            // bypasses the background throttle: a load seconds ago must not turn
+            // a deliberate pull into a no-op.
+            orchestrator.refreshEntertainmentAvailability(reason: .userInitiated)
             await orchestrator.loadAll(cacheContext: modelContext)
         }
         .background {

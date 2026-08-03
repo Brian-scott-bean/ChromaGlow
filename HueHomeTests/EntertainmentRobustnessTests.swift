@@ -1120,6 +1120,27 @@ final class EntertainmentRoomSelectionTests: XCTestCase {
         #"{"data":[\#(configs.joined(separator: ","))]}"#
     }
 
+    /// One bridge, one area covering exactly the bedroom — the plain
+    /// "streaming works here" setup, which the packet 7 follow-up needs
+    /// repeatedly (invalidate, refresh, forced re-read, last-known-good).
+    private func stageStreamableBridge(_ spy: EntertainmentSpyClient,
+                                       areaID: String = "area-bedroom",
+                                       areaName: String = "Bedroom") {
+        spy.stubLights = lights(2)
+        spy.stubEntertainmentJSON = entertainmentJSON(2)
+        spy.stubConfigsJSON = configsJSON([
+            configJSON(id: areaID, name: areaName, ent: ["E1", "E2"]),
+        ])
+    }
+
+    /// The same bridge with NO areas at all — what the app sees before the
+    /// user creates one in the official Hue app.
+    private func stageArealessBridge(_ spy: EntertainmentSpyClient) {
+        spy.stubLights = lights(2)
+        spy.stubEntertainmentJSON = entertainmentJSON(2)
+        spy.stubConfigsJSON = #"{"data":[]}"#
+    }
+
     /// Two rooms, two areas, one bridge — the wrong-room scenario.
     private func stageTwoAreaBridge(_ spy: EntertainmentSpyClient) {
         spy.stubLights = lights(4)
@@ -1545,5 +1566,253 @@ final class EntertainmentRoomSelectionTests: XCTestCase {
         XCTAssertEqual(state?.sendCount, 1,
             "the live generation's successful prime records exactly one send")
         XCTAssertNotNil(state?.lastSentX)
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Packet 7 follow-up: the cache had no way to go stale
+    // ──────────────────────────────────────────────
+    //
+    // Found on hardware. `entertainmentAvailability` answers from a cache that
+    // only a Studio transport tap ever filled, and that tap was disabled by the
+    // cache's own verdict. An Entertainment Area created in the official Hue
+    // app after launch was therefore undiscoverable until ChromaGlow was
+    // force-quit — and packet 7's takeover prompt, which only ever appears
+    // downstream of a streamable area, could not be reached at all.
+    //
+    // Three new production seams answer it, and these drive all three:
+    // `invalidateEntertainmentCaches(forBridge:)`, the forced
+    // `refreshEntertainmentAvailability(reason:)`, and `frozenStartPlan(for:)`
+    // as the single plan-capture site.
+
+    /// P7F-04
+    /// The exact force-quit defect: the answer was cached before the area
+    /// existed, and nothing short of relaunching the process could unstick it.
+    func testAnAreaCreatedAfterTheCacheWasWarmedBecomesDiscoverableWithoutARestart() async {
+        stageArealessBridge(bridgeA)
+        let bedroom = room("bedroom", bridge: bridgeAID, lightIDs: ["L1", "L2"])
+
+        await orchestrator.warmEntertainmentCaches(for: bedroom)
+        XCTAssertEqual(orchestrator.entertainmentAvailability(for: bedroom), .noArea,
+            "the bridge really had no areas at the moment we asked")
+
+        // The user goes to the official Hue app and creates one.
+        stageStreamableBridge(bridgeA)
+        XCTAssertEqual(orchestrator.entertainmentAvailability(for: bedroom), .noArea,
+            "availability is a cache read by design — it cannot notice this on its own")
+
+        orchestrator.invalidateEntertainmentCaches(forBridge: bridgeAID)
+        XCTAssertEqual(orchestrator.entertainmentAvailability(for: bedroom), .unknown, """
+            invalidation must return the bridge to honest ignorance, not leave \
+            the stale verdict standing — `.unknown` still offers streaming, \
+            `.noArea` is the answer that disabled its own remedy
+            """)
+        XCTAssertNil(orchestrator.testEntertainmentMembership(forBridge: bridgeAID),
+            "the membership half must be dropped too, or the next warm skips it")
+
+        await orchestrator.warmEntertainmentCaches(for: bedroom)
+        XCTAssertEqual(orchestrator.entertainmentAvailability(for: bedroom),
+                       .available(areaName: "Bedroom"),
+            "one ordinary warm after invalidation is the whole fix: no force-quit")
+    }
+
+    /// P7F-05
+    /// A refresh that quietly re-read every paired bridge would turn one room's
+    /// start into whole-home traffic, and — worse — could disturb a bridge the
+    /// user never named. The forced path must be exactly as wide as its subject.
+    func testAnExplicitRequestRefreshesTheExactBridgeAndRoomItNames() async {
+        stageStreamableBridge(bridgeA)
+        stageStreamableBridge(bridgeB, areaID: "area-b", areaName: "Bridge B Area")
+        let bedroomA = room("bedroom-a", bridge: bridgeAID, lightIDs: ["L1", "L2"])
+        await orchestrator.warmEntertainmentCaches(for: bedroomA)
+        bridgeA.resetRecordings()
+        bridgeB.resetRecordings()
+
+        let plan = await orchestrator.frozenStartPlan(for: bedroomA)
+
+        XCTAssertEqual(plan?.bridgeID, bridgeAID, "the plan names the bridge it was asked about")
+        XCTAssertEqual(plan?.roomID, "bedroom-a", "and the room it was asked about")
+        XCTAssertFalse(bridgeA.getPaths.isEmpty,
+            "the named bridge must actually be re-read — a cached answer is the defect")
+        XCTAssertGreaterThan(bridgeA.fetchLightsCallCount, 0)
+
+        XCTAssertTrue(bridgeB.getPaths.isEmpty, """
+            bridge B was never named and must not be touched: an explicit \
+            streaming request is not permission to poll the whole house
+            """)
+        XCTAssertEqual(bridgeB.fetchLightsCallCount, 0)
+        XCTAssertTrue(bridgeB.actions.isEmpty, "and certainly nothing may be started or stopped there")
+    }
+
+    /// P7F-06
+    /// Every component of the verdict has to be re-read, not just the one that
+    /// happens to be missing. A forced pass that answered membership or lights
+    /// from cache would still report the pre-edit picture of the bridge, which
+    /// is the same lie with fewer symptoms.
+    func testTheFreshPreflightRefetchesConfigsMembershipLightsAndActivity() async {
+        stageStreamableBridge(bridgeA)
+        let bedroom = room("bedroom", bridge: bridgeAID, lightIDs: ["L1", "L2"])
+        await orchestrator.warmEntertainmentCaches(for: bedroom)
+        XCTAssertEqual(orchestrator.entertainmentAvailability(for: bedroom),
+                       .available(areaName: "Bedroom"),
+            "everything is cached and correct — precisely the state a lazy refresh would trust")
+        bridgeA.resetRecordings()
+
+        let preflight = await orchestrator.foreignTakeoverPreflight(
+            for: bedroom, requestsEntertainment: true)
+
+        let reads = bridgeA.getPaths
+        let configReads = reads.filter { $0.contains("entertainment_configuration") }
+        let membershipReads = reads.filter {
+            $0.contains("resource/entertainment") && !$0.contains("entertainment_configuration")
+        }
+        XCTAssertGreaterThanOrEqual(configReads.count, 2, """
+            the configuration inventory must be read for the plan AND for the \
+            activity check; got \(reads)
+            """)
+        XCTAssertEqual(membershipReads.count, 1,
+            "the entertainment→light membership map must be re-read, not reused: \(reads)")
+        XCTAssertEqual(bridgeA.fetchLightsCallCount, 1,
+            "the lights the membership joins against must be re-read too")
+
+        // And the pass is GET-only: warming availability may never move a session.
+        XCTAssertTrue(bridgeA.actions.isEmpty,
+            "a preflight is a question, not a change")
+        guard case .clear(let plan) = preflight else {
+            return XCTFail("nobody else is streaming, so the preflight must be clear; got \(preflight)")
+        }
+        XCTAssertEqual(plan.targetConfigID, "area-bedroom",
+            "and the plan it carries is the one the fresh read just resolved")
+    }
+
+    /// P7F-07
+    /// The forced re-read reopens selection on every start, so the wrong-room
+    /// defect gets a fresh chance to happen every single time. Each room must
+    /// still come back with its OWN area.
+    func testAFreshRefreshNeverSelectsAnotherRoomsArea() async {
+        stageTwoAreaBridge(bridgeA)
+        let bedroom = room("bedroom", bridge: bridgeAID, lightIDs: ["L1", "L2"])
+        let living = room("living", bridge: bridgeAID, lightIDs: ["L3", "L4"])
+
+        let bedroomPlan = await orchestrator.frozenStartPlan(for: bedroom)
+        let livingPlan = await orchestrator.frozenStartPlan(for: living)
+
+        XCTAssertEqual(bedroomPlan?.targetConfigID, "area-bedroom",
+            "the bridge lists the Living Room area first; position is not evidence")
+        XCTAssertEqual(livingPlan?.targetConfigID, "area-living")
+        XCTAssertNotEqual(bedroomPlan?.targetConfigID, livingPlan?.targetConfigID)
+
+        XCTAssertEqual(bedroomPlan?.channelIDs, [0, 1])
+        XCTAssertEqual(livingPlan?.channelIDs, [0, 1])
+        XCTAssertEqual(bedroomPlan?.channels.map(\.members), [["E1"], ["E2"]],
+            "channel IDs coincide across areas — the MEMBERS are what prove the room")
+        XCTAssertEqual(livingPlan?.channels.map(\.members), [["E3"], ["E4"]])
+        XCTAssertFalse(bedroomPlan?.channels.contains { $0.members.contains("E3") } ?? true,
+            "the other room's lights must never appear in this room's frozen stream")
+    }
+
+    /// P7F-08
+    /// A plan is not a configuration id. Between capture and replay the same
+    /// area can be re-scoped to different lights or re-positioned, and an id-only
+    /// plan would replay both changes invisibly — a stream in the wrong place
+    /// on the wall, with nothing to detect it.
+    func testTheFrozenPlanCarriesOrderMembersAndPositions() async {
+        bridgeA.stubLights = lights(2)
+        bridgeA.stubEntertainmentJSON = entertainmentJSON(2)
+        // Channel ids deliberately out of ascending order, with distinct
+        // positions: sorting or dropping either detail is visible here.
+        bridgeA.stubConfigsJSON = #"""
+        {"data":[{"id":"area-bedroom","metadata":{"name":"Bedroom"},"channels":[
+          {"channel_id":7,"position":{"x":-0.75,"y":0.25,"z":0.5},
+           "members":[{"service":{"rid":"E2","rtype":"entertainment"}}]},
+          {"channel_id":3,"position":{"x":0.75,"y":-0.25,"z":-0.5},
+           "members":[{"service":{"rid":"E1","rtype":"entertainment"}}]}
+        ]}]}
+        """#
+        let bedroom = room("bedroom", bridge: bridgeAID, lightIDs: ["L1", "L2"])
+
+        let plan = await orchestrator.frozenStartPlan(for: bedroom)
+
+        XCTAssertEqual(plan?.channelIDs, [7, 3], """
+            the render loop is driven by exactly these ids in exactly this \
+            order — re-sorting them moves every light's motion to a different \
+            physical light
+            """)
+        XCTAssertEqual(plan?.channels.map(\.id), [7, 3])
+        XCTAssertEqual(plan?.channels.map(\.members), [["E2"], ["E1"]],
+            "each channel's members are frozen with it, not re-resolved at replay")
+        XCTAssertEqual(plan?.channels.first?.x ?? 0, -0.75, accuracy: 0.0001)
+        XCTAssertEqual(plan?.channels.first?.y ?? 0, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(plan?.channels.first?.z ?? 0, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(plan?.channels.last?.x ?? 0, 0.75, accuracy: 0.0001)
+
+        // The whole point of freezing: an unchanged bridge still matches.
+        guard let plan, let resolved = orchestrator.testEntertainmentStartPlan(for: bedroom) else {
+            return XCTFail("this area is streamable; both the frozen and the live plan must exist")
+        }
+        XCTAssertTrue(plan.matches(config: resolved.config, channelIDs: resolved.channelIDs),
+            "a plan captured from this bridge must still describe this bridge")
+    }
+
+    /// P7F-09
+    /// An existing guarantee, re-pinned against the paths that did not exist
+    /// when it was written. The forced refresh runs unattended and often, so a
+    /// single failed GET is now a routine event — if it demoted a known-good
+    /// bridge to `.noArea`, the fix for the stale cache would have manufactured
+    /// a far more common false "unavailable".
+    func testAFailedInventoryFetchNeverDemotesAKnownGoodAnswerToNoArea() async {
+        stageStreamableBridge(bridgeA)
+        let bedroom = room("bedroom", bridge: bridgeAID, lightIDs: ["L1", "L2"])
+        await orchestrator.warmEntertainmentCaches(for: bedroom)
+        XCTAssertEqual(orchestrator.entertainmentAvailability(for: bedroom),
+                       .available(areaName: "Bedroom"))
+
+        bridgeA.configsShouldFail = true
+        let plan = await orchestrator.frozenStartPlan(for: bedroom)
+
+        XCTAssertEqual(orchestrator.entertainmentAvailability(for: bedroom),
+                       .available(areaName: "Bedroom"), """
+            a bridge that failed one GET has not told us its areas are gone — \
+            reporting `.noArea` here would be a lie the user cannot refresh away
+            """)
+        XCTAssertNotEqual(orchestrator.entertainmentAvailability(for: bedroom), .noArea)
+        XCTAssertEqual(plan?.targetConfigID, "area-bedroom",
+            "and the last-known-good inventory is still good enough to start from")
+    }
+
+    /// P7F-10
+    /// The throttle exists so an automatic refresh cannot hammer every bridge
+    /// on every load. If it also swallowed the deliberate gesture, the user's
+    /// one remaining way to clear a stale verdict would be a no-op — the
+    /// force-quit defect rebuilt out of the fix for it.
+    func testAUserInitiatedRefreshIsNotSuppressedByARecentPeriodicOne() async {
+        stageArealessBridge(bridgeA)
+        let bedroom = room("bedroom", bridge: bridgeAID, lightIDs: ["L1", "L2"])
+        orchestrator.allRooms = [bedroom]
+
+        orchestrator.refreshEntertainmentAvailability(reason: .periodic)
+        await orchestrator.testAwaitEntertainmentAvailabilityRefresh()
+        XCTAssertEqual(orchestrator.entertainmentAvailability(for: bedroom), .noArea)
+
+        // The user creates the area in the Hue app and pulls to refresh — well
+        // inside the 60s window the periodic pass just opened.
+        stageStreamableBridge(bridgeA)
+        bridgeA.resetRecordings()
+
+        orchestrator.refreshEntertainmentAvailability(reason: .userInitiated)
+        await orchestrator.testAwaitEntertainmentAvailabilityRefresh()
+
+        XCTAssertFalse(bridgeA.getPaths.isEmpty, """
+            the deliberate gesture must reach the bridge; a throttle that eats \
+            the user's own refresh leaves the stale verdict permanent
+            """)
+        XCTAssertGreaterThan(bridgeA.fetchLightsCallCount, 0,
+            "and it must be a real re-read, not a cache touch")
+        XCTAssertEqual(orchestrator.entertainmentAvailability(for: bedroom),
+                       .available(areaName: "Bedroom"))
+        XCTAssertTrue(bridgeA.actions.isEmpty, """
+            an availability refresh is GETs only — it runs unattended, so \
+            starting or stopping anything from here is something the user \
+            never asked for
+            """)
     }
 }

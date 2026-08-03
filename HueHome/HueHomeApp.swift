@@ -397,6 +397,12 @@ struct AppRootView: View {
                     // and we drain whatever UserDefaults stored from didReceive.
                     .onChange(of: scenePhase) { _, newPhase in
                         guard newPhase == .active, isPaired, !isDemoMode else { return }
+                        // Coming back to the app is the most likely moment for
+                        // the entertainment inventory to have changed behind our
+                        // back — the user was just in the Hue app creating or
+                        // deleting an area. Nothing here ever re-asked, so the
+                        // stale verdict outlived the change (packet 7 follow-up).
+                        orchestrator.refreshEntertainmentAvailability(reason: .userInitiated)
                         if let presetID = UserDefaults.standard.string(forKey: "pendingAutomationPresetID") {
                             UserDefaults.standard.removeObject(forKey: "pendingAutomationPresetID")
                             Task { await orchestrator.applyAutomationPreset(id: presetID) }

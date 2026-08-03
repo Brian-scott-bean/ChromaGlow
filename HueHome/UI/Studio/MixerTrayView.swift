@@ -246,8 +246,12 @@ struct MixerTrayView: View {
                                     } label: {
                                         Label(TransportVocabulary.streamingMenuLabel, systemImage: "bolt.fill")
                                     }
-                                    .disabled(!availability.canStream)
-
+                                    // Deliberately NOT disabled (packet 7
+                                    // follow-up): the verdict is cached, and
+                                    // taking this row was the only thing that
+                                    // ever refreshed the cache — a stale "no"
+                                    // therefore disabled its own remedy. The
+                                    // reason footer below still explains.
                                     Button {
                                         onTransportSwitch(effect, false)
                                     } label: {
