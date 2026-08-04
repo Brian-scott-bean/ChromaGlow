@@ -1046,6 +1046,13 @@ final class StudioViewModel {
     func injectForTesting(compositionStore store: CompositionStore) {
         compositionStore = store
     }
+
+    /// Read-only exact box lookup (round 4e): the live editor box for one
+    /// bridge+room, so a collision test can prove two same-room-id rows do
+    /// NOT alias one `CompositionParamBox` instance (`===`/`!==`).
+    func testActiveCompositionBox(bridgeID: String?, roomID: String) -> CompositionParamBox? {
+        activeCompositionBoxes[RoomEffectKey(bridgeID: bridgeID, roomID: roomID)]
+    }
     #endif
     private let aiGenerator = AICompositionGenerator()
     var isGeneratingAIComposition = false
@@ -1075,9 +1082,13 @@ final class StudioViewModel {
     /// Stable card id for `+ Create` (not `comp_{uuid}`).
     static let composerStarterCardID = "composer_starter"
 
-    /// Live composition param boxes, keyed by room id — the render loops
-    /// read these each frame. UI writes on slider drag for instant response.
-    private var activeCompositionBoxes: [String: CompositionParamBox] = [:]
+    /// Live composition param boxes, keyed by EXACT bridge + room identity
+    /// (round 4e) — the render loops read these each frame. UI writes on
+    /// slider drag for instant response. A bare room-id key made two
+    /// same-room-id composition rows share one editable box: the second apply
+    /// overwrote the first bridge's live editor state, and either stop evicted
+    /// the other's box while its render loop still read it.
+    private var activeCompositionBoxes: [RoomEffectKey: CompositionParamBox] = [:]
 
     /// The editable box for the CURRENTLY SELECTED room. A single slot here
     /// meant the tray edited whatever room applied LAST, not the room on
@@ -1086,7 +1097,7 @@ final class StudioViewModel {
     /// reference; the two ownership writes go straight to the dict.
     var activeCompositionBox: CompositionParamBox? {
         guard let room = selectedRoom else { return nil }
-        return activeCompositionBoxes[room.id]
+        return activeCompositionBoxes[RoomEffectKey(room: room)]
     }
 
     // ── Status ────────────────────────────────────────────────
@@ -2413,7 +2424,7 @@ final class StudioViewModel {
                 await micHeadStart
                 activeCompositionGamut = await gamutTask
                 let box = CompositionParamBox(preset: preset)
-                activeCompositionBoxes[room.id] = box
+                activeCompositionBoxes[RoomEffectKey(room: room)] = box
                 // Restore persisted harmony rule for re-edit
                 if let savedRule = preset.palette.harmonyRule,
                    let rule = HarmonyRule(rawValue: savedRule) {
@@ -2561,9 +2572,9 @@ final class StudioViewModel {
         case .composition:
             await orchestrator.stopCompositionMode(roomID: roomID,
                                                    bridgeID: effect.room.bridgeID)
-            // Keyed by the STOPPING room — the old single-slot nil-out
-            // clobbered the selected room's editor when another room stopped.
-            activeCompositionBoxes.removeValue(forKey: roomID)
+            // Keyed by the STOPPING row's EXACT bridge + room (round 4e) — the
+            // room-id removal used to evict another bridge's same-room-id box.
+            activeCompositionBoxes.removeValue(forKey: rowKey)
             if isExplicitStop, let api, let groupedLightID {
                 // Ensure composition cards (including bridge one-shot tier)
                 // fully release control and don't appear "stuck on".
@@ -2611,9 +2622,17 @@ final class StudioViewModel {
 
         debugLog("[Handoff] Switching from '\(prompt.runningLookName)' to '\(prompt.requestedLookName)'")
         isExplicitStop = false
-        if let owningKey = runningEffectKey(forRoomID: prompt.owningRoomID) {
+        // Round 4e: the prompt CARRIES the owning bridge — resolve the row by
+        // its exact key first. The room-only lookup fails closed on a
+        // same-room-id collision, which used to drop a perfectly attributable
+        // stop to the blunt direct-teardown arm below.
+        let exactOwningKey = RoomEffectKey(
+            bridgeID: prompt.owningBridgeID, roomID: prompt.owningRoomID)
+        if runningEffects[exactOwningKey] != nil {
             // Studio knows this composition: its own stop path already routes to
             // stopCompositionMode and clears the Now-Playing registry.
+            await stopEffect(on: exactOwningKey)
+        } else if let owningKey = runningEffectKey(forRoomID: prompt.owningRoomID) {
             await stopEffect(on: owningKey)
         } else {
             // Ownership without an unambiguous Studio registry entry — stop the
@@ -2621,7 +2640,7 @@ final class StudioViewModel {
             // silently orphaned.
             await orchestrator.stopCompositionMode(roomID: prompt.owningRoomID,
                                                    bridgeID: prompt.owningBridgeID)
-            activeCompositionBoxes.removeValue(forKey: prompt.owningRoomID)
+            activeCompositionBoxes.removeValue(forKey: exactOwningKey)
             if let owningBridgeID = prompt.owningBridgeID {
                 orchestrator.removeActiveEffect(
                     bridgeID: owningBridgeID, roomID: prompt.owningRoomID)

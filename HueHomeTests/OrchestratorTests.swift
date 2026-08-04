@@ -486,7 +486,10 @@ final class OrchestratorTests: XCTestCase {
         // stopping Room A's app-driven effect must not touch either.
         orchestrator.addActiveEffect(makeEntry(id: "room-A", name: "Strobe"))
         orchestrator.addActiveEffect(makeEntry(id: "room-B", name: "Ocean Waves"))
-        orchestrator.compositionTransportByRoom["room-B"] = .rest
+        // Round 4e: the transport map is a recomputed display aggregate — stage
+        // the exact claim through the runtime stage seam, never a direct write.
+        orchestrator.testStageRESTComposition(
+            roomID: "room-B", bridgeID: "bridge-1", api: client)
 
         await orchestrator.stopAppDrivenStudioEffect(roomID: "room-A", bridgeID: nil)
         // The entry removal for the stopping room happens in StudioViewModel's
@@ -581,12 +584,12 @@ final class OrchestratorTests: XCTestCase {
 
 // MARK: - Test-visible SSE hook
 
-/// A testable shim around the private applySSEEvent — exposed via a @discardableResult
-/// internal wrapper so tests can drive the SSE pipeline without subclassing.
+/// A testable shim around applySSEEvent — kept signature-current (round 4e:
+/// the apply path returns per-kind mutation flags and suppresses by EXACT
+/// bridge+room, so callers must pass the event's own bridge).
 extension UnifiedOrchestrator {
-    /// Internal test accessor — mirrors the private applySSEEvent signature.
     @discardableResult
-    func testApplySSEEvent(_ event: SSEEvent, bridgeID: String) -> Bool {
+    func testApplySSEEvent(_ event: SSEEvent, bridgeID: String) -> (rooms: Bool, zones: Bool) {
         applySSEEvent(event, bridgeID: bridgeID)
     }
 }

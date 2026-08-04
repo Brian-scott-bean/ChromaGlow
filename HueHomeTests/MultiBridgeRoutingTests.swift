@@ -9872,8 +9872,9 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         let playingA = runtimeOnlyPreset(named: "Playing A")
         let bridgeSaveA = bridgeStorablePreset(named: "Bridge Look A")
+        let playingB = runtimeOnlyPreset(named: "Playing B")
         let attemptB = bridgeStorablePreset(named: "Attempt B")
-        let vm = makeP7FVM(presets: [playingA, bridgeSaveA, attemptB])
+        let vm = makeP7FVM(presets: [playingA, bridgeSaveA, playingB, attemptB])
 
         let roomA = sharedRoomOnA()
         let manifestA = try await establishBridgeStoredLook(
@@ -9882,10 +9883,16 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"),
             "precondition: A's look is published")
 
-        // Bridge B targets the same room id. Selecting B's room finds A's
-        // room-id-keyed composition box, so the save is attemptable without
-        // playing anything on B — B truly has no predecessor of its own.
-        vm.selectedRoom = sharedRoomOnB()
+        // Bridge B targets the same room id with its OWN live look (round 4e:
+        // the editor box is bridge-exact now, so B can no longer borrow A's
+        // room-id-keyed box — which was itself the conflation under repair).
+        // B still has no bridge-stored predecessor of its own.
+        let roomB = sharedRoomOnB()
+        vm.selectedRoom = roomB
+        await vm.apply(vm.studioCard(for: playingB),
+                       roomOverride: roomB, preferEntertainmentOverride: false)
+        XCTAssertNotNil(vm.runningEffect(for: roomB),
+            "precondition: B plays its own look (status: \(vm.statusMessage))")
         bridgeB.v1Spy.creationShouldFail = true
         await vm.saveActiveLookToBridge(vm.studioCard(for: attemptB))
 
@@ -9898,8 +9905,12 @@ final class MultiBridgeRoutingTests: XCTestCase {
                        [manifestA], "A's exact manifest still exists")
         XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-a", roomID: "shared-room"),
                        [manifestA], "A's ownership entry still names its chain")
-        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored,
-            "A's transport claim remains")
+        XCTAssertEqual(orchestrator.testCompositionTransport(bridgeID: "bridge-a", roomID: "shared-room"),
+                       .bridgeStored, "A's EXACT transport claim remains (round 4e)")
+        XCTAssertEqual(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: "shared-room"),
+                       .rest, "B's own live look keeps its exact REST claim")
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: "shared-room"),
+            "two exact claimants on different transports — the room-only aggregate answers unknown, never picks")
         XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"),
             "A's Now Playing publication remains")
         XCTAssertEqual(vm.runningEffect(for: roomA)?.cardID, rowA.cardID,
@@ -10008,6 +10019,8 @@ final class MultiBridgeRoutingTests: XCTestCase {
                        [newManifest], "the old chain is gone; the new inert one is retained")
         XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: room.id).isEmpty,
             "an inert chain never enters the ownership ledger")
+        XCTAssertNil(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: room.id),
+            "round 4e: the inert replacement holds NO exact transport claim either")
         XCTAssertNil(orchestrator.testCompositionTransport(roomID: room.id),
             "no transport claim survives the destroyed predecessor")
         XCTAssertNil(vm.runningEffect(for: room),
@@ -10020,6 +10033,57 @@ final class MultiBridgeRoutingTests: XCTestCase {
         await vm.stopSavedBridgeLook(result)
         XCTAssertTrue(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: room.id).isEmpty)
         XCTAssertNil(vm.bridgeSaveResult, "the sheet dismisses on a successful stop")
+    }
+
+    /// HCS-13 round-4e variant — the same inert-replacement withdrawal under a
+    /// room-id COLLISION: the destroyed predecessor's exact transport claim
+    /// falls, the inert replacement claims nothing, and the OTHER bridge's
+    /// surviving confirmed-running claim keeps the room aggregate alive.
+    func testSavedNotConfirmedWithdrawalKeepsAnotherBridgesSurvivingClaim() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+
+        let playingA = runtimeOnlyPreset(named: "Playing A")
+        let bridgeSaveA = bridgeStorablePreset(named: "Bridge Look A")
+        let playingB = runtimeOnlyPreset(named: "Playing B")
+        let firstSaveB = bridgeStorablePreset(named: "First B")
+        let secondSaveB = bridgeStorablePreset(named: "Second B")
+        let vm = makeP7FVM(presets: [playingA, bridgeSaveA, playingB, firstSaveB, secondSaveB])
+
+        let roomA = sharedRoomOnA()
+        let roomB = sharedRoomOnB()
+        _ = try await establishBridgeStoredLook(
+            vm, room: roomA, playing: playingA, save: bridgeSaveA)
+        _ = try await establishBridgeStoredLook(
+            vm, room: roomB, playing: playingB, save: firstSaveB)
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"),
+                       .bridgeStored, "precondition: both exact claims agree")
+
+        // B's replacement removes its predecessor; the new chain never confirms.
+        vm.selectedRoom = roomB
+        bridgeB.v1Spy.sensorStatusShouldFail = true
+        await vm.saveActiveLookToBridge(vm.studioCard(for: secondSaveB))
+
+        let result = try XCTUnwrap(vm.bridgeSaveResult)
+        XCTAssertFalse(result.isRunningOnBridge)
+        XCTAssertEqual(result.headline, BridgeSaveCopy.savedNotConfirmedPreviousLookRemoved)
+
+        // B's exact claims fell; the inert replacement claims nothing.
+        XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(
+            bridgeID: "bridge-b", roomID: "shared-room").isEmpty)
+        XCTAssertNil(orchestrator.testCompositionTransport(
+            bridgeID: "bridge-b", roomID: "shared-room"),
+            "the inert replacement holds no exact claim")
+
+        // A's exact claim survives — and it alone keeps the aggregate alive.
+        XCTAssertEqual(orchestrator.testCompositionTransport(
+            bridgeID: "bridge-a", roomID: "shared-room"), .bridgeStored,
+            "A's exact claim is untouched by B's withdrawal")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"),
+                       .bridgeStored,
+            "the room-only compatibility value stays derived from the surviving bridge")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"),
+            "A's publication survives too")
     }
 
     /// HCS-14 — stopping ONE exact manifest, with duplicate room ids across
@@ -10142,8 +10206,12 @@ final class MultiBridgeRoutingTests: XCTestCase {
     }
 
     /// Play a live REST look on each bridge's copy of the same group id and
-    /// prove the collision precondition: both exact rows and publications
-    /// coexist. Returns the two rooms.
+    /// prove the collision precondition ALL THE WAY DOWN (round 4e): not just
+    /// both presentation rows, but both EXACT core runtimes — runtime entries,
+    /// independent generations, scheduler membership, REST transport claims,
+    /// telemetry sessions, and non-aliased editor boxes. Round 4d proved the
+    /// rows coexisted while the second start silently overwrote the first's
+    /// real runtime; these assertions make that false exactness impossible.
     private func playCollidingLiveLooks(
         _ vm: StudioViewModel,
         roomA: RoomDisplayItem, roomB: RoomDisplayItem,
@@ -10161,6 +10229,45 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "precondition: B's row (status: \(vm.statusMessage))")
         XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: roomA.id))
         XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: roomB.id))
+
+        // BOTH exact core runtimes genuinely coexist — the second start must
+        // not have overwritten the first bridge's runtime authority.
+        XCTAssertTrue(orchestrator.testHasCompositionRuntime(
+            bridgeID: "bridge-a", roomID: roomA.id),
+            "A's exact runtime exists")
+        XCTAssertTrue(orchestrator.testHasCompositionRuntime(
+            bridgeID: "bridge-b", roomID: roomB.id),
+            "B's exact runtime coexists — same room id, own runtime")
+        XCTAssertNotNil(orchestrator.testCompositionGeneration(
+            bridgeID: "bridge-a", roomID: roomA.id),
+            "A's exact generation exists independently")
+        XCTAssertNotNil(orchestrator.testCompositionGeneration(
+            bridgeID: "bridge-b", roomID: roomB.id),
+            "B's exact generation exists independently")
+        XCTAssertTrue(orchestrator.testCompositionOrderContains(
+            bridgeID: "bridge-a", roomID: roomA.id),
+            "A is scheduled")
+        XCTAssertTrue(orchestrator.testCompositionOrderContains(
+            bridgeID: "bridge-b", roomID: roomB.id),
+            "B is scheduled independently")
+        XCTAssertEqual(orchestrator.testCompositionTransport(
+            bridgeID: "bridge-a", roomID: roomA.id), .rest,
+            "A's exact REST transport claim")
+        XCTAssertEqual(orchestrator.testCompositionTransport(
+            bridgeID: "bridge-b", roomID: roomB.id), .rest,
+            "B's exact REST transport claim")
+        XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(
+            roomID: roomA.id, bridgeID: "bridge-a"),
+            "A's telemetry session exists")
+        XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(
+            roomID: roomB.id, bridgeID: "bridge-b"),
+            "B's telemetry session exists")
+        let boxA = vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: roomA.id)
+        let boxB = vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: roomB.id)
+        XCTAssertNotNil(boxA, "A's editor box exists")
+        XCTAssertNotNil(boxB, "B's editor box exists")
+        XCTAssertTrue(boxA !== boxB,
+            "two same-room-id composition rows must not share one editable box")
     }
 
     /// HCS-16 — the exact Dashboard stop under a room-id collision. Tapping
@@ -10176,23 +10283,76 @@ final class MultiBridgeRoutingTests: XCTestCase {
         try await playCollidingLiveLooks(vm, roomA: roomA, roomB: roomB,
                                          playingA: playingA, playingB: playingB)
 
+        // B's exact generation, captured BEFORE A's stop — an exact stop of A
+        // must not move it.
+        let generationB = try XCTUnwrap(orchestrator.testCompositionGeneration(
+            bridgeID: "bridge-b", roomID: "shared-room"))
+
         // The Dashboard single-stop path: routed on A's exact ENTRY.
         let entryA = try XCTUnwrap(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
         await orchestrator.requestNowPlayingStop(entryA)
 
+        // A's exact state is gone — runtime authority AND presentation.
         XCTAssertNil(vm.runningEffect(for: roomA), "A stopped")
         XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertFalse(orchestrator.testHasCompositionRuntime(
+            bridgeID: "bridge-a", roomID: "shared-room"),
+            "A's exact runtime is gone")
+        XCTAssertFalse(orchestrator.testCompositionOrderContains(
+            bridgeID: "bridge-a", roomID: "shared-room"),
+            "A left the scheduler")
+        XCTAssertNil(orchestrator.testCompositionTransport(
+            bridgeID: "bridge-a", roomID: "shared-room"),
+            "A's exact transport claim fell")
+        XCTAssertFalse(orchestrator.testHasComposerTelemetrySession(
+            roomID: "shared-room", bridgeID: "bridge-a"),
+            "A's telemetry session was deactivated")
+        XCTAssertNil(vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: "shared-room"),
+            "A's editor box is gone")
+
+        // B's REAL runtime survives — not just its rows and telemetry.
         XCTAssertNotNil(vm.runningEffect(for: roomB), "B remains completely intact")
         XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
+        XCTAssertTrue(orchestrator.testHasCompositionRuntime(
+            bridgeID: "bridge-b", roomID: "shared-room"),
+            "B's exact runtime still exists")
+        XCTAssertTrue(orchestrator.testCompositionOrderContains(
+            bridgeID: "bridge-b", roomID: "shared-room"),
+            "B remains scheduled")
+        XCTAssertEqual(orchestrator.testCompositionGeneration(
+            bridgeID: "bridge-b", roomID: "shared-room"), generationB,
+            "B's generation is unchanged — A's stop invalidated nothing of B's")
+        XCTAssertEqual(orchestrator.testCompositionTransport(
+            bridgeID: "bridge-b", roomID: "shared-room"), .rest,
+            "B's exact REST transport claim remains")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .rest,
+            "the room aggregate stays alive on B's surviving claim")
         XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(
             roomID: "shared-room", bridgeID: "bridge-b"),
             "B's runtime session survives A's stop")
+        XCTAssertNotNil(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: "shared-room"),
+            "B's editor box survives")
+
+        // B still ACCEPTS work: the production prime, issued against B's own
+        // generation, lands its bookkeeping on B's runtime — playback proof,
+        // not telemetry.
+        await orchestrator.testPerformCompositionPrime(room: roomB, generation: generationB)
+        let sendStateB = try XCTUnwrap(orchestrator.testCompositionRuntimeSendState(
+            bridgeID: "bridge-b", roomID: "shared-room"),
+            "B's runtime accepts a generation-matched work item after A's stop")
+        XCTAssertGreaterThanOrEqual(sendStateB.sendCount, 1,
+            "the prime's send was recorded on B's exact runtime")
 
         // And B's own exact row stops B.
         let entryB = try XCTUnwrap(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
         await orchestrator.requestNowPlayingStop(entryB)
         XCTAssertNil(vm.runningEffect(for: roomB))
         XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
+        XCTAssertFalse(orchestrator.testHasCompositionRuntime(
+            bridgeID: "bridge-b", roomID: "shared-room"),
+            "B's own exact stop removes B's runtime")
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: "shared-room"),
+            "no claimant left — the room aggregate is empty")
     }
 
     /// HCS-17 — Dashboard-style Stop All over the two exact entries stops
@@ -10216,6 +10376,25 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(vm.runningEffect(for: roomB))
         XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty,
             "every exact entry stopped — none survived the shared room id")
+        // And the REAL runtime authority is empty too — Stop All must remove
+        // both exact runtimes, scheduler entries, transports, and telemetry,
+        // not just the rows (round 4e).
+        for bridge in ["bridge-a", "bridge-b"] {
+            XCTAssertFalse(orchestrator.testHasCompositionRuntime(
+                bridgeID: bridge, roomID: "shared-room"),
+                "\(bridge)'s exact runtime removed")
+            XCTAssertFalse(orchestrator.testCompositionOrderContains(
+                bridgeID: bridge, roomID: "shared-room"),
+                "\(bridge) left the scheduler")
+            XCTAssertNil(orchestrator.testCompositionTransport(
+                bridgeID: bridge, roomID: "shared-room"),
+                "\(bridge)'s exact transport claim fell")
+            XCTAssertFalse(orchestrator.testHasComposerTelemetrySession(
+                roomID: "shared-room", bridgeID: bridge),
+                "\(bridge)'s telemetry session deactivated")
+        }
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: "shared-room"),
+            "no claimant left — the room aggregate is empty")
     }
 
     /// HCS-18 — Siri-style Stop All: both exact entries stop AND the
@@ -10239,6 +10418,21 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(vm.runningEffect(for: roomA))
         XCTAssertNil(vm.runningEffect(for: roomB))
         XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
+        // Both REAL runtimes are gone, exactly (round 4e).
+        for bridge in ["bridge-a", "bridge-b"] {
+            XCTAssertFalse(orchestrator.testHasCompositionRuntime(
+                bridgeID: bridge, roomID: "shared-room"),
+                "\(bridge)'s exact runtime removed")
+            XCTAssertFalse(orchestrator.testCompositionOrderContains(
+                bridgeID: bridge, roomID: "shared-room"),
+                "\(bridge) left the scheduler")
+            XCTAssertNil(orchestrator.testCompositionTransport(
+                bridgeID: bridge, roomID: "shared-room"),
+                "\(bridge)'s exact transport claim fell")
+            XCTAssertFalse(orchestrator.testHasComposerTelemetrySession(
+                roomID: "shared-room", bridgeID: bridge),
+                "\(bridge)'s telemetry session deactivated")
+        }
         XCTAssertFalse(bridgeA.groupedPowerIDs.contains("gl-shared-a:false"),
             "Siri's contract: A's room is not turned off")
         XCTAssertFalse(bridgeB.groupedPowerIDs.contains("gl-shared-b:false"),
@@ -10366,6 +10560,176 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "the attributed entry keeps its bridge; the room-only request invents none")
         XCTAssertEqual(received.map(\.roomID), ["shared-room", "shared-room"])
         XCTAssertEqual(received.map(\.turnOffLights), [true, false])
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Hardware convergence C round 4e: exact runtime identity
+    // ──────────────────────────────────────────────
+    //
+    // Round 4d made the PRESENTATION exact while the real runtime authority
+    // (generations, runtimes, scheduler order, transport, SSE suppression,
+    // Entertainment teardown selection) stayed room-id-keyed. These pin the
+    // convergence: what the rows say exists is what actually runs.
+
+    /// One decoded grouped_light SSE event, as the bridge would stream it.
+    private func sseGroupedLightEvent(groupedLightID: String, on: Bool) throws -> SSEEvent {
+        let json = """
+        [{"creationtime":"2026-01-01T00:00:00Z","data":[{
+          "id":"\(groupedLightID)","id_v1":null,"type":"grouped_light",
+          "on":{"on":\(on)},"dimming":{"brightness":12},"owner":null
+        }],"id":"evt-4e","type":"update"}]
+        """
+        let events = try JSONDecoder().decode([SSEEvent].self, from: Data(json.utf8))
+        return try XCTUnwrap(events.first)
+    }
+
+    /// Round 4e — SSE suppression is EXACT bridge+room. The room-only set let
+    /// bridge A's composition swallow bridge B's legitimate same-room-id
+    /// updates.
+    func testSSESuppressionIsExactUnderARoomIDCollision() async throws {
+        let roomA = sharedRoomOnA(), roomB = sharedRoomOnB()
+        orchestrator.testSeedBridgeGroups(bridgeID: "bridge-a", rooms: [roomA])
+        orchestrator.testSeedBridgeGroups(bridgeID: "bridge-b", rooms: [roomB])
+        orchestrator.testStageRESTComposition(
+            roomID: "shared-room", bridgeID: "bridge-a", api: bridgeA)
+
+        XCTAssertTrue(orchestrator.testIsAppDrivenGroup(
+            bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertFalse(orchestrator.testIsAppDrivenGroup(
+            bridgeID: "bridge-b", roomID: "shared-room"),
+            "no bridge is suppressed merely because another bridge uses the same room id")
+
+        // The production apply path agrees: B's update lands, A's own echo
+        // does not.
+        let acceptedB = orchestrator.applySSEEvent(
+            try sseGroupedLightEvent(groupedLightID: "gl-shared-b", on: false),
+            bridgeID: "bridge-b")
+        XCTAssertTrue(acceptedB.rooms, "B's legitimate SSE update mutates B's room")
+        let acceptedA = orchestrator.applySSEEvent(
+            try sseGroupedLightEvent(groupedLightID: "gl-shared-a", on: false),
+            bridgeID: "bridge-a")
+        XCTAssertFalse(acceptedA.rooms, "A's echo of our own PUTs stays suppressed")
+    }
+
+    /// Round 4e — stopping A releases exactly A's SSE suppression: A's
+    /// updates flow again while the still-running exact owner B stays
+    /// suppressed. The room-only set kept suppressing A because B still owned
+    /// the same room id.
+    func testSSESuppressionReleasesExactlyTheStoppedBridge() async throws {
+        let roomA = sharedRoomOnA(), roomB = sharedRoomOnB()
+        orchestrator.testSeedBridgeGroups(bridgeID: "bridge-a", rooms: [roomA])
+        orchestrator.testSeedBridgeGroups(bridgeID: "bridge-b", rooms: [roomB])
+        orchestrator.testStageRESTComposition(
+            roomID: "shared-room", bridgeID: "bridge-a", api: bridgeA)
+        orchestrator.testStageRESTComposition(
+            roomID: "shared-room", bridgeID: "bridge-b", api: bridgeB)
+        XCTAssertTrue(orchestrator.testIsAppDrivenGroup(
+            bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertTrue(orchestrator.testIsAppDrivenGroup(
+            bridgeID: "bridge-b", roomID: "shared-room"))
+
+        await orchestrator.stopCompositionMode(roomID: "shared-room", bridgeID: "bridge-a")
+
+        XCTAssertFalse(orchestrator.testIsAppDrivenGroup(
+            bridgeID: "bridge-a", roomID: "shared-room"),
+            "the stopped bridge's SSE is accepted again — B's ownership no longer pins A")
+        XCTAssertTrue(orchestrator.testIsAppDrivenGroup(
+            bridgeID: "bridge-b", roomID: "shared-room"),
+            "the still-running exact owner stays suppressed")
+        XCTAssertTrue(orchestrator.applySSEEvent(
+            try sseGroupedLightEvent(groupedLightID: "gl-shared-a", on: false),
+            bridgeID: "bridge-a").rooms,
+            "A's update mutates A's room after A's stop")
+        XCTAssertFalse(orchestrator.applySSEEvent(
+            try sseGroupedLightEvent(groupedLightID: "gl-shared-b", on: false),
+            bridgeID: "bridge-b").rooms,
+            "B's own echo stays suppressed")
+    }
+
+    /// HCS-24 — Entertainment duplicate-room-id stop. With BOTH bridges
+    /// holding composition Entertainment ownership of "shared-room", stopping
+    /// A through its exact live entry tears down only A's task, client, and
+    /// room mapping. The old reverse lookup
+    /// (`compositionEntRoomByBridge.first(where:)`) picked a bridge by
+    /// dictionary order and could kill B's session.
+    func testAnExactStopTearsDownOnlyItsOwnBridgesEntertainmentSession() async throws {
+        // An isolated ownership store of this test's own (`ownershipStore` is
+        // only installed by the P7 VM factory, which this orchestrator-level
+        // twin deliberately does not use).
+        let suite = "MultiBridgeRoutingTests.hcs24"
+        UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        let ownership = EntertainmentSessionOwnership(defaults: UserDefaults(suiteName: suite)!)
+        ownership.resetForTesting()
+        addTeardownBlock {
+            ownership.resetForTesting()
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        }
+        let clientA = HueEntertainmentClient(
+            bridgeID: "bridge-a", bridgeIP: "192.0.2.1",
+            username: "t", clientKeyHex: "ZZ-not-hex",
+            restClient: bridgeA, ownership: ownership)
+        await clientA.seedSessionForTesting(configID: "cfg-a")
+        let clientB = HueEntertainmentClient(
+            bridgeID: "bridge-b", bridgeIP: "192.0.2.2",
+            username: "t", clientKeyHex: "ZZ-not-hex",
+            restClient: bridgeB, ownership: ownership)
+        await clientB.seedSessionForTesting(configID: "cfg-b")
+        orchestrator.testStageEntertainmentOwner(
+            roomID: "shared-room", bridgeID: "bridge-a", client: clientA)
+        orchestrator.testStageEntertainmentOwner(
+            roomID: "shared-room", bridgeID: "bridge-b", client: clientB)
+
+        let entryA = ActiveEffectEntry(
+            liveBridgeID: "bridge-a", roomID: "shared-room", roomName: "Shared Room",
+            groupedLightID: "gl-shared-a", effectID: "card-a", effectName: "Ent A",
+            effectIcon: "flame.fill", isAppDriven: true)
+        let entryB = ActiveEffectEntry(
+            liveBridgeID: "bridge-b", roomID: "shared-room", roomName: "Shared Room",
+            groupedLightID: "gl-shared-b", effectID: "card-b", effectName: "Ent B",
+            effectIcon: "flame.fill", isAppDriven: true)
+        orchestrator.addActiveEffect(entryA)
+        orchestrator.addActiveEffect(entryB)
+
+        // The handler twin (HCS-23 idiom): forward the exact target into the
+        // production teardown, exactly as Studio's stop path does.
+        let orch = orchestrator!
+        orch.studioStopHandler = { target in
+            await orch.stopCompositionMode(
+                roomID: target.roomID, bridgeID: target.bridgeID)
+            if let bridgeID = target.bridgeID {
+                orch.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID)
+            } else {
+                orch.removeActiveEffect(roomID: target.roomID)
+            }
+        }
+        await orchestrator.requestNowPlayingStop(entryA, turnOffLights: false)
+
+        // Only A's task/client/mapping fell.
+        XCTAssertNil(orchestrator.testCompositionEntertainmentRoom(forBridge: "bridge-a"),
+            "A's room mapping is gone")
+        XCTAssertFalse(orchestrator.testHasCompositionEntertainmentTask(forBridge: "bridge-a"),
+            "A's render task is gone")
+        XCTAssertFalse(orchestrator.testHasEntertainmentClient(forBridge: "bridge-a"),
+            "A's client was stopped and removed")
+        XCTAssertNil(orchestrator.testCompositionTransport(
+            bridgeID: "bridge-a", roomID: "shared-room"),
+            "A's exact transport claim fell")
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
+
+        // B's session is untouched — task, client, mapping, claim, and row.
+        XCTAssertEqual(orchestrator.testCompositionEntertainmentRoom(forBridge: "bridge-b"),
+                       "shared-room", "B's room mapping remains")
+        XCTAssertTrue(orchestrator.testHasCompositionEntertainmentTask(forBridge: "bridge-b"),
+            "B's render task remains")
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+            "B's client remains")
+        XCTAssertEqual(orchestrator.testCompositionTransport(
+            bridgeID: "bridge-b", roomID: "shared-room"), .entertainment,
+            "B's exact transport claim remains")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"),
+                       .entertainment,
+            "the room aggregate stays derived from B's surviving claim")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
     }
 
     /// HCQ-01 — persist fails, compensation partial: the outcome carries the

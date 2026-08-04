@@ -290,6 +290,30 @@ final class UnifiedOrchestrator {
         let generation: Int
     }
 
+    /// Exact identity of one LIVE composition playback (round 4e). The runtime
+    /// authority — generations, runtimes, scheduler order, transport claims —
+    /// is keyed by this, never by roomID alone: the same room id can exist on
+    /// two bridges, and a room-only key makes the second start overwrite the
+    /// first's real runtime while both presentation rows survive.
+    ///
+    /// `bridgeKey` follows the REST/telemetry normalization (`bridgeID ??
+    /// "legacy"`), the same convention as `BridgeNativeOwnershipKey` and
+    /// `ComposerTelemetrySessionKey` — NOT the Entertainment maps' `?? ""`
+    /// coercion, which stays confined to those bridge-keyed maps.
+    struct CompositionPlaybackKey: Hashable, Sendable {
+        let bridgeKey: String
+        let roomID: String
+
+        init(bridgeKey: String, roomID: String) {
+            self.bridgeKey = bridgeKey
+            self.roomID = roomID
+        }
+
+        init(bridgeID: String?, roomID: String) {
+            self.init(bridgeKey: bridgeID ?? "legacy", roomID: roomID)
+        }
+    }
+
     @ObservationIgnored
     private var bridgeNativeOwners: [BridgeNativeOwnershipKey: Int] = [:]
     @ObservationIgnored
@@ -2336,16 +2360,21 @@ final class UnifiedOrchestrator {
         }
     }
 
-    /// Group ids (room or zone) the app is currently driving via a composition — REST
-    /// (`compositionRuntimes`) or DTLS (`compositionEntRoomByBridge`). Used to suppress
-    /// SSE echo of our own ~8 Hz per-light PUTs, which would otherwise rebuild the
-    /// dashboard at composition frame rate. Returns `[]` (no allocation) when nothing
-    /// is playing, so applySSEEvent behavior is unchanged in the common case.
-    private var appDrivenGroupIDs: Set<String> {
-        guard !compositionRuntimes.isEmpty || !compositionEntRoomByBridge.isEmpty else { return [] }
-        var ids = Set(compositionRuntimes.keys)
-        ids.formUnion(compositionEntRoomByBridge.values)
-        return ids
+    /// Is the app currently driving this EXACT bridge's group (room or zone)
+    /// via a composition — REST (`compositionRuntimes`) or DTLS
+    /// (`compositionEntRoomByBridge`)? Used to suppress SSE echo of our own
+    /// ~8 Hz per-light PUTs, which would otherwise rebuild the dashboard at
+    /// composition frame rate.
+    ///
+    /// Round 4e: EXACT bridge+room identity, never a room-id set. A room-only
+    /// set conflated bridges sharing a room id: bridge A's composition
+    /// suppressed bridge B's legitimate SSE, and after A stopped, B's ownership
+    /// kept suppressing A. SSE streams are per-bridge, so every caller has the
+    /// event's bridge in hand.
+    private func isAppDrivenGroup(bridgeID: String, roomID: String) -> Bool {
+        if compositionEntRoomByBridge[bridgeID] == roomID { return true }
+        return compositionRuntimes[
+            CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)] != nil
     }
 
     /// Returns which of rooms/zones were mutated so callers can skip unnecessary rebuilds.
@@ -2353,8 +2382,6 @@ final class UnifiedOrchestrator {
     func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> (rooms: Bool, zones: Bool) {
         var roomsMutated = false
         var zonesMutated = false
-        // Rooms/zones the app is actively driving — their SSE echoes are our own PUTs.
-        let driven = appDrivenGroupIDs
         for update in event.data {
             switch update.type {
 
@@ -2405,9 +2432,11 @@ final class UnifiedOrchestrator {
                     // Skip on/brightness if there is a pending optimistic action in flight.
                     // The SSE event pre-dates our PUT; applying it would cause a visible flicker.
                     let isPending = pendingActionDeadlines[update.id].map { Date() < $0 } ?? false
-                    // Skip if the app is driving this room via a composition — the echo of
-                    // our own per-light PUTs would rebuild the dashboard at frame rate.
-                    if !isPending && !driven.contains(rooms[idx].id) {
+                    // Skip if the app is driving this room ON THIS BRIDGE via a
+                    // composition — the echo of our own per-light PUTs would
+                    // rebuild the dashboard at frame rate. Exact identity: another
+                    // bridge's same-room-id composition must not suppress this one.
+                    if !isPending && !isAppDrivenGroup(bridgeID: bridgeID, roomID: rooms[idx].id) {
                         if let on  = update.on?.on              { rooms[idx].isOn       = on  }
                         if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
                         roomsByBridge[bridgeID] = rooms
@@ -2417,7 +2446,7 @@ final class UnifiedOrchestrator {
                 if var zones = zonesByBridge[bridgeID],
                    let idx = zones.firstIndex(where: { $0.groupedLightID == update.id }) {
                     let isPending = pendingActionDeadlines[update.id].map { Date() < $0 } ?? false
-                    if !isPending && !driven.contains(zones[idx].id) {
+                    if !isPending && !isAppDrivenGroup(bridgeID: bridgeID, roomID: zones[idx].id) {
                         if let on  = update.on?.on              { zones[idx].isOn       = on  }
                         if let bri = update.dimming?.brightness { zones[idx].brightness = bri }
                         zonesByBridge[bridgeID] = zones
@@ -2434,8 +2463,10 @@ final class UnifiedOrchestrator {
                 // our own ~8 Hz PUT echoes don't churn the cache. No rebuild is
                 // triggered by this write (the cache is read imperatively, never
                 // from a View body).
-                let cacheRoomDriven = lightIDToRoomID[update.id].map(driven.contains) ?? false
-                let cacheZoneDriven = lightIDToZoneID[update.id].map(driven.contains) ?? false
+                let cacheRoomDriven = lightIDToRoomID[update.id]
+                    .map { isAppDrivenGroup(bridgeID: bridgeID, roomID: $0) } ?? false
+                let cacheZoneDriven = lightIDToZoneID[update.id]
+                    .map { isAppDrivenGroup(bridgeID: bridgeID, roomID: $0) } ?? false
                 if !cacheRoomDriven && !cacheZoneDriven,
                    var cachedLights = lightsByBridge[bridgeID],
                    let cacheIdx = cachedLights.firstIndex(where: { $0.id == update.id }) {
@@ -2448,7 +2479,7 @@ final class UnifiedOrchestrator {
 
                 if var rooms = roomsByBridge[bridgeID],
                    let roomID = lightIDToRoomID[update.id],
-                   !driven.contains(roomID),
+                   !isAppDrivenGroup(bridgeID: bridgeID, roomID: roomID),
                    let idx = rooms.firstIndex(where: { $0.id == roomID }) {
                     var mutated = false
                     // A light explicitly turning ON proves the room is on even when
@@ -2482,7 +2513,7 @@ final class UnifiedOrchestrator {
                 }
                 if var zones = zonesByBridge[bridgeID],
                    let zoneID = lightIDToZoneID[update.id],
-                   !driven.contains(zoneID),
+                   !isAppDrivenGroup(bridgeID: bridgeID, roomID: zoneID),
                    let idx = zones.firstIndex(where: { $0.id == zoneID }) {
                     var mutated = false
                     // Same on-direction cross-check as rooms above.
@@ -3045,11 +3076,14 @@ final class UnifiedOrchestrator {
     // (`RestScope(.studio)`), which enqueued closures actually consult, and by
     // `activeStudioTask` cancellation for the engine loops.
 
-    /// Per-room composition generation counters.
-    private var compositionGenerations: [String: Int] = [:]
-    /// Shared composition scheduler state (room-scoped runtimes, single bridge-fair ticker).
-    private var compositionRuntimes: [String: CompositionRuntime] = [:]
-    private var compositionOrder: [String] = []
+    /// Per-EXACT-playback composition generation counters (round 4e: keyed by
+    /// bridge+room, never bare roomID — a stop may only invalidate its own
+    /// bridge's generation).
+    private var compositionGenerations: [CompositionPlaybackKey: Int] = [:]
+    /// Shared composition scheduler state (exact bridge+room runtimes, single
+    /// bridge-fair ticker). Two bridges sharing one room id are two runtimes.
+    private var compositionRuntimes: [CompositionPlaybackKey: CompositionRuntime] = [:]
+    private var compositionOrder: [CompositionPlaybackKey] = []
     private var compositionSchedulerTask: Task<Void, Never>?
 
     /// Round 3 (C): the live Perform mix. Non-nil while PerformanceView is
@@ -3335,8 +3369,9 @@ final class UnifiedOrchestrator {
         roomID: String, bridgeID: String?, api: HueAPIClient, generation: Int = 1,
         lightIDs: [String] = []
     ) {
-        compositionTransportByRoom[roomID] = .rest
-        compositionRuntimes[roomID] = CompositionRuntime(
+        let playbackKey = CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)
+        setCompositionTransportClaim(.rest, for: playbackKey)
+        compositionRuntimes[playbackKey] = CompositionRuntime(
             roomID: roomID,
             roomName: roomID,
             bridgeID: bridgeID ?? "",
@@ -3362,10 +3397,10 @@ final class UnifiedOrchestrator {
             lastSentBri: nil,
             lastSentAt: nil
         )
-        if !compositionOrder.contains(roomID) { compositionOrder.append(roomID) }
+        if !compositionOrder.contains(playbackKey) { compositionOrder.append(playbackKey) }
         // Packet 4: production start also opens the telemetry session and
         // marks it REST-active once the runtime is installed — stage the same.
-        compositionGenerations[roomID] = generation
+        compositionGenerations[playbackKey] = generation
         let sessionKey = ComposerTelemetrySessionKey(
             bridgeKey: bridgeID ?? "legacy",
             scope: RestScope(roomID: roomID, owner: .composer))
@@ -3391,9 +3426,27 @@ final class UnifiedOrchestrator {
     }
 
     /// Stage composition ownership of a bridge's Entertainment session.
-    func testStageEntertainmentOwner(roomID: String, bridgeID: String) {
+    /// Round 4e: optionally install a stubbed client and an inert stand-in
+    /// render task, so a duplicate-room-id stop test can prove teardown
+    /// touches exactly one bridge's task/client/mapping.
+    func testStageEntertainmentOwner(
+        roomID: String, bridgeID: String, client: HueEntertainmentClient? = nil
+    ) {
         compositionEntRoomByBridge[bridgeID] = roomID
-        compositionTransportByRoom[roomID] = .entertainment
+        setCompositionTransportClaim(
+            .entertainment,
+            for: CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID))
+        if let client {
+            studioEntClients[bridgeID] = client
+            compositionEntTasks[bridgeID]?.cancel()
+            compositionEntTasks[bridgeID] = Task {}
+        }
+    }
+
+    /// Whether a bridge currently holds a composition Entertainment render
+    /// task (round 4e) — read-only membership, for exact-teardown assertions.
+    func testHasCompositionEntertainmentTask(forBridge bridgeID: String) -> Bool {
+        compositionEntTasks[bridgeID] != nil
     }
 
     /// The per-bridge acquisition gate, exactly as `startCompositionMode` asks it.
@@ -3402,8 +3455,15 @@ final class UnifiedOrchestrator {
     }
 
     /// roomID → bridgeID for every live REST composition runtime.
+    /// Round 4e compat read: with the runtime map exactly keyed, a room id
+    /// held by TWO bridges is ambiguous here and is omitted (fail closed) —
+    /// collision tests must use the exact bridge+room seams instead.
     func testCompositionRuntimeBridges() -> [String: String] {
-        compositionRuntimes.mapValues(\.bridgeID)
+        var byRoom: [String: [String]] = [:]
+        for (key, runtime) in compositionRuntimes {
+            byRoom[key.roomID, default: []].append(runtime.bridgeID)
+        }
+        return byRoom.compactMapValues { $0.count == 1 ? $0[0] : nil }
     }
 
     // Scoped-mailbox seams (packet 3). `restSendersByBridge` and
@@ -3475,8 +3535,18 @@ final class UnifiedOrchestrator {
     }
 
     /// The runtime's delta-gate send state — what completion bookkeeping moves.
+    /// Round 4e compat read: exactly-one rule — nil when two bridges hold the
+    /// room id (use the exact overload below under a collision).
     func testCompositionRuntimeSendState(roomID: String) -> (sendCount: Int, lastSentX: Double?, lastSentY: Double?, lastSentBri: Double?, lastSentAt: CFAbsoluteTime?)? {
-        compositionRuntimes[roomID].map {
+        let matches = compositionRuntimes.filter { $0.key.roomID == roomID }
+        guard matches.count == 1, let runtime = matches.first?.value else { return nil }
+        return (runtime.sendCount, runtime.lastSentX, runtime.lastSentY,
+                runtime.lastSentBri, runtime.lastSentAt)
+    }
+
+    /// EXACT bridge+room send state (round 4e).
+    func testCompositionRuntimeSendState(bridgeID: String?, roomID: String) -> (sendCount: Int, lastSentX: Double?, lastSentY: Double?, lastSentBri: Double?, lastSentAt: CFAbsoluteTime?)? {
+        compositionRuntimes[CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)].map {
             ($0.sendCount, $0.lastSentX, $0.lastSentY, $0.lastSentBri, $0.lastSentAt)
         }
     }
@@ -3680,12 +3750,53 @@ final class UnifiedOrchestrator {
 
     /// Packet 7: the composition bookkeeping that a start which never happened
     /// must leave completely alone.
+    /// Round 4e compat read: exactly-one rule — nil when two bridges hold the
+    /// room id (use the exact overload below under a collision).
     func testCompositionGeneration(roomID: String) -> Int? {
-        compositionGenerations[roomID]
+        let matches = compositionGenerations.filter { $0.key.roomID == roomID }
+        guard matches.count == 1 else { return nil }
+        return matches.first?.value
     }
 
+    /// EXACT bridge+room generation (round 4e).
+    func testCompositionGeneration(bridgeID: String?, roomID: String) -> Int? {
+        compositionGenerations[CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)]
+    }
+
+    /// The room-keyed DISPLAY aggregate — what the UI reads. Under a
+    /// same-room-id collision this is the agreed transport, or nil when the
+    /// exact claimants disagree (the aggregate never picks a winner).
     func testCompositionTransport(roomID: String) -> CompositionTransport? {
         compositionTransportByRoom[roomID]
+    }
+
+    /// EXACT bridge+room transport claim (round 4e) — the runtime truth the
+    /// aggregate above is recomputed from.
+    func testCompositionTransport(bridgeID: String?, roomID: String) -> CompositionTransport? {
+        compositionTransportClaims[CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)]
+    }
+
+    /// EXACT runtime existence (round 4e) — proof a live REST composition
+    /// genuinely exists for this bridge+room, independent of presentation rows.
+    func testHasCompositionRuntime(bridgeID: String?, roomID: String) -> Bool {
+        compositionRuntimes[CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)] != nil
+    }
+
+    /// EXACT scheduler membership (round 4e).
+    func testCompositionOrderContains(bridgeID: String?, roomID: String) -> Bool {
+        compositionOrder.contains(CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID))
+    }
+
+    /// Which room a bridge's Entertainment session is driving, if any (round
+    /// 4e) — the exact map `stopCompositionMode`'s teardown is gated on.
+    func testCompositionEntertainmentRoom(forBridge bridgeID: String) -> String? {
+        compositionEntRoomByBridge[bridgeID]
+    }
+
+    /// The exact SSE-suppression predicate (round 4e) — true only when THIS
+    /// bridge's group is app-driven.
+    func testIsAppDrivenGroup(bridgeID: String, roomID: String) -> Bool {
+        isAppDrivenGroup(bridgeID: bridgeID, roomID: roomID)
     }
 
     func testHasComposerTelemetrySession(roomID: String, bridgeID: String?) -> Bool {
@@ -4075,11 +4186,12 @@ final class UnifiedOrchestrator {
                 // `addActiveEffect` replaces same-id rows, so re-publishing an
                 // unchanged animation cannot produce a duplicate row.
                 addActiveEffect(ActiveEffectEntry(recovered: animation))
-                compositionTransportByRoom[animation.manifest.roomID] = .bridgeStored
                 // Recovered as ACTIVE: reconciliation proved the chain live on
                 // this exact bridge, which is the ownership ledger's standard
                 // of evidence (round 4c) — and how it repopulates after a
-                // relaunch. Idempotent for a re-confirmed owner.
+                // relaunch. Idempotent for a re-confirmed owner. The ledger
+                // write below also raises the exact `.bridgeStored` transport
+                // claim (round 4e), which recomputes the room aggregate.
                 recordBridgeStoredChainOwnership(
                     bridgeID: key.bridgeID,
                     roomID: animation.manifest.roomID,
@@ -4114,9 +4226,14 @@ final class UnifiedOrchestrator {
         guard let animation = recoveredBridgeAnimations.removeValue(forKey: key) else { return }
         removeActiveEffect(id: ActiveEffectEntry.recoveredID(manifestID: key.manifestID))
         // No longer recovered-as-active, so it is no longer the room's
-        // running claim (round 4c). Exact by manifest id.
+        // running claim (round 4c). Exact by manifest id — the subtract also
+        // lowers the exact transport claim when the ownership set empties
+        // (round 4e), recomputing the room aggregate under the same
+        // fail-closed evidence rule the old room-wide clear held.
         subtractBridgeStoredChainOwnership(manifestID: key.manifestID)
-        clearBridgeStoredTransportIfUnowned(roomID: animation.manifest.roomID)
+        // Round 4e: this row may itself have been the last evidence a
+        // retained room label leaned on — recompute the display aggregate.
+        recomputeCompositionTransportAggregate(roomID: animation.manifest.roomID)
         // The registry moved, so Studio's mirror is stale. Bumping the
         // generation is what lets its guarded hydrate run again — without it a
         // stopped animation keeps a Studio row that nothing can clear.
@@ -4133,16 +4250,11 @@ final class UnifiedOrchestrator {
         for key in matching { forgetRecoveredBridgeAnimation(key) }
     }
 
-    /// Clear the `.bridgeStored` label only when nothing else still claims this
-    /// room id. Bridge B's live animation must not be un-labelled because
-    /// bridge A's copy of the same room id was cleaned.
-    private func clearBridgeStoredTransportIfUnowned(roomID: String) {
-        guard compositionTransportByRoom[roomID] == .bridgeStored else { return }
-        let stillRecovered = recoveredBridgeAnimations.values.contains { $0.manifest.roomID == roomID }
-        let stillStored = bridgeAnimationStore.allManifests().contains { $0.roomID == roomID }
-        guard !stillRecovered && !stillStored else { return }
-        compositionTransportByRoom.removeValue(forKey: roomID)
-    }
+    // `clearBridgeStoredTransportIfUnowned` was deleted in round 4e: the
+    // `.bridgeStored` label's lifecycle now moves with the exact transport
+    // claims (raised by the ownership ledger's record, lowered when an exact
+    // bridge+room ownership set empties), and the room aggregate's recompute
+    // carries the same fail-closed evidence rule this function held.
 
     /// Studio upgrades a recovered row's name once it can resolve the preset.
     /// The orchestrator holds no `CompositionStore`, so it publishes the
@@ -4370,11 +4482,88 @@ final class UnifiedOrchestrator {
         case rest            // app-driven REST scheduler
         case bridgeStored    // v1 rules chain on the bridge itself
     }
-    /// Per-room transport truth (absent key = no composition running there).
-    /// Written only at start / stop / failover — never per frame — so views
-    /// may observe it freely. Replaces the old global `isBridgeStored` flag,
-    /// which mislabeled every room whenever ANY room ran bridge-stored.
+    /// Per-room transport DISPLAY AGGREGATE (absent key = no composition
+    /// running there, or the exact claimants disagree). Written only at start /
+    /// stop / failover — never per frame — so views may observe it freely.
+    ///
+    /// Round 4e: this map is COMPATIBILITY/DISPLAY state only, recomputed from
+    /// `compositionTransportClaims` by the two helpers below — never written
+    /// directly, and NEVER destructive authority. Two bridges sharing a room id
+    /// keep the entry alive while either exact claim stands; if their claims
+    /// disagree on transport, the entry is removed (ambiguous — the room-only
+    /// key must not silently pick a winner).
     var compositionTransportByRoom: [String: CompositionTransport] = [:]
+
+    /// EXACT transport ownership (round 4e): which transport each live
+    /// bridge+room playback claims. Represents RUNNING ownership only — a
+    /// saved-but-not-confirmed-running chain is inert and never claims
+    /// (`.bridgeStored` claims move with the ownership ledger: first
+    /// confirmed-running manifest adds the claim, and it falls only when the
+    /// exact bridge+room ownership set empties).
+    @ObservationIgnored
+    private var compositionTransportClaims: [CompositionPlaybackKey: CompositionTransport] = [:]
+
+    /// Write one exact transport claim, then recompute the room aggregate.
+    private func setCompositionTransportClaim(
+        _ transport: CompositionTransport, for key: CompositionPlaybackKey
+    ) {
+        compositionTransportClaims[key] = transport
+        recomputeCompositionTransportAggregate(roomID: key.roomID)
+    }
+
+    /// Withdraw one exact transport claim, then recompute the room aggregate —
+    /// another bridge's same-room-id claim keeps the room entry alive.
+    /// `retainedManifestIDs` flows to the fail-closed evidence check: a
+    /// just-saved inert chain is not the room's playing look.
+    private func removeCompositionTransportClaim(
+        for key: CompositionPlaybackKey, retainedManifestIDs: Set<UUID> = []
+    ) {
+        compositionTransportClaims.removeValue(forKey: key)
+        recomputeCompositionTransportAggregate(
+            roomID: key.roomID, retainedManifestIDs: retainedManifestIDs)
+    }
+
+    /// The ONLY writer of `compositionTransportByRoom`: no claimants → no
+    /// entry; all claimants agree → that value; claimants disagree → no entry
+    /// (ambiguous/unknown — callers that need the truth under a collision hold
+    /// bridge identity and read the exact claim).
+    ///
+    /// One fail-closed exception, carried over from round 4c: a standing
+    /// `.bridgeStored` label whose last exact claim fell is RETAINED while any
+    /// bridge-stored evidence for the room still exists — a recovered
+    /// animation, or a stored manifest (an unattributable legacy manifest
+    /// counts: ambiguity retains). Display state may keep saying "maybe
+    /// running"; it may never be the reason something is destroyed.
+    private func recomputeCompositionTransportAggregate(
+        roomID: String, retainedManifestIDs: Set<UUID> = []
+    ) {
+        let claims = Set(
+            compositionTransportClaims
+                .filter { $0.key.roomID == roomID }
+                .map(\.value))
+        if claims.count == 1, let agreed = claims.first {
+            compositionTransportByRoom[roomID] = agreed
+        } else if claims.isEmpty,
+                  compositionTransportByRoom[roomID] == .bridgeStored,
+                  roomHasBridgeStoredEvidence(
+                      roomID: roomID, excluding: retainedManifestIDs) {
+            // Fail closed: keep the label.
+        } else {
+            compositionTransportByRoom.removeValue(forKey: roomID)
+        }
+    }
+
+    /// Any bridge-stored evidence still standing for this room id (round 4c's
+    /// "nothing anywhere still claims the room" proof, shared by the aggregate
+    /// retention above and `withdrawDestroyedBridgeStoredClaims`).
+    private func roomHasBridgeStoredEvidence(
+        roomID: String, excluding retainedManifestIDs: Set<UUID> = []
+    ) -> Bool {
+        recoveredBridgeAnimations.values.contains { $0.manifest.roomID == roomID }
+            || bridgeAnimationStore.allManifests().contains {
+                $0.roomID == roomID && !retainedManifestIDs.contains($0.id)
+            }
+    }
 
     // ── Exact bridge-stored chain ownership (round 4c) ───────────────────
     //
@@ -4393,11 +4582,17 @@ final class UnifiedOrchestrator {
     private var bridgeStoredChainOwnership: [BridgeNativeOwnershipKey: Set<UUID>] = [:]
 
     /// Record a confirmed-running chain as the room's claim on this bridge.
+    /// Round 4e: the exact `.bridgeStored` transport claim moves WITH the
+    /// ledger — the first confirmed-running manifest for a bridge+room raises
+    /// it (idempotent for later ones), and only the set emptying lowers it.
     private func recordBridgeStoredChainOwnership(
         bridgeID: String, roomID: String, manifestID: UUID
     ) {
         let key = BridgeNativeOwnershipKey(bridgeKey: bridgeID, roomID: roomID)
         bridgeStoredChainOwnership[key, default: []].insert(manifestID)
+        setCompositionTransportClaim(
+            .bridgeStored,
+            for: CompositionPlaybackKey(bridgeKey: key.bridgeKey, roomID: key.roomID))
     }
 
     /// Subtract exactly one destroyed chain's identity, wherever it is
@@ -4410,6 +4605,15 @@ final class UnifiedOrchestrator {
             owned.remove(manifestID)
             if owned.isEmpty {
                 bridgeStoredChainOwnership.removeValue(forKey: key)
+                // Round 4e: the exact bridge+room ownership set emptied — this
+                // key's `.bridgeStored` transport claim falls with it (and
+                // ONLY a bridge-stored claim: a REST/Entertainment claim on
+                // the same key belongs to a different, live playback).
+                let playbackKey = CompositionPlaybackKey(
+                    bridgeKey: key.bridgeKey, roomID: key.roomID)
+                if compositionTransportClaims[playbackKey] == .bridgeStored {
+                    removeCompositionTransportClaim(for: playbackKey)
+                }
             } else {
                 bridgeStoredChainOwnership[key] = owned
             }
@@ -5104,8 +5308,12 @@ final class UnifiedOrchestrator {
         }
 
         let roomID = room.id
-        let nextGeneration = (compositionGenerations[roomID] ?? 0) + 1
-        compositionGenerations[roomID] = nextGeneration
+        // Round 4e: the EXACT playback identity every runtime structure below
+        // is keyed by — bridge+room, "legacy" normalization, same convention as
+        // the telemetry key. Two bridges sharing a room id are two playbacks.
+        let playbackKey = CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID)
+        let nextGeneration = (compositionGenerations[playbackKey] ?? 0) + 1
+        compositionGenerations[playbackKey] = nextGeneration
         // Packet 4: telemetry session identity is established HERE, from
         // nextGeneration directly — no CompositionRuntime required, so stop can
         // find this session even when the transport decision below lands on
@@ -5248,7 +5456,7 @@ final class UnifiedOrchestrator {
                 // would point at a client that is gone.
                 studioEntOwnerByBridge.removeValue(forKey: bridgeID)
                 noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
-                compositionTransportByRoom[roomID] = .entertainment
+                setCompositionTransportClaim(.entertainment, for: playbackKey)
                 compositionEntParamBoxes[bridgeID] = paramBox
                 compositionEntTasks[bridgeID]?.cancel()
                 let capturedRoom = room
@@ -5298,11 +5506,11 @@ final class UnifiedOrchestrator {
                 room: room, preset: preset, lightIDs: compositionLightIDs,
                 gamut: compositionGamut, bridgeID: bridgeID, api: api) {
             case .saved(let owned):
-                compositionTransportByRoom[roomID] = .bridgeStored
                 // Confirmed running — the ledger's standard of evidence
                 // (round 4c). The savedNotConfirmedRunning branch below
                 // deliberately does NOT record: an inert chain is not the
-                // room's running claim.
+                // room's running claim. The record below also raises the
+                // exact `.bridgeStored` transport claim (round 4e).
                 recordBridgeStoredChainOwnership(
                     bridgeID: bridgeID, roomID: roomID, manifestID: owned.id)
                 noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
@@ -5317,8 +5525,10 @@ final class UnifiedOrchestrator {
                 // The resources exist AND are tracked, but nothing is
                 // running. Keep the manifest — it is the exact evidence that
                 // makes them stoppable and recoverable — and say so rather
-                // than claiming the look is playing.
-                compositionTransportByRoom[roomID] = .bridgeStored
+                // than claiming the look is playing. Round 4e: an inert chain
+                // claims NO transport — no exact claim, no ledger entry, and
+                // nothing surfaces in the room aggregate on its account
+                // (round 4c's invariant, now structural).
                 noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
                 return .failed(message: BridgeSaveCopy.savedNotConfirmedRunning)
 
@@ -5406,8 +5616,8 @@ final class UnifiedOrchestrator {
             }
         }
 
-        compositionTransportByRoom[roomID] = .rest
-        compositionRuntimes[roomID] = CompositionRuntime(
+        setCompositionTransportClaim(.rest, for: playbackKey)
+        compositionRuntimes[playbackKey] = CompositionRuntime(
             roomID: roomID,
             roomName: room.name,
             bridgeID: bridgeID,
@@ -5433,8 +5643,8 @@ final class UnifiedOrchestrator {
             lastSentBri: nil,
             lastSentAt: nil
         )
-        if !compositionOrder.contains(roomID) {
-            compositionOrder.append(roomID)
+        if !compositionOrder.contains(playbackKey) {
+            compositionOrder.append(playbackKey)
         }
         // Packet 4: this composition is genuinely REST — its telemetry session
         // becomes refresh-eligible. The Entertainment and bridge-stored returns
@@ -5503,14 +5713,15 @@ final class UnifiedOrchestrator {
             debugLog(
                 "[Composer][Prime] ✅ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) bri=\(String(format: "%.1f", bri)) xy=(\(String(format: "%.4f", xy.x)),\(String(format: "%.4f", xy.y)))"
             )
-            if var runtime = compositionRuntimes[roomID],
+            let primeKey = CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID)
+            if var runtime = compositionRuntimes[primeKey],
                runtime.generation == nextGeneration {
                 runtime.lastSentX = xy.x
                 runtime.lastSentY = xy.y
                 runtime.lastSentBri = bri
                 runtime.sendCount = 1
                 runtime.lastSentAt = CFAbsoluteTimeGetCurrent()
-                compositionRuntimes[roomID] = runtime
+                compositionRuntimes[primeKey] = runtime
             }
         } catch {
             debugLog("[Composer][Prime] ❌ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) error=\(error)")
@@ -5610,9 +5821,12 @@ final class UnifiedOrchestrator {
         // replacement start already cleaned this key — never resurrect.
         guard compositionEntRoomByBridge[bridgeID] == roomID else { return }
         debugLog("[Composer] ⚠ Entertainment session lost for room=\(roomID) — failing over to REST")
-        // Re-entry below records `.rest`; if its guard bails instead, the room
+        // Re-entry below claims `.rest`; if its guard bails instead, the room
         // correctly reads "not running" rather than a phantom `.entertainment`.
-        compositionTransportByRoom.removeValue(forKey: roomID)
+        // Round 4e: withdraw only THIS playback's exact claim — a same-room-id
+        // composition on another bridge keeps its claim and the aggregate.
+        removeCompositionTransportClaim(
+            for: CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID))
         compositionEntParamBoxes.removeValue(forKey: bridgeID)
         compositionEntTasks.removeValue(forKey: bridgeID)   // this task; loop already ended
         compositionEntRoomByBridge.removeValue(forKey: bridgeID)
@@ -5646,7 +5860,8 @@ final class UnifiedOrchestrator {
         // apply-time snapshot that is never re-set — this survives a
         // mid-session failover, which is the case that previously flipped the
         // badge to ROOM with no explanation at all.
-        if let generation = compositionGenerations[roomID] {
+        if let generation = compositionGenerations[
+            CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID)] {
             recordCompositionFallback(
                 sessionKey: ComposerTelemetrySessionKey(
                     bridgeKey: room.bridgeID ?? "legacy",
@@ -6023,20 +6238,26 @@ final class UnifiedOrchestrator {
         }
         refreshComposerCadencePublication(sessionKey: sessionKey)
 
+        // Round 4e: the runtime lookup IS the bridge fence now — the playback
+        // key carries the token's own bridgeKey, so a same-room-id runtime on
+        // another bridge can never absorb this terminal's send state. (The old
+        // `restBridgeIdentity ?? "legacy" == token.bridgeKey` guard became
+        // structural.)
+        let runtimeKey = CompositionPlaybackKey(
+            bridgeKey: token.bridgeKey, roomID: token.scope.roomID)
         guard kind == .completed,
               accepted,
               attemptedOperations > 0,
               failures == 0,
-              var runtime = compositionRuntimes[token.scope.roomID],
-              runtime.generation == token.generation,
-              (runtime.restBridgeIdentity ?? "legacy") == token.bridgeKey
+              var runtime = compositionRuntimes[runtimeKey],
+              runtime.generation == token.generation
         else { return }
         if let sentX { runtime.lastSentX = sentX }
         if let sentY { runtime.lastSentY = sentY }
         if let sentBri { runtime.lastSentBri = sentBri }
         runtime.lastSentAt = terminalAt
         runtime.sendCount += 1
-        compositionRuntimes[token.scope.roomID] = runtime
+        compositionRuntimes[runtimeKey] = runtime
     }
 
     /// The production enqueue sequence, used verbatim by the scheduler AND the
@@ -6327,10 +6548,15 @@ final class UnifiedOrchestrator {
     /// to "legacy", exactly like `restSender(for:)`.
     func stopCompositionMode(roomID: String, bridgeID: String?) async {
         debugLog("[Handoff] Composer stop requested for roomID=\(roomID) bridge=\(bridgeID ?? "legacy")")
-        compositionGenerations[roomID] = (compositionGenerations[roomID] ?? 0) + 1
-        // The ONE identity every teardown step below uses: sender clear,
-        // pending-token cancellation, ledger deactivation, retained-session
-        // removal, and publication removal all key off this exact value.
+        // Round 4e: ONE exact playback identity drives every mutation below.
+        // Only THIS bridge+room's generation is invalidated — bumping a bare
+        // room id used to invalidate another bridge's live same-room-id
+        // runtime, which the scheduler then evicted as stale.
+        let playbackKey = CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)
+        compositionGenerations[playbackKey] = (compositionGenerations[playbackKey] ?? 0) + 1
+        // The ONE identity every telemetry teardown step below uses: sender
+        // clear, pending-token cancellation, ledger deactivation, retained-
+        // session removal, and publication removal all key off this exact value.
         let sessionKey = ComposerTelemetrySessionKey(
             bridgeKey: bridgeID ?? "legacy",
             scope: RestScope(roomID: roomID, owner: .composer))
@@ -6359,9 +6585,20 @@ final class UnifiedOrchestrator {
                 debugLog("[Handoff] ⚠ Bridge did not confirm teardown of \(manifest.id) — retaining for retry")
             }
         }
-        clearBridgeStoredTransportIfUnowned(roomID: roomID)
-        if compositionTransportByRoom[roomID] != .bridgeStored {
-            compositionTransportByRoom.removeValue(forKey: roomID)
+        // Round 4e: withdraw only THIS playback's exact transport claim.
+        // Another bridge's same-room-id claim — and therefore the room's
+        // aggregate entry — survives. A `.bridgeStored` claim is NOT removed
+        // here: it moves with the ownership ledger, which the manifest
+        // retirement above already subtracted from (claim falls only when the
+        // exact bridge+room ownership set emptied — a retained/unconfirmed
+        // manifest keeps it, exactly as it keeps the ledger entry).
+        if let claim = compositionTransportClaims[playbackKey], claim != .bridgeStored {
+            removeCompositionTransportClaim(for: playbackKey)
+        } else {
+            // No live claim of ours to withdraw — still recompute: the
+            // manifest retirement above may have destroyed the last
+            // bridge-stored evidence a retained room label leaned on.
+            recomputeCompositionTransportAggregate(roomID: roomID)
         }
         // Packet 3: clear ONLY this room's Composer scope. Packet 4: on the
         // bridge the CALLER named — the same identity the scheduler enqueues
@@ -6390,9 +6627,17 @@ final class UnifiedOrchestrator {
         // scheduler work, not here.
         try? await Task.sleep(for: .milliseconds(150))
         debugLog("[Handoff] REST scope cleared + settle delay complete for roomID=\(roomID)")
-        // Stop entertainment session for this room's bridge (if any)
-        let stopBridgeID = compositionEntRoomByBridge.first(where: { $0.value == roomID })?.key
-        if let bid = stopBridgeID {
+        // Stop the CALLER'S bridge's entertainment session — and only after
+        // verifying that bridge's session is actually driving this room.
+        // Round 4e: bridge-authoritative selection. The old reverse lookup
+        // (`compositionEntRoomByBridge.first(where: { $0.value == roomID })`)
+        // ignored the caller's bridge and picked by dictionary order, so with
+        // two bridges sharing a room id an exact stop of bridge A could tear
+        // down bridge B's DTLS task, client, and caches. `?? ""` is the
+        // Entertainment maps' own key convention (written at start).
+        let entBridgeKey = bridgeID ?? ""
+        if compositionEntRoomByBridge[entBridgeKey] == roomID {
+            let bid = entBridgeKey
             compositionEntParamBoxes.removeValue(forKey: bid)
             compositionEntTasks[bid]?.cancel()
             compositionEntTasks.removeValue(forKey: bid)
@@ -6405,7 +6650,7 @@ final class UnifiedOrchestrator {
                 studioEntClients.removeValue(forKey: bid)
             }
         }
-        compositionRuntimes.removeValue(forKey: roomID)
+        compositionRuntimes.removeValue(forKey: playbackKey)
         // Packet 4: DEACTIVATION, not merely reset — consume the sender's
         // pending-removal evidence gathered above, record the 0/0 pending
         // cancellation for the exact tracked token if the sender reported one,
@@ -6415,14 +6660,14 @@ final class UnifiedOrchestrator {
         // fresh session with its new runtime generation.
         deactivateComposerTelemetrySession(
             sessionKey: sessionKey, pendingRemovalReported: removedPending)
-        compositionOrder.removeAll { $0 == roomID }
+        compositionOrder.removeAll { $0 == playbackKey }
         if compositionRuntimes.isEmpty {
             compositionSchedulerTask?.cancel()
             compositionSchedulerTask = nil
         }
         await refreshCompositionMicDemand()
         // Re-sync this room's card to the bridge's confirmed state — while the
-        // composition ran, its SSE echoes were suppressed (appDrivenGroupIDs), so
+        // composition ran, its SSE echoes were suppressed (isAppDrivenGroup), so
         // the card is frozen at its pre-composition color until a refresh lands.
         scheduleStateRefresh()
         debugLog("[Handoff] Composer teardown complete for roomID=\(roomID)")
@@ -6471,16 +6716,19 @@ final class UnifiedOrchestrator {
             refreshAllActiveComposerCadencePublications()
 
             let now = CFAbsoluteTimeGetCurrent()
-            guard let roomID = nextCompositionRoomPriority(now: now),
-                  let runtime = compositionRuntimes[roomID] else {
+            guard let playbackKey = nextCompositionRoomPriority(now: now),
+                  let runtime = compositionRuntimes[playbackKey] else {
                 try? await Task.sleep(for: tickInterval)
                 continue
             }
+            let roomID = playbackKey.roomID
 
-            // Generation guard — don't send for stale/stopped rooms
-            guard compositionGenerations[roomID] == runtime.generation else {
-                compositionRuntimes.removeValue(forKey: roomID)
-                compositionOrder.removeAll { $0 == roomID }
+            // Generation guard — don't send for stale/stopped playbacks.
+            // Round 4e: keyed exactly, so a stop on one bridge can only ever
+            // evict its own bridge's same-room-id runtime here.
+            guard compositionGenerations[playbackKey] == runtime.generation else {
+                compositionRuntimes.removeValue(forKey: playbackKey)
+                compositionOrder.removeAll { $0 == playbackKey }
                 continue
             }
 
@@ -6681,22 +6929,22 @@ final class UnifiedOrchestrator {
             // writing back the pre-enqueue copy: a fast completion may have
             // already recorded its bookkeeping during the await above, and a
             // stale whole-struct write would erase it.
-            if var current = compositionRuntimes[roomID],
+            if var current = compositionRuntimes[playbackKey],
                current.generation == runtime.generation {
                 current.nextDueAt = now + 0.12
-                compositionRuntimes[roomID] = current
+                compositionRuntimes[playbackKey] = current
             }
 
             try? await Task.sleep(for: tickInterval)
         }
     }
 
-    private func nextCompositionRoomPriority(now: CFAbsoluteTime) -> String? {
-        var selectedRoomID: String?
+    private func nextCompositionRoomPriority(now: CFAbsoluteTime) -> CompositionPlaybackKey? {
+        var selectedKey: CompositionPlaybackKey?
         var selectedScore: Double = -.greatestFiniteMagnitude
 
-        for roomID in compositionOrder {
-            guard let runtime = compositionRuntimes[roomID] else { continue }
+        for playbackKey in compositionOrder {
+            guard let runtime = compositionRuntimes[playbackKey] else { continue }
             guard let score = CompositionRoomPriorityScorer.score(
                 now: now,
                 input: .init(
@@ -6714,11 +6962,11 @@ final class UnifiedOrchestrator {
 
             if score > selectedScore {
                 selectedScore = score
-                selectedRoomID = roomID
+                selectedKey = playbackKey
             }
         }
 
-        return selectedRoomID
+        return selectedKey
     }
 
     private func resolveCompositionGamut(for room: RoomDisplayItem, api: HueAPIClient) async -> HueColorUtils.Gamut {
@@ -6841,6 +7089,7 @@ final class UnifiedOrchestrator {
         compositionSchedulerTask?.cancel()
         compositionSchedulerTask = nil
         compositionRuntimes.removeAll()
+        compositionOrder.removeAll()
         widgetWriteTask?.cancel()
         clients.removeAll()
         commandGates.removeAll()
@@ -7937,12 +8186,14 @@ final class UnifiedOrchestrator {
     /// - the live Now Playing row for exactly this bridge + room is removed
     ///   only when that ownership set emptied — another bridge's row for the
     ///   same room id is out of reach by key, recovered rows by construction;
-    /// - the roomID-keyed transport entry is aggregate state shared across
-    ///   bridges: it clears only when NOTHING still claims the room — no
-    ///   bridge's ownership entry, no manifest of any bridge (an ambiguous
-    ///   legacy manifest counts: unattributable identity fails closed), no
-    ///   recovered animation — excluding `retainedManifestIDs`, because a
-    ///   just-saved inert chain is not the room's playing look.
+    /// - transport (round 4e): only THIS bridge+room's exact `.bridgeStored`
+    ///   claim falls, and only when its ownership set emptied. The roomID-keyed
+    ///   entry is a display aggregate recomputed from the surviving exact
+    ///   claims — another bridge's claim keeps it alive — with the round-4c
+    ///   fail-closed rule intact: standing bridge-stored evidence (any bridge's
+    ///   manifest — an ambiguous legacy manifest counts — or a recovered
+    ///   animation) retains the label, excluding `retainedManifestIDs`, because
+    ///   a just-saved inert chain is not the room's playing look.
     private func withdrawDestroyedBridgeStoredClaims(
         bridgeID: String, roomID: String,
         destroyedManifestIDs: Set<UUID>, retainedManifestIDs: Set<UUID> = []
@@ -7958,14 +8209,18 @@ final class UnifiedOrchestrator {
         }
         if bridgeStoredChainOwnership[key] == nil {
             removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
-        }
-        let roomStillClaimed = bridgeStoredChainOwnership.keys.contains { $0.roomID == roomID }
-            || recoveredBridgeAnimations.values.contains { $0.manifest.roomID == roomID }
-            || bridgeAnimationStore.allManifests().contains {
-                $0.roomID == roomID && !retainedManifestIDs.contains($0.id)
+            // Round 4e: the exact transport claim falls WITH the emptied
+            // ownership set — only this bridge+room's `.bridgeStored` claim,
+            // so another bridge's same-room-id claim (and therefore the
+            // room aggregate) survives. The recompute inside applies the
+            // round-4c fail-closed evidence rule, excluding the just-saved
+            // inert manifests that are not the room's playing look.
+            let playbackKey = CompositionPlaybackKey(
+                bridgeKey: key.bridgeKey, roomID: key.roomID)
+            if compositionTransportClaims[playbackKey] == .bridgeStored {
+                removeCompositionTransportClaim(
+                    for: playbackKey, retainedManifestIDs: retainedManifestIDs)
             }
-        if !roomStillClaimed, compositionTransportByRoom[roomID] == .bridgeStored {
-            compositionTransportByRoom.removeValue(forKey: roomID)
         }
     }
 
@@ -8204,17 +8459,19 @@ final class UnifiedOrchestrator {
             // its head, done at the tail instead, where failure can no longer
             // reach it.
             let roomID = room.id
-            let nextGeneration = (compositionGenerations[roomID] ?? 0) + 1
-            compositionGenerations[roomID] = nextGeneration
+            let playbackKey = CompositionPlaybackKey(
+                bridgeID: room.bridgeID, roomID: roomID)
+            let nextGeneration = (compositionGenerations[playbackKey] ?? 0) + 1
+            compositionGenerations[playbackKey] = nextGeneration
             beginComposerTelemetrySession(
                 sessionKey: ComposerTelemetrySessionKey(
                     bridgeKey: room.bridgeID ?? "legacy",
                     scope: RestScope(roomID: roomID, owner: .composer)),
                 generation: nextGeneration)
-            compositionTransportByRoom[roomID] = .bridgeStored
             // Confirmed running — the ownership ledger's standard of
             // evidence (round 4c). This is the strict save's ONLY ledger
-            // write; savedNotConfirmedRunning below never records.
+            // write; savedNotConfirmedRunning below never records. The record
+            // also raises the exact `.bridgeStored` transport claim (4e).
             recordBridgeStoredChainOwnership(
                 bridgeID: bridgeID, roomID: roomID, manifestID: owned.id)
             noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
@@ -8332,10 +8589,16 @@ final class UnifiedOrchestrator {
     /// write that never landed — and this keeps that right expressed in one
     /// place rather than scattered across four.
     private func forgetManifestRecord(id: UUID) {
+        let roomID = bridgeAnimationStore.manifest(id: id)?.roomID
         bridgeAnimationStore.remove(id: id)
         // The evidence is gone, so no ownership claim may outlive it (round
         // 4c). Exact by manifest id — no other chain on any key is touched.
         subtractBridgeStoredChainOwnership(manifestID: id)
+        // Round 4e: destroyed evidence may have been the only thing keeping a
+        // retained room label alive — recompute the display aggregate.
+        if let roomID {
+            recomputeCompositionTransportAggregate(roomID: roomID)
+        }
     }
 
     /// Every bridge this app can actually reach, in stable id order.

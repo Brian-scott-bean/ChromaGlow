@@ -50,7 +50,15 @@
 #              commit path), the shared save-outcome mailbox stays dead
 #              (bridgeSaveRequestID replaces it), and the Clean Bridge
 #              confirmation speaks only about its FROZEN id — never the live
-#              re-resolution.
+#              re-resolution. Round 4c (j): bridge-stored cleanup is exact
+#              identity (ownership ledger + one shared withdraw). Round 4d
+#              (k): the exact stop target survives the Now Playing handoff
+#              and removed-group teardown matches recorded bridge+room.
+#              Round 4e (l): the LIVE runtime authority is exactly keyed —
+#              CompositionPlaybackKey runtimes/generations/order, exact
+#              transport claims (inert saves claim nothing), bridge-
+#              authoritative Entertainment teardown, and bridge+room-exact
+#              SSE suppression.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -795,6 +803,67 @@ fi
 hc_removed_ids=$(grep -c 'RemovedGroupIdentity(bridgeID:' "$HC_ORCH" 2>/dev/null || echo 0)
 if [[ "$hc_removed_ids" -lt 3 ]]; then
     fail "composer-hardware-convergence" "expected bridge removal + room delete + zone delete to pass exact RemovedGroupIdentity values (>=3 sites), found $hc_removed_ids"
+fi
+
+# (l, round 4e) The LIVE runtime authority is exactly keyed. Rounds 4c/4d
+# made the presentation and the destructive bridge-stored cleanup exact while
+# the real playback runtime stayed room-id-keyed: the second same-room-id
+# start silently overwrote the first bridge's runtime, and an exact stop of
+# bridge A could invalidate bridge B's generation, evict B from the
+# scheduler, or tear down B's Entertainment session picked by dictionary
+# order. These pins keep the runtime authority — not just the rows — keyed
+# by CompositionPlaybackKey.
+if ! grep -q 'struct CompositionPlaybackKey' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "CompositionPlaybackKey is gone — the runtime authority would fall back to bare room ids"
+fi
+for sym in 'compositionGenerations: \[CompositionPlaybackKey: Int\]' \
+           'compositionRuntimes: \[CompositionPlaybackKey: CompositionRuntime\]' \
+           'compositionOrder: \[CompositionPlaybackKey\]' \
+           'compositionTransportClaims: \[CompositionPlaybackKey: CompositionTransport\]'; do
+    if ! grep -qE "$sym" "$HC_ORCH"; then
+        fail "composer-hardware-convergence" "'$sym' is missing — a runtime structure lost its exact playback key"
+    fi
+done
+hc_bare_keys=$(grep -nE 'compositionGenerations: \[String:|compositionRuntimes: \[String:|compositionOrder: \[String\]' "$HC_ORCH" 2>/dev/null \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_bare_keys" ]]; then
+    fail "composer-hardware-convergence" $'a composition runtime structure is keyed by bare room id again:\n'"$hc_bare_keys"
+fi
+hc_stop_comp_body=$(awk '/func stopCompositionMode\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+hc_stop_room_keyed=$(echo "$hc_stop_comp_body" | grep -nE 'compositionRuntimes\.removeValue\(forKey: roomID\)|compositionGenerations\[roomID\]|compositionEntRoomByBridge\.first\(where:' || true)
+if [[ -n "$hc_stop_room_keyed" ]]; then
+    fail "composer-hardware-convergence" $'stopCompositionMode mutates by bare room id or picks an Entertainment bridge by dictionary order — an exact stop of one bridge would destroy the other bridge\047s same-room-id runtime:\n'"$hc_stop_room_keyed"
+fi
+if ! echo "$hc_stop_comp_body" | grep -q 'compositionEntRoomByBridge\[entBridgeKey\] == roomID'; then
+    fail "composer-hardware-convergence" "stopCompositionMode no longer verifies the CALLER's bridge owns the room before Entertainment teardown"
+fi
+if ! echo "$hc_stop_comp_body" | grep -q 'removeCompositionTransportClaim('; then
+    fail "composer-hardware-convergence" "stopCompositionMode does not withdraw the exact transport claim — another bridge's same-room-id claim would fall with it"
+fi
+if ! grep -q 'func recomputeCompositionTransportAggregate(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the transport aggregate recompute is gone — the room-only map would become writable authority again"
+fi
+# An inert saved-not-confirmed chain may never create a transport claim.
+hc_snc_arms=$(awk '/case \.savedNotConfirmedRunning/,/return \./' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+hc_snc_claims=$(echo "$hc_snc_arms" | grep -nE 'setCompositionTransportClaim\(|compositionTransportByRoom\[[^]]*\][[:space:]]*=' || true)
+if [[ -n "$hc_snc_claims" ]]; then
+    fail "composer-hardware-convergence" $'a savedNotConfirmedRunning arm writes a transport claim — an inert chain is not the room\047s look:\n'"$hc_snc_claims"
+fi
+# SSE suppression is bridge+room exact — never a rebuilt room-id set.
+if ! grep -q 'func isAppDrivenGroup(bridgeID:' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the exact SSE-suppression predicate is missing — suppression would conflate bridges sharing a room id"
+fi
+hc_sse_room_set=$(grep -nE 'appDrivenGroupIDs|compositionRuntimes\.keys\.map\(\\?\.roomID\)' "$HC_ORCH" 2>/dev/null \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_sse_room_set" ]]; then
+    fail "composer-hardware-convergence" $'a room-id-only app-driven suppression set is back — bridge A\047s composition would suppress bridge B\047s legitimate SSE:\n'"$hc_sse_room_set"
+fi
+hc_sse_body=$(awk '/func applySSEEvent\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if ! echo "$hc_sse_body" | grep -q 'isAppDrivenGroup(bridgeID: bridgeID'; then
+    fail "composer-hardware-convergence" "applySSEEvent does not pass the event's bridge into the suppression check"
 fi
 
 # No timing waits in the suites that carry this slice's behaviour.
