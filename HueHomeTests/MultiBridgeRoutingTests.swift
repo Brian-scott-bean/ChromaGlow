@@ -11813,4 +11813,191 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
             "no action=stop reached the bridge — the stale caller had nothing to stop")
     }
+
+    /// Two streamable bridges, each with its own single area, driven over the
+    /// stubbed DTLS transport — the production start path end to end, with
+    /// only the socket replaced. This is the staging the whole 4g slice is
+    /// about: nothing before it ever started streaming on bridge A and then
+    /// on bridge B through the view model.
+    private func armDualBridgeStreaming() -> StudioViewModel {
+        orchestrator.injectForTesting(entertainmentClientConfigurator: { client in
+            await client.testEnableStubTransport()
+        })
+        stageStreamableBridge(bridgeA, areaID: "area-a")
+        stageStreamableBridge(bridgeB, areaID: "area-b")
+        return makeP7VM()
+    }
+
+    /// Exact stops for both rooms, so no engine loop outlives its test.
+    private func stopBothStreams(_ vm: StudioViewModel) async {
+        await vm.stopFromNowPlaying(UnifiedOrchestrator.LiveEffectStopTarget(
+            bridgeID: "bridge-a", roomID: streamRoomOnA().id, turnOffLights: false))
+        await vm.stopFromNowPlaying(UnifiedOrchestrator.LiveEffectStopTarget(
+            bridgeID: "bridge-b", roomID: streamRoomOnB().id, turnOffLights: false))
+    }
+
+    /// HCS-35 — THE hardware defect: starting an Entertainment effect on a
+    /// second bridge must leave the first bridge's stream running. Both
+    /// bridges stream simultaneously; bridge A receives no action=stop of any
+    /// kind.
+    func testStartingEntertainmentOnASecondBridgeLeavesTheFirstBridgesStreamRunning() async throws {
+        let vm = armDualBridgeStreaming()
+        let party = try streamingCard(vm)
+
+        await vm.apply(party, roomOverride: streamRoomOnA(), preferEntertainmentOverride: true)
+        XCTAssertEqual(bridgeA.entertainmentStarts, ["area-a"],
+            "precondition: A is streaming (status: \(vm.statusMessage))")
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        XCTAssertTrue(bridgeA.entertainmentStops.isEmpty,
+            "no action=stop reached bridge A — its stream was not ChromaGlow's to take")
+        XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"],
+            "…while B genuinely started (status: \(vm.statusMessage))")
+        let rowA = try XCTUnwrap(vm.runningEffect(forRoomID: streamRoomOnA().id),
+            "A's row survives B's start")
+        let rowB = try XCTUnwrap(vm.runningEffect(forRoomID: streamRoomOnB().id),
+            "…and B's row exists beside it")
+        XCTAssertTrue(rowA.isEntertainment && rowB.isEntertainment,
+            "both rows are genuine Entertainment transport, not a silent REST demotion")
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-a"),
+            "A's session client is still installed")
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+            "…alongside B's — one session per bridge, simultaneously")
+        XCTAssertNotNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-a"))
+        XCTAssertNotNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-b"))
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: streamRoomOnA().id),
+            "A's Now Playing row survives")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: streamRoomOnB().id),
+            "…beside B's")
+
+        await stopBothStreams(vm)
+    }
+
+    /// HCS-36 — stopping one bridge's stream leaves the other bridge's stream
+    /// completely untouched: no stop request, no cancellation, no lost row.
+    func testStoppingOneBridgesStreamLeavesTheOtherBridgesStreamUntouched() async throws {
+        let vm = armDualBridgeStreaming()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnA(), preferEntertainmentOverride: true)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnA().id), "precondition: A streams")
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id), "precondition: B streams")
+
+        await vm.stopFromNowPlaying(UnifiedOrchestrator.LiveEffectStopTarget(
+            bridgeID: "bridge-a", roomID: streamRoomOnA().id, turnOffLights: false))
+
+        // A fell, exactly and completely.
+        XCTAssertEqual(bridgeA.entertainmentStops, ["area-a"],
+            "A's stop reached A's bridge, once, for the exact area")
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnA().id), "A's row is gone")
+        XCTAssertFalse(orchestrator.testHasEntertainmentClient(forBridge: "bridge-a"),
+            "A's session client was released")
+        XCTAssertFalse(orchestrator.testHasStudioEngineTask(forBridge: "bridge-a"),
+            "A's engine runtime is gone")
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: streamRoomOnA().id))
+
+        // B never learns any of it happened.
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "no action=stop of any kind reached bridge B")
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id), "B's row survives")
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+            "B's session client remains")
+        XCTAssertEqual(orchestrator.testStudioEngineTaskIsCancelled(forBridge: "bridge-b"), false,
+            "B's render loop was not cancelled")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: streamRoomOnB().id))
+
+        await vm.stopFromNowPlaying(UnifiedOrchestrator.LiveEffectStopTarget(
+            bridgeID: "bridge-b", roomID: streamRoomOnB().id, turnOffLights: false))
+    }
+
+    /// HCS-37 — same-bridge exclusivity is PRESERVED: a second streaming room
+    /// on the SAME bridge replaces the previous one (app-driven over
+    /// app-driven is the surface's own promptless replacement — the handoff
+    /// question belongs to the composition↔studio crossings), the bridge's
+    /// one engine slot moves to the new room, and the shared configuration is
+    /// never stopped out from under its successor — `sendBestEffortStop`'s
+    /// final-owner rule keeps the stream alive across the handover.
+    func testSameBridgeReplacementStillStopsThePreviousSessionFirst() async throws {
+        let vm = armDualBridgeStreaming()
+        let party = try streamingCard(vm)
+        let roomB2 = streamRoomOnB(id: "room-b2")
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id), "precondition: B streams")
+
+        await vm.apply(party, roomOverride: roomB2, preferEntertainmentOverride: true)
+
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
+            "the replaced room's row is gone — one streaming look per bridge, still")
+        XCTAssertNotNil(vm.runningEffect(forRoomID: roomB2.id),
+            "the new room's stream runs (status: \(vm.statusMessage))")
+        XCTAssertEqual(orchestrator.testStudioEngineRuntimeRoom(forBridge: "bridge-b"), roomB2.id,
+            "bridge B's one engine slot belongs to the new room")
+        XCTAssertEqual(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-b")?.roomID,
+                       roomB2.id,
+            "…and so does the session owner record")
+        XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b", "area-b"],
+            "each start activated the area for itself")
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "the shared configuration was never stopped — the successor holds it, and a stop would black out its own stream")
+
+        await vm.stopFromNowPlaying(UnifiedOrchestrator.LiveEffectStopTarget(
+            bridgeID: "bridge-b", roomID: roomB2.id, turnOffLights: false))
+        XCTAssertEqual(bridgeB.entertainmentStops, ["area-b"],
+            "…while the FINAL owner's explicit stop does reach the bridge")
+    }
+
+    /// HCS-38 — with two bridges streaming the same card, a slider edit lands
+    /// on the SELECTED room's bridge and only there, in both directions.
+    func testStudioParamEditsRouteOnlyToTheSelectedRoomsBridgeBox() async throws {
+        let vm = armDualBridgeStreaming()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnA(), preferEntertainmentOverride: true)
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        vm.selectedRoom = streamRoomOnA()
+        vm.setParamValue(for: party.id, paramID: "speed", value: 97)
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 97,
+            "the edit landed on the selected room's bridge")
+
+        vm.selectedRoom = streamRoomOnB()
+        vm.setParamValue(for: party.id, paramID: "speed", value: 12)
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-b")?["speed"], 12,
+            "selecting the other room routes to the other bridge")
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 97,
+            "…without touching the first bridge's live box")
+
+        vm.selectedRoom = streamRoomOnA()
+        vm.setParamValue(for: party.id, paramID: "speed", value: 33)
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 33,
+            "…and back again")
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-b")?["speed"], 12,
+            "isolation holds in both directions")
+
+        await stopBothStreams(vm)
+    }
+
+    /// HCS-39 — the starvation half of the defect, pinned separately: bridge
+    /// B's start must not cancel bridge A's render loop. A cancelled loop
+    /// stops feeding frames, the bridge times the session out (~10s), and the
+    /// app goes on showing a live row — the exact on-device symptom.
+    func testStartingOnASecondBridgeDoesNotCancelTheFirstBridgesRenderLoop() async throws {
+        let vm = armDualBridgeStreaming()
+        let party = try streamingCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnA(), preferEntertainmentOverride: true)
+        let boxBefore = orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")
+        XCTAssertNotNil(boxBefore, "precondition: A's runtime and box are installed")
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        XCTAssertEqual(orchestrator.testStudioEngineTaskIsCancelled(forBridge: "bridge-a"), false,
+            "A's render loop is alive — no cancellation, no frame starvation")
+        XCTAssertEqual(orchestrator.testStudioEngineRuntimeRoom(forBridge: "bridge-a"),
+                       streamRoomOnA().id,
+            "…and still belongs to A's room")
+        XCTAssertNotNil(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a"),
+            "…with its live box still installed")
+
+        await stopBothStreams(vm)
+    }
 }

@@ -65,7 +65,13 @@
 #              destroys it, Studio consumes the typed outcome and
 #              revalidates the presentation fence before every row/box
 #              removal, and invalid-fence copy stays neutral (no emptiness
-#              claim, no unproven active-playback claim).
+#              claim, no unproven active-playback claim). Round 4g (n): the
+#              app-driven engine runtime (loop task, live param box, Studio
+#              REST scope) is keyed by BRIDGE — the global slots whose
+#              teardown let a start on bridge 2 stop bridge 1's stream may
+#              not return, apply's teardown loops carry the same-bridge
+#              predicate, and the app-driven stop verifies exact bridge+room
+#              ownership before cancelling anything.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -967,6 +973,44 @@ if ! echo "$hc_apply_save" | grep -q 'previousLookRemovedSaveFailedPlaybackChang
 fi
 if grep -qE 'case previousLookRemovedSaveFailed\(bridgeID: String, reason' "$HC_ORCH"; then
     fail "composer-hardware-convergence" "previousLookRemovedSaveFailed carries a precomputed reason again — the emptiness claim would be frozen before the continuation gap it cannot see across"
+fi
+
+# (n, round 4g) One app-driven engine per BRIDGE. The hardware pass proved
+# the defect: the engine task, live param box, and Studio REST scope were
+# single global slots, and StudioViewModel.apply stopped every streaming row
+# on every bridge before a start — so starting Entertainment on bridge 2
+# stopped bridge 1's stream. The per-bridge maps must stay, the dead global
+# symbols may not return, the VM's teardown loops must keep their same-bridge
+# predicate, and the app-driven stop must keep proving exact bridge+room
+# ownership before it cancels or removes anything.
+for sym in 'studioEngineRuntimesByBridge: [String: StudioEngineRuntime]' \
+           'studioRestScopesByBridge: [String: RestScope]' \
+           'func updateStudioParams(values: [String: Double], colors: [String: Color], bridgeID: String?)'; do
+    if ! grep -qF "$sym" "$HC_ORCH"; then
+        fail "composer-hardware-convergence" "'$sym' is missing from $HC_ORCH — the per-bridge app-driven engine runtime collapsed back toward a global slot"
+    fi
+done
+hc_global_slots=$(grep -nE 'activeStudioTask|activeParamBox|activeStudioRestScope' "$HC_ORCH" "$HC_VM" \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_global_slots" ]]; then
+    fail "composer-hardware-convergence" $'a dead global studio slot symbol is back — one bridge\'s start could again destroy another bridge\'s runtime:\n'"$hc_global_slots"
+fi
+hc_unscoped_ent_loop=$(grep -nE 'in runningEffects where effect\.isEntertainment' "$HC_VM" \
+    | grep -v 'rowKey.bridgeID == room.bridgeID' || true)
+if [[ -n "$hc_unscoped_ent_loop" ]]; then
+    fail "composer-hardware-convergence" $'apply\'s entertainment teardown loop lost its same-bridge predicate — starting on one bridge would stop every bridge\'s stream again:\n'"$hc_unscoped_ent_loop"
+fi
+hc_bridge_predicates=$(grep -c 'rowKey.bridgeID == room.bridgeID' "$HC_VM" || true)
+if [[ "$hc_bridge_predicates" -lt 3 ]]; then
+    fail "composer-hardware-convergence" "expected the same-bridge predicate on all three of apply's teardown loops (engine-singleton, entertainment, light-overlap), found $hc_bridge_predicates"
+fi
+hc_appstop_body=$(awk '/func stopAppDrivenStudioEffect\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if ! echo "$hc_appstop_body" | grep -q 'runtime.roomID == roomID'; then
+    fail "composer-hardware-convergence" "stopAppDrivenStudioEffect no longer verifies the runtime's owning room before cancelling — a stale stop could kill a newer same-bridge effect's loop"
+fi
+if ! echo "$hc_appstop_body" | grep -q 'studioEngineRuntimesByBridge\[bid\] == nil'; then
+    fail "composer-hardware-convergence" "stopAppDrivenStudioEffect no longer checks for a newer runtime across its settle suspension — a stale stop could tear down a successor's session"
 fi
 
 # No timing waits in the suites that carry this slice's behaviour.

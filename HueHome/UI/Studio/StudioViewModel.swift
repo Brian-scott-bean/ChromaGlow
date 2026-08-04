@@ -2261,8 +2261,12 @@ final class StudioViewModel {
             }
         }
 
-        // ── Studio engine is singleton in orchestrator for app-driven cards. ────────
-        // Composition now runs per-room and can coexist across rooms.
+        // ── Studio engine is one slot PER BRIDGE for app-driven cards (round 4g). ──
+        // Composition runs per-room and can coexist across rooms. Only a
+        // SAME-BRIDGE app-driven effect is replaced here: the orchestrator
+        // keys the engine runtime by bridge, so another bridge's loop is not
+        // this start's to stop — that cross-bridge stop is exactly the
+        // hardware-confirmed "bridge 2 kills bridge 1's stream" defect.
         let newUsesStudioEngine: Bool = {
             switch card.strategy {
             case .appDriven: return true
@@ -2270,7 +2274,8 @@ final class StudioViewModel {
             }
         }()
         if newUsesStudioEngine {
-            for (rowKey, effect) in runningEffects where rowKey != RoomEffectKey(room: room) {
+            for (rowKey, effect) in runningEffects
+            where rowKey != RoomEffectKey(room: room) && rowKey.bridgeID == room.bridgeID {
                 let effectUsesStudioEngine: Bool = {
                     switch effect.card.strategy {
                     case .appDriven: return true
@@ -2278,16 +2283,21 @@ final class StudioViewModel {
                     }
                 }()
                 guard effectUsesStudioEngine else { continue }
-                debugLog("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (single Studio engine loop)")
+                debugLog("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (one Studio engine loop per bridge)")
                 isExplicitStop = false
                 await stopEffect(on: rowKey)
             }
         }
 
-        // ── If new card is entertainment-scoped, stop any existing entertainment effect ──
+        // ── If new card is entertainment-scoped, stop any existing SAME-BRIDGE
+        // entertainment effect. One DTLS session per BRIDGE is the real Hue
+        // constraint — different bridges stream independently and
+        // simultaneously, and another bridge's session must survive this
+        // start untouched (round 4g).
         if card.isEntertainmentScoped {
-            for (rowKey, effect) in runningEffects where effect.isEntertainment {
-                debugLog("[Studio] Stopping entertainment '\(effect.card.name)' on \(effect.room.name) (only one DTLS session allowed)")
+            for (rowKey, effect) in runningEffects
+            where effect.isEntertainment && rowKey.bridgeID == room.bridgeID {
+                debugLog("[Studio] Stopping entertainment '\(effect.card.name)' on \(effect.room.name) (one DTLS session per bridge)")
                 isExplicitStop = false
                 await stopEffect(on: rowKey)
             }
@@ -2302,7 +2312,11 @@ final class StudioViewModel {
 
         if !newLightIDs.isEmpty {
             let newLightSet = Set(newLightIDs)
-            for (rowKey, effect) in runningEffects {
+            // Same-bridge rows only (round 4g): light ids are BRIDGE-LOCAL,
+            // so an id match against another bridge's row is a coincidence of
+            // numbering, not a shared bulb — and stopping on it is another
+            // route to the cross-bridge teardown this round removes.
+            for (rowKey, effect) in runningEffects where rowKey.bridgeID == room.bridgeID {
                 let overlap = Set(effect.lightIDs).intersection(newLightSet)
                 if !overlap.isEmpty {
                     debugLog("[Handoff] Light overlap detected: \(overlap.count) lights shared with \(effect.room.name) — awaiting teardown barrier")
