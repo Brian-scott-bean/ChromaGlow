@@ -747,6 +747,28 @@ if ! grep -q 'func verifyAndCommitEntertainment(' "$HC_ORCH"; then
     fail "composer-hardware-convergence" "verifyAndCommitEntertainment is missing — commits would no longer be preceded by the final fresh-read + session-health verification"
 fi
 
+# (j, round 4c) Bridge-stored cleanup is exact identity, never room-id-only.
+# The ownership ledger (bridge + room → manifest ids) is the sole destructive
+# proof, one shared withdraw rule serves both the save failures and the exact
+# Stop, and the round-4b room-id-only clearing may not grow back.
+if grep -rq 'clearStaleBridgeStoredClaims' HueHome/; then
+    fail "composer-hardware-convergence" "clearStaleBridgeStoredClaims is back — room-id-only clearing erases another bridge's same-room-id claims"
+fi
+if ! grep -q 'bridgeStoredChainOwnership' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the exact bridge-stored ownership ledger is gone — destructive predecessor proof would fall back to the roomID-keyed transport map"
+fi
+if ! grep -q 'private func withdrawDestroyedBridgeStoredClaims(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "withdrawDestroyedBridgeStoredClaims is missing — save and stop cleanup would diverge again"
+fi
+hc_stop_body=$(awk '/func stopSavedBridgeLook\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if ! echo "$hc_stop_body" | grep -q 'withdrawDestroyedBridgeStoredClaims('; then
+    fail "composer-hardware-convergence" "stopSavedBridgeLook no longer routes through the shared exact withdraw — stopping bridge B's manifest could unlabel bridge A's same-room-id chain"
+fi
+if echo "$hc_save_body" | grep -q 'hadBridgeStoredClaim'; then
+    fail "composer-hardware-convergence" "saveLookToBridge reads the room-id-only transport claim as ownership proof again — bridge A's claim must never lend destructive authority to a save on bridge B"
+fi
+
 # No timing waits in the suites that carry this slice's behaviour.
 HC_TESTS=(
     "HueHomeTests/MultiBridgeRoutingTests.swift"

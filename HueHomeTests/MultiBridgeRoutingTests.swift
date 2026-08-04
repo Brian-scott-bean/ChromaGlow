@@ -1006,7 +1006,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         vm.configure(orchestrator: orchestrator)
         let compositionRoom = roomOnBridgeB(id: owningRoomID, name: "Aurora Room")
         let compositionCard = vm.studioCard(for: makePreset(named: "Aurora Drift"))
-        vm.runningEffects[owningRoomID] = RunningEffect(
+        vm.runningEffects[RoomEffectKey(room: compositionRoom)] = RunningEffect(
             cardID: compositionCard.id, card: compositionCard, room: compositionRoom,
             lightIDs: [], isEntertainment: true,
             requestedTransport: .entertainmentArea, transportFallback: false
@@ -1037,9 +1037,9 @@ final class MultiBridgeRoutingTests: XCTestCase {
         // …and nothing may have moved yet.
         XCTAssertEqual(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"),
                        "room-b-composer", "the session must survive an unanswered prompt")
-        XCTAssertNotNil(vm.runningEffects["room-b-composer"],
+        XCTAssertNotNil(vm.runningEffect(forRoomID: "room-b-composer"),
                         "the composition must still be registered as playing")
-        XCTAssertNil(vm.runningEffects["room-b"], "Studio must not have started")
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-b"), "Studio must not have started")
         XCTAssertTrue(bridgeB.groupedStateIDs.isEmpty && bridgeB.groupedEffectIDs.isEmpty,
                       "no bridge traffic may precede the user's answer")
     }
@@ -1057,8 +1057,8 @@ final class MultiBridgeRoutingTests: XCTestCase {
                        "room-b-composer", "cancel must not release ownership")
         XCTAssertEqual(orchestrator.compositionTransportByRoom["room-b-composer"], .entertainment,
                        "cancel must not touch transport bookkeeping")
-        XCTAssertNotNil(vm.runningEffects["room-b-composer"], "the composition keeps playing")
-        XCTAssertNil(vm.runningEffects["room-b"], "the Studio card must not have started")
+        XCTAssertNotNil(vm.runningEffect(forRoomID: "room-b-composer"), "the composition keeps playing")
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-b"), "the Studio card must not have started")
         XCTAssertTrue(bridgeB.groupedStateIDs.isEmpty && bridgeB.groupedEffectIDs.isEmpty,
                       "cancel means no writes reached the bridge")
     }
@@ -1077,9 +1077,9 @@ final class MultiBridgeRoutingTests: XCTestCase {
                      "confirm must clear Entertainment ownership — a stopped composition cannot keep the session")
         XCTAssertNil(orchestrator.compositionTransportByRoom["room-b-composer"],
                      "the official stop path clears transport truth; a leftover entry is the orphaned-loop signature")
-        XCTAssertNil(vm.runningEffects["room-b-composer"],
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-b-composer"),
                      "the composition must leave the Now-Playing registry")
-        XCTAssertEqual(vm.runningEffects["room-b"]?.cardID, "ambient",
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-b")?.cardID, "ambient",
                        "…and only then does the requested Studio look start")
         XCTAssertTrue(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-b"),
                       "the bridge is genuinely free afterwards — ownership and live state agree")
@@ -1100,7 +1100,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(vm.entertainmentHandoffPrompt)
         XCTAssertEqual(vm.runningEffects.count, 1,
                        "exactly one effect survives — no double start, no resurrected composition")
-        XCTAssertEqual(vm.runningEffects["room-b"]?.cardID, "ambient")
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-b")?.cardID, "ambient")
         XCTAssertNil(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"))
     }
 
@@ -1146,7 +1146,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertNil(vm.entertainmentHandoffPrompt,
                      "bridge B's owner may not gate playback on bridge A — that is the lockout defect wearing a prompt")
-        XCTAssertEqual(vm.runningEffects["room-a"]?.cardID, "ambient", "it just starts")
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-a")?.cardID, "ambient", "it just starts")
         XCTAssertEqual(orchestrator.compositionOwningEntertainment(onBridge: "bridge-b"),
                        "room-b-composer", "and bridge B is untouched")
     }
@@ -1161,7 +1161,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertNil(vm.entertainmentHandoffPrompt,
                      "no owner, no conflict — the prompt must not become a tax on ordinary taps")
-        XCTAssertEqual(vm.runningEffects["room-b"]?.cardID, "ambient")
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-b")?.cardID, "ambient")
     }
 
     // ──────────────────────────────────────────────
@@ -4469,7 +4469,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(orchestrator.testIsAllDayWriteAllowed(
             bridgeID: "bridge-a", roomID: "room-1"),
             "so All-Day may resume for that room")
-        XCTAssertNil(vm.runningEffects["room-1"],
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-1"),
             "and nothing was registered as running")
     }
 
@@ -4488,7 +4488,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             nothing is running after an unsupported verdict, so the room must \
             not stay suppressed from All-Day
             """)
-        XCTAssertNil(vm.runningEffects["room-1"])
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-1"))
         XCTAssertTrue(bridgeA.groupedStateIDs.contains("gl-room-1"),
             "the group-on that preceded the verdict still happened")
     }
@@ -4505,7 +4505,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             [ownershipKey("room-1", "bridge-a")],
             "exactly one claim survives a successful start")
         XCTAssertEqual(
-            vm.runningEffects["room-1"]?.bridgeNativeOwnership?.key,
+            vm.runningEffect(forRoomID: "room-1")?.bridgeNativeOwnership?.key,
             ownershipKey("room-1", "bridge-a"),
             "and the token the effect holds IS the one the registry holds")
     }
@@ -4521,7 +4521,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
     ) -> UnifiedOrchestrator.BridgeNativeOwnershipToken {
         let token = orchestrator.beginBridgeNativeOwnership(
             roomID: room.id, bridgeID: room.bridgeID)
-        vm.runningEffects[room.id] = RunningEffect(
+        vm.runningEffects[RoomEffectKey(room: room)] = RunningEffect(
             cardID: card.id, card: card, room: room,
             lightIDs: lightIDs, isEntertainment: false,
             requestedTransport: nil, transportFallback: false,
@@ -4542,7 +4542,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             an unreachable bridge must not strand the claim — the room would be \
             skipped by All-Day forever
             """)
-        XCTAssertNil(vm.runningEffects["room-1"],
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-1"),
             "and the running-effect entry is cleaned up too")
     }
 
@@ -4555,7 +4555,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         await vm.stopFromNowPlaying(roomID: "room-1")
 
         XCTAssertTrue(orchestrator.testBridgeNativeOwners().isEmpty)
-        XCTAssertNil(vm.runningEffects["room-1"])
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-1"))
     }
 
     // A2-c. A failing firmware cleanup request still releases the claim.
@@ -4609,7 +4609,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             the stale stop's token no longer holds the room, so its release is a \
             no-op — the replacement keeps its claim
             """)
-        XCTAssertEqual(vm.runningEffects["room-1"]?.cardID, "new-card",
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-1")?.cardID, "new-card",
             "and the replacement's RunningEffect survives")
         XCTAssertEqual(orchestrator.activeEffectEntries.filter { $0.id == "room-1" }.count, 1,
             "its Now-Playing row survives too")
@@ -4849,7 +4849,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "no stop, no start, and no DTLS may precede the user's answer")
         XCTAssertTrue(bridgeB.groupedStateIDs.isEmpty && bridgeB.groupedEffectIDs.isEmpty,
             "and no playback bookkeeping may be partially mutated either")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "the requested look must not be running")
     }
 
@@ -4867,7 +4867,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(bridgeB.entertainmentActions.isEmpty,
             "Keep Existing means the other app's show is never touched")
         XCTAssertTrue(bridgeB.groupedStateIDs.isEmpty && bridgeB.groupedEffectIDs.isEmpty)
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and the requested look does not start")
     }
 
@@ -4893,7 +4893,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(bridgeB.entertainmentStarts.contains("area-b"),
             "then the original request starts, on the area the request named")
         XCTAssertNil(vm.foreignTakeoverRequest, "no second prompt")
-        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "the original request must actually play after a successful takeover")
     }
 
@@ -4930,7 +4930,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertTrue(foreignStops(bridgeB, "cfg-someone-else").isEmpty,
             "there is nothing to stop — a redundant stop is a write nobody asked for")
-        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and the requested look still starts")
     }
 
@@ -4948,7 +4948,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
             "consent named one session; it may not be spread onto its replacement")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and playback must not begin over a session nobody consented to replace")
         XCTAssertEqual(vm.foreignTakeoverRequest?.foreignConfigID, "cfg-second",
             "a fresh decision is required, with its own identity")
@@ -4966,7 +4966,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(vm.foreignTakeoverRequest,
             "there is no single session to name, so there is no honest question to ask")
         XCTAssertTrue(bridgeB.entertainmentStops.isEmpty, "and nothing may be stopped")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     /// P7-21
@@ -4983,7 +4983,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "it was attempted")
         XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
             "never claim a takeover that did not happen — no session may be opened")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
         XCTAssertTrue(vm.statusMessage.contains("take over"),
             "the failure must be said out loud, not swallowed")
     }
@@ -5001,7 +5001,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
             "we cannot see what is running, so we may not evict anything")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
         XCTAssertFalse(vm.statusMessage.isEmpty, "and it must say so")
     }
 
@@ -5035,7 +5035,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertNil(vm.foreignTakeoverRequest,
             "bridge A's owner may not gate playback on bridge B")
-        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id], "bridge B starts normally")
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id), "bridge B starts normally")
         XCTAssertTrue(bridgeA.entertainmentActions.isEmpty,
             "and bridge A is left completely untouched")
         _ = streamRoomOnA()
@@ -5057,7 +5057,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(vm.foreignTakeoverRequest,
             "asking to take over a bridge this room could never stream on is a lie")
         XCTAssertTrue(bridgeB.entertainmentStops.isEmpty)
-        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "the room still plays, in room mode")
     }
 
@@ -5306,7 +5306,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         // Something is already playing in this room.
         await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
-        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id])
+        let running = try XCTUnwrap(vm.runningEffect(forRoomID: streamRoomOnB().id))
         let actionsBefore = bridgeB.entertainmentActions.count
 
         // Now two other controllers appear, and the user taps again.
@@ -5318,7 +5318,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "there is no single session to name, so there is no honest question")
         XCTAssertTrue(bridgeB.entertainmentStops.filter { $0 == "cfg-one" || $0 == "cfg-two" }.isEmpty,
             "and no licence to guess which one to evict")
-        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+        XCTAssertEqual(vm.runningEffect(forRoomID: streamRoomOnB().id)?.cardID, running.cardID,
             "failing closed must not cost the user the look that was already playing")
         XCTAssertEqual(bridgeB.entertainmentActions.count, actionsBefore,
             "nothing was written at all")
@@ -5331,13 +5331,13 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let vm = makeP7VM()
         let party = try streamingCard(vm)
         await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
-        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id])
+        let running = try XCTUnwrap(vm.runningEffect(forRoomID: streamRoomOnB().id))
 
         bridgeB.entertainmentConfigsShouldFail = true
         await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
 
         XCTAssertNil(vm.foreignTakeoverRequest)
-        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+        XCTAssertEqual(vm.runningEffect(forRoomID: streamRoomOnB().id)?.cardID, running.cardID,
             "unknown is not a reason to tear down what is playing")
         XCTAssertFalse(vm.statusMessage.isEmpty)
     }
@@ -5350,7 +5350,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let vm = makeP7VM()
         let party = try streamingCard(vm)
         await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
-        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id])
+        let running = try XCTUnwrap(vm.runningEffect(forRoomID: streamRoomOnB().id))
         let startsBefore = bridgeB.entertainmentStarts.count
 
         // The first read of this attempt sees a clear bridge; a controller
@@ -5366,7 +5366,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertTrue(bridgeB.entertainmentStops.filter { $0 == "cfg-late" }.isEmpty,
             "the late arrival must not be stopped without consent")
-        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+        XCTAssertEqual(vm.runningEffect(forRoomID: streamRoomOnB().id)?.cardID, running.cardID,
             "and the previous look must survive — the conflict is decided before teardown")
         XCTAssertEqual(bridgeB.entertainmentStarts.count, startsBefore,
             "no session may be opened over the late arrival, and no REST fallback may stand in for one")
@@ -5388,7 +5388,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(vm.foreignTakeoverRequest)
         XCTAssertEqual(bridgeB.entertainmentActions.count, actionsBefore,
             "declining touches nothing")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     // ── The frozen start plan ─────────────────────────────────
@@ -5414,7 +5414,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
             "stopping their show with nowhere to put ours is the worst possible trade")
         XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty, "and nothing is started")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
         XCTAssertFalse(vm.statusMessage.isEmpty, "the refusal is stated")
     }
 
@@ -5438,7 +5438,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
             "the captured area no longer describes this room's stream")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     /// P7-46 — the area still matches, but its channels are no longer usable.
@@ -5458,7 +5458,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
             "the render loop would drive a channel map the user never consented to")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     /// P7-47 — the happy path uses the exact captured plan.
@@ -5481,7 +5481,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(captured.bridgeID, "bridge-b")
         XCTAssertEqual(Set(bridgeB.entertainmentStarts), [captured.targetConfigID],
             "the replay streams the captured area and only that one")
-        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     // ── The late-conflict transaction ─────────────────────────
@@ -5512,7 +5512,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let vm = makeP7VM()
         let party = try streamingCard(vm)
         await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
-        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id])
+        let running = try XCTUnwrap(vm.runningEffect(forRoomID: streamRoomOnB().id))
         let startsBefore = bridgeB.entertainmentStarts.count
         let effectsBefore = vm.runningEffects.count
 
@@ -5531,13 +5531,13 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "no session opened, and no REST fallback stood in for one")
         XCTAssertEqual(vm.runningEffects.count, effectsBefore,
             "Now-Playing bookkeeping is untouched")
-        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+        XCTAssertEqual(vm.runningEffect(forRoomID: streamRoomOnB().id)?.cardID, running.cardID,
             "and the previous look is still the one running")
 
         // Declining still costs the user nothing.
         vm.cancelForeignTakeover()
         XCTAssertNil(vm.foreignTakeoverRequest)
-        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+        XCTAssertEqual(vm.runningEffect(forRoomID: streamRoomOnB().id)?.cardID, running.cardID,
             "cancel leaves the prior effect running")
     }
 
@@ -5560,7 +5560,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         // composition genuinely PLAYING before the late conflict arrives,
         // which is what this test needs to be able to destroy.
         await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false)
-        let running = try XCTUnwrap(vm.runningEffects[room.id],
+        let running = try XCTUnwrap(vm.runningEffect(forRoomID: room.id),
             "the composition must actually be playing before the late conflict")
         let generationBefore = orchestrator.testCompositionGeneration(roomID: room.id)
         let transportBefore = orchestrator.testCompositionTransport(roomID: room.id)
@@ -5585,11 +5585,11 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(orchestrator.testHasComposerTelemetrySession(
             roomID: room.id, bridgeID: "bridge-b"), telemetryBefore,
             "nor may a telemetry session be opened")
-        XCTAssertEqual(vm.runningEffects[room.id]?.cardID, running.cardID,
+        XCTAssertEqual(vm.runningEffect(forRoomID: room.id)?.cardID, running.cardID,
             "and the previous composition keeps playing")
 
         vm.cancelForeignTakeover()
-        XCTAssertEqual(vm.runningEffects[room.id]?.cardID, running.cardID,
+        XCTAssertEqual(vm.runningEffect(forRoomID: room.id)?.cardID, running.cardID,
             "cancel leaves the prior effect running")
     }
 
@@ -5613,7 +5613,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
             "the room would be lit in a different shape than the one consented to")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     /// P7-51 — members swapped, ids unchanged: the same area would drive
@@ -5636,7 +5636,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
             "same ids, different lights — the consented mapping no longer holds")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     /// P7-52 — after a successful stop, a cache refresh that reorders or
@@ -5662,7 +5662,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(Set(bridgeB.entertainmentStarts), [captured.targetConfigID],
             "the replay streams the captured area — a rival that appeared later cannot claim it")
         XCTAssertFalse(bridgeB.entertainmentStarts.contains("area-rival"))
-        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and the replay must not silently drop to room mode because selection moved")
     }
 
@@ -5702,7 +5702,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         // Something is already playing, so a premature teardown would show.
         let party = try streamingCard(vm)
         await vm.apply(party, roomOverride: room, preferEntertainmentOverride: true)
-        let running = try XCTUnwrap(vm.runningEffects[room.id])
+        let running = try XCTUnwrap(vm.runningEffect(forRoomID: room.id))
         let nowPlayingBefore = orchestrator.activeEffectEntries
         let actionsBefore = bridgeB.entertainmentActions
         let clientBefore = orchestrator.testHasEntertainmentClient(forBridge: "bridge-b")
@@ -5727,7 +5727,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "and records nothing — a persisted entry here would outlive the app")
 
         // The previous look is untouched.
-        XCTAssertEqual(vm.runningEffects[room.id]?.cardID, running.cardID,
+        XCTAssertEqual(vm.runningEffect(forRoomID: room.id)?.cardID, running.cardID,
             "the running effect must survive a card that was never going to start")
         XCTAssertEqual(orchestrator.activeEffectEntries.count, nowPlayingBefore.count,
             "and Now Playing with it")
@@ -5798,7 +5798,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         // not fire a SECOND stop at whatever the start left behind.
         XCTAssertLessThanOrEqual(bridgeB.entertainmentStops.count, 1,
             "the rollback must not stop anything a successful commit owns")
-        XCTAssertNotNil(vm.runningEffects[room.id])
+        XCTAssertNotNil(vm.runningEffect(forRoomID: room.id))
     }
 
     // ── Two transactions in flight at once ────────────────────
@@ -5999,7 +5999,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertFalse(entry.isAppDriven, "no app task exists behind a bridge-stored animation")
         XCTAssertEqual(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(m, "bridge-a")]?.bridgeID,
                        "bridge-a")
-        XCTAssertEqual(vm.runningEffects["room-1"]?.recovered, recoveredKey(m, "bridge-a"))
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-1")?.recovered, recoveredKey(m, "bridge-a"))
         XCTAssertTrue(storeStillHolds(m))
     }
 
@@ -6055,12 +6055,12 @@ final class MultiBridgeRoutingTests: XCTestCase {
         late.configure(orchestrator: orchestrator)
 
         let key = recoveredKey(m, "bridge-a")
-        XCTAssertEqual(early.runningEffects["room-1"]?.recovered, key,
+        XCTAssertEqual(early.runningEffect(forRoomID: "room-1")?.recovered, key,
                        "the push path restores a view model that was already alive")
-        XCTAssertEqual(late.runningEffects["room-1"]?.recovered, key,
+        XCTAssertEqual(late.runningEffect(forRoomID: "room-1")?.recovered, key,
                        "the pull path restores a view model created afterwards")
         XCTAssertEqual(early.runningEffects.mapValues(\.cardID), late.runningEffects.mapValues(\.cardID))
-        XCTAssertEqual(early.runningEffects["room-1"]?.room.bridgeID, "bridge-a")
+        XCTAssertEqual(early.runningEffect(forRoomID: "room-1")?.room.bridgeID, "bridge-a")
         XCTAssertEqual(recoveredEntries().count, 1, "a second configure must not double-publish")
 
         // StudioView.onAppear re-runs configure on every appearance.
@@ -6083,7 +6083,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(orchestrator.testAllDayRestSenderBridgeKeys().isEmpty)
         XCTAssertFalse(orchestrator.testHasComposerTelemetrySession(roomID: "room-1", bridgeID: "bridge-a"))
         XCTAssertNil(orchestrator.studioEntClients["bridge-a"])
-        let effect = vm.runningEffects["room-1"]
+        let effect = vm.runningEffect(forRoomID: "room-1")
         XCTAssertEqual(effect?.card.params.count, 0, "no sliders: there is nothing to drive")
         XCTAssertNil(effect?.card.compositionLayerActivity, "no layer chips")
         XCTAssertEqual(effect?.card.requiresForeground, false, "no keep-app-open chrome")
@@ -6111,7 +6111,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(orchestrator.testRecoveredBridgeAnimations()[recoveredKey(m, "bridge-a")])
         XCTAssertNil(orchestrator.testCompositionTransport(roomID: "room-1"))
         XCTAssertTrue(recoveredEntries().isEmpty)
-        XCTAssertNil(vm.runningEffects["room-1"])
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-1"))
         // Mirrors a live .composition stop: the resolved room goes off.
         XCTAssertEqual(bridgeA.groupedPowerIDs, ["gl-room-1:false"])
     }
@@ -6130,7 +6130,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
                        "both surfaces converge on one exact teardown")
         XCTAssertFalse(storeStillHolds(m))
         XCTAssertTrue(recoveredEntries().isEmpty)
-        XCTAssertNil(vm.runningEffects["room-1"])
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-1"))
         XCTAssertNil(orchestrator.testCompositionTransport(roomID: "room-1"))
     }
 
@@ -6544,8 +6544,8 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(ghost?.roomName, "Old Study", "the persisted room name keeps it identifiable")
         XCTAssertEqual(ghost?.effectName, "Ghost Look")
         XCTAssertNil(ghost?.groupedLightID, "there is no trustworthy grouped light to name")
-        XCTAssertNil(vm.runningEffects["room-gone"], "no room ⇒ no Studio row, and no room guessing")
-        XCTAssertNotNil(vm.runningEffects["room-other"])
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-gone"), "no room ⇒ no Studio row, and no room guessing")
+        XCTAssertNotNil(vm.runningEffect(forRoomID: "room-other"))
 
         await orchestrator.stopRecoveredBridgeAnimation(recoveredKey(gone, "bridge-a"))
 
@@ -6919,7 +6919,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         await orchestrator.testReconcileBridgeStoredAnimations()
 
-        XCTAssertNil(vm.runningEffects["shared-room"],
+        XCTAssertNil(vm.runningEffect(forRoomID: "shared-room"),
                      "an ambiguous room id must not be mirrored — dictionary order may not pick an owner")
         XCTAssertEqual(recoveredEntries().count, 2, "both stay visible and exactly stoppable")
 
@@ -6951,7 +6951,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         // And with the ambiguity resolved, the survivor becomes mirrorable.
         await orchestrator.testReconcileBridgeStoredAnimations()
-        XCTAssertEqual(vm.runningEffects["shared-room"]?.recovered, recoveredKey(onB, "bridge-b"))
+        XCTAssertEqual(vm.runningEffect(forRoomID: "shared-room")?.recovered, recoveredKey(onB, "bridge-b"))
     }
 
     /// An idempotent republish re-confirms the SAME owner. Treating it as an
@@ -7062,7 +7062,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         await orchestrator.testReconcileBridgeStoredAnimations()
 
-        XCTAssertEqual(vm.runningEffects["room-1"]?.card.name, "Renamed Look",
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-1")?.card.name, "Renamed Look",
                        "Studio builds its card from the CURRENT preset name")
         XCTAssertEqual(recoveredEntries().first?.effectName, "Renamed Look",
                        "and the Dashboard row matches it")
@@ -7070,7 +7070,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         // Idempotent: a second pass changes neither surface nor the row count.
         await orchestrator.testReconcileBridgeStoredAnimations()
-        XCTAssertEqual(vm.runningEffects["room-1"]?.card.name, "Renamed Look")
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-1")?.card.name, "Renamed Look")
         XCTAssertEqual(recoveredEntries().count, 1)
     }
 
@@ -7085,7 +7085,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         await orchestrator.testReconcileBridgeStoredAnimations()
 
-        XCTAssertEqual(vm.runningEffects["room-1"]?.card.name, "Name At Upload")
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-1")?.card.name, "Name At Upload")
         XCTAssertEqual(recoveredEntries().first?.effectName, "Name At Upload")
 
         // And it is still stoppable, which is the point of keeping the name.
@@ -7522,7 +7522,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "the fallback is stated, and the sentence names Room mode")
         XCTAssertTrue(vm.studioNotice?.message.contains("Room mode") == true,
             "an explanation that omits the transport change explains nothing")
-        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "…and Room mode really does start — an explained fallback is still a fallback")
         XCTAssertEqual(orchestrator.testCompositionTransport(roomID: streamRoomOnB().id), .rest,
             "on the REST transport, which is what Room mode means")
@@ -7541,7 +7541,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         // Something is already playing, so a premature teardown would show.
         let party = try streamingCard(vm)
         await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
-        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id])
+        let running = try XCTUnwrap(vm.runningEffect(forRoomID: streamRoomOnB().id))
         let transportBefore = orchestrator.testCompositionTransport(roomID: streamRoomOnB().id)
 
         bridgeB.entertainmentConfigsShouldFail = true
@@ -7550,7 +7550,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertEqual(vm.studioNotice?.message, EntertainmentAvailabilityCopy.couldNotCheck,
             "the refusal is rendered, not written to a field nothing reads")
-        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.cardID, running.cardID,
+        XCTAssertEqual(vm.runningEffect(forRoomID: streamRoomOnB().id)?.cardID, running.cardID,
             "the look that was playing is still the one playing")
         XCTAssertEqual(orchestrator.testCompositionTransport(roomID: streamRoomOnB().id),
                        transportBefore,
@@ -7577,7 +7577,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "and there is no single session to ask about")
         XCTAssertEqual(writeSnapshot(bridgeB), writesBefore,
             "zero PUTs of any kind — no start, no stop, no room-mode write")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
         XCTAssertNil(orchestrator.testCompositionTransport(roomID: streamRoomOnB().id),
             "and no runtime was created")
     }
@@ -7597,7 +7597,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertEqual(vm.studioNotice?.message, EntertainmentAvailabilityCopy.couldNotStart,
             "the refusal is stated")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and nothing plays — an explicit stream request is not satisfied by room mode")
         XCTAssertNil(orchestrator.testCompositionTransport(roomID: streamRoomOnB().id),
             "no REST composition runtime stands in for the stream that failed")
@@ -7634,7 +7634,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "and NO second session was opened — that is the whole defect")
         XCTAssertNil(vm.foreignTakeoverRequest,
             "our own look is not a third party; the two questions stay distinct")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
         XCTAssertNotNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-b"),
             "the owner still holds the bridge while the prompt is open")
     }
@@ -7728,7 +7728,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         let actionsBefore = bridgeB.entertainmentActions.count
         let nowPlayingBefore = orchestrator.activeEffectEntries
-        let ownerRowBefore = vm.runningEffects[owner.roomID]?.cardID
+        let ownerRowBefore = vm.runningEffect(forRoomID: owner.roomID)?.cardID
         let candidateBefore = orchestrator.testHasPendingEntertainmentCandidate()
         let processOwnedBefore = ownershipStore.isProcessOwned(
             bridgeID: "bridge-b", configID: "area-owner")
@@ -7743,7 +7743,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "no stop and no start may precede the answer")
         XCTAssertEqual(orchestrator.activeEffectEntries, nowPlayingBefore,
             "Now Playing is unchanged, row for row")
-        XCTAssertEqual(vm.runningEffects[owner.roomID]?.cardID, ownerRowBefore,
+        XCTAssertEqual(vm.runningEffect(forRoomID: owner.roomID)?.cardID, ownerRowBefore,
             "the owning look's registry row is untouched")
         XCTAssertEqual(orchestrator.testHasPendingEntertainmentCandidate(), candidateBefore,
             "nothing was prepared")
@@ -7775,7 +7775,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "Keep Playing means the running look is never touched")
         XCTAssertNotNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-b"),
             "it still owns the bridge")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and the requested composition does not start")
         XCTAssertTrue(orchestrator.consumedStudioHandoffRequests.isEmpty,
             "a declined question spends no token — the user may ask again")
@@ -7928,7 +7928,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "and start nothing on top of a session that is still live")
         XCTAssertNotNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-b"),
             "the ownership evidence is kept — a still-running owner must stay visible")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and the requested composition did not start")
         XCTAssertNil(vm.studioHandoffRequest, "the answer was consumed, not replayed")
     }
@@ -7951,7 +7951,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertEqual(vm.studioNotice?.message, EntertainmentAvailabilityCopy.couldNotStart,
             "the user asked to stream; they are told it did not")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "no Now-Playing row for a look that is not playing")
         XCTAssertNil(orchestrator.testCompositionTransport(roomID: streamRoomOnB().id),
             "and no REST composition runtime stood in for the stream")
@@ -8035,9 +8035,9 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "confirm still clears Entertainment ownership")
         XCTAssertNil(orchestrator.compositionTransportByRoom["room-b-composer"],
             "and still clears transport truth")
-        XCTAssertNil(vm.runningEffects["room-b-composer"],
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-b-composer"),
             "the composition still leaves the Now-Playing registry")
-        XCTAssertEqual(vm.runningEffects["room-b"]?.cardID, "ambient",
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-b")?.cardID, "ambient",
             "…and only then does the requested Studio look start")
         XCTAssertTrue(orchestrator.testCanAcquireEntertainment(onBridge: "bridge-b"))
         XCTAssertNil(vm.studioHandoffRequest,
@@ -8163,7 +8163,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "and the stranger was never stopped — this consent did not name them")
         XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
             "the composition did not start over them")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and no REST fallback ran underneath their show")
         XCTAssertNil(orchestrator.testCompositionTransport(roomID: streamRoomOnB().id),
             "no composition runtime of any transport was created")
@@ -8225,7 +8225,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let room = streamRoomOnB()
         let party = try streamingCard(vm)
         await vm.apply(party, roomOverride: room, preferEntertainmentOverride: true)
-        let running = try XCTUnwrap(vm.runningEffects[room.id])
+        let running = try XCTUnwrap(vm.runningEffect(forRoomID: room.id))
         let nowPlayingBefore = orchestrator.activeEffectEntries
         let transportBefore = orchestrator.testCompositionTransport(roomID: room.id)
 
@@ -8233,7 +8233,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let strobe = try XCTUnwrap(vm.liveModeCards.first { $0.id == "strobe" })
         await vm.apply(strobe, roomOverride: room, preferEntertainmentOverride: true)
 
-        let after = try XCTUnwrap(vm.runningEffects[room.id],
+        let after = try XCTUnwrap(vm.runningEffect(forRoomID: room.id),
             "the running look must still be there at all")
         XCTAssertEqual(after.cardID, running.cardID)
         XCTAssertEqual(after.room.id, running.room.id)
@@ -8293,7 +8293,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(bridgeB.v1Spy.creations.isEmpty,
             "and nothing was stored on the bridge for it either")
         XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty)
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and it is not registered as playing")
     }
 
@@ -8458,7 +8458,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertNil(vm.studioNotice,
             "and NOT the 'no compatible Entertainment Area' sentence, which would be false")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "nothing starts while the question is open")
         XCTAssertEqual(writeSnapshot(bridgeB), writesBefore,
             "the chooser is raised above every destructive step — nothing was written")
@@ -8535,7 +8535,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertEqual(areaIDs(vm), ["area-exact", "area-wide"],
             "compositions resolve their target through the one shared decision")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     /// HCW-06 — Party and Thunderstorm too. Their TRANSPORT is the engine's,
@@ -8569,7 +8569,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         vm.cancelAreaChoice()
 
         XCTAssertNil(vm.areaChoiceRequest)
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id], "no area was chosen, so nothing plays")
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id), "no area was chosen, so nothing plays")
         XCTAssertEqual(writeSnapshot(bridgeB), writesBefore)
         XCTAssertTrue(bridgeB.entertainmentActions.isEmpty)
     }
@@ -8593,7 +8593,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "and it says so, rather than silently playing somewhere else")
         XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
             "nothing was opened — least of all the area that was still available")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     /// HCW-09 — membership changing under the sheet fails closed. The frozen
@@ -8617,7 +8617,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
             "an area re-scoped under the prompt streams nothing")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     /// HCW-10 — another bridge's areas are never candidates, even when both
@@ -8667,7 +8667,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertNil(vm.areaChoiceRequest, "exactly one safe area — no question to ask")
         XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"])
-        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     // ──────────────────────────────────────────────
@@ -8710,7 +8710,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "the consented stop was still sent exactly once")
         XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
             "but nothing of ours was started on top of a session that never let go")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and no Now Playing row claims a look that is not streaming")
         XCTAssertTrue(orchestrator.takeoverEventLog.contains(.foreignConfigurationRemainedActive),
             "the instrumentation names WHICH failure this was: \(orchestrator.takeoverEventLog)")
@@ -8734,7 +8734,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertTrue(bridgeB.entertainmentStarts.isEmpty,
             "we do not start over a session that came back")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id], "and publish no false ownership")
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id), "and publish no false ownership")
         let second = try XCTUnwrap(vm.foreignTakeoverRequest,
             "the honest next step is to ask again, not to fail silently")
         XCTAssertNotEqual(second.id, first.id,
@@ -8810,7 +8810,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         }
         await vm.confirmForeignTakeover()
 
-        XCTAssertEqual(vm.runningEffects[streamRoomOnB().id]?.isEntertainment, false,
+        XCTAssertEqual(vm.runningEffect(forRoomID: streamRoomOnB().id)?.isEntertainment, false,
             "the badge follows the transport the START RETURNED — a client that was created "
             + "but never reached a usable state is not a stream")
         XCTAssertNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-b"),
@@ -8889,7 +8889,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"],
             "Take Over is fully reachable after a Keep Existing")
-        XCTAssertNotNil(vm.runningEffects[streamRoomOnB().id])
+        XCTAssertNotNil(vm.runningEffect(forRoomID: streamRoomOnB().id))
     }
 
     /// HCT-09 — the other bridge is untouched throughout a takeover.
@@ -8976,7 +8976,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         XCTAssertFalse(orchestrator.takeoverEventLog.contains(.ownershipPublished),
             "a contested bridge may not produce ownership: \(orchestrator.takeoverEventLog)")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "and no Now Playing row claims the look is streaming")
     }
 
@@ -9016,7 +9016,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         await vm.confirmForeignTakeover()   // stop lands, area stays active
 
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "no Room-mode consolation prize — the user asked to stream")
         XCTAssertTrue(bridgeB.groupedEffectIDs.isEmpty,
             "and no REST writes landed underneath the session that is still running")
@@ -9095,7 +9095,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         // Round 4: release-not-proven starts NOTHING. The configuration may
         // genuinely still be streaming, and REST writes underneath an
         // unreleased stream is the exact condition refused everywhere else.
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "no fallback runtime of any transport may start on an unproven release")
         XCTAssertTrue(bridgeB.groupedEffectIDs.isEmpty,
             "and no REST writes landed underneath a possibly-live stream")
@@ -9139,7 +9139,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "a reacquired target publishes nothing: \(log)")
         XCTAssertTrue(orchestrator.consumedEntertainmentConsents.isEmpty,
             "the consent bought a session that never committed, so it is not spent")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "no Now Playing row, and no REST consolation under the reclaimed area")
         let second = try XCTUnwrap(vm.foreignTakeoverRequest,
             "the honest next step is a fresh prompt about what is actually there")
@@ -9176,7 +9176,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         // Round 4: a commit-boundary session failure is the explicit
         // "couldn't start, nothing was changed" refusal — never a silent
         // transport change.
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "no fallback runtime — the user asked to stream and is told the truth instead")
         XCTAssertNotNil(vm.studioNotice, "the refusal is rendered")
     }
@@ -9207,7 +9207,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"], "the start was attempted once")
         XCTAssertEqual(foreignStops(bridgeB, "area-b").count, 1,
             "and the released candidate sent its own compensating stop")
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "no fallback runtime on an unverifiable commit")
         XCTAssertNotNil(vm.studioNotice, "the refusal is rendered")
         XCTAssertFalse(orchestrator.testHasPendingEntertainmentCandidate(),
@@ -9253,7 +9253,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(log.contains(.chromaGlowReleaseNotProven),
             "the honest record: the target was never observed inactive after our release")
         XCTAssertFalse(log.contains(.ownershipPublished))
-        XCTAssertNil(vm.runningEffects[streamRoomOnB().id], "nothing started")
+        XCTAssertNil(vm.runningEffect(forRoomID: streamRoomOnB().id), "nothing started")
         XCTAssertNil(vm.foreignTakeoverRequest,
             "and no prompt was invented from an unproven transition")
     }
@@ -9280,7 +9280,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             log.firstIndex(of: .chromaGlowSessionUsable) ?? .max,
             log.firstIndex(of: .ownershipPublished) ?? .max,
             "verification precedes publication")
-        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id],
+        let running = try XCTUnwrap(vm.runningEffect(forRoomID: streamRoomOnB().id),
             "the committed look is playing")
         XCTAssertTrue(running.isEntertainment, "and truthfully labelled streaming")
         XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"],
@@ -9624,7 +9624,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         outcome = await orchestrator.saveLookToBridge(
             room: room, paramBox: CompositionParamBox(preset: savePreset),
             gamutOverride: .c, preset: savePreset)
-        guard case .savedNotConfirmedRunning(let inertID, "bridge-b") = outcome else {
+        guard case .savedNotConfirmedRunning(let inertID, "bridge-b", previousLookRemoved: false) = outcome else {
             return XCTFail("persisted + failed activation is saved-not-confirmed; got \(outcome)")
         }
         assertLookPreserved("saved but not confirmed running")
@@ -9679,7 +9679,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         await vm.apply(vm.studioCard(for: playing),
                        roomOverride: room, preferEntertainmentOverride: false)
-        let rowBefore = try XCTUnwrap(vm.runningEffects[room.id],
+        let rowBefore = try XCTUnwrap(vm.runningEffect(forRoomID: room.id),
             "precondition: the REST look is playing with a row (status: \(vm.statusMessage))")
         XCTAssertFalse(rowBefore.isEntertainment)
         XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), .rest)
@@ -9691,13 +9691,16 @@ final class MultiBridgeRoutingTests: XCTestCase {
         bridgeB.v1Spy.creationShouldFail = true
         await vm.saveActiveLookToBridge(vm.studioCard(for: savePreset))
 
-        let rowAfter = try XCTUnwrap(vm.runningEffects[room.id],
+        let rowAfter = try XCTUnwrap(vm.runningEffect(forRoomID: room.id),
             "the failed save may not remove the playing look's row")
         XCTAssertEqual(rowAfter.cardID, rowBefore.cardID, "and it is the same look")
         XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), .rest)
         XCTAssertEqual(orchestrator.testCompositionGeneration(roomID: room.id), generationBefore)
         XCTAssertEqual(orchestrator.roomOwnershipGeneration(bridgeID: "bridge-b", roomID: room.id),
                        ownershipBefore)
+        XCTAssertTrue(orchestrator.activeEffectEntries.contains {
+            $0.recovered == nil && $0.roomID == room.id && $0.bridgeID == "bridge-b"
+        }, "the room's Now Playing publication survives too (round 4c)")
         XCTAssertNil(vm.bridgeSaveResult, "no sheet titled anything for a save that saved nothing")
         XCTAssertNotNil(vm.studioNotice, "the refusal is rendered")
     }
@@ -9733,7 +9736,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         )
         await vm.apply(vm.studioCard(for: controlLook),
                        roomOverride: roomA, preferEntertainmentOverride: false)
-        XCTAssertNotNil(vm.runningEffects[roomA.id],
+        XCTAssertNotNil(vm.runningEffect(forRoomID: roomA.id),
             "precondition: control look playing on A (status: \(vm.statusMessage))")
 
         // The room under test: play, then SAVE successfully — the room now
@@ -9743,12 +9746,12 @@ final class MultiBridgeRoutingTests: XCTestCase {
         vm.selectedRoom = roomB
         await vm.apply(vm.studioCard(for: playing),
                        roomOverride: roomB, preferEntertainmentOverride: false)
-        XCTAssertNotNil(vm.runningEffects[roomB.id],
+        XCTAssertNotNil(vm.runningEffect(forRoomID: roomB.id),
             "precondition: a look is playing on B (status: \(vm.statusMessage))")
         await vm.saveActiveLookToBridge(vm.studioCard(for: bridgeSave))
         XCTAssertEqual(orchestrator.testCompositionTransport(roomID: roomB.id), .bridgeStored,
             "precondition: the saved look runs ON THE BRIDGE (notice: \(vm.studioNotice?.message ?? "none"))")
-        XCTAssertNotNil(vm.runningEffects[roomB.id], "the room's row is standing")
+        XCTAssertNotNil(vm.runningEffect(forRoomID: roomB.id), "the room's row is standing")
         XCTAssertEqual(animationStore.allManifests().filter { $0.roomID == roomB.id }.count, 1,
             "precondition: exactly the saved chain's manifest is on record")
         vm.bridgeSaveResult = nil   // dismiss the success sheet
@@ -9763,17 +9766,330 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "the old chain is provably gone — replacement cleanup consumed it")
         XCTAssertNil(orchestrator.testCompositionTransport(roomID: roomB.id),
             "no transport claim survives a chain that no longer exists")
-        XCTAssertNil(vm.runningEffects[roomB.id],
+        XCTAssertNil(vm.runningEffect(forRoomID: roomB.id),
             "and neither does the running row — the UI may not assert a removed look")
         XCTAssertEqual(vm.studioNotice?.message, BridgeSaveCopy.previousLookRemovedSaveFailed,
             "the honest sentence: what was lost, and that nothing plays on the bridge now")
         XCTAssertNil(vm.bridgeSaveResult)
 
         // The unrelated room and bridge are untouched.
-        XCTAssertNotNil(vm.runningEffects[roomA.id],
+        XCTAssertNotNil(vm.runningEffect(forRoomID: roomA.id),
             "the control look on bridge A keeps its row")
         XCTAssertEqual(orchestrator.testCompositionTransport(roomID: roomA.id), .rest,
             "and its transport claim")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Hardware convergence C round 4c: exact identity under
+    //         duplicate room ids
+    // ──────────────────────────────────────────────
+    //
+    // Two bridges may use the SAME room id. Round 4b's cleanup was keyed by
+    // room id alone, so bridge B's failed save could erase bridge A's
+    // transport claim, Now Playing publication, and running row, and
+    // `previousLookRemovedSaveFailed` could fire on a predecessor bridge B
+    // never owned. These pin the exact-identity rules: the ownership ledger
+    // (bridge + room → manifest ids) is the only destructive proof, cleanup
+    // subtracts exact manifest ids, and nothing crosses a bridge boundary.
+
+    /// The same room id on both bridges, with distinct light ids per bridge
+    /// (the light-overlap barrier must never be the reason bridge A's look
+    /// survives — the identity rules must be).
+    private func sharedRoomOnA() -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .room,
+            id: "shared-room", name: "Shared Room", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-shared-a", lightCount: 2,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "A1", rtype: "light"), (rid: "A2", rtype: "light")]
+        )
+    }
+
+    private func sharedRoomOnB() -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .room,
+            id: "shared-room", name: "Shared Room", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-shared-b", lightCount: 2,
+            bridgeID: "bridge-b",
+            childResourceRefs: [(rid: "L1", rtype: "light"), (rid: "L2", rtype: "light")]
+        )
+    }
+
+    /// Play + save a bridge-stored look on the given room and hand back its
+    /// exact manifest id. Leaves the VM row, ledger entry, transport claim,
+    /// and live Now Playing row standing — a real predecessor.
+    private func establishBridgeStoredLook(
+        _ vm: StudioViewModel, room: RoomDisplayItem,
+        playing: CompositionPreset, save: CompositionPreset
+    ) async throws -> UUID {
+        vm.selectedRoom = room
+        await vm.apply(vm.studioCard(for: playing),
+                       roomOverride: room, preferEntertainmentOverride: false)
+        XCTAssertNotNil(vm.runningEffect(for: room),
+            "precondition: a look is playing (status: \(vm.statusMessage))")
+        await vm.saveActiveLookToBridge(vm.studioCard(for: save))
+        let owned = orchestrator.testBridgeStoredChainOwnership(
+            bridgeID: room.bridgeID ?? "", roomID: room.id)
+        XCTAssertEqual(owned.count, 1,
+            "precondition: the save committed one exact running chain (notice: \(vm.studioNotice?.message ?? "none"))")
+        vm.bridgeSaveResult = nil
+        vm.studioNotice = nil
+        return try XCTUnwrap(owned.first)
+    }
+
+    /// The live (non-recovered) Now Playing row for an exact bridge + room.
+    private func liveNowPlayingRow(bridgeID: String, roomID: String) -> ActiveEffectEntry? {
+        orchestrator.activeEffectEntries.first {
+            $0.recovered == nil && $0.roomID == roomID && $0.bridgeID == bridgeID
+        }
+    }
+
+    /// HCS-11 — the NEGATIVE collision. Bridge A genuinely runs a
+    /// bridge-stored chain for "shared-room"; bridge B independently targets
+    /// the same room id and its upload fails. Bridge B had NO proven
+    /// predecessor, so it may not return `previousLookRemovedSaveFailed`, and
+    /// no room-id-only cleanup may cross the bridge boundary: every one of
+    /// A's claims must survive.
+    func testAFailedSaveOnOneBridgeCannotClaimTheOtherBridgesSameRoomIDLook() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+
+        let playingA = runtimeOnlyPreset(named: "Playing A")
+        let bridgeSaveA = bridgeStorablePreset(named: "Bridge Look A")
+        let attemptB = bridgeStorablePreset(named: "Attempt B")
+        let vm = makeP7FVM(presets: [playingA, bridgeSaveA, attemptB])
+
+        let roomA = sharedRoomOnA()
+        let manifestA = try await establishBridgeStoredLook(
+            vm, room: roomA, playing: playingA, save: bridgeSaveA)
+        let rowA = try XCTUnwrap(vm.runningEffect(for: roomA))
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"),
+            "precondition: A's look is published")
+
+        // Bridge B targets the same room id. Selecting B's room finds A's
+        // room-id-keyed composition box, so the save is attemptable without
+        // playing anything on B — B truly has no predecessor of its own.
+        vm.selectedRoom = sharedRoomOnB()
+        bridgeB.v1Spy.creationShouldFail = true
+        await vm.saveActiveLookToBridge(vm.studioCard(for: attemptB))
+
+        XCTAssertEqual(vm.studioNotice?.message, BridgeSaveCopy.saveFailedNothingRecorded,
+            "B had no proven exact predecessor — the ordinary honest failure, never previousLookRemovedSaveFailed")
+        XCTAssertNil(vm.bridgeSaveResult)
+
+        // Bridge A is completely untouched, claim by claim.
+        XCTAssertEqual(orchestrator.testExactManifestIDs(bridgeID: "bridge-a", roomID: "shared-room"),
+                       [manifestA], "A's exact manifest still exists")
+        XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-a", roomID: "shared-room"),
+                       [manifestA], "A's ownership entry still names its chain")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored,
+            "A's transport claim remains")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"),
+            "A's Now Playing publication remains")
+        XCTAssertEqual(vm.runningEffect(for: roomA)?.cardID, rowA.cardID,
+            "A's running row remains")
+        XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(
+            bridgeID: "bridge-b", roomID: "shared-room").isEmpty,
+            "and B recorded no ownership it never earned")
+    }
+
+    /// HCS-12 — the POSITIVE collision. BOTH bridges hold exact bridge-stored
+    /// predecessors for "shared-room", genuinely coexisting (exact keys —
+    /// both VM rows, both Now Playing rows). Bridge B's replacement then
+    /// fails: exactly B's predecessor ids, row, and publication disappear;
+    /// bridge A remains completely intact, and the shared transport entry is
+    /// RETAINED because A's chain still claims the room.
+    func testAFailedReplacementRemovesExactlyItsOwnBridgesClaimsUnderACollision() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+
+        let playingA = runtimeOnlyPreset(named: "Playing A")
+        let bridgeSaveA = bridgeStorablePreset(named: "Bridge Look A")
+        let playingB = runtimeOnlyPreset(named: "Playing B")
+        let bridgeSaveB = bridgeStorablePreset(named: "Bridge Look B")
+        let attemptB = bridgeStorablePreset(named: "Replacement B")
+        let vm = makeP7FVM(presets: [playingA, bridgeSaveA, playingB, bridgeSaveB, attemptB])
+
+        let roomA = sharedRoomOnA()
+        let roomB = sharedRoomOnB()
+        let manifestA = try await establishBridgeStoredLook(
+            vm, room: roomA, playing: playingA, save: bridgeSaveA)
+        let manifestB = try await establishBridgeStoredLook(
+            vm, room: roomB, playing: playingB, save: bridgeSaveB)
+        let ownershipGenerationA = orchestrator.roomOwnershipGeneration(
+            bridgeID: "bridge-a", roomID: "shared-room")
+
+        // The collision precondition the room-id-only key could never
+        // represent: both exact rows and both publications COEXIST, and the
+        // room-only read fails closed rather than guessing between them.
+        XCTAssertNotNil(vm.runningEffect(for: roomA), "A's row coexists")
+        XCTAssertNotNil(vm.runningEffect(for: roomB), "with B's row")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
+        XCTAssertNil(vm.runningEffect(forRoomID: "shared-room"),
+            "the room-only compatibility read refuses to pick a bridge")
+
+        // B's replacement destroys B's predecessor, then the upload fails.
+        vm.selectedRoom = roomB
+        bridgeB.v1Spy.creationShouldFail = true
+        await vm.saveActiveLookToBridge(vm.studioCard(for: attemptB))
+
+        XCTAssertEqual(vm.studioNotice?.message, BridgeSaveCopy.previousLookRemovedSaveFailed,
+            "B DID have a proven exact predecessor, and it was actually removed")
+        XCTAssertNil(vm.bridgeSaveResult)
+
+        // Exactly B's identities disappeared…
+        XCTAssertTrue(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: "shared-room").isEmpty,
+            "B's chain is provably gone")
+        XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(
+            bridgeID: "bridge-b", roomID: "shared-room").isEmpty,
+            "B's ownership entry emptied — exactly \(manifestB) was subtracted")
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"),
+            "B's publication fell with its chain")
+        XCTAssertNil(vm.runningEffect(for: roomB), "and so did B's row")
+
+        // …and none of A's. Manifest, ownership, publication, row,
+        // generation: untouched.
+        XCTAssertEqual(orchestrator.testExactManifestIDs(bridgeID: "bridge-a", roomID: "shared-room"),
+                       [manifestA])
+        XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-a", roomID: "shared-room"),
+                       [manifestA])
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertNotNil(vm.runningEffect(for: roomA))
+        XCTAssertEqual(orchestrator.roomOwnershipGeneration(bridgeID: "bridge-a", roomID: "shared-room"),
+                       ownershipGenerationA)
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored,
+            "the shared transport entry is retained — A's chain still claims the room")
+    }
+
+    /// HCS-13 — savedNotConfirmedRunning over a PROVEN removed predecessor:
+    /// the destroyed chain's claims are withdrawn exactly, the NEW inert
+    /// manifest is retained as the stoppable identity (and never enters the
+    /// ownership ledger), and the sheet says both halves truthfully.
+    func testSavedNotConfirmedOverARemovedPredecessorWithdrawsExactlyItsClaims() async throws {
+        stageStreamableBridge(bridgeB)
+        let playing = runtimeOnlyPreset(named: "Playing")
+        let firstSave = bridgeStorablePreset(named: "First Bridge Look")
+        let secondSave = bridgeStorablePreset(named: "Second Bridge Look")
+        let vm = makeP7FVM(presets: [playing, firstSave, secondSave])
+
+        let room = streamRoomOnB()
+        let oldManifest = try await establishBridgeStoredLook(
+            vm, room: room, playing: playing, save: firstSave)
+
+        bridgeB.v1Spy.sensorStatusShouldFail = true
+        await vm.saveActiveLookToBridge(vm.studioCard(for: secondSave))
+
+        let result = try XCTUnwrap(vm.bridgeSaveResult,
+            "saved-not-confirmed carries the sheet with the exact Stop")
+        XCTAssertFalse(result.isRunningOnBridge)
+        XCTAssertEqual(result.headline, BridgeSaveCopy.savedNotConfirmedPreviousLookRemoved,
+            "both halves: the previous look was removed, and the saved one is not running")
+        let newManifest = try XCTUnwrap(result.stoppableManifestID)
+        XCTAssertNotEqual(newManifest, oldManifest)
+
+        XCTAssertEqual(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: room.id),
+                       [newManifest], "the old chain is gone; the new inert one is retained")
+        XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: room.id).isEmpty,
+            "an inert chain never enters the ownership ledger")
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: room.id),
+            "no transport claim survives the destroyed predecessor")
+        XCTAssertNil(vm.runningEffect(for: room),
+            "the row mirrored a look that no longer exists")
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id),
+            "and so did its publication")
+
+        // The retained manifest is genuinely the exact Stop.
+        bridgeB.v1Spy.sensorStatusShouldFail = false
+        await vm.stopSavedBridgeLook(result)
+        XCTAssertTrue(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: room.id).isEmpty)
+        XCTAssertNil(vm.bridgeSaveResult, "the sheet dismisses on a successful stop")
+    }
+
+    /// HCS-14 — stopping ONE exact manifest, with duplicate room ids across
+    /// bridges AND two recorded chains on one bridge+room key. Each stop
+    /// subtracts exactly its own id: the same-key survivor keeps the key, the
+    /// other bridge keeps everything, and the shared transport entry clears
+    /// only after the LAST claim goes.
+    func testStopSavedBridgeLookSubtractsExactlyTheStoppedManifest() async throws {
+        let mA1 = stageManifest(roomID: "shared-room", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                presetName: "A First", sensorID: "S-a1", ruleIDs: ["R-a1"], scheduleID: "SC-a1")
+        let mA2 = stageManifest(roomID: "shared-room", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                presetName: "A Second", sensorID: "S-a2", ruleIDs: ["R-a2"], scheduleID: "SC-a2")
+        let mB = stageManifest(roomID: "shared-room", bridgeIP: "192.0.2.2", bridgeID: "bridge-b",
+                               presetName: "B Look", sensorID: "S-b1", ruleIDs: ["R-b1"], scheduleID: "SC-b1")
+        stageLive(bridgeA.v1Spy, [mA1, mA2])
+        stageLive(bridgeB.v1Spy, [mB])
+        await orchestrator.testReconcileBridgeStoredAnimations()
+
+        XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-a", roomID: "shared-room"),
+                       [mA1.id, mA2.id], "precondition: one key, two recorded chains")
+        XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: "shared-room"),
+                       [mB.id])
+        XCTAssertEqual(recoveredEntries().count, 3)
+
+        // Stop A's FIRST chain only.
+        let stoppedA1 = await orchestrator.stopSavedBridgeLook(manifestID: mA1.id)
+        XCTAssertTrue(stoppedA1)
+        XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-a", roomID: "shared-room"),
+                       [mA2.id], "only the stopped id was subtracted — the key survives with its other chain")
+        XCTAssertTrue(storeStillHolds(mA2))
+        XCTAssertTrue(storeStillHolds(mB))
+        XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: "shared-room"),
+                       [mB.id], "the other bridge is untouched")
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty)
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored)
+
+        // Stop A's second: A's key goes, B still claims the room.
+        let stoppedA2 = await orchestrator.stopSavedBridgeLook(manifestID: mA2.id)
+        XCTAssertTrue(stoppedA2)
+        XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-a", roomID: "shared-room").isEmpty)
+        XCTAssertTrue(storeStillHolds(mB))
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored,
+            "B's chain still claims the room id — stopping A may not unlabel it")
+
+        // Stop B's: the LAST claim goes, and only now does the label fall.
+        let stoppedB = await orchestrator.stopSavedBridgeLook(manifestID: mB.id)
+        XCTAssertTrue(stoppedB)
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: "shared-room"))
+        XCTAssertTrue(recoveredEntries().isEmpty)
+    }
+
+    /// HCS-15 — ambiguous legacy identity fails CLOSED. A legacy manifest
+    /// whose IP resolves to no registered bridge shares the room; absence of
+    /// a target-bridge chain can then not be proven exactly, so the failed
+    /// replacement returns the ordinary honest failure and clears NOTHING —
+    /// not the transport claim, not the publication, not the row.
+    func testAnAmbiguousLegacyManifestBlocksTheDestructiveOutcomeAndClearsNothing() async throws {
+        stageStreamableBridge(bridgeB)
+        let playing = runtimeOnlyPreset(named: "Playing")
+        let firstSave = bridgeStorablePreset(named: "Bridge Look")
+        let attempt = bridgeStorablePreset(named: "Replacement Attempt")
+        let vm = makeP7FVM(presets: [playing, firstSave, attempt])
+
+        let room = streamRoomOnB()
+        _ = try await establishBridgeStoredLook(
+            vm, room: room, playing: playing, save: firstSave)
+        // A legacy record in the same room, on an IP no registered bridge
+        // has: `resolvedBridgeID` cannot attribute it.
+        let legacy = stageManifest(roomID: room.id, bridgeIP: "192.0.2.9", bridgeID: nil,
+                                   presetName: "Legacy", sensorID: "S-legacy",
+                                   ruleIDs: ["R-legacy"], scheduleID: "SC-legacy")
+
+        bridgeB.v1Spy.creationShouldFail = true
+        await vm.saveActiveLookToBridge(vm.studioCard(for: attempt))
+
+        XCTAssertEqual(vm.studioNotice?.message, BridgeSaveCopy.saveFailedNothingRecorded,
+            "identity that cannot be attributed proves neither a predecessor nor its absence")
+        XCTAssertNil(vm.bridgeSaveResult)
+        XCTAssertTrue(storeStillHolds(legacy), "the ambiguous manifest is retained untouched")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), .bridgeStored,
+            "no destructive claim clearing on an unproven absence")
+        XCTAssertNotNil(vm.runningEffect(for: room), "the row stands")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id),
+            "and so does the publication")
     }
 
     /// HCQ-01 — persist fails, compensation partial: the outcome carries the

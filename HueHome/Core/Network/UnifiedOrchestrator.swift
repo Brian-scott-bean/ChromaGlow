@@ -46,16 +46,20 @@ struct BulkWriteFailure: Equatable {
 }
 
 struct ActiveEffectEntry: Identifiable, Equatable {
-    /// Presentation key. For a live Studio effect this is still the room id,
-    /// unchanged. For a recovered bridge-stored animation (packet 8) it is
-    /// derived from the MANIFEST id, so two bridges running the same room id
+    /// Presentation key. For a bridge-attributed live effect it is
+    /// bridge-qualified (`liveID`), so two bridges running the same room id
     /// produce two rows instead of one silently overwriting the other in
-    /// `addActiveEffect`.
+    /// `addActiveEffect` — the same rule recovered rows (packet 8) already
+    /// follow by keying off the MANIFEST id. An unattributed live row keeps
+    /// the bare room id.
     let id: String
-    /// The room this row is about. Equals `id` for live effects; for a
-    /// recovered row it is the manifest's room id, which may resolve to no
-    /// room at all.
+    /// The room this row is about. For a recovered row it is the manifest's
+    /// room id, which may resolve to no room at all.
     let roomID: String
+    /// The bridge whose look this live row asserts, when the publisher could
+    /// say. nil = unattributed: exact removal retains such a row — never
+    /// destroy what cannot be attributed.
+    let bridgeID: String?
     let roomName: String
     let groupedLightID: String?   // needed to stop bridge-native effects
     let effectID: String          // HueEffect.id
@@ -67,11 +71,29 @@ struct ActiveEffectEntry: Identifiable, Equatable {
     /// cannot say which bridge.
     let recovered: UnifiedOrchestrator.RecoveredBridgeAnimationKey?
 
-    /// Live effect. Every pre-packet-8 call site keeps compiling verbatim.
+    /// Live effect with exact bridge attribution (round 4c).
+    init(liveBridgeID: String?, roomID: String, roomName: String,
+         groupedLightID: String?, effectID: String,
+         effectName: String, effectIcon: String, isAppDriven: Bool) {
+        self.id = Self.liveID(bridgeID: liveBridgeID, roomID: roomID)
+        self.roomID = roomID
+        self.bridgeID = liveBridgeID
+        self.roomName = roomName
+        self.groupedLightID = groupedLightID
+        self.effectID = effectID
+        self.effectName = effectName
+        self.effectIcon = effectIcon
+        self.isAppDriven = isAppDriven
+        self.recovered = nil
+    }
+
+    /// Unattributed live effect. Every pre-round-4c call site keeps compiling
+    /// verbatim; the row keys by bare room id and exact removal retains it.
     init(id: String, roomName: String, groupedLightID: String?, effectID: String,
          effectName: String, effectIcon: String, isAppDriven: Bool) {
         self.id = id
         self.roomID = id
+        self.bridgeID = nil
         self.roomName = roomName
         self.groupedLightID = groupedLightID
         self.effectID = effectID
@@ -85,6 +107,7 @@ struct ActiveEffectEntry: Identifiable, Equatable {
     init(recovered animation: UnifiedOrchestrator.RecoveredBridgeAnimation) {
         self.id = Self.recoveredID(manifestID: animation.manifest.id)
         self.roomID = animation.manifest.roomID
+        self.bridgeID = animation.bridgeID
         self.roomName = animation.roomName
         self.groupedLightID = animation.room?.groupedLightID
         self.effectID = "comp_\(animation.manifest.presetID.uuidString)"
@@ -98,6 +121,14 @@ struct ActiveEffectEntry: Identifiable, Equatable {
 
     static func recoveredID(manifestID: UUID) -> String {
         "cg-recovered:\(manifestID.uuidString)"
+    }
+
+    /// Presentation key for a bridge-attributed live row. Falls back to the
+    /// bare room id when the publisher cannot name a bridge, so unattributed
+    /// rows keep their historical key.
+    static func liveID(bridgeID: String?, roomID: String) -> String {
+        guard let bridgeID else { return roomID }
+        return "cg-live:\(bridgeID):\(roomID)"
     }
 }
 
@@ -237,13 +268,13 @@ final class UnifiedOrchestrator {
     // Studio's `.bridgeNative` cards (candle, fire, sparkle, prism, opal,
     // glisten) are LONG-RUNNING firmware effects, but they leave no
     // orchestrator state at all — the branch writes per-light effects and then
-    // records only `runningEffects[room.id]`, inside StudioViewModel.
+    // records only the view model's `runningEffects` row.
     //
-    // `activeEffectEntries` cannot stand in for that: it carries no bridgeID,
-    // and its `isAppDriven` flag is false for BOTH firmware effects and one-shot
-    // `.bridgeOptimized` presets, so it cannot tell persistent playback from a
-    // command that already finished. This registry can, and it lives here rather
-    // than in the view model so ownership survives StudioView being dismissed.
+    // `activeEffectEntries` cannot stand in for that: its `isAppDriven` flag
+    // is false for BOTH firmware effects and one-shot `.bridgeOptimized`
+    // presets, so it cannot tell persistent playback from a command that
+    // already finished. This registry can, and it lives here rather than in
+    // the view model so ownership survives StudioView being dismissed.
 
     /// Exact identity of one bridge-native owner. Never keyed by roomID alone —
     /// the same room id can exist on two bridges.
@@ -324,9 +355,9 @@ final class UnifiedOrchestrator {
     /// session, Studio scope and this registry, `""` for the Entertainment maps.
     /// Unifying those two spellings is a wider migration than this packet.
     ///
-    /// Display state is not consulted: `activeEffectEntries` and
-    /// `runningEffects` are view-model mirrors with no bridge identity, and they
-    /// cannot distinguish a one-shot from a continuing owner.
+    /// Display state is not consulted: `activeEffectEntries` and the view
+    /// model's `runningEffects` are presentation mirrors, and they cannot
+    /// distinguish a one-shot from a continuing owner.
     private func isAllDayWriteAllowed(bridgeID: String?, roomID: String) -> Bool {
         let legacyKey = bridgeID ?? "legacy"
 
@@ -592,15 +623,31 @@ final class UnifiedOrchestrator {
         activeEffectEntries.append(entry)
     }
 
-    /// Removes one room's active effect entry.
+    /// Removes one room's live active-effect entry — the room-scoped
+    /// compatibility path (round 4c).
     ///
-    /// Matches on the presentation key, which for a live effect IS the room id.
-    /// A recovered bridge-stored row keys off its manifest instead, so this
-    /// structurally cannot erase one — correct, because stopping a live effect
-    /// in a room must not silently retire a different bridge's running
-    /// animation that happens to share the room id.
+    /// Live rows are bridge-qualified now, so a bare room id can be ambiguous:
+    /// when exactly one live row matches the room it is removed; when several
+    /// bridges' rows share the room id NONE is removed (fail closed — a caller
+    /// that cannot say which bridge must not guess). Recovered bridge-stored
+    /// rows key off their manifest and are structurally out of reach either
+    /// way, because stopping a live effect in a room must not silently retire
+    /// a different bridge's running animation that happens to share the room
+    /// id.
     func removeActiveEffect(roomID: String) {
-        activeEffectEntries.removeAll { $0.id == roomID }
+        let matches = activeEffectEntries.filter { $0.recovered == nil && $0.roomID == roomID }
+        guard matches.count == 1, let only = matches.first else { return }
+        activeEffectEntries.removeAll { $0.id == only.id }
+    }
+
+    /// Exact live-row removal — the destructive path (round 4c). Removes only
+    /// live rows recording exactly this bridge + room; unattributed rows are
+    /// retained (never destroy what cannot be attributed), and recovered rows
+    /// key off their manifest, structurally out of reach.
+    func removeActiveEffect(bridgeID: String, roomID: String) {
+        activeEffectEntries.removeAll {
+            $0.recovered == nil && $0.roomID == roomID && $0.bridgeID == bridgeID
+        }
     }
 
     /// Removes one entry by its exact presentation key. The only way to clear a
@@ -3626,6 +3673,14 @@ final class UnifiedOrchestrator {
         Set(exactManifests(bridgeID: bridgeID, roomID: roomID).map(\.id))
     }
 
+    /// Round 4c: the exact ownership ledger — which manifests stand as this
+    /// bridge's RUNNING claim on this room. Read-only; tests prove that
+    /// destructive paths subtract exactly the destroyed identities.
+    func testBridgeStoredChainOwnership(bridgeID: String, roomID: String) -> Set<UUID> {
+        bridgeStoredChainOwnership[
+            BridgeNativeOwnershipKey(bridgeKey: bridgeID, roomID: roomID)] ?? []
+    }
+
     func testRoomOwnershipGeneration(bridgeID: String?, roomID: String) -> Int {
         roomOwnershipGeneration(bridgeID: bridgeID, roomID: roomID)
     }
@@ -3945,6 +4000,14 @@ final class UnifiedOrchestrator {
                 // unchanged animation cannot produce a duplicate row.
                 addActiveEffect(ActiveEffectEntry(recovered: animation))
                 compositionTransportByRoom[animation.manifest.roomID] = .bridgeStored
+                // Recovered as ACTIVE: reconciliation proved the chain live on
+                // this exact bridge, which is the ownership ledger's standard
+                // of evidence (round 4c) — and how it repopulates after a
+                // relaunch. Idempotent for a re-confirmed owner.
+                recordBridgeStoredChainOwnership(
+                    bridgeID: key.bridgeID,
+                    roomID: animation.manifest.roomID,
+                    manifestID: key.manifestID)
                 // ONLY on genuine acquisition. The generation is what a parked
                 // stop compares against before powering the room off, so an
                 // idempotent refresh that re-confirms the SAME owner must not
@@ -3974,6 +4037,9 @@ final class UnifiedOrchestrator {
     private func forgetRecoveredBridgeAnimation(_ key: RecoveredBridgeAnimationKey) {
         guard let animation = recoveredBridgeAnimations.removeValue(forKey: key) else { return }
         removeActiveEffect(id: ActiveEffectEntry.recoveredID(manifestID: key.manifestID))
+        // No longer recovered-as-active, so it is no longer the room's
+        // running claim (round 4c). Exact by manifest id.
+        subtractBridgeStoredChainOwnership(manifestID: key.manifestID)
         clearBridgeStoredTransportIfUnowned(roomID: animation.manifest.roomID)
         // The registry moved, so Studio's mirror is stale. Bumping the
         // generation is what lets its guarded hydrate run again — without it a
@@ -4233,6 +4299,46 @@ final class UnifiedOrchestrator {
     /// may observe it freely. Replaces the old global `isBridgeStored` flag,
     /// which mislabeled every room whenever ANY room ran bridge-stored.
     var compositionTransportByRoom: [String: CompositionTransport] = [:]
+
+    // ── Exact bridge-stored chain ownership (round 4c) ───────────────────
+    //
+    // `compositionTransportByRoom` is roomID-keyed AGGREGATE state: two
+    // bridges using the same room id share one entry, so it can never say
+    // WHICH bridge's chain a room is claiming. This ledger can. It is THE
+    // destructive-ownership evidence — predecessor proof, replacement
+    // cleanup, and `previousLookRemovedSaveFailed` read it, never the
+    // transport map.
+
+    /// The bridge-stored chains currently standing as a room's RUNNING claim,
+    /// per exact bridge. Only a chain confirmed running (save commit, ordinary
+    /// play commit) or recovered as ACTIVE (reconciliation) enters; a
+    /// saved-but-not-confirmed-running manifest is inert and never does.
+    @ObservationIgnored
+    private var bridgeStoredChainOwnership: [BridgeNativeOwnershipKey: Set<UUID>] = [:]
+
+    /// Record a confirmed-running chain as the room's claim on this bridge.
+    private func recordBridgeStoredChainOwnership(
+        bridgeID: String, roomID: String, manifestID: UUID
+    ) {
+        let key = BridgeNativeOwnershipKey(bridgeKey: bridgeID, roomID: roomID)
+        bridgeStoredChainOwnership[key, default: []].insert(manifestID)
+    }
+
+    /// Subtract exactly one destroyed chain's identity, wherever it is
+    /// recorded. Manifest ids are globally unique, so this is exact without
+    /// needing the bridge to resolve at destruction time; a key survives
+    /// while any OTHER recorded chain remains and disappears only when its
+    /// set empties.
+    private func subtractBridgeStoredChainOwnership(manifestID: UUID) {
+        for (key, var owned) in bridgeStoredChainOwnership where owned.contains(manifestID) {
+            owned.remove(manifestID)
+            if owned.isEmpty {
+                bridgeStoredChainOwnership.removeValue(forKey: key)
+            } else {
+                bridgeStoredChainOwnership[key] = owned
+            }
+        }
+    }
     /// EVERY entertainment config on a bridge, keyed by bridgeID.
     ///
     /// This used to hold one config per bridge — whichever the bridge happened to
@@ -5117,6 +5223,12 @@ final class UnifiedOrchestrator {
                 gamut: compositionGamut, bridgeID: bridgeID, api: api) {
             case .saved(let owned):
                 compositionTransportByRoom[roomID] = .bridgeStored
+                // Confirmed running — the ledger's standard of evidence
+                // (round 4c). The savedNotConfirmedRunning branch below
+                // deliberately does NOT record: an inert chain is not the
+                // room's running claim.
+                recordBridgeStoredChainOwnership(
+                    bridgeID: bridgeID, roomID: roomID, manifestID: owned.id)
                 noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
                 debugLog("[Composer] ⚡ Bridge-stored animation active! \(owned.stepCount) steps, \(owned.intervalSeconds)s/step")
                 debugLog("[Composer] ⚡ Close the app — lights will keep going!")
@@ -6957,8 +7069,9 @@ final class UnifiedOrchestrator {
         studioEntOwnerByBridge.removeValue(forKey: bridgeID)
         await entClient.stopSession()
 
-        // The look is no longer streaming, so the row must stop saying it is.
-        removeActiveEffect(roomID: roomID)
+        // The look is no longer streaming, so the row must stop saying it is
+        // — exactly this bridge's row, never a same-room-id row on another.
+        removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
         noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
         toastMessage = EntertainmentConsentCopy.controllerResumed
     }
@@ -7667,8 +7780,12 @@ final class UnifiedOrchestrator {
         /// Resources created and the manifest IS durable, but the chain did not
         /// start. Not a success and not a loss: the manifest is the exact
         /// evidence that keeps these resources stoppable, so it is retained and
-        /// an exact Stop is offered immediately.
-        case savedNotConfirmedRunning(manifestID: UUID, bridgeID: String)
+        /// an exact Stop is offered immediately. `previousLookRemoved` reports
+        /// whether this bridge's PROVEN bridge-stored predecessor was destroyed
+        /// by the required replacement cleanup (round 4c) — true means its
+        /// claims were withdrawn exactly and nothing plays in the room now.
+        case savedNotConfirmedRunning(manifestID: UUID, bridgeID: String,
+                                      previousLookRemoved: Bool)
         /// Nothing was left on the bridge — either nothing was created, or what
         /// was created was cleaned up exactly.
         case nothingRecorded(reason: String)
@@ -7691,8 +7808,11 @@ final class UnifiedOrchestrator {
         /// new upload then failed — so nothing is on the bridge now. Typed,
         /// because every claim belonging to the former chain must fall with
         /// it: a notice-only report would leave the UI asserting a look that
-        /// provably no longer exists.
-        case previousLookRemovedSaveFailed(reason: String)
+        /// provably no longer exists. Round 4c: returned only for a PROVEN
+        /// exact predecessor on `bridgeID` — the destroyed chain's own bridge
+        /// — so the caller's cleanup can be exact too; another bridge's claim
+        /// on the same room id can never produce this outcome.
+        case previousLookRemovedSaveFailed(bridgeID: String, reason: String)
     }
 
     /// Exact bridge+room pairs with a strict save in flight. Claimed before
@@ -7731,23 +7851,46 @@ final class UnifiedOrchestrator {
         case partialCleanup(manifestID: UUID, bridgeID: String, recoverableAfterRelaunch: Bool)
     }
 
-    /// Does the store still hold ANY manifest for this exact room + bridge?
-    /// Resolved the same way `forgetManifestsProvenRemoved` resolves — by
-    /// recorded bridge id, with legacy-IP manifests going through
-    /// `resolvedBridgeID` — so "the previous chain is gone" is a claim about
-    /// exactly the identities the reconciler uses.
-    private func storeHoldsManifest(roomID: String, bridgeID: String) -> Bool {
-        bridgeAnimationStore.allManifests().contains {
-            $0.roomID == roomID && resolvedBridgeID(for: $0) == bridgeID
+    /// Withdraw the claims of DESTROYED bridge-stored chain(s), exactly
+    /// (round 4c). The ONE cleanup rule shared by the save-failure paths and
+    /// the exact Stop, so their semantics cannot drift:
+    ///
+    /// - ownership: ONLY `destroyedManifestIDs` are subtracted at
+    ///   (bridgeID, roomID); the key disappears only when its set empties, so
+    ///   a surviving chain on the same bridge + room keeps its claim;
+    /// - the live Now Playing row for exactly this bridge + room is removed
+    ///   only when that ownership set emptied — another bridge's row for the
+    ///   same room id is out of reach by key, recovered rows by construction;
+    /// - the roomID-keyed transport entry is aggregate state shared across
+    ///   bridges: it clears only when NOTHING still claims the room — no
+    ///   bridge's ownership entry, no manifest of any bridge (an ambiguous
+    ///   legacy manifest counts: unattributable identity fails closed), no
+    ///   recovered animation — excluding `retainedManifestIDs`, because a
+    ///   just-saved inert chain is not the room's playing look.
+    private func withdrawDestroyedBridgeStoredClaims(
+        bridgeID: String, roomID: String,
+        destroyedManifestIDs: Set<UUID>, retainedManifestIDs: Set<UUID> = []
+    ) {
+        let key = BridgeNativeOwnershipKey(bridgeKey: bridgeID, roomID: roomID)
+        if var owned = bridgeStoredChainOwnership[key] {
+            owned.subtract(destroyedManifestIDs)
+            if owned.isEmpty {
+                bridgeStoredChainOwnership.removeValue(forKey: key)
+            } else {
+                bridgeStoredChainOwnership[key] = owned
+            }
         }
-    }
-
-    /// Withdraw the claims a destroyed bridge-stored chain left behind: the
-    /// room's transport record and its active-effect/Now Playing publication.
-    /// Called only once the chain is provably gone (round 4b).
-    private func clearStaleBridgeStoredClaims(roomID: String) {
-        compositionTransportByRoom.removeValue(forKey: roomID)
-        removeActiveEffect(roomID: roomID)
+        if bridgeStoredChainOwnership[key] == nil {
+            removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
+        }
+        let roomStillClaimed = bridgeStoredChainOwnership.keys.contains { $0.roomID == roomID }
+            || recoveredBridgeAnimations.values.contains { $0.manifest.roomID == roomID }
+            || bridgeAnimationStore.allManifests().contains {
+                $0.roomID == roomID && !retainedManifestIDs.contains($0.id)
+            }
+        if !roomStillClaimed, compositionTransportByRoom[roomID] == .bridgeStored {
+            compositionTransportByRoom.removeValue(forKey: roomID)
+        }
     }
 
     private func attemptBridgeStoredSave(
@@ -7938,9 +8081,26 @@ final class UnifiedOrchestrator {
         // current look is itself bridge-stored. Replacement cleanup must
         // destroy that chain before the new upload can fail — two chains
         // cannot coexist — so a failure afterwards leaves nothing on the
-        // bridge while the claims still assert the old look. Captured here
-        // so the exits below can tell the truth about it.
-        let hadBridgeStoredClaim = compositionTransportByRoom[room.id] == .bridgeStored
+        // bridge while the claims still assert the old look.
+        //
+        // Round 4c: the predecessor is EXACT identity, captured before any
+        // bridge write. The ownership ledger names which manifests stand as
+        // THIS bridge's running claim on THIS room, and the store must
+        // corroborate every one of them; the roomID-keyed transport map
+        // appears nowhere in this proof, because it cannot say which bridge —
+        // bridge A's claim must never lend destructive authority to a save
+        // targeting bridge B. An unresolvable legacy manifest in the room
+        // fails the whole proof closed: identity that cannot be attributed
+        // can neither prove a predecessor nor prove its absence.
+        let predecessorChain = bridgeStoredChainOwnership[
+            BridgeNativeOwnershipKey(bridgeKey: bridgeID, roomID: room.id)] ?? []
+        let hadAmbiguousRoomManifest = bridgeAnimationStore.allManifests().contains {
+            $0.roomID == room.id && resolvedBridgeID(for: $0) == nil
+        }
+        let provenExactPredecessor = !predecessorChain.isEmpty
+            && !hadAmbiguousRoomManifest
+            && predecessorChain.isSubset(
+                of: Set(exactManifests(bridgeID: bridgeID, roomID: room.id).map(\.id)))
         let lightIDs: [String]
         switch await resolveCompositionLights(for: room, api: api) {
         case .noneInRoom:
@@ -7976,6 +8136,11 @@ final class UnifiedOrchestrator {
                     scope: RestScope(roomID: roomID, owner: .composer)),
                 generation: nextGeneration)
             compositionTransportByRoom[roomID] = .bridgeStored
+            // Confirmed running — the ownership ledger's standard of
+            // evidence (round 4c). This is the strict save's ONLY ledger
+            // write; savedNotConfirmedRunning below never records.
+            recordBridgeStoredChainOwnership(
+                bridgeID: bridgeID, roomID: roomID, manifestID: owned.id)
             noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
             debugLog("[Composer] ⚡ Bridge-stored animation active! \(owned.stepCount) steps, \(owned.intervalSeconds)s/step")
             await sendBridgeStoredPrimeFrame(
@@ -7985,13 +8150,25 @@ final class UnifiedOrchestrator {
 
         case .savedNotConfirmedRunning(let owned):
             // The chain never started. For an app-driven current look this
-            // means it keeps playing untouched; for a bridge-stored one the
-            // replacement cleanup already removed it, so the old claims are
-            // provably stale and fall here — nothing is running.
-            if hadBridgeStoredClaim {
-                clearStaleBridgeStoredClaims(roomID: room.id)
+            // means it keeps playing untouched; for a PROVEN bridge-stored
+            // predecessor on this exact bridge, the replacement cleanup
+            // already removed it, so exactly those claims are stale and fall
+            // here — nothing is running. The new inert manifest is retained
+            // as the exact stoppable identity but never enters the ownership
+            // ledger, and a predecessor belonging to another bridge (or an
+            // unproven one) clears NOTHING.
+            let previousLookRemoved = provenExactPredecessor
+                && exactManifests(bridgeID: bridgeID, roomID: room.id)
+                    .allSatisfy { $0.id == owned.id }
+            if previousLookRemoved {
+                withdrawDestroyedBridgeStoredClaims(
+                    bridgeID: bridgeID, roomID: room.id,
+                    destroyedManifestIDs: predecessorChain,
+                    retainedManifestIDs: [owned.id])
             }
-            return .savedNotConfirmedRunning(manifestID: owned.id, bridgeID: bridgeID)
+            return .savedNotConfirmedRunning(
+                manifestID: owned.id, bridgeID: bridgeID,
+                previousLookRemoved: previousLookRemoved)
 
         case .replacementBlocked:
             // Cleanup did NOT complete, so the previous chain (and its
@@ -7999,15 +8176,26 @@ final class UnifiedOrchestrator {
             return .nothingRecorded(reason: BridgeSaveCopy.saveFailedReplacementBlocked)
 
         case .uploadFailed, .compensatedNothingRemains:
-            // Nothing new exists. If the room was playing a bridge-stored
-            // look, the required replacement cleanup removed it before the
-            // failure — verify the chain is provably gone and say THAT,
-            // typed, with every claim belonging to it cleared. A bare
-            // "nothing was saved" notice would leave the UI asserting a
-            // look that no longer exists.
-            if hadBridgeStoredClaim, !storeHoldsManifest(roomID: room.id, bridgeID: bridgeID) {
-                clearStaleBridgeStoredClaims(roomID: room.id)
+            // Nothing new exists. If THIS bridge was provably playing a
+            // bridge-stored look in this room, the required replacement
+            // cleanup removed it before the failure — verify the exact chain
+            // is provably gone and say THAT, typed, with every claim
+            // belonging to it (and only it) cleared. A bare "nothing was
+            // saved" notice would leave the UI asserting a look that no
+            // longer exists — but a claim belonging to another bridge, or an
+            // absence the store cannot prove exactly (an ambiguous legacy
+            // manifest remains in the room), returns the ordinary honest
+            // failure and clears NOTHING.
+            if provenExactPredecessor,
+               exactManifests(bridgeID: bridgeID, roomID: room.id).isEmpty,
+               !bridgeAnimationStore.allManifests().contains(where: {
+                   $0.roomID == room.id && resolvedBridgeID(for: $0) == nil
+               }) {
+                withdrawDestroyedBridgeStoredClaims(
+                    bridgeID: bridgeID, roomID: room.id,
+                    destroyedManifestIDs: predecessorChain)
                 return .previousLookRemovedSaveFailed(
+                    bridgeID: bridgeID,
                     reason: BridgeSaveCopy.previousLookRemovedSaveFailed)
             }
             return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
@@ -8045,15 +8233,17 @@ final class UnifiedOrchestrator {
         }
         let result = await bridgeAnimationEngine.stop(manifest: manifest, v1Client: v1Client)
         guard retireManifest(manifest, after: result) else { return false }
-        // Withdraw the room's claims only when they are THIS chain's claims.
-        // A saved-but-not-confirmed manifest (round 4) is inert while the
-        // room's current look keeps playing on REST — removing that look's
-        // transport record and Now Playing row here would erase a claim that
-        // is still true, about a look this stop never touched.
-        if compositionTransportByRoom[manifest.roomID] == .bridgeStored {
-            compositionTransportByRoom.removeValue(forKey: manifest.roomID)
-            removeActiveEffect(roomID: manifest.roomID)
-        }
+        // Withdraw the room's claims only when they are THIS chain's claims
+        // (round 4). Round 4c makes that exact: only the stopped manifest's
+        // id is subtracted from its own bridge's ownership, the Now Playing
+        // row falls only when that bridge's set emptied, and the shared
+        // transport entry survives while ANY chain still claims the room —
+        // a saved-but-not-confirmed manifest is inert while the room's
+        // current look keeps playing on REST, and stopping bridge B's chain
+        // must not unpublish or unlabel bridge A's same-room-id one.
+        withdrawDestroyedBridgeStoredClaims(
+            bridgeID: bridgeID, roomID: manifest.roomID,
+            destroyedManifestIDs: [manifest.id])
         return true
     }
 
@@ -8067,6 +8257,9 @@ final class UnifiedOrchestrator {
     /// place rather than scattered across four.
     private func forgetManifestRecord(id: UUID) {
         bridgeAnimationStore.remove(id: id)
+        // The evidence is gone, so no ownership claim may outlive it (round
+        // 4c). Exact by manifest id — no other chain on any key is touched.
+        subtractBridgeStoredChainOwnership(manifestID: id)
     }
 
     /// Every bridge this app can actually reach, in stable id order.
@@ -8890,6 +9083,11 @@ enum BridgeSaveCopy {
     /// lost, and that nothing runs on the bridge now.
     static let previousLookRemovedSaveFailed =
         "The previous bridge look was removed to make room, but the new one couldn't be saved. Nothing is playing on your bridge now."
+    /// The same removal, but the new look DID save — it just isn't confirmed
+    /// running (round 4c). Both halves are said: what was removed, and that
+    /// the saved look is not playing.
+    static let savedNotConfirmedPreviousLookRemoved =
+        "The previous bridge look was removed to make room. The new one is saved to your bridge, but it isn't confirmed running — nothing is playing there now, and you can stop the saved look from here."
 }
 
 /// Safety refusals shared between Studio and Perform.
