@@ -2045,6 +2045,8 @@ private struct BridgeSaveResultSheet: ViewModifier {
 
                         factRow("Room", result.roomName)
                         factRow("Bridge", result.bridgeLabel)
+                        factRow("Playing now", result.isRunningOnBridge
+                                ? "Yes, on the bridge" : "Not confirmed")
                         factRow("Local copy", result.createdLocalPreset
                                 ? "In My Creations" : "None")
                         factRow("After you reopen ChromaGlow",
@@ -2057,6 +2059,34 @@ private struct BridgeSaveResultSheet: ViewModifier {
                                 .font(.system(size: 12))
                                 .foregroundStyle(.white.opacity(0.6))
                                 .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        // An exact Stop, available NOW.
+                        //
+                        // Especially load-bearing for "saved but not confirmed
+                        // running": those resources exist and are tracked, and
+                        // making the user wait for a relaunch to surface a row
+                        // is the gap that leaves lights nobody can turn off.
+                        if result.stoppableManifestID != nil {
+                            Button(role: .destructive) {
+                                HapticManager.shared.light()
+                                Task { await vm.stopSavedBridgeLook(result) }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "stop.circle.fill")
+                                    Text(result.isRunningOnBridge
+                                         ? "Stop and remove from bridge"
+                                         : "Remove from bridge")
+                                }
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(HuePalette.Noir.destructive)
+                                .frame(maxWidth: .infinity, minHeight: HueHit.min)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(HuePalette.Noir.destructive.opacity(0.14))
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }

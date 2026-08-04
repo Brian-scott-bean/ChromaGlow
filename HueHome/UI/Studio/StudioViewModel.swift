@@ -761,31 +761,53 @@ final class StudioViewModel {
             return
         }
 
-        let outcome = await orchestrator.startCompositionMode(
-            room: room, paramBox: box, gamutOverride: activeCompositionGamut,
-            preferEntertainment: false, tier: .bridgeOptimized, preset: preset,
-            capturedPlan: nil, consent: nil, preparedEntertainment: nil
-        )
+        // The STRICT path: no app-driven fallback, so nothing here can report a
+        // save that did not happen.
+        let outcome = await orchestrator.saveLookToBridge(
+            room: room, paramBox: box,
+            gamutOverride: activeCompositionGamut, preset: preset)
 
+        let label = orchestrator.bridgeLabel(for: room.bridgeID ?? "")
         switch outcome {
-        case .started:
-            let onBridge = orchestrator.compositionTransportByRoom[room.id] == .bridgeStored
+        case .savedAndRunning(let manifestID, _):
             bridgeSaveResult = BridgeSaveResult(
-                lookName: preset.name,
-                roomName: room.name,
-                bridgeLabel: orchestrator.bridgeLabel(for: room.bridgeID ?? ""),
-                isRunningOnBridge: onBridge,
-                createdLocalPreset: true,
-                stopSurvivesRelaunch: onBridge,
-                headline: onBridge ? BridgeSaveCopy.savedAndRunning
-                                   : TransportVocabulary.appDrivenTruth
-            )
-        case .failed(let message):
-            // Covers the honest middles: the manifest failed to persist and
-            // its resources were removed, or it persisted but did not start.
-            studioNotice = StudioNotice(message: message)
-        default:
-            studioNotice = StudioNotice(message: BridgeSaveCopy.saveFailedNothingRecorded)
+                lookName: preset.name, roomName: room.name, bridgeLabel: label,
+                isRunningOnBridge: true, createdLocalPreset: true,
+                stopSurvivesRelaunch: true,
+                headline: BridgeSaveCopy.savedAndRunning,
+                stoppableManifestID: manifestID)
+
+        case .savedNotConfirmedRunning(let manifestID, _):
+            // Saved, tracked, NOT running. The manifest is retained because it
+            // is the only thing that can remove these resources — and the
+            // result carries it, so Stop is available right now rather than
+            // only after a relaunch surfaces a row.
+            bridgeSaveResult = BridgeSaveResult(
+                lookName: preset.name, roomName: room.name, bridgeLabel: label,
+                isRunningOnBridge: false, createdLocalPreset: true,
+                stopSurvivesRelaunch: true,
+                headline: BridgeSaveCopy.savedNotConfirmedRunning,
+                stoppableManifestID: manifestID)
+
+        case .nothingRecorded(let reason), .partialCleanupFailure(let reason):
+            // No sheet titled "Saved" for something that was not saved.
+            studioNotice = StudioNotice(message: reason)
+        }
+    }
+
+    /// Remove a saved look from the bridge, by exact manifest identity.
+    ///
+    /// Offered directly from the save result so a look that was saved but never
+    /// confirmed running can be cleaned up immediately — waiting for a relaunch
+    /// to surface a Stop is exactly the gap that leaves a user with resources
+    /// they cannot find.
+    func stopSavedBridgeLook(_ result: BridgeSaveResult) async {
+        guard let manifestID = result.stoppableManifestID, let orchestrator else { return }
+        bridgeSaveResult = nil
+        if await orchestrator.stopSavedBridgeLook(manifestID: manifestID) {
+            studioNotice = StudioNotice(message: "\(result.lookName) was removed from \(result.bridgeLabel).")
+        } else {
+            studioNotice = StudioNotice(message: BridgeSaveCopy.saveFailedResourcesRemain)
         }
     }
 
@@ -808,6 +830,10 @@ final class StudioViewModel {
         let createdLocalPreset: Bool
         let stopSurvivesRelaunch: Bool
         let headline: String
+        /// Present whenever resources exist on the bridge that this result can
+        /// remove RIGHT NOW. Non-nil is what makes "saved but not confirmed
+        /// running" an actionable state rather than an announcement.
+        let stoppableManifestID: UUID?
     }
 
     var bridgeSaveResult: BridgeSaveResult? = nil

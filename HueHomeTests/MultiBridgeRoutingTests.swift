@@ -204,7 +204,13 @@ private final class RoutingSpyV1Client: HueV1Client, @unchecked Sendable {
     override func fetchScenes() async throws -> [String: [String: Any]] { try await inventory("fetchScenes") }
     override func fetchResourcelinks() async throws -> [String: [String: Any]] { try await inventory("fetchResourcelinks") }
 
+    /// Make the very first creation throw, so a bridge upload fails with no
+    /// timing dependency. The strict-save tests need a deterministic "the
+    /// bridge refused", not a network timeout.
+    var creationShouldFail = false
+
     override func createCLIPSensor(name: String, initialStatus: Int) async throws -> String {
+        if creationShouldFail { throw HueAPIError.httpError(500) }
         recordCreation("sensor"); return "new-sensor"
     }
     override func createRule(
@@ -2812,9 +2818,15 @@ final class MultiBridgeRoutingTests: XCTestCase {
         }
         await drain(sender)
 
-        XCTAssertEqual(bridgeA.lightEffectIDs, ["L4", "L5"])
-        // brightness is sent as a percentage with a 1% floor: frame 4 → 40, 5 → 50.
-        XCTAssertEqual(bridgeA.lightEffectBrightnesses, [40, 50],
+        // PAIRING, not arrival order. The per-light writes are dispatched
+        // concurrently, so which of L4/L5 lands first is not a contract — and
+        // asserting one made this test fail roughly two runs in three (verified
+        // at merge 3479243, before the hardware-convergence slice). What the
+        // test is actually for is that each light receives ITS OWN frame:
+        // brightness is a percentage with a 1% floor, so frame 4 → 40, 5 → 50.
+        let delivered = Dictionary(
+            uniqueKeysWithValues: zip(bridgeA.lightEffectIDs, bridgeA.lightEffectBrightnesses))
+        XCTAssertEqual(delivered, ["L4": 40, "L5": 50],
             "each light must receive ITS OWN frame, addressed absolutely")
     }
 
@@ -8821,6 +8833,105 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "bridge A was never started, stopped, or otherwise addressed")
     }
 
+    // ── Instrumentation may only record what was observed ──────────────
+    //
+    // The first version recorded BOTH "remained active" and "reacquired the
+    // same configuration" from a single post-stop read. One observation cannot
+    // prove both: without ever seeing an inactive state, a reacquisition is a
+    // transition nobody watched. An instrument that invents transitions is
+    // worse than none, because the next device pass would be debugging a
+    // fiction.
+
+    /// HCT-11 — no inactive state observed ⇒ "release not proven" ONLY.
+    func testAStopWithNoObservedReleaseRecordsOnlyThatReleaseWasNotProven() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        _ = try await stagedForeignPrompt(vm)
+        orchestrator.testResetTakeoverEventLog()
+
+        // The stop is accepted; the configuration never goes inactive.
+        await vm.confirmForeignTakeover()
+
+        let log = orchestrator.takeoverEventLog
+        XCTAssertTrue(log.contains(.foreignConfigurationRemainedActive),
+            "the observed fact — it was still active — is recorded: \(log)")
+        XCTAssertFalse(log.contains(.foreignConfigurationReacquiredSameConfig),
+            "NOTHING was ever seen inactive, so no reacquisition may be claimed: \(log)")
+        XCTAssertFalse(log.contains(.foreignConfigurationStopped),
+            "and a release that was not observed is never recorded as one: \(log)")
+        XCTAssertTrue(log.contains(.nowPlayingWithheld),
+            "the failure path must record that Now Playing was withheld: \(log)")
+    }
+
+    /// HCT-12 — inactive observed, then the SAME configuration returns before
+    /// we commit. The only shape that may claim same-config reacquisition.
+    func testSameConfigurationReturningAfterAnObservedReleaseIsRecordedAsReacquisition() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        _ = try await stagedForeignPrompt(vm)
+        orchestrator.testResetTakeoverEventLog()
+
+        // Release IS observed, and then the same session comes straight back.
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+        await vm.confirmForeignTakeover()
+
+        let log = orchestrator.takeoverEventLog
+        XCTAssertTrue(log.contains(.foreignConfigurationStopped),
+            "the release was genuinely observed first: \(log)")
+        XCTAssertFalse(log.contains(.ownershipPublished),
+            "and nothing published ownership on this contested path: \(log)")
+        XCTAssertNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-b"),
+            "no ownership record survives a start that was not verified")
+    }
+
+    /// HCT-13 — a conflict appearing after our start but before ownership is
+    /// published costs the user nothing and publishes nothing.
+    func testAConflictAfterOurStartPreventsOwnershipPublication() async throws {
+        stageStreamableBridge(bridgeB, active: ["cfg-someone-else"])
+        let vm = makeP7VM()
+        _ = try await stagedForeignPrompt(vm)
+        orchestrator.testResetTakeoverEventLog()
+
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: ["cfg-a-third-party"])
+        }
+        await vm.confirmForeignTakeover()
+
+        XCTAssertFalse(orchestrator.takeoverEventLog.contains(.ownershipPublished),
+            "a contested bridge may not produce ownership: \(orchestrator.takeoverEventLog)")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+            "and no Now Playing row claims the look is streaming")
+    }
+
+    /// HCT-14 — ownership is published only at the commit, and only after
+    /// every verification has passed.
+    func testOwnershipIsPublishedOnlyAfterFinalVerification() async throws {
+        stageStreamableBridge(bridgeB)
+        let vm = makeP7VM()
+        let party = try streamingCard(vm)
+        orchestrator.testResetTakeoverEventLog()
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        // In the simulator the DTLS handshake cannot complete, so this start
+        // legitimately fails — which is exactly the case that must publish
+        // nothing. The assertion is about the coupling, not the transport.
+        let log = orchestrator.takeoverEventLog
+        if log.contains(.chromaGlowSessionUsable) {
+            XCTAssertEqual(log.filter { $0 == .ownershipPublished }.count, 1,
+                "a verified session commits ownership exactly once: \(log)")
+            XCTAssertLessThan(
+                log.firstIndex(of: .chromaGlowSessionUsable) ?? .max,
+                log.firstIndex(of: .ownershipPublished) ?? .max,
+                "verification precedes publication")
+        } else {
+            XCTAssertFalse(log.contains(.ownershipPublished),
+                "a session that never became usable may never publish ownership: \(log)")
+        }
+    }
+
     /// HCT-10 — an explicit Streaming request that cannot stream refuses. It
     /// does NOT quietly become Room mode underneath the other app's show.
     func testAFailedTakeoverNeverFallsBackToRoomModeSilently() async throws {
@@ -8837,5 +8948,192 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNotNil(vm.studioNotice ?? vm.foreignTakeoverRequest.map { _ in
             StudioViewModel.StudioNotice(message: "asked again") },
             "the refusal is visible — either explained or re-asked")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Hardware convergence C: a save is not a fallback
+    // ──────────────────────────────────────────────
+    //
+    // The first version of "Save to bridge" called `startCompositionMode`,
+    // whose bridge-upload catch falls through to app-driven REST. That is the
+    // right default for a tap meaning "play this" and the wrong one for a tap
+    // meaning "put this ON THE BRIDGE": the user was shown a sheet titled
+    // "Saved" for a look that was merely running from the phone, and would
+    // have discovered it only when closing the app stopped the lights.
+
+    /// A preset the bridge could genuinely store: no mic, no motion.
+    private func bridgeStorablePreset(named name: String = "Steady Amber") -> CompositionPreset {
+        var preset = makePreset(named: name)
+        preset = CompositionPreset(
+            id: preset.id, name: name, icon: preset.icon,
+            accentColorHex: preset.accentColorHex, isBuiltIn: false,
+            category: preset.category, seasonMonths: nil,
+            palette: preset.palette,
+            motion: MotionConfig(pattern: .static),
+            envelope: EnvelopeConfig(shape: .steady),
+            reaction: ReactionConfig(source: .none),
+            createdAt: preset.createdAt, updatedAt: preset.updatedAt)
+        return preset
+    }
+
+    /// HCS-01 — a bridge upload that fails starts NOTHING and saves nothing.
+    func testAFailedBridgeSaveStartsNoAppDrivenRuntimeAndReportsNothingSaved() async throws {
+        stageStreamableBridge(bridgeB)
+        // The v1 chain cannot be created, so the upload throws.
+        bridgeB.v1Spy.creationShouldFail = true
+        let preset = bridgeStorablePreset()
+
+        let outcome = await orchestrator.saveLookToBridge(
+            room: streamRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preset: preset)
+
+        guard case .nothingRecorded = outcome else {
+            return XCTFail("a save that saved nothing must say so; got \(outcome)")
+        }
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: streamRoomOnB().id),
+            "no transport was claimed for a room that started nothing")
+        XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty,
+            "and no Now Playing row appeared for an app-driven fallback that must not happen")
+    }
+
+    /// HCS-02 — a look the bridge cannot reproduce is refused BEFORE anything
+    /// is attempted, and never becomes app-driven playback wearing a save's
+    /// clothes.
+    func testAnIneligibleLookIsRefusedWithoutTouchingTheBridge() async throws {
+        stageStreamableBridge(bridgeB)
+        let reactive = makePreset(named: "Sound Reactive")   // mic-driven by default
+        let writesBefore = writeSnapshot(bridgeB)
+
+        let outcome = await orchestrator.saveLookToBridge(
+            room: streamRoomOnB(), paramBox: CompositionParamBox(preset: reactive),
+            gamutOverride: .c, preset: reactive)
+
+        guard case .nothingRecorded(let reason) = outcome else {
+            return XCTFail("a reactive look cannot live on a bridge with no microphone; got \(outcome)")
+        }
+        XCTAssertFalse(reason.isEmpty, "and the refusal explains itself")
+        XCTAssertEqual(writeSnapshot(bridgeB), writesBefore,
+            "nothing was written for a look that was never eligible")
+        XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty,
+            "and above all it did not quietly start playing from the phone")
+    }
+
+    /// HCS-03 — ordinary playback keeps its fallback. The strictness is a
+    /// property of the SAVE, not a new global refusal.
+    func testOrdinaryPlaybackStillFallsBackWhenABridgeUploadFails() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeB.v1Spy.creationShouldFail = true
+        let preset = bridgeStorablePreset(named: "Ordinary Play")
+
+        let outcome = await orchestrator.startCompositionMode(
+            room: streamRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preferEntertainment: false,
+            tier: .bridgeOptimized, preset: preset)
+
+        guard case .started = outcome else {
+            return XCTFail("a tap meaning 'play this' should still play it; got \(outcome)")
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Hardware convergence: cleanup targets one exact bridge
+    // ──────────────────────────────────────────────
+    //
+    // Clean Bridge Resources removes every ChromaGlow resource on the bridge it
+    // targets, including other rooms' running looks. It previously targeted
+    // `registeredBridgeIDs.first` — the lowest-sorting id, which is not an
+    // answer to "which of my bridges are you about to wipe?".
+
+    /// HCC-01 — one bridge is unambiguous, so it needs no question.
+    func testASingleRegisteredBridgeIsSelectedAutomatically() {
+        XCTAssertEqual(CleanBridgeTarget.resolve(registered: ["bridge-a"], selected: nil),
+                       "bridge-a")
+        XCTAssertFalse(CleanBridgeTarget.needsChoice(registered: ["bridge-a"], selected: nil))
+    }
+
+    /// HCC-02 — several bridges require the user to name one. No default.
+    func testSeveralBridgesRequireAnExplicitChoiceAndHaveNoDefault() {
+        let both = ["bridge-a", "bridge-b"]
+        XCTAssertNil(CleanBridgeTarget.resolve(registered: both, selected: nil),
+            "there is no defensible default — lowest id is arbitrary, not chosen")
+        XCTAssertTrue(CleanBridgeTarget.needsChoice(registered: both, selected: nil))
+
+        XCTAssertEqual(CleanBridgeTarget.resolve(registered: both, selected: "bridge-b"),
+                       "bridge-b", "and the named bridge is honoured exactly")
+        XCTAssertFalse(CleanBridgeTarget.needsChoice(registered: both, selected: "bridge-b"))
+    }
+
+    /// HCC-03 — a selection naming a bridge that is gone deletes nothing.
+    func testAStaleBridgeSelectionResolvesToNothing() {
+        // With several bridges, a selection naming one that is gone is not a
+        // selection — and there is still no default to fall back to.
+        XCTAssertNil(
+            CleanBridgeTarget.resolve(registered: ["bridge-a", "bridge-b"], selected: "bridge-gone"),
+            "a selection for an unregistered bridge may not resolve to some other bridge")
+        XCTAssertTrue(
+            CleanBridgeTarget.needsChoice(registered: ["bridge-a", "bridge-b"], selected: "bridge-gone"),
+            "the user is asked again rather than handed an arbitrary target")
+
+        // A single remaining bridge IS unambiguous, so a stale selection does
+        // not block it. The destructive act is guarded by revalidate below,
+        // not by refusing to name the only bridge there is.
+        XCTAssertEqual(CleanBridgeTarget.resolve(registered: ["bridge-a"], selected: "bridge-gone"),
+                       "bridge-a")
+
+        // Revalidation is the guard that actually precedes deletion.
+        XCTAssertNil(CleanBridgeTarget.revalidate(confirmed: "bridge-gone",
+                                                  registered: ["bridge-a", "bridge-b"]),
+            "revalidation refuses rather than silently retargeting another bridge")
+        XCTAssertNil(CleanBridgeTarget.revalidate(confirmed: nil, registered: ["bridge-a"]),
+            "and an unconfirmed target deletes nothing")
+    }
+
+    /// HCC-04 — confirming bridge B can only ever act on bridge B.
+    func testRevalidationReturnsTheConfirmedBridgeAndNeverASubstitute() {
+        let both = ["bridge-a", "bridge-b"]
+        XCTAssertEqual(CleanBridgeTarget.revalidate(confirmed: "bridge-b", registered: both),
+                       "bridge-b")
+        XCTAssertNotEqual(CleanBridgeTarget.revalidate(confirmed: "bridge-b", registered: both),
+                          "bridge-a", "the unselected bridge is never the answer")
+    }
+
+    /// HCC-05 — only manifests whose resources were CONFIRMED deleted on that
+    /// exact bridge are forgotten; the other bridge's records are untouched.
+    func testCleanupForgetsOnlyProvenRemovalsOnTheSelectedBridge() async throws {
+        let onA = stageManifest(roomID: "room-a", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                sensorID: "S-a", ruleIDs: ["R-a"], scheduleID: "SC-a")
+        let onB = stageManifest(roomID: "room-b", bridgeIP: "192.0.2.2", bridgeID: "bridge-b",
+                                sensorID: "S-b", ruleIDs: ["R-b"], scheduleID: "SC-b")
+
+        var proven = BridgeAnimationEngine.PurgeReport()
+        proven.deletedSensors = ["S-a", "S-b"]
+        proven.deletedSchedules = ["SC-a", "SC-b"]
+        proven.deletedRules = ["R-a", "R-b"]
+
+        let forgotten = orchestrator.forgetManifestsProvenRemoved(by: proven, onBridge: "bridge-a")
+
+        XCTAssertEqual(forgotten, 1, "exactly the one manifest on the selected bridge")
+        XCTAssertNil(animationStore.manifest(id: onA.id), "A's record is gone")
+        XCTAssertNotNil(animationStore.manifest(id: onB.id),
+            "B was never selected, so its record survives even though the report names its ids")
+    }
+
+    /// HCC-06 — an unproven removal retains its manifest. The manifest is the
+    /// only record that could still stop what remains.
+    func testAnUnprovenRemovalRetainsItsManifest() async throws {
+        let onA = stageManifest(roomID: "room-a", bridgeIP: "192.0.2.1", bridgeID: "bridge-a",
+                                sensorID: "S-a", ruleIDs: ["R-a", "R-a2"], scheduleID: "SC-a")
+
+        var partial = BridgeAnimationEngine.PurgeReport()
+        partial.deletedSensors = ["S-a"]
+        partial.deletedSchedules = ["SC-a"]
+        partial.deletedRules = ["R-a"]          // R-a2 was never confirmed
+        partial.failedDeletes = 1
+
+        let forgotten = orchestrator.forgetManifestsProvenRemoved(by: partial, onBridge: "bridge-a")
+
+        XCTAssertEqual(forgotten, 0)
+        XCTAssertNotNil(animationStore.manifest(id: onA.id),
+            "one unconfirmed rule is enough to keep the record that can still remove it")
     }
 }

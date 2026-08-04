@@ -10,6 +10,45 @@ import SwiftData
 import CoreLocation
 import WidgetKit
 
+// MARK: - CleanBridgeTarget
+
+/// Which bridge a destructive sweep is allowed to touch.
+///
+/// Pure, so the rule can be proved without a view. The rule matters because
+/// Clean Bridge Resources removes every ChromaGlow-created resource on the
+/// bridge it targets — including other rooms' looks that are running right
+/// now — and it previously targeted `registeredBridgeIDs.first`. Lowest-sorting
+/// id is not an answer to "which of my bridges are you about to wipe?".
+enum CleanBridgeTarget {
+
+    /// The bridge to act on, or nil when the user has not said.
+    ///
+    /// One registered bridge is unambiguous and is chosen automatically.
+    /// Several are not, and no default is invented — a selection is required,
+    /// and a selection naming a bridge that is no longer registered is not one.
+    static func resolve(registered: [String], selected: String?) -> String? {
+        if registered.count == 1 { return registered[0] }
+        guard let selected, registered.contains(selected) else { return nil }
+        return selected
+    }
+
+    /// Must the user be asked before the confirmation can even be phrased?
+    static func needsChoice(registered: [String], selected: String?) -> Bool {
+        registered.count > 1 && resolve(registered: registered, selected: selected) == nil
+    }
+
+    /// Re-check, at the moment of deletion, the exact id that was confirmed.
+    ///
+    /// A bridge can be forgotten or drop off the network between the tap and
+    /// the delete. Re-resolving from scratch there could silently retarget
+    /// another bridge, so the confirmed id is either still registered — and
+    /// used — or nothing happens at all.
+    static func revalidate(confirmed: String?, registered: [String]) -> String? {
+        guard let confirmed, registered.contains(confirmed) else { return nil }
+        return confirmed
+    }
+}
+
 // MARK: - SettingsView
 
 struct SettingsView: View {
@@ -29,6 +68,8 @@ struct SettingsView: View {
     @State private var isCleaningBridge = false
     @State private var cleanBridgeResult: String? = nil
     @State private var showCleanBridgeConfirm = false
+    @State private var showCleanBridgePicker = false
+    @State private var cleanBridgeSelectedID: String? = nil
 
     private let glowColor = Color(red: 1.0, green: 0.76, blue: 0.2)
 
@@ -294,7 +335,10 @@ struct SettingsView: View {
             // unguarded tap was too much power for a row whose subtitle said
             // only "tidy up".
             Button {
-                showCleanBridgeConfirm = true
+                // With several bridges the target must be named before the
+                // confirmation can name it.
+                if needsBridgeChoice { showCleanBridgePicker = true }
+                else { showCleanBridgeConfirm = true }
             } label: {
                 HStack(spacing: 12) {
                     iconCircle("trash.circle", color: Color(red: 1.0, green: 0.55, blue: 0.25))
@@ -316,17 +360,37 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .disabled(isCleaningBridge || orchestrator.isDemoMode)
             .opacity(orchestrator.isDemoMode ? 0.4 : 1.0)
+            // Which bridge? Asked before anything is confirmed, never guessed.
+            .confirmationDialog(
+                "Clean which bridge?",
+                isPresented: $showCleanBridgePicker,
+                titleVisibility: .visible
+            ) {
+                ForEach(orchestrator.registeredBridgeIDs, id: \.self) { id in
+                    Button(orchestrator.bridgeLabel(for: id)) {
+                        cleanBridgeSelectedID = id
+                        showCleanBridgeConfirm = true
+                    }
+                }
+                Button("Cancel", role: .cancel) { cleanBridgeSelectedID = nil }
+            } message: {
+                Text("Only the bridge you pick is changed.")
+            }
             .confirmationDialog(
                 "Clean \(orchestrator.bridgeLabel(for: cleanBridgeTargetID ?? ""))?",
                 isPresented: $showCleanBridgeConfirm,
                 titleVisibility: .visible
             ) {
+                // The exact id is frozen at the moment of confirmation and
+                // re-checked before any delete, so a bridge that dropped off
+                // the network in between deletes nothing.
                 Button("Remove ChromaGlow Data", role: .destructive) {
-                    Task { await cleanBridgeResources() }
+                    let frozen = cleanBridgeTargetID
+                    Task { await cleanBridgeResources(confirmedBridgeID: frozen) }
                 }
-                Button("Cancel", role: .cancel) {}
+                Button("Cancel", role: .cancel) { cleanBridgeSelectedID = nil }
             } message: {
-                Text("This removes every look ChromaGlow saved to this bridge, including any that are running right now in other rooms. Looks on your other bridges aren't touched.")
+                Text("This removes every look ChromaGlow saved to \(orchestrator.bridgeLabel(for: cleanBridgeTargetID ?? "")), including any that are running right now in other rooms. Looks on your other bridges aren't touched.")
             }
         }
     }
@@ -562,25 +626,39 @@ struct SettingsView: View {
 
     /// The bridge this action will actually affect.
     ///
-    /// Resolved from the registry, not from `HueAPIClient.shared`. The shared
-    /// client is whichever one happened to be configured last, which on a
-    /// two-bridge home is not necessarily the one the user is looking at — and
-    /// a destructive sweep that cannot name its target must not run at all.
+    /// With ONE registered bridge there is no ambiguity, so it is chosen
+    /// automatically. With several there is no defensible default: `.first` is
+    /// whichever id sorts lowest, which is an arbitrary answer to "which of my
+    /// bridges are you about to wipe?" — so the user must name it, and until
+    /// they do this is nil and the action cannot run.
+    ///
+    /// Also not `HueAPIClient.shared`: that is whichever client was configured
+    /// last, which on a two-bridge home need not be the one on screen.
     private var cleanBridgeTargetID: String? {
-        orchestrator.registeredBridgeIDs.first
+        CleanBridgeTarget.resolve(registered: orchestrator.registeredBridgeIDs,
+                                  selected: cleanBridgeSelectedID)
+    }
+
+    private var needsBridgeChoice: Bool {
+        CleanBridgeTarget.needsChoice(registered: orchestrator.registeredBridgeIDs,
+                                      selected: cleanBridgeSelectedID)
     }
 
     @MainActor
-    private func cleanBridgeResources() async {
+    private func cleanBridgeResources(confirmedBridgeID: String?) async {
         isCleaningBridge = true
         cleanBridgeResult = nil
-        defer { isCleaningBridge = false }
+        defer { isCleaningBridge = false; cleanBridgeSelectedID = nil }
 
-        // Fail closed on an unresolvable target. "Which bridge?" has to have an
-        // answer before anything is deleted.
-        guard let bridgeID = cleanBridgeTargetID,
+        // Revalidate the EXACT bridge that was confirmed. Between the tap and
+        // this line a bridge can be removed or drop off the network, and a
+        // destructive sweep must never re-resolve to "some other bridge" —
+        // that is how the wrong home gets wiped.
+        guard let bridgeID = CleanBridgeTarget.revalidate(
+                confirmed: confirmedBridgeID,
+                registered: orchestrator.registeredBridgeIDs),
               let api = orchestrator.hueClient(for: bridgeID) else {
-            cleanBridgeResult = "✗ Couldn't tell which bridge to clean — nothing was removed"
+            cleanBridgeResult = "✗ Couldn't confirm which bridge to clean — nothing was removed"
             return
         }
         let label = orchestrator.bridgeLabel(for: bridgeID)

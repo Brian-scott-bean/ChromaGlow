@@ -648,6 +648,60 @@ if echo "$hc_roomchange" | grep -qE 'isMixerCollapsed = false'; then
     fail "composer-hardware-convergence" "the room-change handler forces the mixer open — that is the selector collision"
 fi
 
+# (e) Instrumentation may only record what was observed.
+#
+# The first version recorded BOTH "remained active" and "reacquired the same
+# configuration" from one post-stop read. Without ever seeing an inactive
+# state, a reacquisition is a transition nobody watched — and an instrument
+# that invents transitions sends the next device pass debugging a fiction.
+hc_remained_body=$(awk '/if after.foreign.contains\(foreignConfigID\)/,/^        }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_remained_body" | grep -q 'foreignConfigurationReacquiredSameConfig'; then
+    fail "composer-hardware-convergence" "the 'still active' branch claims a reacquisition it never observed — no inactive state was seen there"
+fi
+
+# Ownership publication is recorded at the commit, and nowhere else.
+hc_publish_sites=$(grep -cE 'noteTakeoverEvent\(\.ownershipPublished' "$HC_ORCH" 2>/dev/null || echo 0)
+if [[ "$hc_publish_sites" -ne 1 ]]; then
+    fail "composer-hardware-convergence" "expected exactly 1 ownershipPublished emission (at the commit), found $hc_publish_sites"
+fi
+hc_commit_body=$(awk '/func commitEntertainment\(/,/^    }$/' "$HC_ORCH" 2>/dev/null || true)
+if ! echo "$hc_commit_body" | grep -q 'ownershipPublished'; then
+    fail "composer-hardware-convergence" "commitEntertainment does not record ownershipPublished — the event would drift from the moment ownership becomes real"
+fi
+
+# (f) An explicit save may never become app-driven playback.
+if ! grep -q 'func saveLookToBridge(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the strict bridge-save entry point is missing from $HC_ORCH"
+fi
+if ! grep -q 'strictBridgeSave' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "startCompositionMode lost its strict-save mode — a failed upload would silently become app-driven playback again"
+fi
+hc_vm_save=$(awk '/func saveActiveLookToBridge\(/,/^    }$/' "$HC_VM" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_vm_save" | grep -q 'startCompositionMode('; then
+    fail "composer-hardware-convergence" "the first-class save calls startCompositionMode directly — its upload catch falls back to app-driven REST, which would show a 'Saved' sheet for a look that was never saved"
+fi
+
+# (g) A saved-but-not-running look must be removable immediately.
+if ! grep -q 'func stopSavedBridgeLook(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the immediate exact Stop for a saved look is missing from $HC_ORCH"
+fi
+if ! grep -q 'stoppableManifestID' "$HC_VM"; then
+    fail "composer-hardware-convergence" "the save result no longer carries a manifest to stop — resources would exist with no way to remove them before a relaunch"
+fi
+
+# (h) The destructive sweep may not pick a bridge for the user.
+hc_settings="HueHome/UI/Settings/SettingsView.swift"
+if ! grep -q 'enum CleanBridgeTarget' "$hc_settings"; then
+    fail "composer-hardware-convergence" "CleanBridgeTarget is missing — bridge selection for a destructive sweep would be inline and unprovable"
+fi
+hc_arbitrary=$(grep -nE 'registeredBridgeIDs\.first|clients\.values\.first|HueAPIClient\.shared' "$hc_settings" 2>/dev/null \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_arbitrary" ]]; then
+    fail "composer-hardware-convergence" $'Clean Bridge Resources picks a bridge arbitrarily — lowest-sorting id is not an answer to "which bridge are you about to wipe?":\n'"$hc_arbitrary"
+fi
+
 # No timing waits in the suites that carry this slice's behaviour.
 HC_TESTS=(
     "HueHomeTests/MultiBridgeRoutingTests.swift"

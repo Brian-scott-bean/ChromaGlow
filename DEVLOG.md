@@ -32,7 +32,7 @@
   covered by the effect panel because a room change forced the tray open. Bridge saves now persist
   the manifest **before** activating anything, and the save result states which bridge, which
   room, whether it is bridge-run, whether a local preset exists and whether Stop survives a
-  relaunch. Suite 1335/1335 green (xcresulttool), Guard 12 added. **Neither Packet 7 nor Packet 8
+  relaunch. Suite 1348/1348 green (xcresulttool), Guard 12 added. **Neither Packet 7 nor Packet 8
   hardware validation is complete — Brian must run §V** in
   `docs/ios/master-on-device-checklist.md`. Entry below.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
@@ -610,11 +610,56 @@ succeed in the simulator on any run**. A genuinely stable takeover is therefore 
 is pinned deterministically is ordering, arithmetic, and the refusal to claim a session that did
 not open.
 
+### Review amendments
+
+Four trust defects were found reviewing the first push, and corrected on the same branch.
+
+**Instrumentation claimed a transition nobody watched.** The post-stop branch recorded both
+`foreignConfigurationRemainedActive` and `foreignConfigurationReacquiredSameConfig` from one read.
+Without ever observing an inactive state, a reacquisition is an inference — and an instrument that
+invents transitions sends the next device pass debugging a fiction. The "still active" branch now
+records only that release was not proven. Same-configuration reacquisition is recorded in
+`acquireEntertainment`, after our own start, where an inactive state genuinely was observed first.
+That is also the promised post-start / pre-commit revalidation: a foreign configuration active there
+means we did not win the bridge, so the session is released, the consent is not spent, and the user
+is asked about whatever is actually there. `ownershipPublished` is now emitted at
+`commitEntertainment` — the moment ownership becomes real — and every failure path records that Now
+Playing was withheld.
+
+**An explicit save could silently become app-driven playback.** `saveActiveLookToBridge` called
+`startCompositionMode`, whose bridge-upload catch falls back to REST. That is the right default for
+a tap meaning "play this" and the wrong one for a tap meaning "put this on the bridge": the user was
+shown a sheet titled "Saved" for a look running from the phone, and would have discovered it only
+when closing the app stopped the lights. There is now a strict path — `saveLookToBridge` with
+`strictBridgeSave` — which answers eligibility up front, never falls back, and returns a typed
+`BridgeSaveOutcome`. Ordinary playback keeps its fallback.
+
+**"Saved but not confirmed running" had no immediate Stop.** The manifest persisted and the result
+promised a Now Playing control that did not exist until a relaunch. The result now carries the
+manifest id and offers an exact `stopSavedBridgeLook` directly, and states "Playing now: Not
+confirmed" rather than implying it is running.
+
+**Cleanup picked a bridge for the user.** `registeredBridgeIDs.first` is the lowest-sorting id — not
+an answer to "which of my bridges are you about to wipe?". `CleanBridgeTarget` auto-selects only a
+single registered bridge, requires an explicit choice when there are several, freezes the id at
+confirmation, and revalidates it before deleting; a confirmed id that is no longer registered
+deletes nothing rather than retargeting.
+
+### A pre-existing flake, found and fixed (out of scope — flagging it)
+
+`testSubsetDispatchUsesAbsoluteFrameIndices` asserted a fixed arrival order over concurrently
+dispatched per-light writes. Verified **at merge `3479243`, with none of this slice's changes**: it
+fails **4 runs in 6**. Its actual intent is pairing — L4 receives frame 4, L5 receives frame 5 — so
+it now asserts exactly that and passes 6/6. `main` has therefore been intermittently red for this
+reason, and earlier green totals on this branch were partly luck on that one test.
+
 ### Validation
 
-Suite **1335/1335** green (xcresulttool). `MultiBridgeRoutingTests` 290/290. All 12 hardening
-guards pass, including new Guard 12 `composer-hardware-convergence`. No `project.pbxproj` change,
-no version or build bump. Retest checklist: §V of `docs/ios/master-on-device-checklist.md`.
+Suite **1348/1348** green (xcresulttool), **twice consecutively**. `MultiBridgeRoutingTests`
+303/303; narrow suites 190/190. All 12 hardening guards pass, including Guard 12
+`composer-hardware-convergence`, now extended to cover all four amendments. No `project.pbxproj`
+change, no version or build bump. Retest checklist: §V of
+`docs/ios/master-on-device-checklist.md`.
 
 ---
 

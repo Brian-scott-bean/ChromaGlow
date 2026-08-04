@@ -4805,7 +4805,14 @@ final class UnifiedOrchestrator {
         preset: CompositionPreset? = nil,
         capturedPlan: EntertainmentTakeoverPlan? = nil,
         consent: EntertainmentConsent? = nil,
-        preparedEntertainment: EntertainmentPreparation? = nil
+        preparedEntertainment: EntertainmentPreparation? = nil,
+        /// An explicit "Save to bridge", not ordinary playback.
+        ///
+        /// Ordinary playback may fall back to app-driven REST when a bridge
+        /// upload fails — the user asked for the look to play, and it does.
+        /// A save may not: falling back there reports a successful save of
+        /// something that was never saved.
+        strictBridgeSave: Bool = false
     ) async -> PlaybackStartOutcome {
         // Scoped to THIS transaction's candidate — see startStudioMode.
         var outstandingCandidateID: UUID?
@@ -5088,9 +5095,15 @@ final class UnifiedOrchestrator {
                     forgetManifestRecord(id: owned.id)
                     deactivateComposerTelemetrySession(
                         sessionKey: composerTelemetryKey, pendingRemovalReported: false)
-                    return .failed(message: cleanup == .removed
+                    let message = cleanup == .removed
                         ? BridgeSaveCopy.saveFailedNothingRecorded
-                        : BridgeSaveCopy.saveFailedResourcesRemain)
+                        : BridgeSaveCopy.saveFailedResourcesRemain
+                    if strictBridgeSave {
+                        lastBridgeSaveOutcome = cleanup == .removed
+                            ? .nothingRecorded(reason: message)
+                            : .partialCleanupFailure(reason: message)
+                    }
+                    return .failed(message: message)
                 }
 
                 // Only now may it start.
@@ -5104,7 +5117,14 @@ final class UnifiedOrchestrator {
                     debugLog("[Composer] '\(preset.name)' persisted but did not start: \(error.localizedDescription)")
                     compositionTransportByRoom[roomID] = .bridgeStored
                     noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
+                    if strictBridgeSave {
+                        lastBridgeSaveOutcome = .savedNotConfirmedRunning(
+                            manifestID: owned.id, bridgeID: bridgeID)
+                    }
                     return .failed(message: BridgeSaveCopy.savedNotConfirmedRunning)
+                }
+                if strictBridgeSave {
+                    lastBridgeSaveOutcome = .savedAndRunning(manifestID: owned.id, bridgeID: bridgeID)
                 }
 
                 compositionTransportByRoom[roomID] = .bridgeStored
@@ -5138,6 +5158,22 @@ final class UnifiedOrchestrator {
                 }
                 return .started(transport: .bridgeStored)  // Don't start app-driven scheduler
             } catch {
+                // An explicit save may NOT become ordinary playback.
+                //
+                // Falling through here is right for a tap that meant "play
+                // this": the look still runs, just from the phone. It is wrong
+                // for a tap that meant "put this on the bridge", because the
+                // user is then shown a successful save of something that was
+                // never saved — and will discover it only when closing the app
+                // stops the lights they were told would keep going.
+                if strictBridgeSave {
+                    debugLog("[Composer] ⚠ Bridge save failed for '\(preset.name)': \(error.localizedDescription) — starting nothing")
+                    deactivateComposerTelemetrySession(
+                        sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                    lastBridgeSaveOutcome = .nothingRecorded(
+                        reason: BridgeSaveCopy.saveFailedNothingRecorded)
+                    return .failed(message: BridgeSaveCopy.saveFailedNothingRecorded)
+                }
                 debugLog("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
                 // Packet 5: carry the reason forward instead of dropping it in
                 // a DEBUG log. The three cases stay DISTINCT all the way to the
@@ -6853,9 +6889,39 @@ final class UnifiedOrchestrator {
                 debugLog("[Studio] Entertainment session never reached a usable state — refusing to claim it")
                 await entClient.stopSession()
                 noteTakeoverEvent(.chromaGlowSessionNotUsable, bridgeID: bridgeID, configID: config.id)
+                noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
                 return .unavailable(reason: .streamingFailed)
             }
             noteTakeoverEvent(.chromaGlowSessionUsable, bridgeID: bridgeID, configID: config.id)
+
+            // ── Final check, after our start and before any commitment ──
+            //
+            // A usable session is not the same as an uncontested one. Between
+            // the verified release and this line another controller can claim
+            // the bridge — and because the Hue bridge runs one Entertainment
+            // configuration at a time, a foreign configuration active HERE
+            // means we did not really win it.
+            //
+            // This is also the only place same-configuration reacquisition can
+            // be honestly recorded: the release WAS observed earlier, so a
+            // return of that exact configuration is a transition we watched
+            // happen rather than one we assumed.
+            if let postStart = await entertainmentActivity(onBridge: bridgeID),
+               !postStart.foreign.isEmpty {
+                if let consent, postStart.foreign.contains(consent.foreignConfigID) {
+                    noteTakeoverEvent(.foreignConfigurationReacquiredSameConfig,
+                                      bridgeID: bridgeID, configID: consent.foreignConfigID)
+                } else {
+                    noteTakeoverEvent(.foreignConfigurationReacquiredOtherConfig,
+                                      bridgeID: bridgeID, configID: postStart.foreign.first)
+                }
+                debugLog("[Handoff] A controller claimed \(bridgeID) after our start — releasing rather than claiming ownership")
+                await entClient.stopSession()
+                noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+                // The consent is NOT spent: it bought nothing, and the user is
+                // asked again about whatever is actually there now.
+                return .needsForeignConsent(postStart)
+            }
 
             // Deliberately NOT installed into studioEntClients here. The
             // caller commits it once it has decided the start is going ahead,
@@ -6927,13 +6993,20 @@ final class UnifiedOrchestrator {
 
     enum TakeoverEvent: String {
         case foreignStopRequestFailed
+        /// The stop was accepted and the configuration was STILL active on the
+        /// next read. No inactive state was ever observed, so this says exactly
+        /// that: release not proven. It deliberately does NOT claim a
+        /// reacquisition — that would assert a transition nobody watched.
         case foreignConfigurationRemainedActive
+        /// An inactive state was actually observed. Everything below may only
+        /// be recorded after this one.
         case foreignConfigurationStopped
-        /// The SAME configuration went inactive and came back before we
-        /// committed. Hue Sync reclaiming what it just lost is the ordinary
-        /// case, not the exotic one.
+        /// The SAME configuration was observed inactive and then active again
+        /// before we committed. Hue Sync reclaiming what it just lost is the
+        /// ordinary case, not the exotic one — but it is only recorded when the
+        /// release was seen first.
         case foreignConfigurationReacquiredSameConfig
-        /// A DIFFERENT configuration became active before we committed.
+        /// A DIFFERENT configuration became active after an observed release.
         case foreignConfigurationReacquiredOtherConfig
         case chromaGlowStartRequestFailed
         case chromaGlowSessionNotUsable
@@ -7586,6 +7659,102 @@ final class UnifiedOrchestrator {
     /// Display name for a registered bridge (used by pickers).
     func bridgeName(for bridgeID: String) -> String? {
         clients[bridgeID]?.bridgeName
+    }
+
+    /// What an explicit "Save to bridge" actually produced.
+    ///
+    /// Four outcomes, none of which may be represented by "it started playing".
+    /// The ordinary composition start is allowed to fall back to app-driven
+    /// playback when a bridge upload fails — that is a good default for a tap
+    /// that meant "play this". It is a bad answer for a tap that meant "put
+    /// this ON THE BRIDGE", because the user is then told a save succeeded when
+    /// nothing was saved.
+    enum BridgeSaveOutcome: Equatable {
+        /// Resources created, manifest durable, chain confirmed started.
+        case savedAndRunning(manifestID: UUID, bridgeID: String)
+        /// Resources created and the manifest IS durable, but the chain did not
+        /// start. Not a success and not a loss: the manifest is the exact
+        /// evidence that keeps these resources stoppable, so it is retained and
+        /// an exact Stop is offered immediately.
+        case savedNotConfirmedRunning(manifestID: UUID, bridgeID: String)
+        /// Nothing was left on the bridge — either nothing was created, or what
+        /// was created was cleaned up exactly.
+        case nothingRecorded(reason: String)
+        /// Creation partly succeeded and cleanup could not finish. Named,
+        /// because silence here is what produces a resource set the user can
+        /// never find.
+        case partialCleanupFailure(reason: String)
+    }
+
+    /// Set by the bridge-stored branch of `startCompositionMode` when it was
+    /// entered under `strictBridgeSave`. Read immediately by `saveLookToBridge`.
+    @ObservationIgnored private var lastBridgeSaveOutcome: BridgeSaveOutcome?
+
+    /// Save a look onto the bridge, with NO app-driven fallback.
+    ///
+    /// The strict counterpart of starting a composition. Every failure is
+    /// reported as a bridge-save failure rather than quietly becoming ordinary
+    /// playback, so the result the user is shown can never say "Saved" about a
+    /// look that is merely running from the phone.
+    func saveLookToBridge(
+        room: RoomDisplayItem,
+        paramBox: CompositionParamBox,
+        gamutOverride: HueColorUtils.Gamut?,
+        preset: CompositionPreset
+    ) async -> BridgeSaveOutcome {
+        lastBridgeSaveOutcome = nil
+
+        // Eligibility is answered HERE, not by silently taking another branch.
+        // A reactive or moving look is not a bridge look, and the honest answer
+        // is to say so — not to start it from the phone and call that a save.
+        guard preset.canRunOnBridge else {
+            return .nothingRecorded(reason: BridgeSaveCopy.ineligibleReactive)
+        }
+        guard preset.capabilityTier == .bridgeOptimized else {
+            return .nothingRecorded(reason: BridgeSaveCopy.ineligibleMotion)
+        }
+
+        let outcome = await startCompositionMode(
+            room: room, paramBox: paramBox, gamutOverride: gamutOverride,
+            preferEntertainment: false, tier: .bridgeOptimized, preset: preset,
+            capturedPlan: nil, consent: nil, preparedEntertainment: nil,
+            strictBridgeSave: true)
+
+        if let recorded = lastBridgeSaveOutcome { return recorded }
+
+        // The bridge branch was never reached at all, so nothing was created.
+        if case .failed(let message) = outcome {
+            return .nothingRecorded(reason: message)
+        }
+        return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
+    }
+
+    /// Stop and remove exactly one saved look, by manifest identity.
+    ///
+    /// The immediate counterpart of the recovered-row Stop, for a look that was
+    /// saved but never confirmed running: its resources exist and are tracked,
+    /// so the user must be able to remove them NOW rather than waiting for a
+    /// relaunch to surface a row.
+    ///
+    /// Exact by construction — the manifest names its own resources, and the
+    /// bridge client is resolved from the manifest's recorded bridge id.
+    @discardableResult
+    func stopSavedBridgeLook(manifestID: UUID) async -> Bool {
+        guard let manifest = bridgeAnimationStore.manifest(id: manifestID) else {
+            // Already gone. Nothing to remove is a success, not a failure.
+            return true
+        }
+        guard let bridgeID = resolvedBridgeID(for: manifest),
+              let api = hueClient(for: bridgeID),
+              let v1Client = try? api.makeV1Client() else {
+            debugLog("[Composer] Cannot reach the bridge holding manifest \(manifestID) — retaining it")
+            return false
+        }
+        let result = await bridgeAnimationEngine.stop(manifest: manifest, v1Client: v1Client)
+        guard retireManifest(manifest, after: result) else { return false }
+        compositionTransportByRoom.removeValue(forKey: manifest.roomID)
+        removeActiveEffect(roomID: manifest.roomID)
+        return true
     }
 
     /// The ONE place a manifest record is dropped from the store.
@@ -8381,6 +8550,13 @@ enum BridgeSaveCopy {
         "Saved to your bridge as a scene. It keeps playing with the app closed — start or stop it from Scenes, or in the Hue app."
     static let noLocalPreset =
         "This lives on your bridge only — no copy was added to My Creations."
+    /// Said BEFORE anything is attempted. The bridge has no microphone, so a
+    /// reactive look cannot live there — and starting it from the phone and
+    /// calling that a save would be the lie this whole slice exists to remove.
+    static let ineligibleReactive =
+        "Looks that react to sound can't be saved to the bridge — the bridge has no microphone. Nothing was saved."
+    static let ineligibleMotion =
+        "This look moves in a way the bridge can't reproduce on its own, so it can't be saved there. Nothing was saved."
 }
 
 /// Safety refusals shared between Studio and Perform.
@@ -8734,6 +8910,11 @@ extension UnifiedOrchestrator {
         // concurrent transaction's candidate and leak its session.
         outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
         studioEntClients[prepared.plan.bridgeID] = prepared.client
+        // This IS the moment ownership becomes real — every verification has
+        // passed and the session is now the app's. Recording it here rather
+        // than at the caller keeps the event tied to the commit itself.
+        noteTakeoverEvent(.ownershipPublished, bridgeID: prepared.plan.bridgeID,
+                          configID: prepared.plan.targetConfigID)
     }
 
     /// Stop a session that was prepared but never committed.
@@ -8857,6 +9038,7 @@ extension UnifiedOrchestrator {
             // Never claim a takeover that did not happen.
             debugLog("[Handoff] Takeover stop failed: \(error.localizedDescription)")
             noteTakeoverEvent(.foreignStopRequestFailed, bridgeID: bridgeID, configID: foreignConfigID)
+            noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
             return .failed(message: EntertainmentConsentCopy.takeoverFailed)
         }
 
@@ -8876,17 +9058,19 @@ extension UnifiedOrchestrator {
         }
 
         if after.foreign.contains(foreignConfigID) {
-            // Two different situations share this shape, and both mean "start
-            // nothing": the stop never released it, or it released and the
-            // other controller reclaimed the SAME configuration before we could
-            // act. Either way the consent the user gave has been spent on an
-            // area somebody else still holds, and a fresh question is the only
-            // honest next step.
-            debugLog("[Handoff] \(foreignConfigID) is still active after its stop — starting nothing")
+            // Record ONLY what was observed.
+            //
+            // This single read cannot distinguish "the stop never released it"
+            // from "it released and was reclaimed in the gap" — no inactive
+            // state was ever seen, so claiming reacquisition here would be
+            // inventing a transition. Both mean "start nothing"; only one of
+            // them is a fact. Same-configuration reacquisition is recorded
+            // later, in `acquireEntertainment`, where an inactive state HAS
+            // been observed first.
+            debugLog("[Handoff] \(foreignConfigID) is still active after its stop — release not proven, starting nothing")
             noteTakeoverEvent(.foreignConfigurationRemainedActive,
                               bridgeID: bridgeID, configID: foreignConfigID)
-            noteTakeoverEvent(.foreignConfigurationReacquiredSameConfig,
-                              bridgeID: bridgeID, configID: foreignConfigID)
+            noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
             return .changedOwner(after)
         }
 
@@ -8896,9 +9080,13 @@ extension UnifiedOrchestrator {
         // one specific session; this is not that session, and old consent may
         // not reach it.
         if !after.foreign.isEmpty {
+            // The consented configuration WAS observed inactive above, so this
+            // is a genuine reacquisition by a different session — a transition
+            // we actually saw, not one we inferred.
             debugLog("[Handoff] A different session claimed \(bridgeID) after the stop — old consent stops nothing")
             noteTakeoverEvent(.foreignConfigurationReacquiredOtherConfig,
                               bridgeID: bridgeID, configID: after.foreign.first)
+            noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
             return .changedOwner(after)
         }
 
