@@ -47,8 +47,17 @@
   branch; release-not-proven and session-failed verdicts refuse instead of falling back to
   REST; and Save to Bridge is transactional — zero playback mutations until a chain is
   confirmed running, so a failed save can no longer stop the look it was saving. Suite
-  1365/1365 green twice consecutively (xcresulttool), all 12 guards. **Neither Packet 7 nor
-  Packet 8 hardware validation is complete — Brian must run §V** in
+  1365/1365 green twice consecutively (xcresulttool), all 12 guards. **ROUND 4b (2026-08-03)**
+  typed the one orphanable failed-save state (`previousLookRemovedSaveFailed`, suite
+  1367/1367 ×2). **ROUND 4c (2026-08-04): exact identity under duplicate room ids** (rollback
+  tag `checkpoint/pre-hardware-convergence-round-4c` at `b4f6cd2`): round 4b's cleanup was
+  room-id-keyed, so bridge B's failed save could erase bridge A's same-room-id claims. A
+  confirmed-running ownership ledger (bridge+room → exact manifest ids) is now the only
+  destructive proof, one shared withdraw rule subtracts exact ids for both save failures and
+  the exact Stop, live Now Playing rows and Studio's running rows are bridge-exact-keyed so
+  same-room-id looks coexist and fall individually, and ambiguous legacy identity fails
+  closed. Suite 1372/1372 ×2, MultiBridgeRoutingTests 327/327, guard 12 sub-check (j).
+  **Neither Packet 7 nor Packet 8 hardware validation is complete — Brian must run §V** in
   `docs/ios/master-on-device-checklist.md`. Entries below.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
   hardware. MERGED — PR #59, merge `3479243`, and this is the build Brian tested.** Branch
@@ -482,6 +491,85 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-04 - [Claude] Hardware Convergence round 4c — exact bridge-stored identity under duplicate room ids
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-4c` (at `b4f6cd2`), PR #60 open and **unmerged**.
+One fix commit + this docs commit. No new source file, no `project.pbxproj` change, no
+version/build/signing change (verified against `3479243`). An independent read-only review
+found a blocking defect in round 4b: **every destructive claim-clearing was keyed by room id
+alone**, and two bridges may use the same room id. Bridge B's failed save could erase bridge
+A's transport claim, Now Playing publication and running row; `stopSavedBridgeLook` on B's
+manifest could unlabel A's chain; and `previousLookRemovedSaveFailed` could fire on a
+"predecessor" bridge B never owned — `compositionTransportByRoom[room.id] == .bridgeStored`
+was standing in for ownership proof that the roomID-only key structurally cannot give.
+
+**(1) Ownership is a ledger, not a label.** New `bridgeStoredChainOwnership`
+(`BridgeNativeOwnershipKey` = bridge+room → exact manifest-id set) is THE destructive
+predecessor evidence. It is written at exactly three confirmed-running boundaries — the
+strict save's commit, ordinary play's `.saved` commit, and `publishRecovered` (which is also
+how it repopulates after a relaunch) — and **never** for a saved-but-not-confirmed-running
+chain: inert is not the room's look. Every destruction site subtracts exact manifest ids
+through the existing forget funnels (`forgetManifestRecord`, `forgetRecoveredBridgeAnimation`),
+and a bridge+room key survives while any other recorded chain remains. The save's predecessor
+proof is now `ledger entry present AND corroborated by exactManifests` — an exact-but-inert
+manifest proves nothing, a ledger entry the store no longer backs fails closed, and the
+transport map appears nowhere in the proof (it remains aggregate/display state).
+
+**(2) One exact cleanup rule.** `clearStaleBridgeStoredClaims(roomID:)` is deleted. Both
+save-failure paths and `stopSavedBridgeLook` route through
+`withdrawDestroyedBridgeStoredClaims(bridgeID:roomID:destroyedManifestIDs:retainedManifestIDs:)`:
+subtract ONLY the destroyed ids; remove the bridge-exact live Now Playing row only when that
+bridge's ownership set emptied; clear the shared room-keyed transport entry only when NOTHING
+still claims the room — no bridge's ledger entry, no manifest of any bridge (ambiguous legacy
+manifests count: unattributable identity is retained, never destroyed against), no recovered
+animation — excluding a just-saved inert manifest. `previousLookRemovedSaveFailed` now
+additionally requires exact-lookup proof that no target-bridge chain remains and no ambiguous
+legacy manifest in the room, and carries the destroyed chain's `bridgeID`;
+`savedNotConfirmedRunning` gains `previousLookRemoved`, withdrawing exactly the prior ids
+while the new manifest stays the exact stoppable identity (new honest copy literal for that
+sheet). An unresolved legacy manifest blocks both the entry proof and the absence proof —
+the failed save returns the ordinary non-destructive refusal and clears nothing.
+
+**(3) Same-room-id rows genuinely coexist.** Live `ActiveEffectEntry` rows are now
+bridge-qualified (`cg-live:<bridge>:<room>`, recorded `bridgeID`), with a bridge-exact
+removal; the room-only removal removes only an unambiguous single match and fails closed on
+a collision. `StudioViewModel.runningEffects` is re-keyed by `RoomEffectKey {bridgeID,
+roomID}` with `runningEffect(for:)` (exact) and `runningEffect(forRoomID:)` (exactly-one
+rule, nil on collision — the same fail-closed policy the old comment promised, now enforced
+at read time instead of by key destruction). Recovered-hydration display policy is unchanged
+(duplicate-room recovered rows still mirror for neither; test 6908 intact).
+
+**Tests.** HCS-11: bridge A's real chain on "shared-room" survives bridge B's failed save
+claim-by-claim (manifest, ledger, transport, publication, row) and B gets the ordinary
+refusal, never `previousLookRemovedSaveFailed`. HCS-12: BOTH bridges' rows and publications
+coexist (the collision the old key could not represent — asserted explicitly), then B's
+failed replacement removes exactly B's ids/row/publication while A's ledger still holds
+exactly its captured manifest id and the shared transport entry is retained. HCS-13:
+`savedNotConfirmedRunning` over a removed predecessor — old ids withdrawn, new manifest
+retained and NOT in the ledger, truthful sheet, working exact Stop. HCS-14: stops with
+duplicate room ids AND two chains on one bridge+room key — each stop subtracts exactly its
+own id, the label falls only after the last claim. HCS-15: ambiguous legacy identity fails
+closed. HCS-09 additionally pins the surviving Now Playing publication on ordinary failed
+saves; HCS-07/08/10 intact. Guard 12 sub-check (j): the ledger and shared withdraw must
+exist, `stopSavedBridgeLook` must route through it, `clearStaleBridgeStoredClaims` and the
+`hadBridgeStoredClaim` transport-as-ownership read must stay dead.
+
+### Validation
+
+Full suite **1372/1372** green (xcresulttool), **twice consecutively**.
+`MultiBridgeRoutingTests` **327/327** (322 + the five new HCS-11..15).
+`EntertainmentAvailabilityTests`/`OrchestratorTests`/`StudioEffectsV2Tests`/
+`BridgeAnimationCorrectnessTests` focused: 42/42. All hardening guards pass (12 guards +
+sub-check j). No new source file, no `project.pbxproj` change, no version/build/signing
+change (verified against `3479243`). NOTE: validation ran with default simulator signing —
+`CODE_SIGNING_ALLOWED=NO` strips the keychain entitlement on this machine (OSStatus −34018)
+and spuriously fails the ~87 tests that read bridge credentials; the CLAUDE.md/AGENTS
+canonical command (no signing override) is the correct one. Hardware validation remains
+open: §V of `docs/ios/master-on-device-checklist.md`.
 
 ---
 
