@@ -9564,6 +9564,8 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let generationBefore = orchestrator.testCompositionGeneration(roomID: room.id)
         let telemetryBefore = orchestrator.testComposerTelemetrySessions()
             .filter { $0.roomID == room.id }
+        let ownershipBefore = orchestrator.roomOwnershipGeneration(
+            bridgeID: "bridge-b", roomID: room.id)
         XCTAssertNotNil(generationBefore)
 
         let savePreset = bridgeStorablePreset(named: "Save Attempt")
@@ -9576,6 +9578,9 @@ final class MultiBridgeRoutingTests: XCTestCase {
                 .filter { $0.roomID == room.id }
             XCTAssertEqual(telemetryNow.map(\.generation), telemetryBefore.map(\.generation),
                 "\(label): the telemetry session is the playing look's, untouched")
+            XCTAssertEqual(orchestrator.roomOwnershipGeneration(bridgeID: "bridge-b", roomID: room.id),
+                           ownershipBefore,
+                "\(label): room ownership was not re-noted — no takeover happened")
         }
 
         // (a) Unreadable light inventory.
@@ -9656,6 +9661,119 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(orchestrator.testCompositionGeneration(roomID: room.id), generationBefore + 1,
             "and the old runtime was invalidated exactly once, at commit")
         _ = await orchestrator.stopSavedBridgeLook(manifestID: manifestID)
+    }
+
+    /// HCS-09 — the VM-level half of preservation: the RUNNING-EFFECT ROW of
+    /// a genuinely playing REST composition survives a failed save, along
+    /// with the transport claim underneath it. (A bridgeOptimized preset
+    /// through `vm.apply` is a one-shot, so the PLAYING look here is a
+    /// runtime-only composition — the state a user is actually in when they
+    /// reach for Save to Bridge with a different look.)
+    func testAFailedSaveKeepsTheRunningEffectRowIntact() async throws {
+        stageStreamableBridge(bridgeB)
+        let playing = runtimeOnlyPreset(named: "Row Keeper")
+        let savePreset = bridgeStorablePreset(named: "Save Attempt VM")
+        let vm = makeP7FVM(presets: [playing, savePreset])
+        let room = streamRoomOnB()
+        vm.selectedRoom = room
+
+        await vm.apply(vm.studioCard(for: playing),
+                       roomOverride: room, preferEntertainmentOverride: false)
+        let rowBefore = try XCTUnwrap(vm.runningEffects[room.id],
+            "precondition: the REST look is playing with a row (status: \(vm.statusMessage))")
+        XCTAssertFalse(rowBefore.isEntertainment)
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), .rest)
+        let generationBefore = orchestrator.testCompositionGeneration(roomID: room.id)
+        let ownershipBefore = orchestrator.roomOwnershipGeneration(
+            bridgeID: "bridge-b", roomID: room.id)
+
+        // The save fails at upload — and must change NOTHING the row claims.
+        bridgeB.v1Spy.creationShouldFail = true
+        await vm.saveActiveLookToBridge(vm.studioCard(for: savePreset))
+
+        let rowAfter = try XCTUnwrap(vm.runningEffects[room.id],
+            "the failed save may not remove the playing look's row")
+        XCTAssertEqual(rowAfter.cardID, rowBefore.cardID, "and it is the same look")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), .rest)
+        XCTAssertEqual(orchestrator.testCompositionGeneration(roomID: room.id), generationBefore)
+        XCTAssertEqual(orchestrator.roomOwnershipGeneration(bridgeID: "bridge-b", roomID: room.id),
+                       ownershipBefore)
+        XCTAssertNil(vm.bridgeSaveResult, "no sheet titled anything for a save that saved nothing")
+        XCTAssertNotNil(vm.studioNotice, "the refusal is rendered")
+    }
+
+    /// HCS-10 — the one exceptional state, typed END-TO-END (round 4b). The
+    /// room's look was saved to the bridge (transport claim `.bridgeStored`,
+    /// the VM row standing for it); a REPLACEMENT save must remove that
+    /// chain before its upload can fail, so the failure leaves nothing on
+    /// the bridge — and every claim of the former chain must fall with it,
+    /// including this VM's own running row, while an unrelated room's look
+    /// stays untouched.
+    func testAFailedReplacementSaveWithdrawsEveryClaimOfTheRemovedLook() async throws {
+        stageStreamableBridge(bridgeB)
+        // Distinct light ids on the control bridge — `apply`'s light-overlap
+        // barrier stops any effect sharing ids with the new room, and the
+        // control must survive on its own merits, not by accident of ids.
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+
+        let playing = runtimeOnlyPreset(named: "Old Look")
+        let controlLook = runtimeOnlyPreset(named: "Control Look A")
+        let bridgeSave = bridgeStorablePreset(named: "Old Bridge Look")
+        let replacement = bridgeStorablePreset(named: "Replacement Attempt")
+        let vm = makeP7FVM(presets: [playing, controlLook, bridgeSave, replacement])
+
+        // Unrelated control: a REST look playing in a room on the OTHER bridge.
+        let roomA = RoomDisplayItem(
+            kind: .room,
+            id: "room-a", name: "Bedroom A", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-room-a", lightCount: 2,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "A1", rtype: "light"), (rid: "A2", rtype: "light")]
+        )
+        await vm.apply(vm.studioCard(for: controlLook),
+                       roomOverride: roomA, preferEntertainmentOverride: false)
+        XCTAssertNotNil(vm.runningEffects[roomA.id],
+            "precondition: control look playing on A (status: \(vm.statusMessage))")
+
+        // The room under test: play, then SAVE successfully — the room now
+        // genuinely runs a bridge-stored chain, with the VM row standing in
+        // for the room's look.
+        let roomB = streamRoomOnB()
+        vm.selectedRoom = roomB
+        await vm.apply(vm.studioCard(for: playing),
+                       roomOverride: roomB, preferEntertainmentOverride: false)
+        XCTAssertNotNil(vm.runningEffects[roomB.id],
+            "precondition: a look is playing on B (status: \(vm.statusMessage))")
+        await vm.saveActiveLookToBridge(vm.studioCard(for: bridgeSave))
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: roomB.id), .bridgeStored,
+            "precondition: the saved look runs ON THE BRIDGE (notice: \(vm.studioNotice?.message ?? "none"))")
+        XCTAssertNotNil(vm.runningEffects[roomB.id], "the room's row is standing")
+        XCTAssertEqual(animationStore.allManifests().filter { $0.roomID == roomB.id }.count, 1,
+            "precondition: exactly the saved chain's manifest is on record")
+        vm.bridgeSaveResult = nil   // dismiss the success sheet
+        vm.studioNotice = nil
+
+        // Replacement: the required cleanup removes the saved chain, then
+        // the new upload fails.
+        bridgeB.v1Spy.creationShouldFail = true
+        await vm.saveActiveLookToBridge(vm.studioCard(for: replacement))
+
+        XCTAssertTrue(animationStore.allManifests().filter { $0.roomID == roomB.id }.isEmpty,
+            "the old chain is provably gone — replacement cleanup consumed it")
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: roomB.id),
+            "no transport claim survives a chain that no longer exists")
+        XCTAssertNil(vm.runningEffects[roomB.id],
+            "and neither does the running row — the UI may not assert a removed look")
+        XCTAssertEqual(vm.studioNotice?.message, BridgeSaveCopy.previousLookRemovedSaveFailed,
+            "the honest sentence: what was lost, and that nothing plays on the bridge now")
+        XCTAssertNil(vm.bridgeSaveResult)
+
+        // The unrelated room and bridge are untouched.
+        XCTAssertNotNil(vm.runningEffects[roomA.id],
+            "the control look on bridge A keeps its row")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: roomA.id), .rest,
+            "and its transport claim")
     }
 
     /// HCQ-01 — persist fails, compensation partial: the outcome carries the

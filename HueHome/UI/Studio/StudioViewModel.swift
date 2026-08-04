@@ -812,6 +812,16 @@ final class StudioViewModel {
                 stoppableManifestID: manifestID,
                 succeeded: false)
 
+        case .previousLookRemovedSaveFailed(let reason):
+            // The room's previous bridge look is provably gone (replacement
+            // cleanup removed it) and nothing replaced it. This VM's own
+            // running row is the last claim standing — it falls too, or the
+            // UI keeps asserting a look that no longer exists. The
+            // orchestrator has already withdrawn its transport claim and the
+            // Now Playing publication.
+            runningEffects.removeValue(forKey: room.id)
+            studioNotice = StudioNotice(message: reason)
+
         case .nothingRecorded(let reason), .saveAlreadyInProgress(let reason):
             // No sheet titled "Saved" for something that was not saved.
             studioNotice = StudioNotice(message: reason)

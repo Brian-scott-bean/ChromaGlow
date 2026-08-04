@@ -7685,6 +7685,14 @@ final class UnifiedOrchestrator {
         /// replacing the same room's resources under each other is how a Stop
         /// button ends up pointed at the wrong manifest.
         case saveAlreadyInProgress(reason: String)
+        /// The one exceptional state a failed save can leave (round 4b): the
+        /// room was PLAYING a bridge-stored look, the required replacement
+        /// cleanup removed that chain (two chains cannot coexist), and the
+        /// new upload then failed — so nothing is on the bridge now. Typed,
+        /// because every claim belonging to the former chain must fall with
+        /// it: a notice-only report would leave the UI asserting a look that
+        /// provably no longer exists.
+        case previousLookRemovedSaveFailed(reason: String)
     }
 
     /// Exact bridge+room pairs with a strict save in flight. Claimed before
@@ -7721,6 +7729,25 @@ final class UnifiedOrchestrator {
         /// The manifest did not persist and compensation could NOT finish:
         /// the manifest is retained and quarantined (durably when possible).
         case partialCleanup(manifestID: UUID, bridgeID: String, recoverableAfterRelaunch: Bool)
+    }
+
+    /// Does the store still hold ANY manifest for this exact room + bridge?
+    /// Resolved the same way `forgetManifestsProvenRemoved` resolves — by
+    /// recorded bridge id, with legacy-IP manifests going through
+    /// `resolvedBridgeID` — so "the previous chain is gone" is a claim about
+    /// exactly the identities the reconciler uses.
+    private func storeHoldsManifest(roomID: String, bridgeID: String) -> Bool {
+        bridgeAnimationStore.allManifests().contains {
+            $0.roomID == roomID && resolvedBridgeID(for: $0) == bridgeID
+        }
+    }
+
+    /// Withdraw the claims a destroyed bridge-stored chain left behind: the
+    /// room's transport record and its active-effect/Now Playing publication.
+    /// Called only once the chain is provably gone (round 4b).
+    private func clearStaleBridgeStoredClaims(roomID: String) {
+        compositionTransportByRoom.removeValue(forKey: roomID)
+        removeActiveEffect(roomID: roomID)
     }
 
     private func attemptBridgeStoredSave(
@@ -7907,6 +7934,13 @@ final class UnifiedOrchestrator {
               let groupedLightID = room.groupedLightID else {
             return .nothingRecorded(reason: EntertainmentConsentCopy.bridgeUnreadable)
         }
+        // The one claim a failed save CAN orphan (round 4b): a room whose
+        // current look is itself bridge-stored. Replacement cleanup must
+        // destroy that chain before the new upload can fail — two chains
+        // cannot coexist — so a failure afterwards leaves nothing on the
+        // bridge while the claims still assert the old look. Captured here
+        // so the exits below can tell the truth about it.
+        let hadBridgeStoredClaim = compositionTransportByRoom[room.id] == .bridgeStored
         let lightIDs: [String]
         switch await resolveCompositionLights(for: room, api: api) {
         case .noneInRoom:
@@ -7950,18 +7984,32 @@ final class UnifiedOrchestrator {
             return .savedAndRunning(manifestID: owned.id, bridgeID: bridgeID)
 
         case .savedNotConfirmedRunning(let owned):
-            // The chain never started, so the current look keeps playing —
-            // claiming .bridgeStored here would hand the room to a chain
-            // that is not running. The manifest is the exact Stop's target.
+            // The chain never started. For an app-driven current look this
+            // means it keeps playing untouched; for a bridge-stored one the
+            // replacement cleanup already removed it, so the old claims are
+            // provably stale and fall here — nothing is running.
+            if hadBridgeStoredClaim {
+                clearStaleBridgeStoredClaims(roomID: room.id)
+            }
             return .savedNotConfirmedRunning(manifestID: owned.id, bridgeID: bridgeID)
 
         case .replacementBlocked:
+            // Cleanup did NOT complete, so the previous chain (and its
+            // claims) may genuinely survive — nothing to clear.
             return .nothingRecorded(reason: BridgeSaveCopy.saveFailedReplacementBlocked)
 
-        case .uploadFailed:
-            return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
-
-        case .compensatedNothingRemains:
+        case .uploadFailed, .compensatedNothingRemains:
+            // Nothing new exists. If the room was playing a bridge-stored
+            // look, the required replacement cleanup removed it before the
+            // failure — verify the chain is provably gone and say THAT,
+            // typed, with every claim belonging to it cleared. A bare
+            // "nothing was saved" notice would leave the UI asserting a
+            // look that no longer exists.
+            if hadBridgeStoredClaim, !storeHoldsManifest(roomID: room.id, bridgeID: bridgeID) {
+                clearStaleBridgeStoredClaims(roomID: room.id)
+                return .previousLookRemovedSaveFailed(
+                    reason: BridgeSaveCopy.previousLookRemovedSaveFailed)
+            }
             return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
 
         case .partialCleanup(let manifestID, let manifestBridgeID, let recoverable):
@@ -8836,6 +8884,12 @@ enum BridgeSaveCopy {
     /// recovery after the app closes, and that is said plainly.
     static let partialCleanupNotDurable =
         "Couldn't finish saving that look — some of it is still on your bridge. Remove it now: if the app closes first, ChromaGlow may not be able to find it again."
+    /// The exceptional replacement failure (round 4b): the room's previous
+    /// bridge look had to be removed before the new one could be created,
+    /// and the new one then failed. Both halves of that are said — what was
+    /// lost, and that nothing runs on the bridge now.
+    static let previousLookRemovedSaveFailed =
+        "The previous bridge look was removed to make room, but the new one couldn't be saved. Nothing is playing on your bridge now."
 }
 
 /// Safety refusals shared between Studio and Perform.
