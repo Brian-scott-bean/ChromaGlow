@@ -808,12 +808,15 @@ final class EntertainmentAreaSelectorTests: XCTestCase {
             "a selection that no longer names a candidate resolves to nothing — never to a substitute")
     }
 
-    /// HC-11 — the save vocabulary keeps four outcomes distinct, and none of
+    /// HC-11 — the save vocabulary keeps its outcomes distinct, and none of
     /// them leaks protocol words.
     ///
     /// The device pass found effects running after a force-close with no
     /// recovered row and no Stop. The app knew which transport it had used; it
-    /// had no words for it. These are those words.
+    /// had no words for it. These are those words. Round 3 added four more:
+    /// no-lights vs couldn't-check (an empty room and an unreadable bridge
+    /// are different problems), the save-flavoured replacement refusal, and
+    /// the overlapping-save refusal.
     func testBridgeSaveCopyKeepsItsFourOutcomesDistinctAndJargonFree() {
         let outcomes = [
             BridgeSaveCopy.savedAndRunning,
@@ -821,6 +824,10 @@ final class EntertainmentAreaSelectorTests: XCTestCase {
             BridgeSaveCopy.saveFailedNothingRecorded,
             BridgeSaveCopy.saveFailedResourcesRemain,
             BridgeSaveCopy.savedAsSceneNotStoppable,
+            BridgeSaveCopy.saveFailedNoLights,
+            BridgeSaveCopy.saveFailedLightsUnresolved,
+            BridgeSaveCopy.saveFailedReplacementBlocked,
+            BridgeSaveCopy.saveAlreadyInProgress,
         ]
         XCTAssertEqual(Set(outcomes).count, outcomes.count,
             "outcomes that oblige the user to do different things may not share a sentence")

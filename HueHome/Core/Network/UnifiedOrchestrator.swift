@@ -4844,13 +4844,15 @@ final class UnifiedOrchestrator {
         capturedPlan: EntertainmentTakeoverPlan? = nil,
         consent: EntertainmentConsent? = nil,
         preparedEntertainment: EntertainmentPreparation? = nil,
-        /// An explicit "Save to bridge", not ordinary playback.
+        /// Non-nil marks an explicit "Save to bridge", not ordinary playback —
+        /// and names WHICH save, so its outcome can never be read by another.
         ///
         /// Ordinary playback may fall back to app-driven REST when a bridge
         /// upload fails — the user asked for the look to play, and it does.
         /// A save may not: falling back there reports a successful save of
-        /// something that was never saved.
-        strictBridgeSave: Bool = false
+        /// something that was never saved. Every strict exit records a typed
+        /// outcome under this id BEFORE the REST runtime could be installed.
+        bridgeSaveRequestID: UUID? = nil
     ) async -> PlaybackStartOutcome {
         // Scoped to THIS transaction's candidate — see startStudioMode.
         var outstandingCandidateID: UUID?
@@ -4954,8 +4956,34 @@ final class UnifiedOrchestrator {
 
         // Resolve individual light IDs early — needed for REST spatial positions
         // AND for per-light REST mode later.
-        let compositionLightIDs = await resolveCompositionLightIDs(for: room, api: api)
+        let lightResolution = await resolveCompositionLights(for: room, api: api)
+        let compositionLightIDs = lightResolution.lightIDs
         debugLog("[Composer] 🔍 Resolved \(compositionLightIDs.count) individual lights for per-light REST")
+
+        // ── Structural strictness (round 3) ──
+        //
+        // The bridge-stored branch below is gated on a non-empty light list,
+        // and skipping it used to fall straight through to the REST tail —
+        // so an explicit save with no resolvable lights silently started an
+        // app-driven runtime while reporting "nothing recorded". A save that
+        // cannot even reach the bridge branch refuses HERE, typed, before
+        // any runtime exists to fall back to. The two empty cases get their
+        // own sentences: a room with no lights and a bridge that could not
+        // be read are different problems with different fixes.
+        if let bridgeSaveRequestID {
+            switch lightResolution {
+            case .noneInRoom:
+                bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .nothingRecorded(
+                    reason: BridgeSaveCopy.saveFailedNoLights)
+                return .failed(message: BridgeSaveCopy.saveFailedNoLights)
+            case .unresolved:
+                bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .nothingRecorded(
+                    reason: BridgeSaveCopy.saveFailedLightsUnresolved)
+                return .failed(message: BridgeSaveCopy.saveFailedLightsUnresolved)
+            case .lights:
+                break
+            }
+        }
 
         if let entConfig {
             // Auto-detect principal angle when user hasn't set one
@@ -5105,6 +5133,13 @@ final class UnifiedOrchestrator {
                     // would — nothing was created, so nothing may be claimed.
                     deactivateComposerTelemetrySession(
                         sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                    // A refusal by RECORDED DECISION, not by accident of the
+                    // `.failed` fallback — and in save words, not start words.
+                    if let bridgeSaveRequestID {
+                        bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .nothingRecorded(
+                            reason: BridgeSaveCopy.saveFailedReplacementBlocked)
+                        return .failed(message: BridgeSaveCopy.saveFailedReplacementBlocked)
+                    }
                     return .failed(
                         message: "Couldn't start \(preset.name) — the previous look is still on the bridge. Try again in a moment.")
                 }
@@ -5152,8 +5187,8 @@ final class UnifiedOrchestrator {
                     let message = cleanup == .removed
                         ? BridgeSaveCopy.saveFailedNothingRecorded
                         : BridgeSaveCopy.saveFailedResourcesRemain
-                    if strictBridgeSave {
-                        lastBridgeSaveOutcome = cleanup == .removed
+                    if let bridgeSaveRequestID {
+                        bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = cleanup == .removed
                             ? .nothingRecorded(reason: message)
                             : .partialCleanupFailure(reason: message)
                     }
@@ -5171,14 +5206,15 @@ final class UnifiedOrchestrator {
                     debugLog("[Composer] '\(preset.name)' persisted but did not start: \(error.localizedDescription)")
                     compositionTransportByRoom[roomID] = .bridgeStored
                     noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
-                    if strictBridgeSave {
-                        lastBridgeSaveOutcome = .savedNotConfirmedRunning(
+                    if let bridgeSaveRequestID {
+                        bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .savedNotConfirmedRunning(
                             manifestID: owned.id, bridgeID: bridgeID)
                     }
                     return .failed(message: BridgeSaveCopy.savedNotConfirmedRunning)
                 }
-                if strictBridgeSave {
-                    lastBridgeSaveOutcome = .savedAndRunning(manifestID: owned.id, bridgeID: bridgeID)
+                if let bridgeSaveRequestID {
+                    bridgeSaveOutcomesByRequest[bridgeSaveRequestID] =
+                        .savedAndRunning(manifestID: owned.id, bridgeID: bridgeID)
                 }
 
                 compositionTransportByRoom[roomID] = .bridgeStored
@@ -5220,11 +5256,11 @@ final class UnifiedOrchestrator {
                 // user is then shown a successful save of something that was
                 // never saved — and will discover it only when closing the app
                 // stops the lights they were told would keep going.
-                if strictBridgeSave {
+                if let bridgeSaveRequestID {
                     debugLog("[Composer] ⚠ Bridge save failed for '\(preset.name)': \(error.localizedDescription) — starting nothing")
                     deactivateComposerTelemetrySession(
                         sessionKey: composerTelemetryKey, pendingRemovalReported: false)
-                    lastBridgeSaveOutcome = .nothingRecorded(
+                    bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .nothingRecorded(
                         reason: BridgeSaveCopy.saveFailedNothingRecorded)
                     return .failed(message: BridgeSaveCopy.saveFailedNothingRecorded)
                 }
@@ -6623,10 +6659,33 @@ final class UnifiedOrchestrator {
         return counts.max(by: { $0.value < $1.value })?.key ?? .c
     }
 
+    /// How a room's individual light ids resolved for the Composer paths.
+    ///
+    /// A bare `[]` used to mean three different things: a room with no
+    /// lights, every ref a ghost, and a transient fetch failure. Ordinary
+    /// playback treats them identically — nothing to drive — but an explicit
+    /// Save to Bridge owes the user different sentences for "this room has
+    /// no lights" and "the room's lights couldn't be confirmed", so the
+    /// distinction must survive resolution.
+    enum CompositionLightResolution {
+        case lights([String])
+        /// The room genuinely references no surviving lights.
+        case noneInRoom
+        /// The bridge could not be read. Membership is UNKNOWN, not empty.
+        case unresolved
+
+        /// The historic shape, for every path where the three cases rightly
+        /// collapse to "nothing to drive".
+        var lightIDs: [String] {
+            if case .lights(let ids) = self { return ids }
+            return []
+        }
+    }
+
     /// Resolve individual light IDs for a room/zone — used for per-light REST Composer mode.
-    private func resolveCompositionLightIDs(for room: RoomDisplayItem, api: HueAPIClient) async -> [String] {
+    private func resolveCompositionLights(for room: RoomDisplayItem, api: HueAPIClient) async -> CompositionLightResolution {
         let refs = room.childResourceRefs
-        guard !refs.isEmpty else { return [] }
+        guard !refs.isEmpty else { return .noneInRoom }
 
         // Zones reference lights directly — zero API calls (pinned by
         // ComposerFetchPathParityTests). A ref can still outlive its light
@@ -6634,18 +6693,24 @@ final class UnifiedOrchestrator {
         // the same loadAll that produced these refs also filled; an absent
         // cache keeps the historic pass-through.
         if CompositionLightResolver.hasDirectLightReferences(childResourceRefs: refs) {
-            return CompositionLightResolver.resolveLightIDs(
+            let ids = CompositionLightResolver.resolveLightIDs(
                 childResourceRefs: refs,
                 lights: cachedRawLights(for: room.bridgeID) ?? []
             )
+            return ids.isEmpty ? .noneInRoom : .lights(ids)
         }
 
         // Rooms reference devices — resolve via light.owner.rid
-        guard let allLights = try? await api.fetchLights() else { return [] }
-        return CompositionLightResolver.resolveLightIDs(
+        guard let allLights = try? await api.fetchLights() else { return .unresolved }
+        let ids = CompositionLightResolver.resolveLightIDs(
             childResourceRefs: refs,
             lights: allLights
         )
+        return ids.isEmpty ? .noneInRoom : .lights(ids)
+    }
+
+    private func resolveCompositionLightIDs(for room: RoomDisplayItem, api: HueAPIClient) async -> [String] {
+        await resolveCompositionLights(for: room, api: api).lightIDs
     }
 
     /// Resolve lightID → physical (x, z) position from an entertainment config.
@@ -7720,11 +7785,24 @@ final class UnifiedOrchestrator {
         /// because silence here is what produces a resource set the user can
         /// never find.
         case partialCleanupFailure(reason: String)
+        /// Another save for this exact bridge + room is still in flight. This
+        /// request performed ZERO bridge writes — two saves creating and
+        /// replacing the same room's resources under each other is how a Stop
+        /// button ends up pointed at the wrong manifest.
+        case saveAlreadyInProgress(reason: String)
     }
 
-    /// Set by the bridge-stored branch of `startCompositionMode` when it was
-    /// entered under `strictBridgeSave`. Read immediately by `saveLookToBridge`.
-    @ObservationIgnored private var lastBridgeSaveOutcome: BridgeSaveOutcome?
+    /// Each in-flight save's outcome, keyed by its request id — written only
+    /// by the strict exits of `startCompositionMode`, read and removed only
+    /// by the `saveLookToBridge` call that minted the id. A single shared
+    /// slot let overlapping saves read each other's `manifestID`, and the
+    /// destructive Stop on the result sheet then targeted the wrong look.
+    @ObservationIgnored private var bridgeSaveOutcomesByRequest: [UUID: BridgeSaveOutcome] = [:]
+
+    /// Exact bridge+room pairs with a strict save in flight. Claimed before
+    /// the first await (this class is @MainActor, so the claim is atomic),
+    /// released in the same defer that collects the outcome.
+    @ObservationIgnored private var strictSavesInFlight: Set<String> = []
 
     /// Save a look onto the bridge, with NO app-driven fallback.
     ///
@@ -7738,8 +7816,6 @@ final class UnifiedOrchestrator {
         gamutOverride: HueColorUtils.Gamut?,
         preset: CompositionPreset
     ) async -> BridgeSaveOutcome {
-        lastBridgeSaveOutcome = nil
-
         // Eligibility is answered HERE, not by silently taking another branch.
         // A reactive or moving look is not a bridge look, and the honest answer
         // is to say so — not to start it from the phone and call that a save.
@@ -7750,15 +7826,36 @@ final class UnifiedOrchestrator {
             return .nothingRecorded(reason: BridgeSaveCopy.ineligibleMotion)
         }
 
+        // One save per exact bridge + room. The first save owns the
+        // transaction; a second one arriving while it is suspended must not
+        // create or replace resources underneath it — it refuses, typed,
+        // having touched nothing.
+        let gateKey = "\(room.bridgeID ?? "legacy")|\(room.id)"
+        guard !strictSavesInFlight.contains(gateKey) else {
+            return .saveAlreadyInProgress(reason: BridgeSaveCopy.saveAlreadyInProgress)
+        }
+        strictSavesInFlight.insert(gateKey)
+
+        let requestID = UUID()
+        defer {
+            // Every exit releases the gate and clears this request's slot —
+            // an entry that outlived its reader would be a leak that a later
+            // save on a colliding UUID could mistake for its own.
+            strictSavesInFlight.remove(gateKey)
+            bridgeSaveOutcomesByRequest.removeValue(forKey: requestID)
+        }
+
         let outcome = await startCompositionMode(
             room: room, paramBox: paramBox, gamutOverride: gamutOverride,
             preferEntertainment: false, tier: .bridgeOptimized, preset: preset,
             capturedPlan: nil, consent: nil, preparedEntertainment: nil,
-            strictBridgeSave: true)
+            bridgeSaveRequestID: requestID)
 
-        if let recorded = lastBridgeSaveOutcome { return recorded }
+        if let recorded = bridgeSaveOutcomesByRequest[requestID] { return recorded }
 
-        // The bridge branch was never reached at all, so nothing was created.
+        // Structurally unreachable now — every strict exit records an outcome
+        // before returning — but a missing entry must still never read as a
+        // save, so the honest floor stays.
         if case .failed(let message) = outcome {
             return .nothingRecorded(reason: message)
         }
@@ -8593,6 +8690,23 @@ enum BridgeSaveCopy {
         "Looks that react to sound can't be saved to the bridge — the bridge has no microphone. Nothing was saved."
     static let ineligibleMotion =
         "This look moves in a way the bridge can't reproduce on its own, so it can't be saved there. Nothing was saved."
+    /// The room resolved to zero lights — a real answer about the room, not a
+    /// transport failure, and it must not read like one.
+    static let saveFailedNoLights =
+        "This room has no lights to save the look for. Nothing was saved."
+    /// The bridge could not be read, so the room's membership is unknown.
+    /// Deliberately a different sentence from the one above: "your room is
+    /// empty" and "I couldn't check" call for different next steps.
+    static let saveFailedLightsUnresolved =
+        "Couldn't confirm this room's lights, so nothing was saved. Check the bridge connection and try again."
+    /// The previous bridge look could not be provably cleaned up first. Save
+    /// words, not start words — this is reached only through Save to Bridge.
+    static let saveFailedReplacementBlocked =
+        "Couldn't save — the previous look is still on the bridge. Try again in a moment."
+    /// A save for this room is already running. The second tap changed
+    /// nothing, and saying so beats two saves racing over the same lights.
+    static let saveAlreadyInProgress =
+        "This look is still being saved. Nothing extra was changed."
 }
 
 /// Safety refusals shared between Studio and Perform.

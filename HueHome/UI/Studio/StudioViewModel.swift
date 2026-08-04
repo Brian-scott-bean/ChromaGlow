@@ -738,6 +738,15 @@ final class StudioViewModel {
     /// success nor plain failure: saved-but-not-confirmed-running, and
     /// partially-created-and-not-fully-cleaned.
     func saveActiveLookToBridge(_ card: StudioCard) async {
+        // One save at a time from this surface. The tray button used to be
+        // fire-and-forget and stayed tappable for the whole save — which is
+        // exactly how two overlapping saves reached the same room. The
+        // orchestrator's per-bridge+room gate is the guarantee; this flag is
+        // the honest UI for it.
+        guard !isSavingLookToBridge else { return }
+        isSavingLookToBridge = true
+        defer { isSavingLookToBridge = false }
+
         guard let room = selectedRoom else {
             studioNotice = StudioNotice(message: "Select a room first.")
             return
@@ -789,7 +798,8 @@ final class StudioViewModel {
                 headline: BridgeSaveCopy.savedNotConfirmedRunning,
                 stoppableManifestID: manifestID)
 
-        case .nothingRecorded(let reason), .partialCleanupFailure(let reason):
+        case .nothingRecorded(let reason), .partialCleanupFailure(let reason),
+             .saveAlreadyInProgress(let reason):
             // No sheet titled "Saved" for something that was not saved.
             studioNotice = StudioNotice(message: reason)
         }
@@ -837,6 +847,11 @@ final class StudioViewModel {
     }
 
     var bridgeSaveResult: BridgeSaveResult? = nil
+
+    /// True while a Save to Bridge is in flight — the tray button disables
+    /// and shows progress on it, so the save's serialization is visible
+    /// rather than a silently swallowed second tap.
+    var isSavingLookToBridge = false
 
     /// Dismissed without choosing. Nothing was mutated to raise this prompt and
     /// nothing is mutated to drop it.

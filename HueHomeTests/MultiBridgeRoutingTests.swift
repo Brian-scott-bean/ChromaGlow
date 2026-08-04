@@ -209,7 +209,50 @@ private final class RoutingSpyV1Client: HueV1Client, @unchecked Sendable {
     /// bridge refused", not a network timeout.
     var creationShouldFail = false
 
+    /// Park the FIRST creation mid-flight (round 3) — the continuation
+    /// handshake that holds one save genuinely inside its upload while a
+    /// second save arrives, with no timing at all.
+    private var _creationGate: RestGate?
+    func stageCreationGate(_ gate: RestGate) {
+        lock.lock(); defer { lock.unlock() }
+        _creationGate = gate
+    }
+    private func takeCreationGate() -> RestGate? {
+        lock.lock(); defer { lock.unlock() }
+        let gate = _creationGate
+        _creationGate = nil     // one-shot: only the first creation parks
+        return gate
+    }
+
+    /// The upload's capacity preflight. Un-overridden it reaches the real
+    /// (unroutable) TEST-NET-1 address and times out ten seconds later — which
+    /// both slowed every strict-save test and made a mid-upload gate
+    /// unreachable. Generous by default so uploads proceed offline.
+    override func fetchReportedCapacity() async throws -> BridgeReportedCapacity {
+        BridgeReportedCapacity(
+            rulesAvailable: 100, ruleConditionsAvailable: 100,
+            ruleActionsAvailable: 100, sensorsAvailable: 100,
+            schedulesAvailable: 100)
+    }
+
+    /// `activate` is one `setSensorStatus`. Recorded so the round-3 tests can
+    /// let a full save run to completion offline — without this override the
+    /// real client would try the unroutable TEST-NET-1 address.
+    private var _sensorStatusSets: [String] = []
+    var sensorStatusSets: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _sensorStatusSets
+    }
+    override func setSensorStatus(id: String, status: Int) async throws {
+        lock.lock(); defer { lock.unlock() }
+        _sensorStatusSets.append("\(id):\(status)")
+    }
+
     override func createCLIPSensor(name: String, initialStatus: Int) async throws -> String {
+        if let gate = takeCreationGate() {
+            await gate.signalStarted()
+            await gate.waitForRelease()
+        }
         if creationShouldFail { throw HueAPIError.httpError(500) }
         recordCreation("sensor"); return "new-sensor"
     }
@@ -364,9 +407,15 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
         return _fetchLightsCallCount
     }
 
+    /// Round 3: a light inventory that cannot be READ. Deliberately distinct
+    /// from staging zero lights — "the room resolved empty" and "the bridge
+    /// could not be checked" must drive different strict-save sentences.
+    var lightsShouldFail = false
+
     override func fetchLights() async throws -> [HueLight] {
         lock.lock(); defer { lock.unlock() }
         _fetchLightsCallCount += 1
+        if lightsShouldFail { throw HueAPIError.httpError(500) }
         return _stagedLights
     }
 
@@ -4681,7 +4730,11 @@ final class MultiBridgeRoutingTests: XCTestCase {
             dimming: DimmingState(brightness: 100),
             color: nil,
             color_temperature: nil,
-            owner: ResourceRef(rid: device, rtype: "device")
+            owner: ResourceRef(rid: device, rtype: "device"),
+            // A v1 identity, so a bridge-stored upload can map this light to
+            // the v1 API (round 3 — the strict-save tests run real uploads).
+            // "L1" → "/lights/1": deterministic, no hashing.
+            id_v1: "/lights/\(id.dropFirst())"
         )
     }
 
@@ -9214,6 +9267,130 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         guard case .started = outcome else {
             return XCTFail("a tap meaning 'play this' should still play it; got \(outcome)")
+        }
+    }
+
+    // ── Structural strictness + serialization (round 3) ────────
+    //
+    // Strictness used to live only INSIDE the bridge-stored do/catch, so any
+    // condition that skipped that block — an empty room, an unreadable light
+    // inventory — fell through to the REST tail and started an app-driven
+    // runtime while reporting "nothing recorded". And the save outcome lived
+    // in one shared slot, so two overlapping saves could hand each other's
+    // manifestID to a destructive Stop button.
+
+    /// A room on bridge B that references no lights at all.
+    private func emptyRoomOnB() -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .room,
+            id: "room-empty", name: "Empty Room", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-room-empty", lightCount: 0,
+            bridgeID: "bridge-b",
+            childResourceRefs: []
+        )
+    }
+
+    /// A room on bridge B whose refs are DEVICES, so resolution must read the
+    /// bridge's light inventory — the path that can fail transiently.
+    private func deviceRefRoomOnB() -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .room,
+            id: "room-devices", name: "Device Room", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-room-devices", lightCount: 2,
+            bridgeID: "bridge-b",
+            childResourceRefs: [(rid: "D1", rtype: "device"), (rid: "D2", rtype: "device")]
+        )
+    }
+
+    /// HCS-04 — a room with no lights refuses the save, typed, with zero
+    /// writes and NO app-driven runtime.
+    func testASaveForARoomWithNoLightsRefusesTypedAndStartsNothing() async throws {
+        stageStreamableBridge(bridgeB)
+        let preset = bridgeStorablePreset(named: "No Lights")
+        let writesBefore = writeSnapshot(bridgeB)
+
+        let outcome = await orchestrator.saveLookToBridge(
+            room: emptyRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preset: preset)
+
+        XCTAssertEqual(outcome, .nothingRecorded(reason: BridgeSaveCopy.saveFailedNoLights),
+            "an empty room is an answer about the room, said as such")
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: emptyRoomOnB().id),
+            "no transport claimed")
+        XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty,
+            "and no app-driven runtime started underneath the refusal")
+        XCTAssertEqual(writeSnapshot(bridgeB), writesBefore, "zero bridge writes")
+        XCTAssertTrue(bridgeB.v1Spy.creations.isEmpty, "and zero v1 creations")
+    }
+
+    /// HCS-05 — an unreadable light inventory refuses the save with ITS OWN
+    /// sentence. "Your room is empty" and "I couldn't check" call for
+    /// different next steps, and neither may become a silent REST runtime.
+    func testASaveWithAnUnreadableLightInventoryRefusesTypedAndStartsNothing() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeB.lightsShouldFail = true
+        let preset = bridgeStorablePreset(named: "Unreadable Lights")
+
+        let outcome = await orchestrator.saveLookToBridge(
+            room: deviceRefRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preset: preset)
+
+        XCTAssertEqual(outcome, .nothingRecorded(reason: BridgeSaveCopy.saveFailedLightsUnresolved),
+            "an unreadable bridge is not an empty room, and must not read like one")
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: deviceRefRoomOnB().id))
+        XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty,
+            "the strict path may NEVER install the REST runtime")
+        XCTAssertTrue(bridgeB.v1Spy.creations.isEmpty, "zero v1 creations")
+    }
+
+    /// HCS-06 — the second of two overlapping saves for the same bridge+room
+    /// is refused, typed, having performed ZERO bridge writes; the first
+    /// completes with its own outcome and the gate is released afterwards.
+    func testAnOverlappingSaveIsRefusedTypedWithZeroWrites() async throws {
+        stageStreamableBridge(bridgeB)
+        let preset = bridgeStorablePreset(named: "First Save")
+        let gate = RestGate()
+        bridgeB.v1Spy.stageCreationGate(gate)
+
+        // Save A parks inside its first v1 creation — genuinely mid-upload.
+        async let firstOutcome = orchestrator.saveLookToBridge(
+            room: streamRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preset: preset)
+        await gate.waitUntilStarted()
+        let creationsWhileParked = bridgeB.v1Spy.creations.count
+        let writesWhileParked = writeSnapshot(bridgeB)
+
+        // Save B arrives for the same bridge+room while A is parked.
+        let second = await orchestrator.saveLookToBridge(
+            room: streamRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preset: preset)
+
+        XCTAssertEqual(second, .saveAlreadyInProgress(reason: BridgeSaveCopy.saveAlreadyInProgress),
+            "the overlapping save is refused, typed — not raced")
+        XCTAssertEqual(bridgeB.v1Spy.creations.count, creationsWhileParked,
+            "and it created NOTHING on the bridge")
+        XCTAssertEqual(writeSnapshot(bridgeB), writesWhileParked,
+            "no v2 writes either")
+
+        // A resumes and completes with its own outcome — nothing B did (or
+        // could have done) is readable from A's slot.
+        gate.release()
+        let first = await firstOutcome
+        guard case .savedAndRunning(let manifestID, let bridgeID) = first else {
+            return XCTFail("save A owns the transaction and completes it; got \(first)")
+        }
+        XCTAssertEqual(bridgeID, "bridge-b")
+        XCTAssertNotNil(animationStore.manifest(id: manifestID),
+            "A's manifest is the one on record")
+
+        // The gate is released with A: a later save is no longer 'busy'.
+        let third = await orchestrator.saveLookToBridge(
+            room: streamRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preset: preset)
+        if case .saveAlreadyInProgress = third {
+            XCTFail("the in-flight gate must be released when its save completes")
         }
     }
 

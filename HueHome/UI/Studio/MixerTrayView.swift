@@ -195,23 +195,36 @@ struct MixerTrayView: View {
                                 Task { await vm.saveActiveLookToBridge(card) }
                                 HapticManager.shared.light()
                             } label: {
-                                Image(systemName: "externaldrive.badge.checkmark")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(vm.canSaveActiveLookToBridge
-                                                     ? HuePalette.amber : .white.opacity(0.3))
-                                    .frame(width: 40, height: 40)
-                                    .background(
-                                        Circle().fill(HuePalette.amber.opacity(
-                                            vm.canSaveActiveLookToBridge ? 0.15 : 0.05))
-                                    )
+                                if vm.isSavingLookToBridge {
+                                    ProgressView()
+                                        .tint(HuePalette.amber)
+                                        .scaleEffect(0.6)
+                                        .frame(width: 40, height: 40)
+                                        .background(
+                                            Circle().fill(HuePalette.amber.opacity(0.15))
+                                        )
+                                } else {
+                                    Image(systemName: "externaldrive.badge.checkmark")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(vm.canSaveActiveLookToBridge
+                                                         ? HuePalette.amber : .white.opacity(0.3))
+                                        .frame(width: 40, height: 40)
+                                        .background(
+                                            Circle().fill(HuePalette.amber.opacity(
+                                                vm.canSaveActiveLookToBridge ? 0.15 : 0.05))
+                                        )
+                                }
                             }
                             .buttonStyle(.plain)
                             .stageTapTarget(visual: 40)
                             .fixedSize()
-                            // Deliberately NOT disabled when ineligible: a tap
-                            // explains WHY a look cannot live on the bridge,
-                            // which is more use than a dimmed control that
-                            // says nothing.
+                            // Disabled ONLY while a save is in flight — a
+                            // second tap mid-save is the overlapping-saves
+                            // race. Deliberately NOT disabled when merely
+                            // ineligible: a tap explains WHY a look cannot
+                            // live on the bridge, which is more use than a
+                            // dimmed control that says nothing.
+                            .disabled(vm.isSavingLookToBridge)
                             .accessibilityLabel("Save to bridge")
                         }
 

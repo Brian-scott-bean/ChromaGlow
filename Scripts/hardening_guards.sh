@@ -674,8 +674,14 @@ fi
 if ! grep -q 'func saveLookToBridge(' "$HC_ORCH"; then
     fail "composer-hardware-convergence" "the strict bridge-save entry point is missing from $HC_ORCH"
 fi
-if ! grep -q 'strictBridgeSave' "$HC_ORCH"; then
-    fail "composer-hardware-convergence" "startCompositionMode lost its strict-save mode — a failed upload would silently become app-driven playback again"
+if ! grep -q 'bridgeSaveRequestID' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "startCompositionMode lost its strict-save request id — a failed upload would silently become app-driven playback again"
+fi
+# The shared save-outcome mailbox stays dead (round 3). A single slot read
+# across suspension points is how one save's Stop button ended up pointed at
+# another save's manifest.
+if grep -rq 'lastBridgeSaveOutcome' HueHome/; then
+    fail "composer-hardware-convergence" "lastBridgeSaveOutcome is back — overlapping saves would read each other's outcome again"
 fi
 hc_vm_save=$(awk '/func saveActiveLookToBridge\(/,/^    }$/' "$HC_VM" 2>/dev/null \
     | grep -vE '^[[:space:]]*//' || true)
