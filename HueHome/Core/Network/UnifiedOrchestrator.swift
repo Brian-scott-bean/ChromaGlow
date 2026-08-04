@@ -890,11 +890,21 @@ final class UnifiedOrchestrator {
     @discardableResult
     func testStagePendingEntertainmentCandidate(
         client: HueEntertainmentClient,
-        plan: EntertainmentTakeoverPlan
+        plan: EntertainmentTakeoverPlan,
+        consent: EntertainmentConsent? = nil
     ) -> PreparedEntertainment {
-        let candidate = PreparedEntertainment(client: client, plan: plan)
+        let candidate = PreparedEntertainment(client: client, plan: plan, consent: consent)
         outstandingEntertainmentCandidates[candidate.id] = candidate
         return candidate
+    }
+
+    /// TEST SEAM: configure each freshly built Entertainment client before
+    /// its `startSession` — the hook the production-path takeover tests use
+    /// to stub the DTLS transport and script a mid-window session death.
+    func injectForTesting(
+        entertainmentClientConfigurator: @escaping (HueEntertainmentClient) async -> Void
+    ) {
+        self.entertainmentClientConfigurator = entertainmentClientConfigurator
     }
 
     func testAwaitEntertainmentCleanup() async {
@@ -2832,6 +2842,13 @@ final class UnifiedOrchestrator {
     @ObservationIgnored private var outstandingEntertainmentCandidates: [UUID: PreparedEntertainment] = [:]
     @ObservationIgnored private var entertainmentRollbackTasks: [UUID: Task<Void, Never>] = [:]
 
+    #if DEBUG
+    /// Test-injected hook run on each freshly built Entertainment client
+    /// before `startSession` — how the production-path takeover tests stub
+    /// the DTLS transport the simulator can never open. nil outside tests.
+    @ObservationIgnored private var entertainmentClientConfigurator: ((HueEntertainmentClient) async -> Void)?
+    #endif
+
     /// Consent tokens already acted on. A takeover authorizes exactly one
     /// start; without this a replayed confirmation could start a second time.
     @ObservationIgnored var consumedEntertainmentConsents: Set<UUID> = []
@@ -4632,17 +4649,38 @@ final class UnifiedOrchestrator {
             // no longer streaming.
             studioEntOwnerByBridge.removeValue(forKey: stopBid)
         }
+        // The final verification runs HERE, immediately before the commit —
+        // after the eviction awaits above, so nothing can claim the bridge
+        // between what was verified and what gets installed. A candidate that
+        // fails it is already released; `committed` (not `prepared`) is what
+        // the engine start below may use.
+        var committed: PreparedEntertainment?
         if let prepared {
-            commitEntertainment(prepared)
-            // Record WHOSE session this is, in the same breath as installing
-            // it. Written from the committed plan rather than a re-selection,
-            // so the recorded area is exactly the one that was opened.
-            studioEntOwnerByBridge[prepared.plan.bridgeID] = StudioEntertainmentOwner(
-                bridgeID: prepared.plan.bridgeID,
-                roomID: room.id,
-                engineKey: key,
-                configID: prepared.plan.targetConfigID
-            )
+            switch await verifyAndCommitEntertainment(prepared) {
+            case .committed:
+                committed = prepared
+                // Record WHOSE session this is, in the same breath as
+                // installing it. Written from the committed plan rather than
+                // a re-selection, so the recorded area is exactly the one
+                // that was opened.
+                studioEntOwnerByBridge[prepared.plan.bridgeID] = StudioEntertainmentOwner(
+                    bridgeID: prepared.plan.bridgeID,
+                    roomID: room.id,
+                    engineKey: key,
+                    configID: prepared.plan.targetConfigID
+                )
+            case .contested(let snapshot, let targetConfigID):
+                // A proven foreign owner at the commit boundary. Starting the
+                // REST engine underneath their show is exactly the quiet
+                // overplay this flow exists to prevent — refuse and re-ask.
+                studioEntOwnerByBridge.removeValue(forKey: stopBid)
+                return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
+            case .sessionFailed:
+                // The session died with no proven foreign owner. REST is the
+                // same honest fallback an unusable session has always had.
+                committed = nil
+                studioEntOwnerByBridge.removeValue(forKey: stopBid)
+            }
         } else {
             // No prepared session means the engine is running on REST. An
             // engine on REST owns no Entertainment session, so any record
@@ -4687,8 +4725,8 @@ final class UnifiedOrchestrator {
             entertainment: (HueEntertainmentClient, [UInt8]) -> Task<Void, Never>,
             rest: () -> Task<Void, Never>
         ) -> PlaybackStartOutcome {
-            if let prepared {
-                activeStudioTask = entertainment(prepared.client, prepared.channelIDs)
+            if let committed {
+                activeStudioTask = entertainment(committed.client, committed.channelIDs)
                 return .started(transport: .entertainment)
             }
             activeStudioTask = rest()
@@ -4971,7 +5009,23 @@ final class UnifiedOrchestrator {
             // so nothing re-selected here can disagree with what the user was
             // shown and consented to.
             if let prepared = preparedComposition {
-                commitEntertainment(prepared)
+                // The final verification, immediately before the commit. A
+                // candidate that fails it is already released; a contested
+                // one must NOT become a quiet bridge-stored/REST fallback —
+                // that would play over the other controller's show.
+                switch await verifyAndCommitEntertainment(prepared) {
+                case .committed:
+                    break
+                case .contested(let snapshot, let targetConfigID):
+                    return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
+                case .sessionFailed:
+                    // Died with no proven foreign owner — the bridge-stored /
+                    // REST tail below is the same honest fallback a failed
+                    // acquire has always had.
+                    preparedComposition = nil
+                }
+            }
+            if let prepared = preparedComposition {
                 let entClient = prepared.client
                 let entConfig = prepared.config
                 let channelIDs = prepared.channelIDs
@@ -6877,6 +6931,11 @@ final class UnifiedOrchestrator {
                 restClient: api,
                 ownership: entertainmentOwnership
             )
+            #if DEBUG
+            if let configure = entertainmentClientConfigurator {
+                await configure(entClient)
+            }
+            #endif
             try await entClient.startSession(configID: config.id)
 
             // Verify, do not assume. `startSession` returning means the REST
@@ -6894,45 +6953,15 @@ final class UnifiedOrchestrator {
             }
             noteTakeoverEvent(.chromaGlowSessionUsable, bridgeID: bridgeID, configID: config.id)
 
-            // ── Final check, after our start and before any commitment ──
-            //
-            // A usable session is not the same as an uncontested one. Between
-            // the verified release and this line another controller can claim
-            // the bridge — and because the Hue bridge runs one Entertainment
-            // configuration at a time, a foreign configuration active HERE
-            // means we did not really win it.
-            //
-            // This is also the only place same-configuration reacquisition can
-            // be honestly recorded: the release WAS observed earlier, so a
-            // return of that exact configuration is a transition we watched
-            // happen rather than one we assumed.
-            if let postStart = await entertainmentActivity(onBridge: bridgeID),
-               !postStart.foreign.isEmpty {
-                if let consent, postStart.foreign.contains(consent.foreignConfigID) {
-                    noteTakeoverEvent(.foreignConfigurationReacquiredSameConfig,
-                                      bridgeID: bridgeID, configID: consent.foreignConfigID)
-                } else {
-                    noteTakeoverEvent(.foreignConfigurationReacquiredOtherConfig,
-                                      bridgeID: bridgeID, configID: postStart.foreign.first)
-                }
-                debugLog("[Handoff] A controller claimed \(bridgeID) after our start — releasing rather than claiming ownership")
-                await entClient.stopSession()
-                noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
-                // The consent is NOT spent: it bought nothing, and the user is
-                // asked again about whatever is actually there now.
-                return .needsForeignConsent(postStart)
-            }
-
-            // Deliberately NOT installed into studioEntClients here. The
-            // caller commits it once it has decided the start is going ahead,
-            // so a conflict discovered on the way out costs nothing.
-            //
-            // The takeover has now actually produced a VERIFIED session, so the
-            // token is spent. Spending it earlier would reject the very replay
-            // it was issued for; spending it later would let a replay start
-            // twice; spending it on an unverified start would burn the user's
-            // consent on nothing.
-            if let consent { consumeEntertainmentConsent(consent) }
+            // Deliberately NOT installed into studioEntClients here, and the
+            // consent is deliberately NOT spent here. The final verification —
+            // fresh bridge activity plus a second exact session-health check —
+            // lives in `verifyAndCommitEntertainment`, immediately before the
+            // commit, because there are suspension points between this return
+            // and the caller's commit. A post-start read HERE could not see a
+            // same-configuration reacquisition anyway: `startSession` has
+            // already registered the target as process-owned, so the activity
+            // reader classifies it as ours no matter who is streaming it.
             return .started(entClient)
         } catch {
             debugLog("[Studio] Entertainment start failed: \(error.localizedDescription) — falling back to REST")
@@ -7008,6 +7037,13 @@ final class UnifiedOrchestrator {
         case foreignConfigurationReacquiredSameConfig
         /// A DIFFERENT configuration became active after an observed release.
         case foreignConfigurationReacquiredOtherConfig
+        /// OUR release was requested but the target configuration was never
+        /// observed inactive across the bounded post-release reads. The same
+        /// honesty rule as `foreignConfigurationRemainedActive`, pointed at
+        /// ourselves: "still active" here may simply be our own start not yet
+        /// torn down, so no reacquisition — and no takeover prompt — may be
+        /// built on it.
+        case chromaGlowReleaseNotProven
         case chromaGlowStartRequestFailed
         case chromaGlowSessionNotUsable
         case chromaGlowSessionUsable
@@ -8825,6 +8861,11 @@ extension UnifiedOrchestrator {
         let id = UUID()
         let client: HueEntertainmentClient
         let plan: EntertainmentTakeoverPlan
+        /// The consent that authorized this candidate, if any. Carried to the
+        /// commit so it is spent only on a session that actually committed —
+        /// and so the final verification knows whether a release of this
+        /// exact configuration was genuinely observed earlier.
+        let consent: EntertainmentConsent?
         /// The captured configuration, not a freshly selected one.
         var config: EntertainmentConfig { plan.capturedConfig }
         var channelIDs: [UInt8] { plan.channelIDs }
@@ -8881,7 +8922,7 @@ extension UnifiedOrchestrator {
         switch await acquireEntertainment(room: room, plan: plan, consent: consent,
                                           requester: requester) {
         case .started(let client):
-            let candidate = PreparedEntertainment(client: client, plan: plan)
+            let candidate = PreparedEntertainment(client: client, plan: plan, consent: consent)
             // Outstanding until it is committed or rolled back.
             outstandingEntertainmentCandidates[candidate.id] = candidate
             return .prepared(candidate)
@@ -8898,8 +8939,145 @@ extension UnifiedOrchestrator {
         }
     }
 
-    /// Install a prepared session — the "commit" half. Only called once the
-    /// caller has decided the start is definitely going ahead.
+    /// How the final pre-commit verification ended.
+    enum EntertainmentCommitVerdict {
+        /// Every verification passed; the session is installed and ownership
+        /// published. The consent, if any, was spent here and nowhere else.
+        case committed
+        /// A foreign controller was proven at the commit boundary. The
+        /// candidate was released; nothing is installed, nothing published,
+        /// the consent unspent. The snapshot presents the contested
+        /// configuration as foreign so the caller can re-prompt honestly.
+        case contested(snapshot: EntertainmentActivitySnapshot, targetConfigID: String)
+        /// The session died (or its release could not be proven) without any
+        /// proven foreign owner. Not a takeover: the caller's ordinary
+        /// technical-failure path is the honest answer, and no prompt may be
+        /// raised on it.
+        case sessionFailed
+    }
+
+    /// How many fresh activity reads the post-release observation makes
+    /// before giving up on ever seeing the target inactive.
+    private static let postReleaseReadLimit = 3
+
+    /// The final verification, immediately before commitment — fresh bridge
+    /// activity combined with a second exact session-health check.
+    ///
+    /// This is the only place same-configuration reacquisition can be
+    /// honestly detected, and even here it takes a full observed chain. An
+    /// active target plus a dead client proves nothing by itself: our own
+    /// `action=start` can leave the configuration active briefly after the
+    /// DTLS session dies, and the activity reader classifies the target as
+    /// ours because `startSession` registered it before activation. So when
+    /// the exact client is found dead, this requests OUR release first (a
+    /// stop request is never release proof — it can fail, and even a 2xx
+    /// only means the bridge accepted it), then performs bounded fresh
+    /// reads, and claims a reacquisition only for a target that was
+    /// **observed inactive after our release and then observed active
+    /// again**. A target never observed inactive is recorded exactly as
+    /// that — release not proven — and raises no prompt.
+    func verifyAndCommitEntertainment(_ prepared: PreparedEntertainment) async -> EntertainmentCommitVerdict {
+        let bridgeID = prepared.plan.bridgeID
+        let targetID = prepared.plan.targetConfigID
+
+        // Fresh activity first, then the exact client. In this order a
+        // healthy answer covers the read too: the session was alive after
+        // the snapshot was taken.
+        let fresh = await entertainmentActivity(onBridge: bridgeID)
+        let healthy = await prepared.client.hasStartedSession()
+
+        // A DIFFERENT foreign configuration active at the boundary is
+        // directly observed — no release gymnastics needed.
+        if let fresh, !fresh.foreign.isEmpty {
+            noteTakeoverEvent(.foreignConfigurationReacquiredOtherConfig,
+                              bridgeID: bridgeID, configID: fresh.foreign.first)
+            debugLog("[Handoff] A controller claimed \(bridgeID) at the commit boundary — releasing rather than claiming ownership")
+            outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
+            await prepared.client.stopSession()
+            noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+            return .contested(snapshot: fresh, targetConfigID: targetID)
+        }
+
+        if healthy {
+            commitEntertainment(prepared)
+            // The takeover has now actually produced a VERIFIED, COMMITTED
+            // session, so the token is spent. Spending it earlier would burn
+            // the user's consent on a session that died before commit.
+            if let consent = prepared.consent { consumeEntertainmentConsent(consent) }
+            return .committed
+        }
+
+        // The exact client is dead. Request our release, then observe.
+        outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
+        let stopRequest = await prepared.client.stopSession()
+        if stopRequest == .requestFailed {
+            debugLog("[Handoff] Our own action=stop on \(targetID) failed — release can only be less certain")
+        }
+
+        // Bounded observation: was the target ever seen inactive, and did it
+        // come back afterwards? Reads are what carry the truth here — the
+        // count is small and fixed, and the tests drive it purely by staged
+        // reads.
+        var observedInactive = false
+        var activeAfterInactive = false
+        var lastRead: EntertainmentActivitySnapshot?
+        for _ in 0..<Self.postReleaseReadLimit {
+            guard let read = await entertainmentActivity(onBridge: bridgeID) else { continue }
+            lastRead = read
+            let targetActive = read.processOwned.contains(targetID)
+                || read.persistedOwned.contains(targetID)
+                || read.foreign.contains(targetID)
+            if !targetActive {
+                observedInactive = true
+            } else if observedInactive {
+                activeAfterInactive = true
+                break
+            }
+        }
+
+        noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+
+        if activeAfterInactive, let lastRead {
+            // The full observed chain for a SAME-configuration reacquisition:
+            // the original foreign target was seen inactive at consent time,
+            // our exact client died, our release request completed, the
+            // target was again seen inactive, and then seen active. Only
+            // with the consent-time observation is the reacquisition event
+            // recorded; without it the re-prompt still happens, but nothing
+            // asserts a transition nobody watched.
+            if let consent = prepared.consent, consent.foreignConfigID == targetID {
+                noteTakeoverEvent(.foreignConfigurationReacquiredSameConfig,
+                                  bridgeID: bridgeID, configID: targetID)
+            }
+            debugLog("[Handoff] \(targetID) came back after our observed release on \(bridgeID) — asking rather than claiming")
+            // Whatever the ledger says, a configuration active after our own
+            // observed release is not ours. Present it as foreign so the
+            // re-prompt tells the truth.
+            let snapshot = EntertainmentActivitySnapshot(
+                bridgeID: lastRead.bridgeID,
+                processOwned: lastRead.processOwned.subtracting([targetID]),
+                persistedOwned: lastRead.persistedOwned.subtracting([targetID]),
+                foreign: lastRead.foreign.union([targetID])
+            )
+            return .contested(snapshot: snapshot, targetConfigID: targetID)
+        }
+
+        if observedInactive {
+            // Died and stayed down: a ChromaGlow session failure, nothing
+            // more. No prompt — there is no foreign owner to ask about.
+            noteTakeoverEvent(.chromaGlowSessionNotUsable, bridgeID: bridgeID, configID: targetID)
+        } else {
+            // Never seen inactive. That may be another controller — or our
+            // own start not yet torn down. Say only what was observed.
+            noteTakeoverEvent(.chromaGlowReleaseNotProven, bridgeID: bridgeID, configID: targetID)
+        }
+        return .sessionFailed
+    }
+
+    /// Install a prepared session — the "commit" half. In production this is
+    /// called only from `verifyAndCommitEntertainment`, once every final
+    /// verification has passed (guard 12 pins that); the transaction tests
+    /// call it directly to prove the candidate-ledger semantics.
     ///
     /// Committing is also what marks the candidate no longer outstanding: a
     /// session is either installed here exactly once, or stopped by the

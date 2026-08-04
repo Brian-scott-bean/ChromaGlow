@@ -2596,14 +2596,16 @@ final class StudioViewModel {
                 statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
                 return true
             }
-            guard !hadConsent else {
-                // We already asked once and the answer no longer applies —
-                // the owner changed underneath us. Say so instead of looping
-                // the prompt.
-                studioNotice = StudioNotice(message: EntertainmentConsentCopy.takeoverFailed)
-                statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
-                return true
-            }
+            // A consented start reaching this arm is not a loop (round 3): the
+            // commit-boundary verification only returns a contested verdict
+            // for a controller PROVEN there — either a different configuration
+            // observed directly, or the consented one observed inactive after
+            // our own release and then observed active again. Both are new
+            // conflicts the old consent never covered, and both HCT-02 and
+            // HCT-03 already established that the honest next step is a fresh
+            // question about what is actually there. Each prompt costs the
+            // user a tap, so nothing here can spin.
+            _ = hadConsent
             // Re-derive the frozen plan for the request we are about to raise.
             // Falling back to a bare id here would reintroduce exactly what
             // the plan exists to prevent.

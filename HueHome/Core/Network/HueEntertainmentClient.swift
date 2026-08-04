@@ -307,6 +307,26 @@ final class EntertainmentSessionOwnership: @unchecked Sendable {
     }
 }
 
+// MARK: - EntertainmentStopRequest
+
+/// How a session's release REQUEST went — and nothing more.
+///
+/// Deliberately not "did the configuration become inactive". A 2xx on
+/// `action=stop` proves the bridge accepted the request; whether the
+/// configuration actually left the active state is observable only through a
+/// fresh activity read, and treating request success as release proof is
+/// exactly the assumption the hardware pass caught.
+enum EntertainmentStopRequest: Equatable, Sendable {
+    /// The bridge acknowledged `action=stop`. Still not release proof.
+    case acknowledged
+    /// The stop PUT itself failed — release was never even requested
+    /// successfully. The persisted ownership record is retained for retry.
+    case requestFailed
+    /// Nothing to send: no configuration, or other live ChromaGlow clients
+    /// still hold this exact session, so no stop may be issued.
+    case notSent
+}
+
 // MARK: - HueEntertainmentClient
 
 /// Manages a DTLS streaming session to a Hue Bridge.
@@ -339,6 +359,22 @@ actor HueEntertainmentClient {
     /// torn down. Owning render loops poll this to fail over to REST instead
     /// of streaming into a dead socket. Reset by the next startSession.
     private(set) var isTerminallyFailed = false
+
+    #if DEBUG
+    /// Test seams for production-path verification tests. The simulator can
+    /// never complete a DTLS handshake (the harness pairs bridges with a
+    /// deliberately non-hex client key), which for a long time meant the
+    /// post-start verification code was UNREACHABLE in any test. The stub
+    /// keeps every production step — ownership registration, the REST
+    /// `action=start`, the health checks — and replaces only the socket.
+    private var testStubTransport = false
+    /// When set, `hasStartedSession()` answers truthfully this many more
+    /// times and then reads terminally failed — a scripted mid-window death,
+    /// no timing involved.
+    private var testHealthChecksBeforeFailure: Int?
+    func testEnableStubTransport() { testStubTransport = true }
+    func testFailAfterHealthChecks(_ n: Int) { testHealthChecksBeforeFailure = n }
+    #endif
 
     private let log = Logger(subsystem: "com.lightshade.app", category: "Entertainment")
 
@@ -442,6 +478,14 @@ actor HueEntertainmentClient {
         // Step 2: Open DTLS connection.
         // L-11: a failed open used to leave the configuration activated on
         // the bridge with no rollback — send a compensating action=stop.
+        #if DEBUG
+        if testStubTransport {
+            // Everything above ran for real; only the socket is stubbed.
+            state = .streaming
+            reconnectAttempts = 0
+            return
+        }
+        #endif
         do {
             try await openDTLSConnection()
         } catch {
@@ -464,6 +508,15 @@ actor HueEntertainmentClient {
     /// the difference matter: ChromaGlow reported a successful takeover while
     /// Hue Sync was still visibly in control of the lights.
     func hasStartedSession() -> Bool {
+        #if DEBUG
+        if let n = testHealthChecksBeforeFailure {
+            if n <= 0 {
+                isTerminallyFailed = true
+                return false
+            }
+            testHealthChecksBeforeFailure = n - 1
+        }
+        #endif
         guard case .streaming = state else { return false }
         return !isTerminallyFailed
     }
@@ -471,7 +524,14 @@ actor HueEntertainmentClient {
     /// Stop the streaming session.
     /// 1. Close DTLS connection
     /// 2. PUT /entertainment_configuration/{id} action=stop via REST
-    func stopSession() async {
+    ///
+    /// Returns how the release REQUEST itself went. This is deliberately not
+    /// "did the configuration become inactive": a swallowed `action=stop`
+    /// failure used to be indistinguishable from a delivered one, and even a
+    /// 2xx proves only that the bridge accepted the request — release is
+    /// something only a fresh activity read can observe.
+    @discardableResult
+    func stopSession() async -> EntertainmentStopRequest {
         log.info("Stopping entertainment session")
 
         // Cancel any pending reconnect (M-10)
@@ -483,10 +543,11 @@ actor HueEntertainmentClient {
         connection?.cancel()
         connection = nil
 
-        await sendBestEffortStop()
+        let request = await sendBestEffortStop()
 
         state = .disconnected
         sequenceNumber = 0
+        return request
     }
 
     /// Shared session teardown: release this client's ownership reference and,
@@ -499,15 +560,16 @@ actor HueEntertainmentClient {
     /// Studio card and a composition); an earlier release that stopped the
     /// session would black out a stream whose owner still believes it is
     /// running — and, for a failed DTLS open, would do it as "rollback".
-    private func sendBestEffortStop() async {
-        guard !configID.isEmpty else { return }
+    @discardableResult
+    private func sendBestEffortStop() async -> EntertainmentStopRequest {
+        guard !configID.isEmpty else { return .notSent }
         let stoppingConfigID = configID
         let release = ownership.releaseProcess(bridgeID: bridgeID, configID: stoppingConfigID)
         configID = ""
 
         guard release.wasFinalOwner else {
             log.info("Entertainment session \(stoppingConfigID) still held by \(release.remaining) other client(s) — not stopping")
-            return
+            return .notSent
         }
 
         do {
@@ -522,8 +584,10 @@ actor HueEntertainmentClient {
             // A FAILED stop deliberately keeps the record: the configuration
             // may still be active, and a later launch must be able to retry.
             ownership.forgetPersisted(bridgeID: bridgeID, configID: stoppingConfigID)
+            return .acknowledged
         } catch {
             log.warning("action=stop failed (bridge inactivity timeout will recover): \(error.localizedDescription)")
+            return .requestFailed
         }
     }
 

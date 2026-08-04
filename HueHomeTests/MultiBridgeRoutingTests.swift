@@ -8950,6 +8950,188 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "the refusal is visible — either explained or re-asked")
     }
 
+    // ── Same-target reacquisition (round 3) ───────────────────
+    //
+    // The ordinary Hue Sync case is one bridge, one area: the foreign
+    // controller holds the SAME configuration ChromaGlow targets. After our
+    // start registers that configuration as process-owned, the activity
+    // reader can never call it foreign again — so the old post-start check
+    // was structurally blind to Hue Sync reclaiming it. These run the REAL
+    // production path (stubbed transport, not a DTLS failure) and pin the
+    // observed-chain rule: a reacquisition may be claimed only for a target
+    // that was observed inactive after OUR release and then observed active
+    // again.
+
+    /// Counting box shared by the staged-stop/staged-read closures below —
+    /// the hooks are plain escaping closures, so mutable state lives in a
+    /// reference the way `ReadCounter` already does.
+    private final class TakeoverStagingBox {
+        var stops = 0
+        var postReleaseReads = 0
+    }
+
+    /// The shared HCT-15/16/17 opening: `area-b` itself is the foreign
+    /// session (foreignConfigID == targetConfigID), and the production start
+    /// runs over a stubbed transport whose session dies after its first
+    /// health check — so the commit-boundary verification, not a DTLS
+    /// failure, is what decides the outcome. Returns the first prompt.
+    @discardableResult
+    private func armSameTargetTakeover(_ vm: StudioViewModel) async throws
+        -> StudioViewModel.ForeignTakeoverRequest {
+        orchestrator.injectForTesting(entertainmentClientConfigurator: { client in
+            await client.testEnableStubTransport()
+            await client.testFailAfterHealthChecks(1)
+        })
+        let first = try await stagedForeignPrompt(vm)
+        orchestrator.testResetTakeoverEventLog()
+        return first
+    }
+
+    /// HCT-15 — our stop lands but the target is NEVER observed inactive
+    /// afterwards. That is "release not proven", said exactly — it may be
+    /// another controller, or our own start not yet torn down, and neither a
+    /// reacquisition claim nor a takeover prompt may be built on it.
+    func testATargetNeverObservedInactiveAfterOurReleaseIsOnlyReleaseNotProven() async throws {
+        stageStreamableBridge(bridgeB, active: ["area-b"])
+        let vm = makeP7VM()
+        try await armSameTargetTakeover(vm)
+
+        let box = TakeoverStagingBox()
+        bridgeB.stageDeactivationOnStop { _ in
+            box.stops += 1
+            // Stop 1 is the consented takeover stop: its release is observed.
+            // Stop 2 is OUR release after the session dies — and the target
+            // reads active again immediately, with no inactive state seen.
+            return box.stops == 1
+                ? Self.configsJSON(areaID: "area-b", active: [])
+                : Self.configsJSON(areaID: "area-b", active: ["area-b"])
+        }
+
+        await vm.confirmForeignTakeover()
+
+        let log = orchestrator.takeoverEventLog
+        XCTAssertTrue(log.contains(.chromaGlowReleaseNotProven),
+            "the only honest record is that OUR release was not proven: \(log)")
+        XCTAssertFalse(log.contains(.foreignConfigurationReacquiredSameConfig),
+            "no inactive state was observed after our release, so nothing may be called a reacquisition")
+        XCTAssertFalse(log.contains(.ownershipPublished))
+        XCTAssertNil(vm.foreignTakeoverRequest,
+            "and no takeover prompt — a prompt needs a proven foreign owner")
+        if let running = vm.runningEffects[streamRoomOnB().id] {
+            XCTAssertFalse(running.isEntertainment,
+                "the technical-failure fallback may run, but never labelled streaming")
+        }
+    }
+
+    /// HCT-16 — the full observed chain: the consented release observed, our
+    /// exact session died, OUR release observed to land, and the SAME target
+    /// then observed active again. Only this chain is a same-configuration
+    /// reacquisition — recorded as such, publishing nothing, asking again
+    /// with a fresh request.
+    func testSameTargetObservedActiveAfterOurObservedReleaseIsAReacquisition() async throws {
+        stageStreamableBridge(bridgeB, active: ["area-b"])
+        let vm = makeP7VM()
+        let first = try await armSameTargetTakeover(vm)
+
+        let box = TakeoverStagingBox()
+        bridgeB.stageDeactivationOnStop { [weak bridgeB] _ in
+            box.stops += 1
+            if box.stops == 2 {
+                // Our release has just landed. The first post-release read
+                // observes the target inactive; the staged world then flips,
+                // so the next read observes the SAME target active again.
+                bridgeB?.onEntertainmentReadEach {
+                    box.postReleaseReads += 1
+                    if box.postReleaseReads == 1 {
+                        bridgeB?.stageEntertainmentConfigs(
+                            Self.configsJSON(areaID: "area-b", active: ["area-b"]))
+                    }
+                }
+            }
+            return Self.configsJSON(areaID: "area-b", active: [])
+        }
+
+        await vm.confirmForeignTakeover()
+
+        let log = orchestrator.takeoverEventLog
+        XCTAssertTrue(log.contains(.foreignConfigurationReacquiredSameConfig),
+            "inactive-after-our-release then active again IS the observed chain: \(log)")
+        XCTAssertFalse(log.contains(.ownershipPublished),
+            "a reacquired target publishes nothing: \(log)")
+        XCTAssertTrue(orchestrator.consumedEntertainmentConsents.isEmpty,
+            "the consent bought a session that never committed, so it is not spent")
+        XCTAssertNil(vm.runningEffects[streamRoomOnB().id],
+            "no Now Playing row, and no REST consolation under the reclaimed area")
+        let second = try XCTUnwrap(vm.foreignTakeoverRequest,
+            "the honest next step is a fresh prompt about what is actually there")
+        XCTAssertNotEqual(second.id, first.id, "with a fresh request id")
+        XCTAssertEqual(second.foreignConfigID, "area-b",
+            "naming the exact configuration that was observed to come back")
+    }
+
+    /// HCT-17 — the target observed inactive after our release and NEVER
+    /// observed active again is a ChromaGlow session failure, nothing more.
+    /// No reacquisition claim, no prompt.
+    func testATargetThatStaysInactiveAfterOurReleaseIsASessionFailure() async throws {
+        stageStreamableBridge(bridgeB, active: ["area-b"])
+        let vm = makeP7VM()
+        try await armSameTargetTakeover(vm)
+
+        // Every stop — theirs and ours — releases, and nothing comes back.
+        bridgeB.stageDeactivationOnStop { _ in
+            Self.configsJSON(areaID: "area-b", active: [])
+        }
+
+        await vm.confirmForeignTakeover()
+
+        let log = orchestrator.takeoverEventLog
+        XCTAssertTrue(log.contains(.chromaGlowSessionNotUsable),
+            "died and stayed down is a session failure: \(log)")
+        XCTAssertFalse(log.contains(.foreignConfigurationReacquiredSameConfig),
+            "nothing was observed coming back, so nothing may be called a reacquisition")
+        XCTAssertFalse(log.contains(.chromaGlowReleaseNotProven),
+            "the release WAS observed — the honest record is the failure, not doubt about the release")
+        XCTAssertFalse(log.contains(.ownershipPublished))
+        XCTAssertNil(vm.foreignTakeoverRequest,
+            "no prompt — there is no foreign owner to ask about")
+        if let running = vm.runningEffects[streamRoomOnB().id] {
+            XCTAssertFalse(running.isEntertainment,
+                "the ordinary technical-failure fallback, never labelled streaming")
+        }
+    }
+
+    /// HCT-18 — the companion: a session that stays healthy through the
+    /// commit-boundary verification commits, publishes ownership exactly
+    /// once, and is truthfully labelled streaming. The first test in the
+    /// suite for which `.ownershipPublished` actually fires.
+    func testAHealthySessionCommitsAndPublishesOwnershipExactlyOnce() async throws {
+        stageStreamableBridge(bridgeB)
+        let vm = makeP7VM()
+        orchestrator.injectForTesting(entertainmentClientConfigurator: { client in
+            await client.testEnableStubTransport()
+        })
+        let party = try streamingCard(vm)
+        orchestrator.testResetTakeoverEventLog()
+
+        await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        let log = orchestrator.takeoverEventLog
+        XCTAssertEqual(log.filter { $0 == .ownershipPublished }.count, 1,
+            "a verified session commits ownership exactly once: \(log)")
+        XCTAssertLessThan(
+            log.firstIndex(of: .chromaGlowSessionUsable) ?? .max,
+            log.firstIndex(of: .ownershipPublished) ?? .max,
+            "verification precedes publication")
+        let running = try XCTUnwrap(vm.runningEffects[streamRoomOnB().id],
+            "the committed look is playing")
+        XCTAssertTrue(running.isEntertainment, "and truthfully labelled streaming")
+        XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"],
+            "one start, on the area the room resolves to")
+
+        // Stop the committed stream so its engine loop does not outlive the test.
+        await vm.stopFromNowPlaying(roomID: streamRoomOnB().id, turnOffLights: false)
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - Hardware convergence C: a save is not a fallback
     // ──────────────────────────────────────────────
