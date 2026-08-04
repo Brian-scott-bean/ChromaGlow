@@ -41,8 +41,14 @@
   bridge+room, and the shared outcome mailbox is gone; partial-cleanup evidence is quarantined
   durably and its exact Stop survives a failed attempt and a relaunch; and the Clean Bridge
   confirmation speaks only about its frozen id, so selected-B/B-disappears/A-remains deletes
-  nothing. Suite 1361/1361 green twice consecutively (xcresulttool), all 12 guards. **Neither
-  Packet 7 nor Packet 8 hardware validation is complete — Brian must run §V** in
+  nothing. **ROUND 4 (2026-08-03): three residual production-path blockers resolved** (rollback
+  tag `checkpoint/pre-hardware-convergence-round-4` at `3304f27`, one commit): the final
+  verification fails closed on an unreadable read and excludes the target from the other-config
+  branch; release-not-proven and session-failed verdicts refuse instead of falling back to
+  REST; and Save to Bridge is transactional — zero playback mutations until a chain is
+  confirmed running, so a failed save can no longer stop the look it was saving. Suite
+  1365/1365 green twice consecutively (xcresulttool), all 12 guards. **Neither Packet 7 nor
+  Packet 8 hardware validation is complete — Brian must run §V** in
   `docs/ios/master-on-device-checklist.md`. Entries below.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
   hardware. MERGED — PR #59, merge `3479243`, and this is the build Brian tested.** Branch
@@ -476,6 +482,60 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-03 - [Claude] Hardware Convergence round 4 — commit-boundary honesty and the transactional save
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-4` (at `3304f27`), PR #60 open and **unmerged**.
+One commit. No new source file, no `project.pbxproj` change, no version/build/signing change.
+Review round 4 found three production-path blockers in round 3; all three are resolved here.
+
+**(1) The final verification fails closed.** `verifyAndCommitEntertainment` committed a healthy
+client even when the fresh activity read returned nil — an unreadable final bridge state was
+treated as verified. A nil read now releases the candidate and returns an explicit
+`verificationUnavailable` (no commit, no consent spend, no fallback, no prompt). The direct
+other-config branch counts only `fresh.foreign.subtracting([target])`: asynchronous terminal
+teardown can release our own ledgers before the read, making the target itself read as foreign
+— that case now routes through the same-target observed-transition proof and is never labelled
+an other-config reacquisition. HCT-19 (healthy client + unreadable read → no commit) and
+HCT-20 (target foreign at the boundary → neither reacquisition event, only
+`chromaGlowReleaseNotProven`) pin both, via a new deterministic on-start staging hook.
+
+**(2) Verification failures start nothing.** Round 3 collapsed release-not-proven and
+observed-inactive-stays into one verdict whose Studio caller started REST — REST writes
+underneath a possibly-unreleased stream, the exact condition refused everywhere else.
+`releaseNotProven` is now its own verdict and both callers (Studio and Composer) refuse with
+the explicit "nothing was changed" copy; the observed session failure propagates
+`couldNotStart` instead of silently changing transport; the fresh prompt is reserved for a
+genuinely proven foreign conflict. HCT-15/17 now assert no fallback runtime of any transport
+and a rendered refusal.
+
+**(3) Save to Bridge is transactional.** The strict save delegated to
+`startCompositionMode`, whose head — the generation bump, the telemetry session, the ownership
+note — replaces the room's current look before the bridge branch runs; the scheduler then
+removed the playing runtime as stale, so a save that went on to FAIL had already stopped the
+look it was supposed to save. The bridge/store work now lives in `attemptBridgeStoredSave`,
+shared by ordinary play and the save so the compensation/quarantine rules cannot drift;
+`saveLookToBridge` preflights (eligibility, gate, bridge, lights, gamut) with ZERO playback
+mutations, runs the core, and replaces the room's look only after a chain is CONFIRMED
+running. `savedNotConfirmedRunning` now preserves the playing look — the chain is inert, since
+activation is the only thing that starts it — and `stopSavedBridgeLook` withdraws the room's
+transport/Now Playing claims only when they belong to the bridge chain being stopped, so the
+result sheet's exact Stop for inert resources cannot erase a live REST look's records. HCS-07
+starts a real REST composition and proves generation, transport and telemetry survive every
+representative failed save (unreadable inventory, upload failure, blocked replacement,
+saved-not-confirmed); HCS-08 proves the successful save replaces the look exactly once, at
+commit. Guard 12: `saveLookToBridge` may not call `startCompositionMode`, and the shared core
+must exist.
+
+### Validation
+
+Full suite **1365/1365** green (xcresulttool), **twice consecutively**.
+`MultiBridgeRoutingTests` 320/320. All 12 hardening guards pass. No new source file, no
+`project.pbxproj` change, no version/build/signing change (verified against `3479243`).
+Hardware validation remains open: §V of `docs/ios/master-on-device-checklist.md`.
 
 ---
 
