@@ -64,6 +64,17 @@
   used to survive bridge removal / room-zone deletion). Suite 1380/1380 ×2,
   MultiBridgeRoutingTests 335/335, guard 12 sub-check (k). NOTE: `OrchestratorTests.swift`
   is not a member of the test target (never has run — pbxproj fix deferred, forbidden here).
+  **ROUND 4e (2026-08-04): the runtime authority is exactly keyed** (rollback tag
+  `checkpoint/pre-hardware-convergence-round-4e` at `bdb30c5`): 4d's exact rows sat on a
+  room-ID-only core — the second same-room-id start overwrote the first bridge's real
+  runtime, and an exact stop could invalidate the other bridge's generation, evict it from
+  the scheduler, or tear down its Entertainment session picked by dictionary order.
+  `CompositionPlaybackKey` (bridge+room) now keys generations/runtimes/scheduler order and
+  the new exact transport claims (the room map is a recomputed display aggregate that
+  answers unknown on disagreement; an inert save claims nothing), `stopCompositionMode` is
+  exact throughout with bridge-authoritative Entertainment teardown, SSE suppression is
+  bridge+room exact, and Studio's composition boxes are `RoomEffectKey`-keyed. Suite
+  1384/1384 ×2, MultiBridgeRoutingTests 339/339, guard 12 sub-check (l).
   **Neither Packet 7 nor Packet 8 hardware validation is complete — Brian must run §V** in
   `docs/ios/master-on-device-checklist.md`. Entries below.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
@@ -498,6 +509,101 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-04 - [Claude] Hardware Convergence round 4e — presentation identity and runtime identity converge
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-4e` (at `bdb30c5`), PR #60 open and **unmerged**.
+One fix commit + this docs commit. No new source file, no `project.pbxproj` change, no
+version/build/signing change (verified against `3479243`). Independent review verified round
+4d's stop-handoff and removed-group fixes and found a blocking **false exactness**
+underneath them: the VM and Now Playing rows were bridge+room exact, but the real
+composition runtime remained room-ID-only — `compositionGenerations: [String: Int]`,
+`compositionRuntimes: [String: CompositionRuntime]`, `compositionOrder: [String]`. Under
+HCS-16's own collision the second start silently **overwrote the first bridge's core
+runtime**, and `stopCompositionMode(roomID:bridgeID:)` still bumped the bare room's
+generation, removed the room-keyed transport and runtime, and picked the Entertainment
+bridge with `compositionEntRoomByBridge.first(where: { $0.value == roomID })` — dictionary
+order — so an exact stop of bridge A could destroy bridge B's runtime, transport,
+generation, scheduler membership, or Entertainment session while B's presentation rows
+misleadingly survived. The tests passed because they proved rows and telemetry, not
+playback.
+
+**(1) One exact playback key, and the runtime authority re-keyed.**
+`CompositionPlaybackKey {bridgeKey, roomID}` is the core-level exact identity (`bridgeID ??
+"legacy"` normalization — the same convention as `BridgeNativeOwnershipKey` and the
+telemetry keys; no Core dependency on Studio's `RoomEffectKey`). Generations, runtimes, and
+scheduler order are keyed by it end-to-end: start builds the key once; the scheduler's
+priority walk returns exact keys and its staleness eviction can only ever evict its own
+bridge's runtime; completion bookkeeping looks the runtime up by `token.bridgeKey`, making
+the old `restBridgeIdentity` fence structural; `forgetAllBridges` also clears
+`compositionOrder` (a pre-existing leak). SSE suppression stopped being a room-id set:
+`isAppDrivenGroup(bridgeID:roomID:)` is exact, every `applySSEEvent` site passes the
+event's own bridge, so bridge A's composition no longer swallows bridge B's legitimate
+same-room-id updates — and after A stops, B's ownership no longer keeps suppressing A.
+
+**(2) `stopCompositionMode` is exact throughout.** One playback key drives every mutation:
+only that exact generation is bumped, only that exact runtime and scheduler entry fall, and
+Entertainment teardown is **bridge-authoritative** — the caller's bridge is verified
+against `compositionEntRoomByBridge` and only that bridge's param box, task, room mapping,
+caches, and client are stopped. Never dictionary order.
+
+**(3) Exact transport claims; the room map is display only.** New
+`compositionTransportClaims` (playback key → transport) represents RUNNING ownership;
+`compositionTransportByRoom` is now a recomputed compatibility/display aggregate — all
+claimants agree → that value; claimants disagree → the entry is removed (the room-only key
+never silently picks a winner); destructive authority stays with the round-4c ownership
+ledger. `.bridgeStored` claims move WITH that ledger: the first confirmed-running manifest
+raises the claim, and only the exact bridge+room ownership set emptying lowers it — with
+the fail-closed evidence rule intact (standing manifests, ambiguous legacy included, retain
+the label; evidence destruction recomputes it). `savedNotConfirmedRunning` claims
+**nothing**: no ledger entry, no exact claim, no aggregate write — the manifest stays the
+exact stoppable identity and that is all (round 4c's "inert is not the room's look", now
+structural).
+
+**(4) Studio's editor boxes are exact.** `activeCompositionBoxes` is re-keyed by
+`RoomEffectKey` — two same-room-id composition rows no longer share or overwrite one
+editable `CompositionParamBox`, and a stop evicts only its own row's box. The
+Entertainment-handoff confirm resolves the exact owning key first (the room-only lookup
+had correctly failed closed on a collision and needlessly dropped to the blunt teardown
+arm).
+
+**Tests.** `playCollidingLiveLooks` now proves the collision ALL THE WAY DOWN before any
+stop: both exact runtimes, independent generations, scheduler membership, exact REST
+claims, telemetry sessions, rows, publications, and non-aliased boxes. HCS-16 additionally
+pins, after A's exact stop: A's runtime/order/claim/telemetry/box gone, B's runtime
+scheduled with its generation UNCHANGED, its claim/row/publication/box intact, and B still
+ACCEPTING a generation-matched work item (production prime lands its send bookkeeping on
+B's exact runtime — playback proof, not telemetry) — then B's own exact stop clears it.
+HCS-17/18 assert both exact runtimes exist before Stop All and that runtimes, order,
+claims, and telemetry are all gone after (Siri's no-group-off contract intact). HCS-13
+asserts the inert replacement holds no exact claim, plus a new same-room-id variant where
+the OTHER bridge's surviving claim keeps the room aggregate alive. Two SSE-exactness tests
+pin acceptance/suppression per exact bridge before and after a stop. HCS-24 stages
+simultaneous Entertainment ownership on both bridges (stubbed clients, inert tasks) and
+proves an exact stop of A tears down only A's task/client/mapping. HCS-11 was restaged so
+bridge B plays its own look — its old staging borrowed A's box through the room-only key,
+which was precisely the conflation under repair. Guard 12 sub-check (l) pins the keyed
+declarations, the exact stop body (no bare-room mutations, no `first(where:)`, the
+caller-bridge Entertainment guard, claim withdrawal), the no-claim rule for inert saves,
+and bridge+room SSE suppression. `OrchestratorTests.swift` source stays current (still NOT
+in the test target — pbxproj change remains forbidden here); the
+`CompositionRoomPriorityScorerTests` source pin follows the exact-key walk.
+
+### Validation
+
+Full suite **1384/1384** green (xcresulttool), **twice consecutively** (round 4d was
+1380/1380 ×2; +4 new tests). `MultiBridgeRoutingTests` **339/339** (335 + the HCS-13
+variant, two SSE-exactness tests, and HCS-24). Focused `StudioEffectsV2Tests`/
+`DashboardDisplayModelBuilderTests`/`CompositionLightResolverTests`/
+`CompositionReactionTests`/`CompositionRoomPriorityScorerTests`/`CompositionStoreTests`:
+**100/100**. Focused `EntertainmentAvailabilityTests`/`BridgeAnimationCorrectnessTests`/
+`MixerTrayMetricsTests`: **45/45**. All hardening guards pass (12 guards + sub-checks j, k,
+and the new l). No new source file, no `project.pbxproj` change, no version/build/signing
+change (verified against `3479243`). Hardware validation remains open: §V of
+`docs/ios/master-on-device-checklist.md`.
 
 ---
 
