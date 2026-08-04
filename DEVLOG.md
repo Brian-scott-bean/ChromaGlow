@@ -32,9 +32,18 @@
   covered by the effect panel because a room change forced the tray open. Bridge saves now persist
   the manifest **before** activating anything, and the save result states which bridge, which
   room, whether it is bridge-run, whether a local preset exists and whether Stop survives a
-  relaunch. Suite 1348/1348 green (xcresulttool), Guard 12 added. **Neither Packet 7 nor Packet 8
-  hardware validation is complete — Brian must run §V** in
-  `docs/ios/master-on-device-checklist.md`. Entry below.
+  relaunch. Suite 1348/1348 green (xcresulttool), Guard 12 added. **ROUND 3 (2026-08-03): the
+  review's four residual blockers are resolved** (rollback tag
+  `checkpoint/pre-hardware-convergence-round-3` at `a5b8839`, four commits): the final takeover
+  verification moved to the commit boundary and same-configuration reacquisition is proven by
+  observed release — never inferred from an active target plus a dead client; the strict bridge
+  save refuses typed before the REST tail on empty/unresolved rooms, is serialized per
+  bridge+room, and the shared outcome mailbox is gone; partial-cleanup evidence is quarantined
+  durably and its exact Stop survives a failed attempt and a relaunch; and the Clean Bridge
+  confirmation speaks only about its frozen id, so selected-B/B-disappears/A-remains deletes
+  nothing. Suite 1361/1361 green twice consecutively (xcresulttool), all 12 guards. **Neither
+  Packet 7 nor Packet 8 hardware validation is complete — Brian must run §V** in
+  `docs/ios/master-on-device-checklist.md`. Entries below.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
   hardware. MERGED — PR #59, merge `3479243`, and this is the build Brian tested.** Branch
   `fix/packet7-device-followups`, rollback tag `checkpoint/pre-packet7-device-followups`
@@ -467,6 +476,90 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-03 - [Claude] Hardware Convergence round 3 — four review blockers on PR #60
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-3` (at `a5b8839`), PR #60 open and **unmerged**.
+Four commits, one per blocker. No new source file, no `project.pbxproj` change, no
+version/build/signing change. Review round 3 found four residual blockers in the amendment
+commit; all four are resolved here. (Context: Adam's lane was blocked by an org-level
+Claude-subscription gate before any of this landed; this run took the lane over in the same
+worktree and branch.)
+
+**(1) Same-target reacquisition was structurally invisible — and is now proven, not inferred.**
+`startSession` registers the target configuration as process-owned *before* `action=start`
+(deliberately, so concurrent cleanup cannot kill our own handshake), which means the activity
+reader can never again call that configuration foreign — the old post-start check was blind to
+Hue Sync reclaiming the exact configuration we target, which is the ordinary one-bridge case.
+That check was also unreachable in every test (the harness's non-hex key fails DTLS first).
+The final verification now runs at the commit boundary (`verifyAndCommitEntertainment`: fresh
+activity read + a second exact session-health check, after the callers' eviction awaits), and
+an active target plus a dead client is *not* treated as proof of another controller — our own
+start can leave the config active briefly. When the exact client is found dead, OUR release is
+requested (`stopSession` now returns a typed `EntertainmentStopRequest`; request success is
+never release proof) and bounded fresh reads observe what actually happened: never-inactive →
+`chromaGlowReleaseNotProven`, no prompt; inactive-then-active-again → reacquisition (the
+`foreignConfigurationReacquiredSameConfig` event additionally requires the consent-time
+observed release), fresh prompt, nothing published; inactive-and-stays → session failure, no
+prompt. Consent is spent at the commit, so a session that dies pre-commit costs nothing.
+Production-path tests HCT-15..18 run over a stubbed DTLS transport with scripted health-check
+death — `.ownershipPublished` fires in a test for the first time.
+
+**(2) Strict bridge save is now structurally strict, and serialized.** Strictness lived only
+inside the bridge-stored do/catch; an empty room or an unreadable light inventory skipped the
+branch and fell through to the REST tail — an app-driven runtime started while the save
+reported "nothing recorded". And the shared `lastBridgeSaveOutcome` mailbox let overlapping
+saves read each other's `manifestID`, which the result sheet's destructive Stop then targeted.
+`strictBridgeSave: Bool` became `bridgeSaveRequestID: UUID?` with a per-request outcome map
+(read-and-removed in a `defer`); light resolution is typed
+(`lights`/`noneInRoom`/`unresolved`) with distinct sentences for "no lights" and "couldn't
+check"; the blocked-replacement refusal records itself in save words; and a per-bridge+room
+in-flight gate makes the second overlapping save return a typed `.saveAlreadyInProgress`
+having performed zero bridge writes (the tray button disables and shows progress). Ordinary
+Play keeps its fallback. Tests HCS-04..06; the V1 spy now answers the capability preflight
+offline (it used to burn a real 10-second timeout per strict-save test).
+
+**(3) Partial-cleanup evidence survives a relaunch.** When the manifest persist failed and
+compensation could not finish, the old block forgot the manifest unconditionally — before even
+inspecting the cleanup result — and the normal persist had *just failed*, so even the
+in-memory record died with the process. `BridgeAnimationStore` gains a quarantine sidecar: an
+independent file written durably *before* the failure is reported, merged by `load()` so a
+quarantined manifest is an ordinary manifest on the next launch (reconciler and
+`stopSavedBridgeLook` need no special path), and cleared only through the proven-deletion
+funnel. `partialCleanupFailure` now carries `manifestID`/`bridgeID`/`recoverableAfterRelaunch`;
+the VM shows it as the result sheet (titled "Save Failed") whose Stop is the immediate exact
+retry; a failed Stop keeps the sheet instead of dismissing the only exact control; and when
+even the quarantine write fails, the copy says plainly that recovery after closing the app is
+not guaranteed. Tests HCQ-01..05 include a simulated relaunch recovering the record and
+driving the exact Stop.
+
+**(4) The Clean Bridge confirmation speaks only about its frozen id.** The dialog's title,
+message and destructive capture read the *live* `cleanBridgeTargetID`, and `resolve()`
+auto-selects whenever exactly one bridge is registered — so selected-B / B-drops-off /
+A-remains silently re-rendered the open dialog as "Clean A?" and the tap wiped A. The exact id
+is now frozen into `cleanBridgeFrozenID` before any destructive confirmation is shown; cancel
+paths and the cleanup's defer clear it; `revalidate` then correctly refuses the gone bridge
+and nothing is deleted. HCC-03 re-commented as pre-confirmation-only; HCC-03b pins the
+reported case.
+
+### Guards
+
+Guard 12 extended (round 3): every Entertainment commit goes through
+`verifyAndCommitEntertainment` (exactly two lowercase `commitEntertainment(` occurrences); the
+`lastBridgeSaveOutcome` literal is banned repo-wide; the Clean Bridge confirmation dialogs may
+not contain `cleanBridgeTargetID` and the frozen id must exist.
+
+### Validation
+
+Full suite **1361/1361** green (xcresulttool), **twice consecutively**.
+`MultiBridgeRoutingTests` 316/316. All 12 hardening guards pass. No new source file, no
+`project.pbxproj` change, no version/build/signing change (verified against `3479243`).
+Hardware validation remains open: §V of `docs/ios/master-on-device-checklist.md` is Brian's
+gate, now including the round-3 distinction between "release not proven" and a genuine
+same-configuration reacquisition.
 
 ---
 
