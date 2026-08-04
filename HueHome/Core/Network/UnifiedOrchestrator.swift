@@ -661,11 +661,22 @@ final class UnifiedOrchestrator {
         activeEffectEntries.removeAll()
     }
 
+    /// Exact live-stop target handed to Studio (round 4d). Core-level so the
+    /// handler can carry bridge identity without the orchestrator depending
+    /// on the UI's row key. `bridgeID == nil` is the room-only compatibility
+    /// request: Studio honours it only when exactly one bridge holds the
+    /// room id, and fails closed on a collision.
+    struct LiveEffectStopTarget: Equatable, Sendable {
+        let bridgeID: String?
+        let roomID: String
+        let turnOffLights: Bool
+    }
+
     /// Studio owns effect teardown (per-light no_effect cleanup, engine loops,
     /// mailbox clears, settle delays) — a bare grouped-light PUT from another
     /// surface would leave the loop running underneath. @ObservationIgnored:
     /// installed once from StudioViewModel.configure, never read by views.
-    @ObservationIgnored var studioStopHandler: (@MainActor (String, Bool) async -> Void)?
+    @ObservationIgnored var studioStopHandler: (@MainActor (LiveEffectStopTarget) async -> Void)?
 
     /// Studio mirrors the reconciled bridge-stored registry into
     /// `runningEffects` for rooms that resolve. Installed once from
@@ -678,23 +689,47 @@ final class UnifiedOrchestrator {
     ///
     /// A recovered bridge-stored row carries an exact manifest identity and
     /// must not go through the roomID handler: a room id cannot say which
-    /// bridge, and Studio has no engine to tear down for one of these.
+    /// bridge, and Studio has no engine to tear down for one of these. A
+    /// bridge-attributed live row keeps its bridge identity all the way to
+    /// Studio's exact key (round 4d) — with two live rows sharing one room
+    /// id, a downgraded room-only request would fail closed and stop
+    /// NEITHER. Only an unattributed row falls back to the room-only path.
     func requestNowPlayingStop(_ entry: ActiveEffectEntry, turnOffLights: Bool = true) async {
         if let key = entry.recovered {
             await stopRecoveredBridgeAnimation(key, turnOffLights: turnOffLights)
             return
         }
+        if let bridgeID = entry.bridgeID {
+            await requestNowPlayingStop(
+                bridgeID: bridgeID, roomID: entry.roomID, turnOffLights: turnOffLights)
+            return
+        }
         await requestNowPlayingStop(roomID: entry.roomID, turnOffLights: turnOffLights)
     }
 
-    /// Stop an effect from a non-Studio surface (Dashboard Now-Playing bar,
-    /// Siri). `turnOffLights: true` is explicit-stop semantics — the room
-    /// goes off, matching the Dashboard Stop button. `false` ends the effect
-    /// but leaves lights at their current state (Siri's "stop the lights"
-    /// promises exactly that). Still the ONLY sanctioned non-Studio stop path.
+    /// Exact live stop — this bridge's look in this room, no other's (round
+    /// 4d). `turnOffLights: true` is explicit-stop semantics — the room goes
+    /// off, matching the Dashboard Stop button. `false` ends the effect but
+    /// leaves lights at their current state (Siri's "stop the lights"
+    /// promises exactly that).
+    func requestNowPlayingStop(bridgeID: String, roomID: String, turnOffLights: Bool = true) async {
+        if let studioStopHandler {
+            await studioStopHandler(LiveEffectStopTarget(
+                bridgeID: bridgeID, roomID: roomID, turnOffLights: turnOffLights))
+        } else {
+            // Defensive: the handler exists whenever Studio started anything.
+            removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
+        }
+    }
+
+    /// Room-only COMPATIBILITY stop for callers that genuinely cannot name a
+    /// bridge. Studio honours it only when exactly one bridge holds the room
+    /// id and fails closed on a collision; still the ONLY sanctioned
+    /// non-Studio stop path besides the exact overloads above.
     func requestNowPlayingStop(roomID: String, turnOffLights: Bool = true) async {
         if let studioStopHandler {
-            await studioStopHandler(roomID, turnOffLights)
+            await studioStopHandler(LiveEffectStopTarget(
+                bridgeID: nil, roomID: roomID, turnOffLights: turnOffLights))
         } else {
             // Defensive: the handler exists whenever Studio started anything.
             removeActiveEffect(roomID: roomID)
@@ -958,6 +993,18 @@ final class UnifiedOrchestrator {
         await entertainmentCleanupTask?.value
     }
 
+    /// Seeds the private per-bridge room/zone snapshots so bridge-removal
+    /// tests can exercise removeBridge's exact-group teardown without a full
+    /// loadAll (round 4d).
+    func testSeedBridgeGroups(
+        bridgeID: String,
+        rooms: [RoomDisplayItem] = [],
+        zones: [RoomDisplayItem] = []
+    ) {
+        roomsByBridge[bridgeID] = rooms
+        zonesByBridge[bridgeID] = zones
+    }
+
     /// Seeds the private light→room/zone reverse maps so SSE light-event tests
     /// can exercise applySSEEvent without running a full loadAll.
     func testSeedLightIndex(
@@ -1149,7 +1196,10 @@ final class UnifiedOrchestrator {
         // client, so teardown/no_effect PUTs can still reach the bridge.
         // Previously these were orphaned: a dead Now-Playing entry pointed at
         // a removed bridge while its render loop kept erroring against it.
-        let doomedGroups = ((roomsByBridge[id] ?? []) + (zonesByBridge[id] ?? [])).map(\.id)
+        // Exact identities (round 4d): only THIS bridge's rooms and zones —
+        // another bridge's effect on the same room id keeps running.
+        let doomedGroups = ((roomsByBridge[id] ?? []) + (zonesByBridge[id] ?? []))
+            .map { RemovedGroupIdentity(bridgeID: id, roomID: $0.id) }
         await stopEffectsForRemovedGroups(doomedGroups)
         await retiredAllDaySender?.clearAll()
         sseTasks[id]?.cancel()
@@ -1211,17 +1261,38 @@ final class UnifiedOrchestrator {
         log.info("Removed bridge \(id)")
     }
 
+    /// The exact identity of a group that is about to disappear (round 4d).
+    /// `bridgeID == nil` is a legacy caller that cannot name the bridge —
+    /// matched on room id alone, as before the rekey.
+    struct RemovedGroupIdentity: Hashable, Sendable {
+        let bridgeID: String?
+        let roomID: String
+    }
+
     /// Stop any running effects on rooms/zones that are about to disappear
-    /// (bridge removal, room/zone delete). Routes through the sanctioned
-    /// requestNowPlayingStop path so the owning engine loop, transport truth,
-    /// and Studio's mirror tear down together. turnOffLights: false — the
-    /// group is going away; a goodbye off-PUT is pointless (and unreachable
-    /// once a removed bridge's client is dropped).
+    /// (bridge removal, room/zone delete). Routes each doomed ENTRY through
+    /// the sanctioned requestNowPlayingStop path — preserving its exact
+    /// identity — so the owning engine loop, transport truth, and Studio's
+    /// mirror tear down together. Matching is on the entry's recorded
+    /// bridge + room, never on its presentation key: live rows are
+    /// bridge-qualified ids now, and comparing bare group ids against them
+    /// would match nothing while removing bridge A must also never stop
+    /// bridge B's same-room-id look. Recovered bridge-stored rows are not
+    /// matched (as before): the bridge's own chain and its manifest evidence
+    /// answer to reconciliation, not to a group-list edit. turnOffLights:
+    /// false — the group is going away; a goodbye off-PUT is pointless (and
+    /// unreachable once a removed bridge's client is dropped).
     /// (Internal, not private, so tests can drive it directly.)
-    func stopEffectsForRemovedGroups(_ groupIDs: [String]) async {
-        let doomed = Set(groupIDs)
-        for entry in activeEffectEntries where doomed.contains(entry.id) {
-            await requestNowPlayingStop(roomID: entry.id, turnOffLights: false)
+    func stopEffectsForRemovedGroups(_ doomed: [RemovedGroupIdentity]) async {
+        func matches(_ entry: ActiveEffectEntry, _ identity: RemovedGroupIdentity) -> Bool {
+            guard entry.recovered == nil, entry.roomID == identity.roomID else { return false }
+            guard let doomedBridge = identity.bridgeID else { return true }   // legacy caller
+            guard let entryBridge = entry.bridgeID else { return true }       // unattributed row
+            return entryBridge == doomedBridge
+        }
+        for entry in activeEffectEntries
+        where doomed.contains(where: { matches(entry, $0) }) {
+            await requestNowPlayingStop(entry, turnOffLights: false)
         }
     }
 
@@ -1781,8 +1852,10 @@ final class UnifiedOrchestrator {
         }
         guard let client = clients[item.bridgeID ?? ""] else { return }
         // A running effect on a doomed room would keep PUT-ing to a deleted
-        // group and leave a ghost Now-Playing entry.
-        await stopEffectsForRemovedGroups([item.id])
+        // group and leave a ghost Now-Playing entry. Exact identity (round
+        // 4d): the same room id on another bridge is not being deleted.
+        await stopEffectsForRemovedGroups(
+            [RemovedGroupIdentity(bridgeID: item.bridgeID, roomID: item.id)])
         // Optimistic removal
         withAnimation { allRooms.removeAll { $0.id == item.id } }
         scheduleWidgetWrite()   // deleted groups otherwise linger in widgets
@@ -1831,7 +1904,10 @@ final class UnifiedOrchestrator {
             return
         }
         guard let client = clients[item.bridgeID ?? ""] else { return }
-        await stopEffectsForRemovedGroups([item.id])
+        // Exact identity (round 4d): deleting this zone on this bridge may
+        // not stop the same zone id's effect on another bridge.
+        await stopEffectsForRemovedGroups(
+            [RemovedGroupIdentity(bridgeID: item.bridgeID, roomID: item.id)])
         withAnimation { allZones.removeAll { $0.id == item.id } }
         scheduleWidgetWrite()
         do {

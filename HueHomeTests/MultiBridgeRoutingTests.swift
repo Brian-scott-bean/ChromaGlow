@@ -315,6 +315,20 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
         lock.lock(); _groupedPowerIDs.append("\(id):\(on)"); lock.unlock()
     }
 
+    /// Round 4d: group deletion, recorded instead of hitting the network —
+    /// the exact-teardown tests assert WHICH bridge was asked to delete.
+    private var _deletedGroups: [String] = []
+    var deletedGroups: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _deletedGroups
+    }
+    override func deleteRoom(id: String) async throws {
+        lock.lock(); _deletedGroups.append("room:\(id)"); lock.unlock()
+    }
+    override func deleteZone(id: String) async throws {
+        lock.lock(); _deletedGroups.append("zone:\(id)"); lock.unlock()
+    }
+
     /// Packet 6: All-Day's tick issues exactly this PUT, one per room. Failing
     /// a chosen grouped light proves a per-room error stays confined to its own
     /// scope instead of abandoning the rest of the tick.
@@ -10090,6 +10104,268 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNotNil(vm.runningEffect(for: room), "the row stands")
         XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id),
             "and so does the publication")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Hardware convergence C round 4d: exact live stops and
+    //         removed-group teardown
+    // ──────────────────────────────────────────────
+    //
+    // The 4c rekey made same-room-id rows coexist — and exposed two places
+    // that still downgraded an exact entry to a bare room id: the Now
+    // Playing stop handler (so tapping either exact Dashboard row stopped
+    // NEITHER — the room-only lookup correctly failed closed) and
+    // removed-group teardown (which compared bare group ids against
+    // bridge-qualified presentation keys, matching nothing). These pin the
+    // exact live-stop target end-to-end and exact group-removal identity.
+
+    private func sharedZoneOnA() -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .zone,
+            id: "shared-zone", name: "Shared Zone", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-zone-a", lightCount: 2,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "A1", rtype: "light"), (rid: "A2", rtype: "light")]
+        )
+    }
+
+    private func sharedZoneOnB() -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .zone,
+            id: "shared-zone", name: "Shared Zone", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-zone-b", lightCount: 2,
+            bridgeID: "bridge-b",
+            childResourceRefs: [(rid: "L1", rtype: "light"), (rid: "L2", rtype: "light")]
+        )
+    }
+
+    /// Play a live REST look on each bridge's copy of the same group id and
+    /// prove the collision precondition: both exact rows and publications
+    /// coexist. Returns the two rooms.
+    private func playCollidingLiveLooks(
+        _ vm: StudioViewModel,
+        roomA: RoomDisplayItem, roomB: RoomDisplayItem,
+        playingA: CompositionPreset, playingB: CompositionPreset
+    ) async throws {
+        vm.selectedRoom = roomA
+        await vm.apply(vm.studioCard(for: playingA),
+                       roomOverride: roomA, preferEntertainmentOverride: false)
+        vm.selectedRoom = roomB
+        await vm.apply(vm.studioCard(for: playingB),
+                       roomOverride: roomB, preferEntertainmentOverride: false)
+        XCTAssertNotNil(vm.runningEffect(for: roomA),
+            "precondition: A's row (status: \(vm.statusMessage))")
+        XCTAssertNotNil(vm.runningEffect(for: roomB),
+            "precondition: B's row (status: \(vm.statusMessage))")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: roomA.id))
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: roomB.id))
+    }
+
+    /// HCS-16 — the exact Dashboard stop under a room-id collision. Tapping
+    /// A's exact Now Playing row stops exactly A; B's row, publication, and
+    /// runtime remain; then B's own row stops B.
+    func testAnExactNowPlayingStopUnderACollisionStopsOnlyItsOwnBridge() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let playingA = runtimeOnlyPreset(named: "Live A")
+        let playingB = runtimeOnlyPreset(named: "Live B")
+        let vm = makeP7FVM(presets: [playingA, playingB])
+        let roomA = sharedRoomOnA(), roomB = sharedRoomOnB()
+        try await playCollidingLiveLooks(vm, roomA: roomA, roomB: roomB,
+                                         playingA: playingA, playingB: playingB)
+
+        // The Dashboard single-stop path: routed on A's exact ENTRY.
+        let entryA = try XCTUnwrap(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
+        await orchestrator.requestNowPlayingStop(entryA)
+
+        XCTAssertNil(vm.runningEffect(for: roomA), "A stopped")
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertNotNil(vm.runningEffect(for: roomB), "B remains completely intact")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
+        XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(
+            roomID: "shared-room", bridgeID: "bridge-b"),
+            "B's runtime session survives A's stop")
+
+        // And B's own exact row stops B.
+        let entryB = try XCTUnwrap(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
+        await orchestrator.requestNowPlayingStop(entryB)
+        XCTAssertNil(vm.runningEffect(for: roomB))
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
+    }
+
+    /// HCS-17 — Dashboard-style Stop All over the two exact entries stops
+    /// both, colliding room id and all.
+    func testDashboardStopAllStopsBothCollidingEntries() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let playingA = runtimeOnlyPreset(named: "Live A")
+        let playingB = runtimeOnlyPreset(named: "Live B")
+        let vm = makeP7FVM(presets: [playingA, playingB])
+        let roomA = sharedRoomOnA(), roomB = sharedRoomOnB()
+        try await playCollidingLiveLooks(vm, roomA: roomA, roomB: roomB,
+                                         playingA: playingA, playingB: playingB)
+
+        // DashboardView.stopAllEffects: iterate the exact entries.
+        for entry in orchestrator.activeEffectEntries {
+            await orchestrator.requestNowPlayingStop(entry)
+        }
+
+        XCTAssertNil(vm.runningEffect(for: roomA))
+        XCTAssertNil(vm.runningEffect(for: roomB))
+        XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty,
+            "every exact entry stopped — none survived the shared room id")
+    }
+
+    /// HCS-18 — Siri-style Stop All: both exact entries stop AND the
+    /// lights-stay-on contract holds for each (no group off-PUT on either
+    /// bridge).
+    func testSiriStopAllStopsBothCollidingEntriesAndKeepsLightsOn() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let playingA = runtimeOnlyPreset(named: "Live A")
+        let playingB = runtimeOnlyPreset(named: "Live B")
+        let vm = makeP7FVM(presets: [playingA, playingB])
+        let roomA = sharedRoomOnA(), roomB = sharedRoomOnB()
+        try await playCollidingLiveLooks(vm, roomA: roomA, roomB: roomB,
+                                         playingA: playingA, playingB: playingB)
+
+        // The Siri handler's loop: exact entries, lights stay on.
+        for entry in orchestrator.activeEffectEntries {
+            await orchestrator.requestNowPlayingStop(entry, turnOffLights: false)
+        }
+
+        XCTAssertNil(vm.runningEffect(for: roomA))
+        XCTAssertNil(vm.runningEffect(for: roomB))
+        XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
+        XCTAssertFalse(bridgeA.groupedPowerIDs.contains("gl-shared-a:false"),
+            "Siri's contract: A's room is not turned off")
+        XCTAssertFalse(bridgeB.groupedPowerIDs.contains("gl-shared-b:false"),
+            "nor B's")
+    }
+
+    /// HCS-19 — removing bridge A tears down exactly A's same-room-id look:
+    /// runtime row, publication, and client drop for A; B untouched.
+    func testRemovingABridgeStopsOnlyItsOwnSameRoomIDEffects() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let playingA = runtimeOnlyPreset(named: "Live A")
+        let playingB = runtimeOnlyPreset(named: "Live B")
+        let vm = makeP7FVM(presets: [playingA, playingB])
+        let roomA = sharedRoomOnA(), roomB = sharedRoomOnB()
+        try await playCollidingLiveLooks(vm, roomA: roomA, roomB: roomB,
+                                         playingA: playingA, playingB: playingB)
+        orchestrator.testSeedBridgeGroups(bridgeID: "bridge-a", rooms: [roomA])
+
+        await orchestrator.removeBridge(id: "bridge-a")
+
+        XCTAssertNil(vm.runningEffect(for: roomA), "A's runtime row fell with its bridge")
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertFalse(orchestrator.registeredBridgeIDs.contains("bridge-a"))
+        XCTAssertNotNil(vm.runningEffect(for: roomB),
+            "B's same-room-id effect keeps running")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
+        XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(
+            roomID: "shared-room", bridgeID: "bridge-b"),
+            "and keeps its runtime session")
+    }
+
+    /// HCS-20 — deleting a room on A tears down only A's effect; the same
+    /// room id on B is not being deleted.
+    func testDeletingARoomStopsOnlyThatBridgesEffect() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let playingA = runtimeOnlyPreset(named: "Live A")
+        let playingB = runtimeOnlyPreset(named: "Live B")
+        let vm = makeP7FVM(presets: [playingA, playingB])
+        let roomA = sharedRoomOnA(), roomB = sharedRoomOnB()
+        try await playCollidingLiveLooks(vm, roomA: roomA, roomB: roomB,
+                                         playingA: playingA, playingB: playingB)
+
+        await orchestrator.deleteRoom(roomA)
+
+        XCTAssertEqual(bridgeA.deletedGroups, ["room:shared-room"],
+            "exactly A's bridge was asked to delete")
+        XCTAssertTrue(bridgeB.deletedGroups.isEmpty)
+        XCTAssertNil(vm.runningEffect(for: roomA))
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertNotNil(vm.runningEffect(for: roomB), "B's effect survives A's deletion")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
+    }
+
+    /// HCS-21 — deleting a zone on A tears down only A's effect; the same
+    /// zone id on B keeps its render loop.
+    func testDeletingAZoneStopsOnlyThatBridgesEffect() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let playingA = runtimeOnlyPreset(named: "Zone A")
+        let playingB = runtimeOnlyPreset(named: "Zone B")
+        let vm = makeP7FVM(presets: [playingA, playingB])
+        let zoneA = sharedZoneOnA(), zoneB = sharedZoneOnB()
+        try await playCollidingLiveLooks(vm, roomA: zoneA, roomB: zoneB,
+                                         playingA: playingA, playingB: playingB)
+
+        await orchestrator.deleteZone(zoneA)
+
+        XCTAssertEqual(bridgeA.deletedGroups, ["zone:shared-zone"])
+        XCTAssertTrue(bridgeB.deletedGroups.isEmpty)
+        XCTAssertNil(vm.runningEffect(for: zoneA))
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-zone"))
+        XCTAssertNotNil(vm.runningEffect(for: zoneB),
+            "a bridge-attributed live loop survives only when ITS group was not the one deleted")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-zone"))
+    }
+
+    /// HCS-22 — the room-only compatibility stop: fails closed while two
+    /// bridges share the room id, then works once exactly one remains.
+    func testRoomOnlyStopFailsClosedOnCollisionAndWorksWhenUnambiguous() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let playingA = runtimeOnlyPreset(named: "Live A")
+        let playingB = runtimeOnlyPreset(named: "Live B")
+        let vm = makeP7FVM(presets: [playingA, playingB])
+        let roomA = sharedRoomOnA(), roomB = sharedRoomOnB()
+        try await playCollidingLiveLooks(vm, roomA: roomA, roomB: roomB,
+                                         playingA: playingA, playingB: playingB)
+
+        // Two bridges hold the room id: a bare room id cannot say which.
+        await vm.stopFromNowPlaying(roomID: "shared-room")
+        XCTAssertNotNil(vm.runningEffect(for: roomA), "fail closed: neither is guessed at")
+        XCTAssertNotNil(vm.runningEffect(for: roomB))
+
+        // Resolve the collision by stopping B exactly…
+        let entryB = try XCTUnwrap(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
+        await orchestrator.requestNowPlayingStop(entryB)
+        XCTAssertNil(vm.runningEffect(for: roomB))
+
+        // …and the room-only request now has exactly one honest answer.
+        await vm.stopFromNowPlaying(roomID: "shared-room")
+        XCTAssertNil(vm.runningEffect(for: roomA))
+        XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
+    }
+
+    /// HCS-23 — the stop handler receives the EXACT target: an attributed
+    /// entry keeps its bridge and its lights semantics, and a room-only
+    /// request invents no bridge. (The orchestrator-level twin of the
+    /// end-to-end tests above; OrchestratorTests.swift is not a member of
+    /// the test target, so this coverage must live here to actually run.)
+    func testTheStopHandlerReceivesTheExactBridgeAndRoom() async {
+        let entry = ActiveEffectEntry(
+            liveBridgeID: "bridge-a", roomID: "shared-room", roomName: "Shared Room",
+            groupedLightID: "gl-shared-a", effectID: "card", effectName: "Live A",
+            effectIcon: "flame.fill", isAppDriven: false)
+        orchestrator.addActiveEffect(entry)
+        var received: [UnifiedOrchestrator.LiveEffectStopTarget] = []
+        orchestrator.studioStopHandler = { received.append($0) }
+
+        await orchestrator.requestNowPlayingStop(entry)
+        await orchestrator.requestNowPlayingStop(roomID: "shared-room", turnOffLights: false)
+
+        XCTAssertEqual(received.map(\.bridgeID), ["bridge-a", nil],
+            "the attributed entry keeps its bridge; the room-only request invents none")
+        XCTAssertEqual(received.map(\.roomID), ["shared-room", "shared-room"])
+        XCTAssertEqual(received.map(\.turnOffLights), [true, false])
     }
 
     /// HCQ-01 — persist fails, compensation partial: the outcome carries the

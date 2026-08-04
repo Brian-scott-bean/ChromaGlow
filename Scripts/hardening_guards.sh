@@ -769,6 +769,34 @@ if echo "$hc_save_body" | grep -q 'hadBridgeStoredClaim'; then
     fail "composer-hardware-convergence" "saveLookToBridge reads the room-id-only transport claim as ownership proof again — bridge A's claim must never lend destructive authority to a save on bridge B"
 fi
 
+# (k, round 4d) The exact-key rekey must not be undone at the stop handoff:
+# a bridge-attributed Now Playing entry keeps its bridge identity all the way
+# to Studio, and removed-group teardown matches recorded bridge + room —
+# never bare group ids against bridge-qualified presentation keys.
+if ! grep -q 'struct LiveEffectStopTarget' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "LiveEffectStopTarget is gone — the stop handler would fall back to a bare room id and fail closed under a room-id collision, stopping neither bridge's look"
+fi
+if ! grep -q 'var studioStopHandler: (@MainActor (LiveEffectStopTarget) async -> Void)?' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "studioStopHandler no longer carries the exact bridge+room target"
+fi
+hc_entry_stop=$(awk '/func requestNowPlayingStop\(_ entry:/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if ! echo "$hc_entry_stop" | grep -q 'bridgeID: bridgeID'; then
+    fail "composer-hardware-convergence" "requestNowPlayingStop(_ entry:) downgrades attributed entries to the roomID-only overload — tapping either exact Dashboard row under a collision would stop neither"
+fi
+hc_removed_groups=$(awk '/func stopEffectsForRemovedGroups\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_removed_groups" | grep -qE 'entry\.id|\$0\.id'; then
+    fail "composer-hardware-convergence" "stopEffectsForRemovedGroups compares presentation keys — bridge-qualified live ids match no bare group id, so doomed effects would survive removal"
+fi
+if ! echo "$hc_removed_groups" | grep -q 'RemovedGroupIdentity'; then
+    fail "composer-hardware-convergence" "stopEffectsForRemovedGroups lost its exact-identity input"
+fi
+hc_removed_ids=$(grep -c 'RemovedGroupIdentity(bridgeID:' "$HC_ORCH" 2>/dev/null || echo 0)
+if [[ "$hc_removed_ids" -lt 3 ]]; then
+    fail "composer-hardware-convergence" "expected bridge removal + room delete + zone delete to pass exact RemovedGroupIdentity values (>=3 sites), found $hc_removed_ids"
+fi
+
 # No timing waits in the suites that carry this slice's behaviour.
 HC_TESTS=(
     "HueHomeTests/MultiBridgeRoutingTests.swift"

@@ -1094,8 +1094,8 @@ final class StudioViewModel {
 
     func configure(orchestrator: UnifiedOrchestrator) {
         self.orchestrator = orchestrator
-        orchestrator.studioStopHandler = { [weak self] roomID, turnOffLights in
-            await self?.stopFromNowPlaying(roomID: roomID, turnOffLights: turnOffLights)
+        orchestrator.studioStopHandler = { [weak self] target in
+            await self?.stopFromNowPlaying(target)
         }
         // Packet 8: this pair is the two-way ordering mechanism for recovered
         // bridge-stored animations. The handler covers configure-BEFORE-load
@@ -1253,14 +1253,34 @@ final class StudioViewModel {
     /// `turnOffLights: true` = the tray Stop button's semantics, room goes off.
     /// `false` = tear the effect down but leave lights at their current state.
     func stopFromNowPlaying(roomID: String, turnOffLights: Bool = true) async {
-        isExplicitStop = turnOffLights
-        // A bare room id resolves only when exactly one bridge holds it
-        // (round 4c). On a collision nothing is torn down and nothing is
-        // cleared — this caller cannot say WHICH bridge's look it means.
-        guard let key = runningEffectKey(forRoomID: roomID) else {
-            // No row at all: clear a stale bar entry through the same
-            // fail-closed room-scoped removal.
-            orchestrator?.removeActiveEffect(roomID: roomID)
+        await stopFromNowPlaying(UnifiedOrchestrator.LiveEffectStopTarget(
+            bridgeID: nil, roomID: roomID, turnOffLights: turnOffLights))
+    }
+
+    /// The exact live-stop entry point (round 4d). A bridge-attributed
+    /// target resolves its exact row directly — two bridges sharing one room
+    /// id are two rows, and each Dashboard entry stops precisely its own. A
+    /// room-only target (bridgeID nil) resolves only when exactly one bridge
+    /// holds the room id and fails closed on a collision — that caller
+    /// cannot say WHICH bridge's look it means.
+    func stopFromNowPlaying(_ target: UnifiedOrchestrator.LiveEffectStopTarget) async {
+        isExplicitStop = target.turnOffLights
+        let resolvedKey: RoomEffectKey?
+        if let bridgeID = target.bridgeID {
+            let exact = RoomEffectKey(bridgeID: bridgeID, roomID: target.roomID)
+            resolvedKey = runningEffects[exact] != nil ? exact : nil
+        } else {
+            resolvedKey = runningEffectKey(forRoomID: target.roomID)
+        }
+        guard let key = resolvedKey else {
+            // No resolvable row: clear a stale bar entry — exactly when the
+            // target names its bridge, through the fail-closed room-scoped
+            // removal otherwise.
+            if let bridgeID = target.bridgeID {
+                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID)
+            } else {
+                orchestrator?.removeActiveEffect(roomID: target.roomID)
+            }
             statusMessage = ""
             return
         }
@@ -1278,9 +1298,9 @@ final class StudioViewModel {
                 || survivor?.recovered != stopping?.recovered)
         if !replacedByNewer {
             if let bridgeID = key.bridgeID {
-                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
+                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID)
             } else {
-                orchestrator?.removeActiveEffect(roomID: roomID)
+                orchestrator?.removeActiveEffect(roomID: target.roomID)
             }
         }
         statusMessage = ""
