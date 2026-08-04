@@ -9614,8 +9614,11 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "the user is asked again rather than handed an arbitrary target")
 
         // A single remaining bridge IS unambiguous, so a stale selection does
-        // not block it. The destructive act is guarded by revalidate below,
-        // not by refusing to name the only bridge there is.
+        // not block it — PRE-CONFIRMATION ONLY (round 3). This resolution may
+        // never be consulted while a destructive dialog is open: the id a
+        // shown confirmation speaks about is frozen at presentation, so this
+        // auto-select can only ever name the target of a FUTURE dialog, not
+        // retarget an open one.
         XCTAssertEqual(CleanBridgeTarget.resolve(registered: ["bridge-a"], selected: "bridge-gone"),
                        "bridge-a")
 
@@ -9625,6 +9628,31 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "revalidation refuses rather than silently retargeting another bridge")
         XCTAssertNil(CleanBridgeTarget.revalidate(confirmed: nil, registered: ["bridge-a"]),
             "and an unconfirmed target deletes nothing")
+    }
+
+    /// HCC-03b — the reported round-3 case, end to end in the pure rule:
+    /// bridge B was selected and FROZEN, B disappeared while the dialog was
+    /// up, and A remains as the sole registered bridge. The frozen id is what
+    /// the delete receives, and revalidating it deletes NOTHING — the single
+    /// remaining bridge is never a substitute for the one that was chosen.
+    func testASelectedBridgeDisappearingWhileAnotherRemainsDeletesNothing() {
+        // At freeze time both bridges exist and B is the explicit choice.
+        let frozen = CleanBridgeTarget.resolve(registered: ["bridge-a", "bridge-b"],
+                                               selected: "bridge-b")
+        XCTAssertEqual(frozen, "bridge-b")
+
+        // B drops off while the confirmation is open; only A remains. The
+        // LIVE resolution would now auto-select A — which is exactly why the
+        // open dialog must never consult it.
+        XCTAssertEqual(CleanBridgeTarget.resolve(registered: ["bridge-a"],
+                                                 selected: "bridge-b"),
+                       "bridge-a",
+            "the live resolution retargets — the frozen id must be what the delete receives")
+
+        // The delete receives the FROZEN id, and revalidation refuses.
+        XCTAssertNil(CleanBridgeTarget.revalidate(confirmed: frozen,
+                                                  registered: ["bridge-a"]),
+            "selected-B / B-disappears / A-remains deletes nothing at all")
     }
 
     /// HCC-04 — confirming bridge B can only ever act on bridge B.

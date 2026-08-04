@@ -26,6 +26,14 @@ enum CleanBridgeTarget {
     /// One registered bridge is unambiguous and is chosen automatically.
     /// Several are not, and no default is invented — a selection is required,
     /// and a selection naming a bridge that is no longer registered is not one.
+    ///
+    /// PRE-CONFIRMATION ONLY (round 3). This answers "can a confirmation be
+    /// phrased at all?" — it is a live computation over the current registry,
+    /// and the registry can change while a dialog is up. The moment a
+    /// destructive confirmation is shown, the id it names is FROZEN into
+    /// `cleanBridgeFrozenID`; re-resolving from here under an open dialog is
+    /// exactly how "Clean B?" silently retargeted to A when B dropped off
+    /// with one bridge remaining.
     static func resolve(registered: [String], selected: String?) -> String? {
         if registered.count == 1 { return registered[0] }
         guard let selected, registered.contains(selected) else { return nil }
@@ -70,6 +78,14 @@ struct SettingsView: View {
     @State private var showCleanBridgeConfirm = false
     @State private var showCleanBridgePicker = false
     @State private var cleanBridgeSelectedID: String? = nil
+    /// The exact bridge the OPEN destructive confirmation is about — frozen
+    /// BEFORE the dialog is shown, and the only id its title, message and
+    /// destructive action may read. `cleanBridgeTargetID` is a live
+    /// computation: with bridges A and B, picking B and then losing B off
+    /// the network left `registered == [A]`, which resolve() auto-selects —
+    /// so the open dialog silently re-rendered as "Clean A?" and the tap
+    /// wiped the bridge the user never chose (round 3).
+    @State private var cleanBridgeFrozenID: String? = nil
 
     private let glowColor = Color(red: 1.0, green: 0.76, blue: 0.2)
 
@@ -336,9 +352,16 @@ struct SettingsView: View {
             // only "tidy up".
             Button {
                 // With several bridges the target must be named before the
-                // confirmation can name it.
-                if needsBridgeChoice { showCleanBridgePicker = true }
-                else { showCleanBridgeConfirm = true }
+                // confirmation can name it. Whichever way the confirmation is
+                // reached, the id it will speak about is frozen FIRST — from
+                // here on, the live registry has no say in what the open
+                // dialog names or deletes.
+                if needsBridgeChoice {
+                    showCleanBridgePicker = true
+                } else {
+                    cleanBridgeFrozenID = cleanBridgeTargetID
+                    showCleanBridgeConfirm = true
+                }
             } label: {
                 HStack(spacing: 12) {
                     iconCircle("trash.circle", color: Color(red: 1.0, green: 0.55, blue: 0.25))
@@ -369,28 +392,40 @@ struct SettingsView: View {
                 ForEach(orchestrator.registeredBridgeIDs, id: \.self) { id in
                     Button(orchestrator.bridgeLabel(for: id)) {
                         cleanBridgeSelectedID = id
+                        // Frozen from the picker's exact tap — never
+                        // re-derived while the confirmation is up.
+                        cleanBridgeFrozenID = id
                         showCleanBridgeConfirm = true
                     }
                 }
-                Button("Cancel", role: .cancel) { cleanBridgeSelectedID = nil }
+                Button("Cancel", role: .cancel) {
+                    cleanBridgeSelectedID = nil
+                    cleanBridgeFrozenID = nil
+                }
             } message: {
                 Text("Only the bridge you pick is changed.")
             }
             .confirmationDialog(
-                "Clean \(orchestrator.bridgeLabel(for: cleanBridgeTargetID ?? ""))?",
+                "Clean \(orchestrator.bridgeLabel(for: cleanBridgeFrozenID ?? ""))?",
                 isPresented: $showCleanBridgeConfirm,
                 titleVisibility: .visible
             ) {
-                // The exact id is frozen at the moment of confirmation and
-                // re-checked before any delete, so a bridge that dropped off
-                // the network in between deletes nothing.
+                // Title, message and the destructive action all read ONLY the
+                // frozen id. Reading the live resolution here is the round-3
+                // defect: selected B, B drops off, one bridge remains, and
+                // the open dialog silently becomes "Clean A?" under the
+                // user's finger. Revalidation before the delete still refuses
+                // a frozen id that is gone — so that case deletes nothing.
                 Button("Remove ChromaGlow Data", role: .destructive) {
-                    let frozen = cleanBridgeTargetID
+                    let frozen = cleanBridgeFrozenID
                     Task { await cleanBridgeResources(confirmedBridgeID: frozen) }
                 }
-                Button("Cancel", role: .cancel) { cleanBridgeSelectedID = nil }
+                Button("Cancel", role: .cancel) {
+                    cleanBridgeSelectedID = nil
+                    cleanBridgeFrozenID = nil
+                }
             } message: {
-                Text("This removes every look ChromaGlow saved to \(orchestrator.bridgeLabel(for: cleanBridgeTargetID ?? "")), including any that are running right now in other rooms. Looks on your other bridges aren't touched.")
+                Text("This removes every look ChromaGlow saved to \(orchestrator.bridgeLabel(for: cleanBridgeFrozenID ?? "")), including any that are running right now in other rooms. Looks on your other bridges aren't touched.")
             }
         }
     }
@@ -648,7 +683,11 @@ struct SettingsView: View {
     private func cleanBridgeResources(confirmedBridgeID: String?) async {
         isCleaningBridge = true
         cleanBridgeResult = nil
-        defer { isCleaningBridge = false; cleanBridgeSelectedID = nil }
+        defer {
+            isCleaningBridge = false
+            cleanBridgeSelectedID = nil
+            cleanBridgeFrozenID = nil
+        }
 
         // Revalidate the EXACT bridge that was confirmed. Between the tap and
         // this line a bridge can be removed or drop off the network, and a

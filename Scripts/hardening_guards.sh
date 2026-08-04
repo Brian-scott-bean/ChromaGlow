@@ -45,7 +45,12 @@
 #              disjoint, a stop is never treated as proof of release, the
 #              bridge-save action stays reachable outside Palette → More, the
 #              room wheel is not force-covered by the effect panel, and the
-#              new suites carry no timing waits.
+#              new suites carry no timing waits. Round 3: every Entertainment
+#              commit goes through verifyAndCommitEntertainment (no bare
+#              commit path), the shared save-outcome mailbox stays dead
+#              (bridgeSaveRequestID replaces it), and the Clean Bridge
+#              confirmation speaks only about its FROZEN id — never the live
+#              re-resolution.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -706,6 +711,31 @@ hc_arbitrary=$(grep -nE 'registeredBridgeIDs\.first|clients\.values\.first|HueAP
     | grep -vE ':[[:space:]]*//' || true)
 if [[ -n "$hc_arbitrary" ]]; then
     fail "composer-hardware-convergence" $'Clean Bridge Resources picks a bridge arbitrarily — lowest-sorting id is not an answer to "which bridge are you about to wipe?":\n'"$hc_arbitrary"
+fi
+# (h2, round 3) The OPEN destructive dialog may not consult the live
+# resolution. cleanBridgeTargetID re-resolves from the current registry; with
+# bridge B chosen and lost mid-dialog, one remaining bridge auto-selects and
+# the dialog silently retargets. Only the frozen id may appear from the first
+# confirmationDialog to the end of the sweep's message.
+hc_dialogs=$(awk '/confirmationDialog\(/,/other bridges aren.t touched/' "$hc_settings" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_dialogs" | grep -q 'cleanBridgeTargetID'; then
+    fail "composer-hardware-convergence" "a Clean Bridge confirmation dialog reads the LIVE cleanBridgeTargetID — an open destructive dialog must speak only about its frozen id"
+fi
+if ! grep -q 'cleanBridgeFrozenID' "$hc_settings"; then
+    fail "composer-hardware-convergence" "the frozen cleanup identity is gone — the confirmation would re-resolve its target from live state again"
+fi
+
+# (i, round 3) Every Entertainment commit goes through the final
+# verification. Exactly two lowercase call-shaped occurrences may exist: the
+# definition and the one call inside verifyAndCommitEntertainment. (The
+# wrapper's own name contains a capital C and does not match.)
+hc_commit_calls=$(grep -c 'commitEntertainment(' "$HC_ORCH" 2>/dev/null || echo 0)
+if [[ "$hc_commit_calls" -ne 2 ]]; then
+    fail "composer-hardware-convergence" "expected exactly 2 'commitEntertainment(' occurrences (definition + the verified call), found $hc_commit_calls — an unverified commit path is growing back"
+fi
+if ! grep -q 'func verifyAndCommitEntertainment(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "verifyAndCommitEntertainment is missing — commits would no longer be preceded by the final fresh-read + session-health verification"
 fi
 
 # No timing waits in the suites that carry this slice's behaviour.
