@@ -399,11 +399,10 @@ final class UnifiedOrchestrator {
         // 2. Entertainment ownership, recorded per bridge as bridge -> room.
         if compositionEntRoomByBridge[bridgeID ?? ""] == roomID { return false }
 
-        // 3. Studio's app-driven engine. One global slot, but it carries both
-        //    halves of the identity, so compare both.
-        if let studio = activeStudioRestScope,
-           studio.bridgeKey == legacyKey,
-           studio.scope == RestScope(roomID: roomID, owner: .studio) {
+        // 3. Studio's app-driven engine, recorded per bridge (round 4g). The
+        //    key carries the bridge and the value carries the room, so the
+        //    comparison still covers both halves of the identity.
+        if studioRestScopesByBridge[legacyKey] == RestScope(roomID: roomID, owner: .studio) {
             return false
         }
 
@@ -1225,6 +1224,18 @@ final class UnifiedOrchestrator {
         let doomedGroups = ((roomsByBridge[id] ?? []) + (zonesByBridge[id] ?? []))
             .map { RemovedGroupIdentity(bridgeID: id, roomID: $0.id) }
         await stopEffectsForRemovedGroups(doomedGroups)
+        // Round 4g backstop: whatever the exact stops above could not
+        // attribute — this bridge's app-driven engine loop, its live param
+        // box, its DTLS session and its owner record — dies with the bridge.
+        // Exact key only: another bridge's runtime, session, and owner must
+        // survive its neighbour's removal untouched.
+        if let runtime = studioEngineRuntimesByBridge.removeValue(forKey: id) {
+            runtime.task.cancel()
+        }
+        if let entClient = studioEntClients.removeValue(forKey: id) {
+            await entClient.stopSession()
+        }
+        studioEntOwnerByBridge.removeValue(forKey: id)
         await retiredAllDaySender?.clearAll()
         sseTasks[id]?.cancel()
         sseTasks.removeValue(forKey: id)
@@ -1259,10 +1270,9 @@ final class UnifiedOrchestrator {
                 sessionKey: sessionKey, pendingRemovalReported: false)
         }
         activeRESTCadenceByBridgeRoom.removeValue(forKey: id)
-        // …and forget the Studio owner iff it lived on this bridge.
-        if activeStudioRestScope?.bridgeKey == id {
-            activeStudioRestScope = nil
-        }
+        // …and forget the Studio owner iff it lived on this bridge (round 4g:
+        // the map key IS the bridge, so the removal is exact by construction).
+        studioRestScopesByBridge.removeValue(forKey: id)
         clients.removeValue(forKey: id)
         roomsByBridge.removeValue(forKey: id)
         // Zones were never cleared here — and pruneStaleBridgeSnapshots bails
@@ -2967,9 +2977,25 @@ final class UnifiedOrchestrator {
     // Each engine reads its params from the `params` dictionary passed in.
     // Params are user-adjustable sliders; the engine loop polls them each frame.
 
-    /// Stored reference to the running studio task (strobe, etc.)
-    /// so stopStudioMode() can cancel it. Without this, loops run forever.
-    private var activeStudioTask: Task<Void, Never>?
+    /// One app-driven Studio engine runtime per BRIDGE (round 4g). The record
+    /// binds the loop task to the live param box and to the exact room that
+    /// owns them, keyed by the Entertainment maps' bridge convention
+    /// (`bridgeID ?? ""`), for two reasons:
+    ///
+    ///  1. The old single global slot meant starting a streaming card on
+    ///     bridge 2 cancelled bridge 1's render loop — the hardware-confirmed
+    ///     "second bridge kills the first bridge's stream" defect. The real
+    ///     Hue constraint is one session per bridge, not one per app.
+    ///  2. Carrying the owning roomID is what lets a stale stop — one that
+    ///     resumes after a newer same-bridge start already took the key —
+    ///     recognize that the runtime is no longer the one it was asked to
+    ///     stop, and refuse to cancel it.
+    private struct StudioEngineRuntime {
+        let roomID: String
+        let task: Task<Void, Never>
+        let paramBox: StudioParamBox
+    }
+    @ObservationIgnored private var studioEngineRuntimesByBridge: [String: StudioEngineRuntime] = [:]
 
     /// Entertainment clients keyed by bridgeID — one per concurrent bridge session.
     /// Internal access so StudioViewModel can report transport mode in debug.
@@ -3033,15 +3059,15 @@ final class UnifiedOrchestrator {
     /// already gives: a token spendable by the wrong question is not a token.
     @ObservationIgnored var consumedForeignTakeoverRequests: Set<UUID> = []
 
-    /// Which Studio scope currently owns REST, and on which bridge (packet 3).
-    ///
-    /// `activeStudioTask` above is ONE global slot: starting Studio in room B
-    /// silently replaces room A's loop. Without this record, `startStudioMode`
-    /// could only clear the INCOMING room's scope, leaving room A's epoch valid
-    /// and its in-flight batches legal — cross-room crossfire. The bridgeKey is
-    /// stored alongside because the replacement may target a different bridge,
-    /// and the old scope must be cleared on the sender that actually holds it.
-    private var activeStudioRestScope: (bridgeKey: String, scope: RestScope)?
+    /// Which Studio scope owns REST on each bridge (packet 3; round 4g:
+    /// per-bridge). Keyed by the SENDER key convention (`bridgeID ?? "legacy"`)
+    /// because these values are cleared against `restSender(for:)` and read by
+    /// the All-Day suppression predicate, both of which spell bridgeless that
+    /// way. A same-bridge room A → room B replacement must clear room A's
+    /// scope (or its epoch stays valid and its queued batches keep writing
+    /// over room B), but another bridge's Studio look keeps its scope and
+    /// keeps running.
+    private var studioRestScopesByBridge: [String: RestScope] = [:]
 
     /// Studio live-param writes (StudioViewModel sendParam/sendColorParam)
     /// share the room's Studio mailbox slot: repeated writes to the same
@@ -3062,19 +3088,20 @@ final class UnifiedOrchestrator {
         await restSender(for: bridgeID).enqueue(scope: scope, work)
     }
 
-    /// Clear whichever Studio scope currently owns REST, wherever it lives, and
-    /// forget it. Used by `startStudioMode` (before recording the new owner) and
-    /// by the bridge-removal paths.
-    private func clearActiveStudioRestScope() async {
-        guard let active = activeStudioRestScope else { return }
-        await restSender(for: active.bridgeKey).clear(scope: active.scope)
-        activeStudioRestScope = nil
+    /// Clear ONE bridge's recorded Studio scope on the sender that holds it,
+    /// and forget it. Used by `startStudioMode` (before recording the new
+    /// owner) and by the bridge-removal paths. Round 4g: per-bridge — clearing
+    /// bridge A's owner must not touch bridge B's.
+    private func clearStudioRestScope(bridgeKey: String) async {
+        guard let scope = studioRestScopesByBridge[bridgeKey] else { return }
+        await restSender(for: bridgeKey).clear(scope: scope)
+        studioRestScopesByBridge.removeValue(forKey: bridgeKey)
     }
     // `studioGeneration` was deleted in packet 3. It was incremented on every
     // Studio start/stop and NEVER read — dead state that looked like a working
     // staleness guard. Studio staleness is now carried by the REST scope epoch
     // (`RestScope(.studio)`), which enqueued closures actually consult, and by
-    // `activeStudioTask` cancellation for the engine loops.
+    // engine-runtime task cancellation for the engine loops.
 
     /// Per-EXACT-playback composition generation counters (round 4e: keyed by
     /// bridge+room, never bare roomID — a stop may only invalidate its own
@@ -3467,8 +3494,8 @@ final class UnifiedOrchestrator {
     }
 
     // Scoped-mailbox seams (packet 3). `restSendersByBridge` and
-    // `activeStudioRestScope` are private because only this type may route work
-    // into them, but "one room's stop must not clear another's mailbox" is
+    // `studioRestScopesByBridge` are private because only this type may route
+    // work into them, but "one room's stop must not clear another's mailbox" is
     // precisely the rule that regressed — so tests get a way to enqueue into,
     // and inspect, the real senders the production paths use.
 
@@ -3484,17 +3511,54 @@ final class UnifiedOrchestrator {
         Set(restSendersByBridge.keys)
     }
 
-    /// The recorded Studio REST owner, if any.
-    func testActiveStudioRestScope() -> (bridgeKey: String, scope: RestScope)? {
-        activeStudioRestScope
+    /// The recorded Studio REST owner on ONE bridge, if any (round 4g).
+    func testStudioRestScope(forBridgeKey bridgeKey: String) -> RestScope? {
+        studioRestScopesByBridge[bridgeKey]
+    }
+
+    /// Every recorded Studio REST owner, keyed by bridge (round 4g).
+    func testStudioRestScopes() -> [String: RestScope] {
+        studioRestScopesByBridge
     }
 
     /// Stage a Studio REST owner without running an engine loop.
-    func testSetActiveStudioRestScope(bridgeKey: String, roomID: String) {
-        activeStudioRestScope = (
-            bridgeKey: bridgeKey,
-            scope: RestScope(roomID: roomID, owner: .studio)
-        )
+    func testSetStudioRestScope(bridgeKey: String, roomID: String) {
+        studioRestScopesByBridge[bridgeKey] = RestScope(roomID: roomID, owner: .studio)
+    }
+
+    // Engine-runtime seams (round 4g). Same rule: readers over the REAL
+    // per-bridge map the production paths use, plus a stager for the
+    // stale-stop tests — a runtime whose loop never runs, so ownership
+    // verification can be proven without an engine.
+
+    /// Whether a bridge currently holds an app-driven engine runtime.
+    func testHasStudioEngineTask(forBridge bridgeKey: String) -> Bool {
+        studioEngineRuntimesByBridge[bridgeKey] != nil
+    }
+
+    /// The room recorded as owning a bridge's engine runtime.
+    func testStudioEngineRuntimeRoom(forBridge bridgeKey: String) -> String? {
+        studioEngineRuntimesByBridge[bridgeKey]?.roomID
+    }
+
+    /// Whether a bridge's engine-loop task has been cancelled. nil when no
+    /// runtime is installed.
+    func testStudioEngineTaskIsCancelled(forBridge bridgeKey: String) -> Bool? {
+        studioEngineRuntimesByBridge[bridgeKey]?.task.isCancelled
+    }
+
+    /// The live param values a bridge's engine loop currently reads.
+    func testStudioParamBoxValues(forBridge bridgeKey: String) -> [String: Double]? {
+        studioEngineRuntimesByBridge[bridgeKey]?.paramBox.values
+    }
+
+    /// Stage an engine runtime (inert task, real box) without running a loop.
+    func testInstallStudioEngineRuntime(bridgeKey: String, roomID: String,
+                                        values: [String: Double] = [:]) {
+        studioEngineRuntimesByBridge[bridgeKey] = StudioEngineRuntime(
+            roomID: roomID,
+            task: Task {},
+            paramBox: StudioParamBox(values: values, colors: [:]))
     }
 
     // Composer telemetry seams (packet 4). Same rule as the mailbox seams:
@@ -4923,17 +4987,20 @@ final class UnifiedOrchestrator {
             self.colors = colors
         }
     }
-    // @ObservationIgnored keeps this a STORED property so nonisolated(unsafe)
-    // takes effect (@Observable otherwise rewrites it computed, where the
-    // attribute is a no-op). Private and never view-observed; StudioParamBox
-    // is @unchecked Sendable with its documented cross-actor-write contract.
-    @ObservationIgnored nonisolated(unsafe) private var activeParamBox: StudioParamBox?
+    // Round 4g: the live box lives inside `studioEngineRuntimesByBridge`, so
+    // param edits are routed to the EXACT bridge's engine. The box itself
+    // stays @unchecked Sendable — engine loops keep reading it per frame from
+    // their own tasks under its documented cross-actor-write contract.
 
-    /// Update live params while an engine is running (called by StudioViewModel on slider change).
-    /// Nonisolated because StudioParamBox is @unchecked Sendable — safe for cross-actor writes.
-    nonisolated func updateStudioParams(values: [String: Double], colors: [String: Color]) {
-        activeParamBox?.values = values
-        activeParamBox?.colors = colors
+    /// Update live params while an engine is running (called by StudioViewModel
+    /// on slider change). With two bridges streaming at once, a slider edit
+    /// follows the SELECTED room's bridge instead of whichever engine started
+    /// last. Isolated (both this type and the caller are @MainActor), so the
+    /// map read is safe and the call stays synchronous.
+    func updateStudioParams(values: [String: Double], colors: [String: Color], bridgeID: String?) {
+        guard let box = studioEngineRuntimesByBridge[bridgeID ?? ""]?.paramBox else { return }
+        box.values = values
+        box.colors = colors
     }
 
     /// Studio engine keys that stream over Entertainment. Only these can
@@ -5016,17 +5083,20 @@ final class UnifiedOrchestrator {
 
         // ── COMMIT ──────────────────────────────────────────────
         //
-        // Past this line the start is going ahead, so destruction is safe.
-        activeStudioTask?.cancel()
-        activeStudioTask = nil
-        // Clear the PREVIOUSLY RECORDED Studio scope and forget it — even when
-        // the new card targets a different room or a different bridge.
-        // Clearing only the incoming room would be the bug: `activeStudioTask`
-        // is one global slot, so a room A -> room B switch would leave room A's
-        // epoch valid and its already-queued batches legal, and room A would
-        // keep writing over room B.
-        await clearActiveStudioRestScope()
+        // Past this line the start is going ahead, so destruction is safe —
+        // and scoped to THIS room's bridge (round 4g). One engine per bridge
+        // is the real constraint: starting on bridge 2 must not cancel bridge
+        // 1's loop, clear its scope, or stop its session.
         let stopBid = room.bridgeID ?? ""
+        if let previous = studioEngineRuntimesByBridge.removeValue(forKey: stopBid) {
+            previous.task.cancel()
+        }
+        // Clear THIS bridge's previously recorded Studio scope and forget it —
+        // even when the new card targets a different room on it. Clearing only
+        // the incoming room would be the bug: a same-bridge room A -> room B
+        // switch would leave room A's epoch valid and its already-queued
+        // batches legal, and room A would keep writing over room B.
+        await clearStudioRestScope(bridgeKey: room.bridgeID ?? "legacy")
         if let entClient = studioEntClients[stopBid], entClient !== prepared?.client {
             await entClient.stopSession()
             studioEntClients.removeValue(forKey: stopBid)
@@ -5092,15 +5162,13 @@ final class UnifiedOrchestrator {
         // start/stop can find and invalidate it.
         let studioRoomID = room.id
         let studioBridgeID = room.bridgeID
-        activeStudioRestScope = (
-            bridgeKey: studioBridgeID ?? "legacy",
-            scope: RestScope(roomID: studioRoomID, owner: .studio)
-        )
+        studioRestScopesByBridge[studioBridgeID ?? "legacy"] =
+            RestScope(roomID: studioRoomID, owner: .studio)
         noteRoomOwnershipChange(bridgeID: studioBridgeID, roomID: studioRoomID)
 
-        // Create live param box (engine loop reads from this; ViewModel updates it)
+        // Create live param box (engine loop reads from this; the ViewModel
+        // updates it through the bridge-keyed runtime installed below).
         let paramBox = StudioParamBox(values: params, colors: colors)
-        activeParamBox = paramBox
 
         // Every Entertainment-capable engine below warms this bridge's caches
         // itself rather than trusting that some UI surface already did. A Studio
@@ -5126,10 +5194,14 @@ final class UnifiedOrchestrator {
             rest: () -> Task<Void, Never>
         ) -> PlaybackStartOutcome {
             if let committed {
-                activeStudioTask = entertainment(committed.client, committed.channelIDs)
+                studioEngineRuntimesByBridge[stopBid] = StudioEngineRuntime(
+                    roomID: studioRoomID,
+                    task: entertainment(committed.client, committed.channelIDs),
+                    paramBox: paramBox)
                 return .started(transport: .entertainment)
             }
-            activeStudioTask = rest()
+            studioEngineRuntimesByBridge[stopBid] = StudioEngineRuntime(
+                roomID: studioRoomID, task: rest(), paramBox: paramBox)
             return .started(transport: .rest)
         }
 
@@ -5179,9 +5251,12 @@ final class UnifiedOrchestrator {
 
         case "ambient":
             // Ambient is slow enough for REST (one change every few seconds)
-            activeStudioTask = Task {
-                await runAmbientREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
-            }
+            studioEngineRuntimesByBridge[stopBid] = StudioEngineRuntime(
+                roomID: studioRoomID,
+                task: Task {
+                    await runAmbientREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
+                },
+                paramBox: paramBox)
             return .started(transport: .rest)
 
         default:
@@ -7116,7 +7191,7 @@ final class UnifiedOrchestrator {
                 sessionKey: sessionKey, pendingRemovalReported: false)
         }
         activeRESTCadenceByBridgeRoom.removeAll()
-        activeStudioRestScope = nil
+        studioRestScopesByBridge.removeAll()
         roomsByBridge.removeAll()
         zonesByBridge.removeAll()
         connectionStatus.removeAll()
@@ -7133,9 +7208,10 @@ final class UnifiedOrchestrator {
 
     func stopStudioMode() async {
         debugLog("[Handoff] Studio stop requested")
-        // Cancel the running loop task (strobe, etc.)
-        activeStudioTask?.cancel()
-        activeStudioTask = nil
+        // Cancel every bridge's running loop task (strobe, etc.) — this is
+        // the forget-all path, so ALL bridges' engines go down together.
+        for runtime in studioEngineRuntimesByBridge.values { runtime.task.cancel() }
+        studioEngineRuntimesByBridge.removeAll()
         debugLog("[Handoff] Clearing every REST scope on every bridge sender")
         // This is the forget-all / stop-everything path, so a GLOBAL clear is
         // the correct semantics here — unlike stopCompositionMode and
@@ -7169,13 +7245,12 @@ final class UnifiedOrchestrator {
         }
         composerPendingTokens.removeAll()
         activeRESTCadenceByBridgeRoom.removeAll()
-        activeStudioRestScope = nil
+        studioRestScopesByBridge.removeAll()
         // Small barrier so bridge transition buffers drain before a new startup sequence.
         // KEPT AS-IS (packet 3): a practical settle window, not a formal drain.
         try? await Task.sleep(for: .milliseconds(150))
         debugLog("[Handoff] REST scopes cleared + settle delay complete")
-        activeParamBox = nil
-        debugLog("[Studio] ⏹ stopStudioMode() canceled active engine loop")
+        debugLog("[Studio] ⏹ stopStudioMode() canceled every bridge's engine loop")
 
         // Stop all entertainment sessions (all bridges)
         for (bid, entClient) in studioEntClients {
@@ -7208,41 +7283,56 @@ final class UnifiedOrchestrator {
     }
 
     /// Room-scoped teardown for ONE app-driven Studio effect (strobe, party,
-    /// …). App-driven effects are single-slot — `StudioViewModel.apply` stops
-    /// any other room's app-driven effect before starting, so the active loop
-    /// always belongs to the stopping room. The global `stopStudioMode()`
-    /// (kept verbatim for forgetAllBridges) additionally cancels EVERY room's
-    /// composition tasks, drops all entertainment configs, and wipes the whole
-    /// Now-Playing registry — which silently killed other rooms' running
-    /// compositions when one strobe was stopped. This variant touches only
-    /// the app-driven loop and its bridge's entertainment session, and only
-    /// when no composition owns that session.
+    /// …). Round 4g: the engine runtime is keyed by BRIDGE and records its
+    /// owning room, so this stop proves ownership before destroying anything.
+    /// Every mutation below is gated on "the recorded owner is the exact
+    /// bridge + room this stop was asked for" — a stale stop that resumes
+    /// after a newer same-bridge start already took the key must leave the
+    /// newer runtime, scope, session, and owner record untouched. The global
+    /// `stopStudioMode()` (kept verbatim for forgetAllBridges) additionally
+    /// cancels EVERY bridge's tasks, drops all entertainment configs, and
+    /// wipes the whole Now-Playing registry — which silently killed other
+    /// rooms' running compositions when one strobe was stopped. This variant
+    /// touches only its own bridge's app-driven loop and entertainment
+    /// session, and only when no composition owns that session.
     func stopAppDrivenStudioEffect(roomID: String, bridgeID: String?) async {
         debugLog("[Handoff] App-driven stop requested for roomID=\(roomID)")
-        activeStudioTask?.cancel()
-        activeStudioTask = nil
+        let engineKey = bridgeID ?? ""
+        // Cancel the engine loop ONLY when this exact bridge + room still owns
+        // it. The check and the cancel are synchronous on this actor, so no
+        // newer start can take the key between them.
+        if let runtime = studioEngineRuntimesByBridge[engineKey], runtime.roomID == roomID {
+            runtime.task.cancel()
+            studioEngineRuntimesByBridge.removeValue(forKey: engineKey)
+        }
         // Packet 3: clear ONLY this room's Studio scope, on the supplied
         // bridge — a global clear here is what let one strobe's stop discard
         // another room's queued Composer frame.
         let stoppedScope = RestScope(roomID: roomID, owner: .studio)
         await restSender(for: bridgeID).clear(scope: stoppedScope)
         // Drop the ownership record when it is the one we just stopped; leave
-        // it alone if some other room has since become the Studio owner.
-        if let active = activeStudioRestScope,
-           active.bridgeKey == (bridgeID ?? "legacy"),
-           active.scope == stoppedScope {
-            activeStudioRestScope = nil
+        // it alone if some other room has since become this bridge's owner.
+        if studioRestScopesByBridge[bridgeID ?? "legacy"] == stoppedScope {
+            studioRestScopesByBridge.removeValue(forKey: bridgeID ?? "legacy")
         }
         // Small barrier so bridge transition buffers drain before a new owner starts.
         // KEPT AS-IS (packet 3): a practical settle window, not a formal drain.
         try? await Task.sleep(for: .milliseconds(150))
-        activeParamBox = nil
         // The loop may hold a DTLS session on its room's bridge. Stop it ONLY
-        // if no composition owns that bridge's session — an app-driven effect
-        // that fell back to REST can coexist with a composition streaming on
-        // the same bridge, and that stream must survive this stop.
+        // if every one of these holds:
+        //  • no composition owns that bridge's session — an app-driven effect
+        //    that fell back to REST can coexist with a composition streaming
+        //    on the same bridge, and that stream must survive this stop;
+        //  • no newer engine runtime claimed the bridge while this stop was
+        //    suspended above — the sleep is a real suspension point, and the
+        //    successor's session is not ours to stop;
+        //  • the recorded session owner, when one exists, is the exact room
+        //    being stopped — a stale stop must not tear down another room's
+        //    session on evidence it never held.
         if let bid = bridgeID,
            compositionEntRoomByBridge[bid] == nil,
+           studioEngineRuntimesByBridge[bid] == nil,
+           studioEntOwnerByBridge[bid].map({ $0.roomID == roomID }) ?? true,
            let entClient = studioEntClients[bid] {
             await entClient.stopSession()
             studioEntClients.removeValue(forKey: bid)
@@ -7392,6 +7482,13 @@ final class UnifiedOrchestrator {
 
         studioEntClients.removeValue(forKey: bridgeID)
         studioEntOwnerByBridge.removeValue(forKey: bridgeID)
+        // The loop has already returned, so there is nothing to cancel — but
+        // the runtime record must not outlive its session. Same identity
+        // discipline as the client guard above: only this exact room's record,
+        // never a successor's (round 4g).
+        if studioEngineRuntimesByBridge[bridgeID]?.roomID == roomID {
+            studioEngineRuntimesByBridge.removeValue(forKey: bridgeID)
+        }
         await entClient.stopSession()
 
         // The look is no longer streaming, so the row must stop saying it is

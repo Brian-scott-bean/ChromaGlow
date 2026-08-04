@@ -1732,10 +1732,11 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "clearing the room's Composer slot must leave its Studio slot alone")
     }
 
-    // 13. CROSS-ROOM STUDIO REPLACEMENT. `activeStudioTask` is one global slot,
-    //     so starting Studio in room B replaces room A's loop. startStudioMode
-    //     must therefore clear the PREVIOUSLY RECORDED scope, not the incoming
-    //     room's — otherwise room A's epoch stays valid and it keeps writing.
+    // 13. CROSS-ROOM STUDIO REPLACEMENT. The engine runtime is one slot PER
+    //     BRIDGE (round 4g), so starting Studio in room B replaces a same-
+    //     bridge room A's loop. startStudioMode must therefore clear that
+    //     bridge's PREVIOUSLY RECORDED scope, not the incoming room's —
+    //     otherwise room A's epoch stays valid and it keeps writing.
     func testStartingStudioInAnotherRoomInvalidatesThePreviousRoomsScope() async {
         let roomA = RoomDisplayItem(
             id: "room-a", name: "Room A", archetype: nil,
@@ -1757,7 +1758,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         // an endless engine task.
         await orchestrator.startStudioMode(key: "static-test-card", room: roomA,
                                            params: [:], colors: [:])
-        XCTAssertEqual(orchestrator.testActiveStudioRestScope()?.scope, studioScope("room-a"),
+        XCTAssertEqual(orchestrator.testStudioRestScope(forBridgeKey: "bridge-a"), studioScope("room-a"),
             "room A is recorded as the Studio REST owner")
 
         let sender = orchestrator.testRestSender(for: "bridge-a")
@@ -1773,7 +1774,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let roomAStillCurrent = await sender.isCurrent(scope: studioScope("room-a"), epoch: 0)
         XCTAssertFalse(roomAStillCurrent,
             "room A's epoch must be invalidated even though the new card targets room B")
-        XCTAssertEqual(orchestrator.testActiveStudioRestScope()?.scope, studioScope("room-b"),
+        XCTAssertEqual(orchestrator.testStudioRestScope(forBridgeKey: "bridge-a"), studioScope("room-b"),
             "room B is recorded before its first enqueue")
 
         // Room B's first work is accepted normally.
@@ -1795,7 +1796,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let senderA = orchestrator.testRestSender(for: "bridge-a")
         let senderB = orchestrator.testRestSender(for: "bridge-b")
         let events = RestEventLog()
-        orchestrator.testSetActiveStudioRestScope(bridgeKey: "bridge-a", roomID: "room-a")
+        orchestrator.testSetStudioRestScope(bridgeKey: "bridge-a", roomID: "room-a")
 
         let gateA = await park(senderA, room: "__park-a__", events: events)
         let gateB = await park(senderB, room: "__park-b__", events: events)
@@ -1808,7 +1809,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "bridge A's sender is removed, not leaked")
         XCTAssertTrue(orchestrator.testRestSenderBridgeKeys().contains("bridge-b"),
             "bridge B's sender survives")
-        XCTAssertNil(orchestrator.testActiveStudioRestScope(),
+        XCTAssertTrue(orchestrator.testStudioRestScopes().isEmpty,
             "the Studio owner lived on bridge A, so it is forgotten")
 
         gateA.release()
@@ -1824,11 +1825,11 @@ final class MultiBridgeRoutingTests: XCTestCase {
     func testRemovingADifferentBridgeLeavesStudioOwnershipIntact() async {
         _ = orchestrator.testRestSender(for: "bridge-a")
         _ = orchestrator.testRestSender(for: "bridge-b")
-        orchestrator.testSetActiveStudioRestScope(bridgeKey: "bridge-a", roomID: "room-a")
+        orchestrator.testSetStudioRestScope(bridgeKey: "bridge-a", roomID: "room-a")
 
         await orchestrator.removeBridge(id: "bridge-b")
 
-        XCTAssertEqual(orchestrator.testActiveStudioRestScope()?.bridgeKey, "bridge-a",
+        XCTAssertEqual(orchestrator.testStudioRestScope(forBridgeKey: "bridge-a"), studioScope("room-a"),
             "the Studio owner is cleared iff it belonged to the removed bridge")
     }
 
@@ -4227,7 +4228,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
     // P6-7. A Studio app-driven effect suppresses only its exact room.
     func testStudioScopeSuppressesOnlyItsExactRoom() {
-        orchestrator.testSetActiveStudioRestScope(bridgeKey: "bridge-a", roomID: "room-1")
+        orchestrator.testSetStudioRestScope(bridgeKey: "bridge-a", roomID: "room-1")
 
         XCTAssertFalse(orchestrator.testIsAllDayWriteAllowed(
             bridgeID: "bridge-a", roomID: "room-1"))
@@ -11684,5 +11685,132 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(forgotten, 0)
         XCTAssertNotNil(animationStore.manifest(id: onA.id),
             "one unconfirmed rule is enough to keep the record that can still remove it")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Hardware convergence round 4g: one app-driven engine per BRIDGE
+    // ──────────────────────────────────────────────
+    //
+    // Brian's two-bridge device pass confirmed it on hardware: starting an
+    // Entertainment effect on bridge 2 stopped bridge 1's stream. The engine
+    // task, live param box, and Studio REST scope were single GLOBAL slots,
+    // and StudioViewModel.apply stopped every streaming row on every bridge
+    // before a start. The real Hue constraint is one session per bridge.
+    // These pin the orchestrator half: per-bridge runtime records, exact
+    // per-bridge teardown, and ownership-verified stops that a stale caller
+    // cannot turn against a newer same-bridge effect.
+
+    /// An isolated ownership store + a seeded per-bridge entertainment client,
+    /// the HCS-24 idiom. The client's session is seeded, so a stop sends a
+    /// REAL `action=stop` this test can observe on the spy.
+    private func seededStudioOwner(
+        suite: String, bridgeID: String, ip: String, roomID: String,
+        configID: String, spy: RoutingSpyClient
+    ) async -> HueEntertainmentClient {
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let ownership = EntertainmentSessionOwnership(defaults: defaults)
+        ownership.resetForTesting()
+        addTeardownBlock {
+            ownership.resetForTesting()
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        }
+        let client = HueEntertainmentClient(
+            bridgeID: bridgeID, bridgeIP: ip,
+            username: "t", clientKeyHex: "ZZ-not-hex",
+            restClient: spy, ownership: ownership)
+        await client.seedSessionForTesting(configID: configID)
+        orchestrator.testInstallStudioEntertainmentOwner(
+            UnifiedOrchestrator.StudioEntertainmentOwner(
+                bridgeID: bridgeID, roomID: roomID,
+                engineKey: "party", configID: configID),
+            client: client)
+        return client
+    }
+
+    /// HCS-33 — stopAppDrivenStudioEffect tears down ONLY its own bridge's
+    /// engine runtime, scope, param box, session, and owner record. The other
+    /// bridge's identical staging survives, uncancelled and unstopped.
+    func testAppDrivenStopClearsOnlyItsOwnBridgesStudioRuntime() async {
+        orchestrator.testInstallStudioEngineRuntime(
+            bridgeKey: "bridge-a", roomID: "room-a", values: ["speed": 40])
+        orchestrator.testInstallStudioEngineRuntime(
+            bridgeKey: "bridge-b", roomID: "room-b", values: ["speed": 60])
+        orchestrator.testSetStudioRestScope(bridgeKey: "bridge-a", roomID: "room-a")
+        orchestrator.testSetStudioRestScope(bridgeKey: "bridge-b", roomID: "room-b")
+        _ = await seededStudioOwner(
+            suite: "MultiBridgeRoutingTests.hcs33a", bridgeID: "bridge-a",
+            ip: "192.0.2.1", roomID: "room-a", configID: "cfg-a", spy: bridgeA)
+        _ = await seededStudioOwner(
+            suite: "MultiBridgeRoutingTests.hcs33b", bridgeID: "bridge-b",
+            ip: "192.0.2.2", roomID: "room-b", configID: "cfg-b", spy: bridgeB)
+
+        await orchestrator.stopAppDrivenStudioEffect(roomID: "room-b", bridgeID: "bridge-b")
+
+        // Bridge B's runtime fell, exactly and completely.
+        XCTAssertFalse(orchestrator.testHasStudioEngineTask(forBridge: "bridge-b"),
+            "B's engine runtime is gone")
+        XCTAssertNil(orchestrator.testStudioRestScope(forBridgeKey: "bridge-b"),
+            "B's Studio scope is forgotten")
+        XCTAssertFalse(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+            "B's session client was stopped and removed")
+        XCTAssertNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-b"),
+            "B's owner record died with its session")
+        XCTAssertEqual(bridgeB.entertainmentStops, ["cfg-b"],
+            "the stop reached B's bridge, once, for the exact configuration")
+
+        // Bridge A never learns any of it happened.
+        XCTAssertTrue(orchestrator.testHasStudioEngineTask(forBridge: "bridge-a"),
+            "A's engine runtime survives")
+        XCTAssertEqual(orchestrator.testStudioEngineTaskIsCancelled(forBridge: "bridge-a"), false,
+            "…and its loop was not cancelled")
+        XCTAssertEqual(orchestrator.testStudioEngineRuntimeRoom(forBridge: "bridge-a"), "room-a",
+            "…and still names its own room")
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a"), ["speed": 40],
+            "…and still reads its own live params")
+        XCTAssertEqual(orchestrator.testStudioRestScope(forBridgeKey: "bridge-a"),
+                       studioScope("room-a"),
+            "A's Studio scope is untouched")
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-a"),
+            "A's session client remains installed")
+        XCTAssertNotNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-a"),
+            "A's owner record remains")
+        XCTAssertTrue(bridgeA.entertainmentStops.isEmpty,
+            "no action=stop of any kind reached bridge A")
+    }
+
+    /// HCS-34 — the stale-stop regression: a stop for a room that no longer
+    /// owns its bridge's runtime (a newer same-bridge effect took the key
+    /// while the stop was in flight) must leave the newer effect's runtime,
+    /// scope, session, and owner record completely untouched.
+    func testAStaleStopForAReplacedRoomLeavesTheNewerSameBridgeEffectUntouched() async {
+        // The NEWER owner: room-b2 holds bridge B by the time the old stop runs.
+        orchestrator.testInstallStudioEngineRuntime(
+            bridgeKey: "bridge-b", roomID: "room-b2", values: ["speed": 75])
+        orchestrator.testSetStudioRestScope(bridgeKey: "bridge-b", roomID: "room-b2")
+        _ = await seededStudioOwner(
+            suite: "MultiBridgeRoutingTests.hcs34", bridgeID: "bridge-b",
+            ip: "192.0.2.2", roomID: "room-b2", configID: "cfg-b2", spy: bridgeB)
+
+        // The OLD room's stop resumes late.
+        await orchestrator.stopAppDrivenStudioEffect(roomID: "room-b", bridgeID: "bridge-b")
+
+        XCTAssertTrue(orchestrator.testHasStudioEngineTask(forBridge: "bridge-b"),
+            "the newer runtime survives the stale stop")
+        XCTAssertEqual(orchestrator.testStudioEngineTaskIsCancelled(forBridge: "bridge-b"), false,
+            "…and its loop was not cancelled")
+        XCTAssertEqual(orchestrator.testStudioEngineRuntimeRoom(forBridge: "bridge-b"), "room-b2",
+            "…and still belongs to the newer room")
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-b"), ["speed": 75],
+            "…and its live params are intact")
+        XCTAssertEqual(orchestrator.testStudioRestScope(forBridgeKey: "bridge-b"),
+                       studioScope("room-b2"),
+            "the newer room's scope is still the recorded owner")
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+            "the newer session client remains installed")
+        XCTAssertNotNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-b"),
+            "the newer owner record remains")
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "no action=stop reached the bridge — the stale caller had nothing to stop")
     }
 }

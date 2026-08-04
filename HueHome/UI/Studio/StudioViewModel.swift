@@ -1422,7 +1422,9 @@ final class StudioViewModel {
         guard card.id == runningCardID else { return }
         switch card.strategy {
         case .appDriven:
-            orchestrator?.updateStudioParams(values: [:], colors: [:])
+            orchestrator?.updateStudioParams(
+                values: [:], colors: [:],
+                bridgeID: currentRoomEffect?.room.bridgeID)
         case .bridgeNative:
             await apply(card)
         case .composition:
@@ -1507,11 +1509,15 @@ final class StudioViewModel {
     func setParamValue(for cardID: String, paramID: String, value: Double) {
         if paramValues[cardID] == nil { paramValues[cardID] = [:] }
         paramValues[cardID]?[paramID] = value
-        // Push live update to running engine loop (if this card is running)
+        // Push live update to running engine loop (if this card is running).
+        // Round 4g: routed to the SELECTED room's bridge — `runningCardID`
+        // derives from `currentRoomEffect`, so the two always agree, and with
+        // two bridges streaming the edit lands on the room being looked at.
         if cardID == runningCardID {
             orchestrator?.updateStudioParams(
                 values: paramValues[cardID] ?? [:],
-                colors: paramColors[cardID] ?? [:]
+                colors: paramColors[cardID] ?? [:],
+                bridgeID: currentRoomEffect?.room.bridgeID
             )
         }
         StudioParamStore.shared.scheduleSave(values: paramValues, colors: paramColors)
@@ -1526,11 +1532,13 @@ final class StudioViewModel {
     func setParamColor(for cardID: String, paramID: String, color: Color) {
         if paramColors[cardID] == nil { paramColors[cardID] = [:] }
         paramColors[cardID]?[paramID] = color
-        // Push live update to running engine loop
+        // Push live update to running engine loop (round 4g: exact bridge —
+        // see setParamValue above).
         if cardID == runningCardID {
             orchestrator?.updateStudioParams(
                 values: paramValues[cardID] ?? [:],
-                colors: paramColors[cardID] ?? [:]
+                colors: paramColors[cardID] ?? [:],
+                bridgeID: currentRoomEffect?.room.bridgeID
             )
         }
         StudioParamStore.shared.scheduleSave(values: paramValues, colors: paramColors)
