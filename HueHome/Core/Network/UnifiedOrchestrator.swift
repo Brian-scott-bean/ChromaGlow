@@ -5181,16 +5181,39 @@ final class UnifiedOrchestrator {
                 guard bridgeAnimationStore.save(owned) else {
                     debugLog("[Composer] Manifest for '\(preset.name)' did not persist — removing the resources it named")
                     let cleanup = await bridgeAnimationEngine.stop(manifest: owned, v1Client: v1Client)
-                    forgetManifestRecord(id: owned.id)
                     deactivateComposerTelemetrySession(
                         sessionKey: composerTelemetryKey, pendingRemovalReported: false)
-                    let message = cleanup == .removed
-                        ? BridgeSaveCopy.saveFailedNothingRecorded
-                        : BridgeSaveCopy.saveFailedResourcesRemain
+
+                    if cleanup == .removed {
+                        // Compensation proved complete — the forget funnel's
+                        // standard of evidence is met, and nothing remains to
+                        // name.
+                        forgetManifestRecord(id: owned.id)
+                        if let bridgeSaveRequestID {
+                            bridgeSaveOutcomesByRequest[bridgeSaveRequestID] =
+                                .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
+                        }
+                        return .failed(message: BridgeSaveCopy.saveFailedNothingRecorded)
+                    }
+
+                    // Compensation is INCOMPLETE: resources the manifest names
+                    // may still exist on the bridge, and this manifest is the
+                    // only exact handle on them. It used to be forgotten here
+                    // unconditionally — before the cleanup result was even
+                    // inspected — which reduced the failure to a sentence and
+                    // left the user nothing to act on. It is retained instead,
+                    // and quarantined DURABLY before the failure is reported:
+                    // the normal persist just failed, so only an independent
+                    // record survives a relaunch to feed reconciliation and
+                    // the exact Stop.
+                    let durable = bridgeAnimationStore.quarantine(owned)
+                    let message = durable
+                        ? BridgeSaveCopy.partialCleanupRecoverable
+                        : BridgeSaveCopy.partialCleanupNotDurable
                     if let bridgeSaveRequestID {
-                        bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = cleanup == .removed
-                            ? .nothingRecorded(reason: message)
-                            : .partialCleanupFailure(reason: message)
+                        bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .partialCleanupFailure(
+                            manifestID: owned.id, bridgeID: bridgeID,
+                            recoverableAfterRelaunch: durable, reason: message)
                     }
                     return .failed(message: message)
                 }
@@ -7781,10 +7804,14 @@ final class UnifiedOrchestrator {
         /// Nothing was left on the bridge — either nothing was created, or what
         /// was created was cleaned up exactly.
         case nothingRecorded(reason: String)
-        /// Creation partly succeeded and cleanup could not finish. Named,
-        /// because silence here is what produces a resource set the user can
-        /// never find.
-        case partialCleanupFailure(reason: String)
+        /// Creation partly succeeded and cleanup could not finish. Carries the
+        /// exact identity — manifest and bridge — because that identity IS the
+        /// user's only handle on what remains: the result sheet's Stop targets
+        /// it directly. `recoverableAfterRelaunch` reports whether a durable
+        /// quarantine record survived; false means the honest sentence is
+        /// "recovery after closing the app is not guaranteed", never silence.
+        case partialCleanupFailure(manifestID: UUID, bridgeID: String,
+                                   recoverableAfterRelaunch: Bool, reason: String)
         /// Another save for this exact bridge + room is still in flight. This
         /// request performed ZERO bridge writes — two saves creating and
         /// replacing the same room's resources under each other is how a Stop
@@ -8707,6 +8734,16 @@ enum BridgeSaveCopy {
     /// nothing, and saying so beats two saves racing over the same lights.
     static let saveAlreadyInProgress =
         "This look is still being saved. Nothing extra was changed."
+    /// Partial compensation, with a durable recovery record: some of the look
+    /// is still on the bridge, an exact Remove is offered right now, and a
+    /// relaunch will recover the same handle.
+    static let partialCleanupRecoverable =
+        "Couldn't finish saving that look — some of it is still on your bridge. Remove it now, or ChromaGlow will offer it again after a relaunch."
+    /// Partial compensation AND the recovery record could not be written.
+    /// The exact Remove still works right now; what cannot be promised is
+    /// recovery after the app closes, and that is said plainly.
+    static let partialCleanupNotDurable =
+        "Couldn't finish saving that look — some of it is still on your bridge. Remove it now: if the app closes first, ChromaGlow may not be able to find it again."
 }
 
 /// Safety refusals shared between Studio and Perform.

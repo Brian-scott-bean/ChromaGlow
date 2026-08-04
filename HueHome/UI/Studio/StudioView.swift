@@ -2031,7 +2031,9 @@ private struct BridgeSaveResultSheet: ViewModifier {
                 set: { if $0 == nil { vm.bridgeSaveResult = nil } }
             )
         ) { result in
-            StageSheetScaffold(title: "Saved") {
+            // "Saved" over a partial-cleanup failure would be the exact lie
+            // this sheet exists to end — the title states which one this is.
+            StageSheetScaffold(title: result.succeeded ? "Saved" : "Save Failed") {
                 StageCard(icon: result.isRunningOnBridge
                           ? "externaldrive.badge.checkmark" : "iphone",
                           title: result.lookName) {
@@ -2050,9 +2052,16 @@ private struct BridgeSaveResultSheet: ViewModifier {
                         factRow("Local copy", result.createdLocalPreset
                                 ? "In My Creations" : "None")
                         factRow("After you reopen ChromaGlow",
-                                result.stopSurvivesRelaunch
-                                ? "You can still stop it here"
-                                : "It will already have stopped")
+                                result.succeeded
+                                ? (result.stopSurvivesRelaunch
+                                   ? "You can still stop it here"
+                                   : "It will already have stopped")
+                                // Failure: this row is about RECOVERY of what
+                                // remains, and "not guaranteed" is said as
+                                // itself when the quarantine write also failed.
+                                : (result.stopSurvivesRelaunch
+                                   ? "ChromaGlow will offer to remove it again"
+                                   : "It may not be findable — remove it now"))
 
                         if !result.createdLocalPreset {
                             Text(BridgeSaveCopy.noLocalPreset)
@@ -2073,7 +2082,13 @@ private struct BridgeSaveResultSheet: ViewModifier {
                                 Task { await vm.stopSavedBridgeLook(result) }
                             } label: {
                                 HStack(spacing: 8) {
-                                    Image(systemName: "stop.circle.fill")
+                                    if vm.isStoppingSavedLook {
+                                        ProgressView()
+                                            .tint(HuePalette.Noir.destructive)
+                                            .scaleEffect(0.7)
+                                    } else {
+                                        Image(systemName: "stop.circle.fill")
+                                    }
                                     Text(result.isRunningOnBridge
                                          ? "Stop and remove from bridge"
                                          : "Remove from bridge")
@@ -2087,6 +2102,11 @@ private struct BridgeSaveResultSheet: ViewModifier {
                                 )
                             }
                             .buttonStyle(.plain)
+                            // A failed stop keeps this sheet — and this exact
+                            // control — on screen for the retry. Disabling
+                            // during the attempt is what makes that a retry
+                            // rather than a double-fire.
+                            .disabled(vm.isStoppingSavedLook)
                         }
                     }
                 }

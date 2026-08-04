@@ -828,6 +828,8 @@ final class EntertainmentAreaSelectorTests: XCTestCase {
             BridgeSaveCopy.saveFailedLightsUnresolved,
             BridgeSaveCopy.saveFailedReplacementBlocked,
             BridgeSaveCopy.saveAlreadyInProgress,
+            BridgeSaveCopy.partialCleanupRecoverable,
+            BridgeSaveCopy.partialCleanupNotDurable,
         ]
         XCTAssertEqual(Set(outcomes).count, outcomes.count,
             "outcomes that oblige the user to do different things may not share a sentence")

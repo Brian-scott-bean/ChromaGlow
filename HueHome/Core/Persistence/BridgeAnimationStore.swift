@@ -16,6 +16,14 @@ final class BridgeAnimationStore {
 
     private let log = Logger(subsystem: "com.chromaglow.app", category: "BridgeAnimStore")
     private let fileURL: URL
+    /// The quarantine sidecar (round 3): durable evidence for manifests whose
+    /// NORMAL persist failed while their bridge resources could not be fully
+    /// compensated away. The main file's write just failed, so writing the
+    /// same file again is not an answer — this is a second, independent
+    /// location whose only job is surviving a relaunch.
+    private let quarantineFileURL: URL
+    /// Ids currently carried by the quarantine sidecar.
+    private var quarantinedIDs: Set<UUID> = []
 
     /// Keyed by MANIFEST ID (packet 8), not by `presetID_roomID`.
     ///
@@ -38,6 +46,7 @@ final class BridgeAnimationStore {
     init() {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         fileURL = docs.appendingPathComponent("bridge_animations.json")
+        quarantineFileURL = docs.appendingPathComponent("bridge_animations_quarantine.json")
         load()
     }
 
@@ -48,8 +57,14 @@ final class BridgeAnimationStore {
     /// real Documents file, so a sibling test's set-up can empty the store
     /// while this one is suspended inside a production settle window — and the
     /// assertions here are all about which exact manifests exist.
-    init(fileURL: URL) {
+    ///
+    /// `quarantineFileURL` is separately controllable so a test can make the
+    /// main persist fail while the quarantine write succeeds — the exact
+    /// situation the sidecar exists for — and vice versa.
+    init(fileURL: URL, quarantineFileURL: URL? = nil) {
         self.fileURL = fileURL
+        self.quarantineFileURL = quarantineFileURL
+            ?? fileURL.deletingPathExtension().appendingPathExtension("quarantine.json")
         load()
     }
     #endif
@@ -115,11 +130,60 @@ final class BridgeAnimationStore {
 
     /// Exact removal. There is deliberately no roomID-only or preset+room
     /// removal: both could destroy a different bridge's live evidence.
+    ///
+    /// Removal also clears the id's quarantine record: every caller reaches
+    /// this through the exact-identity forget funnel, which is entered only
+    /// on proven deletion — the same rule that admitted the record.
     func remove(id: UUID) {
         guard manifests.removeValue(forKey: id) != nil else { return }
         revision &+= 1
         persist()
+        removeQuarantined(id: id)
         log.info("[BridgeAnimStore] Removed manifest \(id)")
+    }
+
+    // MARK: - Quarantine (round 3)
+
+    /// Durably record a manifest whose NORMAL persist failed while its bridge
+    /// resources provably (or possibly) remain. Returns whether the record
+    /// actually reached disk — `false` means a relaunch may lose the only
+    /// exact handle, and the caller owes the user that sentence.
+    ///
+    /// The manifest stays in the in-memory map either way; quarantine is
+    /// about surviving the relaunch, not about this session.
+    @discardableResult
+    func quarantine(_ manifest: BridgeAnimationManifest) -> Bool {
+        quarantinedIDs.insert(manifest.id)
+        do {
+            let records = manifests.values.filter { quarantinedIDs.contains($0.id) }
+            let data = try JSONEncoder().encode(Array(records))
+            try data.write(to: quarantineFileURL, options: .atomic)
+            log.info("[BridgeAnimStore] Quarantined manifest '\(manifest.presetName)' for relaunch recovery")
+            return true
+        } catch {
+            log.error("[BridgeAnimStore] Quarantine write failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// The ids the quarantine sidecar currently carries.
+    func quarantinedManifestIDs() -> Set<UUID> { quarantinedIDs }
+
+    /// Drop one id from the sidecar. Reached only via `remove(id:)` — i.e.
+    /// only after complete deletion was proven through the forget funnel.
+    private func removeQuarantined(id: UUID) {
+        guard quarantinedIDs.remove(id) != nil else { return }
+        do {
+            let records = manifests.values.filter { quarantinedIDs.contains($0.id) }
+            if records.isEmpty {
+                try? FileManager.default.removeItem(at: quarantineFileURL)
+            } else {
+                let data = try JSONEncoder().encode(Array(records))
+                try data.write(to: quarantineFileURL, options: .atomic)
+            }
+        } catch {
+            log.warning("[BridgeAnimStore] Quarantine rewrite failed: \(error.localizedDescription)")
+        }
     }
 
     /// Stamp a legacy IP-only manifest with a stable bridge id.
@@ -164,17 +228,38 @@ final class BridgeAnimationStore {
     /// Never writes. A file this cannot parse is left exactly as it is for a
     /// later build to read — overwriting it would destroy the only record of
     /// animations still running on a bridge.
+    ///
+    /// The quarantine sidecar loads alongside the main file, so a manifest
+    /// whose normal persist failed is an ordinary manifest again on the next
+    /// launch: the reconciler and the exact Stop see it with no special
+    /// path. Quarantine wins nothing over the main file — the two describe
+    /// disjoint failure histories, and an id present in both is simply the
+    /// same record.
     private func load() {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
-        do {
-            let data = try Data(contentsOf: fileURL)
-            let loaded = try Self.decodeManifests(data)
-            for manifest in loaded {
-                manifests[manifest.id] = manifest
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            do {
+                let data = try Data(contentsOf: fileURL)
+                let loaded = try Self.decodeManifests(data)
+                for manifest in loaded {
+                    manifests[manifest.id] = manifest
+                }
+                log.info("[BridgeAnimStore] Loaded \(loaded.count) manifests from disk")
+            } catch {
+                log.warning("[BridgeAnimStore] Failed to load: \(error.localizedDescription)")
             }
-            log.info("[BridgeAnimStore] Loaded \(loaded.count) manifests from disk")
-        } catch {
-            log.warning("[BridgeAnimStore] Failed to load: \(error.localizedDescription)")
+        }
+        if FileManager.default.fileExists(atPath: quarantineFileURL.path) {
+            do {
+                let data = try Data(contentsOf: quarantineFileURL)
+                let recovered = try Self.decodeManifests(data)
+                for manifest in recovered {
+                    manifests[manifest.id] = manifest
+                    quarantinedIDs.insert(manifest.id)
+                }
+                log.info("[BridgeAnimStore] Recovered \(recovered.count) quarantined manifest(s)")
+            } catch {
+                log.warning("[BridgeAnimStore] Failed to load quarantine: \(error.localizedDescription)")
+            }
         }
     }
 }

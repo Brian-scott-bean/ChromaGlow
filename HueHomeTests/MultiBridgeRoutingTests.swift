@@ -9394,6 +9394,186 @@ final class MultiBridgeRoutingTests: XCTestCase {
         }
     }
 
+    // ── Partial cleanup keeps the evidence, durably (round 3) ──
+    //
+    // When the manifest's normal persist fails and the compensating deletes
+    // cannot finish, resources remain on the bridge and the manifest is the
+    // only exact handle on them. The old block forgot it unconditionally —
+    // before even inspecting the cleanup result — and reduced everything to
+    // a passing sentence. And since the normal persist had just failed, an
+    // in-memory record alone would die with the process. These pin the
+    // quarantine sidecar: durable identity, relaunch recovery through the
+    // ordinary paths, and honesty when even the sidecar cannot be written.
+
+    /// A store whose MAIN persist fails (its directory does not exist) while
+    /// the quarantine sidecar remains writable — plus the reverse knob.
+    private func brokenMainStore(quarantineWritable: Bool = true)
+        -> (store: BridgeAnimationStore, mainURL: URL, quarantineURL: URL) {
+        let missingDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hcq-missing-\(UUID().uuidString)")
+        let mainURL = missingDir.appendingPathComponent("main.json")
+        let quarantineURL = quarantineWritable
+            ? FileManager.default.temporaryDirectory
+                .appendingPathComponent("hcq-quarantine-\(UUID().uuidString).json")
+            : missingDir.appendingPathComponent("quarantine.json")
+        let store = BridgeAnimationStore(fileURL: mainURL, quarantineFileURL: quarantineURL)
+        return (store, mainURL, quarantineURL)
+    }
+
+    /// HCQ-01 — persist fails, compensation partial: the outcome carries the
+    /// exact identity, the manifest is retained, and the quarantine record is
+    /// on disk BEFORE the failure is reported.
+    func testAPartialCompensationRetainsIdentityAndQuarantinesDurably() async throws {
+        stageStreamableBridge(bridgeB)
+        let broken = brokenMainStore()
+        orchestrator.injectForTesting(bridgeAnimationStore: broken.store)
+        // The compensating rule delete fails — cleanup cannot prove removal.
+        bridgeB.v1Spy.stageDeleteFailures(["rule:new-rule"])
+        let preset = bridgeStorablePreset(named: "Quarantined Look")
+
+        let outcome = await orchestrator.saveLookToBridge(
+            room: streamRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preset: preset)
+
+        guard case .partialCleanupFailure(let manifestID, let bridgeID,
+                                          let recoverable, let reason) = outcome else {
+            return XCTFail("incomplete compensation must be typed, with identity; got \(outcome)")
+        }
+        XCTAssertEqual(bridgeID, "bridge-b")
+        XCTAssertTrue(recoverable, "the quarantine write succeeded, so recovery is promised")
+        XCTAssertEqual(reason, BridgeSaveCopy.partialCleanupRecoverable)
+        XCTAssertNotNil(broken.store.manifest(id: manifestID),
+            "the manifest — the only exact handle — is retained, not forgotten")
+        XCTAssertTrue(broken.store.quarantinedManifestIDs().contains(manifestID))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: broken.quarantineURL.path),
+            "and the record is durably on disk before the failure was reported")
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: streamRoomOnB().id),
+            "nothing claims to be running")
+    }
+
+    /// HCQ-02 — a NEW store on the same files (a relaunch) recovers the
+    /// quarantined manifest through the ordinary load, and the exact Stop
+    /// removes exactly those resources and clears the record.
+    func testQuarantineRecoveryAfterRelaunchFeedsTheExactStop() async throws {
+        stageStreamableBridge(bridgeB)
+        let broken = brokenMainStore()
+        orchestrator.injectForTesting(bridgeAnimationStore: broken.store)
+        bridgeB.v1Spy.stageDeleteFailures(["rule:new-rule"])
+        let preset = bridgeStorablePreset(named: "Recovered Look")
+
+        let outcome = await orchestrator.saveLookToBridge(
+            room: streamRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preset: preset)
+        guard case .partialCleanupFailure(let manifestID, _, true, _) = outcome else {
+            return XCTFail("precondition: durable partial-cleanup failure; got \(outcome)")
+        }
+
+        // "Relaunch": a fresh store over the same file URLs, injected the way
+        // launch wiring would. The bridge is reachable again.
+        bridgeB.v1Spy.stageDeleteFailures([])
+        let relaunched = BridgeAnimationStore(
+            fileURL: broken.mainURL, quarantineFileURL: broken.quarantineURL)
+        orchestrator.injectForTesting(bridgeAnimationStore: relaunched)
+
+        let recovered = try XCTUnwrap(relaunched.manifest(id: manifestID),
+            "the quarantined manifest is an ordinary manifest again after relaunch")
+        XCTAssertEqual(recovered.bridgeID, "bridge-b")
+
+        let stopped = await orchestrator.stopSavedBridgeLook(manifestID: manifestID)
+        XCTAssertTrue(stopped, "the exact Stop works from the recovered record")
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.contains("rule:new-rule"),
+            "and it removed exactly the resources the manifest names")
+        XCTAssertNil(relaunched.manifest(id: manifestID), "proof retires the manifest")
+        XCTAssertFalse(relaunched.quarantinedManifestIDs().contains(manifestID),
+            "and the quarantine record goes only after proven-complete deletion")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: broken.quarantineURL.path),
+            "an empty sidecar does not linger on disk")
+    }
+
+    /// HCQ-03 — both persists fail: said plainly, exact Stop still offered.
+    func testBothPersistencesFailingIsSaidPlainlyAndStillOffersTheExactStop() async throws {
+        stageStreamableBridge(bridgeB)
+        let broken = brokenMainStore(quarantineWritable: false)
+        orchestrator.injectForTesting(bridgeAnimationStore: broken.store)
+        bridgeB.v1Spy.stageDeleteFailures(["rule:new-rule"])
+        let preset = bridgeStorablePreset(named: "Undurable Look")
+
+        let outcome = await orchestrator.saveLookToBridge(
+            room: streamRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preset: preset)
+
+        guard case .partialCleanupFailure(let manifestID, _, let recoverable, let reason) = outcome else {
+            return XCTFail("still typed, still identified; got \(outcome)")
+        }
+        XCTAssertFalse(recoverable,
+            "no durable record could be written, and nothing may pretend otherwise")
+        XCTAssertEqual(reason, BridgeSaveCopy.partialCleanupNotDurable,
+            "recovery after closing the app is explicitly not guaranteed")
+        XCTAssertNotNil(broken.store.manifest(id: manifestID),
+            "the in-memory handle still serves THIS session's exact Stop")
+
+        // The immediate exact Stop is still available and still exact.
+        bridgeB.v1Spy.stageDeleteFailures([])
+        let stopped = await orchestrator.stopSavedBridgeLook(manifestID: manifestID)
+        XCTAssertTrue(stopped)
+        XCTAssertNil(broken.store.manifest(id: manifestID))
+    }
+
+    /// HCQ-04 — persist fails but compensation proves COMPLETE: nothing
+    /// remains, so nothing is retained and nothing is quarantined.
+    func testACompleteCompensationRecordsNothingAndQuarantinesNothing() async throws {
+        stageStreamableBridge(bridgeB)
+        let broken = brokenMainStore()
+        orchestrator.injectForTesting(bridgeAnimationStore: broken.store)
+        let preset = bridgeStorablePreset(named: "Fully Compensated")
+
+        let outcome = await orchestrator.saveLookToBridge(
+            room: streamRoomOnB(), paramBox: CompositionParamBox(preset: preset),
+            gamutOverride: .c, preset: preset)
+
+        XCTAssertEqual(outcome, .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded),
+            "proven-complete compensation is a clean 'nothing was saved'")
+        XCTAssertTrue(broken.store.allManifests().isEmpty,
+            "no evidence is retained for resources proven gone")
+        XCTAssertTrue(broken.store.quarantinedManifestIDs().isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: broken.quarantineURL.path))
+    }
+
+    /// HCQ-05 — a failed exact Stop KEEPS the result sheet (the only exact
+    /// control), and the retry from that same sheet succeeds and dismisses.
+    func testAFailedExactStopKeepsTheSheetAndTheRetrySucceeds() async throws {
+        let vm = makeP7VM()
+        let manifest = stageManifest(
+            roomID: "room-b", bridgeIP: "192.0.2.2", bridgeID: "bridge-b",
+            sensorID: "S-q", ruleIDs: ["R-q"], scheduleID: "SC-q")
+        let result = StudioViewModel.BridgeSaveResult(
+            lookName: "Sticky Look", roomName: "Bedroom B", bridgeLabel: "Bridge B",
+            isRunningOnBridge: false, createdLocalPreset: true,
+            stopSurvivesRelaunch: true,
+            headline: BridgeSaveCopy.partialCleanupRecoverable,
+            stoppableManifestID: manifest.id,
+            succeeded: false)
+        vm.bridgeSaveResult = result
+
+        // First attempt fails on the bridge.
+        bridgeB.v1Spy.stageDeleteFailures(["rule:R-q"])
+        await vm.stopSavedBridgeLook(result)
+
+        XCTAssertNotNil(vm.bridgeSaveResult,
+            "a failed stop may not dismiss the only control that can retry it")
+        XCTAssertNotNil(vm.studioNotice, "and the failure is explained")
+        XCTAssertNotNil(animationStore.manifest(id: manifest.id),
+            "the manifest is retained — the retry still has its exact target")
+
+        // Retry from the SAME sheet succeeds.
+        bridgeB.v1Spy.stageDeleteFailures([])
+        await vm.stopSavedBridgeLook(result)
+
+        XCTAssertNil(vm.bridgeSaveResult, "success is what dismisses the sheet")
+        XCTAssertNil(animationStore.manifest(id: manifest.id),
+            "and the manifest retires on proven removal")
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - Hardware convergence: cleanup targets one exact bridge
     // ──────────────────────────────────────────────

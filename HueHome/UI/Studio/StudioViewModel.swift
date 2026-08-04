@@ -798,8 +798,21 @@ final class StudioViewModel {
                 headline: BridgeSaveCopy.savedNotConfirmedRunning,
                 stoppableManifestID: manifestID)
 
-        case .nothingRecorded(let reason), .partialCleanupFailure(let reason),
-             .saveAlreadyInProgress(let reason):
+        case .partialCleanupFailure(let manifestID, _, let recoverable, let reason):
+            // The failure with something left behind gets the RESULT SHEET,
+            // not a passing notice: the manifest id it carries is the user's
+            // only exact handle on those resources, and the sheet's Remove
+            // button is the immediate exact retry. A notice would dismiss
+            // itself and take the handle with it.
+            bridgeSaveResult = BridgeSaveResult(
+                lookName: preset.name, roomName: room.name, bridgeLabel: label,
+                isRunningOnBridge: false, createdLocalPreset: true,
+                stopSurvivesRelaunch: recoverable,
+                headline: reason,
+                stoppableManifestID: manifestID,
+                succeeded: false)
+
+        case .nothingRecorded(let reason), .saveAlreadyInProgress(let reason):
             // No sheet titled "Saved" for something that was not saved.
             studioNotice = StudioNotice(message: reason)
         }
@@ -813,13 +826,25 @@ final class StudioViewModel {
     /// they cannot find.
     func stopSavedBridgeLook(_ result: BridgeSaveResult) async {
         guard let manifestID = result.stoppableManifestID, let orchestrator else { return }
-        bridgeSaveResult = nil
+        guard !isStoppingSavedLook else { return }
+        isStoppingSavedLook = true
+        defer { isStoppingSavedLook = false }
+
+        // The sheet is dismissed only on SUCCESS. It used to be cleared
+        // before the attempt, so a failed stop dismissed the one control
+        // that carried the exact manifest id — leaving the user a sentence
+        // and no way to retry until a relaunch surfaced a row.
         if await orchestrator.stopSavedBridgeLook(manifestID: manifestID) {
+            bridgeSaveResult = nil
             studioNotice = StudioNotice(message: "\(result.lookName) was removed from \(result.bridgeLabel).")
         } else {
             studioNotice = StudioNotice(message: BridgeSaveCopy.saveFailedResourcesRemain)
         }
     }
+
+    /// True while the result sheet's exact Stop is running — the button
+    /// disables on it, so a failed stop is a visible retry, not a re-tap race.
+    var isStoppingSavedLook = false
 
     private func runningPresetID(for card: StudioCard) -> UUID? {
         if case .composition(let presetID) = card.strategy { return presetID }
@@ -844,6 +869,10 @@ final class StudioViewModel {
         /// remove RIGHT NOW. Non-nil is what makes "saved but not confirmed
         /// running" an actionable state rather than an announcement.
         let stoppableManifestID: UUID?
+        /// False for the partial-cleanup failure (round 3): the sheet then
+        /// titles itself as the failure it is, and the relaunch row talks
+        /// about recovery rather than about a stop.
+        var succeeded: Bool = true
     }
 
     var bridgeSaveResult: BridgeSaveResult? = nil
