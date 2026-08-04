@@ -820,37 +820,73 @@ final class StudioViewModel {
             room: room, paramBox: box,
             gamutOverride: activeCompositionGamut, preset: preset)
 
-        let label = orchestrator.bridgeLabel(for: room.bridgeID ?? "")
+        applyBridgeSaveOutcome(
+            outcome, room: room, presetName: preset.name,
+            bridgeLabel: orchestrator.bridgeLabel(for: room.bridgeID ?? ""))
+    }
+
+    /// Apply a strict-save outcome to this VM's state — synchronously, in the
+    /// main-actor turn that calls it.
+    ///
+    /// Factored out of `saveActiveLookToBridge` (round 4f) because the await
+    /// above it opens a continuation gap: between the orchestrator's return
+    /// and this application, another task can start a new playback on the
+    /// same exact bridge+room. Every destructive step here therefore
+    /// revalidates the outcome's presentation fence against the orchestrator
+    /// immediately before mutating — and the user-facing wording follows the
+    /// SAME revalidated truth, because "nothing is playing in the room now"
+    /// is only as current as the fence that proves it. A nil or stale fence
+    /// proves only that playback CHANGED (the newer look may itself have
+    /// stopped by now), so that branch claims neither emptiness nor active
+    /// playback.
+    func applyBridgeSaveOutcome(
+        _ outcome: UnifiedOrchestrator.BridgeSaveOutcome,
+        room: RoomDisplayItem, presetName: String, bridgeLabel: String
+    ) {
         switch outcome {
         case .savedAndRunning(let manifestID, _):
             bridgeSaveResult = BridgeSaveResult(
-                lookName: preset.name, roomName: room.name, bridgeLabel: label,
+                lookName: presetName, roomName: room.name, bridgeLabel: bridgeLabel,
                 isRunningOnBridge: true, createdLocalPreset: true,
                 stopSurvivesRelaunch: true,
                 headline: BridgeSaveCopy.savedAndRunning,
                 stoppableManifestID: manifestID)
 
-        case .savedNotConfirmedRunning(let manifestID, let savedBridgeID, let previousLookRemoved):
+        case .savedNotConfirmedRunning(
+            let manifestID, let savedBridgeID, let previousLookRemoved,
+            let presentationFence):
             // Saved, tracked, NOT running. The manifest is retained because it
             // is the only thing that can remove these resources — and the
             // result carries it, so Stop is available right now rather than
             // only after a relaunch surfaces a row. When the required
             // replacement cleanup destroyed a PROVEN bridge-stored predecessor
-            // (round 4c), exactly that bridge's row falls with it — the row
-            // mirrored a look that no longer exists — and the headline says
-            // both halves. Another bridge's same-room-id row is a different
-            // key and stays untouched.
-            if previousLookRemoved {
-                runningEffects.removeValue(
-                    forKey: RoomEffectKey(bridgeID: savedBridgeID, roomID: room.id))
+            // (round 4c), exactly that bridge's row AND its editor box fall
+            // with it — they mirrored a look that no longer exists — and the
+            // headline says both halves. Another bridge's same-room-id row is
+            // a different key and stays untouched. Round 4f: the removal and
+            // the "nothing is playing there now" headline both require the
+            // fence to hold RIGHT NOW — a newer look that took the key keeps
+            // its row, its box, and an honest sentence.
+            let fenceValid = previousLookRemoved
+                && presentationFence.map { orchestrator?.presentationFenceHolds($0) ?? false } ?? false
+            if fenceValid {
+                let key = RoomEffectKey(bridgeID: savedBridgeID, roomID: room.id)
+                runningEffects.removeValue(forKey: key)
+                activeCompositionBoxes.removeValue(forKey: key)
+            }
+            let headline: String
+            if !previousLookRemoved {
+                headline = BridgeSaveCopy.savedNotConfirmedRunning
+            } else if fenceValid {
+                headline = BridgeSaveCopy.savedNotConfirmedPreviousLookRemoved
+            } else {
+                headline = BridgeSaveCopy.savedNotConfirmedPreviousLookRemovedPlaybackChanged
             }
             bridgeSaveResult = BridgeSaveResult(
-                lookName: preset.name, roomName: room.name, bridgeLabel: label,
+                lookName: presetName, roomName: room.name, bridgeLabel: bridgeLabel,
                 isRunningOnBridge: false, createdLocalPreset: true,
                 stopSurvivesRelaunch: true,
-                headline: previousLookRemoved
-                    ? BridgeSaveCopy.savedNotConfirmedPreviousLookRemoved
-                    : BridgeSaveCopy.savedNotConfirmedRunning,
+                headline: headline,
                 stoppableManifestID: manifestID)
 
         case .partialCleanupFailure(let manifestID, _, let recoverable, let reason):
@@ -860,25 +896,35 @@ final class StudioViewModel {
             // button is the immediate exact retry. A notice would dismiss
             // itself and take the handle with it.
             bridgeSaveResult = BridgeSaveResult(
-                lookName: preset.name, roomName: room.name, bridgeLabel: label,
+                lookName: presetName, roomName: room.name, bridgeLabel: bridgeLabel,
                 isRunningOnBridge: false, createdLocalPreset: true,
                 stopSurvivesRelaunch: recoverable,
                 headline: reason,
                 stoppableManifestID: manifestID,
                 succeeded: false)
 
-        case .previousLookRemovedSaveFailed(let failedBridgeID, let reason):
+        case .previousLookRemovedSaveFailed(let failedBridgeID, let presentationFence):
             // The room's previous bridge look is provably gone (replacement
-            // cleanup removed it) and nothing replaced it. This VM's own
-            // running row is the last claim standing — it falls too, or the
-            // UI keeps asserting a look that no longer exists. The outcome
-            // names the destroyed chain's own bridge (round 4c), so exactly
-            // that row is removed; another bridge's same-room-id row is a
-            // different key and survives. The orchestrator has already
-            // withdrawn the exact transport claim and Now Playing publication.
-            runningEffects.removeValue(
-                forKey: RoomEffectKey(bridgeID: failedBridgeID, roomID: room.id))
-            studioNotice = StudioNotice(message: reason)
+            // cleanup removed it) and nothing of ours replaced it. This VM's
+            // own running row and editor box were mirroring the destroyed
+            // look — they fall too, or the UI keeps asserting a look that no
+            // longer exists. The outcome names the destroyed chain's own
+            // bridge (round 4c), so exactly that key is removed; another
+            // bridge's same-room-id row is a different key and survives.
+            // Round 4f: removal and wording both require the fence to hold
+            // RIGHT NOW. The outcome deliberately carries no reason string —
+            // whether the room is empty is decided here, not before the
+            // continuation gap.
+            let fenceValid = presentationFence
+                .map { orchestrator?.presentationFenceHolds($0) ?? false } ?? false
+            if fenceValid {
+                let key = RoomEffectKey(bridgeID: failedBridgeID, roomID: room.id)
+                runningEffects.removeValue(forKey: key)
+                activeCompositionBoxes.removeValue(forKey: key)
+            }
+            studioNotice = StudioNotice(message: fenceValid
+                ? BridgeSaveCopy.previousLookRemovedSaveFailed
+                : BridgeSaveCopy.previousLookRemovedSaveFailedPlaybackChanged)
 
         case .nothingRecorded(let reason), .saveAlreadyInProgress(let reason):
             // No sheet titled "Saved" for something that was not saved.
@@ -898,14 +944,52 @@ final class StudioViewModel {
         isStoppingSavedLook = true
         defer { isStoppingSavedLook = false }
 
-        // The sheet is dismissed only on SUCCESS. It used to be cleared
-        // before the attempt, so a failed stop dismissed the one control
-        // that carried the exact manifest id — leaving the user a sentence
-        // and no way to retry until a relaunch surfaced a row.
-        if await orchestrator.stopSavedBridgeLook(manifestID: manifestID) {
+        let outcome = await orchestrator.stopSavedBridgeLook(manifestID: manifestID)
+        applySavedLookStopOutcome(outcome, for: result)
+    }
+
+    /// Apply an exact saved-look Stop outcome to this VM's state —
+    /// synchronously, in the main-actor turn that calls it.
+    ///
+    /// Factored out of `stopSavedBridgeLook(_:)` (round 4f) for the same
+    /// reason as `applyBridgeSaveOutcome`: the await opens a continuation
+    /// gap, so the outcome's presentation fence is revalidated against the
+    /// orchestrator immediately before the row and box are removed. The
+    /// sheet is dismissed only on SUCCESS — it used to be cleared before the
+    /// attempt, so a failed stop dismissed the one control that carried the
+    /// exact manifest id, leaving the user a sentence and no way to retry
+    /// until a relaunch surfaced a row.
+    func applySavedLookStopOutcome(
+        _ outcome: UnifiedOrchestrator.SavedLookStopOutcome,
+        for result: BridgeSaveResult
+    ) {
+        switch outcome {
+        case .removed(_, let bridgeID, let roomID, _, _, let presentationFence):
+            // The fence is the ONLY authorization to touch presentation
+            // mirrors, and it must hold RIGHT NOW: nil means the stopped
+            // manifest was inert, another owner survives, or a newer
+            // playback took the key inside the orchestrator; a token that
+            // no longer holds means one took it between the orchestrator's
+            // return and this continuation. In every one of those cases the
+            // standing row and box belong to a look this stop did not stop
+            // — the saved resources are gone either way, so the sheet still
+            // dismisses.
+            if let fence = presentationFence, let orchestrator,
+               orchestrator.presentationFenceHolds(fence) {
+                let key = RoomEffectKey(bridgeID: bridgeID, roomID: roomID)
+                runningEffects.removeValue(forKey: key)
+                activeCompositionBoxes.removeValue(forKey: key)
+            }
             bridgeSaveResult = nil
             studioNotice = StudioNotice(message: "\(result.lookName) was removed from \(result.bridgeLabel).")
-        } else {
+
+        case .alreadyAbsent:
+            // Nothing to remove is a success: the resources this sheet
+            // offered to remove are not on the bridge.
+            bridgeSaveResult = nil
+            studioNotice = StudioNotice(message: "\(result.lookName) was removed from \(result.bridgeLabel).")
+
+        case .failed:
             studioNotice = StudioNotice(message: BridgeSaveCopy.saveFailedResourcesRemain)
         }
     }

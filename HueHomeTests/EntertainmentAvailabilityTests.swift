@@ -832,6 +832,11 @@ final class EntertainmentAreaSelectorTests: XCTestCase {
             BridgeSaveCopy.partialCleanupNotDurable,
             BridgeSaveCopy.previousLookRemovedSaveFailed,
             BridgeSaveCopy.savedNotConfirmedPreviousLookRemoved,
+            // Round 4f: the neutral superseded-state variants — playback
+            // changed while the save completed, so neither "nothing is
+            // playing" nor "a look is playing" may be claimed.
+            BridgeSaveCopy.previousLookRemovedSaveFailedPlaybackChanged,
+            BridgeSaveCopy.savedNotConfirmedPreviousLookRemovedPlaybackChanged,
         ]
         XCTAssertEqual(Set(outcomes).count, outcomes.count,
             "outcomes that oblige the user to do different things may not share a sentence")

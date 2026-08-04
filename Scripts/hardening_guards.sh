@@ -58,7 +58,14 @@
 #              CompositionPlaybackKey runtimes/generations/order, exact
 #              transport claims (inert saves claim nothing), bridge-
 #              authoritative Entertainment teardown, and bridge+room-exact
-#              SSE suppression.
+#              SSE suppression. Round 4f (m): saved-look Stop truth — the
+#              withdraw takes caller-captured ownership evidence (a nil
+#              ledger key alone may not remove a live publication),
+#              stopSavedBridgeLook captures that evidence before retirement
+#              destroys it, Studio consumes the typed outcome and
+#              revalidates the presentation fence before every row/box
+#              removal, and invalid-fence copy stays neutral (no emptiness
+#              claim, no unproven active-playback claim).
 
 set -u
 cd "$(dirname "$0")/.."
@@ -864,6 +871,102 @@ hc_sse_body=$(awk '/func applySSEEvent\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
     | grep -vE '^[[:space:]]*//' || true)
 if ! echo "$hc_sse_body" | grep -q 'isAppDrivenGroup(bridgeID: bridgeID'; then
     fail "composer-hardware-convergence" "applySSEEvent does not pass the event's bridge into the suppression check"
+fi
+
+# (m, round 4f) Saved-look Stop truth. `retireManifest` subtracts the
+# ownership ledger BEFORE the shared withdraw runs, so a nil ledger key
+# cannot distinguish "this chain's ownership just emptied" from "this chain
+# never ran" — and removing a live publication on a merely-nil key is how an
+# inert manifest's Remove unpublished the room's still-running REST look.
+# The withdraw therefore takes caller-captured evidence and a caller-verified
+# newer-owner fence; the stop captures both before retirement; Studio
+# consumes the typed outcome and revalidates the fence at the moment it
+# mutates presentation state; and invalid-fence copy claims neither
+# emptiness nor active playback.
+hc_withdraw_body=$(awk '/private func withdrawDestroyedBridgeStoredClaims\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if ! echo "$hc_withdraw_body" | grep -q 'ownershipEvidence: Set<UUID>'; then
+    fail "composer-hardware-convergence" "withdrawDestroyedBridgeStoredClaims lost its required ownershipEvidence — destructive ownership would be inferred from the post-cleanup ledger again"
+fi
+if echo "$hc_withdraw_body" | grep -qE 'ownershipEvidence: Set<UUID>[[:space:]]*=|presentationFenceHeld: Bool[[:space:]]*='; then
+    fail "composer-hardware-convergence" "the withdraw's evidence or fence parameter grew a default — every caller must capture and pass its own proof"
+fi
+if ! echo "$hc_withdraw_body" | grep -q 'presentationFenceHeld: Bool'; then
+    fail "composer-hardware-convergence" "withdrawDestroyedBridgeStoredClaims lost its presentation fence — a newer playback's publication could be withdrawn by an old look's cleanup"
+fi
+if ! echo "$hc_withdraw_body" | grep -q 'destroyedWereRunningOwners'; then
+    fail "composer-hardware-convergence" "the withdraw no longer derives running ownership from caller evidence — an inert manifest's Remove could unpublish the room's live look"
+fi
+if echo "$hc_withdraw_body" | grep -qE '^[[:space:]]*if bridgeStoredChainOwnership\[key\] == nil \{'; then
+    fail "composer-hardware-convergence" "the withdraw removes on a merely-nil ownership key again — nil cannot distinguish an emptied running chain from a chain that never ran"
+fi
+hc_withdraw_removes=$(echo "$hc_withdraw_body" | grep -c 'removeActiveEffect(' || true)
+if [[ "$hc_withdraw_removes" -ne 1 ]]; then
+    fail "composer-hardware-convergence" "expected exactly one gated removeActiveEffect in the withdraw, found $hc_withdraw_removes — publication removal must sit behind the evidence and fence gates"
+fi
+if ! echo "$hc_withdraw_body" | grep -q 'if presentationFenceHeld {'; then
+    fail "composer-hardware-convergence" "the withdraw's publication removal is not fenced — a newer playback that took the key mid-suspension would lose its Now Playing row"
+fi
+# The stop must capture its evidence BEFORE the bridge await and BEFORE
+# retirement destroys it (hc_stop_body extracted in sub-check j).
+hc_stop_capture_line=$(echo "$hc_stop_body" | grep -n 'bridgeStoredChainOwnership\[' | head -1 | cut -d: -f1)
+hc_stop_await_line=$(echo "$hc_stop_body" | grep -n 'bridgeAnimationEngine\.stop(' | head -1 | cut -d: -f1)
+hc_stop_retire_line=$(echo "$hc_stop_body" | grep -n 'retireManifest(' | head -1 | cut -d: -f1)
+if [[ -z "$hc_stop_capture_line" || -z "$hc_stop_await_line" || -z "$hc_stop_retire_line" ]] \
+    || [[ "$hc_stop_capture_line" -ge "$hc_stop_await_line" ]] \
+    || [[ "$hc_stop_capture_line" -ge "$hc_stop_retire_line" ]]; then
+    fail "composer-hardware-convergence" "stopSavedBridgeLook no longer captures its ownership evidence before the bridge await and the retirement — after retireManifest the ledger cannot say whether the stopped chain was running"
+fi
+if ! echo "$hc_stop_body" | grep -q 'SavedLookStopOutcome'; then
+    fail "composer-hardware-convergence" "stopSavedBridgeLook no longer returns the typed outcome — Studio cannot tell an inert removal from a running-look withdrawal"
+fi
+if ! echo "$hc_stop_body" | grep -q 'SavedLookPresentationFence'; then
+    fail "composer-hardware-convergence" "stopSavedBridgeLook mints no presentation fence — the VM would mutate rows and boxes on an unverifiable authorization"
+fi
+if ! grep -q 'func presentationFenceHolds(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "presentationFenceHolds is gone — a returned authorization could not be revalidated after the orchestrator→VM continuation gap"
+fi
+# Studio's appliers: typed consumption, fence revalidation before EVERY
+# row/box removal, no room-only cleanup, and apply-time copy truth.
+hc_apply_stop=$(awk '/func applySavedLookStopOutcome\(/,/^    }$/' "$HC_VM" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+hc_apply_save=$(awk '/func applyBridgeSaveOutcome\(/,/^    }$/' "$HC_VM" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if [[ -z "$hc_apply_stop" || -z "$hc_apply_save" ]]; then
+    fail "composer-hardware-convergence" "the factored VM outcome appliers are gone — the continuation-gap race would be untestable and the fence unverified at mutation time"
+fi
+if ! echo "$hc_apply_stop" | grep -q 'case .removed'; then
+    fail "composer-hardware-convergence" "Studio no longer switches on the typed saved-look Stop outcome"
+fi
+for body_name in hc_apply_stop hc_apply_save; do
+    body=${!body_name}
+    fence_line=$(echo "$body" | grep -n 'presentationFenceHolds(' | head -1 | cut -d: -f1)
+    row_line=$(echo "$body" | grep -n 'runningEffects\.removeValue' | head -1 | cut -d: -f1)
+    box_line=$(echo "$body" | grep -n 'activeCompositionBoxes\.removeValue' | head -1 | cut -d: -f1)
+    if [[ -z "$fence_line" || -z "$row_line" || -z "$box_line" ]] \
+        || [[ "$fence_line" -ge "$row_line" ]] || [[ "$fence_line" -ge "$box_line" ]]; then
+        fail "composer-hardware-convergence" "$body_name mutates a running row or composition box without first revalidating the presentation fence — a look that started after the outcome returned would be erased"
+    fi
+    if echo "$body" | grep -qE 'removeActiveEffect\(roomID:|runningEffect\(forRoomID:'; then
+        fail "composer-hardware-convergence" "$body_name uses room-id-only cleanup — presentation removal must be exact bridge+room identity"
+    fi
+done
+# Copy truth: the empty-room sentences may be chosen only behind the
+# apply-time fence check, and the invalid-fence branch may use only the
+# neutral superseded-state wording. The outcome itself may not freeze an
+# emptiness claim.
+hc_save_fence_line=$(echo "$hc_apply_save" | grep -n 'fenceValid' | head -1 | cut -d: -f1)
+hc_save_empty_line=$(echo "$hc_apply_save" | grep -nE 'BridgeSaveCopy\.(previousLookRemovedSaveFailed|savedNotConfirmedPreviousLookRemoved)$' | head -1 | cut -d: -f1)
+if [[ -z "$hc_save_fence_line" || -z "$hc_save_empty_line" ]] \
+    || [[ "$hc_save_fence_line" -ge "$hc_save_empty_line" ]]; then
+    fail "composer-hardware-convergence" "applyBridgeSaveOutcome selects the empty-room wording without an apply-time fence check — the UI could claim 'nothing is playing' over a newer look's playback"
+fi
+if ! echo "$hc_apply_save" | grep -q 'previousLookRemovedSaveFailedPlaybackChanged' \
+    || ! echo "$hc_apply_save" | grep -q 'savedNotConfirmedPreviousLookRemovedPlaybackChanged'; then
+    fail "composer-hardware-convergence" "the neutral superseded-state wording is gone — an invalid fence would have to claim emptiness or playback it cannot prove"
+fi
+if grep -qE 'case previousLookRemovedSaveFailed\(bridgeID: String, reason' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "previousLookRemovedSaveFailed carries a precomputed reason again — the emptiness claim would be frozen before the continuation gap it cannot see across"
 fi
 
 # No timing waits in the suites that carry this slice's behaviour.

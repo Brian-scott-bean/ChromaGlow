@@ -8107,10 +8107,16 @@ final class UnifiedOrchestrator {
         /// evidence that keeps these resources stoppable, so it is retained and
         /// an exact Stop is offered immediately. `previousLookRemoved` reports
         /// whether this bridge's PROVEN bridge-stored predecessor was destroyed
-        /// by the required replacement cleanup (round 4c) — true means its
-        /// claims were withdrawn exactly and nothing plays in the room now.
+        /// by the required replacement cleanup (round 4c). Round 4f: whether
+        /// "nothing plays in the room now" is TRUE is a separate,
+        /// cross-continuation question — `presentationFence` carries that
+        /// authorization, and the caller must revalidate it at the moment it
+        /// mutates presentation state (a newer playback may have taken this
+        /// exact bridge+room while the save was suspended, or between this
+        /// return and the caller's continuation).
         case savedNotConfirmedRunning(manifestID: UUID, bridgeID: String,
-                                      previousLookRemoved: Bool)
+                                      previousLookRemoved: Bool,
+                                      presentationFence: SavedLookPresentationFence?)
         /// Nothing was left on the bridge — either nothing was created, or what
         /// was created was cleaned up exactly.
         case nothingRecorded(reason: String)
@@ -8130,14 +8136,82 @@ final class UnifiedOrchestrator {
         /// The one exceptional state a failed save can leave (round 4b): the
         /// room was PLAYING a bridge-stored look, the required replacement
         /// cleanup removed that chain (two chains cannot coexist), and the
-        /// new upload then failed — so nothing is on the bridge now. Typed,
-        /// because every claim belonging to the former chain must fall with
-        /// it: a notice-only report would leave the UI asserting a look that
-        /// provably no longer exists. Round 4c: returned only for a PROVEN
-        /// exact predecessor on `bridgeID` — the destroyed chain's own bridge
-        /// — so the caller's cleanup can be exact too; another bridge's claim
-        /// on the same room id can never produce this outcome.
-        case previousLookRemovedSaveFailed(bridgeID: String, reason: String)
+        /// new upload then failed — so nothing of OURS is on the bridge now.
+        /// Typed, because every claim belonging to the former chain must fall
+        /// with it: a notice-only report would leave the UI asserting a look
+        /// that provably no longer exists. Round 4c: returned only for a
+        /// PROVEN exact predecessor on `bridgeID` — the destroyed chain's own
+        /// bridge — so the caller's cleanup can be exact too; another bridge's
+        /// claim on the same room id can never produce this outcome. Round 4f:
+        /// this case deliberately carries NO user-facing reason string. "The
+        /// previous look was removed and nothing is playing" is a
+        /// cross-continuation claim — a newer playback can own the room by the
+        /// time the caller applies this outcome — so the wording must be
+        /// chosen at apply time, from `presentationFence` revalidation, never
+        /// frozen here.
+        case previousLookRemovedSaveFailed(bridgeID: String,
+                                           presentationFence: SavedLookPresentationFence?)
+    }
+
+    /// Authorization to withdraw a saved look's LIVE PRESENTATION mirrors —
+    /// the VM's exact running row and its active `CompositionParamBox`
+    /// (round 4f).
+    ///
+    /// Minted only when the orchestrator proved, in one synchronous
+    /// main-actor turn, that the destroyed chain was the exact bridge+room's
+    /// RUNNING look and that no newer playback took the key while the bridge
+    /// operation was suspended. It is deliberately NOT defined by whether a
+    /// Now Playing row happened to exist — it authorizes cleaning every
+    /// presentation mirror, and a missing row must not protect a stale one.
+    ///
+    /// The token is revalidatable because the authorization itself can go
+    /// stale: between the orchestrator's return and the caller's main-actor
+    /// continuation, another task may start a new playback on the same exact
+    /// key. Callers MUST pass it back through `presentationFenceHolds(_:)`
+    /// immediately before mutating presentation state.
+    struct SavedLookPresentationFence: Equatable, Sendable {
+        let bridgeID: String
+        let roomID: String
+        /// `roomOwnershipGeneration(bridgeID:roomID:)` at authorization.
+        let roomOwnershipGeneration: Int
+        /// The exact `CompositionPlaybackKey` generation at authorization —
+        /// nil means no runtime generation existed, and nil-versus-value is
+        /// compared exactly on revalidation.
+        let playbackGeneration: Int?
+    }
+
+    /// What the exact saved-look Stop actually did (round 4f).
+    ///
+    /// The old `Bool` conflated "already gone", "bridge unreachable",
+    /// "retired an inert manifest" and "withdrew the room's running look" —
+    /// so the caller could neither clean up a genuinely stopped look nor
+    /// leave a live one alone. Each case now carries enough identity and
+    /// truth for the caller to act exactly.
+    enum SavedLookStopOutcome: Equatable {
+        /// The bridge confirmed deletion and the manifest was retired.
+        /// `removedRunningOwnership`: the manifest was in the ownership
+        /// ledger when the stop began (an inert saved-not-confirmed manifest
+        /// never is). `exactOwnershipSetEmptied`: this exact bridge+room's
+        /// ownership set is now empty. `presentationFence`: non-nil is the
+        /// (revalidatable) authorization to withdraw live presentation.
+        case removed(manifestID: UUID, bridgeID: String, roomID: String,
+                     removedRunningOwnership: Bool,
+                     exactOwnershipSetEmptied: Bool,
+                     presentationFence: SavedLookPresentationFence?)
+        /// No manifest with that id exists. Nothing to remove is a success,
+        /// not a failure.
+        case alreadyAbsent
+        /// The bridge could not be reached, refused part of the cleanup, or
+        /// the manifest changed while the deletes were in flight. The
+        /// manifest is retained; nothing was withdrawn.
+        case failed
+
+        /// Compatibility read for callers that only need success/failure —
+        /// the same convention as `PlaybackStartOutcome.startedStreaming`.
+        var succeeded: Bool {
+            if case .failed = self { return false }
+            return true
+        }
     }
 
     /// Exact bridge+room pairs with a strict save in flight. Claimed before
@@ -8184,8 +8258,10 @@ final class UnifiedOrchestrator {
     ///   (bridgeID, roomID); the key disappears only when its set empties, so
     ///   a surviving chain on the same bridge + room keeps its claim;
     /// - the live Now Playing row for exactly this bridge + room is removed
-    ///   only when that ownership set emptied — another bridge's row for the
-    ///   same room id is out of reach by key, recovered rows by construction;
+    ///   only when the CALLER'S `ownershipEvidence` proves a destroyed chain
+    ///   was this key's running claim AND that key's ownership is now empty
+    ///   AND `presentationFenceHeld` — another bridge's row for the same room
+    ///   id is out of reach by key, recovered rows by construction;
     /// - transport (round 4e): only THIS bridge+room's exact `.bridgeStored`
     ///   claim falls, and only when its ownership set emptied. The roomID-keyed
     ///   entry is a display aggregate recomputed from the surviving exact
@@ -8194,11 +8270,29 @@ final class UnifiedOrchestrator {
     ///   manifest — an ambiguous legacy manifest counts — or a recovered
     ///   animation) retains the label, excluding `retainedManifestIDs`, because
     ///   a just-saved inert chain is not the room's playing look.
+    ///
+    /// Round 4f: `ownershipEvidence` is REQUIRED and must be captured by the
+    /// caller BEFORE its own destructive cleanup ran. This function must not
+    /// read the ledger as evidence: by the time it runs, `retireManifest`
+    /// (stop path) or the replacement cleanup (save paths) has already
+    /// subtracted the destroyed chain, so a nil key here cannot distinguish
+    /// "this chain WAS the running look and just emptied" from "this chain
+    /// never ran at all" — and removing a live publication on a merely-nil
+    /// key is exactly how an inert manifest's Remove used to unpublish the
+    /// room's still-running REST look. `presentationFenceHeld` is the
+    /// caller's proof that no newer playback took this exact key while its
+    /// bridge operation was suspended; a broken fence withdraws ownership and
+    /// stale claims but never the newer look's publication.
     private func withdrawDestroyedBridgeStoredClaims(
         bridgeID: String, roomID: String,
-        destroyedManifestIDs: Set<UUID>, retainedManifestIDs: Set<UUID> = []
+        destroyedManifestIDs: Set<UUID>,
+        ownershipEvidence: Set<UUID>,
+        presentationFenceHeld: Bool,
+        retainedManifestIDs: Set<UUID> = []
     ) {
         let key = BridgeNativeOwnershipKey(bridgeKey: bridgeID, roomID: roomID)
+        let destroyedWereRunningOwners =
+            !ownershipEvidence.isDisjoint(with: destroyedManifestIDs)
         if var owned = bridgeStoredChainOwnership[key] {
             owned.subtract(destroyedManifestIDs)
             if owned.isEmpty {
@@ -8207,14 +8301,17 @@ final class UnifiedOrchestrator {
                 bridgeStoredChainOwnership[key] = owned
             }
         }
-        if bridgeStoredChainOwnership[key] == nil {
-            removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
+        if destroyedWereRunningOwners, bridgeStoredChainOwnership[key] == nil {
+            if presentationFenceHeld {
+                removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
+            }
             // Round 4e: the exact transport claim falls WITH the emptied
             // ownership set — only this bridge+room's `.bridgeStored` claim,
             // so another bridge's same-room-id claim (and therefore the
-            // room aggregate) survives. The recompute inside applies the
-            // round-4c fail-closed evidence rule, excluding the just-saved
-            // inert manifests that are not the room's playing look.
+            // room aggregate) survives, and a newer `.rest`/`.entertainment`
+            // claim on this key is never touched. The recompute inside
+            // applies the round-4c fail-closed evidence rule, excluding the
+            // just-saved inert manifests that are not the room's playing look.
             let playbackKey = CompositionPlaybackKey(
                 bridgeKey: key.bridgeKey, roomID: key.roomID)
             if compositionTransportClaims[playbackKey] == .bridgeStored {
@@ -8432,6 +8529,31 @@ final class UnifiedOrchestrator {
             && !hadAmbiguousRoomManifest
             && predecessorChain.isSubset(
                 of: Set(exactManifests(bridgeID: bridgeID, roomID: room.id).map(\.id)))
+        // Round 4f: the presentation fence for the two destructive-failure
+        // arms, captured before ANY suspension. The attempt below awaits the
+        // bridge; a newer playback can take this exact bridge+room while it
+        // is suspended, and destroying the predecessor's claims must then
+        // leave the newer look's presentation alone. The fence is the same
+        // exactness rule the stop path uses: ownership generation, exact
+        // playback generation (nil preserved), and no standing live claim.
+        let savePlaybackKey = CompositionPlaybackKey(
+            bridgeKey: bridgeID, roomID: room.id)
+        let fencedOwnershipGeneration = roomOwnershipGeneration(
+            bridgeID: bridgeID, roomID: room.id)
+        let fencedPlaybackGeneration = compositionGenerations[savePlaybackKey]
+        func presentationFenceStillHeld() -> Bool {
+            let standingClaim = compositionTransportClaims[savePlaybackKey]
+            return roomOwnershipGeneration(bridgeID: bridgeID, roomID: room.id)
+                    == fencedOwnershipGeneration
+                && compositionGenerations[savePlaybackKey] == fencedPlaybackGeneration
+                && standingClaim != .rest && standingClaim != .entertainment
+        }
+        func mintedPresentationFence() -> SavedLookPresentationFence {
+            SavedLookPresentationFence(
+                bridgeID: bridgeID, roomID: room.id,
+                roomOwnershipGeneration: fencedOwnershipGeneration,
+                playbackGeneration: fencedPlaybackGeneration)
+        }
         let lightIDs: [String]
         switch await resolveCompositionLights(for: room, api: api) {
         case .noneInRoom:
@@ -8493,15 +8615,20 @@ final class UnifiedOrchestrator {
             let previousLookRemoved = provenExactPredecessor
                 && exactManifests(bridgeID: bridgeID, roomID: room.id)
                     .allSatisfy { $0.id == owned.id }
+            let fenceHeld = presentationFenceStillHeld()
             if previousLookRemoved {
                 withdrawDestroyedBridgeStoredClaims(
                     bridgeID: bridgeID, roomID: room.id,
                     destroyedManifestIDs: predecessorChain,
+                    ownershipEvidence: predecessorChain,
+                    presentationFenceHeld: fenceHeld,
                     retainedManifestIDs: [owned.id])
             }
             return .savedNotConfirmedRunning(
                 manifestID: owned.id, bridgeID: bridgeID,
-                previousLookRemoved: previousLookRemoved)
+                previousLookRemoved: previousLookRemoved,
+                presentationFence: (previousLookRemoved && fenceHeld)
+                    ? mintedPresentationFence() : nil)
 
         case .replacementBlocked:
             // Cleanup did NOT complete, so the previous chain (and its
@@ -8524,12 +8651,15 @@ final class UnifiedOrchestrator {
                !bridgeAnimationStore.allManifests().contains(where: {
                    $0.roomID == room.id && resolvedBridgeID(for: $0) == nil
                }) {
+                let fenceHeld = presentationFenceStillHeld()
                 withdrawDestroyedBridgeStoredClaims(
                     bridgeID: bridgeID, roomID: room.id,
-                    destroyedManifestIDs: predecessorChain)
+                    destroyedManifestIDs: predecessorChain,
+                    ownershipEvidence: predecessorChain,
+                    presentationFenceHeld: fenceHeld)
                 return .previousLookRemovedSaveFailed(
                     bridgeID: bridgeID,
-                    reason: BridgeSaveCopy.previousLookRemovedSaveFailed)
+                    presentationFence: fenceHeld ? mintedPresentationFence() : nil)
             }
             return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
 
@@ -8543,6 +8673,26 @@ final class UnifiedOrchestrator {
         }
     }
 
+    /// May a returned presentation-withdrawal authorization still be applied?
+    ///
+    /// The token is minted in one synchronous main-actor turn, but its
+    /// CONSUMER resumes in a later one — and between those turns another
+    /// task can start a new playback on the same exact bridge+room. Studio
+    /// calls this immediately before removing its running row and active
+    /// composition box; a stale token preserves the newer look's mirrors.
+    /// Same exactness rule as minting: ownership generation, exact playback
+    /// generation (nil-versus-value compared exactly), and no standing live
+    /// `.rest`/`.entertainment` claim on the key.
+    func presentationFenceHolds(_ fence: SavedLookPresentationFence) -> Bool {
+        let playbackKey = CompositionPlaybackKey(
+            bridgeKey: fence.bridgeID, roomID: fence.roomID)
+        let standingClaim = compositionTransportClaims[playbackKey]
+        return roomOwnershipGeneration(bridgeID: fence.bridgeID, roomID: fence.roomID)
+                == fence.roomOwnershipGeneration
+            && compositionGenerations[playbackKey] == fence.playbackGeneration
+            && standingClaim != .rest && standingClaim != .entertainment
+    }
+
     /// Stop and remove exactly one saved look, by manifest identity.
     ///
     /// The immediate counterpart of the recovered-row Stop, for a look that was
@@ -8552,32 +8702,108 @@ final class UnifiedOrchestrator {
     ///
     /// Exact by construction — the manifest names its own resources, and the
     /// bridge client is resolved from the manifest's recorded bridge id.
+    ///
+    /// Round 4f: the outcome is typed, because "removed" alone cannot say
+    /// WHAT was removed. An inert saved-not-confirmed manifest and the
+    /// room's confirmed-running bridge look retire through the same funnel,
+    /// and only the ownership ledger — read BEFORE retirement destroys it —
+    /// can tell them apart. The evidence capture, the retirement, the
+    /// withdrawal and the fence verification all run in the same main-actor
+    /// turn after the single bridge await, so nothing can change between
+    /// them.
     @discardableResult
-    func stopSavedBridgeLook(manifestID: UUID) async -> Bool {
+    func stopSavedBridgeLook(manifestID: UUID) async -> SavedLookStopOutcome {
         guard let manifest = bridgeAnimationStore.manifest(id: manifestID) else {
             // Already gone. Nothing to remove is a success, not a failure.
-            return true
+            return .alreadyAbsent
         }
         guard let bridgeID = resolvedBridgeID(for: manifest),
               let api = hueClient(for: bridgeID),
               let v1Client = try? api.makeV1Client() else {
             debugLog("[Composer] Cannot reach the bridge holding manifest \(manifestID) — retaining it")
-            return false
+            return .failed
         }
+        // Round 4f: capture the destructive-ownership evidence and the
+        // presentation fence BEFORE the bridge suspension. `retireManifest`
+        // below funnels through `forgetManifestRecord`, which subtracts this
+        // manifest from the ownership ledger — after that, the ledger can no
+        // longer distinguish a confirmed-running chain whose entry just
+        // emptied from an inert chain that never had one.
+        let ownershipKey = BridgeNativeOwnershipKey(
+            bridgeKey: bridgeID, roomID: manifest.roomID)
+        let playbackKey = CompositionPlaybackKey(
+            bridgeKey: bridgeID, roomID: manifest.roomID)
+        let ownedBeforeRetirement = bridgeStoredChainOwnership[ownershipKey] ?? []
+        let wasRunningOwner = ownedBeforeRetirement.contains(manifest.id)
+        let fencedOwnershipGeneration = roomOwnershipGeneration(
+            bridgeID: bridgeID, roomID: manifest.roomID)
+        let fencedPlaybackGeneration = compositionGenerations[playbackKey]
         let result = await bridgeAnimationEngine.stop(manifest: manifest, v1Client: v1Client)
-        guard retireManifest(manifest, after: result) else { return false }
+        // Freshness stays fail-closed: if the manifest changed while the
+        // deletes were in flight, `retireManifest` retires nothing and the
+        // captured evidence is discarded with it.
+        guard retireManifest(manifest, after: result) else { return .failed }
+        // Everything from the capture check to the withdrawal below is
+        // synchronous on the main actor — no await separates the evidence
+        // from the mutation it authorizes.
+        let exactOwnershipSetEmptied =
+            wasRunningOwner && bridgeStoredChainOwnership[ownershipKey] == nil
+        let standingClaim = compositionTransportClaims[playbackKey]
+        let presentationFenceHeld =
+            roomOwnershipGeneration(bridgeID: bridgeID, roomID: manifest.roomID)
+                == fencedOwnershipGeneration
+            && compositionGenerations[playbackKey] == fencedPlaybackGeneration
+            && standingClaim != .rest && standingClaim != .entertainment
         // Withdraw the room's claims only when they are THIS chain's claims
         // (round 4). Round 4c makes that exact: only the stopped manifest's
         // id is subtracted from its own bridge's ownership, the Now Playing
         // row falls only when that bridge's set emptied, and the shared
-        // transport entry survives while ANY chain still claims the room —
-        // a saved-but-not-confirmed manifest is inert while the room's
-        // current look keeps playing on REST, and stopping bridge B's chain
-        // must not unpublish or unlabel bridge A's same-room-id one.
+        // transport entry survives while ANY chain still claims the room.
+        // Round 4f makes the emptying itself provable: the ledger membership
+        // captured above is the evidence — a saved-but-not-confirmed
+        // manifest is inert (never in the ledger) while the room's current
+        // look keeps playing on REST, and removing the inert manifest must
+        // not unpublish that look; stopping bridge B's chain must not
+        // unpublish or unlabel bridge A's same-room-id one; and a newer
+        // playback that took this exact key during the suspension keeps its
+        // publication because the fence above no longer holds.
         withdrawDestroyedBridgeStoredClaims(
             bridgeID: bridgeID, roomID: manifest.roomID,
-            destroyedManifestIDs: [manifest.id])
-        return true
+            destroyedManifestIDs: [manifest.id],
+            ownershipEvidence: ownedBeforeRetirement,
+            presentationFenceHeld: presentationFenceHeld)
+        var presentationFence: SavedLookPresentationFence?
+        if exactOwnershipSetEmptied, presentationFenceHeld {
+            presentationFence = SavedLookPresentationFence(
+                bridgeID: bridgeID, roomID: manifest.roomID,
+                roomOwnershipGeneration: fencedOwnershipGeneration,
+                playbackGeneration: fencedPlaybackGeneration)
+            // The room's running look was THIS chain, and nothing newer took
+            // the key — so the app-driven runtime the save-commit replaced
+            // (generation already bumped there; the runtime itself was left
+            // standing) is provably stale. Retire it exactly: this playback
+            // key's runtime, scheduler membership and Composer telemetry
+            // session, nothing else. A standing live claim means the runtime
+            // belongs to a newer look and every piece of it survives.
+            if compositionTransportClaims[playbackKey] == nil {
+                compositionRuntimes.removeValue(forKey: playbackKey)
+                compositionOrder.removeAll { $0 == playbackKey }
+                if compositionRuntimes.isEmpty {
+                    compositionSchedulerTask?.cancel()
+                    compositionSchedulerTask = nil
+                }
+                deactivateComposerTelemetrySession(
+                    sessionKey: ComposerTelemetrySessionKey(
+                        bridgeKey: bridgeID,
+                        scope: RestScope(roomID: manifest.roomID, owner: .composer)),
+                    pendingRemovalReported: false)
+            }
+        }
+        return .removed(
+            manifestID: manifest.id, bridgeID: bridgeID, roomID: manifest.roomID,
+            removedRunningOwnership: wasRunningOwner,
+            exactOwnershipSetEmptied: exactOwnershipSetEmptied,
+            presentationFence: presentationFence)
     }
 
     /// The ONE place a manifest record is dropped from the store.
@@ -9427,6 +9653,20 @@ enum BridgeSaveCopy {
     /// the saved look is not playing.
     static let savedNotConfirmedPreviousLookRemoved =
         "The previous bridge look was removed to make room. The new one is saved to your bridge, but it isn't confirmed running — nothing is playing there now, and you can stop the saved look from here."
+    /// Round 4f: the SAME bridge facts as `previousLookRemovedSaveFailed`,
+    /// told when the presentation fence is nil or stale at apply time.
+    /// Playback changed while the save was in flight — but a stale fence
+    /// proves only the CHANGE: the newer look may itself have stopped by
+    /// now, so this wording claims neither "nothing is playing" nor "a look
+    /// is playing". Chosen at apply time from the revalidated fence, never
+    /// frozen into the outcome.
+    static let previousLookRemovedSaveFailedPlaybackChanged =
+        "The previous bridge look was removed to make room, but the new one couldn't be saved. Playback changed while the save completed — ChromaGlow preserved the newer state."
+    /// Round 4f: `savedNotConfirmedPreviousLookRemoved` under a nil or stale
+    /// fence — the saved chain is durable and stoppable, and no claim is
+    /// made about what is or isn't playing now.
+    static let savedNotConfirmedPreviousLookRemovedPlaybackChanged =
+        "The previous bridge look was removed to make room. The new one is saved to your bridge, but it isn't confirmed running. Playback changed while the save completed — ChromaGlow preserved the newer state. You can stop the saved look from here."
 }
 
 /// Safety refusals shared between Studio and Perform.

@@ -9638,12 +9638,55 @@ final class MultiBridgeRoutingTests: XCTestCase {
         outcome = await orchestrator.saveLookToBridge(
             room: room, paramBox: CompositionParamBox(preset: savePreset),
             gamutOverride: .c, preset: savePreset)
-        guard case .savedNotConfirmedRunning(let inertID, "bridge-b", previousLookRemoved: false) = outcome else {
-            return XCTFail("persisted + failed activation is saved-not-confirmed; got \(outcome)")
+        guard case .savedNotConfirmedRunning(let inertID, "bridge-b",
+                                             previousLookRemoved: false,
+                                             presentationFence: nil) = outcome else {
+            return XCTFail("persisted + failed activation is saved-not-confirmed, with no presentation authorization; got \(outcome)")
         }
         assertLookPreserved("saved but not confirmed running")
         bridgeB.v1Spy.sensorStatusShouldFail = false
-        _ = await orchestrator.stopSavedBridgeLook(manifestID: inertID)
+
+        // Round 4f: removing the INERT manifest is non-destructive to
+        // playback. The room's live publication is staged the way a real
+        // start publishes it, and every piece of the running REST look must
+        // survive the exact Remove — the inert chain never entered the
+        // ownership ledger, so its retirement authorizes nothing.
+        orchestrator.addActiveEffect(ActiveEffectEntry(
+            liveBridgeID: "bridge-b", roomID: room.id, roomName: room.name,
+            groupedLightID: room.groupedLightID ?? "", effectID: "rest-look",
+            effectName: playing.name, effectIcon: "sparkles", isAppDriven: true))
+        let inertStop = await orchestrator.stopSavedBridgeLook(manifestID: inertID)
+        guard case .removed(inertID, "bridge-b", room.id,
+                            removedRunningOwnership: false,
+                            exactOwnershipSetEmptied: false,
+                            presentationFence: nil) = inertStop else {
+            return XCTFail("an inert manifest retires with no ownership and no presentation authorization; got \(inertStop)")
+        }
+        assertLookPreserved("inert manifest removed")
+        XCTAssertTrue(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: room.id).isEmpty,
+            "the inert manifest itself is gone")
+        XCTAssertTrue(orchestrator.testHasCompositionRuntime(bridgeID: "bridge-b", roomID: room.id),
+            "the live REST runtime survives the inert Remove")
+        XCTAssertTrue(orchestrator.testCompositionOrderContains(bridgeID: "bridge-b", roomID: room.id),
+            "and its scheduler membership")
+        XCTAssertEqual(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: room.id), .rest,
+            "and its exact REST transport claim")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), .rest,
+            "and the room aggregate")
+        XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(roomID: room.id, bridgeID: "bridge-b"),
+            "and its telemetry session")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id),
+            "and its live Now Playing publication — the inert Remove may not unpublish the room")
+
+        // Playback proof, not telemetry: the surviving runtime still ACCEPTS
+        // a generation-matched work item (the round-4e standard).
+        let liveGeneration = try XCTUnwrap(generationBefore)
+        await orchestrator.testPerformCompositionPrime(room: room, generation: liveGeneration)
+        let sendState = try XCTUnwrap(orchestrator.testCompositionRuntimeSendState(
+            bridgeID: "bridge-b", roomID: room.id),
+            "the live runtime accepts work after the inert Remove")
+        XCTAssertGreaterThanOrEqual(sendState.sendCount, 1,
+            "the prime's send was recorded on the live runtime")
 
         // And the look is still genuinely there to stop normally.
         XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), .rest)
@@ -9674,7 +9717,42 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "the room now belongs to the confirmed bridge chain")
         XCTAssertEqual(orchestrator.testCompositionGeneration(roomID: room.id), generationBefore + 1,
             "and the old runtime was invalidated exactly once, at commit")
-        _ = await orchestrator.stopSavedBridgeLook(manifestID: manifestID)
+        XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: room.id),
+                       [manifestID], "the commit recorded the running chain")
+
+        // Round 4f: the result sheet's exact Stop of the CONFIRMED-RUNNING
+        // chain withdraws every running claim — with the live publication
+        // staged the way a real start publishes it, so its withdrawal is
+        // provable here too.
+        orchestrator.addActiveEffect(ActiveEffectEntry(
+            liveBridgeID: "bridge-b", roomID: room.id, roomName: room.name,
+            groupedLightID: room.groupedLightID ?? "", effectID: "bridge-look",
+            effectName: savePreset.name, effectIcon: "sparkles", isAppDriven: true))
+        let stop = await orchestrator.stopSavedBridgeLook(manifestID: manifestID)
+        guard case .removed(manifestID, "bridge-b", room.id,
+                            removedRunningOwnership: true,
+                            exactOwnershipSetEmptied: true,
+                            presentationFence: .some) = stop else {
+            return XCTFail("stopping the running chain empties its exact ownership and authorizes presentation withdrawal; got \(stop)")
+        }
+        XCTAssertTrue(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: room.id).isEmpty,
+            "the exact manifest is gone")
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.contains("sensor:new-sensor"),
+            "and its bridge resources were deleted")
+        XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: room.id).isEmpty,
+            "the bridgeStored ownership set is empty")
+        XCTAssertNil(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: room.id),
+            "the exact transport claim is gone")
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: room.id),
+            "and the aggregate — no other claimant remains")
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id),
+            "the exact Now Playing row is gone")
+        XCTAssertFalse(orchestrator.testHasComposerTelemetrySession(roomID: room.id, bridgeID: "bridge-b"),
+            "the exact telemetry session is gone")
+        XCTAssertFalse(orchestrator.testHasCompositionRuntime(bridgeID: "bridge-b", roomID: room.id),
+            "no stale runtime remains — the replaced app-driven runtime was retired with the chain")
+        XCTAssertFalse(orchestrator.testCompositionOrderContains(bridgeID: "bridge-b", roomID: room.id),
+            "and no stale scheduler entry")
     }
 
     /// HCS-09 — the VM-level half of preservation: the RUNNING-EFFECT ROW of
@@ -9766,6 +9844,8 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(orchestrator.testCompositionTransport(roomID: roomB.id), .bridgeStored,
             "precondition: the saved look runs ON THE BRIDGE (notice: \(vm.studioNotice?.message ?? "none"))")
         XCTAssertNotNil(vm.runningEffect(forRoomID: roomB.id), "the room's row is standing")
+        XCTAssertNotNil(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: roomB.id),
+            "and so is its editor box")
         XCTAssertEqual(animationStore.allManifests().filter { $0.roomID == roomB.id }.count, 1,
             "precondition: exactly the saved chain's manifest is on record")
         vm.bridgeSaveResult = nil   // dismiss the success sheet
@@ -9782,13 +9862,17 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "no transport claim survives a chain that no longer exists")
         XCTAssertNil(vm.runningEffect(forRoomID: roomB.id),
             "and neither does the running row — the UI may not assert a removed look")
+        XCTAssertNil(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: roomB.id),
+            "nor its editor box — a destroyed look leaves no editable stand-in (round 4f)")
         XCTAssertEqual(vm.studioNotice?.message, BridgeSaveCopy.previousLookRemovedSaveFailed,
-            "the honest sentence: what was lost, and that nothing plays on the bridge now")
+            "the honest sentence: what was lost, and that nothing plays on the bridge now — said only because the fence held at apply time")
         XCTAssertNil(vm.bridgeSaveResult)
 
         // The unrelated room and bridge are untouched.
         XCTAssertNotNil(vm.runningEffect(forRoomID: roomA.id),
             "the control look on bridge A keeps its row")
+        XCTAssertNotNil(vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: roomA.id),
+            "and its editor box")
         XCTAssertEqual(orchestrator.testCompositionTransport(roomID: roomA.id), .rest,
             "and its transport claim")
     }
@@ -10025,6 +10109,8 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "no transport claim survives the destroyed predecessor")
         XCTAssertNil(vm.runningEffect(for: room),
             "the row mirrored a look that no longer exists")
+        XCTAssertNil(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id),
+            "and so did its editor box (round 4f) — no stale editable stand-in")
         XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id),
             "and so did its publication")
 
@@ -10074,6 +10160,8 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(orchestrator.testCompositionTransport(
             bridgeID: "bridge-b", roomID: "shared-room"),
             "the inert replacement holds no exact claim")
+        XCTAssertNil(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: "shared-room"),
+            "B's destroyed predecessor took its editor box with it (round 4f)")
 
         // A's exact claim survives — and it alone keeps the aggregate alive.
         XCTAssertEqual(orchestrator.testCompositionTransport(
@@ -10084,6 +10172,8 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "the room-only compatibility value stays derived from the surviving bridge")
         XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"),
             "A's publication survives too")
+        XCTAssertNotNil(vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: "shared-room"),
+            "and A's editor box — B's exact withdrawal reaches nothing of A's (round 4f)")
     }
 
     /// HCS-14 — stopping ONE exact manifest, with duplicate room ids across
@@ -10108,9 +10198,17 @@ final class MultiBridgeRoutingTests: XCTestCase {
                        [mB.id])
         XCTAssertEqual(recoveredEntries().count, 3)
 
-        // Stop A's FIRST chain only.
+        // Stop A's FIRST chain only. Round 4f: the typed outcome says exactly
+        // what happened — a running owner was subtracted, but the key
+        // survives with its other chain, so NO presentation withdrawal is
+        // authorized.
         let stoppedA1 = await orchestrator.stopSavedBridgeLook(manifestID: mA1.id)
-        XCTAssertTrue(stoppedA1)
+        guard case .removed(mA1.id, "bridge-a", "shared-room",
+                            removedRunningOwnership: true,
+                            exactOwnershipSetEmptied: false,
+                            presentationFence: nil) = stoppedA1 else {
+            return XCTFail("stopping one of two owners subtracts without emptying; got \(stoppedA1)")
+        }
         XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-a", roomID: "shared-room"),
                        [mA2.id], "only the stopped id was subtracted — the key survives with its other chain")
         XCTAssertTrue(storeStillHolds(mA2))
@@ -10122,7 +10220,12 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         // Stop A's second: A's key goes, B still claims the room.
         let stoppedA2 = await orchestrator.stopSavedBridgeLook(manifestID: mA2.id)
-        XCTAssertTrue(stoppedA2)
+        guard case .removed(mA2.id, "bridge-a", "shared-room",
+                            removedRunningOwnership: true,
+                            exactOwnershipSetEmptied: true,
+                            presentationFence: .some) = stoppedA2 else {
+            return XCTFail("stopping the LAST owner empties the exact set and authorizes presentation withdrawal; got \(stoppedA2)")
+        }
         XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-a", roomID: "shared-room").isEmpty)
         XCTAssertTrue(storeStillHolds(mB))
         XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored,
@@ -10130,7 +10233,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         // Stop B's: the LAST claim goes, and only now does the label fall.
         let stoppedB = await orchestrator.stopSavedBridgeLook(manifestID: mB.id)
-        XCTAssertTrue(stoppedB)
+        XCTAssertTrue(stoppedB.succeeded)
         XCTAssertNil(orchestrator.testCompositionTransport(roomID: "shared-room"))
         XCTAssertTrue(recoveredEntries().isEmpty)
     }
@@ -10792,7 +10895,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertEqual(recovered.bridgeID, "bridge-b")
 
         let stopped = await orchestrator.stopSavedBridgeLook(manifestID: manifestID)
-        XCTAssertTrue(stopped, "the exact Stop works from the recovered record")
+        XCTAssertTrue(stopped.succeeded, "the exact Stop works from the recovered record")
         XCTAssertTrue(bridgeB.v1Spy.deletedResources.contains("rule:new-rule"),
             "and it removed exactly the resources the manifest names")
         XCTAssertNil(relaunched.manifest(id: manifestID), "proof retires the manifest")
@@ -10827,7 +10930,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
         // The immediate exact Stop is still available and still exact.
         bridgeB.v1Spy.stageDeleteFailures([])
         let stopped = await orchestrator.stopSavedBridgeLook(manifestID: manifestID)
-        XCTAssertTrue(stopped)
+        XCTAssertTrue(stopped.succeeded)
         XCTAssertNil(broken.store.manifest(id: manifestID))
     }
 
@@ -10884,6 +10987,573 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertNil(vm.bridgeSaveResult, "success is what dismisses the sheet")
         XCTAssertNil(animationStore.manifest(id: manifest.id),
             "and the manifest retires on proven removal")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Hardware convergence round 4f: exact saved-look Stop truth
+    // ──────────────────────────────────────────────
+    //
+    // `stopSavedBridgeLook` retires an inert saved-not-confirmed manifest and
+    // the room's confirmed-running bridge look through the same funnel, and
+    // the ownership ledger it needs to tell them apart is destroyed by the
+    // retirement itself. Round 4f captures that evidence BEFORE retirement,
+    // types the outcome, and fences every presentation withdrawal against a
+    // newer playback taking the exact bridge+room key — during the bridge
+    // suspension AND across the orchestrator→VM continuation gap.
+
+    /// HCS-25 — the inert result-sheet Remove is NON-DESTRUCTIVE to playback.
+    /// A REST look drives the room through the VM; a Save to Bridge persists
+    /// a manifest whose activation fails (`previousLookRemoved: false`).
+    /// Pressing the sheet's exact Remove deletes only the inert resources —
+    /// the live REST look keeps its row, publication, box, runtime,
+    /// transport, generation, scheduler entry, and telemetry, and another
+    /// bridge's same-room-id look is untouched.
+    func testInertResultSheetRemovePreservesTheLiveRESTLookCompletely() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let playingA = runtimeOnlyPreset(named: "Playing A")
+        let bridgeSaveA = bridgeStorablePreset(named: "Bridge Look A")
+        let playingB = runtimeOnlyPreset(named: "Live B")
+        let inertSaveB = bridgeStorablePreset(named: "Inert Save B")
+        let vm = makeP7FVM(presets: [playingA, bridgeSaveA, playingB, inertSaveB])
+
+        // Isolation control: bridge A genuinely runs a same-room-id chain.
+        let roomA = sharedRoomOnA()
+        let manifestA = try await establishBridgeStoredLook(
+            vm, room: roomA, playing: playingA, save: bridgeSaveA)
+
+        // The room under test: a REAL REST look through the VM.
+        let roomB = sharedRoomOnB()
+        vm.selectedRoom = roomB
+        await vm.apply(vm.studioCard(for: playingB),
+                       roomOverride: roomB, preferEntertainmentOverride: false)
+        let rowBefore = try XCTUnwrap(vm.runningEffect(for: roomB),
+            "precondition: the REST look is playing (status: \(vm.statusMessage))")
+        let boxBefore = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: roomB.id))
+        let generationBefore = try XCTUnwrap(orchestrator.testCompositionGeneration(
+            bridgeID: "bridge-b", roomID: roomB.id))
+
+        // Save persists, activation fails: saved, tracked, NOT running.
+        bridgeB.v1Spy.sensorStatusShouldFail = true
+        await vm.saveActiveLookToBridge(vm.studioCard(for: inertSaveB))
+        bridgeB.v1Spy.sensorStatusShouldFail = false
+        let sheet = try XCTUnwrap(vm.bridgeSaveResult,
+            "the inert save carries the sheet with the exact Stop")
+        XCTAssertEqual(sheet.headline, BridgeSaveCopy.savedNotConfirmedRunning,
+            "no predecessor was removed — the plain saved-not-confirmed sentence")
+        XCTAssertEqual(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: roomB.id).count, 1,
+            "precondition: the inert manifest is on record")
+
+        // Press the sheet's exact Remove.
+        await vm.stopSavedBridgeLook(sheet)
+
+        // Only the inert manifest and its resources disappeared.
+        XCTAssertTrue(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: roomB.id).isEmpty,
+            "the inert manifest is gone")
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.contains("sensor:new-sensor"),
+            "its bridge resources were deleted")
+        XCTAssertNil(vm.bridgeSaveResult, "the sheet dismisses on success")
+        XCTAssertNotNil(vm.studioNotice, "and says so")
+
+        // The live REST look is untouched — every piece.
+        XCTAssertEqual(vm.runningEffect(for: roomB)?.cardID, rowBefore.cardID,
+            "the REST row survives, same look")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: roomB.id),
+            "its live Now Playing publication survives")
+        XCTAssertTrue(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: roomB.id) === boxBefore,
+            "its active editor box is the SAME instance")
+        XCTAssertTrue(orchestrator.testHasCompositionRuntime(bridgeID: "bridge-b", roomID: roomB.id),
+            "its exact runtime survives")
+        XCTAssertEqual(orchestrator.testCompositionGeneration(bridgeID: "bridge-b", roomID: roomB.id),
+                       generationBefore, "its generation is unchanged")
+        XCTAssertTrue(orchestrator.testCompositionOrderContains(bridgeID: "bridge-b", roomID: roomB.id),
+            "it remains scheduled")
+        XCTAssertEqual(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: roomB.id),
+                       .rest, "its exact REST transport claim survives")
+        XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(roomID: roomB.id, bridgeID: "bridge-b"),
+            "its telemetry session survives")
+
+        // And the other bridge's same-room-id look is completely untouched.
+        XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-a", roomID: "shared-room"),
+                       [manifestA])
+        XCTAssertEqual(orchestrator.testCompositionTransport(bridgeID: "bridge-a", roomID: "shared-room"),
+                       .bridgeStored)
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertNotNil(vm.runningEffect(for: roomA))
+        XCTAssertNotNil(vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: "shared-room"))
+
+        await orchestrator.stopCompositionMode(roomID: roomB.id, bridgeID: "bridge-b")
+    }
+
+    /// HCS-26 — the confirmed-running result-sheet Stop withdraws EVERY exact
+    /// running claim: manifest, bridge resources, ownership, exact and
+    /// aggregate transport, Now Playing row, VM row, editor box, telemetry,
+    /// and the stale replaced runtime and scheduler entry the save-commit
+    /// left behind.
+    func testRunningResultSheetStopWithdrawsEveryExactClaim() async throws {
+        stageStreamableBridge(bridgeB)
+        let playing = runtimeOnlyPreset(named: "Playing")
+        let save = bridgeStorablePreset(named: "Committed Bridge Look")
+        let vm = makeP7FVM(presets: [playing, save])
+        let room = streamRoomOnB()
+        vm.selectedRoom = room
+        await vm.apply(vm.studioCard(for: playing),
+                       roomOverride: room, preferEntertainmentOverride: false)
+        XCTAssertNotNil(vm.runningEffect(for: room),
+            "precondition: a look is playing (status: \(vm.statusMessage))")
+        await vm.saveActiveLookToBridge(vm.studioCard(for: save))
+        let sheet = try XCTUnwrap(vm.bridgeSaveResult)
+        XCTAssertTrue(sheet.isRunningOnBridge, "precondition: the save committed")
+        let manifestID = try XCTUnwrap(sheet.stoppableManifestID)
+        XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: room.id),
+                       [manifestID])
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertNotNil(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertTrue(orchestrator.testHasCompositionRuntime(bridgeID: "bridge-b", roomID: room.id),
+            "precondition: the replaced app-driven runtime is still standing after the commit")
+
+        // Press the sheet's exact Stop.
+        await vm.stopSavedBridgeLook(sheet)
+
+        XCTAssertTrue(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: room.id).isEmpty,
+            "the exact manifest is gone")
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.contains("sensor:new-sensor"),
+            "and its bridge resources")
+        XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: room.id).isEmpty,
+            "the ownership set is empty")
+        XCTAssertNil(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: room.id),
+            "the exact transport claim is gone")
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: room.id),
+            "and the aggregate — no other claimant remains")
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id),
+            "the exact Now Playing row is gone")
+        XCTAssertNil(vm.runningEffect(for: room), "the exact VM running row is gone")
+        XCTAssertNil(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id),
+            "the exact active editor box is gone")
+        XCTAssertFalse(orchestrator.testHasComposerTelemetrySession(roomID: room.id, bridgeID: "bridge-b"),
+            "the exact telemetry session is gone")
+        XCTAssertFalse(orchestrator.testHasCompositionRuntime(bridgeID: "bridge-b", roomID: room.id),
+            "no stale runtime remains")
+        XCTAssertFalse(orchestrator.testCompositionOrderContains(bridgeID: "bridge-b", roomID: room.id),
+            "and no stale scheduler entry")
+        XCTAssertNil(vm.bridgeSaveResult, "the sheet dismisses")
+    }
+
+    /// HCS-27 — bridge isolation for the RUNNING Stop, through the real
+    /// sheet path: the same room id runs confirmed bridge-stored chains on
+    /// bridges A and B; stopping A's exact manifest changes NOTHING on B,
+    /// and the room aggregate falls only with the last claimant.
+    func testStoppingOneBridgesRunningSavedLookLeavesTheOthersAlone() async throws {
+        stageStreamableBridge(bridgeB)
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let playingA = runtimeOnlyPreset(named: "Playing A")
+        let bridgeSaveA = bridgeStorablePreset(named: "Bridge Look A")
+        let playingB = runtimeOnlyPreset(named: "Playing B")
+        let bridgeSaveB = bridgeStorablePreset(named: "Bridge Look B")
+        let vm = makeP7FVM(presets: [playingA, bridgeSaveA, playingB, bridgeSaveB])
+
+        let roomA = sharedRoomOnA(), roomB = sharedRoomOnB()
+        let manifestA = try await establishBridgeStoredLook(
+            vm, room: roomA, playing: playingA, save: bridgeSaveA)
+        let manifestB = try await establishBridgeStoredLook(
+            vm, room: roomB, playing: playingB, save: bridgeSaveB)
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored,
+            "precondition: both exact claims agree")
+
+        // Stop A's exact manifest from its sheet (rebuilt, HCQ-05 idiom —
+        // `establishBridgeStoredLook` dismissed the original).
+        let sheetA = StudioViewModel.BridgeSaveResult(
+            lookName: "Bridge Look A", roomName: roomA.name, bridgeLabel: "Bridge A",
+            isRunningOnBridge: true, createdLocalPreset: true,
+            stopSurvivesRelaunch: true,
+            headline: BridgeSaveCopy.savedAndRunning,
+            stoppableManifestID: manifestA)
+        vm.bridgeSaveResult = sheetA
+        await vm.stopSavedBridgeLook(sheetA)
+
+        // A is gone, exactly.
+        XCTAssertTrue(orchestrator.testExactManifestIDs(bridgeID: "bridge-a", roomID: "shared-room").isEmpty)
+        XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-a", roomID: "shared-room").isEmpty)
+        XCTAssertNil(orchestrator.testCompositionTransport(bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertNil(vm.runningEffect(for: roomA))
+        XCTAssertNil(vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: "shared-room"))
+        XCTAssertFalse(orchestrator.testHasCompositionRuntime(bridgeID: "bridge-a", roomID: "shared-room"),
+            "A's stale replaced runtime fell with A's chain")
+        XCTAssertFalse(orchestrator.testHasComposerTelemetrySession(roomID: "shared-room", bridgeID: "bridge-a"))
+        XCTAssertNil(vm.bridgeSaveResult)
+
+        // B is completely intact.
+        XCTAssertEqual(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: "shared-room"),
+                       [manifestB])
+        XCTAssertEqual(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: "shared-room"),
+                       [manifestB])
+        XCTAssertEqual(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: "shared-room"),
+                       .bridgeStored)
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: "shared-room"), .bridgeStored,
+            "the aggregate stays alive on B's surviving claim")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: "shared-room"))
+        XCTAssertNotNil(vm.runningEffect(for: roomB))
+        XCTAssertNotNil(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: "shared-room"))
+        XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(roomID: "shared-room", bridgeID: "bridge-b"))
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.isEmpty,
+            "not one delete crossed the bridge boundary")
+
+        // Stopping B's — the LAST claimant — is what empties the room.
+        let sheetB = StudioViewModel.BridgeSaveResult(
+            lookName: "Bridge Look B", roomName: roomB.name, bridgeLabel: "Bridge B",
+            isRunningOnBridge: true, createdLocalPreset: true,
+            stopSurvivesRelaunch: true,
+            headline: BridgeSaveCopy.savedAndRunning,
+            stoppableManifestID: manifestB)
+        vm.bridgeSaveResult = sheetB
+        await vm.stopSavedBridgeLook(sheetB)
+        XCTAssertNil(orchestrator.testCompositionTransport(roomID: "shared-room"))
+        XCTAssertNil(vm.runningEffect(for: roomB))
+        XCTAssertNil(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: "shared-room"))
+    }
+
+    /// HCS-28 — a newer REST playback takes the exact bridge+room key WHILE
+    /// the running-owner Stop is suspended inside its bridge deletes. The
+    /// stop still retires the old manifest and empties its ownership, but it
+    /// mints NO presentation authorization — every part of the newer
+    /// playback survives, and it still accepts a generation-matched work
+    /// item.
+    func testANewerLookTakingTheKeyMidStopSurvivesCompletely() async throws {
+        stageStreamableBridge(bridgeB)
+        let playing = runtimeOnlyPreset(named: "Playing")
+        let save = bridgeStorablePreset(named: "Saved Look")
+        let vm = makeP7FVM(presets: [playing, save])
+        let room = streamRoomOnB()
+        let manifestID = try await establishBridgeStoredLook(
+            vm, room: room, playing: playing, save: save)
+        let rowBefore = try XCTUnwrap(vm.runningEffect(for: room))
+        let boxBefore = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id))
+
+        // Park the stop inside its bridge deletes.
+        let gate = RestGate()
+        bridgeB.v1Spy.stageDeleteGate("sensor:new-sensor", gate)
+        let orch = orchestrator!
+        let stopTask = Task { await orch.stopSavedBridgeLook(manifestID: manifestID) }
+        await gate.waitUntilStarted()
+
+        // While the stop is suspended, a newer REST playback takes the exact
+        // key. (Production `startCompositionMode` would first run replacement
+        // cleanup against the very manifest whose deletes are parked —
+        // deadlock by construction — so the newer playback is staged through
+        // the production seam, exactly as a start would install it.)
+        let newerGeneration = 41
+        orchestrator.testStageRESTComposition(
+            roomID: room.id, bridgeID: "bridge-b", api: bridgeB,
+            generation: newerGeneration, lightIDs: ["L1", "L2"])
+
+        gate.release()
+        let outcome = await stopTask.value
+
+        guard case .removed(manifestID, "bridge-b", room.id,
+                            removedRunningOwnership: true,
+                            exactOwnershipSetEmptied: true,
+                            presentationFence: nil) = outcome else {
+            return XCTFail("the old owner retires, but a broken fence authorizes NO presentation withdrawal; got \(outcome)")
+        }
+        XCTAssertTrue(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: room.id).isEmpty,
+            "the old manifest is gone")
+        XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: room.id).isEmpty,
+            "and its ownership")
+
+        // Every part of the newer playback survives.
+        XCTAssertTrue(orchestrator.testHasCompositionRuntime(bridgeID: "bridge-b", roomID: room.id),
+            "the newer runtime survives the old look's stop")
+        XCTAssertEqual(orchestrator.testCompositionGeneration(bridgeID: "bridge-b", roomID: room.id),
+                       newerGeneration, "its generation is untouched")
+        XCTAssertTrue(orchestrator.testCompositionOrderContains(bridgeID: "bridge-b", roomID: room.id),
+            "it remains scheduled")
+        XCTAssertEqual(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: room.id),
+                       .rest, "its exact REST claim stands")
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), .rest,
+            "and the aggregate")
+        XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(roomID: room.id, bridgeID: "bridge-b"),
+            "its telemetry session stands")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id),
+            "the key's live publication was NOT withdrawn")
+        XCTAssertEqual(vm.runningEffect(for: room)?.cardID, rowBefore.cardID,
+            "the VM row was not touched")
+        XCTAssertTrue(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id) === boxBefore,
+            "nor the editor box")
+
+        // Playback proof: the newer runtime still ACCEPTS work.
+        await orchestrator.testPerformCompositionPrime(room: room, generation: newerGeneration)
+        let sendState = try XCTUnwrap(orchestrator.testCompositionRuntimeSendState(
+            bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertGreaterThanOrEqual(sendState.sendCount, 1,
+            "a generation-matched work item still lands on the newer runtime")
+
+        await orchestrator.stopCompositionMode(roomID: room.id, bridgeID: "bridge-b")
+    }
+
+    /// HCS-29 — the continuation-gap race on the STOP path: the orchestrator
+    /// returns a then-valid presentation fence, a newer look starts before
+    /// the VM applies the outcome, and the apply-time revalidation preserves
+    /// the newer look's row and box while still dismissing the sheet.
+    func testAStaleStopOutcomePreservesTheNewerLooksRowAndBox() async throws {
+        stageStreamableBridge(bridgeB)
+        let playing = runtimeOnlyPreset(named: "Playing")
+        let save = bridgeStorablePreset(named: "Saved Look")
+        let newer = runtimeOnlyPreset(named: "Newer Look")
+        let vm = makeP7FVM(presets: [playing, save, newer])
+        let room = streamRoomOnB()
+        vm.selectedRoom = room
+        await vm.apply(vm.studioCard(for: playing),
+                       roomOverride: room, preferEntertainmentOverride: false)
+        await vm.saveActiveLookToBridge(vm.studioCard(for: save))
+        let sheet = try XCTUnwrap(vm.bridgeSaveResult)
+        let manifestID = try XCTUnwrap(sheet.stoppableManifestID)
+
+        // The orchestrator half of the Stop completes with a VALID fence…
+        let outcome = await orchestrator.stopSavedBridgeLook(manifestID: manifestID)
+        guard case .removed(_, _, _, removedRunningOwnership: true,
+                            exactOwnershipSetEmptied: true,
+                            presentationFence: .some(let fence)) = outcome else {
+            return XCTFail("precondition: an authorized running-owner stop; got \(outcome)")
+        }
+        XCTAssertTrue(orchestrator.presentationFenceHolds(fence),
+            "precondition: the authorization was valid when returned")
+
+        // …but before the VM continuation runs, a newer look starts.
+        await vm.apply(vm.studioCard(for: newer),
+                       roomOverride: room, preferEntertainmentOverride: false)
+        let newerRow = try XCTUnwrap(vm.runningEffect(for: room),
+            "precondition: the newer look is playing (status: \(vm.statusMessage))")
+        let newerBox = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id))
+        let newerGeneration = try XCTUnwrap(orchestrator.testCompositionGeneration(
+            bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertFalse(orchestrator.presentationFenceHolds(fence),
+            "the newer start invalidated the returned authorization")
+
+        // The stale outcome is applied — exactly what the suspended VM
+        // continuation would do.
+        vm.applySavedLookStopOutcome(outcome, for: sheet)
+
+        XCTAssertNil(vm.bridgeSaveResult,
+            "the saved resources are genuinely gone — the sheet dismisses")
+        XCTAssertEqual(vm.runningEffect(for: room)?.cardID, newerRow.cardID,
+            "the newer look's row survives the stale authorization")
+        XCTAssertTrue(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id) === newerBox,
+            "and its editor box")
+        XCTAssertTrue(orchestrator.testHasCompositionRuntime(bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertEqual(orchestrator.testCompositionGeneration(bridgeID: "bridge-b", roomID: room.id),
+                       newerGeneration)
+        XCTAssertTrue(orchestrator.testCompositionOrderContains(bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertEqual(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: room.id), .rest)
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), .rest)
+        XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(roomID: room.id, bridgeID: "bridge-b"))
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id))
+
+        await orchestrator.stopCompositionMode(roomID: room.id, bridgeID: "bridge-b")
+    }
+
+    /// HCS-30 — the continuation-gap race on the SAVE-FAILURE path, plus the
+    /// copy-truth rule: a stale fence proves only that playback CHANGED, so
+    /// the applied wording claims neither "nothing is playing" nor "a look
+    /// is playing" — whether the newer look is still running or already
+    /// stopped again.
+    func testAStaleSaveFailureOutcomeSpeaksNeutrallyAndPreservesTheNewerLook() async throws {
+        stageStreamableBridge(bridgeB)
+        let playing = runtimeOnlyPreset(named: "Playing")
+        let firstSave = bridgeStorablePreset(named: "First Bridge Look")
+        let replacement = bridgeStorablePreset(named: "Replacement")
+        let newer = runtimeOnlyPreset(named: "Newer Look")
+        let vm = makeP7FVM(presets: [playing, firstSave, replacement, newer])
+        let room = streamRoomOnB()
+        _ = try await establishBridgeStoredLook(
+            vm, room: room, playing: playing, save: firstSave)
+
+        // The orchestrator half of the failed replacement, NOT yet applied.
+        bridgeB.v1Spy.creationShouldFail = true
+        let outcome = await orchestrator.saveLookToBridge(
+            room: room, paramBox: CompositionParamBox(preset: replacement),
+            gamutOverride: .c, preset: replacement)
+        bridgeB.v1Spy.creationShouldFail = false
+        guard case .previousLookRemovedSaveFailed(bridgeID: "bridge-b",
+                                                  presentationFence: .some(let fence)) = outcome else {
+            return XCTFail("precondition: the typed destructive failure with a then-valid fence; got \(outcome)")
+        }
+        XCTAssertTrue(orchestrator.presentationFenceHolds(fence))
+
+        // A newer look starts in the continuation gap.
+        vm.selectedRoom = room
+        await vm.apply(vm.studioCard(for: newer),
+                       roomOverride: room, preferEntertainmentOverride: false)
+        let newerRow = try XCTUnwrap(vm.runningEffect(for: room),
+            "precondition: the newer look is playing (status: \(vm.statusMessage))")
+        let newerBox = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertFalse(orchestrator.presentationFenceHolds(fence))
+
+        vm.applyBridgeSaveOutcome(
+            outcome, room: room, presetName: "Replacement", bridgeLabel: "Bridge B")
+
+        XCTAssertEqual(vm.studioNotice?.message,
+                       BridgeSaveCopy.previousLookRemovedSaveFailedPlaybackChanged,
+            "a stale fence gets the neutral sentence — never the empty-room claim")
+        XCTAssertEqual(vm.runningEffect(for: room)?.cardID, newerRow.cardID,
+            "the newer look's row survives")
+        XCTAssertTrue(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id) === newerBox,
+            "and its editor box")
+        XCTAssertEqual(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: room.id), .rest,
+            "nothing of the newer playback changed")
+
+        // Start-then-STOP before application: the newer look stops again, so
+        // the room is idle — but the fence is still stale, and neither
+        // emptiness nor playback is proven. Still the neutral sentence.
+        vm.studioNotice = nil
+        await orchestrator.stopCompositionMode(roomID: room.id, bridgeID: "bridge-b")
+        XCTAssertFalse(orchestrator.presentationFenceHolds(fence),
+            "stopping the newer look does not restore the old authorization")
+        vm.applyBridgeSaveOutcome(
+            outcome, room: room, presetName: "Replacement", bridgeLabel: "Bridge B")
+        XCTAssertEqual(vm.studioNotice?.message,
+                       BridgeSaveCopy.previousLookRemovedSaveFailedPlaybackChanged,
+            "started-then-stopped: no unsupported claim in either direction")
+    }
+
+    /// HCS-31 — the same continuation-gap protection for
+    /// `savedNotConfirmedRunning(previousLookRemoved: true)`: a stale fence
+    /// preserves the newer look's row and box, and the sheet headline makes
+    /// no claim about what is or isn't playing.
+    func testAStaleSavedNotConfirmedOutcomeKeepsTheNewerLookAndSpeaksNeutrally() async throws {
+        stageStreamableBridge(bridgeB)
+        let playing = runtimeOnlyPreset(named: "Playing")
+        let firstSave = bridgeStorablePreset(named: "First Bridge Look")
+        let secondSave = bridgeStorablePreset(named: "Second Bridge Look")
+        let newer = runtimeOnlyPreset(named: "Newer Look")
+        let vm = makeP7FVM(presets: [playing, firstSave, secondSave, newer])
+        let room = streamRoomOnB()
+        _ = try await establishBridgeStoredLook(
+            vm, room: room, playing: playing, save: firstSave)
+
+        bridgeB.v1Spy.sensorStatusShouldFail = true
+        let outcome = await orchestrator.saveLookToBridge(
+            room: room, paramBox: CompositionParamBox(preset: secondSave),
+            gamutOverride: .c, preset: secondSave)
+        bridgeB.v1Spy.sensorStatusShouldFail = false
+        guard case .savedNotConfirmedRunning(_, "bridge-b",
+                                             previousLookRemoved: true,
+                                             presentationFence: .some(let fence)) = outcome else {
+            return XCTFail("precondition: an inert replacement over a removed predecessor, fence valid; got \(outcome)")
+        }
+        XCTAssertTrue(orchestrator.presentationFenceHolds(fence))
+
+        vm.selectedRoom = room
+        await vm.apply(vm.studioCard(for: newer),
+                       roomOverride: room, preferEntertainmentOverride: false)
+        let newerRow = try XCTUnwrap(vm.runningEffect(for: room),
+            "precondition: the newer look is playing (status: \(vm.statusMessage))")
+        let newerBox = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertFalse(orchestrator.presentationFenceHolds(fence))
+
+        vm.applyBridgeSaveOutcome(
+            outcome, room: room, presetName: "Second Bridge Look", bridgeLabel: "Bridge B")
+
+        let sheet = try XCTUnwrap(vm.bridgeSaveResult)
+        XCTAssertEqual(sheet.headline,
+                       BridgeSaveCopy.savedNotConfirmedPreviousLookRemovedPlaybackChanged,
+            "the headline claims neither emptiness nor active playback")
+        XCTAssertEqual(vm.runningEffect(for: room)?.cardID, newerRow.cardID,
+            "the newer look's row survives")
+        XCTAssertTrue(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id) === newerBox,
+            "and its editor box")
+
+        vm.bridgeSaveResult = nil
+        await orchestrator.stopCompositionMode(roomID: room.id, bridgeID: "bridge-b")
+    }
+
+    /// HCS-32 — the IN-FLIGHT save-path fence, on the production path: a
+    /// newer REST playback takes the exact key while `attemptBridgeStoredSave`
+    /// is suspended inside its upload. The failed replacement still retires
+    /// the destroyed predecessor exactly, mints no fence, preserves every
+    /// part of the newer playback, and the applied copy stays neutral.
+    func testANewerLookDuringTheSaveSuspensionSurvivesTheFailedReplacement() async throws {
+        stageStreamableBridge(bridgeB)
+        let playing = runtimeOnlyPreset(named: "Playing")
+        let firstSave = bridgeStorablePreset(named: "First Bridge Look")
+        let replacement = bridgeStorablePreset(named: "Replacement")
+        let vm = makeP7FVM(presets: [playing, firstSave, replacement])
+        let room = streamRoomOnB()
+        let oldManifest = try await establishBridgeStoredLook(
+            vm, room: room, playing: playing, save: firstSave)
+        let rowBefore = try XCTUnwrap(vm.runningEffect(for: room))
+        let boxBefore = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id))
+
+        // Park the replacement INSIDE its upload — after the predecessor
+        // cleanup has completed, before the outcome exists.
+        let gate = RestGate()
+        bridgeB.v1Spy.stageCreationGate(gate)
+        let orch = orchestrator!
+        let saveTask = Task {
+            await orch.saveLookToBridge(
+                room: room, paramBox: CompositionParamBox(preset: replacement),
+                gamutOverride: .c, preset: replacement)
+        }
+        await gate.waitUntilStarted()
+        XCTAssertTrue(bridgeB.v1Spy.deletedResources.contains("sensor:new-sensor"),
+            "the upload parks only after the predecessor cleanup ran")
+        XCTAssertNil(animationStore.manifest(id: oldManifest),
+            "the predecessor is already retired while the save is suspended")
+
+        // The newer playback takes the exact key mid-save.
+        let newerGeneration = 47
+        orchestrator.testStageRESTComposition(
+            roomID: room.id, bridgeID: "bridge-b", api: bridgeB,
+            generation: newerGeneration, lightIDs: ["L1", "L2"])
+
+        // Release the upload and make it fail: nothing new lands.
+        bridgeB.v1Spy.creationShouldFail = true
+        gate.release()
+        let outcome = await saveTask.value
+        bridgeB.v1Spy.creationShouldFail = false
+
+        guard case .previousLookRemovedSaveFailed(bridgeID: "bridge-b",
+                                                  presentationFence: nil) = outcome else {
+            return XCTFail("the destroyed predecessor is still reported exactly, but the broken fence mints no authorization; got \(outcome)")
+        }
+        XCTAssertTrue(orchestrator.testExactManifestIDs(bridgeID: "bridge-b", roomID: room.id).isEmpty,
+            "the old chain and the failed upload left nothing")
+        XCTAssertTrue(orchestrator.testBridgeStoredChainOwnership(bridgeID: "bridge-b", roomID: room.id).isEmpty)
+
+        // Every part of the newer playback survives the failed replacement.
+        XCTAssertTrue(orchestrator.testHasCompositionRuntime(bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertEqual(orchestrator.testCompositionGeneration(bridgeID: "bridge-b", roomID: room.id),
+                       newerGeneration)
+        XCTAssertTrue(orchestrator.testCompositionOrderContains(bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertEqual(orchestrator.testCompositionTransport(bridgeID: "bridge-b", roomID: room.id), .rest)
+        XCTAssertEqual(orchestrator.testCompositionTransport(roomID: room.id), .rest)
+        XCTAssertTrue(orchestrator.testHasComposerTelemetrySession(roomID: room.id, bridgeID: "bridge-b"))
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: room.id),
+            "the key's live publication was NOT withdrawn")
+
+        // Applying the outcome preserves the presentation mirrors and speaks
+        // neutrally.
+        vm.applyBridgeSaveOutcome(
+            outcome, room: room, presetName: "Replacement", bridgeLabel: "Bridge B")
+        XCTAssertEqual(vm.studioNotice?.message,
+                       BridgeSaveCopy.previousLookRemovedSaveFailedPlaybackChanged)
+        XCTAssertEqual(vm.runningEffect(for: room)?.cardID, rowBefore.cardID,
+            "the standing row was preserved for the newer playback")
+        XCTAssertTrue(vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: room.id) === boxBefore,
+            "and the standing box")
+
+        // Playback proof, then a normal stop.
+        await orchestrator.testPerformCompositionPrime(room: room, generation: newerGeneration)
+        let sendState = try XCTUnwrap(orchestrator.testCompositionRuntimeSendState(
+            bridgeID: "bridge-b", roomID: room.id))
+        XCTAssertGreaterThanOrEqual(sendState.sendCount, 1)
+        await orchestrator.stopCompositionMode(roomID: room.id, bridgeID: "bridge-b")
     }
 
     // ──────────────────────────────────────────────
