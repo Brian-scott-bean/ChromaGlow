@@ -530,12 +530,33 @@ saved-not-confirmed); HCS-08 proves the successful save replaces the look exactl
 commit. Guard 12: `saveLookToBridge` may not call `startCompositionMode`, and the shared core
 must exist.
 
+### Round 4b — the production-path self-review, and its one finding, closed
+
+The requested self-review of the three production paths confirmed paths 1 and 2 hold (all-nil
+bounded reads correctly yield release-not-proven; only commit-boundary failures refuse, while
+acquire-time failures keep their HCT-05-pinned REST fallback) and found ONE remaining orphanable
+state on path 3: a room whose current look is bridge-stored. Replacement cleanup must remove
+that chain before a new save's upload can fail, so the failure left the transport claim, the
+Now Playing publication, and the VM's running row all asserting a look that provably no longer
+existed. That state is now typed end-to-end: `BridgeSaveOutcome.previousLookRemovedSaveFailed`
+(returned only when the prior claim was `.bridgeStored` and the store provably holds no manifest
+for that room+bridge), every claim of the former chain withdrawn — orchestrator transport,
+active-effect publication, and the VM's `runningEffects` row — with honest copy stating both
+halves: the previous look was removed to make room, and nothing plays on the bridge now.
+`savedNotConfirmedRunning` over a bridge-stored predecessor clears the stale claims too;
+`replacementBlocked` clears nothing (cleanup did not complete, the chain may survive). HCS-07
+additionally pins `roomOwnershipGeneration` untouched by every failed save; HCS-09 (VM-level)
+pins the running-effect row of a playing REST composition surviving a failed save; HCS-10
+(VM-level) pins the exceptional state end-to-end while an unrelated room on the other bridge
+keeps its row and claim.
+
 ### Validation
 
-Full suite **1365/1365** green (xcresulttool), **twice consecutively**.
-`MultiBridgeRoutingTests` 320/320. All 12 hardening guards pass. No new source file, no
-`project.pbxproj` change, no version/build/signing change (verified against `3479243`).
-Hardware validation remains open: §V of `docs/ios/master-on-device-checklist.md`.
+Full suite **1367/1367** green (xcresulttool), **twice consecutively** (round 4b; the round-4
+commit alone was 1365/1365 twice). `MultiBridgeRoutingTests` 322/322. All 12 hardening guards
+pass. No new source file, no `project.pbxproj` change, no version/build/signing change
+(verified against `3479243`). Hardware validation remains open: §V of
+`docs/ios/master-on-device-checklist.md`.
 
 ---
 
