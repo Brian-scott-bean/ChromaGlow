@@ -679,8 +679,17 @@ fi
 if ! grep -q 'func saveLookToBridge(' "$HC_ORCH"; then
     fail "composer-hardware-convergence" "the strict bridge-save entry point is missing from $HC_ORCH"
 fi
-if ! grep -q 'bridgeSaveRequestID' "$HC_ORCH"; then
-    fail "composer-hardware-convergence" "startCompositionMode lost its strict-save request id — a failed upload would silently become app-driven playback again"
+if ! grep -q 'func attemptBridgeStoredSave(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the shared bridge-save core is gone — the save and ordinary-play paths would drift apart again"
+fi
+# Round 4: the save is TRANSACTIONAL. saveLookToBridge may never re-enter
+# startCompositionMode — its head replaces the room's current look (the
+# generation bump invalidates the running runtime), so a save that failed
+# there had already stopped the look it was supposed to save.
+hc_save_body=$(awk '/func saveLookToBridge\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_save_body" | grep -q 'startCompositionMode('; then
+    fail "composer-hardware-convergence" "saveLookToBridge calls startCompositionMode — a failed save would invalidate the running look before the refusal"
 fi
 # The shared save-outcome mailbox stays dead (round 3). A single slot read
 # across suspension points is how one save's Stop button ended up pointed at

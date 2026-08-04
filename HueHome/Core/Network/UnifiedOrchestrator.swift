@@ -4675,11 +4675,25 @@ final class UnifiedOrchestrator {
                 // overplay this flow exists to prevent — refuse and re-ask.
                 studioEntOwnerByBridge.removeValue(forKey: stopBid)
                 return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
-            case .sessionFailed:
-                // The session died with no proven foreign owner. REST is the
-                // same honest fallback an unusable session has always had.
-                committed = nil
+            case .verificationUnavailable:
+                // Unknown is not verified. Nothing starts on a bridge whose
+                // final state nobody saw — and no fallback, for the same
+                // reason release-not-proven gets none.
                 studioEntOwnerByBridge.removeValue(forKey: stopBid)
+                return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+            case .releaseNotProven:
+                // The target may STILL be streaming. REST writes underneath
+                // an unreleased stream is the exact condition this flow
+                // refuses everywhere else — start nothing, say so.
+                studioEntOwnerByBridge.removeValue(forKey: stopBid)
+                return .failed(message: EntertainmentAvailabilityCopy.couldNotStart)
+            case .sessionFailed:
+                // Observed dead and stayed down. The explicit refusal, not a
+                // silent transport change (round 4) — the user asked to
+                // stream, and "couldn't start, nothing changed" is the
+                // honest answer.
+                studioEntOwnerByBridge.removeValue(forKey: stopBid)
+                return .failed(message: EntertainmentAvailabilityCopy.couldNotStart)
             }
         } else {
             // No prepared session means the engine is running on REST. An
@@ -4843,16 +4857,14 @@ final class UnifiedOrchestrator {
         preset: CompositionPreset? = nil,
         capturedPlan: EntertainmentTakeoverPlan? = nil,
         consent: EntertainmentConsent? = nil,
-        preparedEntertainment: EntertainmentPreparation? = nil,
-        /// Non-nil marks an explicit "Save to bridge", not ordinary playback —
-        /// and names WHICH save, so its outcome can never be read by another.
-        ///
-        /// Ordinary playback may fall back to app-driven REST when a bridge
-        /// upload fails — the user asked for the look to play, and it does.
-        /// A save may not: falling back there reports a successful save of
-        /// something that was never saved. Every strict exit records a typed
-        /// outcome under this id BEFORE the REST runtime could be installed.
-        bridgeSaveRequestID: UUID? = nil
+        preparedEntertainment: EntertainmentPreparation? = nil
+        // Round 4: there is deliberately NO strict-save mode here any more.
+        // An explicit Save to Bridge never enters this function — it runs
+        // `attemptBridgeStoredSave` directly, after its own zero-mutation
+        // preflight — because everything below this signature (the generation
+        // bump, the telemetry session, the ownership note) replaces the
+        // room's CURRENT look, and a save that fails must leave that look
+        // exactly as it found it.
     ) async -> PlaybackStartOutcome {
         // Scoped to THIS transaction's candidate — see startStudioMode.
         var outstandingCandidateID: UUID?
@@ -4960,31 +4972,6 @@ final class UnifiedOrchestrator {
         let compositionLightIDs = lightResolution.lightIDs
         debugLog("[Composer] 🔍 Resolved \(compositionLightIDs.count) individual lights for per-light REST")
 
-        // ── Structural strictness (round 3) ──
-        //
-        // The bridge-stored branch below is gated on a non-empty light list,
-        // and skipping it used to fall straight through to the REST tail —
-        // so an explicit save with no resolvable lights silently started an
-        // app-driven runtime while reporting "nothing recorded". A save that
-        // cannot even reach the bridge branch refuses HERE, typed, before
-        // any runtime exists to fall back to. The two empty cases get their
-        // own sentences: a room with no lights and a bridge that could not
-        // be read are different problems with different fixes.
-        if let bridgeSaveRequestID {
-            switch lightResolution {
-            case .noneInRoom:
-                bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .nothingRecorded(
-                    reason: BridgeSaveCopy.saveFailedNoLights)
-                return .failed(message: BridgeSaveCopy.saveFailedNoLights)
-            case .unresolved:
-                bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .nothingRecorded(
-                    reason: BridgeSaveCopy.saveFailedLightsUnresolved)
-                return .failed(message: BridgeSaveCopy.saveFailedLightsUnresolved)
-            case .lights:
-                break
-            }
-        }
-
         if let entConfig {
             // Auto-detect principal angle when user hasn't set one
             if paramBox.motion.motionAngle < 0 {
@@ -5038,19 +5025,22 @@ final class UnifiedOrchestrator {
             // shown and consented to.
             if let prepared = preparedComposition {
                 // The final verification, immediately before the commit. A
-                // candidate that fails it is already released; a contested
-                // one must NOT become a quiet bridge-stored/REST fallback —
-                // that would play over the other controller's show.
+                // candidate that fails it is already released — and NO
+                // failure here may become a quiet bridge-stored/REST
+                // continuation (round 4): a contested bridge would play over
+                // the other controller's show, an unproven release may still
+                // be streaming, and even the observed session failure owes
+                // the user the explicit refusal rather than a silently
+                // different transport.
                 switch await verifyAndCommitEntertainment(prepared) {
                 case .committed:
                     break
                 case .contested(let snapshot, let targetConfigID):
                     return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
-                case .sessionFailed:
-                    // Died with no proven foreign owner — the bridge-stored /
-                    // REST tail below is the same honest fallback a failed
-                    // acquire has always had.
-                    preparedComposition = nil
+                case .verificationUnavailable:
+                    return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+                case .releaseNotProven, .sessionFailed:
+                    return .failed(message: EntertainmentAvailabilityCopy.couldNotStart)
                 }
             }
             if let prepared = preparedComposition {
@@ -5116,177 +5106,55 @@ final class UnifiedOrchestrator {
         if let preset, preset.canRunOnBridge,
            preset.capabilityTier == .bridgeOptimized,
            !compositionLightIDs.isEmpty {
-            do {
-                let v1Client = try api.makeV1Client()
-
-                // Clean up only what THIS room owns on THIS bridge (packet 2),
-                // and REFUSE TO CREATE until that cleanup is provably complete
-                // (packet 8). Two recurring rule chains driving one room is not
-                // an accumulation risk to tidy up later — both keep firing, they
-                // fight over every light, and the app has a record of only the
-                // newer one.
-                let readiness = await cleanupBridgeStoredAnimationForReplacement(
-                    roomID: roomID, bridgeID: bridgeID, v1Client: v1Client)
-                if case .blocked(let reason, let retained) = readiness {
-                    debugLog("[Composer] ⚠ Refusing bridge-stored upload for room=\(roomID): \(reason) (retained \(retained.count) manifest(s))")
-                    // Close the session this start opened, exactly as a stop
-                    // would — nothing was created, so nothing may be claimed.
-                    deactivateComposerTelemetrySession(
-                        sessionKey: composerTelemetryKey, pendingRemovalReported: false)
-                    // A refusal by RECORDED DECISION, not by accident of the
-                    // `.failed` fallback — and in save words, not start words.
-                    if let bridgeSaveRequestID {
-                        bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .nothingRecorded(
-                            reason: BridgeSaveCopy.saveFailedReplacementBlocked)
-                        return .failed(message: BridgeSaveCopy.saveFailedReplacementBlocked)
-                    }
-                    return .failed(
-                        message: "Couldn't start \(preset.name) — the previous look is still on the bridge. Try again in a moment.")
-                }
-
-                debugLog("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
-                // M-04: the engine maps v2 UUIDs → v1 numeric ids via id_v1
-                // identity, so it needs the v2 light objects. One retry — a
-                // transient fetch failure here would silently demote the
-                // "close the app, lights keep going" path to app-driven.
-                var v2Lights = (try? await api.fetchLights()) ?? []
-                if v2Lights.isEmpty {
-                    try? await Task.sleep(for: .milliseconds(300))
-                    v2Lights = (try? await api.fetchLights()) ?? []
-                }
-                if v2Lights.isEmpty {
-                    debugLog("[Composer] ⚠ Could not fetch lights for id_v1 mapping — running app-driven (stops when the app closes)")
-                }
-                let manifest = try await bridgeAnimationEngine.upload(
-                    preset: preset,
-                    room: room,
-                    lightIDs: compositionLightIDs,
-                    v2Lights: v2Lights,
-                    gamut: compositionGamut,
-                    v1Client: v1Client
-                )
-                // ── Durable BEFORE running ────────────────────────
-                //
-                // Stamp the stable bridge identity here, where it is exact. The
-                // engine only ever sees a client, which knows its host but not
-                // which BridgeRecord it is — and an IP alone strands the
-                // manifest the moment DHCP moves the bridge.
-                let owned = manifest.adoptingBridgeID(bridgeID)
-
-                // The manifest is the only thing that can name these resources
-                // later, so it goes to disk before they are allowed to run. A
-                // write that failed used to be indistinguishable from one that
-                // worked, and the animation started regardless — which is how a
-                // bridge ends up running a look the app cannot see or stop.
-                guard bridgeAnimationStore.save(owned) else {
-                    debugLog("[Composer] Manifest for '\(preset.name)' did not persist — removing the resources it named")
-                    let cleanup = await bridgeAnimationEngine.stop(manifest: owned, v1Client: v1Client)
-                    deactivateComposerTelemetrySession(
-                        sessionKey: composerTelemetryKey, pendingRemovalReported: false)
-
-                    if cleanup == .removed {
-                        // Compensation proved complete — the forget funnel's
-                        // standard of evidence is met, and nothing remains to
-                        // name.
-                        forgetManifestRecord(id: owned.id)
-                        if let bridgeSaveRequestID {
-                            bridgeSaveOutcomesByRequest[bridgeSaveRequestID] =
-                                .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
-                        }
-                        return .failed(message: BridgeSaveCopy.saveFailedNothingRecorded)
-                    }
-
-                    // Compensation is INCOMPLETE: resources the manifest names
-                    // may still exist on the bridge, and this manifest is the
-                    // only exact handle on them. It used to be forgotten here
-                    // unconditionally — before the cleanup result was even
-                    // inspected — which reduced the failure to a sentence and
-                    // left the user nothing to act on. It is retained instead,
-                    // and quarantined DURABLY before the failure is reported:
-                    // the normal persist just failed, so only an independent
-                    // record survives a relaunch to feed reconciliation and
-                    // the exact Stop.
-                    let durable = bridgeAnimationStore.quarantine(owned)
-                    let message = durable
-                        ? BridgeSaveCopy.partialCleanupRecoverable
-                        : BridgeSaveCopy.partialCleanupNotDurable
-                    if let bridgeSaveRequestID {
-                        bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .partialCleanupFailure(
-                            manifestID: owned.id, bridgeID: bridgeID,
-                            recoverableAfterRelaunch: durable, reason: message)
-                    }
-                    return .failed(message: message)
-                }
-
-                // Only now may it start.
-                do {
-                    try await bridgeAnimationEngine.activate(manifest: owned, v1Client: v1Client)
-                } catch {
-                    // The resources exist AND are tracked, but nothing is
-                    // running. Keep the manifest — it is the exact evidence
-                    // that makes them stoppable and recoverable — and say so
-                    // rather than claiming the look is playing.
-                    debugLog("[Composer] '\(preset.name)' persisted but did not start: \(error.localizedDescription)")
-                    compositionTransportByRoom[roomID] = .bridgeStored
-                    noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
-                    if let bridgeSaveRequestID {
-                        bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .savedNotConfirmedRunning(
-                            manifestID: owned.id, bridgeID: bridgeID)
-                    }
-                    return .failed(message: BridgeSaveCopy.savedNotConfirmedRunning)
-                }
-                if let bridgeSaveRequestID {
-                    bridgeSaveOutcomesByRequest[bridgeSaveRequestID] =
-                        .savedAndRunning(manifestID: owned.id, bridgeID: bridgeID)
-                }
-
+            // The bridge/store work is the shared `attemptBridgeStoredSave`
+            // core (round 4) — the same code the transactional Save to Bridge
+            // uses, so the compensation and quarantine rules cannot drift
+            // between the two entry points. This ORDINARY-PLAY caller maps
+            // its results onto playback semantics; the strict save maps them
+            // onto save semantics without ever entering this function.
+            switch await attemptBridgeStoredSave(
+                room: room, preset: preset, lightIDs: compositionLightIDs,
+                gamut: compositionGamut, bridgeID: bridgeID, api: api) {
+            case .saved(let owned):
                 compositionTransportByRoom[roomID] = .bridgeStored
                 noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
-                debugLog("[Composer] ⚡ Bridge-stored animation active! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s/step")
+                debugLog("[Composer] ⚡ Bridge-stored animation active! \(owned.stepCount) steps, \(owned.intervalSeconds)s/step")
                 debugLog("[Composer] ⚡ Close the app — lights will keep going!")
-
-                // ── Immediate prime frame ──
-                // The first bridge rule won't fire until the schedule ticks (up to cycleTotalSeconds away).
-                // Send step-0 of the composition now so the room turns on instantly after the card tap.
-                let paramBox = CompositionParamBox(preset: preset)
-                if let firstFrame = CompositionEngine.render(
-                    time: 0,
-                    channelIDs: [0],
-                    params: paramBox
-                ).first {
-                    let primeXY = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: compositionGamut)
-                    let primeBri = max(1.0, firstFrame.brightness * 100.0)
-                    do {
-                        try await api.setGroupedLightEffect(
-                            id: groupedLightID, on: true,
-                            brightness: primeBri,
-                            xy: (primeXY.x, primeXY.y),
-                            mirek: nil,
-                            duration: 500
-                        )
-                        debugLog("[Composer][BridgePrime] ✅ room='\(room.name)' bri=\(String(format: "%.1f", primeBri))")
-                    } catch {
-                        debugLog("[Composer][BridgePrime] ⚠ Prime frame failed (bridge animation still active): \(error.localizedDescription)")
-                    }
-                }
+                await sendBridgeStoredPrimeFrame(
+                    preset: preset, gamut: compositionGamut,
+                    api: api, groupedLightID: groupedLightID, roomName: room.name)
                 return .started(transport: .bridgeStored)  // Don't start app-driven scheduler
-            } catch {
-                // An explicit save may NOT become ordinary playback.
-                //
-                // Falling through here is right for a tap that meant "play
-                // this": the look still runs, just from the phone. It is wrong
-                // for a tap that meant "put this on the bridge", because the
-                // user is then shown a successful save of something that was
-                // never saved — and will discover it only when closing the app
-                // stops the lights they were told would keep going.
-                if let bridgeSaveRequestID {
-                    debugLog("[Composer] ⚠ Bridge save failed for '\(preset.name)': \(error.localizedDescription) — starting nothing")
-                    deactivateComposerTelemetrySession(
-                        sessionKey: composerTelemetryKey, pendingRemovalReported: false)
-                    bridgeSaveOutcomesByRequest[bridgeSaveRequestID] = .nothingRecorded(
-                        reason: BridgeSaveCopy.saveFailedNothingRecorded)
-                    return .failed(message: BridgeSaveCopy.saveFailedNothingRecorded)
-                }
+
+            case .savedNotConfirmedRunning:
+                // The resources exist AND are tracked, but nothing is
+                // running. Keep the manifest — it is the exact evidence that
+                // makes them stoppable and recoverable — and say so rather
+                // than claiming the look is playing.
+                compositionTransportByRoom[roomID] = .bridgeStored
+                noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
+                return .failed(message: BridgeSaveCopy.savedNotConfirmedRunning)
+
+            case .replacementBlocked:
+                // Close the session this start opened, exactly as a stop
+                // would — nothing was created, so nothing may be claimed.
+                deactivateComposerTelemetrySession(
+                    sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                return .failed(
+                    message: "Couldn't start \(preset.name) — the previous look is still on the bridge. Try again in a moment.")
+
+            case .compensatedNothingRemains:
+                deactivateComposerTelemetrySession(
+                    sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                return .failed(message: BridgeSaveCopy.saveFailedNothingRecorded)
+
+            case .partialCleanup(_, _, let recoverable):
+                deactivateComposerTelemetrySession(
+                    sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                return .failed(message: recoverable
+                    ? BridgeSaveCopy.partialCleanupRecoverable
+                    : BridgeSaveCopy.partialCleanupNotDurable)
+
+            case .uploadFailed(let error):
                 debugLog("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
                 // Packet 5: carry the reason forward instead of dropping it in
                 // a DEBUG log. The three cases stay DISTINCT all the way to the
@@ -7819,24 +7687,193 @@ final class UnifiedOrchestrator {
         case saveAlreadyInProgress(reason: String)
     }
 
-    /// Each in-flight save's outcome, keyed by its request id — written only
-    /// by the strict exits of `startCompositionMode`, read and removed only
-    /// by the `saveLookToBridge` call that minted the id. A single shared
-    /// slot let overlapping saves read each other's `manifestID`, and the
-    /// destructive Stop on the result sheet then targeted the wrong look.
-    @ObservationIgnored private var bridgeSaveOutcomesByRequest: [UUID: BridgeSaveOutcome] = [:]
-
     /// Exact bridge+room pairs with a strict save in flight. Claimed before
     /// the first await (this class is @MainActor, so the claim is atomic),
-    /// released in the same defer that collects the outcome.
+    /// released in the same defer that returns the outcome.
     @ObservationIgnored private var strictSavesInFlight: Set<String> = []
 
-    /// Save a look onto the bridge, with NO app-driven fallback.
+    /// The bridge/store half of a bridge-stored save — and NOTHING of its
+    /// playback half (round 4).
     ///
-    /// The strict counterpart of starting a composition. Every failure is
-    /// reported as a bridge-save failure rather than quietly becoming ordinary
-    /// playback, so the result the user is shown can never say "Saved" about a
-    /// look that is merely running from the phone.
+    /// Both entry points run exactly this: ordinary Play from inside
+    /// `startCompositionMode` (which already replaced the room's look before
+    /// calling, because playing IS a replacement), and the transactional
+    /// Save to Bridge, which must leave the room's current look untouched
+    /// until a saved chain is confirmed. One implementation, so the
+    /// cleanup-readiness, compensation, and quarantine rules cannot drift
+    /// between them.
+    enum BridgeStoredAttempt {
+        /// Resources created, manifest durable, chain confirmed started.
+        case saved(BridgeAnimationManifest)
+        /// Resources created and tracked; the chain did not start. The
+        /// manifest is retained — it is the exact evidence that keeps the
+        /// resources stoppable.
+        case savedNotConfirmedRunning(BridgeAnimationManifest)
+        /// The previous bridge look could not be provably cleaned up first.
+        /// Nothing was created.
+        case replacementBlocked
+        /// The upload failed; nothing was created. Carries the error so the
+        /// ordinary-play caller can classify its documented REST fallback.
+        case uploadFailed(Error)
+        /// The manifest did not persist, and compensation proved COMPLETE:
+        /// nothing remains anywhere.
+        case compensatedNothingRemains
+        /// The manifest did not persist and compensation could NOT finish:
+        /// the manifest is retained and quarantined (durably when possible).
+        case partialCleanup(manifestID: UUID, bridgeID: String, recoverableAfterRelaunch: Bool)
+    }
+
+    private func attemptBridgeStoredSave(
+        room: RoomDisplayItem,
+        preset: CompositionPreset,
+        lightIDs: [String],
+        gamut: HueColorUtils.Gamut,
+        bridgeID: String,
+        api: HueAPIClient
+    ) async -> BridgeStoredAttempt {
+        let v1Client: HueV1Client
+        do { v1Client = try api.makeV1Client() }
+        catch { return .uploadFailed(error) }
+
+        // Clean up only what THIS room owns on THIS bridge (packet 2), and
+        // REFUSE TO CREATE until that cleanup is provably complete (packet
+        // 8). Two recurring rule chains driving one room is not an
+        // accumulation risk to tidy up later — both keep firing, they fight
+        // over every light, and the app has a record of only the newer one.
+        let readiness = await cleanupBridgeStoredAnimationForReplacement(
+            roomID: room.id, bridgeID: bridgeID, v1Client: v1Client)
+        if case .blocked(let reason, let retained) = readiness {
+            debugLog("[Composer] ⚠ Refusing bridge-stored upload for room=\(room.id): \(reason) (retained \(retained.count) manifest(s))")
+            return .replacementBlocked
+        }
+
+        debugLog("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
+        // M-04: the engine maps v2 UUIDs → v1 numeric ids via id_v1
+        // identity, so it needs the v2 light objects. One retry — a
+        // transient fetch failure here would silently demote the
+        // "close the app, lights keep going" path to app-driven.
+        var v2Lights = (try? await api.fetchLights()) ?? []
+        if v2Lights.isEmpty {
+            try? await Task.sleep(for: .milliseconds(300))
+            v2Lights = (try? await api.fetchLights()) ?? []
+        }
+        if v2Lights.isEmpty {
+            debugLog("[Composer] ⚠ Could not fetch lights for id_v1 mapping — the upload will refuse rather than guess")
+        }
+
+        let manifest: BridgeAnimationManifest
+        do {
+            manifest = try await bridgeAnimationEngine.upload(
+                preset: preset,
+                room: room,
+                lightIDs: lightIDs,
+                v2Lights: v2Lights,
+                gamut: gamut,
+                v1Client: v1Client
+            )
+        } catch {
+            return .uploadFailed(error)
+        }
+
+        // ── Durable BEFORE running ────────────────────────
+        //
+        // Stamp the stable bridge identity here, where it is exact. The
+        // engine only ever sees a client, which knows its host but not
+        // which BridgeRecord it is — and an IP alone strands the
+        // manifest the moment DHCP moves the bridge.
+        let owned = manifest.adoptingBridgeID(bridgeID)
+
+        // The manifest is the only thing that can name these resources
+        // later, so it goes to disk before they are allowed to run. A
+        // write that failed used to be indistinguishable from one that
+        // worked, and the animation started regardless — which is how a
+        // bridge ends up running a look the app cannot see or stop.
+        guard bridgeAnimationStore.save(owned) else {
+            debugLog("[Composer] Manifest for '\(preset.name)' did not persist — removing the resources it named")
+            let cleanup = await bridgeAnimationEngine.stop(manifest: owned, v1Client: v1Client)
+
+            if cleanup == .removed {
+                // Compensation proved complete — the forget funnel's
+                // standard of evidence is met, and nothing remains to name.
+                forgetManifestRecord(id: owned.id)
+                return .compensatedNothingRemains
+            }
+
+            // Compensation is INCOMPLETE: resources the manifest names may
+            // still exist on the bridge, and this manifest is the only exact
+            // handle on them. It is retained, and quarantined DURABLY before
+            // the failure is reported: the normal persist just failed, so
+            // only an independent record survives a relaunch to feed
+            // reconciliation and the exact Stop.
+            let durable = bridgeAnimationStore.quarantine(owned)
+            return .partialCleanup(
+                manifestID: owned.id, bridgeID: bridgeID,
+                recoverableAfterRelaunch: durable)
+        }
+
+        // Only now may it start.
+        do {
+            try await bridgeAnimationEngine.activate(manifest: owned, v1Client: v1Client)
+        } catch {
+            debugLog("[Composer] '\(preset.name)' persisted but did not start: \(error.localizedDescription)")
+            return .savedNotConfirmedRunning(owned)
+        }
+        return .saved(owned)
+    }
+
+    /// The bridge chain's step-0, sent immediately: the first bridge rule
+    /// won't fire until the schedule ticks (up to a full cycle away), so the
+    /// room turns on instantly instead of sitting dark.
+    private func sendBridgeStoredPrimeFrame(
+        preset: CompositionPreset,
+        gamut: HueColorUtils.Gamut,
+        api: HueAPIClient,
+        groupedLightID: String,
+        roomName: String
+    ) async {
+        let paramBox = CompositionParamBox(preset: preset)
+        guard let firstFrame = CompositionEngine.render(
+            time: 0, channelIDs: [0], params: paramBox
+        ).first else { return }
+        let primeXY = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: gamut)
+        let primeBri = max(1.0, firstFrame.brightness * 100.0)
+        do {
+            try await api.setGroupedLightEffect(
+                id: groupedLightID, on: true,
+                brightness: primeBri,
+                xy: (primeXY.x, primeXY.y),
+                mirek: nil,
+                duration: 500
+            )
+            debugLog("[Composer][BridgePrime] ✅ room='\(roomName)' bri=\(String(format: "%.1f", primeBri))")
+        } catch {
+            debugLog("[Composer][BridgePrime] ⚠ Prime frame failed (bridge animation still active): \(error.localizedDescription)")
+        }
+    }
+
+    /// Save a look onto the bridge — TRANSACTIONALLY with respect to whatever
+    /// is playing (round 4).
+    ///
+    /// The previous shape delegated to `startCompositionMode`, whose very
+    /// first playback mutations (the generation bump, the telemetry session,
+    /// the ownership note) replace the room's current look — so a save that
+    /// went on to FAIL had already invalidated the runtime it was supposed to
+    /// be saving, and the scheduler removed the playing look as stale. Every
+    /// preflight and the whole bridge/store attempt now run with ZERO
+    /// playback mutations; the room's look is replaced only after a saved
+    /// chain is CONFIRMED running on the bridge.
+    ///
+    /// Non-success outcomes and what they leave behind:
+    /// - ineligible / busy / no-lights / unreadable / blocked / upload-failed
+    ///   / compensated: nothing anywhere; the current look untouched.
+    /// - `savedNotConfirmedRunning`: resources exist on the bridge but the
+    ///   chain is NOT running (activation is the only thing that starts it),
+    ///   so the current look keeps playing and is NOT replaced — the one
+    ///   deliberate divergence from ordinary play, which has no look to
+    ///   preserve. The manifest is retained and the result's exact Stop can
+    ///   remove the inert resources immediately.
+    /// - `partialCleanupFailure`: leftover resources, inert for the same
+    ///   reason; current look untouched; quarantined handle carried.
     func saveLookToBridge(
         room: RoomDisplayItem,
         paramBox: CompositionParamBox,
@@ -7862,31 +7899,79 @@ final class UnifiedOrchestrator {
             return .saveAlreadyInProgress(reason: BridgeSaveCopy.saveAlreadyInProgress)
         }
         strictSavesInFlight.insert(gateKey)
+        defer { strictSavesInFlight.remove(gateKey) }
 
-        let requestID = UUID()
-        defer {
-            // Every exit releases the gate and clears this request's slot —
-            // an entry that outlived its reader would be a leak that a later
-            // save on a colliding UUID could mistake for its own.
-            strictSavesInFlight.remove(gateKey)
-            bridgeSaveOutcomesByRequest.removeValue(forKey: requestID)
+        // ── Preflight: zero playback mutations ──
+        guard let bridgeID = room.bridgeID,
+              let api = hueClient(for: bridgeID),
+              let groupedLightID = room.groupedLightID else {
+            return .nothingRecorded(reason: EntertainmentConsentCopy.bridgeUnreadable)
         }
-
-        let outcome = await startCompositionMode(
-            room: room, paramBox: paramBox, gamutOverride: gamutOverride,
-            preferEntertainment: false, tier: .bridgeOptimized, preset: preset,
-            capturedPlan: nil, consent: nil, preparedEntertainment: nil,
-            bridgeSaveRequestID: requestID)
-
-        if let recorded = bridgeSaveOutcomesByRequest[requestID] { return recorded }
-
-        // Structurally unreachable now — every strict exit records an outcome
-        // before returning — but a missing entry must still never read as a
-        // save, so the honest floor stays.
-        if case .failed(let message) = outcome {
-            return .nothingRecorded(reason: message)
+        let lightIDs: [String]
+        switch await resolveCompositionLights(for: room, api: api) {
+        case .noneInRoom:
+            return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNoLights)
+        case .unresolved:
+            return .nothingRecorded(reason: BridgeSaveCopy.saveFailedLightsUnresolved)
+        case .lights(let ids):
+            lightIDs = ids
         }
-        return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
+        let gamut: HueColorUtils.Gamut
+        if let gamutOverride { gamut = gamutOverride }
+        else { gamut = await resolveCompositionGamut(for: room, api: api) }
+
+        // ── The attempt: bridge and manifest store only ──
+        switch await attemptBridgeStoredSave(
+            room: room, preset: preset, lightIDs: lightIDs,
+            gamut: gamut, bridgeID: bridgeID, api: api) {
+
+        case .saved(let owned):
+            // ── COMMIT: only now does playback state change ──
+            //
+            // The chain is confirmed running on the bridge, so the app-driven
+            // look must yield — two engines driving one room fight over every
+            // light. This is the same replacement ordinary play performs at
+            // its head, done at the tail instead, where failure can no longer
+            // reach it.
+            let roomID = room.id
+            let nextGeneration = (compositionGenerations[roomID] ?? 0) + 1
+            compositionGenerations[roomID] = nextGeneration
+            beginComposerTelemetrySession(
+                sessionKey: ComposerTelemetrySessionKey(
+                    bridgeKey: room.bridgeID ?? "legacy",
+                    scope: RestScope(roomID: roomID, owner: .composer)),
+                generation: nextGeneration)
+            compositionTransportByRoom[roomID] = .bridgeStored
+            noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
+            debugLog("[Composer] ⚡ Bridge-stored animation active! \(owned.stepCount) steps, \(owned.intervalSeconds)s/step")
+            await sendBridgeStoredPrimeFrame(
+                preset: preset, gamut: gamut,
+                api: api, groupedLightID: groupedLightID, roomName: room.name)
+            return .savedAndRunning(manifestID: owned.id, bridgeID: bridgeID)
+
+        case .savedNotConfirmedRunning(let owned):
+            // The chain never started, so the current look keeps playing —
+            // claiming .bridgeStored here would hand the room to a chain
+            // that is not running. The manifest is the exact Stop's target.
+            return .savedNotConfirmedRunning(manifestID: owned.id, bridgeID: bridgeID)
+
+        case .replacementBlocked:
+            return .nothingRecorded(reason: BridgeSaveCopy.saveFailedReplacementBlocked)
+
+        case .uploadFailed:
+            return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
+
+        case .compensatedNothingRemains:
+            return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
+
+        case .partialCleanup(let manifestID, let manifestBridgeID, let recoverable):
+            let message = recoverable
+                ? BridgeSaveCopy.partialCleanupRecoverable
+                : BridgeSaveCopy.partialCleanupNotDurable
+            return .partialCleanupFailure(
+                manifestID: manifestID, bridgeID: manifestBridgeID,
+                recoverableAfterRelaunch: recoverable, reason: message)
+        }
     }
 
     /// Stop and remove exactly one saved look, by manifest identity.
@@ -7912,8 +7997,15 @@ final class UnifiedOrchestrator {
         }
         let result = await bridgeAnimationEngine.stop(manifest: manifest, v1Client: v1Client)
         guard retireManifest(manifest, after: result) else { return false }
-        compositionTransportByRoom.removeValue(forKey: manifest.roomID)
-        removeActiveEffect(roomID: manifest.roomID)
+        // Withdraw the room's claims only when they are THIS chain's claims.
+        // A saved-but-not-confirmed manifest (round 4) is inert while the
+        // room's current look keeps playing on REST — removing that look's
+        // transport record and Now Playing row here would erase a claim that
+        // is still true, about a look this stop never touched.
+        if compositionTransportByRoom[manifest.roomID] == .bridgeStored {
+            compositionTransportByRoom.removeValue(forKey: manifest.roomID)
+            removeActiveEffect(roomID: manifest.roomID)
+        }
         return true
     }
 
@@ -9100,10 +9192,20 @@ extension UnifiedOrchestrator {
         /// the consent unspent. The snapshot presents the contested
         /// configuration as foreign so the caller can re-prompt honestly.
         case contested(snapshot: EntertainmentActivitySnapshot, targetConfigID: String)
-        /// The session died (or its release could not be proven) without any
-        /// proven foreign owner. Not a takeover: the caller's ordinary
-        /// technical-failure path is the honest answer, and no prompt may be
-        /// raised on it.
+        /// The final activity read could not be taken. Unknown is not
+        /// verified: the candidate was released and the caller must refuse
+        /// with "nothing was changed" — no commit, no fallback, no prompt.
+        case verificationUnavailable
+        /// Our release was requested but the target was NEVER observed
+        /// inactive. The configuration may genuinely still be active, so the
+        /// caller must start NOTHING — REST writes underneath an unreleased
+        /// stream is the exact condition refused everywhere else. No prompt
+        /// either: nothing proved a foreign owner.
+        case releaseNotProven
+        /// The session died and the target was observed inactive and stayed
+        /// inactive. A plain ChromaGlow session failure — the caller refuses
+        /// with the explicit streaming-failed answer rather than silently
+        /// changing transport. No prompt.
         case sessionFailed
     }
 
@@ -9134,14 +9236,30 @@ extension UnifiedOrchestrator {
         // Fresh activity first, then the exact client. In this order a
         // healthy answer covers the read too: the session was alive after
         // the snapshot was taken.
-        let fresh = await entertainmentActivity(onBridge: bridgeID)
+        //
+        // FAIL CLOSED on the read itself (round 4): an unreadable final
+        // bridge state is UNKNOWN, not verified. Committing a healthy client
+        // over a nil read would publish ownership on a bridge whose actual
+        // occupancy nobody saw.
+        guard let fresh = await entertainmentActivity(onBridge: bridgeID) else {
+            debugLog("[Handoff] Final activity read on \(bridgeID) unavailable — releasing rather than committing unverified")
+            outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
+            await prepared.client.stopSession()
+            noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+            return .verificationUnavailable
+        }
         let healthy = await prepared.client.hasStartedSession()
 
         // A DIFFERENT foreign configuration active at the boundary is
-        // directly observed — no release gymnastics needed.
-        if let fresh, !fresh.foreign.isEmpty {
+        // directly observed — no release gymnastics needed. The target is
+        // EXCLUDED here (round 4): asynchronous terminal teardown can release
+        // our own ledger entries before this read, making the target itself
+        // read as foreign — and calling that "another configuration" would
+        // bypass the observed-transition proof the same-target case requires.
+        let foreignOthers = fresh.foreign.subtracting([targetID])
+        if !foreignOthers.isEmpty {
             noteTakeoverEvent(.foreignConfigurationReacquiredOtherConfig,
-                              bridgeID: bridgeID, configID: fresh.foreign.first)
+                              bridgeID: bridgeID, configID: foreignOthers.first)
             debugLog("[Handoff] A controller claimed \(bridgeID) at the commit boundary — releasing rather than claiming ownership")
             outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
             await prepared.client.stopSession()
@@ -9149,7 +9267,12 @@ extension UnifiedOrchestrator {
             return .contested(snapshot: fresh, targetConfigID: targetID)
         }
 
-        if healthy {
+        // The target reading as foreign — whatever the cause — means our
+        // claim on it is not clean, so it takes the same observed-transition
+        // path as a dead client. It is never labelled a reacquisition here.
+        let targetAppearsForeign = fresh.foreign.contains(targetID)
+
+        if healthy && !targetAppearsForeign {
             commitEntertainment(prepared)
             // The takeover has now actually produced a VERIFIED, COMMITTED
             // session, so the token is spent. Spending it earlier would burn
@@ -9158,7 +9281,8 @@ extension UnifiedOrchestrator {
             return .committed
         }
 
-        // The exact client is dead. Request our release, then observe.
+        // The exact client is dead (or the target's ownership is no longer
+        // cleanly ours). Request our release, then observe.
         outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
         let stopRequest = await prepared.client.stopSession()
         if stopRequest == .requestFailed {
@@ -9217,12 +9341,15 @@ extension UnifiedOrchestrator {
             // Died and stayed down: a ChromaGlow session failure, nothing
             // more. No prompt — there is no foreign owner to ask about.
             noteTakeoverEvent(.chromaGlowSessionNotUsable, bridgeID: bridgeID, configID: targetID)
-        } else {
-            // Never seen inactive. That may be another controller — or our
-            // own start not yet torn down. Say only what was observed.
-            noteTakeoverEvent(.chromaGlowReleaseNotProven, bridgeID: bridgeID, configID: targetID)
+            return .sessionFailed
         }
-        return .sessionFailed
+        // Never seen inactive. That may be another controller — or our own
+        // start not yet torn down. Say only what was observed, and let the
+        // caller start NOTHING: the configuration may genuinely still be
+        // streaming, and REST writes underneath an unreleased stream is the
+        // exact condition refused everywhere else.
+        noteTakeoverEvent(.chromaGlowReleaseNotProven, bridgeID: bridgeID, configID: targetID)
+        return .releaseNotProven
     }
 
     /// Install a prepared session — the "commit" half. In production this is
