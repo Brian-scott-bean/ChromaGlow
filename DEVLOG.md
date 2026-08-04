@@ -57,6 +57,13 @@
   the exact Stop, live Now Playing rows and Studio's running rows are bridge-exact-keyed so
   same-room-id looks coexist and fall individually, and ambiguous legacy identity fails
   closed. Suite 1372/1372 ×2, MultiBridgeRoutingTests 327/327, guard 12 sub-check (j).
+  **ROUND 4d (2026-08-04): exact identity kept through the stop handoffs** — the live Now
+  Playing stop no longer downgrades an attributed entry to a bare room id (a collision used
+  to stop NEITHER bridge's look), and removed-group teardown matches recorded bridge+room
+  instead of comparing bare group ids with bridge-qualified presentation keys (doomed loops
+  used to survive bridge removal / room-zone deletion). Suite 1380/1380 ×2,
+  MultiBridgeRoutingTests 335/335, guard 12 sub-check (k). NOTE: `OrchestratorTests.swift`
+  is not a member of the test target (never has run — pbxproj fix deferred, forbidden here).
   **Neither Packet 7 nor Packet 8 hardware validation is complete — Brian must run §V** in
   `docs/ios/master-on-device-checklist.md`. Entries below.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
@@ -491,6 +498,67 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-04 - [Claude] Hardware Convergence round 4d — exact identity through Now Playing stops and removed-group teardown
+
+Branch `fix/hardware-convergence-entertainment-targeting`, PR #60 open and **unmerged**. One
+fix commit + this docs commit. No new source file, no `project.pbxproj` change, no
+version/build/signing change (verified against `3479243`). Independent review verified the
+round-4c ledger and manifest-granular cleanup, and found two blocking regressions the
+exact-key rekey itself exposed — both were places that still DOWNGRADED an exact entry to a
+bare room id.
+
+**(1) The live Now Playing stop lost its bridge at the handoff.**
+`requestNowPlayingStop(_ entry:)` treated recovered rows exactly but forwarded every live
+entry to the roomID-only overload, and `studioStopHandler` accepted only `(roomID,
+turnOffLights)`. With two live rows sharing one room id (exactly the state 4c made
+representable), Studio's room-only lookup correctly failed closed — so tapping EITHER exact
+Dashboard row, Dashboard Stop All, or Siri Stop All stopped **neither**. Now:
+`LiveEffectStopTarget {bridgeID, roomID, turnOffLights}` is the core-level exact stop target
+(no Core→UI dependency on `RoomEffectKey`); the handler carries it; an attributed entry
+routes through the new exact `requestNowPlayingStop(bridgeID:roomID:)`; and
+`stopFromNowPlaying(_ target:)` resolves the exact row directly. The roomID-only overload
+remains as the compatibility path: it works when exactly one bridge holds the room id and
+fails closed on a collision. Recovered rows keep their manifest routing untouched.
+
+**(2) Removed-group teardown compared bare group ids with presentation keys.**
+`stopEffectsForRemovedGroups([String])` matched `entry.id` — now the bridge-qualified
+`cg-live:<bridge>:<room>` — so normal live entries matched nothing and could survive bridge
+removal or room/zone deletion, leaving a render loop erroring against a deleted group. It now
+takes exact `RemovedGroupIdentity {bridgeID, roomID}` values and matches on the entry's
+RECORDED bridge + room: `removeBridge` passes only that bridge's rooms and zones,
+`deleteRoom`/`deleteZone` pass the item's exact bridge + group, and teardown routes each
+doomed ENTRY through `requestNowPlayingStop(entry, turnOffLights: false)` — so removing
+bridge A can no longer stop bridge B's same-room-id look, and a doomed loop actually dies.
+
+**Tests.** HCS-16 (exact Dashboard stop under a collision: A stops, B's row/publication/
+runtime survive, then B stops), HCS-17 (Dashboard Stop All stops both colliding entries),
+HCS-18 (Siri Stop All stops both and no group off-PUT reaches either bridge), HCS-19
+(removing bridge A tears down only A; B keeps row, publication, and telemetry session),
+HCS-20/21 (deleting a room/zone on A deletes and stops only A's), HCS-22 (room-only stop
+fails closed on a collision, works once unambiguous), HCS-23 (the handler receives the exact
+bridge+room; a room-only request invents no bridge). Guard 12 sub-check (k) pins the target
+type, the handler signature, the entry routing, and identity-matched removed-group teardown.
+
+**Structural finding, reported honestly:** `HueHomeTests/OrchestratorTests.swift` is NOT a
+member of the HueHomeTests target — zero `project.pbxproj` references and zero symbols in
+the built test bundle. Its tests (including the old removed-groups test) have never executed
+in any recorded suite total. Its source is updated to the new signatures for consistency,
+but the coverage it nominally held now lives in `MultiBridgeRoutingTests`, where it runs.
+Adding the file to the target needs a pbxproj change this PR is forbidden to make — flagging
+for a future run that may touch the project file.
+
+### Validation
+
+Full suite **1380/1380** green (xcresulttool), **twice consecutively** (round 4c was
+1372/1372 ×2). `MultiBridgeRoutingTests` **335/335** (327 + HCS-16..23). Focused
+`EntertainmentAvailabilityTests`/`StudioEffectsV2Tests`/`BridgeAnimationCorrectnessTests`/
+`MixerTrayMetricsTests`: 51/51. All hardening guards pass (12 guards + sub-checks j and k).
+No new source file, no `project.pbxproj` change, no version/build/signing change (verified
+against `3479243`). Hardware validation remains open: §V of
+`docs/ios/master-on-device-checklist.md`.
 
 ---
 
