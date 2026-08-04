@@ -75,6 +75,22 @@
   exact throughout with bridge-authoritative Entertainment teardown, SSE suppression is
   bridge+room exact, and Studio's composition boxes are `RoomEffectKey`-keyed. Suite
   1384/1384 ×2, MultiBridgeRoutingTests 339/339, guard 12 sub-check (l).
+  **ROUND 4f (2026-08-04): saved-look Stop truth** (rollback tag
+  `checkpoint/pre-hardware-convergence-round-4f` at `87d9828`): `stopSavedBridgeLook`
+  retired the manifest FIRST and then read the ownership ledger the retirement had just
+  emptied — a nil key cannot tell an emptied running chain from an inert
+  saved-not-confirmed one, so the sheet's Remove on an inert manifest unpublished the
+  room's still-running REST look, and stopping a running one left Studio's row, box, and
+  the replaced runtime standing. Ownership evidence is now captured BEFORE retirement and
+  passed explicitly to the one shared withdraw (which never removes a publication on a
+  merely-nil key); the Stop returns a typed outcome carrying a revalidatable presentation
+  fence (ownership generation + exact playback generation + no standing live claim), which
+  Studio re-verifies at the moment it removes the exact row and box — a newer playback
+  that takes the key mid-suspension or in the continuation gap keeps everything; the two
+  destructive save-failure outcomes carry the same fence, and their empty-room wording is
+  chosen at apply time (a nil/stale fence gets neutral playback-changed copy claiming
+  neither emptiness nor playback). Suite 1392/1392 ×2, MultiBridgeRoutingTests 347/347,
+  guard 12 sub-check (m).
   **Neither Packet 7 nor Packet 8 hardware validation is complete — Brian must run §V** in
   `docs/ios/master-on-device-checklist.md`. Entries below.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
@@ -509,6 +525,102 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-04 - [Claude] Hardware Convergence round 4f — saved-look Stop truth
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-4f` (at `87d9828`), PR #60 open and **unmerged**.
+One fix commit + this docs commit. No new source file, no `project.pbxproj` change, no
+version/build/signing change (verified against `3479243`). Independent review verified round
+4e's exact live-runtime migration, exact transport claims, exact SSE suppression, and exact
+composition boxes, and found one blocking defect left in `stopSavedBridgeLook`: it called
+`retireManifest` FIRST — whose `forgetManifestRecord` funnel subtracts the stopped chain from
+`bridgeStoredChainOwnership` — and only then asked the shared withdraw whether the room's
+claims should fall, on the condition `bridgeStoredChainOwnership[key] == nil`. A nil key
+cannot distinguish a confirmed-running chain whose entry just emptied from an inert
+`savedNotConfirmedRunning` (or partial-cleanup, or quarantined) chain that never entered the
+ledger. Two opposite bugs: the result sheet's Remove on an INERT manifest removed the exact
+live Now Playing row of the room's still-running REST look (runtime, scheduler, `.rest`
+claim, telemetry, VM row and box all kept going — Dashboard falsely empty), and stopping a
+RUNNING saved look returned only a `Bool`, so Studio could not clean its own row, its editor
+box, or the stale replaced runtime the save-commit had left standing.
+
+**(1) Ownership evidence is captured before retirement and required at every withdraw.**
+`stopSavedBridgeLook` reads the exact key's ledger membership BEFORE its single bridge await;
+capture, retirement, withdrawal and fence verification then run in one synchronous main-actor
+turn (a raced manifest replacement still fails closed through `stillCurrent`). The save path
+had the same shape hidden inside it — `attemptBridgeStoredSave`'s replacement cleanup retires
+predecessors before the outcome arms run — so `withdrawDestroyedBridgeStoredClaims` now takes
+`ownershipEvidence` (the stop's pre-retirement membership; the save arms' pre-attempt
+`predecessorChain`) and `presentationFenceHeld` as REQUIRED parameters with no defaults and
+no ledger fallback. The removal branch fires only for a proven running chain whose exact
+bridge+room set emptied; an inert chain's Remove deletes its bridge resources and manifest
+evidence and touches nothing else.
+
+**(2) Presentation withdrawal is fenced against a newer owner, twice.** A newer playback can
+take the exact key while the bridge delete (or the save's upload) is suspended — and again
+between the orchestrator's return and the VM continuation that applies it. The Stop therefore
+returns a typed `SavedLookStopOutcome` whose `.removed` carries identity
+(`manifestID`/`bridgeID`/`roomID`), the two ownership truths (`removedRunningOwnership`,
+`exactOwnershipSetEmptied`), and an optional `SavedLookPresentationFence` (ownership
+generation + exact playback generation with nil-versus-value preserved + no standing
+`.rest`/`.entertainment` claim) minted only when withdrawal was authorized. Studio's factored
+sync appliers (`applySavedLookStopOutcome`, `applyBridgeSaveOutcome`) re-verify the fence via
+`presentationFenceHolds(_:)` immediately before removing the exact `runningEffects` row and
+`activeCompositionBoxes` entry — never on an unverified Bool, never room-id-only. When the
+running owner's set empties with the fence held, the orchestrator also retires the stale
+replaced runtime, its scheduler membership, and the Composer telemetry session — exactly that
+playback key, and only when no live claim stands on it.
+
+**(3) The destructive save failures carry the same fence, and their copy follows it.**
+`savedNotConfirmedRunning` gains `presentationFence`; `previousLookRemovedSaveFailed` gains
+it and LOSES its precomputed reason string — "nothing is playing on your bridge now" is a
+cross-continuation claim, so the wording is chosen at apply time: a valid fence removes the
+exact row + box and uses the empty-room sentences; a nil or stale fence preserves both and
+uses neutral playback-changed copy (`…PlaybackChanged`) that claims neither emptiness nor
+active playback, because the newer look may itself have stopped again before application.
+
+**Tests.** HCS-07 extended: after the inert Remove, the REST look retains runtime, unchanged
+generation, scheduler membership, exact + aggregate `.rest`, telemetry and publication, and
+still ACCEPTS a generation-matched work item before stopping normally. HCS-08 extended: the
+running Stop's typed outcome plus every-claim-gone assertions (manifest, resources,
+ownership, exact + aggregate claims, publication, telemetry, runtime, scheduler). HCS-10 and
+both HCS-13 variants additionally pin the destroyed predecessor's exact BOX removal (and the
+other bridge's box survival). HCS-14 pins the typed multiplicity truths: one-of-two owners
+subtracts without emptying (no fence); the last owner empties and mints. New: HCS-25 (VM
+inert sheet Remove preserves the live REST look completely, with another bridge's
+same-room-id look untouched), HCS-26 (VM running sheet Stop withdraws every exact claim),
+HCS-27 (A/B same-room-id running-stop isolation through the real sheet path; aggregate falls
+only with the last claimant), HCS-28 (newer REST playback staged mid-stop under a parked
+delete gate survives completely and still accepts work; outcome mints no fence), HCS-29
+(stale Stop outcome applied after a newer start: row/box preserved, sheet still dismisses),
+HCS-30 (stale save-failure outcome: neutral copy, newer look preserved; plus
+start-then-STOP-before-application — still neutral, no unsupported claim in either
+direction), HCS-31 (stale `savedNotConfirmedRunning` headline stays neutral), HCS-32 (the
+production save-path fence under a parked upload via `stageCreationGate`: predecessor retired
+exactly, no fence minted, newer playback fully intact and accepting work). Guard 12 gained
+sub-check (m): required evidence parameters with no ledger fallback, exactly one
+double-gated `removeActiveEffect` in the withdraw, capture-before-await-and-retirement line
+order in the stop body, typed outcome + fence minting, `presentationFenceHolds` existing,
+both VM appliers revalidating before row AND box removal with no room-only cleanup, empty-room
+copy only behind the fence check, and the outcome case carrying no frozen reason.
+
+### Validation
+
+Full suite **1392/1392** green (xcresulttool), **twice consecutively** (round 4e was
+1384/1384 ×2; +8 new tests). `MultiBridgeRoutingTests` **347/347** (339 + HCS-25..32).
+Focused `StudioEffectsV2Tests`/`DashboardDisplayModelBuilderTests`/
+`CompositionLightResolverTests`/`CompositionReactionTests`/
+`CompositionRoomPriorityScorerTests`/`CompositionStoreTests`: **100/100**. Focused
+`EntertainmentAvailabilityTests`/`BridgeAnimationCorrectnessTests`/`MixerTrayMetricsTests`:
+**45/45** (expanded sibling classes `CompositionRotationPlanTests`,
+`EntertainmentAreaSelectorTests`, `BridgeAnimationPacket8Tests` also ran green: 115/115 and
+121/121 in their file groups). All hardening guards pass (12 guards + sub-checks j, k, l, and
+the new m). No new source file, no `project.pbxproj` change, no version/build/signing change
+(verified against `3479243`). Hardware validation remains open: §V of
+`docs/ios/master-on-device-checklist.md`.
 
 ---
 
