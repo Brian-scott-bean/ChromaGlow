@@ -34,21 +34,24 @@ struct RoomRolodexView: View {
     // wheel can show and still read as a wheel. Studio's deck grid takes every
     // point this gives back, so the stage does not get to be generous.
     private let stageHeight:   CGFloat = 96        // the wheel viewport
-    private let rowHeight:      CGFloat = 32        // vertical detent height
-    private let colWidth:       CGFloat = 150       // horizontal detent width
+    private static let rowHeightConst: CGFloat = 32     // vertical detent height
+    private static let colWidthConst:  CGFloat = 150    // horizontal detent width
+    private var rowHeight: CGFloat { Self.rowHeightConst }
+    private var colWidth:  CGFloat { Self.colWidthConst }
     private let lensWidth:      CGFloat = 214
     private let lensHeight:     CGFloat = 36
 
     // ── Selection + drag state ────────────────────────────────────────
-    @State private var selRoom = 0                  // committed room index
-    @State private var selZone = 0                  // committed zone index
-    @State private var liveRoom = 0                 // currently-centered room while dragging
-    @State private var liveZone = 0                 // currently-centered zone while dragging
-    @State private var lockAxis: Axis? = nil        // axis captured for the active drag
-    @State private var activeAxis: Axis = .vertical // .vertical = a room, .horizontal = a zone
-    @State private var drag: CGFloat = 0            // live translation along the active axis
+    //
+    // C2: the six `@State` scalars that used to live here (selRoom, selZone,
+    // liveRoom, liveZone, lockAxis, activeAxis, drag) are now one machine. The
+    // old `isSyncing` flag is gone with them: its only job was the `!isSyncing`
+    // guard in `updateLive()`, and it could never be true during a drag —
+    // `select(_:)` and the external-sync handler both set and cleared it
+    // synchronously, with no gesture callback in between. The machine encodes
+    // the same rule structurally: `.externalSync` emits nothing.
+    @State private var machine: RolodexSelectionMachine
     @State private var didInit = false
-    @State private var isSyncing = false
     @State private var showListFallback = false
 
     init(
@@ -67,21 +70,45 @@ struct RoomRolodexView: View {
         let startAsZone = selectedRoom?.kind == .zone
         let r = rooms.firstIndex { $0.id == selectedRoom?.id } ?? 0
         let z = zones.firstIndex { $0.id == selectedRoom?.id } ?? 0
-        _activeAxis = State(initialValue: startAsZone ? .horizontal : .vertical)
-        _selRoom = State(initialValue: r); _liveRoom = State(initialValue: r)
-        _selZone = State(initialValue: z); _liveZone = State(initialValue: z)
+        _machine = State(initialValue: RolodexSelectionMachine(
+            rowHeight: Self.rowHeightConst,
+            colWidth: Self.colWidthConst,
+            activeAxis: startAsZone ? .horizontal : .vertical,
+            committedRoom: r,
+            committedZone: z))
     }
 
     // ── Derived ───────────────────────────────────────────────────────
-    private var roomDrag: CGFloat { activeAxis == .vertical ? drag : 0 }
-    private var zoneDrag: CGFloat { activeAxis == .horizontal ? drag : 0 }
+    private var selRoom: Int { machine.committedRoom }
+    private var selZone: Int { machine.committedZone }
+    private var liveRoom: Int { machine.liveRoom }
+    private var liveZone: Int { machine.liveZone }
+    private var activeAxis: Axis { machine.activeAxis }
+
+    private var roomDrag: CGFloat { activeAxis == .vertical ? machine.translation : 0 }
+    private var zoneDrag: CGFloat { activeAxis == .horizontal ? machine.translation : 0 }
 
     private var activeItem: RoomDisplayItem? {
-        activeAxis == .vertical
-            ? rooms[safe: liveRoom]
-            : zones[safe: liveZone]
+        item(axis: activeAxis, index: machine.activeIndex)
     }
     private var activeID: String? { activeItem?.id }
+
+    private func item(axis: Axis, index: Int) -> RoomDisplayItem? {
+        axis == .vertical ? rooms[safe: index] : zones[safe: index]
+    }
+
+    /// Run the machine's effects against the outside world. This is the ONLY
+    /// place the rolodex talks to its parent.
+    private func perform(_ effects: [RolodexSelectionMachine.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .haptic:
+                HapticManager.shared.selection()
+            case let .commit(axis, index):
+                if let item = item(axis: axis, index: index) { onSelect(item) }
+            }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -95,15 +122,17 @@ struct RoomRolodexView: View {
         // Keep the wheels aligned if the selection is changed from elsewhere.
         .onChange(of: selectedRoom?.id) { _, id in
             guard didInit, let id, id != activeID else { return }
-            isSyncing = true
             if let z = zones.firstIndex(where: { $0.id == id }) {
-                activeAxis = .horizontal
-                withAnimation(HueAnimation.card) { selZone = z; liveZone = z }
+                withAnimation(HueAnimation.card) {
+                    machine.apply(.externalSync(axis: .horizontal, index: z),
+                                  roomCount: rooms.count, zoneCount: zones.count)
+                }
             } else if let r = rooms.firstIndex(where: { $0.id == id }) {
-                activeAxis = .vertical
-                withAnimation(HueAnimation.card) { selRoom = r; liveRoom = r }
+                withAnimation(HueAnimation.card) {
+                    machine.apply(.externalSync(axis: .vertical, index: r),
+                                  roomCount: rooms.count, zoneCount: zones.count)
+                }
             }
-            isSyncing = false
         }
         .sheet(isPresented: $showListFallback) {
             RoomPickerSheetView(
@@ -208,56 +237,32 @@ struct RoomRolodexView: View {
     private func wheelDrag(width: CGFloat, height: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 5)
             .onChanged { value in
-                let dx = value.translation.width
-                let dy = value.translation.height
-
-                if lockAxis == nil {
-                    guard abs(dx) > 6 || abs(dy) > 6 else { return }
-                    lockAxis = abs(dx) > abs(dy) ? .horizontal : .vertical
-                    activeAxis = lockAxis!
-                }
-
-                drag = lockAxis == .horizontal ? dx : dy
-                updateLive()
+                perform(machine.apply(
+                    .dragChanged(dx: value.translation.width, dy: value.translation.height),
+                    roomCount: rooms.count, zoneCount: zones.count))
             }
             .onEnded { value in
-                let axis = lockAxis ?? activeAxis
-                let step = axis == .horizontal ? colWidth : rowHeight
-                let predicted = axis == .horizontal ? value.predictedEndTranslation.width : value.predictedEndTranslation.height
-                let base = axis == .horizontal ? selZone : selRoom
-                let count = axis == .horizontal ? zones.count : rooms.count
-                guard count > 0 else { lockAxis = nil; drag = 0; return }
-
-                let target = min(max(Int((CGFloat(base) - predicted / step).rounded()), 0), count - 1)
-
+                // Two transactions, preserved from the legacy shape: the spring
+                // settles onto the predicted detent, and then `select(_:)` ran
+                // its own `HueAnimation.card` transaction over the same indices.
+                // The second one writes identical values, but it is what fires
+                // the selection and the haptic, and it can retarget the
+                // still-running spring — so C2 keeps both. C3 collapses them.
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                    if axis == .horizontal { selZone = target; liveZone = target }
-                    else { selRoom = target; liveRoom = target }
-                    drag = 0
+                    machine.apply(
+                        .dragEnded(predictedDX: value.predictedEndTranslation.width,
+                                   predictedDY: value.predictedEndTranslation.height),
+                        roomCount: rooms.count, zoneCount: zones.count)
                 }
-
-                let item = axis == .horizontal ? zones[safe: target] : rooms[safe: target]
-                if let item { select(item) }
-                lockAxis = nil
+                guard activeItem != nil else { return }   // zero-count axis: inert, as before
+                var effects: [RolodexSelectionMachine.Effect] = []
+                withAnimation(HueAnimation.card) {
+                    effects = machine.apply(
+                        .pickerSelect(axis: machine.activeAxis, index: machine.activeIndex),
+                        roomCount: rooms.count, zoneCount: zones.count)
+                }
+                perform(effects)
             }
-    }
-
-    /// Fires as each new item crosses the center during a drag — the detent tick.
-    private func updateLive() {
-        var newRoom = liveRoom, newZone = liveZone
-        if lockAxis == .vertical, !rooms.isEmpty {
-            newRoom = clampIndex(CGFloat(selRoom) - drag / rowHeight, rooms.count)
-        } else if lockAxis == .horizontal, !zones.isEmpty {
-            newZone = clampIndex(CGFloat(selZone) - drag / colWidth, zones.count)
-        }
-        guard newRoom != liveRoom || newZone != liveZone else { return }
-        liveRoom = newRoom; liveZone = newZone
-        HapticManager.shared.selection()
-        if let item = activeItem, !isSyncing { onSelect(item) }
-    }
-
-    private func clampIndex(_ v: CGFloat, _ count: Int) -> Int {
-        min(max(Int(v.rounded()), 0), count - 1)
     }
 
     /// The active axis is fully opaque. The inactive axis keeps a clear "hole" over
@@ -271,19 +276,28 @@ struct RoomRolodexView: View {
         return Double(t) * 0.18
     }
 
-    /// Commit a concrete item (from the list fallback or a snap) and sync the wheels.
+    /// Commit a concrete item (from the list fallback) and sync the wheels.
+    /// Zones are searched before rooms, exactly as before.
     private func select(_ item: RoomDisplayItem) {
-        isSyncing = true
+        var effects: [RolodexSelectionMachine.Effect] = []
         if let z = zones.firstIndex(where: { $0.id == item.id }) {
-            activeAxis = .horizontal
-            withAnimation(HueAnimation.card) { selZone = z; liveZone = z }
+            withAnimation(HueAnimation.card) {
+                effects = machine.apply(.pickerSelect(axis: .horizontal, index: z),
+                                        roomCount: rooms.count, zoneCount: zones.count)
+            }
         } else if let r = rooms.firstIndex(where: { $0.id == item.id }) {
-            activeAxis = .vertical
-            withAnimation(HueAnimation.card) { selRoom = r; liveRoom = r }
+            withAnimation(HueAnimation.card) {
+                effects = machine.apply(.pickerSelect(axis: .vertical, index: r),
+                                        roomCount: rooms.count, zoneCount: zones.count)
+            }
+        } else {
+            // Not on either wheel — the legacy code still notified the parent
+            // and fired the haptic, so that is preserved verbatim.
+            onSelect(item)
+            HapticManager.shared.selection()
+            return
         }
-        onSelect(item)
-        HapticManager.shared.selection()
-        isSyncing = false
+        perform(effects)
     }
 
     // ── Shared cell ────────────────────────────────────────────────────
@@ -370,6 +384,202 @@ private struct Cylinder: ViewModifier {
                 axis: axis == .vertical ? (x: 1, y: 0, z: 0) : (x: 0, y: 1, z: 0),
                 perspective: 0.5
             )
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MARK: - Rolodex selection machine (Track A / C2)
+//
+// A MECHANICAL extraction of the gesture handlers above. This commit changes
+// no behaviour: the machine still emits a selection event at every detent
+// crossing, exactly as `updateLive()` did. There is no settling phase, no
+// deliberate activation, no delayed commit, no settle token, no watchdog and no
+// token-based rebasing — those are C3's, and putting any of them here would
+// destroy this commit's value as a bisect anchor.
+//
+// `RolodexItemToken` is minted here but never consulted: C2 introduces it as
+// DATA so C3 can key rebasing on it without also having to prove the minting.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Pure detent arithmetic, lifted verbatim from the gesture handlers.
+///
+/// There is no momentum simulation and never was: `predictedEndTranslation` IS
+/// the flick, and the spring is the settle. Preserving these two expressions
+/// unchanged is what preserves the wheel's feel.
+enum RolodexKinematics {
+
+    /// The legacy `clampIndex` bound. A zero-count axis yields `-1`, exactly as
+    /// before — every caller guards on a non-empty axis first, and
+    /// `RolodexSelectionMachine` keeps that guard.
+    static func clamp(_ i: Int, count: Int) -> Int {
+        min(max(i, 0), count - 1)
+    }
+
+    /// The detent under the lens for a live translation.
+    /// Reproduces `clampIndex(CGFloat(base) - drag / step, count)`.
+    static func liveIndex(base: Int, translation: CGFloat, step: CGFloat, count: Int) -> Int {
+        clamp(Int((CGFloat(base) - translation / step).rounded()), count: count)
+    }
+
+    /// The flick-predicted settle detent. Reproduces the `.onEnded` expression
+    /// `min(max(Int((CGFloat(base) - predicted / step).rounded()), 0), count - 1)`.
+    static func settleTarget(base: Int, predicted: CGFloat, step: CGFloat, count: Int) -> Int {
+        clamp(Int((CGFloat(base) - predicted / step).rounded()), count: count)
+    }
+}
+
+/// Opaque, wheel-local identity for one rolodex item.
+///
+/// TYPED FIELDS, not a delimiter-composed string — a "|" inside a bridge or
+/// group id must not be able to alias two items. Indexes alone cannot survive a
+/// roster reorder and cannot disambiguate a duplicate Hue room id across two
+/// bridges, which is why C3 will key rebasing on this rather than on position.
+struct RolodexItemToken: Hashable {
+    let bridgeID: String?
+    let groupID: String
+    let kind: RoomDisplayItem.Kind
+
+    init(item: RoomDisplayItem) {
+        self.bridgeID = item.bridgeID
+        self.groupID = item.id
+        self.kind = item.kind
+    }
+}
+
+/// The rolodex's interaction state, extracted from `RoomRolodexView`'s `@State`.
+///
+/// Counts are passed per-event rather than stored: the view reads `rooms.count`
+/// and `zones.count` live at gesture time, and a stored copy could go stale
+/// against a roster change mid-drag.
+struct RolodexSelectionMachine: Equatable {
+
+    enum Event {
+        case dragChanged(dx: CGFloat, dy: CGFloat)
+        /// Settles onto the flick-predicted detent. Emits NOTHING — the legacy
+        /// `.onEnded` ran its spring first and only then called `select(_:)`,
+        /// and that second step is modelled by `.pickerSelect` below.
+        case dragEnded(predictedDX: CGFloat, predictedDY: CGFloat)
+        /// The legacy `select(_:)`: the picker sheet, and the end-of-drag
+        /// re-application. Deliberate, so it commits.
+        case pickerSelect(axis: Axis, index: Int)
+        /// The legacy `.onChange(of: selectedRoom?.id)` sync. Aligns the wheels
+        /// to a selection made elsewhere and emits nothing — this is what the
+        /// old `isSyncing` flag existed to suppress.
+        case externalSync(axis: Axis, index: Int)
+    }
+
+    enum Effect: Equatable {
+        case haptic
+        /// Writes `vm.selectedRoom`. In C2 this still fires per detent crossing,
+        /// which IS the defect — C3 moves it behind settling.
+        case commit(axis: Axis, index: Int)
+    }
+
+    let rowHeight: CGFloat
+    let colWidth: CGFloat
+
+    private(set) var committedRoom: Int
+    private(set) var committedZone: Int
+    private(set) var liveRoom: Int
+    private(set) var liveZone: Int
+    private(set) var activeAxis: Axis
+    private(set) var lockAxis: Axis?
+    private(set) var translation: CGFloat
+
+    init(
+        rowHeight: CGFloat,
+        colWidth: CGFloat,
+        activeAxis: Axis,
+        committedRoom: Int,
+        committedZone: Int
+    ) {
+        self.rowHeight = rowHeight
+        self.colWidth = colWidth
+        self.activeAxis = activeAxis
+        self.committedRoom = committedRoom
+        self.committedZone = committedZone
+        self.liveRoom = committedRoom
+        self.liveZone = committedZone
+        self.lockAxis = nil
+        self.translation = 0
+    }
+
+    /// The index the lens is over on the active axis.
+    var activeIndex: Int { activeAxis == .vertical ? liveRoom : liveZone }
+
+    @discardableResult
+    mutating func apply(_ event: Event, roomCount: Int, zoneCount: Int) -> [Effect] {
+        switch event {
+        case let .dragChanged(dx, dy):
+            // Axis capture: >6pt on either axis, and it NEVER re-locks for the
+            // life of the gesture.
+            if lockAxis == nil {
+                guard abs(dx) > 6 || abs(dy) > 6 else { return [] }
+                lockAxis = abs(dx) > abs(dy) ? .horizontal : .vertical
+                activeAxis = lockAxis!
+            }
+            translation = lockAxis == .horizontal ? dx : dy
+            return updateLive(roomCount: roomCount, zoneCount: zoneCount)
+
+        case let .dragEnded(predictedDX, predictedDY):
+            let axis = lockAxis ?? activeAxis
+            let step = axis == .horizontal ? colWidth : rowHeight
+            let predicted = axis == .horizontal ? predictedDX : predictedDY
+            let base = axis == .horizontal ? committedZone : committedRoom
+            let count = axis == .horizontal ? zoneCount : roomCount
+            guard count > 0 else {
+                lockAxis = nil
+                translation = 0
+                return []
+            }
+            let target = RolodexKinematics.settleTarget(
+                base: base, predicted: predicted, step: step, count: count)
+            if axis == .horizontal {
+                committedZone = target; liveZone = target
+            } else {
+                committedRoom = target; liveRoom = target
+            }
+            activeAxis = axis
+            translation = 0
+            lockAxis = nil
+            return []
+
+        case let .pickerSelect(axis, index):
+            activeAxis = axis
+            if axis == .horizontal {
+                committedZone = index; liveZone = index
+            } else {
+                committedRoom = index; liveRoom = index
+            }
+            return [.commit(axis: axis, index: index), .haptic]
+
+        case let .externalSync(axis, index):
+            activeAxis = axis
+            if axis == .horizontal {
+                committedZone = index; liveZone = index
+            } else {
+                committedRoom = index; liveRoom = index
+            }
+            return []
+        }
+    }
+
+    /// The detent tick — `updateLive()`, unchanged. Haptic first, then the
+    /// selection write, which is the order the legacy code fired them in.
+    private mutating func updateLive(roomCount: Int, zoneCount: Int) -> [Effect] {
+        var newRoom = liveRoom
+        var newZone = liveZone
+        if lockAxis == .vertical, roomCount > 0 {
+            newRoom = RolodexKinematics.liveIndex(
+                base: committedRoom, translation: translation, step: rowHeight, count: roomCount)
+        } else if lockAxis == .horizontal, zoneCount > 0 {
+            newZone = RolodexKinematics.liveIndex(
+                base: committedZone, translation: translation, step: colWidth, count: zoneCount)
+        }
+        guard newRoom != liveRoom || newZone != liveZone else { return [] }
+        liveRoom = newRoom
+        liveZone = newZone
+        return [.haptic, .commit(axis: activeAxis, index: activeIndex)]
     }
 }
 
