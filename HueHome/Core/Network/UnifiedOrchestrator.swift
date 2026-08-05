@@ -657,31 +657,105 @@ final class UnifiedOrchestrator {
     /// way, because stopping a live effect in a room must not silently retire
     /// a different bridge's running animation that happens to share the room
     /// id.
-    func removeActiveEffect(roomID: String) {
+    func removeActiveEffect(roomID: String, context: StopAuditContext = .unattributed) {
         let matches = activeEffectEntries.filter { $0.recovered == nil && $0.roomID == roomID }
         guard matches.count == 1, let only = matches.first else { return }
         activeEffectEntries.removeAll { $0.id == only.id }
+        recordStopAudit(context, operation: .nowPlayingRemoved,
+                        bridgeID: only.bridgeID, roomID: roomID,
+                        cardOrEffectID: only.effectID, outcomeReason: "roomScoped")
     }
 
     /// Exact live-row removal — the destructive path (round 4c). Removes only
     /// live rows recording exactly this bridge + room; unattributed rows are
     /// retained (never destroy what cannot be attributed), and recovered rows
     /// key off their manifest, structurally out of reach.
-    func removeActiveEffect(bridgeID: String, roomID: String) {
+    func removeActiveEffect(bridgeID: String, roomID: String,
+                            context: StopAuditContext = .unattributed) {
+        let beforeCount = activeEffectEntries.count
         activeEffectEntries.removeAll {
             $0.recovered == nil && $0.roomID == roomID && $0.bridgeID == bridgeID
+        }
+        if activeEffectEntries.count != beforeCount {
+            recordStopAudit(context, operation: .nowPlayingRemoved,
+                            bridgeID: bridgeID, roomID: roomID)
         }
     }
 
     /// Removes one entry by its exact presentation key. The only way to clear a
     /// recovered bridge-stored row.
-    func removeActiveEffect(id: String) {
+    func removeActiveEffect(id: String, context: StopAuditContext = .unattributed) {
+        let beforeCount = activeEffectEntries.count
         activeEffectEntries.removeAll { $0.id == id }
+        if activeEffectEntries.count != beforeCount {
+            recordStopAudit(context, operation: .nowPlayingRemoved,
+                            bridgeID: nil, roomID: nil,
+                            cardOrEffectID: id, outcomeReason: "presentationKey")
+        }
     }
 
     /// Removes all active effect entries (Stop All).
-    func removeAllActiveEffects() {
+    func removeAllActiveEffects(context: StopAuditContext = .unattributed) {
+        let beforeCount = activeEffectEntries.count
         activeEffectEntries.removeAll()
+        if beforeCount != 0 {
+            recordStopAudit(context, operation: .nowPlayingRemoved,
+                            bridgeID: nil, roomID: nil,
+                            outcomeReason: "allRows count=\(beforeCount)")
+        }
+    }
+
+    // ── Stop-audit diagnostics (PR #60 stop-isolation) ────────────────────
+    //
+    // Observational only. DEBUG builds append one event per destructive stop
+    // operation so the exact teardown chain — route, identity, outcome — is
+    // provable in tests and readable from the device console. Release builds
+    // compile the recorder to a no-op; nothing here changes stop ordering,
+    // guard outcomes, or return values.
+
+    #if DEBUG
+    /// Every recorded stop operation, in commit order. Test-readable.
+    @ObservationIgnored private(set) var stopAuditEvents: [StopAuditEvent] = []
+    @ObservationIgnored private var stopAuditSequence = 0
+
+    /// Clear the ledger between a test's staging and its assertions.
+    func testResetStopAudit() {
+        stopAuditEvents.removeAll()
+        stopAuditSequence = 0
+    }
+    #endif
+
+    /// Stable DEBUG identity for audit correlation (runtime param boxes,
+    /// Entertainment clients). Identity only — never dereferenced.
+    static func stopAuditToken(_ object: AnyObject) -> String {
+        String(UInt(bitPattern: ObjectIdentifier(object).hashValue), radix: 16)
+    }
+
+    /// Record one stop-audit event. DEBUG-only observation; no-op in Release.
+    func recordStopAudit(_ context: StopAuditContext,
+                         operation: StopAuditOperation,
+                         bridgeID: String?,
+                         roomID: String?,
+                         cardOrEffectID: String? = nil,
+                         runtimeToken: String? = nil,
+                         clientID: String? = nil,
+                         outcomeReason: String? = nil) {
+        #if DEBUG
+        stopAuditSequence += 1
+        let event = StopAuditEvent(
+            sequence: stopAuditSequence,
+            timestamp: Date(),
+            route: context.route,
+            bridgeID: bridgeID,
+            roomID: roomID,
+            cardOrEffectID: cardOrEffectID ?? context.cardOrEffectID,
+            runtimeToken: runtimeToken,
+            clientID: clientID,
+            operation: operation,
+            outcomeReason: outcomeReason)
+        stopAuditEvents.append(event)
+        debugLog("[StopAudit] #\(event.sequence) \(event.route.rawValue).\(event.operation.rawValue) bridge=\(event.bridgeID ?? "nil") room=\(event.roomID ?? "nil") card=\(event.cardOrEffectID ?? "-") runtime=\(event.runtimeToken ?? "-") client=\(event.clientID ?? "-") reason=\(event.outcomeReason ?? "-")")
+        #endif
     }
 
     /// Exact live-stop target handed to Studio (round 4d). Core-level so the
@@ -3793,6 +3867,21 @@ final class UnifiedOrchestrator {
     /// Whether this bridge currently holds a live Studio/Composer DTLS client.
     func testHasEntertainmentClient(forBridge bridgeID: String) -> Bool {
         studioEntClients[bridgeID] != nil
+    }
+
+    /// DEBUG frame-production proof: the installed client's total send
+    /// attempts (nil when no client is installed). The stub transport drops
+    /// every frame at the connection guard, so this counter is the only
+    /// observable liveness signal a render loop has in tests.
+    func testSendAttempts(forBridge bridgeID: String) async -> Int? {
+        guard let client = studioEntClients[bridgeID] else { return nil }
+        return await client.testSendAttempts
+    }
+
+    /// Stage a composition Entertainment claim on a bridge, so the guard-skip
+    /// diagnostics can prove which condition an app-driven stop refused on.
+    func testSetCompositionEntRoom(bridgeID: String, roomID: String) {
+        compositionEntRoomByBridge[bridgeID] = roomID
     }
 
     /// The production answer to "which app-driven look owns this bridge?",
@@ -7208,9 +7297,18 @@ final class UnifiedOrchestrator {
 
     func stopStudioMode() async {
         debugLog("[Handoff] Studio stop requested")
+        let auditContext = StopAuditContext(route: .stopStudioMode)
+        recordStopAudit(auditContext, operation: .stopStudioModeInvoked,
+                        bridgeID: nil, roomID: nil,
+                        outcomeReason: "runtimes=\(studioEngineRuntimesByBridge.count) clients=\(studioEntClients.count)")
         // Cancel every bridge's running loop task (strobe, etc.) — this is
         // the forget-all path, so ALL bridges' engines go down together.
-        for runtime in studioEngineRuntimesByBridge.values { runtime.task.cancel() }
+        for (bid, runtime) in studioEngineRuntimesByBridge {
+            runtime.task.cancel()
+            recordStopAudit(auditContext, operation: .taskCancelled,
+                            bridgeID: bid, roomID: runtime.roomID,
+                            runtimeToken: Self.stopAuditToken(runtime.paramBox))
+        }
         studioEngineRuntimesByBridge.removeAll()
         debugLog("[Handoff] Clearing every REST scope on every bridge sender")
         // This is the forget-all / stop-everything path, so a GLOBAL clear is
@@ -7254,8 +7352,16 @@ final class UnifiedOrchestrator {
 
         // Stop all entertainment sessions (all bridges)
         for (bid, entClient) in studioEntClients {
-            await entClient.stopSession()
-            _ = bid
+            recordStopAudit(auditContext, operation: .clientStopSession,
+                            bridgeID: bid, roomID: nil,
+                            clientID: Self.stopAuditToken(entClient))
+            let stopRequest = await entClient.stopSession()
+            recordStopAudit(auditContext,
+                            operation: stopRequest == .notSent
+                                ? .actionStopSuppressed : .actionStopSent,
+                            bridgeID: bid, roomID: nil,
+                            clientID: Self.stopAuditToken(entClient),
+                            outcomeReason: String(describing: stopRequest))
         }
         studioEntClients.removeAll()
         // Stop-everything: no session survives, so no ownership record may.
@@ -7275,7 +7381,13 @@ final class UnifiedOrchestrator {
         // are still running on their bridges and clearing their rows would be
         // a claim this function did not earn. They stop through the exact
         // manifest path, which is still reachable from Dashboard and Studio.
+        let liveRowsBefore = activeEffectEntries.count
         activeEffectEntries.removeAll { $0.recovered == nil }
+        if activeEffectEntries.count != liveRowsBefore {
+            recordStopAudit(auditContext, operation: .nowPlayingRemoved,
+                            bridgeID: nil, roomID: nil,
+                            outcomeReason: "allLiveRows removed=\(liveRowsBefore - activeEffectEntries.count)")
+        }
         // Stop-everything includes the firmware effects Studio started, so their
         // All-Day claims go with them.
         bridgeNativeOwners.removeAll()
@@ -7295,8 +7407,12 @@ final class UnifiedOrchestrator {
     /// rooms' running compositions when one strobe was stopped. This variant
     /// touches only its own bridge's app-driven loop and entertainment
     /// session, and only when no composition owns that session.
-    func stopAppDrivenStudioEffect(roomID: String, bridgeID: String?) async {
+    func stopAppDrivenStudioEffect(roomID: String, bridgeID: String?,
+                                   context: StopAuditContext = .unattributed) async {
         debugLog("[Handoff] App-driven stop requested for roomID=\(roomID)")
+        recordStopAudit(context, operation: .stopRequested,
+                        bridgeID: bridgeID, roomID: roomID,
+                        outcomeReason: "stopAppDrivenStudioEffect")
         let engineKey = bridgeID ?? ""
         // Cancel the engine loop ONLY when this exact bridge + room still owns
         // it. The check and the cancel are synchronous on this actor, so no
@@ -7304,6 +7420,9 @@ final class UnifiedOrchestrator {
         if let runtime = studioEngineRuntimesByBridge[engineKey], runtime.roomID == roomID {
             runtime.task.cancel()
             studioEngineRuntimesByBridge.removeValue(forKey: engineKey)
+            recordStopAudit(context, operation: .taskCancelled,
+                            bridgeID: bridgeID, roomID: roomID,
+                            runtimeToken: Self.stopAuditToken(runtime.paramBox))
         }
         // Packet 3: clear ONLY this room's Studio scope, on the supplied
         // bridge — a global clear here is what let one strobe's stop discard
@@ -7315,6 +7434,8 @@ final class UnifiedOrchestrator {
         if studioRestScopesByBridge[bridgeID ?? "legacy"] == stoppedScope {
             studioRestScopesByBridge.removeValue(forKey: bridgeID ?? "legacy")
         }
+        recordStopAudit(context, operation: .restScopeCleared,
+                        bridgeID: bridgeID, roomID: roomID)
         // Small barrier so bridge transition buffers drain before a new owner starts.
         // KEPT AS-IS (packet 3): a practical settle window, not a formal drain.
         try? await Task.sleep(for: .milliseconds(150))
@@ -7334,7 +7455,15 @@ final class UnifiedOrchestrator {
            studioEngineRuntimesByBridge[bid] == nil,
            studioEntOwnerByBridge[bid].map({ $0.roomID == roomID }) ?? true,
            let entClient = studioEntClients[bid] {
-            await entClient.stopSession()
+            let auditClientID = Self.stopAuditToken(entClient)
+            recordStopAudit(context, operation: .clientStopSession,
+                            bridgeID: bid, roomID: roomID, clientID: auditClientID)
+            let stopRequest = await entClient.stopSession()
+            recordStopAudit(context,
+                            operation: stopRequest == .notSent
+                                ? .actionStopSuppressed : .actionStopSent,
+                            bridgeID: bid, roomID: roomID, clientID: auditClientID,
+                            outcomeReason: String(describing: stopRequest))
             studioEntClients.removeValue(forKey: bid)
             // Inside the SAME branch on purpose. A stop that did not release
             // the session (a composition owns it, or there was no client) must
@@ -7342,6 +7471,27 @@ final class UnifiedOrchestrator {
             // make a still-running owner invisible to the very question that
             // exists to protect it.
             studioEntOwnerByBridge.removeValue(forKey: bid)
+        } else {
+            // DEBUG audit only: name the exact reason the Entertainment
+            // teardown was skipped. Pure re-reads of the same conditions the
+            // guard above evaluated; production behavior is unchanged.
+            let skipReason: String
+            if let bid = bridgeID {
+                if let compositionOwnerRoom = compositionEntRoomByBridge[bid] {
+                    skipReason = "compositionClaim room=\(compositionOwnerRoom)"
+                } else if studioEngineRuntimesByBridge[bid] != nil {
+                    skipReason = "newerRuntimeClaimedBridge"
+                } else if !(studioEntOwnerByBridge[bid].map({ $0.roomID == roomID }) ?? true) {
+                    skipReason = "ownerRoomMismatch"
+                } else {
+                    skipReason = "noClientInstalled"
+                }
+            } else {
+                skipReason = "nilBridgeID"
+            }
+            recordStopAudit(context, operation: .entertainmentGuardSkipped,
+                            bridgeID: bridgeID, roomID: roomID,
+                            outcomeReason: skipReason)
         }
         debugLog("[Handoff] App-driven teardown complete for roomID=\(roomID)")
     }
@@ -7470,11 +7620,33 @@ final class UnifiedOrchestrator {
         bridgeID: String?,
         roomID: String
     ) async {
-        guard await entClient.isTerminallyFailed, let bridgeID else { return }
+        let auditContext = StopAuditContext(route: .reconcileAfterLoop)
+        // Same single await and the same outcomes as the original compound
+        // guard — decomposed only so the DEBUG audit can say why this
+        // invocation did (or did not) clean anything up.
+        let terminallyFailed = await entClient.isTerminallyFailed
+        guard terminallyFailed, let bridgeID else {
+            recordStopAudit(auditContext, operation: .reconcileCleanup,
+                            bridgeID: bridgeID, roomID: roomID,
+                            clientID: Self.stopAuditToken(entClient),
+                            outcomeReason: terminallyFailed
+                                ? "skippedNilBridge" : "skippedClientHealthy")
+            return
+        }
         // Only if this exact client is still the installed owner. A loop that
         // ends after its session was already replaced must not tear down its
         // successor.
-        guard studioEntClients[bridgeID] === entClient else { return }
+        guard studioEntClients[bridgeID] === entClient else {
+            recordStopAudit(auditContext, operation: .reconcileCleanup,
+                            bridgeID: bridgeID, roomID: roomID,
+                            clientID: Self.stopAuditToken(entClient),
+                            outcomeReason: "skippedClientReplaced")
+            return
+        }
+        recordStopAudit(auditContext, operation: .reconcileCleanup,
+                        bridgeID: bridgeID, roomID: roomID,
+                        clientID: Self.stopAuditToken(entClient),
+                        outcomeReason: "sessionLostCleanup")
 
         debugLog("[Takeover] Studio session on \(bridgeID) was lost — correcting the UI rather than claiming it still streams")
         noteTakeoverEvent(.sessionLostAfterOwnership, bridgeID: bridgeID,
@@ -7489,11 +7661,20 @@ final class UnifiedOrchestrator {
         if studioEngineRuntimesByBridge[bridgeID]?.roomID == roomID {
             studioEngineRuntimesByBridge.removeValue(forKey: bridgeID)
         }
-        await entClient.stopSession()
+        recordStopAudit(auditContext, operation: .clientStopSession,
+                        bridgeID: bridgeID, roomID: roomID,
+                        clientID: Self.stopAuditToken(entClient))
+        let stopRequest = await entClient.stopSession()
+        recordStopAudit(auditContext,
+                        operation: stopRequest == .notSent
+                            ? .actionStopSuppressed : .actionStopSent,
+                        bridgeID: bridgeID, roomID: roomID,
+                        clientID: Self.stopAuditToken(entClient),
+                        outcomeReason: String(describing: stopRequest))
 
         // The look is no longer streaming, so the row must stop saying it is
         // — exactly this bridge's row, never a same-room-id row on another.
-        removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
+        removeActiveEffect(bridgeID: bridgeID, roomID: roomID, context: auditContext)
         noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
         toastMessage = EntertainmentConsentCopy.controllerResumed
     }
@@ -10850,6 +11031,75 @@ extension UnifiedOrchestrator {
 struct SSEEvent: Decodable {
     let type: String
     let data: [SSEResourceUpdate]
+}
+
+// MARK: - Stop-audit diagnostics types (PR #60 stop-isolation)
+//
+// Inert value types, defined unconditionally so the DEBUG-defaulted `context`
+// parameters keep a single signature in both configurations. All storage and
+// recording is #if DEBUG — in Release these types carry no behavior.
+extension UnifiedOrchestrator {
+
+    /// Which surface or internal path initiated a stop chain.
+    enum StopAuditRoute: String, Sendable {
+        case explicitStop             // Studio card / tray / param-sheet Stop
+        case stopAll                  // Studio toolbar Stop All
+        case nowPlaying               // Dashboard / Siri via LiveEffectStopTarget
+        case applyReplacement         // apply: same-room replacement
+        case applyEngineSingleton     // apply: same-bridge app-driven eviction
+        case applyEntertainmentScoped // apply: same-bridge entertainment eviction
+        case applyLightOverlap        // apply: same-bridge light-overlap eviction
+        case reconcileAfterLoop       // engine-loop tail reconciliation
+        case bridgeRemoval
+        case stopStudioMode           // forget-all global teardown
+        case handoff
+        case unattributed
+    }
+
+    /// Immutable per-stop context, passed by value through the exact call
+    /// chain — concurrent stops on two bridges can never overwrite or inherit
+    /// one another's route.
+    struct StopAuditContext: Sendable {
+        let route: StopAuditRoute
+        let cardOrEffectID: String?
+
+        init(route: StopAuditRoute, cardOrEffectID: String? = nil) {
+            self.route = route
+            self.cardOrEffectID = cardOrEffectID
+        }
+
+        static let unattributed = StopAuditContext(route: .unattributed)
+    }
+
+    /// One destructive stop operation the audit can observe.
+    enum StopAuditOperation: String, Sendable {
+        case stopRequested
+        case taskCancelled
+        case restScopeCleared
+        case entertainmentGuardSkipped
+        case clientStopSession
+        case actionStopSent
+        case actionStopSuppressed
+        case rowRemoved
+        case nowPlayingRemoved
+        case stopAllInvoked
+        case stopStudioModeInvoked
+        case reconcileCleanup
+    }
+
+    /// One recorded stop operation, with full identity and outcome.
+    struct StopAuditEvent: Sendable {
+        let sequence: Int
+        let timestamp: Date
+        let route: StopAuditRoute
+        let bridgeID: String?
+        let roomID: String?
+        let cardOrEffectID: String?
+        let runtimeToken: String?
+        let clientID: String?
+        let operation: StopAuditOperation
+        let outcomeReason: String?
+    }
 }
 
 /// DEBUG-only console diagnostics (house convention — prints are #if DEBUG,

@@ -374,6 +374,13 @@ actor HueEntertainmentClient {
     private var testHealthChecksBeforeFailure: Int?
     func testEnableStubTransport() { testStubTransport = true }
     func testFailAfterHealthChecks(_ n: Int) { testHealthChecksBeforeFailure = n }
+
+    /// Frames handed to `send(channels:)`, INCLUDING frames the state/
+    /// connection guard drops. Under the stub transport `connection` is nil
+    /// and every frame is dropped at that guard, so this counter is the only
+    /// observable proof a render loop is still producing (PR #60
+    /// stop-isolation diagnostics).
+    private(set) var testSendAttempts = 0
     #endif
 
     private let log = Logger(subsystem: "com.lightshade.app", category: "Entertainment")
@@ -616,6 +623,12 @@ actor HueEntertainmentClient {
     ///   x, y: CIE 1931 color coordinates (0.0–1.0)
     ///   brightness: 0.0–1.0
     func send(channels: [(id: UInt8, x: Double, y: Double, brightness: Double)]) {
+        #if DEBUG
+        // Diagnostics only: count the attempt BEFORE the guard, so a live
+        // render loop is observable even when the stub transport (or a dead
+        // connection) drops the frame below.
+        testSendAttempts += 1
+        #endif
         guard case .streaming = state, let conn = connection else { return }
 
         let packet = buildPacket(channels: channels)

@@ -1359,6 +1359,10 @@ final class StudioViewModel {
     /// holds the room id and fails closed on a collision — that caller
     /// cannot say WHICH bridge's look it means.
     func stopFromNowPlaying(_ target: UnifiedOrchestrator.LiveEffectStopTarget) async {
+        let context = UnifiedOrchestrator.StopAuditContext(route: .nowPlaying)
+        orchestrator?.recordStopAudit(context, operation: .stopRequested,
+                                      bridgeID: target.bridgeID, roomID: target.roomID,
+                                      outcomeReason: "nowPlayingEntry turnOffLights=\(target.turnOffLights)")
         isExplicitStop = target.turnOffLights
         let resolvedKey: RoomEffectKey?
         if let bridgeID = target.bridgeID {
@@ -1372,15 +1376,16 @@ final class StudioViewModel {
             // target names its bridge, through the fail-closed room-scoped
             // removal otherwise.
             if let bridgeID = target.bridgeID {
-                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID)
+                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID,
+                                                context: context)
             } else {
-                orchestrator?.removeActiveEffect(roomID: target.roomID)
+                orchestrator?.removeActiveEffect(roomID: target.roomID, context: context)
             }
             statusMessage = ""
             return
         }
         let stopping = runningEffects[key]
-        await stopEffect(on: key)
+        await stopEffect(on: key, context: context)
         // stopEffect's guard can still bail (stale entry with nothing running),
         // and the bar entry must clear in that case or Stop appears to do
         // nothing. But this stop suspends, so a REPLACEMENT may have taken the
@@ -1393,9 +1398,10 @@ final class StudioViewModel {
                 || survivor?.recovered != stopping?.recovered)
         if !replacedByNewer {
             if let bridgeID = key.bridgeID {
-                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID)
+                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID,
+                                                context: context)
             } else {
-                orchestrator?.removeActiveEffect(roomID: target.roomID)
+                orchestrator?.removeActiveEffect(roomID: target.roomID, context: context)
             }
         }
         statusMessage = ""
@@ -2249,7 +2255,9 @@ final class StudioViewModel {
             let existingCard = existing.card
             debugLog("[Studio] Replacing '\(existingCard.name)' on \(room.name)")
             isExplicitStop = false
-            await stopEffect(on: RoomEffectKey(room: room))
+            await stopEffect(on: RoomEffectKey(room: room),
+                             context: UnifiedOrchestrator.StopAuditContext(
+                                 route: .applyReplacement, cardOrEffectID: card.id))
 
             // Delay if both old and new use REST on the same grouped_light
             let oldIsBridgeNative: Bool
@@ -2285,7 +2293,9 @@ final class StudioViewModel {
                 guard effectUsesStudioEngine else { continue }
                 debugLog("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (one Studio engine loop per bridge)")
                 isExplicitStop = false
-                await stopEffect(on: rowKey)
+                await stopEffect(on: rowKey,
+                                 context: UnifiedOrchestrator.StopAuditContext(
+                                     route: .applyEngineSingleton, cardOrEffectID: card.id))
             }
         }
 
@@ -2299,7 +2309,9 @@ final class StudioViewModel {
             where effect.isEntertainment && rowKey.bridgeID == room.bridgeID {
                 debugLog("[Studio] Stopping entertainment '\(effect.card.name)' on \(effect.room.name) (one DTLS session per bridge)")
                 isExplicitStop = false
-                await stopEffect(on: rowKey)
+                await stopEffect(on: rowKey,
+                                 context: UnifiedOrchestrator.StopAuditContext(
+                                     route: .applyEntertainmentScoped, cardOrEffectID: card.id))
             }
         }
 
@@ -2321,7 +2333,9 @@ final class StudioViewModel {
                 if !overlap.isEmpty {
                     debugLog("[Handoff] Light overlap detected: \(overlap.count) lights shared with \(effect.room.name) — awaiting teardown barrier")
                     isExplicitStop = false
-                    await stopEffect(on: rowKey)
+                    await stopEffect(on: rowKey,
+                                     context: UnifiedOrchestrator.StopAuditContext(
+                                         route: .applyLightOverlap, cardOrEffectID: card.id))
                     debugLog("[Handoff] Overlap teardown barrier complete for \(effect.room.name)")
                 }
             }
@@ -2606,9 +2620,14 @@ final class StudioViewModel {
     /// (once ownership existed) the room suppressed from All-Day forever. Only
     /// the effect and the orchestrator are actually needed to begin teardown;
     /// every network step below is best-effort.
-    private func stopEffect(on rowKey: RoomEffectKey) async {
+    private func stopEffect(on rowKey: RoomEffectKey,
+                            context: UnifiedOrchestrator.StopAuditContext = .unattributed) async {
         guard let effect = runningEffects[rowKey], let orchestrator else { return }
         let roomID = rowKey.roomID
+        orchestrator.recordStopAudit(context, operation: .stopRequested,
+                                     bridgeID: rowKey.bridgeID, roomID: roomID,
+                                     cardOrEffectID: effect.cardID,
+                                     outcomeReason: "rowStop")
 
         // Packet 8: a recovered bridge-stored animation has no engine loop, no
         // per-light firmware state and no REST scope to tear down. The ONLY
@@ -2628,6 +2647,10 @@ final class StudioViewModel {
             // flight must keep its row.
             guard let current = runningEffects[rowKey], current.recovered == key else { return }
             runningEffects.removeValue(forKey: rowKey)
+            orchestrator.recordStopAudit(context, operation: .rowRemoved,
+                                         bridgeID: rowKey.bridgeID, roomID: roomID,
+                                         cardOrEffectID: current.cardID,
+                                         outcomeReason: "recovered")
             // NOT removeActiveEffect(roomID:) — a recovered row is keyed by its
             // manifest, and the orchestrator already removed it.
             return
@@ -2672,7 +2695,8 @@ final class StudioViewModel {
             // Room-scoped: the global stopStudioMode() tore down every other
             // room's composition stream and the whole Now-Playing registry.
             await orchestrator.stopAppDrivenStudioEffect(roomID: roomID,
-                                                         bridgeID: effect.room.bridgeID)
+                                                         bridgeID: effect.room.bridgeID,
+                                                         context: context)
             try? await Task.sleep(for: .milliseconds(200))
 
         case .composition:
@@ -2697,12 +2721,16 @@ final class StudioViewModel {
               current.cardID == stoppingCardID,
               current.bridgeNativeOwnership == ownership else { return }
         runningEffects.removeValue(forKey: rowKey)
+        orchestrator.recordStopAudit(context, operation: .rowRemoved,
+                                     bridgeID: rowKey.bridgeID, roomID: roomID,
+                                     cardOrEffectID: stoppingCardID)
         // Exact when the row can name its bridge; a legacy nil-bridge row
         // falls back to the fail-closed room-scoped removal.
         if let bridgeID = rowKey.bridgeID {
-            orchestrator.removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
+            orchestrator.removeActiveEffect(bridgeID: bridgeID, roomID: roomID,
+                                            context: context)
         } else {
-            orchestrator.removeActiveEffect(roomID: roomID)
+            orchestrator.removeActiveEffect(roomID: roomID, context: context)
         }
     }
 
@@ -2995,17 +3023,30 @@ final class StudioViewModel {
     /// Turns off the room's lights.
     func explicitStop(_ card: StudioCard) async {
         guard let room = selectedRoom else { return }
+        let context = UnifiedOrchestrator.StopAuditContext(
+            route: .explicitStop, cardOrEffectID: card.id)
+        // Audit note: this route targets the SELECTED room's row, not the
+        // tapped card's — record both identities so a hardware trace can say
+        // whether they disagreed.
+        orchestrator?.recordStopAudit(context, operation: .stopRequested,
+                                      bridgeID: room.bridgeID, roomID: room.id,
+                                      cardOrEffectID: card.id,
+                                      outcomeReason: "explicitStopEntry selectedRoom=\(room.id)")
         isExplicitStop = true
-        await stopEffect(on: RoomEffectKey(room: room))
+        await stopEffect(on: RoomEffectKey(room: room), context: context)
         statusMessage = ""
     }
 
     /// Stop all running effects across all rooms.
     func stopAll() async {
+        let context = UnifiedOrchestrator.StopAuditContext(route: .stopAll)
+        orchestrator?.recordStopAudit(context, operation: .stopAllInvoked,
+                                      bridgeID: nil, roomID: nil,
+                                      outcomeReason: "rows=\(runningEffects.count)")
         isExplicitStop = true
         let rowKeys = Array(runningEffects.keys)
         for rowKey in rowKeys {
-            await stopEffect(on: rowKey)
+            await stopEffect(on: rowKey, context: context)
         }
         statusMessage = ""
     }
