@@ -15,7 +15,10 @@ import SwiftUI
 /// compact tray, which overflow to the "+N more" reveal, and the
 /// content-derived tray height (replaces the old hardcoded 390/420).
 enum MixerTrayMetrics {
-    static let grabBarHeight: CGFloat = 36
+    /// The "Back to decks" row that replaced the grab bar. The capsule's only
+    /// job was "drag or tap to dismiss"; dismissal is a named destination now,
+    /// so the gesture that competed with every child control is gone.
+    static let backToDecksRowHeight: CGFloat = 36
     /// Row 1 of the tray header: 40pt icon/action circles plus padding.
     static let headerHeight: CGFloat = 66
     /// Row 2: the horizontally scrolling badge lane (LIVE, coverage, beat,
@@ -28,11 +31,6 @@ enum MixerTrayMetrics {
     static let sliderRowHeight: CGFloat = 56
     static let moreRowHeight: CGFloat = 44
     static let verticalPadding: CGFloat = 16
-    /// Raised with the three-row header (and again for the 44pt-hit-target
-    /// pass: +8 grab, +6 header, +4 badge lane) so compact devices keep the
-    /// inline slider count they had before. MixerTrayMetricsTests pins this.
-    static let compactHeightCap: CGFloat = 406
-
     /// Floating tab bar + home indicator — the clearance a bottom-anchored
     /// Studio surface owes when nothing else is clearing the bar for it.
     static func tabBarClearance(bottomInset: CGFloat) -> CGFloat {
@@ -81,25 +79,12 @@ enum MixerTrayMetrics {
         return card.params.filter { !inlineIDs.contains($0.id) }
     }
 
-    /// Content-derived compact height for engine cards. Engine cards say their
-    /// scope in a badge, so they get no status line.
-    static func engineHeight(for card: StudioCard, isCompact: Bool) -> CGFloat {
-        let rows = inlineParams(for: card).count
-        let hasMore = !overflowParams(for: card).isEmpty
-        var height = grabBarHeight + headerBlockHeight(hasStatusLine: false)
-            + CGFloat(rows) * sliderRowHeight
-            + verticalPadding
-        if hasMore { height += moreRowHeight }
-        return isCompact ? min(height, compactHeightCap) : height
-    }
-
-    /// Composition tray height (header + layer tabs + active-tab essentials;
-    /// the inner ScrollView absorbs overflow). The 390/430 body figures are
-    /// unchanged — only the taller three-row header is added on top.
-    static func compositionHeight(isCompact: Bool) -> CGFloat {
-        let body: CGFloat = isCompact ? 390 : 430
-        return body - headerHeight + headerBlockHeight(hasStatusLine: true)
-    }
+    // DELETED in Track A C5: `engineHeight`, `compositionHeight` and
+    // `compactHeightCap`. They computed a FIXED height for a bottom-anchored
+    // box. The customization surface is now an inline region that takes the
+    // space the decks would have taken, so there is no height to compute and a
+    // stale one would only fight the layout. `bottomClearance` is NOT dead and
+    // stays — it is the build-46 double-count fix.
 }
 
 // MARK: - StudioParamRow

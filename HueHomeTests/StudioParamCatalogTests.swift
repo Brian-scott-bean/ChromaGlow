@@ -142,26 +142,10 @@ final class StudioParamCatalogTests: XCTestCase {
 
     /// Tray height is derived from content now — more inline rows must never
     /// produce a shorter tray, and the compact cap must hold.
-    func testEngineHeightIsMonotonicInRowCountAndCapped() {
-        let sorted = allCards.sorted {
-            MixerTrayMetrics.inlineParams(for: $0).count < MixerTrayMetrics.inlineParams(for: $1).count
-        }
-        var lastRows = -1
-        var lastHeight: CGFloat = -1
-        for card in sorted {
-            let rows = MixerTrayMetrics.inlineParams(for: card).count
-            let height = MixerTrayMetrics.engineHeight(for: card, isCompact: false)
-            if rows > lastRows && lastHeight >= 0 {
-                XCTAssertGreaterThanOrEqual(height, lastHeight,
-                                            "\(card.id): more rows produced a shorter tray")
-            }
-            XCTAssertGreaterThanOrEqual(height, MixerTrayMetrics.grabBarHeight + MixerTrayMetrics.headerHeight)
-            XCTAssertLessThanOrEqual(MixerTrayMetrics.engineHeight(for: card, isCompact: true),
-                                     MixerTrayMetrics.compactHeightCap)
-            lastRows = rows
-            lastHeight = height
-        }
-    }
+    // DELETED in Track A C5 with `MixerTrayMetrics.engineHeight` /
+    // `compactHeightCap`: they sized a fixed-height bottom-anchored tray, and
+    // the customization host has no height to compute. `inlineParams` /
+    // `overflowParams` are still covered by the tests around this one.
 
     // ── Three-row header ──────────────────────────────────────
     //
@@ -195,12 +179,9 @@ final class StudioParamCatalogTests: XCTestCase {
         XCTAssertGreaterThan(MixerTrayMetrics.headerBlockHeight(hasStatusLine: true),
                              MixerTrayMetrics.headerBlockHeight(hasStatusLine: false))
 
-        for isCompact in [true, false] {
-            XCTAssertGreaterThanOrEqual(
-                MixerTrayMetrics.compositionHeight(isCompact: isCompact),
-                MixerTrayMetrics.headerBlockHeight(hasStatusLine: true),
-                "composition tray is shorter than its own header (compact=\(isCompact))")
-        }
+        // The `compositionHeight` assertion that stood here died with the
+        // fixed-height tray in Track A C5; the header arithmetic above is the
+        // part that outlived it.
     }
 
     /// Inline + overflow must partition the catalog exactly — no param can

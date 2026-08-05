@@ -13,7 +13,7 @@ import SwiftUI
 final class MixerTrayMetricsTests: XCTestCase {
 
     func testHeaderRowFloors() {
-        XCTAssertGreaterThanOrEqual(MixerTrayMetrics.grabBarHeight, 36)
+        XCTAssertGreaterThanOrEqual(MixerTrayMetrics.backToDecksRowHeight, 36)
         XCTAssertGreaterThanOrEqual(MixerTrayMetrics.headerHeight, 66,
                                     "row 1 must cover the 40pt action circles plus padding")
         XCTAssertGreaterThanOrEqual(MixerTrayMetrics.badgeLaneHeight, 28)
@@ -73,14 +73,6 @@ final class MixerTrayMetricsTests: XCTestCase {
 
     /// Compact devices must keep at least three inline slider rows after any
     /// header growth (the cap otherwise silently eats slider rows).
-    func testCompactCapCoversHeaderGrowth() {
-        let needed = MixerTrayMetrics.grabBarHeight
-            + MixerTrayMetrics.headerBlockHeight(hasStatusLine: false)
-            + 3 * MixerTrayMetrics.sliderRowHeight
-            + MixerTrayMetrics.verticalPadding
-            + MixerTrayMetrics.moreRowHeight
-        XCTAssertGreaterThanOrEqual(MixerTrayMetrics.compactHeightCap, needed)
-    }
 
     // ── Selector vs effect panel (hardware convergence slice D) ─────────
     //
@@ -101,27 +93,80 @@ final class MixerTrayMetricsTests: XCTestCase {
             + "wheel and its scrim eats the next scroll, which is the reported collision")
     }
 
-    /// HCD-02 — the wheel survives landing on a streaming room.
-    func testTheRoomWheelStaysMountedWhileTheTrayIsCollapsed() {
-        XCTAssertFalse(
-            StudioMixerPresentation.rolodexHidden(isEntertainmentRunning: true,
-                                                  mixerVisible: false),
-            "a streaming look with its tray closed must NOT remove the selector — that "
-            + "deleted the wheel mid-gesture, destroying the very selection being made")
-
-        XCTAssertFalse(
-            StudioMixerPresentation.rolodexHidden(isEntertainmentRunning: false,
-                                                  mixerVisible: true),
-            "a non-streaming look's tray never hides the wheel either")
+    /// HCD-02/03, superseded by Track A C5 — `rolodexHidden` is DELETED.
+    ///
+    /// The old pair tested WHEN the wheel could be unmounted. Inline, the
+    /// customization region never covers the wheel, so the answer is "never"
+    /// and the predicate that had to stay correct is gone. Regressing this
+    /// costs a constant and the render probe in StudioScrollStabilityTests.
+    func testRolodexIsAlwaysMounted() {
+        XCTAssertTrue(StudioMixerPresentation.rolodexAlwaysMounted,
+            "the wheel must be unconditionally mounted — keying its removal on a "
+            + "running streaming look deleted it MID-GESTURE, destroying the very "
+            + "selection being made, and any predicate here can regress that way again")
     }
 
-    /// HCD-03 — the one case that legitimately hides it: a streaming look whose
-    /// full-height tray is actually on screen.
-    func testTheWheelIsHiddenOnlyWhenAStreamingTrayIsActuallyShowing() {
-        XCTAssertTrue(
-            StudioMixerPresentation.rolodexHidden(isEntertainmentRunning: true,
-                                                  mixerVisible: true),
-            "both conditions together are what reclaims the space")
+    /// Build 46's fix, explicitly named and still standing after C5 replaced
+    /// the overlay with an inline region. `bottomClearance` is the one height
+    /// helper that did NOT die with the fixed-height tray.
+    func testBottomClearanceStillAvoidsTheDoubleCount() {
+        // Bar mounted: its safeAreaInset has already floored the content and
+        // cleared the floating tab bar, so only a card-to-card gap is owed.
+        // Re-adding tabBarClearance here is the ~200pt dead band.
+        XCTAssertEqual(
+            MixerTrayMetrics.bottomClearance(bottomInset: musicBarInset, barMounted: true),
+            HueSpacing.sm,
+            "the double-count is back — the region would sit on a floor it is already on")
+        XCTAssertLessThan(
+            MixerTrayMetrics.bottomClearance(bottomInset: musicBarInset, barMounted: true),
+            MixerTrayMetrics.tabBarClearance(bottomInset: musicBarInset))
+
+        // Bar suppressed: nothing else clears the tab bar, so the full figure
+        // is owed and compact geometry is unchanged.
+        XCTAssertEqual(
+            MixerTrayMetrics.bottomClearance(bottomInset: musicBarInset, barMounted: false),
+            MixerTrayMetrics.tabBarClearance(bottomInset: musicBarInset))
+    }
+
+    // ── Track A / C5 — passive vs deliberate ──────────────────────────
+
+    /// A passive runtime change may CLOSE customization but must never OPEN it.
+    ///
+    /// `runningCardID` goes nil for reasons the user never asked for — a stop
+    /// completing, a recovered animation reconciling, an external teardown. The
+    /// pre-C5 handler set `.customization` there, which is the "panel appeared
+    /// over the wheel on its own" class this track exists to end.
+    func testPassiveRunningCardChangeNeverOpensCustomization() {
+        for current in [StudioRegionMode.decks, .customization] {
+            // Teardown → decks, from either mode.
+            XCTAssertEqual(
+                StudioMixerPresentation.modeAfterRunningCardChange(nil, current: current),
+                .decks,
+                "an effect ending must return to the decks (from \(current))")
+
+            // A card merely BECOMING the running card — recovery, reconciliation,
+            // an external start — must leave the mode exactly as it was.
+            XCTAssertEqual(
+                StudioMixerPresentation.modeAfterRunningCardChange("some-card", current: current),
+                current,
+                "a passive runtime change moved the region (from \(current))")
+        }
+
+        // Specifically: never .customization from .decks, for ANY input.
+        for newValue in [nil, "candle-card", ""] as [String?] {
+            XCTAssertNotEqual(
+                StudioMixerPresentation.modeAfterRunningCardChange(newValue, current: .decks),
+                .customization,
+                "a passive change opened customization for newValue=\(String(describing: newValue))")
+        }
+    }
+
+    /// …while a deliberate activation is exactly what does open it.
+    func testDeliberateActivationOpensCustomization() {
+        XCTAssertEqual(StudioMixerPresentation.modeOnDeliberateActivation, .customization,
+            "tapping a card to start it, the Live Controls pill, and the rolodex's "
+            + "onActivate all route through this — if it stops opening customization "
+            + "there is no way left to reach the editor")
     }
 
     // ── Track A / C4 — StudioRegionWiring extraction ──────────────────

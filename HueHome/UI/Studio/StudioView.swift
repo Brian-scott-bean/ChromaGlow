@@ -130,7 +130,6 @@ struct StudioView: View {
     /// C4 renames it and nothing else — the tray is still a bottom-anchored
     /// overlay with its scrim, height maths and dismiss gesture intact.
     @State private var regionMode: StudioRegionMode = .customization
-    @State private var isMixerExpanded = false
     @State private var showCompositionTransportPrompt = false
     @State private var pendingCompositionCard: StudioCard?
     @State private var pendingCompositionRoom: RoomDisplayItem?
@@ -166,43 +165,42 @@ struct StudioView: View {
     var body: some View {
         GeometryReader { geo in
             let hasCurrentRoomEffect = vm.currentRoomEffect != nil
-            let mixerVisible = hasCurrentRoomEffect && regionMode == .customization
-            let mixerHeight: CGFloat = mixerVisible ? resolvedMixerHeight(proxy: geo) : 0
-            let isEntertainmentRunning = vm.currentRoomEffect?.card.isEntertainmentScoped ?? false
+            let showCustomization = hasCurrentRoomEffect && regionMode == .customization
 
             ZStack {
                 ambientBackground
 
-                if mixerVisible {
-                    Color.black.opacity(0.001)
-                        .ignoresSafeArea()
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            hideKeyboard()
-                            collapseMixer()
-                            HapticManager.shared.light()
-                        }
-                }
+                // The full-screen invisible scrim is DELETED. It was the direct
+                // cause of "the panel appears and collapses immediately": an
+                // open tray mounted a scrim over the whole screen, so the next
+                // drag intended for the room wheel hit the scrim and dismissed
+                // the tray instead. Nothing replaces it — an inline region has
+                // nothing to dismiss by tapping outside of.
 
                 VStack(spacing: 0) {
                     // ── Zone A: Inline two-axis room/zone rolodex ─
                     //
-                    // Hidden only while a streaming look is ACTUALLY on screen,
-                    // not merely running. Keyed on `isEntertainmentRunning`
-                    // alone, scrolling the wheel onto a streaming room deleted
-                    // the wheel mid-gesture — the selector destroyed by the
-                    // very selection it was making.
-                    if !StudioMixerPresentation.rolodexHidden(
-                        isEntertainmentRunning: isEntertainmentRunning,
-                        mixerVisible: mixerVisible) {
-                        roomRolodex
-                            .padding(.horizontal, HueSpacing.lg)
-                            .padding(.vertical, HueSpacing.xs)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
+                    // ALWAYS MOUNTED. `StudioMixerPresentation.rolodexHidden`
+                    // and its conditional wrapper are deleted, and nothing
+                    // replaces them: the mid-gesture-unmount bug — "the selector
+                    // destroyed by the very selection it was making" — is now
+                    // fixed BY CONSTRUCTION rather than by a predicate that has
+                    // to stay correct.
+                    roomRolodex
+                        .padding(.horizontal, HueSpacing.lg)
+                        .padding(.vertical, HueSpacing.xs)
 
-                    // ── Zone B: Living Card Grid ──────────────────
-                    cardGrid
+                    // ── Zone B: the region — decks OR customization ──
+                    //
+                    // A MODE SWITCH, not a stack. The deck pager is a
+                    // TabView(.page) of three vertically-scrolling pages; it can
+                    // never live inside a vertical parent scroll, and stacking
+                    // two vertical scrollers would break "one continuous
+                    // surface". So each mode owns exactly one scroll surface.
+                    // Deck access while an effect runs is preserved by the two
+                    // return tickets below: deckDots and the "Live Controls"
+                    // pill.
+                    studioRegion(showCustomization: showCustomization)
                         .frame(maxHeight: .infinity)
                         .onReceive(NotificationCenter.default.publisher(for: .compositionMicPermissionDenied)) { _ in
                             // Previously a dead wire: mic denial during a
@@ -211,8 +209,10 @@ struct StudioView: View {
                         }
 
                     // ── Deck page indicator ───────────────────────
-                    deckDots
-                        .padding(.bottom, HueSpacing.sm)
+                    if !showCustomization {
+                        deckDots
+                            .padding(.bottom, HueSpacing.sm)
+                    }
 
                     if hasCurrentRoomEffect && regionMode == .decks {
                         Button {
@@ -244,34 +244,6 @@ struct StudioView: View {
                     }
 
                     studioBottomClearance
-                }
-
-                if mixerVisible {
-                    VStack {
-                        Spacer()
-                    MixerTrayView(
-                        vm: vm,
-                        isMixerExpanded: $isMixerExpanded,
-                        performVM: $performVM,
-                        activeCompositionTab: $activeCompositionTab,
-                        activeHarmonyRule: $activeHarmonyRule,
-                        editingSwatch: $editingSwatch,
-                        onCollapse: { collapseMixer() },
-                        onSaveComposition: { card in
-                            compositionSaveName = card.name == "New Composition" ? "" : card.name
-                            compositionSaveIcon = card.icon
-                            compositionSaveTransport = vm.compositionTransportPreference == .roomOnly ? .roomOnly : .entertainmentArea
-                            showCompositionSaveSheet = true
-                        },
-                        onTransportSwitch: { effect, preferEntertainment in
-                            switchRunningCompositionTransport(effect, preferEntertainment: preferEntertainment)
-                        }
-                    )
-                    .frame(height: mixerHeight)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                    .padding(.bottom, MixerTrayMetrics.bottomClearance(
-                        bottomInset: geo.safeAreaInsets.bottom, barMounted: mixerBarMounted))
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -307,7 +279,7 @@ struct StudioView: View {
         // Region state: the room-change rule and the effect-teardown reset.
         // Extracted verbatim — see `StudioRegionWiring`.
         .modifier(StudioRegionWiring(
-            vm: vm, regionMode: $regionMode, isMixerExpanded: $isMixerExpanded))
+            vm: vm, regionMode: $regionMode))
         // Coverage badges for Deck 0 — refires on selection switch, auto-cancels
         // stale fetches on rapid rolodex scrubs (R4 Effects port).
         //
@@ -516,35 +488,11 @@ struct StudioView: View {
         }
     }
 
-    /// Caps tray height to available tab content so the mixer can use most of the screen on SE while keeping the deck visible.
-    /// When expanded (dragged up), grows to near-full-screen so the whole composition editor is visible.
-    private func resolvedMixerHeight(proxy: GeometryProxy) -> CGFloat {
-        let inset = proxy.safeAreaInsets.bottom
-        // Every point the tray stops spending on bottom padding becomes panel
-        // height. Added AFTER both existing caps — which are known-good on
-        // device — so the top edge lands exactly where it does today and the
-        // tray grows DOWNWARD only, to rest just above the music card. Zero
-        // when the bar is suppressed, so ≤700pt phones are unchanged.
-        let reclaimed = MixerTrayMetrics.tabBarClearance(bottomInset: inset)
-            - MixerTrayMetrics.bottomClearance(bottomInset: inset, barMounted: mixerBarMounted)
-
-        let half = min(computeMixerHeight(), max(300, proxy.size.height * 0.88))
-        guard isMixerExpanded else { return half + reclaimed }
-        // Near-full-screen: leave a small top peek and clear the floating tab bar below.
-        let expanded = proxy.size.height
-            - proxy.safeAreaInsets.top
-            - MixerTrayMetrics.tabBarClearance(bottomInset: inset)
-            - 24
-        return max(half, min(expanded, proxy.size.height * 0.92)) + reclaimed
-    }
-
-    private func computeMixerHeight() -> CGFloat {
-        guard let effect = vm.currentRoomEffect else { return 0 }
-        if case .composition = effect.card.strategy {
-            return MixerTrayMetrics.compositionHeight(isCompact: isCompactStudio)
-        }
-        return MixerTrayMetrics.engineHeight(for: effect.card, isCompact: isCompactStudio)
-    }
+    // DELETED in Track A C5: `resolvedMixerHeight` and `computeMixerHeight`.
+    // They sized a fixed-height bottom-anchored box. The customization host is
+    // an inline region that takes the space the decks would have taken, so
+    // there is no height to resolve. `bottomClearance` is NOT dead — see
+    // `studioBottomClearance`, which still preserves the build-46 fix.
 
     private var allCards: [StudioCard] {
         vm.effectCards + vm.liveModeCards
@@ -604,6 +552,43 @@ struct StudioView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
             }
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Zone B: the region (decks OR customization)
+    // ──────────────────────────────────────────────
+
+    /// One mode, one scroll surface. In `.customization` the deck pager is
+    /// UNMOUNTED, which is what stops every `LookPreviewCanvas` clock for free —
+    /// there is no hidden pager animating behind the editor.
+    @ViewBuilder
+    private func studioRegion(showCustomization: Bool) -> some View {
+        if showCustomization {
+            StudioCustomizationHost(
+                vm: vm,
+                performVM: $performVM,
+                activeCompositionTab: $activeCompositionTab,
+                activeHarmonyRule: $activeHarmonyRule,
+                editingSwatch: $editingSwatch,
+                onBackToDecks: {
+                    hideKeyboard()
+                    collapseMixer()
+                },
+                onSaveComposition: { card in
+                    compositionSaveName = card.name == "New Composition" ? "" : card.name
+                    compositionSaveIcon = card.icon
+                    compositionSaveTransport = vm.compositionTransportPreference == .roomOnly ? .roomOnly : .entertainmentArea
+                    showCompositionSaveSheet = true
+                },
+                onTransportSwitch: { effect, preferEntertainment in
+                    switchRunningCompositionTransport(effect, preferEntertainment: preferEntertainment)
+                }
+            )
+            .transition(.opacity)
+        } else {
+            cardGrid
+                .transition(.opacity)
         }
     }
 
@@ -698,7 +683,7 @@ struct StudioView: View {
                                 Task { await vm.explicitStop(card) }
                             }
                         } else {
-                            regionMode = .customization
+                            expandMixer()   // deliberate activation
                             applyCardWithTransportPrompt(card)
                         }
                     }
@@ -1123,7 +1108,7 @@ struct StudioView: View {
                         Task { await vm.explicitStop(card) }
                     }
                 } else {
-                    regionMode = .customization
+                    expandMixer()   // deliberate activation
                     applyCardWithTransportPrompt(card)
                 }
             }
@@ -1213,13 +1198,16 @@ struct StudioView: View {
     private func collapseMixer() {
         withAnimation(HueAnimation.fast) {
             regionMode = .decks
-            isMixerExpanded = false
         }
     }
 
+    /// The single deliberate opener. Every path that may present customization
+    /// — a card tap that starts an effect, the "Live Controls" pill, the
+    /// rolodex's `onActivate` — routes through here, which is what keeps the
+    /// passive paths structurally unable to open it.
     private func expandMixer() {
         withAnimation(HueAnimation.fast) {
-            regionMode = .customization
+            regionMode = StudioMixerPresentation.modeOnDeliberateActivation
         }
     }
 
@@ -1342,7 +1330,7 @@ struct StudioView: View {
             HapticManager.shared.selection()
             return
         }
-        regionMode = .customization
+        expandMixer()   // deliberate activation
         transportSwitchInFlightRoomIDs.insert(roomID)
         Task {
             await vm.apply(
@@ -1370,13 +1358,13 @@ struct StudioView: View {
         case .defaultStudioRules:
             applyCardWithTransportPrompt(card)
         case .streaming:
-            regionMode = .customization
+            expandMixer()   // deliberate activation
             Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: true) }
         case .roomREST:
-            regionMode = .customization
+            expandMixer()   // deliberate activation
             Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: false) }
         case .matchSavedPreset:
-            regionMode = .customization
+            expandMixer()   // deliberate activation
             Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: nil) }
         }
     }
@@ -2173,16 +2161,37 @@ enum StudioMixerPresentation {
     /// stated in the new vocabulary.
     static let modeOnRoomChange: StudioRegionMode = .decks
 
-    /// The wheel is unmounted only when a streaming look's tray is actually on
-    /// screen — never merely because a streaming look exists.
+    /// The rolodex is ALWAYS MOUNTED. `rolodexHidden` is deleted, and nothing
+    /// replaces it.
     ///
-    /// Both conditions matter. `isEntertainmentRunning` alone removed the
-    /// selector the moment the wheel landed on a streaming room, destroying the
-    /// gesture in progress; dropping the check entirely would put the wheel
-    /// underneath a full-height tray.
-    static func rolodexHidden(isEntertainmentRunning: Bool, mixerVisible: Bool) -> Bool {
-        isEntertainmentRunning && mixerVisible
+    /// The historical bug is worth keeping in view: keying the unmount on
+    /// `isEntertainmentRunning` alone deleted the wheel mid-gesture — "the
+    /// selector destroyed by the very selection it was making" — and the
+    /// two-condition version that fixed it only narrowed when the wheel could
+    /// vanish. Inline, the customization region no longer covers the wheel at
+    /// all, so there is nothing to hide it FOR. This constant is pinned by a
+    /// unit test and a host-render probe, so regressing it costs a constant and
+    /// two named tests.
+    static let rolodexAlwaysMounted = true
+
+    /// What a PASSIVE runtime change does to the region.
+    ///
+    /// `runningCardID` goes nil for reasons the user never asked for: a stop
+    /// completing, a recovered bridge animation reconciling, an external
+    /// teardown, a failed start rolling back. None of those may present a
+    /// deliberate surface, so this can only CLOSE customization — never open
+    /// it. Before C5 the same handler set `.customization`, which is exactly
+    /// the "unexpectedly opened over the wheel" class Track A exists to end.
+    static func modeAfterRunningCardChange(
+        _ newRunningCardID: String?, current: StudioRegionMode
+    ) -> StudioRegionMode {
+        newRunningCardID == nil ? .decks : current
     }
+
+    /// The ONLY thing that opens customization: a deliberate act — tapping a
+    /// card to start it, tapping the centred room, the picker sheet, or the
+    /// "Live Controls" pill. All of them route through `expandMixer()`.
+    static let modeOnDeliberateActivation: StudioRegionMode = .customization
 }
 
 /// "Which lights should this play on?" — the exact-area chooser
@@ -2352,7 +2361,6 @@ struct StudioRegionWiring: ViewModifier {
 
     let vm: StudioViewModel
     @Binding var regionMode: StudioRegionMode
-    @Binding var isMixerExpanded: Bool
 
     func body(content: Content) -> some View {
         content
@@ -2373,18 +2381,20 @@ struct StudioRegionWiring: ViewModifier {
             // open over the wheel for the arriving room.
             .onChange(of: vm.selectedRoom.map(StudioSelectionKey.init)) { _, _ in
                 regionMode = StudioMixerPresentation.modeOnRoomChange
-                isMixerExpanded = false
             }
-            // The effect that the customization surface was editing is gone, so
-            // there is nothing left to customize. Unchanged from the pre-C4
-            // `runningCardID` handler, including the fact that it resets to
-            // `.customization` rather than `.decks` — that asymmetry is
-            // existing behaviour and C4 does not touch it.
+            // The effect the customization surface was editing is gone, so
+            // there is nothing left to customize: return to the decks.
+            //
+            // C4 moved this verbatim and flagged the asymmetry; C5 resolves it.
+            // It used to set `.customization`, which is a PASSIVE runtime change
+            // asking for a deliberate surface. `runningCardID` goes nil for
+            // reasons the user never asked for — a stop completing, a recovered
+            // bridge animation reconciling, an external teardown — and none of
+            // those may open customization. Opening it is now reachable only
+            // from a deliberate card activation or the "Live Controls" pill.
             .onChange(of: vm.runningCardID) { _, newValue in
-                if newValue == nil {
-                    regionMode = .customization
-                    isMixerExpanded = false
-                }
+                regionMode = StudioMixerPresentation.modeAfterRunningCardChange(
+                    newValue, current: regionMode)
             }
     }
 }

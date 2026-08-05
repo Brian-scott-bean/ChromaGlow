@@ -134,6 +134,184 @@ final class StudioScrollStabilityTests: XCTestCase {
         XCTAssertGreaterThan(colors, 4,
                              "bottom strip is flat — idle Now Playing bar did not render")
     }
+
+    // ──────────────────────────────────────────────────────────────
+    // MARK: - Track A / C5 — inline customization host
+    //
+    // The overlay era's defect was spatial: a bottom-anchored tray up to 92% of
+    // the screen tall, plus a full-screen invisible scrim, sat OVER the room
+    // wheel. These probe the replacement — an inline region below a permanently
+    // mounted wheel — by rendering the real views and reading pixels/geometry.
+    // ──────────────────────────────────────────────────────────────
+
+    /// The wheel band, in points, inside the harness below.
+    private var wheelBand: ClosedRange<CGFloat> { 0...140 }
+
+    private func stagedEntertainmentEffect() -> (StudioViewModel, RoomDisplayItem) {
+        let vm = StudioViewModel()
+        let room = RoomDisplayItem(
+            id: "room-live", name: "Living Room", archetype: "living_room",
+            isOn: true, brightness: 80, groupedLightID: "gl-1", lightCount: 4,
+            bridgeID: "bridge-a", childResourceRefs: [])
+        let card = StudioCard(
+            id: "candle-card", name: "Candle", tagline: "Soft flicker", icon: "flame",
+            accentColor: .orange, requiresForeground: false,
+            params: [
+                StudioParam(id: "speed", label: "Speed",
+                            kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
+                StudioParam(id: "intensity", label: "Intensity",
+                            kind: .slider(min: 0, max: 100), defaultValue: 70, tier: .essential),
+                StudioParam(id: "warmth", label: "Warmth",
+                            kind: .slider(min: 0, max: 100), defaultValue: 30, tier: .advanced),
+            ],
+            strategy: .bridgeNative(effect: "candle"),
+            compositionLayerActivity: nil)
+        vm.selectedRoom = room
+        vm.runningEffects[RoomEffectKey(room: room)] = RunningEffect(
+            cardID: card.id, card: card, room: room, lightIDs: ["L1"],
+            isEntertainment: true, requestedTransport: nil, transportFallback: false)
+        XCTAssertNotNil(vm.currentRoomEffect, "fixture: an effect must be running")
+        return (vm, room)
+    }
+
+    /// The real composition order from `StudioView.body`: the wheel pinned on
+    /// top, the region below it. `StudioView`'s own view model is `@State
+    /// private`, so a running effect cannot be injected into the whole screen —
+    /// this harness mirrors the layout the body builds instead, which is what
+    /// the spatial claims below are about.
+    private func hostRolodexAboveCustomization(
+        vm: StudioViewModel, room: RoomDisplayItem, orchestrator: UnifiedOrchestrator
+    ) -> UIHostingController<AnyView> {
+        let root = AnyView(
+            VStack(spacing: 0) {
+                RoomRolodexView(
+                    rooms: [room], zones: [],
+                    selectedRoom: room, runningEffects: vm.runningEffects,
+                    onCommit: { _ in }, onActivate: { _ in }
+                )
+                .padding(.horizontal, HueSpacing.lg)
+                .padding(.vertical, HueSpacing.xs)
+
+                StudioCustomizationHost(
+                    vm: vm,
+                    performVM: .constant(nil),
+                    activeCompositionTab: .constant(.palette),
+                    activeHarmonyRule: .constant(HarmonyRule.none),
+                    editingSwatch: .constant(nil),
+                    onBackToDecks: {},
+                    onSaveComposition: { _ in },
+                    onTransportSwitch: { _, _ in }
+                )
+                .frame(maxHeight: .infinity)
+            }
+            .background(StagePalette.stage)
+            .environment(orchestrator)
+        )
+        let host = UIHostingController(rootView: root)
+        host.view.bounds = CGRect(x: 0, y: 0, width: 402, height: 874)
+        host.overrideUserInterfaceStyle = .dark
+        host.view.backgroundColor = UIColor(StagePalette.stage)
+        host.view.layoutIfNeeded()
+        return host
+    }
+
+    /// The wheel band must render even while a STREAMING look is running — the
+    /// exact case the deleted `rolodexHidden` predicate used to unmount it in,
+    /// destroying the gesture that was choosing the room.
+    func testRolodexBandRendersWhileAnEntertainmentEffectRuns() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let (vm, room) = stagedEntertainmentEffect()
+        let host = hostRolodexAboveCustomization(vm: vm, room: room, orchestrator: orchestrator)
+        pump(0.4)
+
+        let image = attachRender(of: host, named: "c5-wheel-with-entertainment-running")
+        let colors = distinctColors(in: image, stripY: wheelBand, of: 874)
+        XCTAssertGreaterThan(colors, 4,
+            "the wheel band is flat while a streaming look runs — the rolodex was "
+            + "unmounted or covered, which is the mid-gesture-unmount defect")
+    }
+
+    /// …and the customization host must not reach up into that band.
+    func testCustomizationHostDoesNotCoverTheWheelBand() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let (vm, room) = stagedEntertainmentEffect()
+        let host = hostRolodexAboveCustomization(vm: vm, room: room, orchestrator: orchestrator)
+        pump(0.4)
+
+        _ = attachRender(of: host, named: "c5-host-below-wheel")
+
+        // Geometry, not pixels: find the host's own backing view and assert its
+        // top edge is below the wheel band. An overlay tray would have started
+        // at the bottom and grown UP through it.
+        let hostTop = deepestSubviewTop(in: host.view, minHeight: 200)
+        XCTAssertGreaterThan(hostTop, wheelBand.upperBound - 1,
+            "the customization region starts at y=\(hostTop), inside the wheel band "
+            + "(0...\(wheelBand.upperBound)) — it is covering the selector")
+
+        // …and it is INLINE, not bottom-anchored. The overlay tray grew upward
+        // from the bottom edge to as much as 92% of the screen; an inline
+        // region begins just under the wheel and runs down from there.
+        XCTAssertLessThan(hostTop, 400,
+            "the region starts at y=\(hostTop) — that is a bottom-anchored overlay, "
+            + "not an inline region below the wheel")
+    }
+
+    /// The host renders its pinned header (identity + actions) and its content.
+    func testCustomizationHostRendersHeaderAndParams() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let (vm, room) = stagedEntertainmentEffect()
+        let host = hostRolodexAboveCustomization(vm: vm, room: room, orchestrator: orchestrator)
+        pump(0.4)
+
+        let image = attachRender(of: host, named: "c5-host-header-and-content")
+
+        // Header band, just below the wheel: the "Back to decks" row, the card
+        // name, the room name and the action circles all live here.
+        let header = distinctColors(in: image, stripY: 130...260, of: 874)
+        XCTAssertGreaterThan(header, 4,
+            "the pinned header band is flat — Stop / Perform / Save / Revert and "
+            + "'Back to decks' would be unreachable")
+
+        // The "Back to decks" row specifically — the grab bar's replacement.
+        // Probed by pixels, not by walking for a UILabel: SwiftUI on iOS 26
+        // renders text through display lists and vends no UIKit label to find.
+        let backRow = distinctColors(in: image, stripY: 155...175, of: 874)
+        XCTAssertGreaterThan(backRow, 2,
+            "the 'Back to decks' row is flat — with the grab bar gone there would "
+            + "be no way back to the decks")
+
+        // Content below the separator belongs to the host, not to a deck pager
+        // showing through: the region is a MODE SWITCH, so the decks are
+        // unmounted here and their preview clocks are stopped.
+        XCTAssertGreaterThan(distinctColors(in: image, stripY: 190...245, of: 874), 3,
+            "the identity + actions row did not render")
+
+        // The PARAMS half of this test's name: the two essential slider rows
+        // render below the separator, inside the host's single scroll surface.
+        XCTAssertGreaterThan(distinctColors(in: image, stripY: 265...400, of: 874), 3,
+            "the content band below the header is flat — the inline param rows "
+            + "did not render into the host's scroll surface")
+    }
+
+    // ── Probing helpers ───────────────────────────────────────────
+
+    /// Top edge (in the root's coordinate space) of the tallest subview that is
+    /// not the root itself — the customization region in this harness.
+    private func deepestSubviewTop(in root: UIView, minHeight: CGFloat) -> CGFloat {
+        var best: CGFloat = .greatestFiniteMagnitude
+        func walk(_ v: UIView) {
+            for sub in v.subviews {
+                let frame = sub.convert(sub.bounds, to: root)
+                if frame.height >= minHeight, frame.minY > 1 {
+                    best = min(best, frame.minY)
+                }
+                walk(sub)
+            }
+        }
+        walk(root)
+        return best == .greatestFiniteMagnitude ? 0 : best
+    }
+
 }
 
 // ──────────────────────────────────────────────────────────────────────────
