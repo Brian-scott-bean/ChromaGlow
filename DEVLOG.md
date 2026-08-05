@@ -112,6 +112,43 @@
   cross-bridge stop isolation, per-bridge slider routing, same-bridge switch).
   **Neither Packet 7 nor Packet 8 hardware validation is complete — Brian must run §V** in
   `docs/ios/master-on-device-checklist.md`. Entries below.
+- **TRACK A — UNIFIED CUSTOMIZATION ENGINE (2026-08-05): the Rolodex and the customization
+  surface stop fighting each other. Branch `fix/unified-rolodex-host`, rollback tag
+  `checkpoint/pre-unified-rolodex-host` (at `320ebaf`), five commits, UNMERGED, and
+  ZERO hardware rows executed.** C1 `fd03ecb` closed the wrong-bridge class on the Studio
+  READ path — two bridges can share a Hue room id, so `.task(id: selectedRoom?.id)` never
+  refired between them and Deck 0 showed bridge A's "N OF M LIGHTS" against bridge B's room;
+  `StudioSelectionKey` (bridge + group + kind) re-keys the coverage task, the room-change
+  handler, `refreshCoverage`'s state and the host's view identity, and a read-only exact
+  transport projection replaces three bare-room-id reads. C2 `afed54f` extracted
+  `RolodexSelectionMachine` mechanically, preserving the per-detent commit that IS the defect
+  so the commit stays an honest bisect anchor. C3 `1c01b14` is the correction, atomic per
+  settled decision 17: detent crossings preview WHEEL-LOCALLY (there is no `onPreview` and no
+  Studio preview state), release enters `.settling` and emits no commit, a token-matching
+  settle completion or watchdog commits exactly ONCE, Reduce Motion runs the same rule with no
+  spring, `.activate` is separate from `.commit` so tapping an already-selected room still
+  opens customization, a deferred external selection supersedes a stale settle target (one
+  write, zero user commits), and roster changes rebase by token — a reorder 3→8 produces no
+  effect at all. C4 `d73760c` extracted `StudioRegionWiring` and renamed `isMixerCollapsed`
+  to `regionMode: StudioRegionMode`. C5 `757a1ea` replaced the bottom-anchored overlay with
+  the inline host: the rolodex is now mounted UNCONDITIONALLY (`rolodexHidden` deleted, the
+  mid-gesture-unmount bug fixed by construction), the full-screen scrim is deleted, the region
+  is a mode switch with exactly ONE vertical scroll surface, the grab bar became "Back to
+  decks" in a pinned header, and the passive `runningCardID` handler can no longer OPEN
+  customization — only deliberate activation does. Suite **1440 passed / 0 failed / 96
+  suites**, all 12 hardening guards pass, tracked tree clean (untracked `.cnvs/` and
+  `.cursor/mcp.json` remain excluded, as throughout). **NONE OF THAT IS HARDWARE EVIDENCE.**
+  C5's layout probes render a harness MIRRORING `StudioView`'s composition order rather than
+  the real screen, because `StudioView`'s view model is `@State private` and a running effect
+  cannot be injected into it — so real-screen placement, gesture routing and the feel of the
+  settle are **hardware-UNPROVEN**. The drag-up advanced reveal was removed with the overlay
+  (`isMixerExpanded` was a height job on a fixed-height box); advanced params are now reached
+  only through the host disclosure and the existing "+N more" sheet, which is why §V-A row 36
+  exists. §V-A adds rows **23–35 (approved set, verbatim) plus row 36 (C5 amendment)**, every
+  one marked **UNPROVEN**. No `project.pbxproj` edit was permitted in this packet, so
+  `CURRENT_PROJECT_VERSION` still needs its own bump before Brian installs. **Track A is not
+  complete and not merge-ready until rows 23–36 are physically tested.** Track B (the unified
+  control grammar) remains blocked on Composer 2 Phase 1–2.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
   hardware. MERGED — PR #59, merge `3479243`, and this is the build Brian tested.** Branch
   `fix/packet7-device-followups`, rollback tag `checkpoint/pre-packet7-device-followups`

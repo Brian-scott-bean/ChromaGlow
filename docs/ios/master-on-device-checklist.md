@@ -837,6 +837,64 @@ with an explanation is the designed answer; a silent no-op is not.
 | 21 | **Round 4g.** With both bridges streaming, move a slider in each room | The edit changes only that room's bridge; the other bridge's look is unaffected | |
 | 22 | **Round 4g.** With bridge 2 streaming, start a second streaming room on bridge 2 | The app ASKS (switch prompt); confirming stops the old room and streams the new one — same-bridge exclusivity unchanged | |
 
+### V-A. Track A — unified customization engine, Rolodex + inline host
+
+**Every row below is UNPROVEN. Nothing here has been on a device.**
+
+Branch `fix/unified-rolodex-host`, rollback tag `checkpoint/pre-unified-rolodex-host`
+(at `320ebaf`). Five commits, **unmerged**, no build bump (a `project.pbxproj`
+edit was forbidden in this packet, so `CURRENT_PROJECT_VERSION` must be bumped in
+its own commit before installing).
+
+| Commit | SHA | What |
+| --- | --- | --- |
+| C1 | `fd03ecb` | bridge-qualify every selection-keyed side effect |
+| C2 | `afed54f` | extract `RolodexSelectionMachine` — no behaviour change |
+| C3 | `1c01b14` | previews while dragging, commits after settling, tap activates |
+| C4 | `d73760c` | extract `StudioRegionWiring` |
+| C5 | `757a1ea` | inline customization host below the pinned rolodex |
+
+**What the automated run does and does not prove.** The suite is 1440 passed /
+0 failed across 96 suites, and `Scripts/hardening_guards.sh` passes. **None of
+that is evidence about hardware.** In particular C5's layout probes render a
+harness that MIRRORS `StudioView`'s composition order (wheel above region) rather
+than driving the real screen — `StudioView`'s view model is `@State private` and
+a running effect cannot be injected into it. Real-screen placement, real gesture
+routing, and the feel of the settle are therefore **hardware-UNPROVEN**, and the
+render probes must not be read as placement evidence.
+
+**One removal needs explicit device attention.** The drag-up-to-expand gesture
+went with the overlay: `isMixerExpanded` was a HEIGHT job on a fixed-height box,
+and full-region there is no height to expand. Advanced params are now reached
+ONLY through the host's own disclosure and the existing "+N more" sheet. Row 36
+exists because that path lost its old entry point and nothing on the automated
+side can prove the new one is discoverable.
+
+| # | Test | Expected | Result |
+| --- | --- | --- | --- |
+| 23 | Drag the wheel fast across 6+ rooms, several with running effects | Scrolls smoothly through all; the panel does **not** open, close, or flash; only the centre highlight moves | **UNPROVEN** |
+| 24 | Watch the centred room name while dragging, then release | Mid-drag the name highlights and the lens reads "hovering"; nothing below changes. On release it snaps and *then* the panel switches. Should feel crisper — report if abrupt | **UNPROVEN** |
+| 25 | Console/Charles open; drag across 6 rooms on a bridge with entertainment areas | **Zero** selection-triggered network work *during* the drag. After settling, **no more than one** refresh for the final exact selection — subject to the existing ≤60s coverage cache and in-flight coalescing, so a legitimately cached no-GET is also a PASS | **UNPROVEN** |
+| 26 | Start a streaming look, then drag the wheel | Wheel stays on screen and responsive for the whole gesture; never removed mid-drag, never covered | **UNPROVEN** |
+| 27 | With an effect running, scroll the panel top→bottom in one continuous drag | One continuous scroll, no inner panel scrolling separately, no rubber-band stop; header stays pinned and tappable | **UNPROVEN** |
+| 28 | Drag the hue/saturation pad, then each slider | Every drag lands on the control it started on; panel never dismisses under the finger | **UNPROVEN** |
+| 29 | Tap "Back to decks" in the panel's **pinned header**, then the "Live Controls" pill | Decks return with the effect still running; the pill brings the panel back. Nothing restarts, nothing stops | **UNPROVEN** |
+| 30 | VoiceOver: swipe to the wheel's centre row and double-tap | Customization **opens** for that room (today the row announces as a button and activating it does nothing at all) | **UNPROVEN** |
+| 31 | Two bridges with the **same** Hue room id; switch between them | Deck-0 coverage badges refresh — bridge A's numbers never show against bridge B's room | **UNPROVEN** |
+| 32 | Rename/delete a room in the Hue app **while mid-drag** | Drag continues; wheel re-centres on a surviving room; nothing stays selected that no longer exists | **UNPROVEN** |
+| 33 | With the panel open: background→foreground, switch tabs and back | Panel and scroll position preserved; no animation runs while Studio is off screen | **UNPROVEN** |
+| 34 | Release the wheel and watch closely as it springs to rest | Nothing below the wheel changes *while it is still moving*. The panel/room content switches only once the wheel has visibly stopped | **UNPROVEN** |
+| 35 | Tap the centred room when it is **already** the selected room | Customization opens for that room (this is the case a commit-only design silently no-ops). Nothing starts, stops, or restarts | **UNPROVEN** |
+| 36 | **C5 amendment — advanced controls.** With an engine card running, look for the advanced params: use the host's disclosure, then the "+N more" sheet | Every advanced param is reachable WITHOUT the deleted drag-up gesture; the disclosure is discoverable without being told it exists; "+N more" still opens `StudioParamSheet` unchanged | **UNPROVEN** |
+
+Rows 23–35 are the approved §V set from the Track A packet, verbatim. Row 36 is
+an addition made when C5 removed the drag-up reveal.
+
+**Track A is NOT complete and NOT merge-ready.** It is five green commits on a
+branch. It becomes a candidate only after rows 23–36 are physically executed.
+
+---
+
 Items 6, 7 and 8 need a second controller (Hue Sync or the Hue app) and cannot be
 produced in the simulator — the test harness deliberately cannot complete a DTLS
 handshake, so a genuinely stable takeover is hardware-only. Leave any
