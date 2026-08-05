@@ -846,6 +846,146 @@ final class RolodexSelectionMachineTests: XCTestCase {
         XCTAssertNil(m.activeSettleToken)
     }
 
+    // ── Build-47 device finding 1: the settle must not snap back ──────
+    //
+    // The wheel's rendered geometry is `(idx - renderBase)*step + translation`.
+    // `applyDragEnded` zeroes `translation` INSIDE the spring transaction while the
+    // commit is deliberately deferred to the spring's completion — so if the base is
+    // still the previously committed row, the spring carries the wheel BACK there and
+    // the commit then jumps it forward. Bathroom → Laundry rendered as
+    // Bathroom → (back toward Bathroom) → Laundry.
+
+    /// The base under a settle is the TARGET, not the row we are leaving.
+    func testSettlingRendersFromTheSettleTargetNotThePreviousCommit() {
+        var m = machine(room: 0)
+        dragDown(&m, detents: 2)
+        m.apply(.dragEnded(predictedDX: 0, predictedDY: -rowHeight * 5, reduceMotion: false))
+
+        guard case let .settling(_, _, target) = m.phase else {
+            return XCTFail("expected a settle, phase is \(m.phase)")
+        }
+        XCTAssertEqual(target, 5)
+        XCTAssertEqual(m.committedRoom, 0, "the commit is still deferred — that is C3's rule")
+        XCTAssertEqual(m.renderBase(for: .vertical), target,
+            "the wheel must be DRAWN from the settle target while the spring runs")
+
+        // The target cell's rendered offset must already be the centre, because
+        // `translation` is zero and the base is the target.
+        let pos = CGFloat(target - m.renderBase(for: .vertical)) * rowHeight + m.translation
+        XCTAssertEqual(pos, 0, accuracy: 0.0001,
+            "the settle target must land on the lens, not one wheel-length away")
+    }
+
+    /// The device finding itself: releasing on B must never render a frame whose
+    /// destination is A. Walks every state the view can draw between release and
+    /// commit and asserts the base is never the row the drag started from.
+    func testReleasingOnTargetNeverRendersAnIntermediateTargetOfThePreviousItem() {
+        var m = machine(room: 2)
+        let previouslyCommitted = m.committedRoom
+
+        dragDown(&m, detents: 3)
+        XCTAssertEqual(m.renderBase(for: .vertical), previouslyCommitted,
+            "while a finger is down the base IS the committed row — translation carries the wheel")
+
+        m.apply(.dragEnded(predictedDX: 0, predictedDY: -rowHeight * 4, reduceMotion: false))
+        guard case let .settling(token, _, target) = m.phase else {
+            return XCTFail("expected a settle, phase is \(m.phase)")
+        }
+        XCTAssertNotEqual(target, previouslyCommitted)
+        XCTAssertNotEqual(m.renderBase(for: .vertical), previouslyCommitted,
+            "SNAP-BACK: the spring would carry the wheel back to the room we left")
+        XCTAssertEqual(m.translation, 0, "…and it does so because translation is zeroed here")
+
+        m.apply(.settleFinished(token))
+        XCTAssertEqual(m.renderBase(for: .vertical), target,
+            "the commit must not move the base — the wheel is already there")
+        XCTAssertEqual(m.committedRoom, target)
+    }
+
+    /// The old committed marker answers "where does releasing unchanged return you".
+    /// That question is live under a finger and answered once the wheel is settling —
+    /// keeping the marker on the old row advertises a destination we are leaving.
+    func testSettlingSuppressesTheOldCommittedMarker() {
+        var m = machine(room: 1)
+        XCTAssertEqual(m.committedMarker(for: .vertical), 1, "at rest the marker is the selection")
+
+        dragDown(&m, detents: 3)
+        XCTAssertEqual(m.committedMarker(for: .vertical), 1,
+            "PRESERVED while dragging — this is the user's way back")
+
+        m.apply(.dragEnded(predictedDX: 0, predictedDY: -rowHeight * 3, reduceMotion: false))
+        guard case let .settling(token, _, target) = m.phase else {
+            return XCTFail("expected a settle, phase is \(m.phase)")
+        }
+        XCTAssertNil(m.committedMarker(for: .vertical),
+            "SUPPRESSED while settling — the choice is made")
+
+        m.apply(.settleFinished(token))
+        XCTAssertEqual(m.committedMarker(for: .vertical), target,
+            "and it returns on the row we actually landed on")
+    }
+
+    /// One settle, one write. The snap-back fix must not add a second.
+    func testOneSettleProducesExactlyOneParentSelectionWrite() {
+        var m = machine(room: 0)
+        var all: [RolodexSelectionMachine.Effect] = []
+        all += dragDown(&m, detents: 4)
+        all += m.apply(.dragEnded(predictedDX: 0, predictedDY: -rowHeight * 6, reduceMotion: false))
+        guard let token = m.activeSettleToken else { return XCTFail("no settle token") }
+        all += m.apply(.settleFinished(token))
+
+        XCTAssertEqual(selectionWrites(all).count, 1, "exactly ONE selectedRoom write")
+        XCTAssertEqual(commits(all).count, 1, "…and it is the user's commit")
+        XCTAssertEqual(m.committedRoom, 6)
+    }
+
+    /// Reduce Motion has no spring to roll back through, and must not grow one.
+    func testReduceMotionAppliesTheFinalTargetWithoutAVisualRollback() {
+        var m = machine(room: 0)
+        dragDown(&m, detents: 2)
+        let effects = m.apply(
+            .dragEnded(predictedDX: 0, predictedDY: -rowHeight * 5, reduceMotion: true))
+
+        XCTAssertEqual(m.phase, .idle, "Reduce Motion never enters a settling window")
+        XCTAssertNil(m.activeSettleToken)
+        XCTAssertEqual(m.committedRoom, 5)
+        XCTAssertEqual(m.renderBase(for: .vertical), 5,
+            "the base goes straight to the target — there is no intermediate frame")
+        XCTAssertEqual(m.committedMarker(for: .vertical), 5)
+        XCTAssertEqual(selectionWrites(effects).count, 1, "one write, exactly as the spring path")
+    }
+
+    /// A settle on one axis must not disturb how the other wheel is drawn.
+    func testInactiveAxisRenderBaseAndMarkerAreUnaffectedByASettleOnTheOtherAxis() {
+        var m = machine(room: 0, zone: 2)
+        dragDown(&m, detents: 3)
+        m.apply(.dragEnded(predictedDX: 0, predictedDY: -rowHeight * 3, reduceMotion: false))
+
+        XCTAssertEqual(m.renderBase(for: .horizontal), 2, "the zone wheel has no settle in flight")
+        XCTAssertEqual(m.committedMarker(for: .horizontal), 2, "…so its marker stays put")
+    }
+
+    /// The counterpart guarantee, pinned deliberately: this fix does NOT suppress
+    /// external selections. Siri, a deep link or a parent write naming the room we
+    /// just left is a real reselection, not an echo — the event carries no origin, so
+    /// a token-equality guess would silently swallow legitimate selections.
+    func testExternalSelectionOfThePreviousRoomStillSupersedesAnActiveSettle() {
+        var m = machine(room: 3)
+        var all: [RolodexSelectionMachine.Effect] = []
+        all += dragDown(&m, detents: 2)
+        all += m.apply(.dragEnded(predictedDX: 0, predictedDY: -rowHeight * 4, reduceMotion: false))
+        guard let token = m.activeSettleToken else { return XCTFail("no settle token") }
+
+        // Index 3 is the room the drag STARTED from.
+        all += m.apply(.externalSelect(axis: .vertical, index: 3))
+        XCTAssertNotNil(m.deferredExternal, "a genuine external selection must still be held")
+
+        all += m.apply(.settleFinished(token))
+        XCTAssertEqual(m.committedRoom, 3, "…and must still supersede the settle target")
+        XCTAssertEqual(selectionWrites(all).count, 1, "one write")
+        XCTAssertTrue(commits(all).isEmpty, "…and it is not a user commit")
+    }
+
     /// C2's extraction proof, re-pointed at C3. The detent ARITHMETIC is
     /// untouched — same indices, same settle target — and the ONLY divergence
     /// from the pre-extraction behaviour is that the mid-drag commits became

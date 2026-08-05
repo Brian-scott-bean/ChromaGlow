@@ -94,8 +94,11 @@ struct RoomRolodexView: View {
     }
 
     // ── Derived ───────────────────────────────────────────────────────
-    private var selRoom: Int { machine.committedRoom }
-    private var selZone: Int { machine.committedZone }
+    /// The POSITIONAL base each wheel is drawn from — the settle target while a settle
+    /// is in flight, the committed index otherwise. Never `committedRoom` directly:
+    /// see `renderBase(for:)` for why that produced the snap-back.
+    private var baseRoom: Int { machine.renderBase(for: .vertical) }
+    private var baseZone: Int { machine.renderBase(for: .horizontal) }
     private var liveRoom: Int { machine.liveRoom }
     private var liveZone: Int { machine.liveZone }
     private var activeAxis: Axis { machine.activeAxis }
@@ -247,12 +250,13 @@ struct RoomRolodexView: View {
 
                 // Vertical ROOM wheel
                 ForEach(Array(rooms.enumerated()), id: \.element.id) { idx, room in
-                    let pos = CGFloat(idx - selRoom) * rowHeight + roomDrag
+                    let pos = CGFloat(idx - baseRoom) * rowHeight + roomDrag
                     if abs(pos) < h / 2 + rowHeight {
                         wheelCell(
                             item: room, isZone: false,
                             isCenter: idx == liveRoom && activeAxis == .vertical,
-                            isCommitted: idx == selRoom && activeAxis == .vertical)
+                            isCommitted: machine.committedMarker(for: .vertical) == idx
+                                && activeAxis == .vertical)
                             .frame(width: min(w, 300))
                             .offset(y: pos)
                             .modifier(Cylinder(n: pos / (h / 2), axis: .vertical, reduceMotion: reduceMotion))
@@ -262,12 +266,13 @@ struct RoomRolodexView: View {
 
                 // Horizontal ZONE wheel
                 ForEach(Array(zones.enumerated()), id: \.element.id) { idx, zone in
-                    let pos = CGFloat(idx - selZone) * colWidth + zoneDrag
+                    let pos = CGFloat(idx - baseZone) * colWidth + zoneDrag
                     if abs(pos) < w / 2 + colWidth {
                         wheelCell(
                             item: zone, isZone: true,
                             isCenter: idx == liveZone && activeAxis == .horizontal,
-                            isCommitted: idx == selZone && activeAxis == .horizontal)
+                            isCommitted: machine.committedMarker(for: .horizontal) == idx
+                                && activeAxis == .horizontal)
                             .frame(width: colWidth)
                             .offset(x: pos)
                             .modifier(Cylinder(n: pos / (w / 2), axis: .horizontal, reduceMotion: reduceMotion))
@@ -685,6 +690,35 @@ struct RolodexSelectionMachine: Equatable {
     /// The committed index on the active axis — the amber ring's home, so the
     /// user can see where releasing without moving would return them.
     var committedIndex: Int { activeAxis == .vertical ? committedRoom : committedZone }
+
+    /// The index each wheel is DRAWN from on `axis`.
+    ///
+    /// `translation` is measured from this base, and `applyDragEnded` zeroes it the
+    /// instant a settle begins — so during `.settling` the base must already BE the
+    /// settle target. Drawing from `committedRoom` there (which does not move until
+    /// the spring's completion commits) makes the spring carry the wheel back to the
+    /// previously committed row, and the deferred commit then jumps it forward. That
+    /// two-legged move is the build-47 snap-back.
+    func renderBase(for axis: Axis) -> Int {
+        if case let .settling(_, settleAxis, target) = phase, settleAxis == axis {
+            return target
+        }
+        return axis == .vertical ? committedRoom : committedZone
+    }
+
+    /// The index wearing the committed marker on `axis`, or nil when there is no live
+    /// "return here" answer.
+    ///
+    /// PRESERVED while dragging — that is exactly when the user needs to see where
+    /// letting go unchanged would land them. SUPPRESSED while settling: the choice is
+    /// made, and continuing to mark the old room presents a destination the wheel is
+    /// no longer travelling to.
+    func committedMarker(for axis: Axis) -> Int? {
+        if case let .settling(_, settleAxis, _) = phase, settleAxis == axis {
+            return nil
+        }
+        return axis == .vertical ? committedRoom : committedZone
+    }
 
     /// True while the wheel is moving under a finger or still springing. The
     /// lens draws a dashed stroke here and a solid one at rest.
