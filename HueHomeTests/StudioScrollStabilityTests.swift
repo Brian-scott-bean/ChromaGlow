@@ -1392,7 +1392,37 @@ final class StudioAIPresentationTests: XCTestCase {
         XCTAssertEqual(p.deck, composerDeck)
     }
 
-    // ── 9. Guards on the reducer's own edges ────────────────────────
+    // ── 9. A teardown forced by the region taking over ──────────────
+
+    /// The customization region unmounts the deck ZStack — pager AND overlay —
+    /// and it can do so while the composer is open (the rolodex and the "Live
+    /// Controls" pill both sit outside the overlay and both call
+    /// `expandMixer()`). Only `finishDismissal` lowers the fence, so a takeover
+    /// that skipped the teardown would leave the pager fenced forever: every
+    /// deck pill and every swipe refused until a relaunch. The takeover
+    /// therefore runs the SAME ordered teardown, keeping the draft — the user
+    /// never cancelled.
+    func testRegionTakeoverTeardownReleasesTheFenceAndKeepsTheDraft() {
+        var p = onComposerDeck()
+        p.promptText = "sunset over the water"
+        p.open()
+
+        // `dismissAIComposer(clearingDraft: false)` in production is exactly
+        // this pair, and nothing here clears the draft.
+        let settle = p.beginDismissal()
+        p.finishDismissal(token: settle)
+
+        XCTAssertFalse(p.isFenced,
+            "a takeover that leaves the fence up locks deck navigation permanently")
+        XCTAssertEqual(p.phase, .idle)
+        XCTAssertEqual(p.promptText, "sunset over the water",
+            "a takeover is not a cancel — the draft survives")
+
+        p.propose(effectsDeck)
+        XCTAssertEqual(p.deck, effectsDeck, "and ordinary deck selection works again")
+    }
+
+    // ── 10. Guards on the reducer's own edges ───────────────────────
 
     func testOutOfOrderTransitionsAreInert() {
         var p = onComposerDeck()

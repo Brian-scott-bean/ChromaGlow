@@ -283,6 +283,23 @@ struct StudioView: View {
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            // The customization region UNMOUNTS the whole deck ZStack — pager
+            // and AI overlay together — and it can do that while the composer
+            // is open: the rolodex (Zone A, above) and the "Live Controls" pill
+            // (below) both sit OUTSIDE the overlay and both route through
+            // `expandMixer()`, as do the Siri/deep-link drains.
+            //
+            // Without this the presentation would be torn off the screen while
+            // its model still said `.presenting`, and since only
+            // `finishDismissal` lowers the fence, the deck pager would stay
+            // fenced FOREVER — every pill tap and every swipe refused until a
+            // relaunch. That is a worse failure than the bug this packet fixes,
+            // so the takeover runs the same ordered teardown any other close
+            // does. The draft is kept: the user never cancelled.
+            .onChange(of: showCustomization) { _, tookOver in
+                guard tookOver, aiPresentation.isOverlayVisible else { return }
+                dismissAIComposer(clearingDraft: false)
+            }
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
