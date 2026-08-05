@@ -547,6 +547,62 @@
 
 ---
 
+## 2026-08-05 - [Claude] Unified Customization Engine, Track A / C2 — RolodexSelectionMachine extraction
+
+Branch `fix/unified-rolodex-host`, rollback tag `checkpoint/pre-unified-rolodex-host` (at
+`320ebaf`). One refactor commit (`afed54f`), on top of C1 (`fd03ecb`). No new source file, no
+`project.pbxproj` change, no version/build/signing change. **Not merged** — settled decision 19.
+
+**Mechanical extraction, and deliberately nothing more.** The rolodex's seven `@State` scalars
+(`selRoom`, `selZone`, `liveRoom`, `liveZone`, `lockAxis`, `activeAxis`, `drag`) became one
+`RolodexSelectionMachine`, and the two detent expressions moved into `RolodexKinematics`
+unchanged. The machine **still emits a selection event at every detent crossing** — which is the
+defect Track A exists to fix. No settling phase, no deliberate activation, no delayed commit, no
+settle token, no watchdog, no Reduce Motion path, no token-based rebasing. All of that is C3.
+Keeping C2 behaviour-identical is what makes it an honest bisect anchor: if the feel of the wheel
+changes, `git bisect` lands on C3, not here.
+
+`RolodexItemToken` is introduced as **data only** — nothing consults it yet. C3 keys rebasing on
+it, and minting it here means C3 does not have to prove the minting and the rebasing at once.
+
+**Two structural changes, both argued inert.**
+- `isSyncing` deleted. Its only job was the `!isSyncing` guard in `updateLive()`, and it could
+  never be true during a drag — `select(_:)` and the external-sync handler each set and cleared
+  it synchronously with no gesture callback in between. `.externalSync` now encodes the same rule
+  structurally: it emits nothing.
+- The end of a drag still runs **two** transactions (the spring, then a second
+  `HueAnimation.card` transaction re-applying the same indices and firing the selection and
+  haptic). The second writes identical values, but it can retarget the still-running spring, so
+  C2 keeps it; C3 collapses them. The sync and picker paths now write the axis inside the same
+  transaction as the indices rather than just before them — the stage's
+  `.animation(HueAnimation.normal, value: activeAxis)` still scopes the axis crossfade, so the
+  resolved animation is unchanged.
+
+**Validation.** 6 tests in the existing registered `StudioScrollStabilityTests.swift`, as a
+second `final class` (no new file, no pbxproj edit): `testDetentMathMatchesLegacyRounding`,
+`testSettleTargetUsesPredictedTranslation`, `testAxisLockRequiresSixPointsAndNeverFlips`,
+`testZeroCountAxisIsInert`, `testLegacyEventStreamMatchesPreExtractionBehaviour`,
+`testTokenMintingIsStableAndBridgeQualified`.
+
+The extraction proof transcribes the pre-extraction gesture code **verbatim** as a reference and
+drives both it and the machine through the same 15-sample drag plus an overshooting flick,
+asserting an identical event stream and identical committed/live/axis state — and asserting the
+per-detent commits are still present, so C3's change must show up in a diff rather than arrive
+alongside an extraction. Negative-controlled: swapping the haptic/commit order in the machine
+makes it fail.
+
+Full `HueHomeTests` suite green — **1414 passed, 0 failed, 96 suites**;
+`Scripts/hardening_guards.sh` clean. (One simulator clone hit a transient
+`FBSOpenApplicationServiceErrorDomain` launch denial and retried; the C1 and C2 tests were
+verified present in the passing set.)
+
+**Next.** C3 — the actual defect: preview while dragging, commit after settling, tap activates.
+One atomic commit (settled decision 17); it introduces `.activate`, the `.settling` phase,
+`settleFinished`, generation tokens, the watchdog and the Reduce Motion path together, because
+they are one correctness boundary. Not yet authorized. Nothing in Track A is on device yet.
+
+---
+
 ## 2026-08-05 - [Claude] Unified Customization Engine, Track A / C1 — bridge-qualified selection identity
 
 Branch `fix/unified-rolodex-host`, rollback tag `checkpoint/pre-unified-rolodex-host` (at
