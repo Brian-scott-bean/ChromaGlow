@@ -636,10 +636,19 @@ struct StudioView: View {
             zones: orchestrator.allZones,
             selectedRoom: vm.selectedRoom,
             runningEffects: vm.runningEffects,
-            onSelect: { room in
+            // Fires ONCE, after the wheel has stopped. Selection assignment
+            // only — no playback API is reachable from here, which is the
+            // contract `testSelectionChangeNeverMutatesPlayback` locks.
+            onCommit: { room in
                 withAnimation(HueAnimation.fast) {
                     vm.selectedRoom = room
                 }
+            },
+            // Deliberate activation: open customization for the item the user
+            // tapped. Assigns nothing and starts, stops or restarts nothing —
+            // which is why tapping an ALREADY-selected room still works.
+            onActivate: { _ in
+                expandMixer()
             }
         )
     }
