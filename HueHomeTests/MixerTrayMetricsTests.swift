@@ -189,4 +189,50 @@ final class MixerTrayMetricsTests: XCTestCase {
         // make the rule above unfalsifiable.
         XCTAssertNotEqual(StudioRegionMode.decks, .customization)
     }
+
+    // ── Build-47 device finding 2 — creating a NEW composition ────────
+    //
+    // "+ Create" is deliberate editing intent and should land the user IN the
+    // editor. Before this it called the view model and discarded the result, so
+    // the host appeared only when `regionMode` happened to still be
+    // `.customization` — and after any room scrub or prior teardown the wiring
+    // has already set it to `.decks`.
+
+    func testSuccessfulNewCompositionCreationOpensCustomization() {
+        for current in [StudioRegionMode.decks, .customization] {
+            XCTAssertEqual(
+                StudioMixerPresentation.modeAfterNewCompositionCreated(
+                    created: true, current: current),
+                .customization,
+                "creating a new composition must open the editor (from \(current))")
+        }
+    }
+
+    /// A refused room, a cancelled transport prompt, a failed start, or a
+    /// re-entry on an already-running starter card are all NOT creation.
+    func testFailedOrCancelledCreationLeavesTheRegionAlone() {
+        for current in [StudioRegionMode.decks, .customization] {
+            XCTAssertEqual(
+                StudioMixerPresentation.modeAfterNewCompositionCreated(
+                    created: false, current: current),
+                current,
+                "a failed or cancelled creation moved the region (from \(current))")
+        }
+    }
+
+    /// The two rules point in OPPOSITE directions and must never be swapped: a
+    /// creation result opens, a passive runtime change can only close. Wiring the
+    /// creation rule to `runningCardID` would reintroduce the exact defect C5
+    /// removed, because that fires for teardowns and recoveries too.
+    func testNewCompositionRuleIsDistinctFromThePassiveRunningCardRule() {
+        XCTAssertEqual(
+            StudioMixerPresentation.modeAfterNewCompositionCreated(
+                created: true, current: .decks),
+            .customization)
+        XCTAssertNotEqual(
+            StudioMixerPresentation.modeAfterRunningCardChange("composer_starter", current: .decks),
+            .customization,
+            "a card merely becoming the running card must NOT open customization — "
+            + "only a creation RESULT may")
+    }
 }

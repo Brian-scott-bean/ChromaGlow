@@ -3444,8 +3444,14 @@ final class StudioViewModel {
     }
 
     /// Ensures the hidden starter template exists so `.composition(starterID)` resolves in `apply()`.
-    func ensureComposerStarterDraft() {
-        guard !compositionStore.presets.contains(where: { $0.id == Self.composerStarterDraftPresetID }) else { return }
+    ///
+    /// Returns whether the draft is present and usable afterwards. This is a READINESS
+    /// result, not a novelty claim: the sentinel id is fixed, so the draft is minted once
+    /// and reused forever. "Did this tap start something new" is carried separately by
+    /// `NewCompositionCreation.wasAlreadyRunning`.
+    @discardableResult
+    func ensureComposerStarterDraft() -> Bool {
+        guard !compositionStore.presets.contains(where: { $0.id == Self.composerStarterDraftPresetID }) else { return true }
         let now = Date()
         let draft = CompositionPreset(
             id: Self.composerStarterDraftPresetID,
@@ -3469,12 +3475,55 @@ final class StudioViewModel {
             providerModel: nil
         )
         compositionStore.save(draft)
+        return compositionStore.presets.contains(where: { $0.id == Self.composerStarterDraftPresetID })
     }
 
-    func applyStarterComposition() async {
-        ensureComposerStarterDraft()
-        // +Create should stay scoped to the selected room by default.
-        await apply(starterCompositionCard(), roomOverride: nil, preferEntertainmentOverride: false)
+    /// What ONE "+ Create" tap actually accomplished.
+    ///
+    /// Every field is measured against the room captured AT THE TAP. Inferring success
+    /// from `currentRoomEffect` instead would be wrong twice over: it follows
+    /// `selectedRoom`, so a mid-await scrub makes it report on a room the user was not
+    /// creating in, and it cannot tell a fresh start from the starter card that was
+    /// already running before the tap.
+    struct NewCompositionCreation {
+        /// The selection captured at the tap, before any await.
+        let target: StudioSelectionKey?
+        /// The starter draft exists and is usable.
+        let draftReady: Bool
+        /// The starter card was ALREADY running in `target` before we applied — this
+        /// tap started nothing new, so it is a re-entry, not a creation.
+        let wasAlreadyRunning: Bool
+        /// `apply` left the starter card running in `target` specifically.
+        let applied: Bool
+
+        /// A new composition was created BY THIS TAP. Anything less — no room, a
+        /// refused or cancelled apply, a re-entry on an already-running card — is not
+        /// deliberate creation and must not open the editor.
+        var createdNewComposition: Bool { draftReady && applied && !wasAlreadyRunning }
+    }
+
+    /// "+ Create": mint the starter draft if needed and start it in `room`.
+    ///
+    /// `room` is passed explicitly rather than resolved from `selectedRoom` inside
+    /// `apply`. `roomOverride: nil` resolves the selection at APPLY time, so a scrub
+    /// during the await could start playback in a room the user had already left. Every
+    /// other apply site captures a `roomSnapshot` the same way.
+    func createStarterComposition(in room: RoomDisplayItem?) async -> NewCompositionCreation {
+        guard let room else {
+            return NewCompositionCreation(
+                target: nil, draftReady: false, wasAlreadyRunning: false, applied: false)
+        }
+        let draftReady = ensureComposerStarterDraft()
+        let card = starterCompositionCard()
+        let wasAlreadyRunning = runningEffect(for: room)?.cardID == card.id
+
+        await apply(card, roomOverride: room, preferEntertainmentOverride: false)
+
+        return NewCompositionCreation(
+            target: StudioSelectionKey(room: room),
+            draftReady: draftReady,
+            wasAlreadyRunning: wasAlreadyRunning,
+            applied: runningEffect(for: room)?.cardID == card.id)
     }
 
     func generateCompositionFromPrompt(_ rawPrompt: String) async -> CompositionPreset? {

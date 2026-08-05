@@ -936,7 +936,23 @@ struct StudioView: View {
                 } else {
                     HStack(spacing: HueSpacing.md) {
                         Button {
-                            Task { await vm.applyStarterComposition() }
+                            // The exact room, captured before any await.
+                            let target = vm.selectedRoom
+                            Task {
+                                let outcome = await vm.createStarterComposition(in: target)
+                                // Creating a new composition is deliberate editing
+                                // intent, so it opens the editor — but only if the
+                                // target is STILL selected. If the wheel moved during
+                                // the await, opening would present a surface for a
+                                // room the user has already left.
+                                guard outcome.createdNewComposition,
+                                      vm.selectedRoom.map(StudioSelectionKey.init) == outcome.target
+                                else { return }
+                                withAnimation(HueAnimation.fast) {
+                                    regionMode = StudioMixerPresentation.modeAfterNewCompositionCreated(
+                                        created: true, current: regionMode)
+                                }
+                            }
                             HapticManager.shared.medium()
                         } label: {
                             HStack(spacing: HueSpacing.md) {
@@ -2192,6 +2208,22 @@ enum StudioMixerPresentation {
     /// card to start it, tapping the centred room, the picker sheet, or the
     /// "Live Controls" pill. All of them route through `expandMixer()`.
     static let modeOnDeliberateActivation: StudioRegionMode = .customization
+
+    /// Creating a NEW composition is deliberate editing intent, so it opens the
+    /// host — the one case where the editor should appear without the user having
+    /// aimed at an existing card.
+    ///
+    /// Starting or selecting an EXISTING saved composition is NOT routed here:
+    /// those taps already carry their own explicit opener at the card. And this is
+    /// deliberately a decision about a CREATION RESULT, not an observer — attaching
+    /// it to `runningCardID`, `selectedRoom`, `runningEffects` or transport state
+    /// would reopen the "unexpectedly opened over the wheel" class, because every
+    /// one of those also changes for reasons the user never asked for.
+    static func modeAfterNewCompositionCreated(
+        created: Bool, current: StudioRegionMode
+    ) -> StudioRegionMode {
+        created ? modeOnDeliberateActivation : current
+    }
 }
 
 /// "Which lights should this play on?" — the exact-area chooser
