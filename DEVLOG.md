@@ -547,6 +547,60 @@
 
 ---
 
+## 2026-08-05 - [Claude] Unified Customization Engine, Track A / C1 — bridge-qualified selection identity
+
+Branch `fix/unified-rolodex-host`, rollback tag `checkpoint/pre-unified-rolodex-host` (at
+`320ebaf`). One fix commit (`fd03ecb`). No new source file, no `project.pbxproj` change, no
+version/build/signing change. **Not merged** — settled decision 19 authorizes no merge.
+
+Implementation packet (approved, 1041 lines) lives outside the repo at
+`~/Library/Application Support/CNVS/claude-accounts/cec652db/plans/next-prompt-unified-abundant-narwhal.md`.
+It is the source of truth for Track A; this entry records only what landed.
+
+**What C1 fixed.** `RoomEffectKey` closed the wrong-bridge class on the write path in round 4c.
+The Studio *read* path was still open: two bridges can expose the same Hue room id, and every
+selection-keyed side effect keyed on a bare one. `.task(id: vm.selectedRoom?.id)` never refired
+between two bridges' same-id rooms, so Deck 0 showed bridge A's "N OF M LIGHTS" against bridge
+B's room; `refreshCoverage`'s `coverageRoomID != room.id` skipped its clear for the same reason;
+the customization host's `.id(…)` gave both rooms one SwiftUI identity; and the surface read
+transport from `compositionTransportByRoom`, a display aggregate that answers nil when two
+bridges' claims disagree — exactly when exact truth is needed.
+
+**What landed.**
+- `StudioSelectionKey` (bridgeID + groupID + `RoomDisplayItem.Kind`) beside `RoomEffectKey`.
+  `kind` is defense in depth for view identity and the legacy nil-bridge path — the Rolodex's
+  two axes address rooms and zones from different bridge collections.
+- Re-keyed the coverage `.task`, the room-change `.onChange`, `refreshCoverage`'s internal
+  state (`coverageRoomID` → `coverageSelection`), and `MixerTrayView`'s `.id(…)`.
+- `UnifiedOrchestrator.compositionTransport(bridgeID:roomID:)` — a **read-only** exact
+  projection over the existing round-4e claims. No writes, no new state, no playback mutation.
+  The three bare-id reads in `MixerTrayView` now use it. The aggregate stays for consumers with
+  no bridge identity; the fallback is reached only for a nil bridgeID.
+- `.task(id: vm.selectedRoom?.bridgeID)` stays **deliberately** bridge-keyed (per-bridge sweep)
+  and now documents that in place so nobody "fixes" it for consistency.
+- Documented at `CompositionPlaybackKey` the invariant its kind-free identity rests on — within
+  one bridge a room id and a zone id can never be equal, CLIP v2 rids being per-resource UUIDs —
+  and proved it. **Track A does not expand the PR #60 runtime ownership keys.** If that test
+  ever fails, adding `kind` to `CompositionPlaybackKey` is its own reviewed packet.
+
+**Guard repair worth noting.** Guard 12(d) anchored its awk range on the literal
+`onChange(of: vm.selectedRoom?.id)`. After the re-key it would have matched nothing and passed
+vacuously. Its anchor now tracks the handler rather than one spelling of its key, it fails if
+the handler disappears, and a new sub-check (d2) bans a bare-id selection key coming back.
+
+**Validation.** 7 new tests in the existing registered `MultiBridgeRoutingTests.swift` (no
+pbxproj edit — `HueHomeTests` uses an explicit sources phase). Full `HueHomeTests` suite green,
+`Scripts/hardening_guards.sh` clean. `testCoverageClearsWhenBridgeChangesButRoomIDDoesNot` was
+negative-controlled: reverting the comparison to the bare room id makes it fail, so it is not a
+vacuous pass.
+
+**Next.** C2 (mechanical `RolodexSelectionMachine` extraction, no behaviour change — an honest
+bisect anchor), then C3 (the actual defect: preview while dragging, commit after settling, tap
+activates — one atomic commit per settled decision 17), C4, C5, C6. Nothing here is on device
+yet; the §V hardware rows 23–35 land with C6.
+
+---
+
 ## 2026-08-04 - [Claude] Hardware Convergence round 4g — one Entertainment session per bridge
 
 Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
