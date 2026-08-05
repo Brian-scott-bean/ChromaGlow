@@ -181,6 +181,51 @@ struct MixerTrayView: View {
                             .stageTapTarget(visual: 40)
                             .fixedSize()
                             .accessibilityLabel("Save composition")
+
+                            // ── Save onto the bridge ──────────────
+                            //
+                            // First-class, beside the local save. This was
+                            // reachable only through Palette → +N more →
+                            // "Save as Hue dynamic scene" — which is a
+                            // DIFFERENT feature: that one creates a Hue scene
+                            // ChromaGlow can never stop, while this takes the
+                            // manifest-backed path that survives a relaunch
+                            // and keeps an exact Stop.
+                            Button {
+                                Task { await vm.saveActiveLookToBridge(card) }
+                                HapticManager.shared.light()
+                            } label: {
+                                if vm.isSavingLookToBridge {
+                                    ProgressView()
+                                        .tint(HuePalette.amber)
+                                        .scaleEffect(0.6)
+                                        .frame(width: 40, height: 40)
+                                        .background(
+                                            Circle().fill(HuePalette.amber.opacity(0.15))
+                                        )
+                                } else {
+                                    Image(systemName: "externaldrive.badge.checkmark")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(vm.canSaveActiveLookToBridge
+                                                         ? HuePalette.amber : .white.opacity(0.3))
+                                        .frame(width: 40, height: 40)
+                                        .background(
+                                            Circle().fill(HuePalette.amber.opacity(
+                                                vm.canSaveActiveLookToBridge ? 0.15 : 0.05))
+                                        )
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .stageTapTarget(visual: 40)
+                            .fixedSize()
+                            // Disabled ONLY while a save is in flight — a
+                            // second tap mid-save is the overlapping-saves
+                            // race. Deliberately NOT disabled when merely
+                            // ineligible: a tap explains WHY a look cannot
+                            // live on the bridge, which is more use than a
+                            // dimmed control that says nothing.
+                            .disabled(vm.isSavingLookToBridge)
+                            .accessibilityLabel("Save to bridge")
                         }
 
                         // Stop control

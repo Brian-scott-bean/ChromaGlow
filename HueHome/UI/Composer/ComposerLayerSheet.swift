@@ -304,6 +304,13 @@ struct ComposerAdvancedControls: View {
                 SceneProvenanceStore.shared.markStudioExported(bridgeID: bridgeID, sceneID: sceneID)
             }
             vm.statusMessage = BridgeDynamicSceneExporter.successMessage(name: name, willAnimate: recipe.willAnimate)
+            // A scene is bridge-run and genuinely keeps playing with the app
+            // closed — but it has NO ownership manifest, so Packet 8 will never
+            // recover it and ChromaGlow can never stop it. Say where it lives
+            // and where to stop it: promising a Stop we cannot deliver is what
+            // leaves someone hunting for lights they cannot turn off.
+            vm.studioNotice = StudioViewModel.StudioNotice(
+                message: BridgeSaveCopy.savedAsSceneNotStoppable)
             HapticManager.shared.medium()
             await orchestrator.loadAllScenes()
         } catch HueAPIError.decodingFailed {

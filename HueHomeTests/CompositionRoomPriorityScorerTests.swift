@@ -186,7 +186,10 @@ final class CompositionRoomPriorityScorerTests: XCTestCase {
             return
         }
 
-        XCTAssertTrue(source.contains("for roomID in compositionOrder"))
+        // Round 4e: the walk is over EXACT playback keys (bridge+room), and
+        // selection stays strict `>` — first-listed wins a tie, never
+        // dictionary order.
+        XCTAssertTrue(source.contains("for playbackKey in compositionOrder"))
         XCTAssertTrue(source.contains("if score > selectedScore"))
     }
 

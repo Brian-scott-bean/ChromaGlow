@@ -156,7 +156,7 @@ final class StudioEffectsV2Tests: XCTestCase {
             XCTAssertEqual(put.speed ?? -1, 0.5, accuracy: 0.001, "default 50 → API 0.5")
             XCTAssertFalse(put.hasColor, "no color sent unless the user picked a tint")
         }
-        XCTAssertEqual(vm.runningEffects["room-a"]?.v2CapableLightIDs.sorted(), ["L1", "L2"])
+        XCTAssertEqual(vm.runningEffect(forRoomID: "room-a")?.v2CapableLightIDs.sorted(), ["L1", "L2"])
         let cov = try XCTUnwrap(vm.effectCoverage["cosmos"])
         XCTAssertEqual(cov.label, "2 of 3")
         XCTAssertFalse(cov.isFull)
@@ -180,7 +180,7 @@ final class StudioEffectsV2Tests: XCTestCase {
 
         XCTAssertEqual(spy.v1Effects.count, 2, "the blanket is still attempted")
         XCTAssertTrue(spy.v2Puts.isEmpty, "no v2 traffic without capable lights")
-        XCTAssertNil(vm.runningEffects["room-a"], "nothing is running — do not register an effect")
+        XCTAssertNil(vm.runningEffect(forRoomID: "room-a"), "nothing is running — do not register an effect")
         XCTAssertEqual(vm.effectCoverage["cosmos"]?.isEmpty, true)
         XCTAssertTrue(vm.statusMessage.contains("No lights"),
                       "expected an explanation, got: \(vm.statusMessage)")

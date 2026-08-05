@@ -456,6 +456,26 @@ private struct AICompositionGenerator {
 
 // MARK: - StudioViewModel
 
+/// Exact identity of a running-effect row (round 4c). The same room id can
+/// exist on two bridges, and a room-id-only key silently overwrites one
+/// bridge's row with the other's — which is how one bridge's failed save or
+/// stop used to erase the other's record. Destructive row removal always uses
+/// this key; room-only callers go through the fail-closed
+/// `runningEffect(forRoomID:)` read instead.
+struct RoomEffectKey: Hashable {
+    let bridgeID: String?
+    let roomID: String
+
+    init(bridgeID: String?, roomID: String) {
+        self.bridgeID = bridgeID
+        self.roomID = roomID
+    }
+
+    init(room: RoomDisplayItem) {
+        self.init(bridgeID: room.bridgeID, roomID: room.id)
+    }
+}
+
 /// Tracks a running effect on a specific room.
 struct RunningEffect {
     let cardID: String
@@ -496,9 +516,33 @@ final class StudioViewModel {
     // ── Selection state ───────────────────────────────────────
     var selectedRoom: RoomDisplayItem? = nil
 
-    /// All currently running effects, keyed by room ID.
-    /// Multiple rooms can have independent effects running simultaneously.
-    var runningEffects: [String: RunningEffect] = [:]
+    /// All currently running effects, keyed by EXACT bridge + room identity
+    /// (round 4c). Multiple rooms can have independent effects running
+    /// simultaneously — including the same room id on two bridges, which the
+    /// old room-id-only key could not represent: one bridge's row silently
+    /// overwrote the other's before any exact cleanup could even be attempted.
+    var runningEffects: [RoomEffectKey: RunningEffect] = [:]
+
+    /// The exact row for a room the caller can fully identify.
+    func runningEffect(for room: RoomDisplayItem) -> RunningEffect? {
+        runningEffects[RoomEffectKey(room: room)]
+    }
+
+    /// Room-only compatibility read: the row when EXACTLY ONE bridge holds
+    /// this room id, nil otherwise. Fail closed on a collision — a caller
+    /// that cannot say which bridge must not be handed either bridge's row.
+    func runningEffect(forRoomID id: String) -> RunningEffect? {
+        guard let key = runningEffectKey(forRoomID: id) else { return nil }
+        return runningEffects[key]
+    }
+
+    /// Same exactly-one rule, resolving the key itself (for stops that enter
+    /// with a bare room id from the Dashboard bar, Siri, or a handoff record).
+    private func runningEffectKey(forRoomID id: String) -> RoomEffectKey? {
+        let keys = runningEffects.keys.filter { $0.roomID == id }
+        guard keys.count == 1 else { return nil }
+        return keys.first
+    }
 
     /// A pending cross-surface handoff awaiting the user's answer.
     ///
@@ -604,6 +648,34 @@ final class StudioViewModel {
         var bridgeID: String { plan.bridgeID }
     }
 
+    /// A pending "which Entertainment Area did you mean?" awaiting the user
+    /// (hardware convergence slice A).
+    ///
+    /// Non-nil means: a start was requested, several areas could serve the
+    /// room, and NOTHING has been mutated — this is raised from the preflight,
+    /// above every destructive step, exactly like the two consent prompts.
+    var areaChoiceRequest: EntertainmentAreaChoiceRequest? = nil
+
+    /// A FOURTH request type, and the one that is not a consent.
+    ///
+    /// Choosing a target is not agreeing to replace anybody. This carries no
+    /// token, spends no ledger, and authorises no stop — picking "Bedroom TV"
+    /// answers *where*, and the takeover prompt still has to ask *whether*, on
+    /// its own terms. Folding this into `ForeignTakeoverRequest` would make one
+    /// tap silently answer two very different questions.
+    struct EntertainmentAreaChoiceRequest: Identifiable {
+        let id = UUID()
+        let choices: [UnifiedOrchestrator.EntertainmentAreaChoice]
+        let card: StudioCard
+        let room: RoomDisplayItem
+        let preferEntertainmentOverride: Bool?
+
+        /// Each choice carries the exact stream it promises, frozen when the
+        /// sheet opened — `confirmAreaChoice` compares that whole value against
+        /// a freshly resolved one before anything starts.
+        var offeredConfigIDs: [String] { choices.map(\.configID) }
+    }
+
     /// One sentence the user actually sees when we refused, or did something
     /// other than what was asked (packet 7 follow-up).
     ///
@@ -643,11 +715,338 @@ final class StudioViewModel {
         foreignTakeoverRequest = request
     }
 
+    private func present(_ request: EntertainmentAreaChoiceRequest) {
+        studioNotice = nil
+        areaChoiceRequest = request
+    }
+
+    // ── Area choice: target fidelity only, never consent ──────────────
+
+    /// The user named the area. Revalidate that exact area, then replay the
+    /// original request against it through the normal production path.
+    ///
+    /// The revalidation is the point. `exactTargetDecision` re-reads the bridge
+    /// and the result is compared to the plan frozen when the sheet opened —
+    /// whole value, so a re-scoped area, reordered channels, or moved lights
+    /// all fail closed. Resolving by configuration id alone would accept an
+    /// area that now drives a different set of lights under the same name.
+    ///
+    /// A stale choice starts NOTHING. Deliberately not "fall back to the other
+    /// candidate": substituting an area the user did not pick is the defect
+    /// this whole chooser exists to remove.
+    func confirmAreaChoice(_ choice: UnifiedOrchestrator.EntertainmentAreaChoice) async {
+        // Cleared before the first await, so a double-tap finds nil.
+        guard let request = areaChoiceRequest else { return }
+        areaChoiceRequest = nil
+        guard let orchestrator else { return }
+
+        guard case .plan(let fresh) = await orchestrator.exactTargetDecision(
+                for: request.room, selectedConfigID: choice.configID),
+              fresh == choice.plan else {
+            studioNotice = StudioNotice(message: EntertainmentAreaChoiceCopy.staleSelection)
+            statusMessage = "⚠ \(EntertainmentAreaChoiceCopy.staleSelection)"
+            debugLog("[Handoff] '\(choice.areaName)' changed under the chooser — starting nothing")
+            return
+        }
+
+        await apply(request.card,
+                    roomOverride: request.room,
+                    preferEntertainmentOverride: request.preferEntertainmentOverride,
+                    selectedConfigID: choice.configID)
+    }
+
+    // ── Saving a look onto the bridge ─────────────────────────────
+
+    /// Could the look currently being edited actually live on the bridge?
+    ///
+    /// A bridge chain is pre-rendered steps driven by a schedule; it has no
+    /// microphone and no per-frame render loop. Reactive looks therefore
+    /// cannot be stored, and saying so up front beats uploading something that
+    /// would play back as a still image.
+    var canSaveActiveLookToBridge: Bool {
+        guard let box = activeCompositionBox else { return false }
+        return !box.reaction.requiresMic
+    }
+
+    /// Save the running look onto the bridge, on the MANIFEST-BACKED path.
+    ///
+    /// Deliberately not the "Save as Hue dynamic scene" action buried under
+    /// Palette → +N more. That one creates a native Hue scene: genuinely
+    /// bridge-run, but with no ownership manifest, so ChromaGlow can never
+    /// show it or stop it afterwards. This one goes through
+    /// `startCompositionMode(tier: .bridgeOptimized)`, which creates the
+    /// resources, persists the manifest BEFORE anything starts, and leaves a
+    /// row with an exact Stop that survives a relaunch.
+    ///
+    /// Every outcome is reported honestly, including the two that are neither
+    /// success nor plain failure: saved-but-not-confirmed-running, and
+    /// partially-created-and-not-fully-cleaned.
+    func saveActiveLookToBridge(_ card: StudioCard) async {
+        // One save at a time from this surface. The tray button used to be
+        // fire-and-forget and stayed tappable for the whole save — which is
+        // exactly how two overlapping saves reached the same room. The
+        // orchestrator's per-bridge+room gate is the guarantee; this flag is
+        // the honest UI for it.
+        guard !isSavingLookToBridge else { return }
+        isSavingLookToBridge = true
+        defer { isSavingLookToBridge = false }
+
+        guard let room = selectedRoom else {
+            studioNotice = StudioNotice(message: "Select a room first.")
+            return
+        }
+        guard let box = activeCompositionBox else { return }
+        guard canSaveActiveLookToBridge else {
+            studioNotice = StudioNotice(message:
+                "Looks that react to sound can't be stored on the bridge — the bridge has no microphone. This one keeps running from ChromaGlow instead.")
+            return
+        }
+        guard let orchestrator else { return }
+
+        // A local preset is what gives the bridge copy a name and a room to be
+        // recovered under, so it is created first and reported separately: the
+        // user is told whether a copy landed in My Creations or not.
+        let preset = compositionStore.presets.first { $0.id == runningPresetID(for: card) }
+            ?? saveActiveComposition(name: card.name, icon: card.icon,
+                                     preferredTransport: nil)
+        guard let preset else {
+            studioNotice = StudioNotice(message: BridgeSaveCopy.saveFailedNothingRecorded)
+            return
+        }
+
+        // The STRICT path: no app-driven fallback, so nothing here can report a
+        // save that did not happen.
+        let outcome = await orchestrator.saveLookToBridge(
+            room: room, paramBox: box,
+            gamutOverride: activeCompositionGamut, preset: preset)
+
+        applyBridgeSaveOutcome(
+            outcome, room: room, presetName: preset.name,
+            bridgeLabel: orchestrator.bridgeLabel(for: room.bridgeID ?? ""))
+    }
+
+    /// Apply a strict-save outcome to this VM's state — synchronously, in the
+    /// main-actor turn that calls it.
+    ///
+    /// Factored out of `saveActiveLookToBridge` (round 4f) because the await
+    /// above it opens a continuation gap: between the orchestrator's return
+    /// and this application, another task can start a new playback on the
+    /// same exact bridge+room. Every destructive step here therefore
+    /// revalidates the outcome's presentation fence against the orchestrator
+    /// immediately before mutating — and the user-facing wording follows the
+    /// SAME revalidated truth, because "nothing is playing in the room now"
+    /// is only as current as the fence that proves it. A nil or stale fence
+    /// proves only that playback CHANGED (the newer look may itself have
+    /// stopped by now), so that branch claims neither emptiness nor active
+    /// playback.
+    func applyBridgeSaveOutcome(
+        _ outcome: UnifiedOrchestrator.BridgeSaveOutcome,
+        room: RoomDisplayItem, presetName: String, bridgeLabel: String
+    ) {
+        switch outcome {
+        case .savedAndRunning(let manifestID, _):
+            bridgeSaveResult = BridgeSaveResult(
+                lookName: presetName, roomName: room.name, bridgeLabel: bridgeLabel,
+                isRunningOnBridge: true, createdLocalPreset: true,
+                stopSurvivesRelaunch: true,
+                headline: BridgeSaveCopy.savedAndRunning,
+                stoppableManifestID: manifestID)
+
+        case .savedNotConfirmedRunning(
+            let manifestID, let savedBridgeID, let previousLookRemoved,
+            let presentationFence):
+            // Saved, tracked, NOT running. The manifest is retained because it
+            // is the only thing that can remove these resources — and the
+            // result carries it, so Stop is available right now rather than
+            // only after a relaunch surfaces a row. When the required
+            // replacement cleanup destroyed a PROVEN bridge-stored predecessor
+            // (round 4c), exactly that bridge's row AND its editor box fall
+            // with it — they mirrored a look that no longer exists — and the
+            // headline says both halves. Another bridge's same-room-id row is
+            // a different key and stays untouched. Round 4f: the removal and
+            // the "nothing is playing there now" headline both require the
+            // fence to hold RIGHT NOW — a newer look that took the key keeps
+            // its row, its box, and an honest sentence.
+            let fenceValid = previousLookRemoved
+                && presentationFence.map { orchestrator?.presentationFenceHolds($0) ?? false } ?? false
+            if fenceValid {
+                let key = RoomEffectKey(bridgeID: savedBridgeID, roomID: room.id)
+                runningEffects.removeValue(forKey: key)
+                activeCompositionBoxes.removeValue(forKey: key)
+            }
+            let headline: String
+            if !previousLookRemoved {
+                headline = BridgeSaveCopy.savedNotConfirmedRunning
+            } else if fenceValid {
+                headline = BridgeSaveCopy.savedNotConfirmedPreviousLookRemoved
+            } else {
+                headline = BridgeSaveCopy.savedNotConfirmedPreviousLookRemovedPlaybackChanged
+            }
+            bridgeSaveResult = BridgeSaveResult(
+                lookName: presetName, roomName: room.name, bridgeLabel: bridgeLabel,
+                isRunningOnBridge: false, createdLocalPreset: true,
+                stopSurvivesRelaunch: true,
+                headline: headline,
+                stoppableManifestID: manifestID)
+
+        case .partialCleanupFailure(let manifestID, _, let recoverable, let reason):
+            // The failure with something left behind gets the RESULT SHEET,
+            // not a passing notice: the manifest id it carries is the user's
+            // only exact handle on those resources, and the sheet's Remove
+            // button is the immediate exact retry. A notice would dismiss
+            // itself and take the handle with it.
+            bridgeSaveResult = BridgeSaveResult(
+                lookName: presetName, roomName: room.name, bridgeLabel: bridgeLabel,
+                isRunningOnBridge: false, createdLocalPreset: true,
+                stopSurvivesRelaunch: recoverable,
+                headline: reason,
+                stoppableManifestID: manifestID,
+                succeeded: false)
+
+        case .previousLookRemovedSaveFailed(let failedBridgeID, let presentationFence):
+            // The room's previous bridge look is provably gone (replacement
+            // cleanup removed it) and nothing of ours replaced it. This VM's
+            // own running row and editor box were mirroring the destroyed
+            // look — they fall too, or the UI keeps asserting a look that no
+            // longer exists. The outcome names the destroyed chain's own
+            // bridge (round 4c), so exactly that key is removed; another
+            // bridge's same-room-id row is a different key and survives.
+            // Round 4f: removal and wording both require the fence to hold
+            // RIGHT NOW. The outcome deliberately carries no reason string —
+            // whether the room is empty is decided here, not before the
+            // continuation gap.
+            let fenceValid = presentationFence
+                .map { orchestrator?.presentationFenceHolds($0) ?? false } ?? false
+            if fenceValid {
+                let key = RoomEffectKey(bridgeID: failedBridgeID, roomID: room.id)
+                runningEffects.removeValue(forKey: key)
+                activeCompositionBoxes.removeValue(forKey: key)
+            }
+            studioNotice = StudioNotice(message: fenceValid
+                ? BridgeSaveCopy.previousLookRemovedSaveFailed
+                : BridgeSaveCopy.previousLookRemovedSaveFailedPlaybackChanged)
+
+        case .nothingRecorded(let reason), .saveAlreadyInProgress(let reason):
+            // No sheet titled "Saved" for something that was not saved.
+            studioNotice = StudioNotice(message: reason)
+        }
+    }
+
+    /// Remove a saved look from the bridge, by exact manifest identity.
+    ///
+    /// Offered directly from the save result so a look that was saved but never
+    /// confirmed running can be cleaned up immediately — waiting for a relaunch
+    /// to surface a Stop is exactly the gap that leaves a user with resources
+    /// they cannot find.
+    func stopSavedBridgeLook(_ result: BridgeSaveResult) async {
+        guard let manifestID = result.stoppableManifestID, let orchestrator else { return }
+        guard !isStoppingSavedLook else { return }
+        isStoppingSavedLook = true
+        defer { isStoppingSavedLook = false }
+
+        let outcome = await orchestrator.stopSavedBridgeLook(manifestID: manifestID)
+        applySavedLookStopOutcome(outcome, for: result)
+    }
+
+    /// Apply an exact saved-look Stop outcome to this VM's state —
+    /// synchronously, in the main-actor turn that calls it.
+    ///
+    /// Factored out of `stopSavedBridgeLook(_:)` (round 4f) for the same
+    /// reason as `applyBridgeSaveOutcome`: the await opens a continuation
+    /// gap, so the outcome's presentation fence is revalidated against the
+    /// orchestrator immediately before the row and box are removed. The
+    /// sheet is dismissed only on SUCCESS — it used to be cleared before the
+    /// attempt, so a failed stop dismissed the one control that carried the
+    /// exact manifest id, leaving the user a sentence and no way to retry
+    /// until a relaunch surfaced a row.
+    func applySavedLookStopOutcome(
+        _ outcome: UnifiedOrchestrator.SavedLookStopOutcome,
+        for result: BridgeSaveResult
+    ) {
+        switch outcome {
+        case .removed(_, let bridgeID, let roomID, _, _, let presentationFence):
+            // The fence is the ONLY authorization to touch presentation
+            // mirrors, and it must hold RIGHT NOW: nil means the stopped
+            // manifest was inert, another owner survives, or a newer
+            // playback took the key inside the orchestrator; a token that
+            // no longer holds means one took it between the orchestrator's
+            // return and this continuation. In every one of those cases the
+            // standing row and box belong to a look this stop did not stop
+            // — the saved resources are gone either way, so the sheet still
+            // dismisses.
+            if let fence = presentationFence, let orchestrator,
+               orchestrator.presentationFenceHolds(fence) {
+                let key = RoomEffectKey(bridgeID: bridgeID, roomID: roomID)
+                runningEffects.removeValue(forKey: key)
+                activeCompositionBoxes.removeValue(forKey: key)
+            }
+            bridgeSaveResult = nil
+            studioNotice = StudioNotice(message: "\(result.lookName) was removed from \(result.bridgeLabel).")
+
+        case .alreadyAbsent:
+            // Nothing to remove is a success: the resources this sheet
+            // offered to remove are not on the bridge.
+            bridgeSaveResult = nil
+            studioNotice = StudioNotice(message: "\(result.lookName) was removed from \(result.bridgeLabel).")
+
+        case .failed:
+            studioNotice = StudioNotice(message: BridgeSaveCopy.saveFailedResourcesRemain)
+        }
+    }
+
+    /// True while the result sheet's exact Stop is running — the button
+    /// disables on it, so a failed stop is a visible retry, not a re-tap race.
+    var isStoppingSavedLook = false
+
+    private func runningPresetID(for card: StudioCard) -> UUID? {
+        if case .composition(let presetID) = card.strategy { return presetID }
+        return nil
+    }
+
+    /// What a completed bridge save actually produced, in the user's terms.
+    ///
+    /// Every field answers a question the device pass proved the user could not
+    /// otherwise answer: which bridge, which room, is it running there, is
+    /// there a local copy, and will Stop still be there after a relaunch.
+    struct BridgeSaveResult: Identifiable, Equatable {
+        let id = UUID()
+        let lookName: String
+        let roomName: String
+        let bridgeLabel: String
+        let isRunningOnBridge: Bool
+        let createdLocalPreset: Bool
+        let stopSurvivesRelaunch: Bool
+        let headline: String
+        /// Present whenever resources exist on the bridge that this result can
+        /// remove RIGHT NOW. Non-nil is what makes "saved but not confirmed
+        /// running" an actionable state rather than an announcement.
+        let stoppableManifestID: UUID?
+        /// False for the partial-cleanup failure (round 3): the sheet then
+        /// titles itself as the failure it is, and the relaunch row talks
+        /// about recovery rather than about a stop.
+        var succeeded: Bool = true
+    }
+
+    var bridgeSaveResult: BridgeSaveResult? = nil
+
+    /// True while a Save to Bridge is in flight — the tray button disables
+    /// and shows progress on it, so the save's serialization is visible
+    /// rather than a silently swallowed second tap.
+    var isSavingLookToBridge = false
+
+    /// Dismissed without choosing. Nothing was mutated to raise this prompt and
+    /// nothing is mutated to drop it.
+    func cancelAreaChoice() {
+        guard areaChoiceRequest != nil else { return }
+        debugLog("[Handoff] Area chooser dismissed without a choice — nothing started")
+        areaChoiceRequest = nil
+    }
+
     /// The running effect on the CURRENTLY SELECTED room.
     /// Drives card grid running indicators and mixer tray content.
     var currentRoomEffect: RunningEffect? {
         guard let room = selectedRoom else { return nil }
-        return runningEffects[room.id]
+        return runningEffect(for: room)
     }
 
     /// Whether ANY effect is running across any room.
@@ -731,6 +1130,13 @@ final class StudioViewModel {
     func injectForTesting(compositionStore store: CompositionStore) {
         compositionStore = store
     }
+
+    /// Read-only exact box lookup (round 4e): the live editor box for one
+    /// bridge+room, so a collision test can prove two same-room-id rows do
+    /// NOT alias one `CompositionParamBox` instance (`===`/`!==`).
+    func testActiveCompositionBox(bridgeID: String?, roomID: String) -> CompositionParamBox? {
+        activeCompositionBoxes[RoomEffectKey(bridgeID: bridgeID, roomID: roomID)]
+    }
     #endif
     private let aiGenerator = AICompositionGenerator()
     var isGeneratingAIComposition = false
@@ -760,9 +1166,13 @@ final class StudioViewModel {
     /// Stable card id for `+ Create` (not `comp_{uuid}`).
     static let composerStarterCardID = "composer_starter"
 
-    /// Live composition param boxes, keyed by room id — the render loops
-    /// read these each frame. UI writes on slider drag for instant response.
-    private var activeCompositionBoxes: [String: CompositionParamBox] = [:]
+    /// Live composition param boxes, keyed by EXACT bridge + room identity
+    /// (round 4e) — the render loops read these each frame. UI writes on
+    /// slider drag for instant response. A bare room-id key made two
+    /// same-room-id composition rows share one editable box: the second apply
+    /// overwrote the first bridge's live editor state, and either stop evicted
+    /// the other's box while its render loop still read it.
+    private var activeCompositionBoxes: [RoomEffectKey: CompositionParamBox] = [:]
 
     /// The editable box for the CURRENTLY SELECTED room. A single slot here
     /// meant the tray edited whatever room applied LAST, not the room on
@@ -771,7 +1181,7 @@ final class StudioViewModel {
     /// reference; the two ownership writes go straight to the dict.
     var activeCompositionBox: CompositionParamBox? {
         guard let room = selectedRoom else { return nil }
-        return activeCompositionBoxes[room.id]
+        return activeCompositionBoxes[RoomEffectKey(room: room)]
     }
 
     // ── Status ────────────────────────────────────────────────
@@ -779,8 +1189,8 @@ final class StudioViewModel {
 
     func configure(orchestrator: UnifiedOrchestrator) {
         self.orchestrator = orchestrator
-        orchestrator.studioStopHandler = { [weak self] roomID, turnOffLights in
-            await self?.stopFromNowPlaying(roomID: roomID, turnOffLights: turnOffLights)
+        orchestrator.studioStopHandler = { [weak self] target in
+            await self?.stopFromNowPlaying(target)
         }
         // Packet 8: this pair is the two-way ordering mechanism for recovered
         // bridge-stored animations. The handler covers configure-BEFORE-load
@@ -816,11 +1226,12 @@ final class StudioViewModel {
 
         let live = orchestrator.recoveredBridgeAnimations
 
-        // `runningEffects` is keyed by room id alone, so it cannot represent
-        // the same room id running on two different bridges. Letting dictionary
-        // order pick a winner would mean selecting bridge A and pressing Stop
-        // could tear down bridge B's animation instead. Fail closed: a room id
-        // claimed by more than one bridge is mirrored for NEITHER.
+        // A room id claimed by more than one bridge is mirrored into Studio
+        // for NEITHER — unchanged display policy (round 4c re-keyed the rows
+        // exactly, but Studio's rolodex still presents one card per room id,
+        // and letting dictionary order pick which bridge's animation that
+        // card controls would mean selecting bridge A and pressing Stop could
+        // tear down bridge B's).
         //
         // Nothing is lost by that. The orchestrator's registry is exact-keyed,
         // so both animations keep their own Dashboard Now-Playing row and each
@@ -833,10 +1244,10 @@ final class StudioViewModel {
         // Drop mirrors whose animation is gone, and any whose room id has since
         // become ambiguous — a second bridge appearing must retract the first
         // one's row rather than leave a now-unsafe owner in place.
-        for (roomID, effect) in runningEffects {
+        for (rowKey, effect) in runningEffects {
             guard let key = effect.recovered else { continue }
-            if live[key] == nil || recoveredCountByRoomID[roomID, default: 0] > 1 {
-                runningEffects.removeValue(forKey: roomID)
+            if live[key] == nil || recoveredCountByRoomID[rowKey.roomID, default: 0] > 1 {
+                runningEffects.removeValue(forKey: rowKey)
             }
         }
 
@@ -848,7 +1259,7 @@ final class StudioViewModel {
             guard recoveredCountByRoomID[room.id] == 1 else { continue }
             // Never overwrite a live effect the user started, and never rebuild
             // a mirror that already matches.
-            if let existing = runningEffects[room.id], existing.recovered != key { continue }
+            if let existing = runningEffect(for: room), existing.recovered != key { continue }
 
             // Resolve the display name BEFORE building the card. The
             // orchestrator holds no CompositionStore, so it publishes the
@@ -863,7 +1274,7 @@ final class StudioViewModel {
             // stays stoppable either way because Stop routes on the manifest.
             let displayName = currentPresetName ?? animation.displayName
 
-            runningEffects[room.id] = RunningEffect(
+            runningEffects[RoomEffectKey(room: room)] = RunningEffect(
                 cardID: Self.recoveredCardID(manifestID: key.manifestID),
                 card: recoveredCard(for: animation, displayName: displayName),
                 room: room,
@@ -918,8 +1329,12 @@ final class StudioViewModel {
     /// Mirror a running effect into the orchestrator's shared now-playing
     /// registry (Dashboard bar, Tap-Dial punch target).
     private func publishNowPlaying(room: RoomDisplayItem, card: StudioCard) {
+        // Bridge-attributed (round 4c): the row's presentation key is
+        // bridge-qualified, so two bridges' looks in one room id are two rows
+        // and each is exactly withdrawable.
         orchestrator?.addActiveEffect(ActiveEffectEntry(
-            id: room.id,
+            liveBridgeID: room.bridgeID,
+            roomID: room.id,
             roomName: room.name,
             groupedLightID: room.groupedLightID,
             effectID: card.id,
@@ -933,21 +1348,61 @@ final class StudioViewModel {
     /// `turnOffLights: true` = the tray Stop button's semantics, room goes off.
     /// `false` = tear the effect down but leave lights at their current state.
     func stopFromNowPlaying(roomID: String, turnOffLights: Bool = true) async {
-        isExplicitStop = turnOffLights
-        let stopping = runningEffects[roomID]
-        await stopEffect(on: roomID)
+        await stopFromNowPlaying(UnifiedOrchestrator.LiveEffectStopTarget(
+            bridgeID: nil, roomID: roomID, turnOffLights: turnOffLights))
+    }
+
+    /// The exact live-stop entry point (round 4d). A bridge-attributed
+    /// target resolves its exact row directly — two bridges sharing one room
+    /// id are two rows, and each Dashboard entry stops precisely its own. A
+    /// room-only target (bridgeID nil) resolves only when exactly one bridge
+    /// holds the room id and fails closed on a collision — that caller
+    /// cannot say WHICH bridge's look it means.
+    func stopFromNowPlaying(_ target: UnifiedOrchestrator.LiveEffectStopTarget) async {
+        let context = UnifiedOrchestrator.StopAuditContext(route: .nowPlaying)
+        orchestrator?.recordStopAudit(context, operation: .stopRequested,
+                                      bridgeID: target.bridgeID, roomID: target.roomID,
+                                      outcomeReason: "nowPlayingEntry turnOffLights=\(target.turnOffLights)")
+        isExplicitStop = target.turnOffLights
+        let resolvedKey: RoomEffectKey?
+        if let bridgeID = target.bridgeID {
+            let exact = RoomEffectKey(bridgeID: bridgeID, roomID: target.roomID)
+            resolvedKey = runningEffects[exact] != nil ? exact : nil
+        } else {
+            resolvedKey = runningEffectKey(forRoomID: target.roomID)
+        }
+        guard let key = resolvedKey else {
+            // No resolvable row: clear a stale bar entry — exactly when the
+            // target names its bridge, through the fail-closed room-scoped
+            // removal otherwise.
+            if let bridgeID = target.bridgeID {
+                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID,
+                                                context: context)
+            } else {
+                orchestrator?.removeActiveEffect(roomID: target.roomID, context: context)
+            }
+            statusMessage = ""
+            return
+        }
+        let stopping = runningEffects[key]
+        await stopEffect(on: key, context: context)
         // stopEffect's guard can still bail (stale entry with nothing running),
         // and the bar entry must clear in that case or Stop appears to do
         // nothing. But this stop suspends, so a REPLACEMENT may have taken the
         // room meanwhile — clearing unconditionally would erase the newcomer's
         // Now-Playing row. Clear only when nothing newer holds the room.
-        let survivor = runningEffects[roomID]
+        let survivor = runningEffects[key]
         let replacedByNewer = survivor != nil
             && (survivor?.cardID != stopping?.cardID
                 || survivor?.bridgeNativeOwnership != stopping?.bridgeNativeOwnership
                 || survivor?.recovered != stopping?.recovered)
         if !replacedByNewer {
-            orchestrator?.removeActiveEffect(roomID: roomID)
+            if let bridgeID = key.bridgeID {
+                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID,
+                                                context: context)
+            } else {
+                orchestrator?.removeActiveEffect(roomID: target.roomID, context: context)
+            }
         }
         statusMessage = ""
     }
@@ -973,7 +1428,9 @@ final class StudioViewModel {
         guard card.id == runningCardID else { return }
         switch card.strategy {
         case .appDriven:
-            orchestrator?.updateStudioParams(values: [:], colors: [:])
+            orchestrator?.updateStudioParams(
+                values: [:], colors: [:],
+                bridgeID: currentRoomEffect?.room.bridgeID)
         case .bridgeNative:
             await apply(card)
         case .composition:
@@ -1058,11 +1515,15 @@ final class StudioViewModel {
     func setParamValue(for cardID: String, paramID: String, value: Double) {
         if paramValues[cardID] == nil { paramValues[cardID] = [:] }
         paramValues[cardID]?[paramID] = value
-        // Push live update to running engine loop (if this card is running)
+        // Push live update to running engine loop (if this card is running).
+        // Round 4g: routed to the SELECTED room's bridge — `runningCardID`
+        // derives from `currentRoomEffect`, so the two always agree, and with
+        // two bridges streaming the edit lands on the room being looked at.
         if cardID == runningCardID {
             orchestrator?.updateStudioParams(
                 values: paramValues[cardID] ?? [:],
-                colors: paramColors[cardID] ?? [:]
+                colors: paramColors[cardID] ?? [:],
+                bridgeID: currentRoomEffect?.room.bridgeID
             )
         }
         StudioParamStore.shared.scheduleSave(values: paramValues, colors: paramColors)
@@ -1077,11 +1538,13 @@ final class StudioViewModel {
     func setParamColor(for cardID: String, paramID: String, color: Color) {
         if paramColors[cardID] == nil { paramColors[cardID] = [:] }
         paramColors[cardID]?[paramID] = color
-        // Push live update to running engine loop
+        // Push live update to running engine loop (round 4g: exact bridge —
+        // see setParamValue above).
         if cardID == runningCardID {
             orchestrator?.updateStudioParams(
                 values: paramValues[cardID] ?? [:],
-                colors: paramColors[cardID] ?? [:]
+                colors: paramColors[cardID] ?? [:],
+                bridgeID: currentRoomEffect?.room.bridgeID
             )
         }
         StudioParamStore.shared.scheduleSave(values: paramValues, colors: paramColors)
@@ -1372,7 +1835,8 @@ final class StudioViewModel {
                preferEntertainmentOverride: Bool?,
                skipHandoffConfirmation: Bool = false,
                foreignConsent: EntertainmentConsent? = nil,
-               consentedPlan: EntertainmentTakeoverPlan? = nil) async {
+               consentedPlan: EntertainmentTakeoverPlan? = nil,
+               selectedConfigID: String? = nil) async {
         debugLog("[Studio] apply '\(card.name)' — selectedRoom: \(selectedRoom?.name ?? "nil")")
         guard let room = roomOverride ?? selectedRoom else {
             statusMessage = "⚠ Select a room first"
@@ -1453,7 +1917,7 @@ final class StudioViewModel {
            let bridgeID = room.bridgeID,
            let owningRoomID = orchestrator.compositionOwningEntertainment(onBridge: bridgeID) {
             present(EntertainmentHandoffPrompt(
-                runningLookName: runningEffects[owningRoomID]?.card.name ?? "A composition",
+                runningLookName: runningEffect(forRoomID: owningRoomID)?.card.name ?? "A composition",
                 requestedLookName: card.name,
                 owningRoomID: owningRoomID,
                 owningBridgeID: bridgeID,
@@ -1489,7 +1953,29 @@ final class StudioViewModel {
             // Freeze BEFORE the slot is set. A bare configuration id would let
             // the area be deleted or re-scoped under the open prompt and still
             // be replayed on the way out.
-            guard let plan = await orchestrator.frozenStartPlan(for: room) else {
+            //
+            // The same exact-target decision the preflight uses, so this gate
+            // cannot resolve a room differently from the path just below it.
+            let plan: EntertainmentTakeoverPlan
+            switch await orchestrator.exactTargetDecision(for: room,
+                                                          selectedConfigID: selectedConfigID) {
+            case .plan(let resolved):
+                plan = resolved
+
+            case .choiceRequired(let choices):
+                // WHERE has to be settled before WHETHER TO SWITCH — asking to
+                // replace a live look without knowing which area replaces it
+                // would be asking the user to approve an unknown.
+                present(EntertainmentAreaChoiceRequest(
+                    choices: choices, card: card, room: room,
+                    preferEntertainmentOverride: preferEntertainmentOverride))
+                return
+
+            case .staleSelection:
+                studioNotice = StudioNotice(message: EntertainmentAreaChoiceCopy.staleSelection)
+                return
+
+            case .noCompatiblePlan, .unreadableBridge, .ambiguousOwnership:
                 // NOT the Room-mode sentence: this gate returns without
                 // starting anything, on purpose. Falling through to a
                 // Room-mode start here would put REST writes on a bridge
@@ -1504,7 +1990,7 @@ final class StudioViewModel {
                 owner: owner,
                 // Name the look as the user knows it; the engine key is the
                 // honest fallback when Studio has no registry row for it.
-                runningLookName: runningEffects[owner.roomID]?.card.name
+                runningLookName: runningEffect(forRoomID: owner.roomID)?.card.name
                     ?? owner.engineKey.capitalized,
                 requestedLookName: card.name,
                 card: card,
@@ -1564,12 +2050,39 @@ final class StudioViewModel {
             let preflight = await orchestrator.foreignTakeoverPreflight(
                 for: room,
                 requestsEntertainment: requestsEntertainment(
-                    card, preferEntertainmentOverride: preferEntertainmentOverride))
+                    card, preferEntertainmentOverride: preferEntertainmentOverride),
+                selectedConfigID: selectedConfigID)
 
             switch preflight {
             case .notRequested:
                 // This card never streams, so no third party can be in the way.
                 break
+
+            case .choiceRequired(let choices):
+                // Several areas cover this room. Ask — with nothing prepared,
+                // nothing torn down, and no consent implied by the answer.
+                //
+                // This reaches Party and Thunderstorm too: their transport is
+                // the engine's, but WHERE they stream is still the user's, and
+                // routing them around the chooser would be the second
+                // selection path this decision exists to prevent.
+                present(EntertainmentAreaChoiceRequest(
+                    choices: choices,
+                    card: card,
+                    room: room,
+                    preferEntertainmentOverride: preferEntertainmentOverride
+                ))
+                debugLog("[Handoff] \(choices.count) areas could serve room \(room.id) — asking which")
+                return
+
+            case .staleSelection:
+                // The area the user picked no longer serves this room. Falling
+                // back to whatever else is available would stream somewhere
+                // they did not choose, so start nothing and say so.
+                studioNotice = StudioNotice(message: EntertainmentAreaChoiceCopy.staleSelection)
+                statusMessage = "⚠ \(EntertainmentAreaChoiceCopy.staleSelection)"
+                debugLog("[Handoff] Selected area no longer valid for room \(room.id) — starting nothing")
+                return
 
             case .noStreamableArea:
                 // Room mode still starts — that fallback is honest and is what
@@ -1667,7 +2180,7 @@ final class StudioViewModel {
                     present(StudioHandoffRequest(
                         plan: plan,
                         owner: owner,
-                        runningLookName: runningEffects[owner.roomID]?.card.name
+                        runningLookName: runningEffect(forRoomID: owner.roomID)?.card.name
                             ?? owner.engineKey.capitalized,
                         requestedLookName: card.name,
                         card: card,
@@ -1738,11 +2251,13 @@ final class StudioViewModel {
         }
 
         // ── Stop any effect already running on THIS room ─────────────
-        if let existing = runningEffects[room.id] {
+        if let existing = runningEffect(for: room) {
             let existingCard = existing.card
             debugLog("[Studio] Replacing '\(existingCard.name)' on \(room.name)")
             isExplicitStop = false
-            await stopEffect(on: room.id)
+            await stopEffect(on: RoomEffectKey(room: room),
+                             context: UnifiedOrchestrator.StopAuditContext(
+                                 route: .applyReplacement, cardOrEffectID: card.id))
 
             // Delay if both old and new use REST on the same grouped_light
             let oldIsBridgeNative: Bool
@@ -1754,8 +2269,12 @@ final class StudioViewModel {
             }
         }
 
-        // ── Studio engine is singleton in orchestrator for app-driven cards. ────────
-        // Composition now runs per-room and can coexist across rooms.
+        // ── Studio engine is one slot PER BRIDGE for app-driven cards (round 4g). ──
+        // Composition runs per-room and can coexist across rooms. Only a
+        // SAME-BRIDGE app-driven effect is replaced here: the orchestrator
+        // keys the engine runtime by bridge, so another bridge's loop is not
+        // this start's to stop — that cross-bridge stop is exactly the
+        // hardware-confirmed "bridge 2 kills bridge 1's stream" defect.
         let newUsesStudioEngine: Bool = {
             switch card.strategy {
             case .appDriven: return true
@@ -1763,7 +2282,8 @@ final class StudioViewModel {
             }
         }()
         if newUsesStudioEngine {
-            for (roomID, effect) in runningEffects where roomID != room.id {
+            for (rowKey, effect) in runningEffects
+            where rowKey != RoomEffectKey(room: room) && rowKey.bridgeID == room.bridgeID {
                 let effectUsesStudioEngine: Bool = {
                     switch effect.card.strategy {
                     case .appDriven: return true
@@ -1771,18 +2291,27 @@ final class StudioViewModel {
                     }
                 }()
                 guard effectUsesStudioEngine else { continue }
-                debugLog("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (single Studio engine loop)")
+                debugLog("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (one Studio engine loop per bridge)")
                 isExplicitStop = false
-                await stopEffect(on: roomID)
+                await stopEffect(on: rowKey,
+                                 context: UnifiedOrchestrator.StopAuditContext(
+                                     route: .applyEngineSingleton, cardOrEffectID: card.id))
             }
         }
 
-        // ── If new card is entertainment-scoped, stop any existing entertainment effect ──
+        // ── If new card is entertainment-scoped, stop any existing SAME-BRIDGE
+        // entertainment effect. One DTLS session per BRIDGE is the real Hue
+        // constraint — different bridges stream independently and
+        // simultaneously, and another bridge's session must survive this
+        // start untouched (round 4g).
         if card.isEntertainmentScoped {
-            for (roomID, effect) in runningEffects where effect.isEntertainment {
-                debugLog("[Studio] Stopping entertainment '\(effect.card.name)' on \(effect.room.name) (only one DTLS session allowed)")
+            for (rowKey, effect) in runningEffects
+            where effect.isEntertainment && rowKey.bridgeID == room.bridgeID {
+                debugLog("[Studio] Stopping entertainment '\(effect.card.name)' on \(effect.room.name) (one DTLS session per bridge)")
                 isExplicitStop = false
-                await stopEffect(on: roomID)
+                await stopEffect(on: rowKey,
+                                 context: UnifiedOrchestrator.StopAuditContext(
+                                     route: .applyEntertainmentScoped, cardOrEffectID: card.id))
             }
         }
 
@@ -1795,12 +2324,18 @@ final class StudioViewModel {
 
         if !newLightIDs.isEmpty {
             let newLightSet = Set(newLightIDs)
-            for (roomID, effect) in runningEffects {
+            // Same-bridge rows only (round 4g): light ids are BRIDGE-LOCAL,
+            // so an id match against another bridge's row is a coincidence of
+            // numbering, not a shared bulb — and stopping on it is another
+            // route to the cross-bridge teardown this round removes.
+            for (rowKey, effect) in runningEffects where rowKey.bridgeID == room.bridgeID {
                 let overlap = Set(effect.lightIDs).intersection(newLightSet)
                 if !overlap.isEmpty {
                     debugLog("[Handoff] Light overlap detected: \(overlap.count) lights shared with \(effect.room.name) — awaiting teardown barrier")
                     isExplicitStop = false
-                    await stopEffect(on: roomID)
+                    await stopEffect(on: rowKey,
+                                     context: UnifiedOrchestrator.StopAuditContext(
+                                         route: .applyLightOverlap, cardOrEffectID: card.id))
                     debugLog("[Handoff] Overlap teardown barrier complete for \(effect.room.name)")
                 }
             }
@@ -1905,7 +2440,7 @@ final class StudioViewModel {
             // effect's own. Marking it transferred is what keeps the defer above
             // from releasing it on the way out of this scope.
             ownershipTransferred = true
-            runningEffects[room.id] = RunningEffect(
+            runningEffects[RoomEffectKey(room: room)] = RunningEffect(
                 cardID: card.id, card: card, room: room,
                 lightIDs: drivenIDs, isEntertainment: false,
                 requestedTransport: nil, transportFallback: false,
@@ -1944,8 +2479,15 @@ final class StudioViewModel {
                                   hadConsent: foreignConsent != nil) {
                 return
             }
-            let isEnt = orchestrator.studioEntClients[room.bridgeID ?? ""] != nil
-            runningEffects[room.id] = RunningEffect(
+            // The transport the start ACTUALLY used, from the outcome itself.
+            //
+            // This used to peek at `studioEntClients` and infer streaming from
+            // a client being installed. A client installed is not a session
+            // streaming — that inference is precisely what let ChromaGlow show
+            // AREA while Hue Sync still owned the lights. The outcome is the
+            // only value that knows which branch ran.
+            let isEnt = outcome.startedStreaming
+            runningEffects[RoomEffectKey(room: room)] = RunningEffect(
                 cardID: card.id, card: card, room: room,
                 lightIDs: newLightIDs, isEntertainment: isEnt,
                 requestedTransport: nil, transportFallback: false
@@ -2002,7 +2544,7 @@ final class StudioViewModel {
                 await micHeadStart
                 activeCompositionGamut = await gamutTask
                 let box = CompositionParamBox(preset: preset)
-                activeCompositionBoxes[room.id] = box
+                activeCompositionBoxes[RoomEffectKey(room: room)] = box
                 // Restore persisted harmony rule for re-edit
                 if let savedRule = preset.palette.harmonyRule,
                    let rule = HarmonyRule(rawValue: savedRule) {
@@ -2039,8 +2581,10 @@ final class StudioViewModel {
                                       hadConsent: foreignConsent != nil) {
                     return
                 }
-                let isEnt = orchestrator.studioEntClients[room.bridgeID ?? ""] != nil
-                runningEffects[room.id] = RunningEffect(
+                // Same rule as the app-driven arm above: the transport comes
+                // from what the start returned, never from a registry peek.
+                let isEnt = outcome.startedStreaming
+                runningEffects[RoomEffectKey(room: room)] = RunningEffect(
                     cardID: card.id, card: card, room: room,
                     lightIDs: newLightIDs, isEntertainment: isEnt,
                     requestedTransport: requestedTransport,
@@ -2056,7 +2600,7 @@ final class StudioViewModel {
                 debugLog("[Studio] Active effects: \(runningEffects.count) rooms")
                 return
             }
-            runningEffects[room.id] = RunningEffect(
+            runningEffects[RoomEffectKey(room: room)] = RunningEffect(
                 cardID: card.id, card: card, room: room,
                 lightIDs: newLightIDs, isEntertainment: false,
                 requestedTransport: nil, transportFallback: false
@@ -2076,8 +2620,14 @@ final class StudioViewModel {
     /// (once ownership existed) the room suppressed from All-Day forever. Only
     /// the effect and the orchestrator are actually needed to begin teardown;
     /// every network step below is best-effort.
-    private func stopEffect(on roomID: String) async {
-        guard let effect = runningEffects[roomID], let orchestrator else { return }
+    private func stopEffect(on rowKey: RoomEffectKey,
+                            context: UnifiedOrchestrator.StopAuditContext = .unattributed) async {
+        guard let effect = runningEffects[rowKey], let orchestrator else { return }
+        let roomID = rowKey.roomID
+        orchestrator.recordStopAudit(context, operation: .stopRequested,
+                                     bridgeID: rowKey.bridgeID, roomID: roomID,
+                                     cardOrEffectID: effect.cardID,
+                                     outcomeReason: "rowStop")
 
         // Packet 8: a recovered bridge-stored animation has no engine loop, no
         // per-light firmware state and no REST scope to tear down. The ONLY
@@ -2095,8 +2645,12 @@ final class StudioViewModel {
             // Identity-matched removal, same discipline as the tail of this
             // function: a replacement that took this room while the stop was in
             // flight must keep its row.
-            guard let current = runningEffects[roomID], current.recovered == key else { return }
-            runningEffects.removeValue(forKey: roomID)
+            guard let current = runningEffects[rowKey], current.recovered == key else { return }
+            runningEffects.removeValue(forKey: rowKey)
+            orchestrator.recordStopAudit(context, operation: .rowRemoved,
+                                         bridgeID: rowKey.bridgeID, roomID: roomID,
+                                         cardOrEffectID: current.cardID,
+                                         outcomeReason: "recovered")
             // NOT removeActiveEffect(roomID:) — a recovered row is keyed by its
             // manifest, and the orchestrator already removed it.
             return
@@ -2141,15 +2695,16 @@ final class StudioViewModel {
             // Room-scoped: the global stopStudioMode() tore down every other
             // room's composition stream and the whole Now-Playing registry.
             await orchestrator.stopAppDrivenStudioEffect(roomID: roomID,
-                                                         bridgeID: effect.room.bridgeID)
+                                                         bridgeID: effect.room.bridgeID,
+                                                         context: context)
             try? await Task.sleep(for: .milliseconds(200))
 
         case .composition:
             await orchestrator.stopCompositionMode(roomID: roomID,
                                                    bridgeID: effect.room.bridgeID)
-            // Keyed by the STOPPING room — the old single-slot nil-out
-            // clobbered the selected room's editor when another room stopped.
-            activeCompositionBoxes.removeValue(forKey: roomID)
+            // Keyed by the STOPPING row's EXACT bridge + room (round 4e) — the
+            // room-id removal used to evict another bridge's same-room-id box.
+            activeCompositionBoxes.removeValue(forKey: rowKey)
             if isExplicitStop, let api, let groupedLightID {
                 // Ensure composition cards (including bridge one-shot tier)
                 // fully release control and don't appear "stuck on".
@@ -2162,11 +2717,21 @@ final class StudioViewModel {
         // stop that started before a replacement can finish after it — and the
         // old unconditional removal would then erase the REPLACEMENT's entry and
         // its Now-Playing row. Only clear what this stop actually owned.
-        guard let current = runningEffects[roomID],
+        guard let current = runningEffects[rowKey],
               current.cardID == stoppingCardID,
               current.bridgeNativeOwnership == ownership else { return }
-        runningEffects.removeValue(forKey: roomID)
-        orchestrator.removeActiveEffect(roomID: roomID)
+        runningEffects.removeValue(forKey: rowKey)
+        orchestrator.recordStopAudit(context, operation: .rowRemoved,
+                                     bridgeID: rowKey.bridgeID, roomID: roomID,
+                                     cardOrEffectID: stoppingCardID)
+        // Exact when the row can name its bridge; a legacy nil-bridge row
+        // falls back to the fail-closed room-scoped removal.
+        if let bridgeID = rowKey.bridgeID {
+            orchestrator.removeActiveEffect(bridgeID: bridgeID, roomID: roomID,
+                                            context: context)
+        } else {
+            orchestrator.removeActiveEffect(roomID: roomID, context: context)
+        }
     }
 
     // ── Cross-surface Entertainment handoff ───────────────────────
@@ -2191,17 +2756,31 @@ final class StudioViewModel {
 
         debugLog("[Handoff] Switching from '\(prompt.runningLookName)' to '\(prompt.requestedLookName)'")
         isExplicitStop = false
-        if runningEffects[prompt.owningRoomID] != nil {
+        // Round 4e: the prompt CARRIES the owning bridge — resolve the row by
+        // its exact key first. The room-only lookup fails closed on a
+        // same-room-id collision, which used to drop a perfectly attributable
+        // stop to the blunt direct-teardown arm below.
+        let exactOwningKey = RoomEffectKey(
+            bridgeID: prompt.owningBridgeID, roomID: prompt.owningRoomID)
+        if runningEffects[exactOwningKey] != nil {
             // Studio knows this composition: its own stop path already routes to
             // stopCompositionMode and clears the Now-Playing registry.
-            await stopEffect(on: prompt.owningRoomID)
+            await stopEffect(on: exactOwningKey)
+        } else if let owningKey = runningEffectKey(forRoomID: prompt.owningRoomID) {
+            await stopEffect(on: owningKey)
         } else {
-            // Ownership without a Studio registry entry — stop the composition
-            // directly rather than leaving the session to be silently orphaned.
+            // Ownership without an unambiguous Studio registry entry — stop the
+            // composition directly rather than leaving the session to be
+            // silently orphaned.
             await orchestrator.stopCompositionMode(roomID: prompt.owningRoomID,
                                                    bridgeID: prompt.owningBridgeID)
-            activeCompositionBoxes.removeValue(forKey: prompt.owningRoomID)
-            orchestrator.removeActiveEffect(roomID: prompt.owningRoomID)
+            activeCompositionBoxes.removeValue(forKey: exactOwningKey)
+            if let owningBridgeID = prompt.owningBridgeID {
+                orchestrator.removeActiveEffect(
+                    bridgeID: owningBridgeID, roomID: prompt.owningRoomID)
+            } else {
+                orchestrator.removeActiveEffect(roomID: prompt.owningRoomID)
+            }
         }
 
         await apply(prompt.card,
@@ -2249,7 +2828,7 @@ final class StudioViewModel {
             present(StudioHandoffRequest(
                 plan: request.plan,
                 owner: owner,
-                runningLookName: runningEffects[owner.roomID]?.card.name
+                runningLookName: runningEffect(forRoomID: owner.roomID)?.card.name
                     ?? owner.engineKey.capitalized,
                 requestedLookName: request.requestedLookName,
                 card: request.card,
@@ -2283,12 +2862,14 @@ final class StudioViewModel {
     /// start is refused rather than silently redirected.
     private func replayStudioHandoff(_ request: StudioHandoffRequest) async {
         // The session is gone, so its Now-Playing row and Studio entry are
-        // claims about something that is no longer running. `removeActiveEffect
-        // (roomID:)` matches on the live presentation key, so a recovered
-        // bridge-stored row (keyed by its manifest) structurally cannot be
-        // reached from here.
-        runningEffects.removeValue(forKey: request.owner.roomID)
-        orchestrator?.removeActiveEffect(roomID: request.owner.roomID)
+        // claims about something that is no longer running. Both removals are
+        // exact — the owner names its bridge — and a recovered bridge-stored
+        // row (keyed by its manifest) structurally cannot be reached from
+        // either.
+        runningEffects.removeValue(forKey: RoomEffectKey(
+            bridgeID: request.owner.bridgeID, roomID: request.owner.roomID))
+        orchestrator?.removeActiveEffect(
+            bridgeID: request.owner.bridgeID, roomID: request.owner.roomID)
 
         await apply(request.card,
                     roomOverride: request.room,
@@ -2334,14 +2915,16 @@ final class StudioViewModel {
                 statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
                 return true
             }
-            guard !hadConsent else {
-                // We already asked once and the answer no longer applies —
-                // the owner changed underneath us. Say so instead of looping
-                // the prompt.
-                studioNotice = StudioNotice(message: EntertainmentConsentCopy.takeoverFailed)
-                statusMessage = "⚠ \(EntertainmentConsentCopy.takeoverFailed)"
-                return true
-            }
+            // A consented start reaching this arm is not a loop (round 3): the
+            // commit-boundary verification only returns a contested verdict
+            // for a controller PROVEN there — either a different configuration
+            // observed directly, or the consented one observed inactive after
+            // our own release and then observed active again. Both are new
+            // conflicts the old consent never covered, and both HCT-02 and
+            // HCT-03 already established that the honest next step is a fresh
+            // question about what is actually there. Each prompt costs the
+            // user a tap, so nothing here can spin.
+            _ = hadConsent
             // Re-derive the frozen plan for the request we are about to raise.
             // Falling back to a bare id here would reintroduce exactly what
             // the plan exists to prevent.
@@ -2440,17 +3023,30 @@ final class StudioViewModel {
     /// Turns off the room's lights.
     func explicitStop(_ card: StudioCard) async {
         guard let room = selectedRoom else { return }
+        let context = UnifiedOrchestrator.StopAuditContext(
+            route: .explicitStop, cardOrEffectID: card.id)
+        // Audit note: this route targets the SELECTED room's row, not the
+        // tapped card's — record both identities so a hardware trace can say
+        // whether they disagreed.
+        orchestrator?.recordStopAudit(context, operation: .stopRequested,
+                                      bridgeID: room.bridgeID, roomID: room.id,
+                                      cardOrEffectID: card.id,
+                                      outcomeReason: "explicitStopEntry selectedRoom=\(room.id)")
         isExplicitStop = true
-        await stopEffect(on: room.id)
+        await stopEffect(on: RoomEffectKey(room: room), context: context)
         statusMessage = ""
     }
 
     /// Stop all running effects across all rooms.
     func stopAll() async {
+        let context = UnifiedOrchestrator.StopAuditContext(route: .stopAll)
+        orchestrator?.recordStopAudit(context, operation: .stopAllInvoked,
+                                      bridgeID: nil, roomID: nil,
+                                      outcomeReason: "rows=\(runningEffects.count)")
         isExplicitStop = true
-        let roomIDs = Array(runningEffects.keys)
-        for roomID in roomIDs {
-            await stopEffect(on: roomID)
+        let rowKeys = Array(runningEffects.keys)
+        for rowKey in rowKeys {
+            await stopEffect(on: rowKey, context: context)
         }
         statusMessage = ""
     }
@@ -2500,7 +3096,7 @@ final class StudioViewModel {
                 // re-parameterize the EFFECT's color_temperature per-light —
                 // a grouped mirek PUT fights the running firmware effect.
                 // Mirrors the speed case below; grouped stays the v1 fallback.
-                if let effect = runningEffects[room.id],
+                if let effect = runningEffect(for: room),
                    effect.cardID == cardID,
                    case .bridgeNative(let effectName) = effect.card.strategy,
                    !effect.v2CapableLightIDs.isEmpty {
@@ -2547,7 +3143,7 @@ final class StudioViewModel {
                 // R4 Effects port: while a bridge-native effect runs on
                 // v2-capable lights, the speed slider re-parameterizes the
                 // effect itself per-light (latest-wins mailbox + gate pacing).
-                if let effect = runningEffects[room.id],
+                if let effect = runningEffect(for: room),
                    effect.cardID == cardID,
                    case .bridgeNative(let effectName) = effect.card.strategy,
                    !effect.v2CapableLightIDs.isEmpty {
@@ -2613,7 +3209,7 @@ final class StudioViewModel {
             // R4 Effects port: while this bridge-native effect runs on
             // v2-capable lights, tint the EFFECT itself per-light; the
             // grouped xy write below stays the v1-only path.
-            if let effect = runningEffects[room.id],
+            if let effect = runningEffect(for: room),
                effect.cardID == cardID,
                case .bridgeNative(let effectName) = effect.card.strategy,
                !effect.v2CapableLightIDs.isEmpty {
@@ -2929,15 +3525,15 @@ final class StudioViewModel {
         compositionStore.save(preset)
         guard let fresh = compositionStore.presets.first(where: { $0.id == id }) else { return }
 
-        let roomIDs = Array(runningEffects.keys).filter { roomID in
-            guard let effect = runningEffects[roomID] else { return false }
+        let rowKeys = Array(runningEffects.keys).filter { rowKey in
+            guard let effect = runningEffects[rowKey] else { return false }
             guard case .composition(let pid) = effect.card.strategy else { return false }
             return pid == id
         }
-        for roomID in roomIDs {
-            guard let effect = runningEffects[roomID] else { continue }
+        for rowKey in rowKeys {
+            guard let effect = runningEffects[rowKey] else { continue }
             let freshCard = studioCard(for: fresh)
-            runningEffects[roomID] = RunningEffect(
+            runningEffects[rowKey] = RunningEffect(
                 cardID: effect.cardID,
                 card: freshCard,
                 room: effect.room,

@@ -182,7 +182,15 @@ struct StudioView: View {
 
                 VStack(spacing: 0) {
                     // ── Zone A: Inline two-axis room/zone rolodex ─
-                    if !isEntertainmentRunning {
+                    //
+                    // Hidden only while a streaming look is ACTUALLY on screen,
+                    // not merely running. Keyed on `isEntertainmentRunning`
+                    // alone, scrolling the wheel onto a streaming room deleted
+                    // the wheel mid-gesture — the selector destroyed by the
+                    // very selection it was making.
+                    if !StudioMixerPresentation.rolodexHidden(
+                        isEntertainmentRunning: isEntertainmentRunning,
+                        mixerVisible: mixerVisible) {
                         roomRolodex
                             .padding(.horizontal, HueSpacing.lg)
                             .padding(.vertical, HueSpacing.xs)
@@ -292,8 +300,18 @@ struct StudioView: View {
                 withAnimation(.easeIn(duration: 0.4)) { blurReady = true }
             }
         }
+        // Landing on a room does NOT throw its editor open.
+        //
+        // This used to set `isMixerCollapsed = false`, which made the tray
+        // appear the instant the wheel touched a room with a running effect.
+        // The tray takes up to 92% of the screen and mounts a full-screen
+        // invisible scrim, so the next drag on the wheel hit the scrim and
+        // collapsed the tray instead — the panel flashing open and shut while
+        // the selector became unusable. Arriving collapsed keeps the wheel
+        // free; the "Live Controls" pill is right there when the editor is
+        // what the user actually wants.
         .onChange(of: vm.selectedRoom?.id) { _, _ in
-            isMixerCollapsed = false
+            isMixerCollapsed = StudioMixerPresentation.collapsedOnRoomChange
             isMixerExpanded = false
         }
         // Coverage badges for Deck 0 — refires on room switch, auto-cancels
@@ -425,6 +443,8 @@ struct StudioView: View {
         .modifier(EntertainmentHandoffAlert(vm: vm))
         .modifier(StudioEntertainmentHandoffAlert(vm: vm))
         .modifier(ForeignTakeoverAlert(vm: vm))
+        .modifier(EntertainmentAreaChooserSheet(vm: vm))
+        .modifier(BridgeSaveResultSheet(vm: vm))
         .modifier(StudioNoticeAlert(vm: vm))
         .confirmationDialog(
             TransportVocabulary.choosePlayTitle,
@@ -1991,6 +2011,272 @@ private struct ForeignTakeoverAlert: ViewModifier {
         // is streaming, not which room the other controller is lighting — so
         // any sentence naming a room would be asserting something we cannot
         // actually know.
+    }
+}
+
+/// "Where did that look actually go?" — the bridge-save result.
+///
+/// Brian's device pass found effects still running after a force-close with no
+/// recovered row and no Stop anywhere. The app knew which transport it had
+/// used; it simply never said. Every line here answers a question the user
+/// could not otherwise answer: which bridge, which room, is it running there,
+/// is there a local copy, and will Stop still exist after a relaunch.
+private struct BridgeSaveResultSheet: ViewModifier {
+    let vm: StudioViewModel
+
+    func body(content: Content) -> some View {
+        content.sheet(
+            item: Binding(
+                get: { vm.bridgeSaveResult },
+                set: { if $0 == nil { vm.bridgeSaveResult = nil } }
+            )
+        ) { result in
+            // "Saved" over a partial-cleanup failure would be the exact lie
+            // this sheet exists to end — the title states which one this is.
+            StageSheetScaffold(title: result.succeeded ? "Saved" : "Save Failed") {
+                StageCard(icon: result.isRunningOnBridge
+                          ? "externaldrive.badge.checkmark" : "iphone",
+                          title: result.lookName) {
+                    VStack(alignment: .leading, spacing: HueSpacing.md) {
+                        // The headline IS the distinction: running from the app
+                        // and stopping with it, or living on the bridge.
+                        Text(result.headline)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        factRow("Room", result.roomName)
+                        factRow("Bridge", result.bridgeLabel)
+                        factRow("Playing now", result.isRunningOnBridge
+                                ? "Yes, on the bridge" : "Not confirmed")
+                        factRow("Local copy", result.createdLocalPreset
+                                ? "In My Creations" : "None")
+                        factRow("After you reopen ChromaGlow",
+                                result.succeeded
+                                ? (result.stopSurvivesRelaunch
+                                   ? "You can still stop it here"
+                                   : "It will already have stopped")
+                                // Failure: this row is about RECOVERY of what
+                                // remains, and "not guaranteed" is said as
+                                // itself when the quarantine write also failed.
+                                : (result.stopSurvivesRelaunch
+                                   ? "ChromaGlow will offer to remove it again"
+                                   : "It may not be findable — remove it now"))
+
+                        if !result.createdLocalPreset {
+                            Text(BridgeSaveCopy.noLocalPreset)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.white.opacity(0.6))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        // An exact Stop, available NOW.
+                        //
+                        // Especially load-bearing for "saved but not confirmed
+                        // running": those resources exist and are tracked, and
+                        // making the user wait for a relaunch to surface a row
+                        // is the gap that leaves lights nobody can turn off.
+                        if result.stoppableManifestID != nil {
+                            Button(role: .destructive) {
+                                HapticManager.shared.light()
+                                Task { await vm.stopSavedBridgeLook(result) }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    if vm.isStoppingSavedLook {
+                                        ProgressView()
+                                            .tint(HuePalette.Noir.destructive)
+                                            .scaleEffect(0.7)
+                                    } else {
+                                        Image(systemName: "stop.circle.fill")
+                                    }
+                                    Text(result.isRunningOnBridge
+                                         ? "Stop and remove from bridge"
+                                         : "Remove from bridge")
+                                }
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(HuePalette.Noir.destructive)
+                                .frame(maxWidth: .infinity, minHeight: HueHit.min)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(HuePalette.Noir.destructive.opacity(0.14))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            // A failed stop keeps this sheet — and this exact
+                            // control — on screen for the retry. Disabling
+                            // during the attempt is what makes that a retry
+                            // rather than a double-fire.
+                            .disabled(vm.isStoppingSavedLook)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func factRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: HueSpacing.sm) {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.5))
+                .frame(width: 132, alignment: .leading)
+            Text(value)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.9))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The two mixer-vs-selector layout rules, as plain values.
+///
+/// Extracted for the same reason `StudioMusicWiring.barSuppressed` was: a rule
+/// buried in a view body is only checkable by rendering, and the defect here is
+/// a rule, not a pixel. Brian's report was that scrolling the room wheel onto a
+/// room with a running effect made the customization panel cover the wheel —
+/// and that the panel could "appear and collapse immediately", which is the
+/// scrim eating the very next drag.
+enum StudioMixerPresentation {
+
+    /// Arriving on a new room leaves the tray CLOSED.
+    ///
+    /// The editor is not lost — `hasCurrentRoomEffect && isMixerCollapsed`
+    /// shows the "Live Controls" pill that opens it. What is gained is that the
+    /// wheel keeps working: no tray over it, and no full-screen scrim between
+    /// the finger and the next scroll.
+    static let collapsedOnRoomChange = true
+
+    /// The wheel is unmounted only when a streaming look's tray is actually on
+    /// screen — never merely because a streaming look exists.
+    ///
+    /// Both conditions matter. `isEntertainmentRunning` alone removed the
+    /// selector the moment the wheel landed on a streaming room, destroying the
+    /// gesture in progress; dropping the check entirely would put the wheel
+    /// underneath a full-height tray.
+    static func rolodexHidden(isEntertainmentRunning: Bool, mixerVisible: Bool) -> Bool {
+        isEntertainmentRunning && mixerVisible
+    }
+}
+
+/// "Which lights should this play on?" — the exact-area chooser
+/// (hardware convergence slice A).
+///
+/// A SHEET, not an alert, and not by preference. On Brian's bridge two areas
+/// reach one room; on a larger home there can be more, each needing its name,
+/// its bridge, the rooms it covers and a scope warning. That does not fit in
+/// two alert buttons, and squeezing it in is how the disclosure that selecting
+/// an area also lights another room ends up omitted.
+///
+/// This prompt is NOT a consent. Picking an area answers *where*; if another
+/// app owns the bridge, `ForeignTakeoverAlert` still has to ask *whether*.
+private struct EntertainmentAreaChooserSheet: ViewModifier {
+    let vm: StudioViewModel
+
+    func body(content: Content) -> some View {
+        content.sheet(
+            item: Binding(
+                get: { vm.areaChoiceRequest },
+                // Swipe-away is "not now": nothing was mutated to raise this,
+                // and nothing is mutated to drop it.
+                set: { if $0 == nil { vm.cancelAreaChoice() } }
+            )
+        ) { request in
+            StageSheetScaffold(title: EntertainmentAreaChoiceCopy.title) {
+                StageCard(icon: "sparkles.tv", title: request.room.name) {
+                    VStack(alignment: .leading, spacing: HueSpacing.md) {
+                        Text(EntertainmentAreaChoiceCopy.message)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        ForEach(request.choices) { choice in
+                            areaRow(choice, requestedRoom: request.room.name)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func areaRow(
+        _ choice: UnifiedOrchestrator.EntertainmentAreaChoice,
+        requestedRoom: String
+    ) -> some View {
+        Button {
+            HapticManager.shared.light()
+            Task { await vm.confirmAreaChoice(choice) }
+        } label: {
+            HStack(alignment: .top, spacing: HueSpacing.sm) {
+                Image(systemName: "light.panel")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HuePalette.amber.opacity(0.9))
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(choice.areaName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+
+                    // Bridge label, never the IP — during multi-bridge testing
+                    // this is the only line that says which box is involved.
+                    Text(choice.bridgeLabel)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.55))
+
+                    if !choice.roomNames.isEmpty {
+                        Text(choice.roomNames.joined(separator: " · "))
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Text(EntertainmentAreaChoiceCopy.lightSummary(
+                        inRoom: choice.lightCount, outside: choice.extraLightCount))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.55))
+
+                    // Stated BEFORE the tap. An area spanning bedroom+hallway
+                    // is a legitimate answer for "hallway" — Hue streams whole
+                    // configurations — but only if the user knows the bedroom
+                    // lights come with it.
+                    if choice.expandsScope {
+                        StageBadge(
+                            text: EntertainmentAreaChoiceCopy.expandsScope(room: requestedRoom),
+                            style: .amber)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .padding(.top, 2)
+            }
+            .padding(.vertical, HueSpacing.xs)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(minHeight: HueHit.min)
+        .accessibilityLabel(accessibilityLabel(choice, requestedRoom: requestedRoom))
+    }
+
+    private func accessibilityLabel(
+        _ choice: UnifiedOrchestrator.EntertainmentAreaChoice,
+        requestedRoom: String
+    ) -> String {
+        var parts = [choice.areaName, "on \(choice.bridgeLabel)"]
+        if !choice.roomNames.isEmpty { parts.append(choice.roomNames.joined(separator: ", ")) }
+        parts.append(EntertainmentAreaChoiceCopy.lightSummary(
+            inRoom: choice.lightCount, outside: choice.extraLightCount))
+        if choice.expandsScope {
+            parts.append(EntertainmentAreaChoiceCopy.expandsScope(room: requestedRoom))
+        }
+        return parts.joined(separator: ". ")
     }
 }
 

@@ -22,7 +22,7 @@ struct RoomRolodexView: View {
     let rooms: [RoomDisplayItem]
     let zones: [RoomDisplayItem]
     let selectedRoom: RoomDisplayItem?
-    let runningEffects: [String: RunningEffect]   // keyed by room/zone ID
+    let runningEffects: [RoomEffectKey: RunningEffect]   // exact bridge+room key (round 4c)
     let onSelect: (RoomDisplayItem) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -55,7 +55,7 @@ struct RoomRolodexView: View {
         rooms: [RoomDisplayItem],
         zones: [RoomDisplayItem],
         selectedRoom: RoomDisplayItem?,
-        runningEffects: [String: RunningEffect],
+        runningEffects: [RoomEffectKey: RunningEffect],
         onSelect: @escaping (RoomDisplayItem) -> Void
     ) {
         self.rooms = rooms
@@ -289,7 +289,7 @@ struct RoomRolodexView: View {
     // ── Shared cell ────────────────────────────────────────────────────
 
     private func wheelCell(item: RoomDisplayItem, isZone: Bool, isCenter: Bool) -> some View {
-        let running = runningEffects[item.id]
+        let running = runningEffects[RoomEffectKey(room: item)]
         return HStack(spacing: 7) {
             Image(systemName: isZone ? "square.3.layers.3d" : archetypeIcon(for: item.archetype))
                 .font(.system(size: 13, weight: .semibold))

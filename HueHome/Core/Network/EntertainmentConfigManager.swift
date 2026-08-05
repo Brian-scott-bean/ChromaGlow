@@ -347,4 +347,146 @@ enum EntertainmentAreaSelector {
         }
         return nil
     }
+
+    // ─────────────────────────────────────────────────────────
+    // MARK: - Exact target decision (hardware convergence slice A)
+    // ─────────────────────────────────────────────────────────
+
+    /// One Entertainment Area the user could be offered, described in full.
+    ///
+    /// Every eligible configuration gets its own candidate. Two areas covering
+    /// the same lights are two different areas to the person who named them —
+    /// "TV" and "Movie Night" over one room are not interchangeable just
+    /// because their light sets match — so they are never merged, and neither
+    /// is ever hidden behind the other.
+    struct ExactAreaCandidate: Equatable, Sendable {
+        let config: EntertainmentConfig
+        /// The room lights this area actually contains. Sorted for stable display.
+        let lightIDs: [String]
+        /// Lights this area drives that are NOT in the requested room. Non-empty
+        /// means selecting it reaches outside what the user asked for.
+        let extraLightIDs: [String]
+        var expandsScope: Bool { !extraLightIDs.isEmpty }
+
+        /// Hand-written because `EntertainmentConfig.channels` carries a tuple
+        /// position, which blocks synthesis. Identity plus the two resolved
+        /// light sets is the whole of what a candidate asserts; the channel
+        /// geometry is compared where it actually matters, by
+        /// `EntertainmentTakeoverPlan.matches`.
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.config.id == rhs.config.id
+                && lhs.config.name == rhs.config.name
+                && lhs.lightIDs == rhs.lightIDs
+                && lhs.extraLightIDs == rhs.extraLightIDs
+        }
+    }
+
+    /// What should happen for one room's streaming request.
+    ///
+    /// Deliberately not an optional. `select` above answers with nil for four
+    /// very different situations — nothing matches, two areas tie, an area
+    /// reaches outside the room, several areas overlap it — and the UI showed
+    /// all four as "There's no compatible Entertainment Area for that room."
+    /// On a bridge with an area spanning bedroom+bathroom and another spanning
+    /// bedroom+hallway, that sentence is simply false: there are two, and the
+    /// user is the only one who can say which was meant.
+    enum ExactAreaDecision: Equatable, Sendable {
+        /// Exactly one safe, exact, streamable candidate. Safe to auto-select.
+        case exact(EntertainmentConfig)
+        /// More than one plausible area. The user must name the target.
+        case choiceRequired([ExactAreaCandidate])
+        /// Nothing here can serve this room at all.
+        case noCompatible
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            switch (lhs, rhs) {
+            case (.exact(let a), .exact(let b)):
+                return a.id == b.id && a.name == b.name
+            case (.choiceRequired(let a), .choiceRequired(let b)):
+                return a == b
+            case (.noCompatible, .noCompatible):
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    /// Resolve a room to one exact area, or to the choice only the user can make.
+    ///
+    /// **Auto-select requires being alone.** `.exact` is returned only when the
+    /// safe winner is also the *only* eligible candidate touching this room.
+    /// That is stricter than `select`, on purpose: `select` collapses configs
+    /// with identical light sets and breaks the tie with `min(by: id)`, which
+    /// silently picks one of two differently-named areas the user can see in
+    /// the Hue app. A hidden pick is indistinguishable from a wrong pick.
+    ///
+    /// **Ordering is display, never selection.** Candidates come back in
+    /// configuration-id order so a reordered bridge response renders
+    /// identically. Nothing about that ordering decides anything: array order,
+    /// dictionary order, area name, maximum overlap and majority membership are
+    /// never consulted, and a tie is never broken — it is escalated.
+    ///
+    /// `preferredConfigID` names a target the user already chose. It is
+    /// honoured only if it still resolves to a candidate that safely serves
+    /// this room; anything else is `.noCompatible`, because replaying a stale
+    /// selection is how a stream lands in a room nobody asked about.
+    static func decide(
+        roomLightIDs: Set<String>,
+        configs: [EntertainmentConfig],
+        entertainmentToLightMap: [String: String],
+        preferredConfigID: String? = nil
+    ) -> ExactAreaDecision {
+        guard !roomLightIDs.isEmpty else { return .noCompatible }
+
+        // Eligibility is the same bar `select` uses: an area must resolve to at
+        // least one real light and produce usable channel IDs, or availability
+        // would promise a stream that startup then refuses. Deduplication is by
+        // configuration id ONLY — a retried create can append the same id twice,
+        // but two distinct ids are always two distinct candidates.
+        var seenIDs: Set<String> = []
+        var candidates: [ExactAreaCandidate] = []
+        for config in configs {
+            guard seenIDs.insert(config.id).inserted else { continue }
+            guard validatedChannelIDs(for: config) != nil else { continue }
+            let mapped = mappedLightIDs(for: config, entertainmentToLightMap: entertainmentToLightMap)
+            guard !mapped.isEmpty else { continue }
+            let overlap = mapped.intersection(roomLightIDs)
+            // No overlap at all means this area belongs to some other room. It
+            // is not a candidate, and it is never shown.
+            guard !overlap.isEmpty else { continue }
+            candidates.append(ExactAreaCandidate(
+                config: config,
+                lightIDs: overlap.sorted(),
+                extraLightIDs: mapped.subtracting(roomLightIDs).sorted()
+            ))
+        }
+        // Display order only.
+        candidates.sort { $0.config.id < $1.config.id }
+
+        guard !candidates.isEmpty else { return .noCompatible }
+
+        // An explicit selection answers for itself: it either still names a
+        // candidate for this room, or it is stale.
+        if let preferredConfigID {
+            guard let chosen = candidates.first(where: { $0.config.id == preferredConfigID }) else {
+                return .noCompatible
+            }
+            return .exact(chosen.config)
+        }
+
+        // Alone AND safe. `select` supplies the safety half — containment,
+        // dominant overlap, the refusal to reach outside the room without a
+        // contest to win — and is re-asked here rather than reimplemented so
+        // the two can never drift apart.
+        if candidates.count == 1,
+           let safe = select(roomLightIDs: roomLightIDs,
+                             configs: configs,
+                             entertainmentToLightMap: entertainmentToLightMap),
+           safe.id == candidates[0].config.id {
+            return .exact(safe)
+        }
+
+        return .choiceRequired(candidates)
+    }
 }

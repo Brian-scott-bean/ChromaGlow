@@ -46,16 +46,20 @@ struct BulkWriteFailure: Equatable {
 }
 
 struct ActiveEffectEntry: Identifiable, Equatable {
-    /// Presentation key. For a live Studio effect this is still the room id,
-    /// unchanged. For a recovered bridge-stored animation (packet 8) it is
-    /// derived from the MANIFEST id, so two bridges running the same room id
+    /// Presentation key. For a bridge-attributed live effect it is
+    /// bridge-qualified (`liveID`), so two bridges running the same room id
     /// produce two rows instead of one silently overwriting the other in
-    /// `addActiveEffect`.
+    /// `addActiveEffect` — the same rule recovered rows (packet 8) already
+    /// follow by keying off the MANIFEST id. An unattributed live row keeps
+    /// the bare room id.
     let id: String
-    /// The room this row is about. Equals `id` for live effects; for a
-    /// recovered row it is the manifest's room id, which may resolve to no
-    /// room at all.
+    /// The room this row is about. For a recovered row it is the manifest's
+    /// room id, which may resolve to no room at all.
     let roomID: String
+    /// The bridge whose look this live row asserts, when the publisher could
+    /// say. nil = unattributed: exact removal retains such a row — never
+    /// destroy what cannot be attributed.
+    let bridgeID: String?
     let roomName: String
     let groupedLightID: String?   // needed to stop bridge-native effects
     let effectID: String          // HueEffect.id
@@ -67,11 +71,29 @@ struct ActiveEffectEntry: Identifiable, Equatable {
     /// cannot say which bridge.
     let recovered: UnifiedOrchestrator.RecoveredBridgeAnimationKey?
 
-    /// Live effect. Every pre-packet-8 call site keeps compiling verbatim.
+    /// Live effect with exact bridge attribution (round 4c).
+    init(liveBridgeID: String?, roomID: String, roomName: String,
+         groupedLightID: String?, effectID: String,
+         effectName: String, effectIcon: String, isAppDriven: Bool) {
+        self.id = Self.liveID(bridgeID: liveBridgeID, roomID: roomID)
+        self.roomID = roomID
+        self.bridgeID = liveBridgeID
+        self.roomName = roomName
+        self.groupedLightID = groupedLightID
+        self.effectID = effectID
+        self.effectName = effectName
+        self.effectIcon = effectIcon
+        self.isAppDriven = isAppDriven
+        self.recovered = nil
+    }
+
+    /// Unattributed live effect. Every pre-round-4c call site keeps compiling
+    /// verbatim; the row keys by bare room id and exact removal retains it.
     init(id: String, roomName: String, groupedLightID: String?, effectID: String,
          effectName: String, effectIcon: String, isAppDriven: Bool) {
         self.id = id
         self.roomID = id
+        self.bridgeID = nil
         self.roomName = roomName
         self.groupedLightID = groupedLightID
         self.effectID = effectID
@@ -85,6 +107,7 @@ struct ActiveEffectEntry: Identifiable, Equatable {
     init(recovered animation: UnifiedOrchestrator.RecoveredBridgeAnimation) {
         self.id = Self.recoveredID(manifestID: animation.manifest.id)
         self.roomID = animation.manifest.roomID
+        self.bridgeID = animation.bridgeID
         self.roomName = animation.roomName
         self.groupedLightID = animation.room?.groupedLightID
         self.effectID = "comp_\(animation.manifest.presetID.uuidString)"
@@ -98,6 +121,14 @@ struct ActiveEffectEntry: Identifiable, Equatable {
 
     static func recoveredID(manifestID: UUID) -> String {
         "cg-recovered:\(manifestID.uuidString)"
+    }
+
+    /// Presentation key for a bridge-attributed live row. Falls back to the
+    /// bare room id when the publisher cannot name a bridge, so unattributed
+    /// rows keep their historical key.
+    static func liveID(bridgeID: String?, roomID: String) -> String {
+        guard let bridgeID else { return roomID }
+        return "cg-live:\(bridgeID):\(roomID)"
     }
 }
 
@@ -237,13 +268,13 @@ final class UnifiedOrchestrator {
     // Studio's `.bridgeNative` cards (candle, fire, sparkle, prism, opal,
     // glisten) are LONG-RUNNING firmware effects, but they leave no
     // orchestrator state at all — the branch writes per-light effects and then
-    // records only `runningEffects[room.id]`, inside StudioViewModel.
+    // records only the view model's `runningEffects` row.
     //
-    // `activeEffectEntries` cannot stand in for that: it carries no bridgeID,
-    // and its `isAppDriven` flag is false for BOTH firmware effects and one-shot
-    // `.bridgeOptimized` presets, so it cannot tell persistent playback from a
-    // command that already finished. This registry can, and it lives here rather
-    // than in the view model so ownership survives StudioView being dismissed.
+    // `activeEffectEntries` cannot stand in for that: its `isAppDriven` flag
+    // is false for BOTH firmware effects and one-shot `.bridgeOptimized`
+    // presets, so it cannot tell persistent playback from a command that
+    // already finished. This registry can, and it lives here rather than in
+    // the view model so ownership survives StudioView being dismissed.
 
     /// Exact identity of one bridge-native owner. Never keyed by roomID alone —
     /// the same room id can exist on two bridges.
@@ -257,6 +288,30 @@ final class UnifiedOrchestrator {
     struct BridgeNativeOwnershipToken: Hashable, Sendable {
         let key: BridgeNativeOwnershipKey
         let generation: Int
+    }
+
+    /// Exact identity of one LIVE composition playback (round 4e). The runtime
+    /// authority — generations, runtimes, scheduler order, transport claims —
+    /// is keyed by this, never by roomID alone: the same room id can exist on
+    /// two bridges, and a room-only key makes the second start overwrite the
+    /// first's real runtime while both presentation rows survive.
+    ///
+    /// `bridgeKey` follows the REST/telemetry normalization (`bridgeID ??
+    /// "legacy"`), the same convention as `BridgeNativeOwnershipKey` and
+    /// `ComposerTelemetrySessionKey` — NOT the Entertainment maps' `?? ""`
+    /// coercion, which stays confined to those bridge-keyed maps.
+    struct CompositionPlaybackKey: Hashable, Sendable {
+        let bridgeKey: String
+        let roomID: String
+
+        init(bridgeKey: String, roomID: String) {
+            self.bridgeKey = bridgeKey
+            self.roomID = roomID
+        }
+
+        init(bridgeID: String?, roomID: String) {
+            self.init(bridgeKey: bridgeID ?? "legacy", roomID: roomID)
+        }
     }
 
     @ObservationIgnored
@@ -324,9 +379,9 @@ final class UnifiedOrchestrator {
     /// session, Studio scope and this registry, `""` for the Entertainment maps.
     /// Unifying those two spellings is a wider migration than this packet.
     ///
-    /// Display state is not consulted: `activeEffectEntries` and
-    /// `runningEffects` are view-model mirrors with no bridge identity, and they
-    /// cannot distinguish a one-shot from a continuing owner.
+    /// Display state is not consulted: `activeEffectEntries` and the view
+    /// model's `runningEffects` are presentation mirrors, and they cannot
+    /// distinguish a one-shot from a continuing owner.
     private func isAllDayWriteAllowed(bridgeID: String?, roomID: String) -> Bool {
         let legacyKey = bridgeID ?? "legacy"
 
@@ -344,11 +399,10 @@ final class UnifiedOrchestrator {
         // 2. Entertainment ownership, recorded per bridge as bridge -> room.
         if compositionEntRoomByBridge[bridgeID ?? ""] == roomID { return false }
 
-        // 3. Studio's app-driven engine. One global slot, but it carries both
-        //    halves of the identity, so compare both.
-        if let studio = activeStudioRestScope,
-           studio.bridgeKey == legacyKey,
-           studio.scope == RestScope(roomID: roomID, owner: .studio) {
+        // 3. Studio's app-driven engine, recorded per bridge (round 4g). The
+        //    key carries the bridge and the value carries the room, so the
+        //    comparison still covers both halves of the identity.
+        if studioRestScopesByBridge[legacyKey] == RestScope(roomID: roomID, owner: .studio) {
             return false
         }
 
@@ -592,33 +646,134 @@ final class UnifiedOrchestrator {
         activeEffectEntries.append(entry)
     }
 
-    /// Removes one room's active effect entry.
+    /// Removes one room's live active-effect entry — the room-scoped
+    /// compatibility path (round 4c).
     ///
-    /// Matches on the presentation key, which for a live effect IS the room id.
-    /// A recovered bridge-stored row keys off its manifest instead, so this
-    /// structurally cannot erase one — correct, because stopping a live effect
-    /// in a room must not silently retire a different bridge's running
-    /// animation that happens to share the room id.
-    func removeActiveEffect(roomID: String) {
-        activeEffectEntries.removeAll { $0.id == roomID }
+    /// Live rows are bridge-qualified now, so a bare room id can be ambiguous:
+    /// when exactly one live row matches the room it is removed; when several
+    /// bridges' rows share the room id NONE is removed (fail closed — a caller
+    /// that cannot say which bridge must not guess). Recovered bridge-stored
+    /// rows key off their manifest and are structurally out of reach either
+    /// way, because stopping a live effect in a room must not silently retire
+    /// a different bridge's running animation that happens to share the room
+    /// id.
+    func removeActiveEffect(roomID: String, context: StopAuditContext = .unattributed) {
+        let matches = activeEffectEntries.filter { $0.recovered == nil && $0.roomID == roomID }
+        guard matches.count == 1, let only = matches.first else { return }
+        activeEffectEntries.removeAll { $0.id == only.id }
+        recordStopAudit(context, operation: .nowPlayingRemoved,
+                        bridgeID: only.bridgeID, roomID: roomID,
+                        cardOrEffectID: only.effectID, outcomeReason: "roomScoped")
+    }
+
+    /// Exact live-row removal — the destructive path (round 4c). Removes only
+    /// live rows recording exactly this bridge + room; unattributed rows are
+    /// retained (never destroy what cannot be attributed), and recovered rows
+    /// key off their manifest, structurally out of reach.
+    func removeActiveEffect(bridgeID: String, roomID: String,
+                            context: StopAuditContext = .unattributed) {
+        let beforeCount = activeEffectEntries.count
+        activeEffectEntries.removeAll {
+            $0.recovered == nil && $0.roomID == roomID && $0.bridgeID == bridgeID
+        }
+        if activeEffectEntries.count != beforeCount {
+            recordStopAudit(context, operation: .nowPlayingRemoved,
+                            bridgeID: bridgeID, roomID: roomID)
+        }
     }
 
     /// Removes one entry by its exact presentation key. The only way to clear a
     /// recovered bridge-stored row.
-    func removeActiveEffect(id: String) {
+    func removeActiveEffect(id: String, context: StopAuditContext = .unattributed) {
+        let beforeCount = activeEffectEntries.count
         activeEffectEntries.removeAll { $0.id == id }
+        if activeEffectEntries.count != beforeCount {
+            recordStopAudit(context, operation: .nowPlayingRemoved,
+                            bridgeID: nil, roomID: nil,
+                            cardOrEffectID: id, outcomeReason: "presentationKey")
+        }
     }
 
     /// Removes all active effect entries (Stop All).
-    func removeAllActiveEffects() {
+    func removeAllActiveEffects(context: StopAuditContext = .unattributed) {
+        let beforeCount = activeEffectEntries.count
         activeEffectEntries.removeAll()
+        if beforeCount != 0 {
+            recordStopAudit(context, operation: .nowPlayingRemoved,
+                            bridgeID: nil, roomID: nil,
+                            outcomeReason: "allRows count=\(beforeCount)")
+        }
+    }
+
+    // ── Stop-audit diagnostics (PR #60 stop-isolation) ────────────────────
+    //
+    // Observational only. DEBUG builds append one event per destructive stop
+    // operation so the exact teardown chain — route, identity, outcome — is
+    // provable in tests and readable from the device console. Release builds
+    // compile the recorder to a no-op; nothing here changes stop ordering,
+    // guard outcomes, or return values.
+
+    #if DEBUG
+    /// Every recorded stop operation, in commit order. Test-readable.
+    @ObservationIgnored private(set) var stopAuditEvents: [StopAuditEvent] = []
+    @ObservationIgnored private var stopAuditSequence = 0
+
+    /// Clear the ledger between a test's staging and its assertions.
+    func testResetStopAudit() {
+        stopAuditEvents.removeAll()
+        stopAuditSequence = 0
+    }
+    #endif
+
+    /// Stable DEBUG identity for audit correlation (runtime param boxes,
+    /// Entertainment clients). Identity only — never dereferenced.
+    static func stopAuditToken(_ object: AnyObject) -> String {
+        String(UInt(bitPattern: ObjectIdentifier(object).hashValue), radix: 16)
+    }
+
+    /// Record one stop-audit event. DEBUG-only observation; no-op in Release.
+    func recordStopAudit(_ context: StopAuditContext,
+                         operation: StopAuditOperation,
+                         bridgeID: String?,
+                         roomID: String?,
+                         cardOrEffectID: String? = nil,
+                         runtimeToken: String? = nil,
+                         clientID: String? = nil,
+                         outcomeReason: String? = nil) {
+        #if DEBUG
+        stopAuditSequence += 1
+        let event = StopAuditEvent(
+            sequence: stopAuditSequence,
+            timestamp: Date(),
+            route: context.route,
+            bridgeID: bridgeID,
+            roomID: roomID,
+            cardOrEffectID: cardOrEffectID ?? context.cardOrEffectID,
+            runtimeToken: runtimeToken,
+            clientID: clientID,
+            operation: operation,
+            outcomeReason: outcomeReason)
+        stopAuditEvents.append(event)
+        debugLog("[StopAudit] #\(event.sequence) \(event.route.rawValue).\(event.operation.rawValue) bridge=\(event.bridgeID ?? "nil") room=\(event.roomID ?? "nil") card=\(event.cardOrEffectID ?? "-") runtime=\(event.runtimeToken ?? "-") client=\(event.clientID ?? "-") reason=\(event.outcomeReason ?? "-")")
+        #endif
+    }
+
+    /// Exact live-stop target handed to Studio (round 4d). Core-level so the
+    /// handler can carry bridge identity without the orchestrator depending
+    /// on the UI's row key. `bridgeID == nil` is the room-only compatibility
+    /// request: Studio honours it only when exactly one bridge holds the
+    /// room id, and fails closed on a collision.
+    struct LiveEffectStopTarget: Equatable, Sendable {
+        let bridgeID: String?
+        let roomID: String
+        let turnOffLights: Bool
     }
 
     /// Studio owns effect teardown (per-light no_effect cleanup, engine loops,
     /// mailbox clears, settle delays) — a bare grouped-light PUT from another
     /// surface would leave the loop running underneath. @ObservationIgnored:
     /// installed once from StudioViewModel.configure, never read by views.
-    @ObservationIgnored var studioStopHandler: (@MainActor (String, Bool) async -> Void)?
+    @ObservationIgnored var studioStopHandler: (@MainActor (LiveEffectStopTarget) async -> Void)?
 
     /// Studio mirrors the reconciled bridge-stored registry into
     /// `runningEffects` for rooms that resolve. Installed once from
@@ -631,23 +786,47 @@ final class UnifiedOrchestrator {
     ///
     /// A recovered bridge-stored row carries an exact manifest identity and
     /// must not go through the roomID handler: a room id cannot say which
-    /// bridge, and Studio has no engine to tear down for one of these.
+    /// bridge, and Studio has no engine to tear down for one of these. A
+    /// bridge-attributed live row keeps its bridge identity all the way to
+    /// Studio's exact key (round 4d) — with two live rows sharing one room
+    /// id, a downgraded room-only request would fail closed and stop
+    /// NEITHER. Only an unattributed row falls back to the room-only path.
     func requestNowPlayingStop(_ entry: ActiveEffectEntry, turnOffLights: Bool = true) async {
         if let key = entry.recovered {
             await stopRecoveredBridgeAnimation(key, turnOffLights: turnOffLights)
             return
         }
+        if let bridgeID = entry.bridgeID {
+            await requestNowPlayingStop(
+                bridgeID: bridgeID, roomID: entry.roomID, turnOffLights: turnOffLights)
+            return
+        }
         await requestNowPlayingStop(roomID: entry.roomID, turnOffLights: turnOffLights)
     }
 
-    /// Stop an effect from a non-Studio surface (Dashboard Now-Playing bar,
-    /// Siri). `turnOffLights: true` is explicit-stop semantics — the room
-    /// goes off, matching the Dashboard Stop button. `false` ends the effect
-    /// but leaves lights at their current state (Siri's "stop the lights"
-    /// promises exactly that). Still the ONLY sanctioned non-Studio stop path.
+    /// Exact live stop — this bridge's look in this room, no other's (round
+    /// 4d). `turnOffLights: true` is explicit-stop semantics — the room goes
+    /// off, matching the Dashboard Stop button. `false` ends the effect but
+    /// leaves lights at their current state (Siri's "stop the lights"
+    /// promises exactly that).
+    func requestNowPlayingStop(bridgeID: String, roomID: String, turnOffLights: Bool = true) async {
+        if let studioStopHandler {
+            await studioStopHandler(LiveEffectStopTarget(
+                bridgeID: bridgeID, roomID: roomID, turnOffLights: turnOffLights))
+        } else {
+            // Defensive: the handler exists whenever Studio started anything.
+            removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
+        }
+    }
+
+    /// Room-only COMPATIBILITY stop for callers that genuinely cannot name a
+    /// bridge. Studio honours it only when exactly one bridge holds the room
+    /// id and fails closed on a collision; still the ONLY sanctioned
+    /// non-Studio stop path besides the exact overloads above.
     func requestNowPlayingStop(roomID: String, turnOffLights: Bool = true) async {
         if let studioStopHandler {
-            await studioStopHandler(roomID, turnOffLights)
+            await studioStopHandler(LiveEffectStopTarget(
+                bridgeID: nil, roomID: roomID, turnOffLights: turnOffLights))
         } else {
             // Defensive: the handler exists whenever Studio started anything.
             removeActiveEffect(roomID: roomID)
@@ -890,15 +1069,37 @@ final class UnifiedOrchestrator {
     @discardableResult
     func testStagePendingEntertainmentCandidate(
         client: HueEntertainmentClient,
-        plan: EntertainmentTakeoverPlan
+        plan: EntertainmentTakeoverPlan,
+        consent: EntertainmentConsent? = nil
     ) -> PreparedEntertainment {
-        let candidate = PreparedEntertainment(client: client, plan: plan)
+        let candidate = PreparedEntertainment(client: client, plan: plan, consent: consent)
         outstandingEntertainmentCandidates[candidate.id] = candidate
         return candidate
     }
 
+    /// TEST SEAM: configure each freshly built Entertainment client before
+    /// its `startSession` — the hook the production-path takeover tests use
+    /// to stub the DTLS transport and script a mid-window session death.
+    func injectForTesting(
+        entertainmentClientConfigurator: @escaping (HueEntertainmentClient) async -> Void
+    ) {
+        self.entertainmentClientConfigurator = entertainmentClientConfigurator
+    }
+
     func testAwaitEntertainmentCleanup() async {
         await entertainmentCleanupTask?.value
+    }
+
+    /// Seeds the private per-bridge room/zone snapshots so bridge-removal
+    /// tests can exercise removeBridge's exact-group teardown without a full
+    /// loadAll (round 4d).
+    func testSeedBridgeGroups(
+        bridgeID: String,
+        rooms: [RoomDisplayItem] = [],
+        zones: [RoomDisplayItem] = []
+    ) {
+        roomsByBridge[bridgeID] = rooms
+        zonesByBridge[bridgeID] = zones
     }
 
     /// Seeds the private light→room/zone reverse maps so SSE light-event tests
@@ -1092,8 +1293,23 @@ final class UnifiedOrchestrator {
         // client, so teardown/no_effect PUTs can still reach the bridge.
         // Previously these were orphaned: a dead Now-Playing entry pointed at
         // a removed bridge while its render loop kept erroring against it.
-        let doomedGroups = ((roomsByBridge[id] ?? []) + (zonesByBridge[id] ?? [])).map(\.id)
+        // Exact identities (round 4d): only THIS bridge's rooms and zones —
+        // another bridge's effect on the same room id keeps running.
+        let doomedGroups = ((roomsByBridge[id] ?? []) + (zonesByBridge[id] ?? []))
+            .map { RemovedGroupIdentity(bridgeID: id, roomID: $0.id) }
         await stopEffectsForRemovedGroups(doomedGroups)
+        // Round 4g backstop: whatever the exact stops above could not
+        // attribute — this bridge's app-driven engine loop, its live param
+        // box, its DTLS session and its owner record — dies with the bridge.
+        // Exact key only: another bridge's runtime, session, and owner must
+        // survive its neighbour's removal untouched.
+        if let runtime = studioEngineRuntimesByBridge.removeValue(forKey: id) {
+            runtime.task.cancel()
+        }
+        if let entClient = studioEntClients.removeValue(forKey: id) {
+            await entClient.stopSession()
+        }
+        studioEntOwnerByBridge.removeValue(forKey: id)
         await retiredAllDaySender?.clearAll()
         sseTasks[id]?.cancel()
         sseTasks.removeValue(forKey: id)
@@ -1128,10 +1344,9 @@ final class UnifiedOrchestrator {
                 sessionKey: sessionKey, pendingRemovalReported: false)
         }
         activeRESTCadenceByBridgeRoom.removeValue(forKey: id)
-        // …and forget the Studio owner iff it lived on this bridge.
-        if activeStudioRestScope?.bridgeKey == id {
-            activeStudioRestScope = nil
-        }
+        // …and forget the Studio owner iff it lived on this bridge (round 4g:
+        // the map key IS the bridge, so the removal is exact by construction).
+        studioRestScopesByBridge.removeValue(forKey: id)
         clients.removeValue(forKey: id)
         roomsByBridge.removeValue(forKey: id)
         // Zones were never cleared here — and pruneStaleBridgeSnapshots bails
@@ -1154,17 +1369,38 @@ final class UnifiedOrchestrator {
         log.info("Removed bridge \(id)")
     }
 
+    /// The exact identity of a group that is about to disappear (round 4d).
+    /// `bridgeID == nil` is a legacy caller that cannot name the bridge —
+    /// matched on room id alone, as before the rekey.
+    struct RemovedGroupIdentity: Hashable, Sendable {
+        let bridgeID: String?
+        let roomID: String
+    }
+
     /// Stop any running effects on rooms/zones that are about to disappear
-    /// (bridge removal, room/zone delete). Routes through the sanctioned
-    /// requestNowPlayingStop path so the owning engine loop, transport truth,
-    /// and Studio's mirror tear down together. turnOffLights: false — the
-    /// group is going away; a goodbye off-PUT is pointless (and unreachable
-    /// once a removed bridge's client is dropped).
+    /// (bridge removal, room/zone delete). Routes each doomed ENTRY through
+    /// the sanctioned requestNowPlayingStop path — preserving its exact
+    /// identity — so the owning engine loop, transport truth, and Studio's
+    /// mirror tear down together. Matching is on the entry's recorded
+    /// bridge + room, never on its presentation key: live rows are
+    /// bridge-qualified ids now, and comparing bare group ids against them
+    /// would match nothing while removing bridge A must also never stop
+    /// bridge B's same-room-id look. Recovered bridge-stored rows are not
+    /// matched (as before): the bridge's own chain and its manifest evidence
+    /// answer to reconciliation, not to a group-list edit. turnOffLights:
+    /// false — the group is going away; a goodbye off-PUT is pointless (and
+    /// unreachable once a removed bridge's client is dropped).
     /// (Internal, not private, so tests can drive it directly.)
-    func stopEffectsForRemovedGroups(_ groupIDs: [String]) async {
-        let doomed = Set(groupIDs)
-        for entry in activeEffectEntries where doomed.contains(entry.id) {
-            await requestNowPlayingStop(roomID: entry.id, turnOffLights: false)
+    func stopEffectsForRemovedGroups(_ doomed: [RemovedGroupIdentity]) async {
+        func matches(_ entry: ActiveEffectEntry, _ identity: RemovedGroupIdentity) -> Bool {
+            guard entry.recovered == nil, entry.roomID == identity.roomID else { return false }
+            guard let doomedBridge = identity.bridgeID else { return true }   // legacy caller
+            guard let entryBridge = entry.bridgeID else { return true }       // unattributed row
+            return entryBridge == doomedBridge
+        }
+        for entry in activeEffectEntries
+        where doomed.contains(where: { matches(entry, $0) }) {
+            await requestNowPlayingStop(entry, turnOffLights: false)
         }
     }
 
@@ -1724,8 +1960,10 @@ final class UnifiedOrchestrator {
         }
         guard let client = clients[item.bridgeID ?? ""] else { return }
         // A running effect on a doomed room would keep PUT-ing to a deleted
-        // group and leave a ghost Now-Playing entry.
-        await stopEffectsForRemovedGroups([item.id])
+        // group and leave a ghost Now-Playing entry. Exact identity (round
+        // 4d): the same room id on another bridge is not being deleted.
+        await stopEffectsForRemovedGroups(
+            [RemovedGroupIdentity(bridgeID: item.bridgeID, roomID: item.id)])
         // Optimistic removal
         withAnimation { allRooms.removeAll { $0.id == item.id } }
         scheduleWidgetWrite()   // deleted groups otherwise linger in widgets
@@ -1774,7 +2012,10 @@ final class UnifiedOrchestrator {
             return
         }
         guard let client = clients[item.bridgeID ?? ""] else { return }
-        await stopEffectsForRemovedGroups([item.id])
+        // Exact identity (round 4d): deleting this zone on this bridge may
+        // not stop the same zone id's effect on another bridge.
+        await stopEffectsForRemovedGroups(
+            [RemovedGroupIdentity(bridgeID: item.bridgeID, roomID: item.id)])
         withAnimation { allZones.removeAll { $0.id == item.id } }
         scheduleWidgetWrite()
         do {
@@ -2203,16 +2444,21 @@ final class UnifiedOrchestrator {
         }
     }
 
-    /// Group ids (room or zone) the app is currently driving via a composition — REST
-    /// (`compositionRuntimes`) or DTLS (`compositionEntRoomByBridge`). Used to suppress
-    /// SSE echo of our own ~8 Hz per-light PUTs, which would otherwise rebuild the
-    /// dashboard at composition frame rate. Returns `[]` (no allocation) when nothing
-    /// is playing, so applySSEEvent behavior is unchanged in the common case.
-    private var appDrivenGroupIDs: Set<String> {
-        guard !compositionRuntimes.isEmpty || !compositionEntRoomByBridge.isEmpty else { return [] }
-        var ids = Set(compositionRuntimes.keys)
-        ids.formUnion(compositionEntRoomByBridge.values)
-        return ids
+    /// Is the app currently driving this EXACT bridge's group (room or zone)
+    /// via a composition — REST (`compositionRuntimes`) or DTLS
+    /// (`compositionEntRoomByBridge`)? Used to suppress SSE echo of our own
+    /// ~8 Hz per-light PUTs, which would otherwise rebuild the dashboard at
+    /// composition frame rate.
+    ///
+    /// Round 4e: EXACT bridge+room identity, never a room-id set. A room-only
+    /// set conflated bridges sharing a room id: bridge A's composition
+    /// suppressed bridge B's legitimate SSE, and after A stopped, B's ownership
+    /// kept suppressing A. SSE streams are per-bridge, so every caller has the
+    /// event's bridge in hand.
+    private func isAppDrivenGroup(bridgeID: String, roomID: String) -> Bool {
+        if compositionEntRoomByBridge[bridgeID] == roomID { return true }
+        return compositionRuntimes[
+            CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)] != nil
     }
 
     /// Returns which of rooms/zones were mutated so callers can skip unnecessary rebuilds.
@@ -2220,8 +2466,6 @@ final class UnifiedOrchestrator {
     func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> (rooms: Bool, zones: Bool) {
         var roomsMutated = false
         var zonesMutated = false
-        // Rooms/zones the app is actively driving — their SSE echoes are our own PUTs.
-        let driven = appDrivenGroupIDs
         for update in event.data {
             switch update.type {
 
@@ -2272,9 +2516,11 @@ final class UnifiedOrchestrator {
                     // Skip on/brightness if there is a pending optimistic action in flight.
                     // The SSE event pre-dates our PUT; applying it would cause a visible flicker.
                     let isPending = pendingActionDeadlines[update.id].map { Date() < $0 } ?? false
-                    // Skip if the app is driving this room via a composition — the echo of
-                    // our own per-light PUTs would rebuild the dashboard at frame rate.
-                    if !isPending && !driven.contains(rooms[idx].id) {
+                    // Skip if the app is driving this room ON THIS BRIDGE via a
+                    // composition — the echo of our own per-light PUTs would
+                    // rebuild the dashboard at frame rate. Exact identity: another
+                    // bridge's same-room-id composition must not suppress this one.
+                    if !isPending && !isAppDrivenGroup(bridgeID: bridgeID, roomID: rooms[idx].id) {
                         if let on  = update.on?.on              { rooms[idx].isOn       = on  }
                         if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
                         roomsByBridge[bridgeID] = rooms
@@ -2284,7 +2530,7 @@ final class UnifiedOrchestrator {
                 if var zones = zonesByBridge[bridgeID],
                    let idx = zones.firstIndex(where: { $0.groupedLightID == update.id }) {
                     let isPending = pendingActionDeadlines[update.id].map { Date() < $0 } ?? false
-                    if !isPending && !driven.contains(zones[idx].id) {
+                    if !isPending && !isAppDrivenGroup(bridgeID: bridgeID, roomID: zones[idx].id) {
                         if let on  = update.on?.on              { zones[idx].isOn       = on  }
                         if let bri = update.dimming?.brightness { zones[idx].brightness = bri }
                         zonesByBridge[bridgeID] = zones
@@ -2301,8 +2547,10 @@ final class UnifiedOrchestrator {
                 // our own ~8 Hz PUT echoes don't churn the cache. No rebuild is
                 // triggered by this write (the cache is read imperatively, never
                 // from a View body).
-                let cacheRoomDriven = lightIDToRoomID[update.id].map(driven.contains) ?? false
-                let cacheZoneDriven = lightIDToZoneID[update.id].map(driven.contains) ?? false
+                let cacheRoomDriven = lightIDToRoomID[update.id]
+                    .map { isAppDrivenGroup(bridgeID: bridgeID, roomID: $0) } ?? false
+                let cacheZoneDriven = lightIDToZoneID[update.id]
+                    .map { isAppDrivenGroup(bridgeID: bridgeID, roomID: $0) } ?? false
                 if !cacheRoomDriven && !cacheZoneDriven,
                    var cachedLights = lightsByBridge[bridgeID],
                    let cacheIdx = cachedLights.firstIndex(where: { $0.id == update.id }) {
@@ -2315,7 +2563,7 @@ final class UnifiedOrchestrator {
 
                 if var rooms = roomsByBridge[bridgeID],
                    let roomID = lightIDToRoomID[update.id],
-                   !driven.contains(roomID),
+                   !isAppDrivenGroup(bridgeID: bridgeID, roomID: roomID),
                    let idx = rooms.firstIndex(where: { $0.id == roomID }) {
                     var mutated = false
                     // A light explicitly turning ON proves the room is on even when
@@ -2349,7 +2597,7 @@ final class UnifiedOrchestrator {
                 }
                 if var zones = zonesByBridge[bridgeID],
                    let zoneID = lightIDToZoneID[update.id],
-                   !driven.contains(zoneID),
+                   !isAppDrivenGroup(bridgeID: bridgeID, roomID: zoneID),
                    let idx = zones.firstIndex(where: { $0.id == zoneID }) {
                     var mutated = false
                     // Same on-direction cross-check as rooms above.
@@ -2803,9 +3051,25 @@ final class UnifiedOrchestrator {
     // Each engine reads its params from the `params` dictionary passed in.
     // Params are user-adjustable sliders; the engine loop polls them each frame.
 
-    /// Stored reference to the running studio task (strobe, etc.)
-    /// so stopStudioMode() can cancel it. Without this, loops run forever.
-    private var activeStudioTask: Task<Void, Never>?
+    /// One app-driven Studio engine runtime per BRIDGE (round 4g). The record
+    /// binds the loop task to the live param box and to the exact room that
+    /// owns them, keyed by the Entertainment maps' bridge convention
+    /// (`bridgeID ?? ""`), for two reasons:
+    ///
+    ///  1. The old single global slot meant starting a streaming card on
+    ///     bridge 2 cancelled bridge 1's render loop — the hardware-confirmed
+    ///     "second bridge kills the first bridge's stream" defect. The real
+    ///     Hue constraint is one session per bridge, not one per app.
+    ///  2. Carrying the owning roomID is what lets a stale stop — one that
+    ///     resumes after a newer same-bridge start already took the key —
+    ///     recognize that the runtime is no longer the one it was asked to
+    ///     stop, and refuse to cancel it.
+    private struct StudioEngineRuntime {
+        let roomID: String
+        let task: Task<Void, Never>
+        let paramBox: StudioParamBox
+    }
+    @ObservationIgnored private var studioEngineRuntimesByBridge: [String: StudioEngineRuntime] = [:]
 
     /// Entertainment clients keyed by bridgeID — one per concurrent bridge session.
     /// Internal access so StudioViewModel can report transport mode in debug.
@@ -2832,6 +3096,13 @@ final class UnifiedOrchestrator {
     @ObservationIgnored private var outstandingEntertainmentCandidates: [UUID: PreparedEntertainment] = [:]
     @ObservationIgnored private var entertainmentRollbackTasks: [UUID: Task<Void, Never>] = [:]
 
+    #if DEBUG
+    /// Test-injected hook run on each freshly built Entertainment client
+    /// before `startSession` — how the production-path takeover tests stub
+    /// the DTLS transport the simulator can never open. nil outside tests.
+    @ObservationIgnored private var entertainmentClientConfigurator: ((HueEntertainmentClient) async -> Void)?
+    #endif
+
     /// Consent tokens already acted on. A takeover authorizes exactly one
     /// start; without this a replayed confirmation could start a second time.
     @ObservationIgnored var consumedEntertainmentConsents: Set<UUID> = []
@@ -2846,15 +3117,31 @@ final class UnifiedOrchestrator {
     /// silently satisfying a "Switch" that was never asked, or the reverse.
     @ObservationIgnored var consumedStudioHandoffRequests: Set<UUID> = []
 
-    /// Which Studio scope currently owns REST, and on which bridge (packet 3).
+    /// Foreign-takeover REQUESTS already acted on (hardware convergence A).
     ///
-    /// `activeStudioTask` above is ONE global slot: starting Studio in room B
-    /// silently replaces room A's loop. Without this record, `startStudioMode`
-    /// could only clear the INCOMING room's scope, leaving room A's epoch valid
-    /// and its in-flight batches legal — cross-room crossfire. The bridgeKey is
-    /// stored alongside because the replacement may target a different bridge,
-    /// and the old scope must be cleared on the sender that actually holds it.
-    private var activeStudioRestScope: (bridgeKey: String, scope: RestScope)?
+    /// A THIRD ledger, and it does not overlap either of the two above.
+    /// `consumedEntertainmentConsents` records that a consent token bought a
+    /// session — it is spent late, at the moment a session actually opens, so
+    /// that a legitimate replay is not rejected before it can start. This one
+    /// records that a specific "Take Over" tap was acted on at all, and is
+    /// spent before the first await: `resolveForeignTakeover` suspends several
+    /// times before reaching the stop, so two confirmations in flight together
+    /// would otherwise both pass and both send one, the second landing on
+    /// whatever had started in between.
+    ///
+    /// Kept apart from `consumedStudioHandoffRequests` for the reason that one
+    /// already gives: a token spendable by the wrong question is not a token.
+    @ObservationIgnored var consumedForeignTakeoverRequests: Set<UUID> = []
+
+    /// Which Studio scope owns REST on each bridge (packet 3; round 4g:
+    /// per-bridge). Keyed by the SENDER key convention (`bridgeID ?? "legacy"`)
+    /// because these values are cleared against `restSender(for:)` and read by
+    /// the All-Day suppression predicate, both of which spell bridgeless that
+    /// way. A same-bridge room A → room B replacement must clear room A's
+    /// scope (or its epoch stays valid and its queued batches keep writing
+    /// over room B), but another bridge's Studio look keeps its scope and
+    /// keeps running.
+    private var studioRestScopesByBridge: [String: RestScope] = [:]
 
     /// Studio live-param writes (StudioViewModel sendParam/sendColorParam)
     /// share the room's Studio mailbox slot: repeated writes to the same
@@ -2875,25 +3162,29 @@ final class UnifiedOrchestrator {
         await restSender(for: bridgeID).enqueue(scope: scope, work)
     }
 
-    /// Clear whichever Studio scope currently owns REST, wherever it lives, and
-    /// forget it. Used by `startStudioMode` (before recording the new owner) and
-    /// by the bridge-removal paths.
-    private func clearActiveStudioRestScope() async {
-        guard let active = activeStudioRestScope else { return }
-        await restSender(for: active.bridgeKey).clear(scope: active.scope)
-        activeStudioRestScope = nil
+    /// Clear ONE bridge's recorded Studio scope on the sender that holds it,
+    /// and forget it. Used by `startStudioMode` (before recording the new
+    /// owner) and by the bridge-removal paths. Round 4g: per-bridge — clearing
+    /// bridge A's owner must not touch bridge B's.
+    private func clearStudioRestScope(bridgeKey: String) async {
+        guard let scope = studioRestScopesByBridge[bridgeKey] else { return }
+        await restSender(for: bridgeKey).clear(scope: scope)
+        studioRestScopesByBridge.removeValue(forKey: bridgeKey)
     }
     // `studioGeneration` was deleted in packet 3. It was incremented on every
     // Studio start/stop and NEVER read — dead state that looked like a working
     // staleness guard. Studio staleness is now carried by the REST scope epoch
     // (`RestScope(.studio)`), which enqueued closures actually consult, and by
-    // `activeStudioTask` cancellation for the engine loops.
+    // engine-runtime task cancellation for the engine loops.
 
-    /// Per-room composition generation counters.
-    private var compositionGenerations: [String: Int] = [:]
-    /// Shared composition scheduler state (room-scoped runtimes, single bridge-fair ticker).
-    private var compositionRuntimes: [String: CompositionRuntime] = [:]
-    private var compositionOrder: [String] = []
+    /// Per-EXACT-playback composition generation counters (round 4e: keyed by
+    /// bridge+room, never bare roomID — a stop may only invalidate its own
+    /// bridge's generation).
+    private var compositionGenerations: [CompositionPlaybackKey: Int] = [:]
+    /// Shared composition scheduler state (exact bridge+room runtimes, single
+    /// bridge-fair ticker). Two bridges sharing one room id are two runtimes.
+    private var compositionRuntimes: [CompositionPlaybackKey: CompositionRuntime] = [:]
+    private var compositionOrder: [CompositionPlaybackKey] = []
     private var compositionSchedulerTask: Task<Void, Never>?
 
     /// Round 3 (C): the live Perform mix. Non-nil while PerformanceView is
@@ -3179,8 +3470,9 @@ final class UnifiedOrchestrator {
         roomID: String, bridgeID: String?, api: HueAPIClient, generation: Int = 1,
         lightIDs: [String] = []
     ) {
-        compositionTransportByRoom[roomID] = .rest
-        compositionRuntimes[roomID] = CompositionRuntime(
+        let playbackKey = CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)
+        setCompositionTransportClaim(.rest, for: playbackKey)
+        compositionRuntimes[playbackKey] = CompositionRuntime(
             roomID: roomID,
             roomName: roomID,
             bridgeID: bridgeID ?? "",
@@ -3206,10 +3498,10 @@ final class UnifiedOrchestrator {
             lastSentBri: nil,
             lastSentAt: nil
         )
-        if !compositionOrder.contains(roomID) { compositionOrder.append(roomID) }
+        if !compositionOrder.contains(playbackKey) { compositionOrder.append(playbackKey) }
         // Packet 4: production start also opens the telemetry session and
         // marks it REST-active once the runtime is installed — stage the same.
-        compositionGenerations[roomID] = generation
+        compositionGenerations[playbackKey] = generation
         let sessionKey = ComposerTelemetrySessionKey(
             bridgeKey: bridgeID ?? "legacy",
             scope: RestScope(roomID: roomID, owner: .composer))
@@ -3235,9 +3527,27 @@ final class UnifiedOrchestrator {
     }
 
     /// Stage composition ownership of a bridge's Entertainment session.
-    func testStageEntertainmentOwner(roomID: String, bridgeID: String) {
+    /// Round 4e: optionally install a stubbed client and an inert stand-in
+    /// render task, so a duplicate-room-id stop test can prove teardown
+    /// touches exactly one bridge's task/client/mapping.
+    func testStageEntertainmentOwner(
+        roomID: String, bridgeID: String, client: HueEntertainmentClient? = nil
+    ) {
         compositionEntRoomByBridge[bridgeID] = roomID
-        compositionTransportByRoom[roomID] = .entertainment
+        setCompositionTransportClaim(
+            .entertainment,
+            for: CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID))
+        if let client {
+            studioEntClients[bridgeID] = client
+            compositionEntTasks[bridgeID]?.cancel()
+            compositionEntTasks[bridgeID] = Task {}
+        }
+    }
+
+    /// Whether a bridge currently holds a composition Entertainment render
+    /// task (round 4e) — read-only membership, for exact-teardown assertions.
+    func testHasCompositionEntertainmentTask(forBridge bridgeID: String) -> Bool {
+        compositionEntTasks[bridgeID] != nil
     }
 
     /// The per-bridge acquisition gate, exactly as `startCompositionMode` asks it.
@@ -3246,13 +3556,20 @@ final class UnifiedOrchestrator {
     }
 
     /// roomID → bridgeID for every live REST composition runtime.
+    /// Round 4e compat read: with the runtime map exactly keyed, a room id
+    /// held by TWO bridges is ambiguous here and is omitted (fail closed) —
+    /// collision tests must use the exact bridge+room seams instead.
     func testCompositionRuntimeBridges() -> [String: String] {
-        compositionRuntimes.mapValues(\.bridgeID)
+        var byRoom: [String: [String]] = [:]
+        for (key, runtime) in compositionRuntimes {
+            byRoom[key.roomID, default: []].append(runtime.bridgeID)
+        }
+        return byRoom.compactMapValues { $0.count == 1 ? $0[0] : nil }
     }
 
     // Scoped-mailbox seams (packet 3). `restSendersByBridge` and
-    // `activeStudioRestScope` are private because only this type may route work
-    // into them, but "one room's stop must not clear another's mailbox" is
+    // `studioRestScopesByBridge` are private because only this type may route
+    // work into them, but "one room's stop must not clear another's mailbox" is
     // precisely the rule that regressed — so tests get a way to enqueue into,
     // and inspect, the real senders the production paths use.
 
@@ -3268,17 +3585,54 @@ final class UnifiedOrchestrator {
         Set(restSendersByBridge.keys)
     }
 
-    /// The recorded Studio REST owner, if any.
-    func testActiveStudioRestScope() -> (bridgeKey: String, scope: RestScope)? {
-        activeStudioRestScope
+    /// The recorded Studio REST owner on ONE bridge, if any (round 4g).
+    func testStudioRestScope(forBridgeKey bridgeKey: String) -> RestScope? {
+        studioRestScopesByBridge[bridgeKey]
+    }
+
+    /// Every recorded Studio REST owner, keyed by bridge (round 4g).
+    func testStudioRestScopes() -> [String: RestScope] {
+        studioRestScopesByBridge
     }
 
     /// Stage a Studio REST owner without running an engine loop.
-    func testSetActiveStudioRestScope(bridgeKey: String, roomID: String) {
-        activeStudioRestScope = (
-            bridgeKey: bridgeKey,
-            scope: RestScope(roomID: roomID, owner: .studio)
-        )
+    func testSetStudioRestScope(bridgeKey: String, roomID: String) {
+        studioRestScopesByBridge[bridgeKey] = RestScope(roomID: roomID, owner: .studio)
+    }
+
+    // Engine-runtime seams (round 4g). Same rule: readers over the REAL
+    // per-bridge map the production paths use, plus a stager for the
+    // stale-stop tests — a runtime whose loop never runs, so ownership
+    // verification can be proven without an engine.
+
+    /// Whether a bridge currently holds an app-driven engine runtime.
+    func testHasStudioEngineTask(forBridge bridgeKey: String) -> Bool {
+        studioEngineRuntimesByBridge[bridgeKey] != nil
+    }
+
+    /// The room recorded as owning a bridge's engine runtime.
+    func testStudioEngineRuntimeRoom(forBridge bridgeKey: String) -> String? {
+        studioEngineRuntimesByBridge[bridgeKey]?.roomID
+    }
+
+    /// Whether a bridge's engine-loop task has been cancelled. nil when no
+    /// runtime is installed.
+    func testStudioEngineTaskIsCancelled(forBridge bridgeKey: String) -> Bool? {
+        studioEngineRuntimesByBridge[bridgeKey]?.task.isCancelled
+    }
+
+    /// The live param values a bridge's engine loop currently reads.
+    func testStudioParamBoxValues(forBridge bridgeKey: String) -> [String: Double]? {
+        studioEngineRuntimesByBridge[bridgeKey]?.paramBox.values
+    }
+
+    /// Stage an engine runtime (inert task, real box) without running a loop.
+    func testInstallStudioEngineRuntime(bridgeKey: String, roomID: String,
+                                        values: [String: Double] = [:]) {
+        studioEngineRuntimesByBridge[bridgeKey] = StudioEngineRuntime(
+            roomID: roomID,
+            task: Task {},
+            paramBox: StudioParamBox(values: values, colors: [:]))
     }
 
     // Composer telemetry seams (packet 4). Same rule as the mailbox seams:
@@ -3319,8 +3673,18 @@ final class UnifiedOrchestrator {
     }
 
     /// The runtime's delta-gate send state — what completion bookkeeping moves.
+    /// Round 4e compat read: exactly-one rule — nil when two bridges hold the
+    /// room id (use the exact overload below under a collision).
     func testCompositionRuntimeSendState(roomID: String) -> (sendCount: Int, lastSentX: Double?, lastSentY: Double?, lastSentBri: Double?, lastSentAt: CFAbsoluteTime?)? {
-        compositionRuntimes[roomID].map {
+        let matches = compositionRuntimes.filter { $0.key.roomID == roomID }
+        guard matches.count == 1, let runtime = matches.first?.value else { return nil }
+        return (runtime.sendCount, runtime.lastSentX, runtime.lastSentY,
+                runtime.lastSentBri, runtime.lastSentAt)
+    }
+
+    /// EXACT bridge+room send state (round 4e).
+    func testCompositionRuntimeSendState(bridgeID: String?, roomID: String) -> (sendCount: Int, lastSentX: Double?, lastSentY: Double?, lastSentBri: Double?, lastSentAt: CFAbsoluteTime?)? {
+        compositionRuntimes[CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)].map {
             ($0.sendCount, $0.lastSentX, $0.lastSentY, $0.lastSentBri, $0.lastSentAt)
         }
     }
@@ -3505,6 +3869,21 @@ final class UnifiedOrchestrator {
         studioEntClients[bridgeID] != nil
     }
 
+    /// DEBUG frame-production proof: the installed client's total send
+    /// attempts (nil when no client is installed). The stub transport drops
+    /// every frame at the connection guard, so this counter is the only
+    /// observable liveness signal a render loop has in tests.
+    func testSendAttempts(forBridge bridgeID: String) async -> Int? {
+        guard let client = studioEntClients[bridgeID] else { return nil }
+        return await client.testSendAttempts
+    }
+
+    /// Stage a composition Entertainment claim on a bridge, so the guard-skip
+    /// diagnostics can prove which condition an app-driven stop refused on.
+    func testSetCompositionEntRoom(bridgeID: String, roomID: String) {
+        compositionEntRoomByBridge[bridgeID] = roomID
+    }
+
     /// The production answer to "which app-driven look owns this bridge?",
     /// asked exactly as `startCompositionMode` and the handoff gate ask it.
     func testStudioEntertainmentOwner(onBridge bridgeID: String) -> StudioEntertainmentOwner? {
@@ -3524,12 +3903,53 @@ final class UnifiedOrchestrator {
 
     /// Packet 7: the composition bookkeeping that a start which never happened
     /// must leave completely alone.
+    /// Round 4e compat read: exactly-one rule — nil when two bridges hold the
+    /// room id (use the exact overload below under a collision).
     func testCompositionGeneration(roomID: String) -> Int? {
-        compositionGenerations[roomID]
+        let matches = compositionGenerations.filter { $0.key.roomID == roomID }
+        guard matches.count == 1 else { return nil }
+        return matches.first?.value
     }
 
+    /// EXACT bridge+room generation (round 4e).
+    func testCompositionGeneration(bridgeID: String?, roomID: String) -> Int? {
+        compositionGenerations[CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)]
+    }
+
+    /// The room-keyed DISPLAY aggregate — what the UI reads. Under a
+    /// same-room-id collision this is the agreed transport, or nil when the
+    /// exact claimants disagree (the aggregate never picks a winner).
     func testCompositionTransport(roomID: String) -> CompositionTransport? {
         compositionTransportByRoom[roomID]
+    }
+
+    /// EXACT bridge+room transport claim (round 4e) — the runtime truth the
+    /// aggregate above is recomputed from.
+    func testCompositionTransport(bridgeID: String?, roomID: String) -> CompositionTransport? {
+        compositionTransportClaims[CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)]
+    }
+
+    /// EXACT runtime existence (round 4e) — proof a live REST composition
+    /// genuinely exists for this bridge+room, independent of presentation rows.
+    func testHasCompositionRuntime(bridgeID: String?, roomID: String) -> Bool {
+        compositionRuntimes[CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)] != nil
+    }
+
+    /// EXACT scheduler membership (round 4e).
+    func testCompositionOrderContains(bridgeID: String?, roomID: String) -> Bool {
+        compositionOrder.contains(CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID))
+    }
+
+    /// Which room a bridge's Entertainment session is driving, if any (round
+    /// 4e) — the exact map `stopCompositionMode`'s teardown is gated on.
+    func testCompositionEntertainmentRoom(forBridge bridgeID: String) -> String? {
+        compositionEntRoomByBridge[bridgeID]
+    }
+
+    /// The exact SSE-suppression predicate (round 4e) — true only when THIS
+    /// bridge's group is app-driven.
+    func testIsAppDrivenGroup(bridgeID: String, roomID: String) -> Bool {
+        isAppDrivenGroup(bridgeID: bridgeID, roomID: roomID)
     }
 
     func testHasComposerTelemetrySession(roomID: String, bridgeID: String?) -> Bool {
@@ -3591,6 +4011,14 @@ final class UnifiedOrchestrator {
 
     func testExactManifestIDs(bridgeID: String?, roomID: String) -> Set<UUID> {
         Set(exactManifests(bridgeID: bridgeID, roomID: roomID).map(\.id))
+    }
+
+    /// Round 4c: the exact ownership ledger — which manifests stand as this
+    /// bridge's RUNNING claim on this room. Read-only; tests prove that
+    /// destructive paths subtract exactly the destroyed identities.
+    func testBridgeStoredChainOwnership(bridgeID: String, roomID: String) -> Set<UUID> {
+        bridgeStoredChainOwnership[
+            BridgeNativeOwnershipKey(bridgeKey: bridgeID, roomID: roomID)] ?? []
     }
 
     func testRoomOwnershipGeneration(bridgeID: String?, roomID: String) -> Int {
@@ -3838,7 +4266,7 @@ final class UnifiedOrchestrator {
                 case .notRunning(let residue) where residue.isEmpty:
                     // The bridge PROVED every named resource is absent.
                     guard stillCurrent(manifest) else { complete = false; continue }
-                    bridgeAnimationStore.remove(id: manifest.id)
+                    forgetManifestRecord(id: manifest.id)
                     decided[key] = .some(nil)
 
                 case .notRunning(let residue):
@@ -3911,7 +4339,16 @@ final class UnifiedOrchestrator {
                 // `addActiveEffect` replaces same-id rows, so re-publishing an
                 // unchanged animation cannot produce a duplicate row.
                 addActiveEffect(ActiveEffectEntry(recovered: animation))
-                compositionTransportByRoom[animation.manifest.roomID] = .bridgeStored
+                // Recovered as ACTIVE: reconciliation proved the chain live on
+                // this exact bridge, which is the ownership ledger's standard
+                // of evidence (round 4c) — and how it repopulates after a
+                // relaunch. Idempotent for a re-confirmed owner. The ledger
+                // write below also raises the exact `.bridgeStored` transport
+                // claim (round 4e), which recomputes the room aggregate.
+                recordBridgeStoredChainOwnership(
+                    bridgeID: key.bridgeID,
+                    roomID: animation.manifest.roomID,
+                    manifestID: key.manifestID)
                 // ONLY on genuine acquisition. The generation is what a parked
                 // stop compares against before powering the room off, so an
                 // idempotent refresh that re-confirms the SAME owner must not
@@ -3941,7 +4378,15 @@ final class UnifiedOrchestrator {
     private func forgetRecoveredBridgeAnimation(_ key: RecoveredBridgeAnimationKey) {
         guard let animation = recoveredBridgeAnimations.removeValue(forKey: key) else { return }
         removeActiveEffect(id: ActiveEffectEntry.recoveredID(manifestID: key.manifestID))
-        clearBridgeStoredTransportIfUnowned(roomID: animation.manifest.roomID)
+        // No longer recovered-as-active, so it is no longer the room's
+        // running claim (round 4c). Exact by manifest id — the subtract also
+        // lowers the exact transport claim when the ownership set empties
+        // (round 4e), recomputing the room aggregate under the same
+        // fail-closed evidence rule the old room-wide clear held.
+        subtractBridgeStoredChainOwnership(manifestID: key.manifestID)
+        // Round 4e: this row may itself have been the last evidence a
+        // retained room label leaned on — recompute the display aggregate.
+        recomputeCompositionTransportAggregate(roomID: animation.manifest.roomID)
         // The registry moved, so Studio's mirror is stale. Bumping the
         // generation is what lets its guarded hydrate run again — without it a
         // stopped animation keeps a Studio row that nothing can clear.
@@ -3958,16 +4403,11 @@ final class UnifiedOrchestrator {
         for key in matching { forgetRecoveredBridgeAnimation(key) }
     }
 
-    /// Clear the `.bridgeStored` label only when nothing else still claims this
-    /// room id. Bridge B's live animation must not be un-labelled because
-    /// bridge A's copy of the same room id was cleaned.
-    private func clearBridgeStoredTransportIfUnowned(roomID: String) {
-        guard compositionTransportByRoom[roomID] == .bridgeStored else { return }
-        let stillRecovered = recoveredBridgeAnimations.values.contains { $0.manifest.roomID == roomID }
-        let stillStored = bridgeAnimationStore.allManifests().contains { $0.roomID == roomID }
-        guard !stillRecovered && !stillStored else { return }
-        compositionTransportByRoom.removeValue(forKey: roomID)
-    }
+    // `clearBridgeStoredTransportIfUnowned` was deleted in round 4e: the
+    // `.bridgeStored` label's lifecycle now moves with the exact transport
+    // claims (raised by the ownership ledger's record, lowered when an exact
+    // bridge+room ownership set empties), and the room aggregate's recompute
+    // carries the same fail-closed evidence rule this function held.
 
     /// Studio upgrades a recovered row's name once it can resolve the preset.
     /// The orchestrator holds no `CompositionStore`, so it publishes the
@@ -4173,7 +4613,7 @@ final class UnifiedOrchestrator {
                 debugLog("[Composer] Manifest \(manifest.id) changed during cleanup — leaving the newer record alone")
                 return false
             }
-            bridgeAnimationStore.remove(id: manifest.id)
+            forgetManifestRecord(id: manifest.id)
             forgetRecoveredBridgeAnimation(manifestID: manifest.id)
             return true
         }
@@ -4195,11 +4635,143 @@ final class UnifiedOrchestrator {
         case rest            // app-driven REST scheduler
         case bridgeStored    // v1 rules chain on the bridge itself
     }
-    /// Per-room transport truth (absent key = no composition running there).
-    /// Written only at start / stop / failover — never per frame — so views
-    /// may observe it freely. Replaces the old global `isBridgeStored` flag,
-    /// which mislabeled every room whenever ANY room ran bridge-stored.
+    /// Per-room transport DISPLAY AGGREGATE (absent key = no composition
+    /// running there, or the exact claimants disagree). Written only at start /
+    /// stop / failover — never per frame — so views may observe it freely.
+    ///
+    /// Round 4e: this map is COMPATIBILITY/DISPLAY state only, recomputed from
+    /// `compositionTransportClaims` by the two helpers below — never written
+    /// directly, and NEVER destructive authority. Two bridges sharing a room id
+    /// keep the entry alive while either exact claim stands; if their claims
+    /// disagree on transport, the entry is removed (ambiguous — the room-only
+    /// key must not silently pick a winner).
     var compositionTransportByRoom: [String: CompositionTransport] = [:]
+
+    /// EXACT transport ownership (round 4e): which transport each live
+    /// bridge+room playback claims. Represents RUNNING ownership only — a
+    /// saved-but-not-confirmed-running chain is inert and never claims
+    /// (`.bridgeStored` claims move with the ownership ledger: first
+    /// confirmed-running manifest adds the claim, and it falls only when the
+    /// exact bridge+room ownership set empties).
+    @ObservationIgnored
+    private var compositionTransportClaims: [CompositionPlaybackKey: CompositionTransport] = [:]
+
+    /// Write one exact transport claim, then recompute the room aggregate.
+    private func setCompositionTransportClaim(
+        _ transport: CompositionTransport, for key: CompositionPlaybackKey
+    ) {
+        compositionTransportClaims[key] = transport
+        recomputeCompositionTransportAggregate(roomID: key.roomID)
+    }
+
+    /// Withdraw one exact transport claim, then recompute the room aggregate —
+    /// another bridge's same-room-id claim keeps the room entry alive.
+    /// `retainedManifestIDs` flows to the fail-closed evidence check: a
+    /// just-saved inert chain is not the room's playing look.
+    private func removeCompositionTransportClaim(
+        for key: CompositionPlaybackKey, retainedManifestIDs: Set<UUID> = []
+    ) {
+        compositionTransportClaims.removeValue(forKey: key)
+        recomputeCompositionTransportAggregate(
+            roomID: key.roomID, retainedManifestIDs: retainedManifestIDs)
+    }
+
+    /// The ONLY writer of `compositionTransportByRoom`: no claimants → no
+    /// entry; all claimants agree → that value; claimants disagree → no entry
+    /// (ambiguous/unknown — callers that need the truth under a collision hold
+    /// bridge identity and read the exact claim).
+    ///
+    /// One fail-closed exception, carried over from round 4c: a standing
+    /// `.bridgeStored` label whose last exact claim fell is RETAINED while any
+    /// bridge-stored evidence for the room still exists — a recovered
+    /// animation, or a stored manifest (an unattributable legacy manifest
+    /// counts: ambiguity retains). Display state may keep saying "maybe
+    /// running"; it may never be the reason something is destroyed.
+    private func recomputeCompositionTransportAggregate(
+        roomID: String, retainedManifestIDs: Set<UUID> = []
+    ) {
+        let claims = Set(
+            compositionTransportClaims
+                .filter { $0.key.roomID == roomID }
+                .map(\.value))
+        if claims.count == 1, let agreed = claims.first {
+            compositionTransportByRoom[roomID] = agreed
+        } else if claims.isEmpty,
+                  compositionTransportByRoom[roomID] == .bridgeStored,
+                  roomHasBridgeStoredEvidence(
+                      roomID: roomID, excluding: retainedManifestIDs) {
+            // Fail closed: keep the label.
+        } else {
+            compositionTransportByRoom.removeValue(forKey: roomID)
+        }
+    }
+
+    /// Any bridge-stored evidence still standing for this room id (round 4c's
+    /// "nothing anywhere still claims the room" proof, shared by the aggregate
+    /// retention above and `withdrawDestroyedBridgeStoredClaims`).
+    private func roomHasBridgeStoredEvidence(
+        roomID: String, excluding retainedManifestIDs: Set<UUID> = []
+    ) -> Bool {
+        recoveredBridgeAnimations.values.contains { $0.manifest.roomID == roomID }
+            || bridgeAnimationStore.allManifests().contains {
+                $0.roomID == roomID && !retainedManifestIDs.contains($0.id)
+            }
+    }
+
+    // ── Exact bridge-stored chain ownership (round 4c) ───────────────────
+    //
+    // `compositionTransportByRoom` is roomID-keyed AGGREGATE state: two
+    // bridges using the same room id share one entry, so it can never say
+    // WHICH bridge's chain a room is claiming. This ledger can. It is THE
+    // destructive-ownership evidence — predecessor proof, replacement
+    // cleanup, and `previousLookRemovedSaveFailed` read it, never the
+    // transport map.
+
+    /// The bridge-stored chains currently standing as a room's RUNNING claim,
+    /// per exact bridge. Only a chain confirmed running (save commit, ordinary
+    /// play commit) or recovered as ACTIVE (reconciliation) enters; a
+    /// saved-but-not-confirmed-running manifest is inert and never does.
+    @ObservationIgnored
+    private var bridgeStoredChainOwnership: [BridgeNativeOwnershipKey: Set<UUID>] = [:]
+
+    /// Record a confirmed-running chain as the room's claim on this bridge.
+    /// Round 4e: the exact `.bridgeStored` transport claim moves WITH the
+    /// ledger — the first confirmed-running manifest for a bridge+room raises
+    /// it (idempotent for later ones), and only the set emptying lowers it.
+    private func recordBridgeStoredChainOwnership(
+        bridgeID: String, roomID: String, manifestID: UUID
+    ) {
+        let key = BridgeNativeOwnershipKey(bridgeKey: bridgeID, roomID: roomID)
+        bridgeStoredChainOwnership[key, default: []].insert(manifestID)
+        setCompositionTransportClaim(
+            .bridgeStored,
+            for: CompositionPlaybackKey(bridgeKey: key.bridgeKey, roomID: key.roomID))
+    }
+
+    /// Subtract exactly one destroyed chain's identity, wherever it is
+    /// recorded. Manifest ids are globally unique, so this is exact without
+    /// needing the bridge to resolve at destruction time; a key survives
+    /// while any OTHER recorded chain remains and disappears only when its
+    /// set empties.
+    private func subtractBridgeStoredChainOwnership(manifestID: UUID) {
+        for (key, var owned) in bridgeStoredChainOwnership where owned.contains(manifestID) {
+            owned.remove(manifestID)
+            if owned.isEmpty {
+                bridgeStoredChainOwnership.removeValue(forKey: key)
+                // Round 4e: the exact bridge+room ownership set emptied — this
+                // key's `.bridgeStored` transport claim falls with it (and
+                // ONLY a bridge-stored claim: a REST/Entertainment claim on
+                // the same key belongs to a different, live playback).
+                let playbackKey = CompositionPlaybackKey(
+                    bridgeKey: key.bridgeKey, roomID: key.roomID)
+                if compositionTransportClaims[playbackKey] == .bridgeStored {
+                    removeCompositionTransportClaim(for: playbackKey)
+                }
+            } else {
+                bridgeStoredChainOwnership[key] = owned
+            }
+        }
+    }
     /// EVERY entertainment config on a bridge, keyed by bridgeID.
     ///
     /// This used to hold one config per bridge — whichever the bridge happened to
@@ -4298,6 +4870,12 @@ final class UnifiedOrchestrator {
         /// purpose: telling someone with three areas that they have none is a lie,
         /// and it sends them to build a fourth.
         case noMatchingArea
+        /// Several areas could serve this room and only the user can say which
+        /// (hardware convergence slice A). Streaming absolutely works here —
+        /// reporting it as `noMatchingArea` was the defect: a bridge with an
+        /// area over bedroom+bathroom and another over bedroom+hallway told the
+        /// user that hallway and bathroom had no compatible area at all.
+        case choiceRequired(count: Int)
         case noBridge
         /// We have not asked the bridge yet. Offer streaming rather than
         /// wrongly disabling it — `startCompositionMode` still falls back.
@@ -4306,7 +4884,7 @@ final class UnifiedOrchestrator {
         /// Whether the transport option should be offered as usable.
         var canStream: Bool {
             switch self {
-            case .available, .unknown: return true
+            case .available, .unknown, .choiceRequired: return true
             case .noClientKey, .noArea, .noMatchingArea, .noBridge: return false
             }
         }
@@ -4316,6 +4894,10 @@ final class UnifiedOrchestrator {
             switch self {
             case .available, .unknown:
                 return nil
+            case .choiceRequired(let count):
+                // Not a refusal — an invitation. The row stays usable and the
+                // start path opens the chooser.
+                return "\(count) Entertainment Areas could cover this room. You'll be asked which one to use."
             case .noClientKey:
                 return "This bridge was paired without streaming access. Re-pair it in Settings to enable Entertainment."
             case .noArea:
@@ -4352,8 +4934,42 @@ final class UnifiedOrchestrator {
         // Room lights not resolvable yet — cold cache, not a verdict.
         guard cachedRoomLightIDs(for: room) != nil else { return .unknown }
 
-        guard let config = selectedEntertainmentConfig(for: room) else { return .noMatchingArea }
-        return .available(areaName: config.name)
+        // The typed decision, not the optional. `select` answering nil covers
+        // both "nothing here fits" and "several things fit and one of them is
+        // yours to pick"; only the first is a refusal.
+        switch cachedAreaDecision(for: room) {
+        case .exact(let config):            return .available(areaName: config.name)
+        case .choiceRequired(let options):  return .choiceRequired(count: options.count)
+        case .noCompatible, .none:          return .noMatchingArea
+        }
+    }
+
+    /// The exact-target decision from cache alone — synchronous, no network.
+    ///
+    /// Nil only when the caches cannot answer at all; the rungs above have
+    /// already separated that from a real verdict.
+    ///
+    /// An EMPTY inventory is an answer, not a gap — the key being present is
+    /// what says the bridge was asked and replied "none". Requiring
+    /// `!configs.isEmpty` here would report a bridge with no areas as
+    /// unreadable, turning an honest Room-mode fallback into a refusal.
+    func cachedAreaDecision(
+        for room: RoomDisplayItem?,
+        selectedConfigID: String? = nil
+    ) -> EntertainmentAreaSelector.ExactAreaDecision? {
+        guard let room,
+              let bridgeID = room.bridgeID,
+              let configs = entertainmentConfigsByBridge[bridgeID],
+              let membership = entertainmentMembershipByBridge[bridgeID],
+              let roomLightIDs = cachedRoomLightIDs(for: room)
+        else { return nil }
+
+        return EntertainmentAreaSelector.decide(
+            roomLightIDs: roomLightIDs,
+            configs: configs,
+            entertainmentToLightMap: membership,
+            preferredConfigID: selectedConfigID
+        )
     }
 
     /// Warms the entertainment caches for a room's bridge so
@@ -4460,17 +5076,20 @@ final class UnifiedOrchestrator {
             self.colors = colors
         }
     }
-    // @ObservationIgnored keeps this a STORED property so nonisolated(unsafe)
-    // takes effect (@Observable otherwise rewrites it computed, where the
-    // attribute is a no-op). Private and never view-observed; StudioParamBox
-    // is @unchecked Sendable with its documented cross-actor-write contract.
-    @ObservationIgnored nonisolated(unsafe) private var activeParamBox: StudioParamBox?
+    // Round 4g: the live box lives inside `studioEngineRuntimesByBridge`, so
+    // param edits are routed to the EXACT bridge's engine. The box itself
+    // stays @unchecked Sendable — engine loops keep reading it per frame from
+    // their own tasks under its documented cross-actor-write contract.
 
-    /// Update live params while an engine is running (called by StudioViewModel on slider change).
-    /// Nonisolated because StudioParamBox is @unchecked Sendable — safe for cross-actor writes.
-    nonisolated func updateStudioParams(values: [String: Double], colors: [String: Color]) {
-        activeParamBox?.values = values
-        activeParamBox?.colors = colors
+    /// Update live params while an engine is running (called by StudioViewModel
+    /// on slider change). With two bridges streaming at once, a slider edit
+    /// follows the SELECTED room's bridge instead of whichever engine started
+    /// last. Isolated (both this type and the caller are @MainActor), so the
+    /// map read is safe and the call stays synchronous.
+    func updateStudioParams(values: [String: Double], colors: [String: Color], bridgeID: String?) {
+        guard let box = studioEngineRuntimesByBridge[bridgeID ?? ""]?.paramBox else { return }
+        box.values = values
+        box.colors = colors
     }
 
     /// Studio engine keys that stream over Entertainment. Only these can
@@ -4553,17 +5172,20 @@ final class UnifiedOrchestrator {
 
         // ── COMMIT ──────────────────────────────────────────────
         //
-        // Past this line the start is going ahead, so destruction is safe.
-        activeStudioTask?.cancel()
-        activeStudioTask = nil
-        // Clear the PREVIOUSLY RECORDED Studio scope and forget it — even when
-        // the new card targets a different room or a different bridge.
-        // Clearing only the incoming room would be the bug: `activeStudioTask`
-        // is one global slot, so a room A -> room B switch would leave room A's
-        // epoch valid and its already-queued batches legal, and room A would
-        // keep writing over room B.
-        await clearActiveStudioRestScope()
+        // Past this line the start is going ahead, so destruction is safe —
+        // and scoped to THIS room's bridge (round 4g). One engine per bridge
+        // is the real constraint: starting on bridge 2 must not cancel bridge
+        // 1's loop, clear its scope, or stop its session.
         let stopBid = room.bridgeID ?? ""
+        if let previous = studioEngineRuntimesByBridge.removeValue(forKey: stopBid) {
+            previous.task.cancel()
+        }
+        // Clear THIS bridge's previously recorded Studio scope and forget it —
+        // even when the new card targets a different room on it. Clearing only
+        // the incoming room would be the bug: a same-bridge room A -> room B
+        // switch would leave room A's epoch valid and its already-queued
+        // batches legal, and room A would keep writing over room B.
+        await clearStudioRestScope(bridgeKey: room.bridgeID ?? "legacy")
         if let entClient = studioEntClients[stopBid], entClient !== prepared?.client {
             await entClient.stopSession()
             studioEntClients.removeValue(forKey: stopBid)
@@ -4572,17 +5194,52 @@ final class UnifiedOrchestrator {
             // no longer streaming.
             studioEntOwnerByBridge.removeValue(forKey: stopBid)
         }
+        // The final verification runs HERE, immediately before the commit —
+        // after the eviction awaits above, so nothing can claim the bridge
+        // between what was verified and what gets installed. A candidate that
+        // fails it is already released; `committed` (not `prepared`) is what
+        // the engine start below may use.
+        var committed: PreparedEntertainment?
         if let prepared {
-            commitEntertainment(prepared)
-            // Record WHOSE session this is, in the same breath as installing
-            // it. Written from the committed plan rather than a re-selection,
-            // so the recorded area is exactly the one that was opened.
-            studioEntOwnerByBridge[prepared.plan.bridgeID] = StudioEntertainmentOwner(
-                bridgeID: prepared.plan.bridgeID,
-                roomID: room.id,
-                engineKey: key,
-                configID: prepared.plan.targetConfigID
-            )
+            switch await verifyAndCommitEntertainment(prepared) {
+            case .committed:
+                committed = prepared
+                // Record WHOSE session this is, in the same breath as
+                // installing it. Written from the committed plan rather than
+                // a re-selection, so the recorded area is exactly the one
+                // that was opened.
+                studioEntOwnerByBridge[prepared.plan.bridgeID] = StudioEntertainmentOwner(
+                    bridgeID: prepared.plan.bridgeID,
+                    roomID: room.id,
+                    engineKey: key,
+                    configID: prepared.plan.targetConfigID
+                )
+            case .contested(let snapshot, let targetConfigID):
+                // A proven foreign owner at the commit boundary. Starting the
+                // REST engine underneath their show is exactly the quiet
+                // overplay this flow exists to prevent — refuse and re-ask.
+                studioEntOwnerByBridge.removeValue(forKey: stopBid)
+                return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
+            case .verificationUnavailable:
+                // Unknown is not verified. Nothing starts on a bridge whose
+                // final state nobody saw — and no fallback, for the same
+                // reason release-not-proven gets none.
+                studioEntOwnerByBridge.removeValue(forKey: stopBid)
+                return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+            case .releaseNotProven:
+                // The target may STILL be streaming. REST writes underneath
+                // an unreleased stream is the exact condition this flow
+                // refuses everywhere else — start nothing, say so.
+                studioEntOwnerByBridge.removeValue(forKey: stopBid)
+                return .failed(message: EntertainmentAvailabilityCopy.couldNotStart)
+            case .sessionFailed:
+                // Observed dead and stayed down. The explicit refusal, not a
+                // silent transport change (round 4) — the user asked to
+                // stream, and "couldn't start, nothing changed" is the
+                // honest answer.
+                studioEntOwnerByBridge.removeValue(forKey: stopBid)
+                return .failed(message: EntertainmentAvailabilityCopy.couldNotStart)
+            }
         } else {
             // No prepared session means the engine is running on REST. An
             // engine on REST owns no Entertainment session, so any record
@@ -4594,15 +5251,13 @@ final class UnifiedOrchestrator {
         // start/stop can find and invalidate it.
         let studioRoomID = room.id
         let studioBridgeID = room.bridgeID
-        activeStudioRestScope = (
-            bridgeKey: studioBridgeID ?? "legacy",
-            scope: RestScope(roomID: studioRoomID, owner: .studio)
-        )
+        studioRestScopesByBridge[studioBridgeID ?? "legacy"] =
+            RestScope(roomID: studioRoomID, owner: .studio)
         noteRoomOwnershipChange(bridgeID: studioBridgeID, roomID: studioRoomID)
 
-        // Create live param box (engine loop reads from this; ViewModel updates it)
+        // Create live param box (engine loop reads from this; the ViewModel
+        // updates it through the bridge-keyed runtime installed below).
         let paramBox = StudioParamBox(values: params, colors: colors)
-        activeParamBox = paramBox
 
         // Every Entertainment-capable engine below warms this bridge's caches
         // itself rather than trusting that some UI surface already did. A Studio
@@ -4627,11 +5282,15 @@ final class UnifiedOrchestrator {
             entertainment: (HueEntertainmentClient, [UInt8]) -> Task<Void, Never>,
             rest: () -> Task<Void, Never>
         ) -> PlaybackStartOutcome {
-            if let prepared {
-                activeStudioTask = entertainment(prepared.client, prepared.channelIDs)
+            if let committed {
+                studioEngineRuntimesByBridge[stopBid] = StudioEngineRuntime(
+                    roomID: studioRoomID,
+                    task: entertainment(committed.client, committed.channelIDs),
+                    paramBox: paramBox)
                 return .started(transport: .entertainment)
             }
-            activeStudioTask = rest()
+            studioEngineRuntimesByBridge[stopBid] = StudioEngineRuntime(
+                roomID: studioRoomID, task: rest(), paramBox: paramBox)
             return .started(transport: .rest)
         }
 
@@ -4640,7 +5299,11 @@ final class UnifiedOrchestrator {
             // Try entertainment first for crisp on/off, fall back to REST
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
-                    Task { await self.runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox) }
+                    Task {
+                        await self.runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.reconcileStudioSessionAfterLoop(
+                            entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
+                    }
                 },
                 rest: {
                     Task { await self.runStrobeREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox) }
@@ -4650,7 +5313,11 @@ final class UnifiedOrchestrator {
         case "party":
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
-                    Task { await self.runPartyEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox) }
+                    Task {
+                        await self.runPartyEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.reconcileStudioSessionAfterLoop(
+                            entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
+                    }
                 },
                 rest: {
                     Task { await self.runPartyREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox) }
@@ -4660,7 +5327,11 @@ final class UnifiedOrchestrator {
         case "thunderstorm":
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
-                    Task { await self.runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox) }
+                    Task {
+                        await self.runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.reconcileStudioSessionAfterLoop(
+                            entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
+                    }
                 },
                 rest: {
                     Task { await self.runThunderstormREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox) }
@@ -4669,9 +5340,12 @@ final class UnifiedOrchestrator {
 
         case "ambient":
             // Ambient is slow enough for REST (one change every few seconds)
-            activeStudioTask = Task {
-                await runAmbientREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
-            }
+            studioEngineRuntimesByBridge[stopBid] = StudioEngineRuntime(
+                roomID: studioRoomID,
+                task: Task {
+                    await runAmbientREST(roomID: studioRoomID, bridgeID: studioBridgeID, api: api, groupedLightID: groupedLightID, paramBox: paramBox)
+                },
+                paramBox: paramBox)
             return .started(transport: .rest)
 
         default:
@@ -4734,6 +5408,13 @@ final class UnifiedOrchestrator {
         capturedPlan: EntertainmentTakeoverPlan? = nil,
         consent: EntertainmentConsent? = nil,
         preparedEntertainment: EntertainmentPreparation? = nil
+        // Round 4: there is deliberately NO strict-save mode here any more.
+        // An explicit Save to Bridge never enters this function — it runs
+        // `attemptBridgeStoredSave` directly, after its own zero-mutation
+        // preflight — because everything below this signature (the generation
+        // bump, the telemetry session, the ownership note) replaces the
+        // room's CURRENT look, and a save that fails must leave that look
+        // exactly as it found it.
     ) async -> PlaybackStartOutcome {
         // Scoped to THIS transaction's candidate — see startStudioMode.
         var outstandingCandidateID: UUID?
@@ -4791,8 +5472,12 @@ final class UnifiedOrchestrator {
         }
 
         let roomID = room.id
-        let nextGeneration = (compositionGenerations[roomID] ?? 0) + 1
-        compositionGenerations[roomID] = nextGeneration
+        // Round 4e: the EXACT playback identity every runtime structure below
+        // is keyed by — bridge+room, "legacy" normalization, same convention as
+        // the telemetry key. Two bridges sharing a room id are two playbacks.
+        let playbackKey = CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID)
+        let nextGeneration = (compositionGenerations[playbackKey] ?? 0) + 1
+        compositionGenerations[playbackKey] = nextGeneration
         // Packet 4: telemetry session identity is established HERE, from
         // nextGeneration directly — no CompositionRuntime required, so stop can
         // find this session even when the transport decision below lands on
@@ -4837,7 +5522,8 @@ final class UnifiedOrchestrator {
 
         // Resolve individual light IDs early — needed for REST spatial positions
         // AND for per-light REST mode later.
-        let compositionLightIDs = await resolveCompositionLightIDs(for: room, api: api)
+        let lightResolution = await resolveCompositionLights(for: room, api: api)
+        let compositionLightIDs = lightResolution.lightIDs
         debugLog("[Composer] 🔍 Resolved \(compositionLightIDs.count) individual lights for per-light REST")
 
         if let entConfig {
@@ -4892,7 +5578,26 @@ final class UnifiedOrchestrator {
             // so nothing re-selected here can disagree with what the user was
             // shown and consented to.
             if let prepared = preparedComposition {
-                commitEntertainment(prepared)
+                // The final verification, immediately before the commit. A
+                // candidate that fails it is already released — and NO
+                // failure here may become a quiet bridge-stored/REST
+                // continuation (round 4): a contested bridge would play over
+                // the other controller's show, an unproven release may still
+                // be streaming, and even the observed session failure owes
+                // the user the explicit refusal rather than a silently
+                // different transport.
+                switch await verifyAndCommitEntertainment(prepared) {
+                case .committed:
+                    break
+                case .contested(let snapshot, let targetConfigID):
+                    return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
+                case .verificationUnavailable:
+                    return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+                case .releaseNotProven, .sessionFailed:
+                    return .failed(message: EntertainmentAvailabilityCopy.couldNotStart)
+                }
+            }
+            if let prepared = preparedComposition {
                 let entClient = prepared.client
                 let entConfig = prepared.config
                 let channelIDs = prepared.channelIDs
@@ -4915,7 +5620,7 @@ final class UnifiedOrchestrator {
                 // would point at a client that is gone.
                 studioEntOwnerByBridge.removeValue(forKey: bridgeID)
                 noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
-                compositionTransportByRoom[roomID] = .entertainment
+                setCompositionTransportClaim(.entertainment, for: playbackKey)
                 compositionEntParamBoxes[bridgeID] = paramBox
                 compositionEntTasks[bridgeID]?.cancel()
                 let capturedRoom = room
@@ -4955,84 +5660,63 @@ final class UnifiedOrchestrator {
         if let preset, preset.canRunOnBridge,
            preset.capabilityTier == .bridgeOptimized,
            !compositionLightIDs.isEmpty {
-            do {
-                let v1Client = try api.makeV1Client()
-
-                // Clean up only what THIS room owns on THIS bridge (packet 2),
-                // and REFUSE TO CREATE until that cleanup is provably complete
-                // (packet 8). Two recurring rule chains driving one room is not
-                // an accumulation risk to tidy up later — both keep firing, they
-                // fight over every light, and the app has a record of only the
-                // newer one.
-                let readiness = await cleanupBridgeStoredAnimationForReplacement(
-                    roomID: roomID, bridgeID: bridgeID, v1Client: v1Client)
-                if case .blocked(let reason, let retained) = readiness {
-                    debugLog("[Composer] ⚠ Refusing bridge-stored upload for room=\(roomID): \(reason) (retained \(retained.count) manifest(s))")
-                    // Close the session this start opened, exactly as a stop
-                    // would — nothing was created, so nothing may be claimed.
-                    deactivateComposerTelemetrySession(
-                        sessionKey: composerTelemetryKey, pendingRemovalReported: false)
-                    return .failed(
-                        message: "Couldn't start \(preset.name) — the previous look is still on the bridge. Try again in a moment.")
-                }
-
-                debugLog("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
-                // M-04: the engine maps v2 UUIDs → v1 numeric ids via id_v1
-                // identity, so it needs the v2 light objects. One retry — a
-                // transient fetch failure here would silently demote the
-                // "close the app, lights keep going" path to app-driven.
-                var v2Lights = (try? await api.fetchLights()) ?? []
-                if v2Lights.isEmpty {
-                    try? await Task.sleep(for: .milliseconds(300))
-                    v2Lights = (try? await api.fetchLights()) ?? []
-                }
-                if v2Lights.isEmpty {
-                    debugLog("[Composer] ⚠ Could not fetch lights for id_v1 mapping — running app-driven (stops when the app closes)")
-                }
-                let manifest = try await bridgeAnimationEngine.upload(
-                    preset: preset,
-                    room: room,
-                    lightIDs: compositionLightIDs,
-                    v2Lights: v2Lights,
-                    gamut: compositionGamut,
-                    v1Client: v1Client
-                )
-                // Stamp the stable bridge identity here, where it is exact. The
-                // engine only ever sees a client, which knows its host but not
-                // which BridgeRecord it is — and an IP alone strands the
-                // manifest the moment DHCP moves the bridge.
-                bridgeAnimationStore.save(manifest.adoptingBridgeID(bridgeID))
-                compositionTransportByRoom[roomID] = .bridgeStored
+            // The bridge/store work is the shared `attemptBridgeStoredSave`
+            // core (round 4) — the same code the transactional Save to Bridge
+            // uses, so the compensation and quarantine rules cannot drift
+            // between the two entry points. This ORDINARY-PLAY caller maps
+            // its results onto playback semantics; the strict save maps them
+            // onto save semantics without ever entering this function.
+            switch await attemptBridgeStoredSave(
+                room: room, preset: preset, lightIDs: compositionLightIDs,
+                gamut: compositionGamut, bridgeID: bridgeID, api: api) {
+            case .saved(let owned):
+                // Confirmed running — the ledger's standard of evidence
+                // (round 4c). The savedNotConfirmedRunning branch below
+                // deliberately does NOT record: an inert chain is not the
+                // room's running claim. The record below also raises the
+                // exact `.bridgeStored` transport claim (round 4e).
+                recordBridgeStoredChainOwnership(
+                    bridgeID: bridgeID, roomID: roomID, manifestID: owned.id)
                 noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
-                debugLog("[Composer] ⚡ Bridge-stored animation active! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s/step")
+                debugLog("[Composer] ⚡ Bridge-stored animation active! \(owned.stepCount) steps, \(owned.intervalSeconds)s/step")
                 debugLog("[Composer] ⚡ Close the app — lights will keep going!")
-
-                // ── Immediate prime frame ──
-                // The first bridge rule won't fire until the schedule ticks (up to cycleTotalSeconds away).
-                // Send step-0 of the composition now so the room turns on instantly after the card tap.
-                let paramBox = CompositionParamBox(preset: preset)
-                if let firstFrame = CompositionEngine.render(
-                    time: 0,
-                    channelIDs: [0],
-                    params: paramBox
-                ).first {
-                    let primeXY = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: compositionGamut)
-                    let primeBri = max(1.0, firstFrame.brightness * 100.0)
-                    do {
-                        try await api.setGroupedLightEffect(
-                            id: groupedLightID, on: true,
-                            brightness: primeBri,
-                            xy: (primeXY.x, primeXY.y),
-                            mirek: nil,
-                            duration: 500
-                        )
-                        debugLog("[Composer][BridgePrime] ✅ room='\(room.name)' bri=\(String(format: "%.1f", primeBri))")
-                    } catch {
-                        debugLog("[Composer][BridgePrime] ⚠ Prime frame failed (bridge animation still active): \(error.localizedDescription)")
-                    }
-                }
+                await sendBridgeStoredPrimeFrame(
+                    preset: preset, gamut: compositionGamut,
+                    api: api, groupedLightID: groupedLightID, roomName: room.name)
                 return .started(transport: .bridgeStored)  // Don't start app-driven scheduler
-            } catch {
+
+            case .savedNotConfirmedRunning:
+                // The resources exist AND are tracked, but nothing is
+                // running. Keep the manifest — it is the exact evidence that
+                // makes them stoppable and recoverable — and say so rather
+                // than claiming the look is playing. Round 4e: an inert chain
+                // claims NO transport — no exact claim, no ledger entry, and
+                // nothing surfaces in the room aggregate on its account
+                // (round 4c's invariant, now structural).
+                noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
+                return .failed(message: BridgeSaveCopy.savedNotConfirmedRunning)
+
+            case .replacementBlocked:
+                // Close the session this start opened, exactly as a stop
+                // would — nothing was created, so nothing may be claimed.
+                deactivateComposerTelemetrySession(
+                    sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                return .failed(
+                    message: "Couldn't start \(preset.name) — the previous look is still on the bridge. Try again in a moment.")
+
+            case .compensatedNothingRemains:
+                deactivateComposerTelemetrySession(
+                    sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                return .failed(message: BridgeSaveCopy.saveFailedNothingRecorded)
+
+            case .partialCleanup(_, _, let recoverable):
+                deactivateComposerTelemetrySession(
+                    sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                return .failed(message: recoverable
+                    ? BridgeSaveCopy.partialCleanupRecoverable
+                    : BridgeSaveCopy.partialCleanupNotDurable)
+
+            case .uploadFailed(let error):
                 debugLog("[Composer] ⚠ Bridge-stored upload failed, falling back to app-driven: \(error.localizedDescription)")
                 // Packet 5: carry the reason forward instead of dropping it in
                 // a DEBUG log. The three cases stay DISTINCT all the way to the
@@ -5096,8 +5780,8 @@ final class UnifiedOrchestrator {
             }
         }
 
-        compositionTransportByRoom[roomID] = .rest
-        compositionRuntimes[roomID] = CompositionRuntime(
+        setCompositionTransportClaim(.rest, for: playbackKey)
+        compositionRuntimes[playbackKey] = CompositionRuntime(
             roomID: roomID,
             roomName: room.name,
             bridgeID: bridgeID,
@@ -5123,8 +5807,8 @@ final class UnifiedOrchestrator {
             lastSentBri: nil,
             lastSentAt: nil
         )
-        if !compositionOrder.contains(roomID) {
-            compositionOrder.append(roomID)
+        if !compositionOrder.contains(playbackKey) {
+            compositionOrder.append(playbackKey)
         }
         // Packet 4: this composition is genuinely REST — its telemetry session
         // becomes refresh-eligible. The Entertainment and bridge-stored returns
@@ -5193,14 +5877,15 @@ final class UnifiedOrchestrator {
             debugLog(
                 "[Composer][Prime] ✅ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) bri=\(String(format: "%.1f", bri)) xy=(\(String(format: "%.4f", xy.x)),\(String(format: "%.4f", xy.y)))"
             )
-            if var runtime = compositionRuntimes[roomID],
+            let primeKey = CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID)
+            if var runtime = compositionRuntimes[primeKey],
                runtime.generation == nextGeneration {
                 runtime.lastSentX = xy.x
                 runtime.lastSentY = xy.y
                 runtime.lastSentBri = bri
                 runtime.sendCount = 1
                 runtime.lastSentAt = CFAbsoluteTimeGetCurrent()
-                compositionRuntimes[roomID] = runtime
+                compositionRuntimes[primeKey] = runtime
             }
         } catch {
             debugLog("[Composer][Prime] ❌ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) error=\(error)")
@@ -5300,9 +5985,12 @@ final class UnifiedOrchestrator {
         // replacement start already cleaned this key — never resurrect.
         guard compositionEntRoomByBridge[bridgeID] == roomID else { return }
         debugLog("[Composer] ⚠ Entertainment session lost for room=\(roomID) — failing over to REST")
-        // Re-entry below records `.rest`; if its guard bails instead, the room
+        // Re-entry below claims `.rest`; if its guard bails instead, the room
         // correctly reads "not running" rather than a phantom `.entertainment`.
-        compositionTransportByRoom.removeValue(forKey: roomID)
+        // Round 4e: withdraw only THIS playback's exact claim — a same-room-id
+        // composition on another bridge keeps its claim and the aggregate.
+        removeCompositionTransportClaim(
+            for: CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID))
         compositionEntParamBoxes.removeValue(forKey: bridgeID)
         compositionEntTasks.removeValue(forKey: bridgeID)   // this task; loop already ended
         compositionEntRoomByBridge.removeValue(forKey: bridgeID)
@@ -5336,7 +6024,8 @@ final class UnifiedOrchestrator {
         // apply-time snapshot that is never re-set — this survives a
         // mid-session failover, which is the case that previously flipped the
         // badge to ROOM with no explanation at all.
-        if let generation = compositionGenerations[roomID] {
+        if let generation = compositionGenerations[
+            CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID)] {
             recordCompositionFallback(
                 sessionKey: ComposerTelemetrySessionKey(
                     bridgeKey: room.bridgeID ?? "legacy",
@@ -5713,20 +6402,26 @@ final class UnifiedOrchestrator {
         }
         refreshComposerCadencePublication(sessionKey: sessionKey)
 
+        // Round 4e: the runtime lookup IS the bridge fence now — the playback
+        // key carries the token's own bridgeKey, so a same-room-id runtime on
+        // another bridge can never absorb this terminal's send state. (The old
+        // `restBridgeIdentity ?? "legacy" == token.bridgeKey` guard became
+        // structural.)
+        let runtimeKey = CompositionPlaybackKey(
+            bridgeKey: token.bridgeKey, roomID: token.scope.roomID)
         guard kind == .completed,
               accepted,
               attemptedOperations > 0,
               failures == 0,
-              var runtime = compositionRuntimes[token.scope.roomID],
-              runtime.generation == token.generation,
-              (runtime.restBridgeIdentity ?? "legacy") == token.bridgeKey
+              var runtime = compositionRuntimes[runtimeKey],
+              runtime.generation == token.generation
         else { return }
         if let sentX { runtime.lastSentX = sentX }
         if let sentY { runtime.lastSentY = sentY }
         if let sentBri { runtime.lastSentBri = sentBri }
         runtime.lastSentAt = terminalAt
         runtime.sendCount += 1
-        compositionRuntimes[token.scope.roomID] = runtime
+        compositionRuntimes[runtimeKey] = runtime
     }
 
     /// The production enqueue sequence, used verbatim by the scheduler AND the
@@ -6017,10 +6712,15 @@ final class UnifiedOrchestrator {
     /// to "legacy", exactly like `restSender(for:)`.
     func stopCompositionMode(roomID: String, bridgeID: String?) async {
         debugLog("[Handoff] Composer stop requested for roomID=\(roomID) bridge=\(bridgeID ?? "legacy")")
-        compositionGenerations[roomID] = (compositionGenerations[roomID] ?? 0) + 1
-        // The ONE identity every teardown step below uses: sender clear,
-        // pending-token cancellation, ledger deactivation, retained-session
-        // removal, and publication removal all key off this exact value.
+        // Round 4e: ONE exact playback identity drives every mutation below.
+        // Only THIS bridge+room's generation is invalidated — bumping a bare
+        // room id used to invalidate another bridge's live same-room-id
+        // runtime, which the scheduler then evicted as stale.
+        let playbackKey = CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)
+        compositionGenerations[playbackKey] = (compositionGenerations[playbackKey] ?? 0) + 1
+        // The ONE identity every telemetry teardown step below uses: sender
+        // clear, pending-token cancellation, ledger deactivation, retained-
+        // session removal, and publication removal all key off this exact value.
         let sessionKey = ComposerTelemetrySessionKey(
             bridgeKey: bridgeID ?? "legacy",
             scope: RestScope(roomID: roomID, owner: .composer))
@@ -6049,9 +6749,20 @@ final class UnifiedOrchestrator {
                 debugLog("[Handoff] ⚠ Bridge did not confirm teardown of \(manifest.id) — retaining for retry")
             }
         }
-        clearBridgeStoredTransportIfUnowned(roomID: roomID)
-        if compositionTransportByRoom[roomID] != .bridgeStored {
-            compositionTransportByRoom.removeValue(forKey: roomID)
+        // Round 4e: withdraw only THIS playback's exact transport claim.
+        // Another bridge's same-room-id claim — and therefore the room's
+        // aggregate entry — survives. A `.bridgeStored` claim is NOT removed
+        // here: it moves with the ownership ledger, which the manifest
+        // retirement above already subtracted from (claim falls only when the
+        // exact bridge+room ownership set emptied — a retained/unconfirmed
+        // manifest keeps it, exactly as it keeps the ledger entry).
+        if let claim = compositionTransportClaims[playbackKey], claim != .bridgeStored {
+            removeCompositionTransportClaim(for: playbackKey)
+        } else {
+            // No live claim of ours to withdraw — still recompute: the
+            // manifest retirement above may have destroyed the last
+            // bridge-stored evidence a retained room label leaned on.
+            recomputeCompositionTransportAggregate(roomID: roomID)
         }
         // Packet 3: clear ONLY this room's Composer scope. Packet 4: on the
         // bridge the CALLER named — the same identity the scheduler enqueues
@@ -6080,9 +6791,17 @@ final class UnifiedOrchestrator {
         // scheduler work, not here.
         try? await Task.sleep(for: .milliseconds(150))
         debugLog("[Handoff] REST scope cleared + settle delay complete for roomID=\(roomID)")
-        // Stop entertainment session for this room's bridge (if any)
-        let stopBridgeID = compositionEntRoomByBridge.first(where: { $0.value == roomID })?.key
-        if let bid = stopBridgeID {
+        // Stop the CALLER'S bridge's entertainment session — and only after
+        // verifying that bridge's session is actually driving this room.
+        // Round 4e: bridge-authoritative selection. The old reverse lookup
+        // (`compositionEntRoomByBridge.first(where: { $0.value == roomID })`)
+        // ignored the caller's bridge and picked by dictionary order, so with
+        // two bridges sharing a room id an exact stop of bridge A could tear
+        // down bridge B's DTLS task, client, and caches. `?? ""` is the
+        // Entertainment maps' own key convention (written at start).
+        let entBridgeKey = bridgeID ?? ""
+        if compositionEntRoomByBridge[entBridgeKey] == roomID {
+            let bid = entBridgeKey
             compositionEntParamBoxes.removeValue(forKey: bid)
             compositionEntTasks[bid]?.cancel()
             compositionEntTasks.removeValue(forKey: bid)
@@ -6095,7 +6814,7 @@ final class UnifiedOrchestrator {
                 studioEntClients.removeValue(forKey: bid)
             }
         }
-        compositionRuntimes.removeValue(forKey: roomID)
+        compositionRuntimes.removeValue(forKey: playbackKey)
         // Packet 4: DEACTIVATION, not merely reset — consume the sender's
         // pending-removal evidence gathered above, record the 0/0 pending
         // cancellation for the exact tracked token if the sender reported one,
@@ -6105,14 +6824,14 @@ final class UnifiedOrchestrator {
         // fresh session with its new runtime generation.
         deactivateComposerTelemetrySession(
             sessionKey: sessionKey, pendingRemovalReported: removedPending)
-        compositionOrder.removeAll { $0 == roomID }
+        compositionOrder.removeAll { $0 == playbackKey }
         if compositionRuntimes.isEmpty {
             compositionSchedulerTask?.cancel()
             compositionSchedulerTask = nil
         }
         await refreshCompositionMicDemand()
         // Re-sync this room's card to the bridge's confirmed state — while the
-        // composition ran, its SSE echoes were suppressed (appDrivenGroupIDs), so
+        // composition ran, its SSE echoes were suppressed (isAppDrivenGroup), so
         // the card is frozen at its pre-composition color until a refresh lands.
         scheduleStateRefresh()
         debugLog("[Handoff] Composer teardown complete for roomID=\(roomID)")
@@ -6161,16 +6880,19 @@ final class UnifiedOrchestrator {
             refreshAllActiveComposerCadencePublications()
 
             let now = CFAbsoluteTimeGetCurrent()
-            guard let roomID = nextCompositionRoomPriority(now: now),
-                  let runtime = compositionRuntimes[roomID] else {
+            guard let playbackKey = nextCompositionRoomPriority(now: now),
+                  let runtime = compositionRuntimes[playbackKey] else {
                 try? await Task.sleep(for: tickInterval)
                 continue
             }
+            let roomID = playbackKey.roomID
 
-            // Generation guard — don't send for stale/stopped rooms
-            guard compositionGenerations[roomID] == runtime.generation else {
-                compositionRuntimes.removeValue(forKey: roomID)
-                compositionOrder.removeAll { $0 == roomID }
+            // Generation guard — don't send for stale/stopped playbacks.
+            // Round 4e: keyed exactly, so a stop on one bridge can only ever
+            // evict its own bridge's same-room-id runtime here.
+            guard compositionGenerations[playbackKey] == runtime.generation else {
+                compositionRuntimes.removeValue(forKey: playbackKey)
+                compositionOrder.removeAll { $0 == playbackKey }
                 continue
             }
 
@@ -6371,22 +7093,22 @@ final class UnifiedOrchestrator {
             // writing back the pre-enqueue copy: a fast completion may have
             // already recorded its bookkeeping during the await above, and a
             // stale whole-struct write would erase it.
-            if var current = compositionRuntimes[roomID],
+            if var current = compositionRuntimes[playbackKey],
                current.generation == runtime.generation {
                 current.nextDueAt = now + 0.12
-                compositionRuntimes[roomID] = current
+                compositionRuntimes[playbackKey] = current
             }
 
             try? await Task.sleep(for: tickInterval)
         }
     }
 
-    private func nextCompositionRoomPriority(now: CFAbsoluteTime) -> String? {
-        var selectedRoomID: String?
+    private func nextCompositionRoomPriority(now: CFAbsoluteTime) -> CompositionPlaybackKey? {
+        var selectedKey: CompositionPlaybackKey?
         var selectedScore: Double = -.greatestFiniteMagnitude
 
-        for roomID in compositionOrder {
-            guard let runtime = compositionRuntimes[roomID] else { continue }
+        for playbackKey in compositionOrder {
+            guard let runtime = compositionRuntimes[playbackKey] else { continue }
             guard let score = CompositionRoomPriorityScorer.score(
                 now: now,
                 input: .init(
@@ -6404,11 +7126,11 @@ final class UnifiedOrchestrator {
 
             if score > selectedScore {
                 selectedScore = score
-                selectedRoomID = roomID
+                selectedKey = playbackKey
             }
         }
 
-        return selectedRoomID
+        return selectedKey
     }
 
     private func resolveCompositionGamut(for room: RoomDisplayItem, api: HueAPIClient) async -> HueColorUtils.Gamut {
@@ -6428,10 +7150,33 @@ final class UnifiedOrchestrator {
         return counts.max(by: { $0.value < $1.value })?.key ?? .c
     }
 
+    /// How a room's individual light ids resolved for the Composer paths.
+    ///
+    /// A bare `[]` used to mean three different things: a room with no
+    /// lights, every ref a ghost, and a transient fetch failure. Ordinary
+    /// playback treats them identically — nothing to drive — but an explicit
+    /// Save to Bridge owes the user different sentences for "this room has
+    /// no lights" and "the room's lights couldn't be confirmed", so the
+    /// distinction must survive resolution.
+    enum CompositionLightResolution {
+        case lights([String])
+        /// The room genuinely references no surviving lights.
+        case noneInRoom
+        /// The bridge could not be read. Membership is UNKNOWN, not empty.
+        case unresolved
+
+        /// The historic shape, for every path where the three cases rightly
+        /// collapse to "nothing to drive".
+        var lightIDs: [String] {
+            if case .lights(let ids) = self { return ids }
+            return []
+        }
+    }
+
     /// Resolve individual light IDs for a room/zone — used for per-light REST Composer mode.
-    private func resolveCompositionLightIDs(for room: RoomDisplayItem, api: HueAPIClient) async -> [String] {
+    private func resolveCompositionLights(for room: RoomDisplayItem, api: HueAPIClient) async -> CompositionLightResolution {
         let refs = room.childResourceRefs
-        guard !refs.isEmpty else { return [] }
+        guard !refs.isEmpty else { return .noneInRoom }
 
         // Zones reference lights directly — zero API calls (pinned by
         // ComposerFetchPathParityTests). A ref can still outlive its light
@@ -6439,18 +7184,24 @@ final class UnifiedOrchestrator {
         // the same loadAll that produced these refs also filled; an absent
         // cache keeps the historic pass-through.
         if CompositionLightResolver.hasDirectLightReferences(childResourceRefs: refs) {
-            return CompositionLightResolver.resolveLightIDs(
+            let ids = CompositionLightResolver.resolveLightIDs(
                 childResourceRefs: refs,
                 lights: cachedRawLights(for: room.bridgeID) ?? []
             )
+            return ids.isEmpty ? .noneInRoom : .lights(ids)
         }
 
         // Rooms reference devices — resolve via light.owner.rid
-        guard let allLights = try? await api.fetchLights() else { return [] }
-        return CompositionLightResolver.resolveLightIDs(
+        guard let allLights = try? await api.fetchLights() else { return .unresolved }
+        let ids = CompositionLightResolver.resolveLightIDs(
             childResourceRefs: refs,
             lights: allLights
         )
+        return ids.isEmpty ? .noneInRoom : .lights(ids)
+    }
+
+    private func resolveCompositionLightIDs(for room: RoomDisplayItem, api: HueAPIClient) async -> [String] {
+        await resolveCompositionLights(for: room, api: api).lightIDs
     }
 
     /// Resolve lightID → physical (x, z) position from an entertainment config.
@@ -6502,6 +7253,7 @@ final class UnifiedOrchestrator {
         compositionSchedulerTask?.cancel()
         compositionSchedulerTask = nil
         compositionRuntimes.removeAll()
+        compositionOrder.removeAll()
         widgetWriteTask?.cancel()
         clients.removeAll()
         commandGates.removeAll()
@@ -6528,7 +7280,7 @@ final class UnifiedOrchestrator {
                 sessionKey: sessionKey, pendingRemovalReported: false)
         }
         activeRESTCadenceByBridgeRoom.removeAll()
-        activeStudioRestScope = nil
+        studioRestScopesByBridge.removeAll()
         roomsByBridge.removeAll()
         zonesByBridge.removeAll()
         connectionStatus.removeAll()
@@ -6545,9 +7297,19 @@ final class UnifiedOrchestrator {
 
     func stopStudioMode() async {
         debugLog("[Handoff] Studio stop requested")
-        // Cancel the running loop task (strobe, etc.)
-        activeStudioTask?.cancel()
-        activeStudioTask = nil
+        let auditContext = StopAuditContext(route: .stopStudioMode)
+        recordStopAudit(auditContext, operation: .stopStudioModeInvoked,
+                        bridgeID: nil, roomID: nil,
+                        outcomeReason: "runtimes=\(studioEngineRuntimesByBridge.count) clients=\(studioEntClients.count)")
+        // Cancel every bridge's running loop task (strobe, etc.) — this is
+        // the forget-all path, so ALL bridges' engines go down together.
+        for (bid, runtime) in studioEngineRuntimesByBridge {
+            runtime.task.cancel()
+            recordStopAudit(auditContext, operation: .taskCancelled,
+                            bridgeID: bid, roomID: runtime.roomID,
+                            runtimeToken: Self.stopAuditToken(runtime.paramBox))
+        }
+        studioEngineRuntimesByBridge.removeAll()
         debugLog("[Handoff] Clearing every REST scope on every bridge sender")
         // This is the forget-all / stop-everything path, so a GLOBAL clear is
         // the correct semantics here — unlike stopCompositionMode and
@@ -6581,18 +7343,25 @@ final class UnifiedOrchestrator {
         }
         composerPendingTokens.removeAll()
         activeRESTCadenceByBridgeRoom.removeAll()
-        activeStudioRestScope = nil
+        studioRestScopesByBridge.removeAll()
         // Small barrier so bridge transition buffers drain before a new startup sequence.
         // KEPT AS-IS (packet 3): a practical settle window, not a formal drain.
         try? await Task.sleep(for: .milliseconds(150))
         debugLog("[Handoff] REST scopes cleared + settle delay complete")
-        activeParamBox = nil
-        debugLog("[Studio] ⏹ stopStudioMode() canceled active engine loop")
+        debugLog("[Studio] ⏹ stopStudioMode() canceled every bridge's engine loop")
 
         // Stop all entertainment sessions (all bridges)
         for (bid, entClient) in studioEntClients {
-            await entClient.stopSession()
-            _ = bid
+            recordStopAudit(auditContext, operation: .clientStopSession,
+                            bridgeID: bid, roomID: nil,
+                            clientID: Self.stopAuditToken(entClient))
+            let stopRequest = await entClient.stopSession()
+            recordStopAudit(auditContext,
+                            operation: stopRequest == .notSent
+                                ? .actionStopSuppressed : .actionStopSent,
+                            bridgeID: bid, roomID: nil,
+                            clientID: Self.stopAuditToken(entClient),
+                            outcomeReason: String(describing: stopRequest))
         }
         studioEntClients.removeAll()
         // Stop-everything: no session survives, so no ownership record may.
@@ -6612,7 +7381,13 @@ final class UnifiedOrchestrator {
         // are still running on their bridges and clearing their rows would be
         // a claim this function did not earn. They stop through the exact
         // manifest path, which is still reachable from Dashboard and Studio.
+        let liveRowsBefore = activeEffectEntries.count
         activeEffectEntries.removeAll { $0.recovered == nil }
+        if activeEffectEntries.count != liveRowsBefore {
+            recordStopAudit(auditContext, operation: .nowPlayingRemoved,
+                            bridgeID: nil, roomID: nil,
+                            outcomeReason: "allLiveRows removed=\(liveRowsBefore - activeEffectEntries.count)")
+        }
         // Stop-everything includes the firmware effects Studio started, so their
         // All-Day claims go with them.
         bridgeNativeOwners.removeAll()
@@ -6620,43 +7395,75 @@ final class UnifiedOrchestrator {
     }
 
     /// Room-scoped teardown for ONE app-driven Studio effect (strobe, party,
-    /// …). App-driven effects are single-slot — `StudioViewModel.apply` stops
-    /// any other room's app-driven effect before starting, so the active loop
-    /// always belongs to the stopping room. The global `stopStudioMode()`
-    /// (kept verbatim for forgetAllBridges) additionally cancels EVERY room's
-    /// composition tasks, drops all entertainment configs, and wipes the whole
-    /// Now-Playing registry — which silently killed other rooms' running
-    /// compositions when one strobe was stopped. This variant touches only
-    /// the app-driven loop and its bridge's entertainment session, and only
-    /// when no composition owns that session.
-    func stopAppDrivenStudioEffect(roomID: String, bridgeID: String?) async {
+    /// …). Round 4g: the engine runtime is keyed by BRIDGE and records its
+    /// owning room, so this stop proves ownership before destroying anything.
+    /// Every mutation below is gated on "the recorded owner is the exact
+    /// bridge + room this stop was asked for" — a stale stop that resumes
+    /// after a newer same-bridge start already took the key must leave the
+    /// newer runtime, scope, session, and owner record untouched. The global
+    /// `stopStudioMode()` (kept verbatim for forgetAllBridges) additionally
+    /// cancels EVERY bridge's tasks, drops all entertainment configs, and
+    /// wipes the whole Now-Playing registry — which silently killed other
+    /// rooms' running compositions when one strobe was stopped. This variant
+    /// touches only its own bridge's app-driven loop and entertainment
+    /// session, and only when no composition owns that session.
+    func stopAppDrivenStudioEffect(roomID: String, bridgeID: String?,
+                                   context: StopAuditContext = .unattributed) async {
         debugLog("[Handoff] App-driven stop requested for roomID=\(roomID)")
-        activeStudioTask?.cancel()
-        activeStudioTask = nil
+        recordStopAudit(context, operation: .stopRequested,
+                        bridgeID: bridgeID, roomID: roomID,
+                        outcomeReason: "stopAppDrivenStudioEffect")
+        let engineKey = bridgeID ?? ""
+        // Cancel the engine loop ONLY when this exact bridge + room still owns
+        // it. The check and the cancel are synchronous on this actor, so no
+        // newer start can take the key between them.
+        if let runtime = studioEngineRuntimesByBridge[engineKey], runtime.roomID == roomID {
+            runtime.task.cancel()
+            studioEngineRuntimesByBridge.removeValue(forKey: engineKey)
+            recordStopAudit(context, operation: .taskCancelled,
+                            bridgeID: bridgeID, roomID: roomID,
+                            runtimeToken: Self.stopAuditToken(runtime.paramBox))
+        }
         // Packet 3: clear ONLY this room's Studio scope, on the supplied
         // bridge — a global clear here is what let one strobe's stop discard
         // another room's queued Composer frame.
         let stoppedScope = RestScope(roomID: roomID, owner: .studio)
         await restSender(for: bridgeID).clear(scope: stoppedScope)
         // Drop the ownership record when it is the one we just stopped; leave
-        // it alone if some other room has since become the Studio owner.
-        if let active = activeStudioRestScope,
-           active.bridgeKey == (bridgeID ?? "legacy"),
-           active.scope == stoppedScope {
-            activeStudioRestScope = nil
+        // it alone if some other room has since become this bridge's owner.
+        if studioRestScopesByBridge[bridgeID ?? "legacy"] == stoppedScope {
+            studioRestScopesByBridge.removeValue(forKey: bridgeID ?? "legacy")
         }
+        recordStopAudit(context, operation: .restScopeCleared,
+                        bridgeID: bridgeID, roomID: roomID)
         // Small barrier so bridge transition buffers drain before a new owner starts.
         // KEPT AS-IS (packet 3): a practical settle window, not a formal drain.
         try? await Task.sleep(for: .milliseconds(150))
-        activeParamBox = nil
         // The loop may hold a DTLS session on its room's bridge. Stop it ONLY
-        // if no composition owns that bridge's session — an app-driven effect
-        // that fell back to REST can coexist with a composition streaming on
-        // the same bridge, and that stream must survive this stop.
+        // if every one of these holds:
+        //  • no composition owns that bridge's session — an app-driven effect
+        //    that fell back to REST can coexist with a composition streaming
+        //    on the same bridge, and that stream must survive this stop;
+        //  • no newer engine runtime claimed the bridge while this stop was
+        //    suspended above — the sleep is a real suspension point, and the
+        //    successor's session is not ours to stop;
+        //  • the recorded session owner, when one exists, is the exact room
+        //    being stopped — a stale stop must not tear down another room's
+        //    session on evidence it never held.
         if let bid = bridgeID,
            compositionEntRoomByBridge[bid] == nil,
+           studioEngineRuntimesByBridge[bid] == nil,
+           studioEntOwnerByBridge[bid].map({ $0.roomID == roomID }) ?? true,
            let entClient = studioEntClients[bid] {
-            await entClient.stopSession()
+            let auditClientID = Self.stopAuditToken(entClient)
+            recordStopAudit(context, operation: .clientStopSession,
+                            bridgeID: bid, roomID: roomID, clientID: auditClientID)
+            let stopRequest = await entClient.stopSession()
+            recordStopAudit(context,
+                            operation: stopRequest == .notSent
+                                ? .actionStopSuppressed : .actionStopSent,
+                            bridgeID: bid, roomID: roomID, clientID: auditClientID,
+                            outcomeReason: String(describing: stopRequest))
             studioEntClients.removeValue(forKey: bid)
             // Inside the SAME branch on purpose. A stop that did not release
             // the session (a composition owns it, or there was no client) must
@@ -6664,6 +7471,27 @@ final class UnifiedOrchestrator {
             // make a still-running owner invisible to the very question that
             // exists to protect it.
             studioEntOwnerByBridge.removeValue(forKey: bid)
+        } else {
+            // DEBUG audit only: name the exact reason the Entertainment
+            // teardown was skipped. Pure re-reads of the same conditions the
+            // guard above evaluated; production behavior is unchanged.
+            let skipReason: String
+            if let bid = bridgeID {
+                if let compositionOwnerRoom = compositionEntRoomByBridge[bid] {
+                    skipReason = "compositionClaim room=\(compositionOwnerRoom)"
+                } else if studioEngineRuntimesByBridge[bid] != nil {
+                    skipReason = "newerRuntimeClaimedBridge"
+                } else if !(studioEntOwnerByBridge[bid].map({ $0.roomID == roomID }) ?? true) {
+                    skipReason = "ownerRoomMismatch"
+                } else {
+                    skipReason = "noClientInstalled"
+                }
+            } else {
+                skipReason = "nilBridgeID"
+            }
+            recordStopAudit(context, operation: .entertainmentGuardSkipped,
+                            bridgeID: bridgeID, roomID: roomID,
+                            outcomeReason: skipReason)
         }
         debugLog("[Handoff] App-driven teardown complete for roomID=\(roomID)")
     }
@@ -6736,21 +7564,180 @@ final class UnifiedOrchestrator {
                 restClient: api,
                 ownership: entertainmentOwnership
             )
+            #if DEBUG
+            if let configure = entertainmentClientConfigurator {
+                await configure(entClient)
+            }
+            #endif
             try await entClient.startSession(configID: config.id)
-            // Deliberately NOT installed into studioEntClients here. The
-            // caller commits it once it has decided the start is going ahead,
-            // so a conflict discovered on the way out costs nothing.
-            //
-            // The takeover has now actually produced a session, so the token is
-            // spent. Spending it earlier would reject the very replay it was
-            // issued for; spending it later would let a replay start twice.
-            if let consent { consumeEntertainmentConsent(consent) }
+
+            // Verify, do not assume. `startSession` returning means the REST
+            // activate was accepted and the handshake reported ready; this asks
+            // the session itself whether it is actually streaming. Without it a
+            // takeover could stop another app's show, fail to open its own, and
+            // still publish ownership — which is exactly what the hardware pass
+            // saw. Tear down rather than leave a half-open session behind.
+            guard await entClient.hasStartedSession() else {
+                debugLog("[Studio] Entertainment session never reached a usable state — refusing to claim it")
+                await entClient.stopSession()
+                noteTakeoverEvent(.chromaGlowSessionNotUsable, bridgeID: bridgeID, configID: config.id)
+                noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+                return .unavailable(reason: .streamingFailed)
+            }
+            noteTakeoverEvent(.chromaGlowSessionUsable, bridgeID: bridgeID, configID: config.id)
+
+            // Deliberately NOT installed into studioEntClients here, and the
+            // consent is deliberately NOT spent here. The final verification —
+            // fresh bridge activity plus a second exact session-health check —
+            // lives in `verifyAndCommitEntertainment`, immediately before the
+            // commit, because there are suspension points between this return
+            // and the caller's commit. A post-start read HERE could not see a
+            // same-configuration reacquisition anyway: `startSession` has
+            // already registered the target as process-owned, so the activity
+            // reader classifies it as ours no matter who is streaming it.
             return .started(entClient)
         } catch {
             debugLog("[Studio] Entertainment start failed: \(error.localizedDescription) — falling back to REST")
+            noteTakeoverEvent(.chromaGlowStartRequestFailed, bridgeID: bridgeID, configID: config.id)
             return .unavailable(reason: .streamingFailed)
         }
     }
+
+    /// One of our streaming engines just stopped looping. If the session died
+    /// rather than being cancelled, stop claiming it is playing.
+    ///
+    /// The composition path has always failed over here; the three Studio
+    /// engines had no equivalent, so when the official Hue app reacquired the
+    /// area their loops kept writing into a dead socket while Now Playing, the
+    /// AREA badge and `studioOwningEntertainment` all went on reporting a live
+    /// ChromaGlow stream. That is the "Take Over looked like it worked and then
+    /// Hue took it straight back" symptom, seen from the inside.
+    ///
+    /// Deliberately narrow: it corrects what the app CLAIMS. It does not
+    /// re-acquire, re-prompt, or arbitrate — that is Phase 2's job.
+    private func reconcileStudioSessionAfterLoop(
+        entClient: HueEntertainmentClient,
+        bridgeID: String?,
+        roomID: String
+    ) async {
+        let auditContext = StopAuditContext(route: .reconcileAfterLoop)
+        // Same single await and the same outcomes as the original compound
+        // guard — decomposed only so the DEBUG audit can say why this
+        // invocation did (or did not) clean anything up.
+        let terminallyFailed = await entClient.isTerminallyFailed
+        guard terminallyFailed, let bridgeID else {
+            recordStopAudit(auditContext, operation: .reconcileCleanup,
+                            bridgeID: bridgeID, roomID: roomID,
+                            clientID: Self.stopAuditToken(entClient),
+                            outcomeReason: terminallyFailed
+                                ? "skippedNilBridge" : "skippedClientHealthy")
+            return
+        }
+        // Only if this exact client is still the installed owner. A loop that
+        // ends after its session was already replaced must not tear down its
+        // successor.
+        guard studioEntClients[bridgeID] === entClient else {
+            recordStopAudit(auditContext, operation: .reconcileCleanup,
+                            bridgeID: bridgeID, roomID: roomID,
+                            clientID: Self.stopAuditToken(entClient),
+                            outcomeReason: "skippedClientReplaced")
+            return
+        }
+        recordStopAudit(auditContext, operation: .reconcileCleanup,
+                        bridgeID: bridgeID, roomID: roomID,
+                        clientID: Self.stopAuditToken(entClient),
+                        outcomeReason: "sessionLostCleanup")
+
+        debugLog("[Takeover] Studio session on \(bridgeID) was lost — correcting the UI rather than claiming it still streams")
+        noteTakeoverEvent(.sessionLostAfterOwnership, bridgeID: bridgeID,
+                          configID: studioEntOwnerByBridge[bridgeID]?.configID)
+
+        studioEntClients.removeValue(forKey: bridgeID)
+        studioEntOwnerByBridge.removeValue(forKey: bridgeID)
+        // The loop has already returned, so there is nothing to cancel — but
+        // the runtime record must not outlive its session. Same identity
+        // discipline as the client guard above: only this exact room's record,
+        // never a successor's (round 4g).
+        if studioEngineRuntimesByBridge[bridgeID]?.roomID == roomID {
+            studioEngineRuntimesByBridge.removeValue(forKey: bridgeID)
+        }
+        recordStopAudit(auditContext, operation: .clientStopSession,
+                        bridgeID: bridgeID, roomID: roomID,
+                        clientID: Self.stopAuditToken(entClient))
+        let stopRequest = await entClient.stopSession()
+        recordStopAudit(auditContext,
+                        operation: stopRequest == .notSent
+                            ? .actionStopSuppressed : .actionStopSent,
+                        bridgeID: bridgeID, roomID: roomID,
+                        clientID: Self.stopAuditToken(entClient),
+                        outcomeReason: String(describing: stopRequest))
+
+        // The look is no longer streaming, so the row must stop saying it is
+        // — exactly this bridge's row, never a same-room-id row on another.
+        removeActiveEffect(bridgeID: bridgeID, roomID: roomID, context: auditContext)
+        noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+        toastMessage = EntertainmentConsentCopy.controllerResumed
+    }
+
+    // MARK: - Takeover instrumentation (hardware convergence slice A)
+    //
+    // Brian's device pass could tell that Take Over did not work, but not WHY:
+    // the exact stop may have failed, the stop may have succeeded and Hue
+    // reacquired, our own start may have failed, or ownership may simply have
+    // been published too early. Those four have different fixes and the app
+    // emitted nothing that separated them.
+    //
+    // Only observable facts are recorded. CLIP v2 does not name the controller
+    // holding a configuration, so nothing here invents a foreign owner — the
+    // vocabulary is limited to configuration activity, our own session state,
+    // and the order the transitions were seen in.
+
+    enum TakeoverEvent: String {
+        case foreignStopRequestFailed
+        /// The stop was accepted and the configuration was STILL active on the
+        /// next read. No inactive state was ever observed, so this says exactly
+        /// that: release not proven. It deliberately does NOT claim a
+        /// reacquisition — that would assert a transition nobody watched.
+        case foreignConfigurationRemainedActive
+        /// An inactive state was actually observed. Everything below may only
+        /// be recorded after this one.
+        case foreignConfigurationStopped
+        /// The SAME configuration was observed inactive and then active again
+        /// before we committed. Hue Sync reclaiming what it just lost is the
+        /// ordinary case, not the exotic one — but it is only recorded when the
+        /// release was seen first.
+        case foreignConfigurationReacquiredSameConfig
+        /// A DIFFERENT configuration became active after an observed release.
+        case foreignConfigurationReacquiredOtherConfig
+        /// OUR release was requested but the target configuration was never
+        /// observed inactive across the bounded post-release reads. The same
+        /// honesty rule as `foreignConfigurationRemainedActive`, pointed at
+        /// ourselves: "still active" here may simply be our own start not yet
+        /// torn down, so no reacquisition — and no takeover prompt — may be
+        /// built on it.
+        case chromaGlowReleaseNotProven
+        case chromaGlowStartRequestFailed
+        case chromaGlowSessionNotUsable
+        case chromaGlowSessionUsable
+        case ownershipPublished
+        case sessionLostAfterOwnership
+        case nowPlayingWithheld
+    }
+
+    func noteTakeoverEvent(_ event: TakeoverEvent, bridgeID: String, configID: String?) {
+        let target = configID.map { " config \($0)" } ?? ""
+        debugLog("[Takeover] \(event.rawValue) — bridge \(bridgeID)\(target)")
+        #if DEBUG
+        takeoverEventLog.append(event)
+        #endif
+    }
+
+    #if DEBUG
+    /// Ordered, in-process record of the takeover transitions above. Lets a
+    /// test assert WHICH failure happened, not merely that one did.
+    private(set) var takeoverEventLog: [TakeoverEvent] = []
+    func testResetTakeoverEventLog() { takeoverEventLog.removeAll() }
+    #endif
 
     /// What the choke point decided about a foreign owner.
     private enum ForeignConflictVerdict {
@@ -6841,11 +7828,14 @@ final class UnifiedOrchestrator {
     /// Returns nil when no area safely matches OR when the selected area cannot
     /// produce usable channel IDs — so an unstreamable config can never get as far
     /// as opening a DTLS session.
+    /// Routed through `decide`, not `select`: a room several areas could serve
+    /// has no single start plan, and must not be given one silently. That case
+    /// surfaces as `.choiceRequired` from `exactTargetDecision` instead.
     private func entertainmentStartPlan(
         for room: RoomDisplayItem,
         preferredConfigID: String? = nil
     ) -> (config: EntertainmentConfig, channelIDs: [UInt8])? {
-        guard let config = selectedEntertainmentConfig(for: room, preferredConfigID: preferredConfigID),
+        guard case .exact(let config)? = cachedAreaDecision(for: room, selectedConfigID: preferredConfigID),
               let channelIDs = EntertainmentAreaSelector.validatedChannelIDs(for: config)
         else { return nil }
         return (config, channelIDs)
@@ -6865,6 +7855,10 @@ final class UnifiedOrchestrator {
         let frameInterval: UInt64 = 20_000_000  // 20ms = 50fps
 
         while !Task.isCancelled {
+            // The session can die under us — the official Hue app reclaiming
+            // the area is the ordinary way. Without this the loop streamed
+            // into a dead socket forever while the UI kept claiming AREA.
+            if await entClient.isTerminallyFailed { break }
             let p = paramBox.values
             let speed       = p["speed"]          ?? 50
             let peakBri     = (p["brightness"]    ?? 100) / 100.0
@@ -6985,6 +7979,10 @@ final class UnifiedOrchestrator {
         var colorIndex = 0
 
         while !Task.isCancelled {
+            // The session can die under us — the official Hue app reclaiming
+            // the area is the ordinary way. Without this the loop streamed
+            // into a dead socket forever while the UI kept claiming AREA.
+            if await entClient.isTerminallyFailed { break }
             let p = paramBox.values
             let speed       = p["speed"]          ?? 60
             let peakBri     = (p["brightness"]    ?? 90) / 100.0
@@ -7121,6 +8119,10 @@ final class UnifiedOrchestrator {
         let ambientXY = (x: 0.1548, y: 0.1220)
 
         while !Task.isCancelled {
+            // The session can die under us — the official Hue app reclaiming
+            // the area is the ordinary way. Without this the loop streamed
+            // into a dead socket forever while the UI kept claiming AREA.
+            if await entClient.isTerminallyFailed { break }
             let p = paramBox.values
             let frequency      = (p["frequency"]       ?? 50) / 100.0  // 0–1
             let flashIntensity = (p["flash_intensity"]  ?? 90) / 100.0
@@ -7365,6 +8367,789 @@ final class UnifiedOrchestrator {
     /// Display name for a registered bridge (used by pickers).
     func bridgeName(for bridgeID: String) -> String? {
         clients[bridgeID]?.bridgeName
+    }
+
+    /// What an explicit "Save to bridge" actually produced.
+    ///
+    /// Four outcomes, none of which may be represented by "it started playing".
+    /// The ordinary composition start is allowed to fall back to app-driven
+    /// playback when a bridge upload fails — that is a good default for a tap
+    /// that meant "play this". It is a bad answer for a tap that meant "put
+    /// this ON THE BRIDGE", because the user is then told a save succeeded when
+    /// nothing was saved.
+    enum BridgeSaveOutcome: Equatable {
+        /// Resources created, manifest durable, chain confirmed started.
+        case savedAndRunning(manifestID: UUID, bridgeID: String)
+        /// Resources created and the manifest IS durable, but the chain did not
+        /// start. Not a success and not a loss: the manifest is the exact
+        /// evidence that keeps these resources stoppable, so it is retained and
+        /// an exact Stop is offered immediately. `previousLookRemoved` reports
+        /// whether this bridge's PROVEN bridge-stored predecessor was destroyed
+        /// by the required replacement cleanup (round 4c). Round 4f: whether
+        /// "nothing plays in the room now" is TRUE is a separate,
+        /// cross-continuation question — `presentationFence` carries that
+        /// authorization, and the caller must revalidate it at the moment it
+        /// mutates presentation state (a newer playback may have taken this
+        /// exact bridge+room while the save was suspended, or between this
+        /// return and the caller's continuation).
+        case savedNotConfirmedRunning(manifestID: UUID, bridgeID: String,
+                                      previousLookRemoved: Bool,
+                                      presentationFence: SavedLookPresentationFence?)
+        /// Nothing was left on the bridge — either nothing was created, or what
+        /// was created was cleaned up exactly.
+        case nothingRecorded(reason: String)
+        /// Creation partly succeeded and cleanup could not finish. Carries the
+        /// exact identity — manifest and bridge — because that identity IS the
+        /// user's only handle on what remains: the result sheet's Stop targets
+        /// it directly. `recoverableAfterRelaunch` reports whether a durable
+        /// quarantine record survived; false means the honest sentence is
+        /// "recovery after closing the app is not guaranteed", never silence.
+        case partialCleanupFailure(manifestID: UUID, bridgeID: String,
+                                   recoverableAfterRelaunch: Bool, reason: String)
+        /// Another save for this exact bridge + room is still in flight. This
+        /// request performed ZERO bridge writes — two saves creating and
+        /// replacing the same room's resources under each other is how a Stop
+        /// button ends up pointed at the wrong manifest.
+        case saveAlreadyInProgress(reason: String)
+        /// The one exceptional state a failed save can leave (round 4b): the
+        /// room was PLAYING a bridge-stored look, the required replacement
+        /// cleanup removed that chain (two chains cannot coexist), and the
+        /// new upload then failed — so nothing of OURS is on the bridge now.
+        /// Typed, because every claim belonging to the former chain must fall
+        /// with it: a notice-only report would leave the UI asserting a look
+        /// that provably no longer exists. Round 4c: returned only for a
+        /// PROVEN exact predecessor on `bridgeID` — the destroyed chain's own
+        /// bridge — so the caller's cleanup can be exact too; another bridge's
+        /// claim on the same room id can never produce this outcome. Round 4f:
+        /// this case deliberately carries NO user-facing reason string. "The
+        /// previous look was removed and nothing is playing" is a
+        /// cross-continuation claim — a newer playback can own the room by the
+        /// time the caller applies this outcome — so the wording must be
+        /// chosen at apply time, from `presentationFence` revalidation, never
+        /// frozen here.
+        case previousLookRemovedSaveFailed(bridgeID: String,
+                                           presentationFence: SavedLookPresentationFence?)
+    }
+
+    /// Authorization to withdraw a saved look's LIVE PRESENTATION mirrors —
+    /// the VM's exact running row and its active `CompositionParamBox`
+    /// (round 4f).
+    ///
+    /// Minted only when the orchestrator proved, in one synchronous
+    /// main-actor turn, that the destroyed chain was the exact bridge+room's
+    /// RUNNING look and that no newer playback took the key while the bridge
+    /// operation was suspended. It is deliberately NOT defined by whether a
+    /// Now Playing row happened to exist — it authorizes cleaning every
+    /// presentation mirror, and a missing row must not protect a stale one.
+    ///
+    /// The token is revalidatable because the authorization itself can go
+    /// stale: between the orchestrator's return and the caller's main-actor
+    /// continuation, another task may start a new playback on the same exact
+    /// key. Callers MUST pass it back through `presentationFenceHolds(_:)`
+    /// immediately before mutating presentation state.
+    struct SavedLookPresentationFence: Equatable, Sendable {
+        let bridgeID: String
+        let roomID: String
+        /// `roomOwnershipGeneration(bridgeID:roomID:)` at authorization.
+        let roomOwnershipGeneration: Int
+        /// The exact `CompositionPlaybackKey` generation at authorization —
+        /// nil means no runtime generation existed, and nil-versus-value is
+        /// compared exactly on revalidation.
+        let playbackGeneration: Int?
+    }
+
+    /// What the exact saved-look Stop actually did (round 4f).
+    ///
+    /// The old `Bool` conflated "already gone", "bridge unreachable",
+    /// "retired an inert manifest" and "withdrew the room's running look" —
+    /// so the caller could neither clean up a genuinely stopped look nor
+    /// leave a live one alone. Each case now carries enough identity and
+    /// truth for the caller to act exactly.
+    enum SavedLookStopOutcome: Equatable {
+        /// The bridge confirmed deletion and the manifest was retired.
+        /// `removedRunningOwnership`: the manifest was in the ownership
+        /// ledger when the stop began (an inert saved-not-confirmed manifest
+        /// never is). `exactOwnershipSetEmptied`: this exact bridge+room's
+        /// ownership set is now empty. `presentationFence`: non-nil is the
+        /// (revalidatable) authorization to withdraw live presentation.
+        case removed(manifestID: UUID, bridgeID: String, roomID: String,
+                     removedRunningOwnership: Bool,
+                     exactOwnershipSetEmptied: Bool,
+                     presentationFence: SavedLookPresentationFence?)
+        /// No manifest with that id exists. Nothing to remove is a success,
+        /// not a failure.
+        case alreadyAbsent
+        /// The bridge could not be reached, refused part of the cleanup, or
+        /// the manifest changed while the deletes were in flight. The
+        /// manifest is retained; nothing was withdrawn.
+        case failed
+
+        /// Compatibility read for callers that only need success/failure —
+        /// the same convention as `PlaybackStartOutcome.startedStreaming`.
+        var succeeded: Bool {
+            if case .failed = self { return false }
+            return true
+        }
+    }
+
+    /// Exact bridge+room pairs with a strict save in flight. Claimed before
+    /// the first await (this class is @MainActor, so the claim is atomic),
+    /// released in the same defer that returns the outcome.
+    @ObservationIgnored private var strictSavesInFlight: Set<String> = []
+
+    /// The bridge/store half of a bridge-stored save — and NOTHING of its
+    /// playback half (round 4).
+    ///
+    /// Both entry points run exactly this: ordinary Play from inside
+    /// `startCompositionMode` (which already replaced the room's look before
+    /// calling, because playing IS a replacement), and the transactional
+    /// Save to Bridge, which must leave the room's current look untouched
+    /// until a saved chain is confirmed. One implementation, so the
+    /// cleanup-readiness, compensation, and quarantine rules cannot drift
+    /// between them.
+    enum BridgeStoredAttempt {
+        /// Resources created, manifest durable, chain confirmed started.
+        case saved(BridgeAnimationManifest)
+        /// Resources created and tracked; the chain did not start. The
+        /// manifest is retained — it is the exact evidence that keeps the
+        /// resources stoppable.
+        case savedNotConfirmedRunning(BridgeAnimationManifest)
+        /// The previous bridge look could not be provably cleaned up first.
+        /// Nothing was created.
+        case replacementBlocked
+        /// The upload failed; nothing was created. Carries the error so the
+        /// ordinary-play caller can classify its documented REST fallback.
+        case uploadFailed(Error)
+        /// The manifest did not persist, and compensation proved COMPLETE:
+        /// nothing remains anywhere.
+        case compensatedNothingRemains
+        /// The manifest did not persist and compensation could NOT finish:
+        /// the manifest is retained and quarantined (durably when possible).
+        case partialCleanup(manifestID: UUID, bridgeID: String, recoverableAfterRelaunch: Bool)
+    }
+
+    /// Withdraw the claims of DESTROYED bridge-stored chain(s), exactly
+    /// (round 4c). The ONE cleanup rule shared by the save-failure paths and
+    /// the exact Stop, so their semantics cannot drift:
+    ///
+    /// - ownership: ONLY `destroyedManifestIDs` are subtracted at
+    ///   (bridgeID, roomID); the key disappears only when its set empties, so
+    ///   a surviving chain on the same bridge + room keeps its claim;
+    /// - the live Now Playing row for exactly this bridge + room is removed
+    ///   only when the CALLER'S `ownershipEvidence` proves a destroyed chain
+    ///   was this key's running claim AND that key's ownership is now empty
+    ///   AND `presentationFenceHeld` — another bridge's row for the same room
+    ///   id is out of reach by key, recovered rows by construction;
+    /// - transport (round 4e): only THIS bridge+room's exact `.bridgeStored`
+    ///   claim falls, and only when its ownership set emptied. The roomID-keyed
+    ///   entry is a display aggregate recomputed from the surviving exact
+    ///   claims — another bridge's claim keeps it alive — with the round-4c
+    ///   fail-closed rule intact: standing bridge-stored evidence (any bridge's
+    ///   manifest — an ambiguous legacy manifest counts — or a recovered
+    ///   animation) retains the label, excluding `retainedManifestIDs`, because
+    ///   a just-saved inert chain is not the room's playing look.
+    ///
+    /// Round 4f: `ownershipEvidence` is REQUIRED and must be captured by the
+    /// caller BEFORE its own destructive cleanup ran. This function must not
+    /// read the ledger as evidence: by the time it runs, `retireManifest`
+    /// (stop path) or the replacement cleanup (save paths) has already
+    /// subtracted the destroyed chain, so a nil key here cannot distinguish
+    /// "this chain WAS the running look and just emptied" from "this chain
+    /// never ran at all" — and removing a live publication on a merely-nil
+    /// key is exactly how an inert manifest's Remove used to unpublish the
+    /// room's still-running REST look. `presentationFenceHeld` is the
+    /// caller's proof that no newer playback took this exact key while its
+    /// bridge operation was suspended; a broken fence withdraws ownership and
+    /// stale claims but never the newer look's publication.
+    private func withdrawDestroyedBridgeStoredClaims(
+        bridgeID: String, roomID: String,
+        destroyedManifestIDs: Set<UUID>,
+        ownershipEvidence: Set<UUID>,
+        presentationFenceHeld: Bool,
+        retainedManifestIDs: Set<UUID> = []
+    ) {
+        let key = BridgeNativeOwnershipKey(bridgeKey: bridgeID, roomID: roomID)
+        let destroyedWereRunningOwners =
+            !ownershipEvidence.isDisjoint(with: destroyedManifestIDs)
+        if var owned = bridgeStoredChainOwnership[key] {
+            owned.subtract(destroyedManifestIDs)
+            if owned.isEmpty {
+                bridgeStoredChainOwnership.removeValue(forKey: key)
+            } else {
+                bridgeStoredChainOwnership[key] = owned
+            }
+        }
+        if destroyedWereRunningOwners, bridgeStoredChainOwnership[key] == nil {
+            if presentationFenceHeld {
+                removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
+            }
+            // Round 4e: the exact transport claim falls WITH the emptied
+            // ownership set — only this bridge+room's `.bridgeStored` claim,
+            // so another bridge's same-room-id claim (and therefore the
+            // room aggregate) survives, and a newer `.rest`/`.entertainment`
+            // claim on this key is never touched. The recompute inside
+            // applies the round-4c fail-closed evidence rule, excluding the
+            // just-saved inert manifests that are not the room's playing look.
+            let playbackKey = CompositionPlaybackKey(
+                bridgeKey: key.bridgeKey, roomID: key.roomID)
+            if compositionTransportClaims[playbackKey] == .bridgeStored {
+                removeCompositionTransportClaim(
+                    for: playbackKey, retainedManifestIDs: retainedManifestIDs)
+            }
+        }
+    }
+
+    private func attemptBridgeStoredSave(
+        room: RoomDisplayItem,
+        preset: CompositionPreset,
+        lightIDs: [String],
+        gamut: HueColorUtils.Gamut,
+        bridgeID: String,
+        api: HueAPIClient
+    ) async -> BridgeStoredAttempt {
+        let v1Client: HueV1Client
+        do { v1Client = try api.makeV1Client() }
+        catch { return .uploadFailed(error) }
+
+        // Clean up only what THIS room owns on THIS bridge (packet 2), and
+        // REFUSE TO CREATE until that cleanup is provably complete (packet
+        // 8). Two recurring rule chains driving one room is not an
+        // accumulation risk to tidy up later — both keep firing, they fight
+        // over every light, and the app has a record of only the newer one.
+        let readiness = await cleanupBridgeStoredAnimationForReplacement(
+            roomID: room.id, bridgeID: bridgeID, v1Client: v1Client)
+        if case .blocked(let reason, let retained) = readiness {
+            debugLog("[Composer] ⚠ Refusing bridge-stored upload for room=\(room.id): \(reason) (retained \(retained.count) manifest(s))")
+            return .replacementBlocked
+        }
+
+        debugLog("[Composer] ⚡ Attempting bridge-stored upload for '\(preset.name)'")
+        // M-04: the engine maps v2 UUIDs → v1 numeric ids via id_v1
+        // identity, so it needs the v2 light objects. One retry — a
+        // transient fetch failure here would silently demote the
+        // "close the app, lights keep going" path to app-driven.
+        var v2Lights = (try? await api.fetchLights()) ?? []
+        if v2Lights.isEmpty {
+            try? await Task.sleep(for: .milliseconds(300))
+            v2Lights = (try? await api.fetchLights()) ?? []
+        }
+        if v2Lights.isEmpty {
+            debugLog("[Composer] ⚠ Could not fetch lights for id_v1 mapping — the upload will refuse rather than guess")
+        }
+
+        let manifest: BridgeAnimationManifest
+        do {
+            manifest = try await bridgeAnimationEngine.upload(
+                preset: preset,
+                room: room,
+                lightIDs: lightIDs,
+                v2Lights: v2Lights,
+                gamut: gamut,
+                v1Client: v1Client
+            )
+        } catch {
+            return .uploadFailed(error)
+        }
+
+        // ── Durable BEFORE running ────────────────────────
+        //
+        // Stamp the stable bridge identity here, where it is exact. The
+        // engine only ever sees a client, which knows its host but not
+        // which BridgeRecord it is — and an IP alone strands the
+        // manifest the moment DHCP moves the bridge.
+        let owned = manifest.adoptingBridgeID(bridgeID)
+
+        // The manifest is the only thing that can name these resources
+        // later, so it goes to disk before they are allowed to run. A
+        // write that failed used to be indistinguishable from one that
+        // worked, and the animation started regardless — which is how a
+        // bridge ends up running a look the app cannot see or stop.
+        guard bridgeAnimationStore.save(owned) else {
+            debugLog("[Composer] Manifest for '\(preset.name)' did not persist — removing the resources it named")
+            let cleanup = await bridgeAnimationEngine.stop(manifest: owned, v1Client: v1Client)
+
+            if cleanup == .removed {
+                // Compensation proved complete — the forget funnel's
+                // standard of evidence is met, and nothing remains to name.
+                forgetManifestRecord(id: owned.id)
+                return .compensatedNothingRemains
+            }
+
+            // Compensation is INCOMPLETE: resources the manifest names may
+            // still exist on the bridge, and this manifest is the only exact
+            // handle on them. It is retained, and quarantined DURABLY before
+            // the failure is reported: the normal persist just failed, so
+            // only an independent record survives a relaunch to feed
+            // reconciliation and the exact Stop.
+            let durable = bridgeAnimationStore.quarantine(owned)
+            return .partialCleanup(
+                manifestID: owned.id, bridgeID: bridgeID,
+                recoverableAfterRelaunch: durable)
+        }
+
+        // Only now may it start.
+        do {
+            try await bridgeAnimationEngine.activate(manifest: owned, v1Client: v1Client)
+        } catch {
+            debugLog("[Composer] '\(preset.name)' persisted but did not start: \(error.localizedDescription)")
+            return .savedNotConfirmedRunning(owned)
+        }
+        return .saved(owned)
+    }
+
+    /// The bridge chain's step-0, sent immediately: the first bridge rule
+    /// won't fire until the schedule ticks (up to a full cycle away), so the
+    /// room turns on instantly instead of sitting dark.
+    private func sendBridgeStoredPrimeFrame(
+        preset: CompositionPreset,
+        gamut: HueColorUtils.Gamut,
+        api: HueAPIClient,
+        groupedLightID: String,
+        roomName: String
+    ) async {
+        let paramBox = CompositionParamBox(preset: preset)
+        guard let firstFrame = CompositionEngine.render(
+            time: 0, channelIDs: [0], params: paramBox
+        ).first else { return }
+        let primeXY = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: gamut)
+        let primeBri = max(1.0, firstFrame.brightness * 100.0)
+        do {
+            try await api.setGroupedLightEffect(
+                id: groupedLightID, on: true,
+                brightness: primeBri,
+                xy: (primeXY.x, primeXY.y),
+                mirek: nil,
+                duration: 500
+            )
+            debugLog("[Composer][BridgePrime] ✅ room='\(roomName)' bri=\(String(format: "%.1f", primeBri))")
+        } catch {
+            debugLog("[Composer][BridgePrime] ⚠ Prime frame failed (bridge animation still active): \(error.localizedDescription)")
+        }
+    }
+
+    /// Save a look onto the bridge — TRANSACTIONALLY with respect to whatever
+    /// is playing (round 4).
+    ///
+    /// The previous shape delegated to `startCompositionMode`, whose very
+    /// first playback mutations (the generation bump, the telemetry session,
+    /// the ownership note) replace the room's current look — so a save that
+    /// went on to FAIL had already invalidated the runtime it was supposed to
+    /// be saving, and the scheduler removed the playing look as stale. Every
+    /// preflight and the whole bridge/store attempt now run with ZERO
+    /// playback mutations; the room's look is replaced only after a saved
+    /// chain is CONFIRMED running on the bridge.
+    ///
+    /// Non-success outcomes and what they leave behind:
+    /// - ineligible / busy / no-lights / unreadable / blocked / upload-failed
+    ///   / compensated: nothing anywhere; the current look untouched.
+    /// - `savedNotConfirmedRunning`: resources exist on the bridge but the
+    ///   chain is NOT running (activation is the only thing that starts it),
+    ///   so the current look keeps playing and is NOT replaced — the one
+    ///   deliberate divergence from ordinary play, which has no look to
+    ///   preserve. The manifest is retained and the result's exact Stop can
+    ///   remove the inert resources immediately.
+    /// - `partialCleanupFailure`: leftover resources, inert for the same
+    ///   reason; current look untouched; quarantined handle carried.
+    func saveLookToBridge(
+        room: RoomDisplayItem,
+        paramBox: CompositionParamBox,
+        gamutOverride: HueColorUtils.Gamut?,
+        preset: CompositionPreset
+    ) async -> BridgeSaveOutcome {
+        // Eligibility is answered HERE, not by silently taking another branch.
+        // A reactive or moving look is not a bridge look, and the honest answer
+        // is to say so — not to start it from the phone and call that a save.
+        guard preset.canRunOnBridge else {
+            return .nothingRecorded(reason: BridgeSaveCopy.ineligibleReactive)
+        }
+        guard preset.capabilityTier == .bridgeOptimized else {
+            return .nothingRecorded(reason: BridgeSaveCopy.ineligibleMotion)
+        }
+
+        // One save per exact bridge + room. The first save owns the
+        // transaction; a second one arriving while it is suspended must not
+        // create or replace resources underneath it — it refuses, typed,
+        // having touched nothing.
+        let gateKey = "\(room.bridgeID ?? "legacy")|\(room.id)"
+        guard !strictSavesInFlight.contains(gateKey) else {
+            return .saveAlreadyInProgress(reason: BridgeSaveCopy.saveAlreadyInProgress)
+        }
+        strictSavesInFlight.insert(gateKey)
+        defer { strictSavesInFlight.remove(gateKey) }
+
+        // ── Preflight: zero playback mutations ──
+        guard let bridgeID = room.bridgeID,
+              let api = hueClient(for: bridgeID),
+              let groupedLightID = room.groupedLightID else {
+            return .nothingRecorded(reason: EntertainmentConsentCopy.bridgeUnreadable)
+        }
+        // The one claim a failed save CAN orphan (round 4b): a room whose
+        // current look is itself bridge-stored. Replacement cleanup must
+        // destroy that chain before the new upload can fail — two chains
+        // cannot coexist — so a failure afterwards leaves nothing on the
+        // bridge while the claims still assert the old look.
+        //
+        // Round 4c: the predecessor is EXACT identity, captured before any
+        // bridge write. The ownership ledger names which manifests stand as
+        // THIS bridge's running claim on THIS room, and the store must
+        // corroborate every one of them; the roomID-keyed transport map
+        // appears nowhere in this proof, because it cannot say which bridge —
+        // bridge A's claim must never lend destructive authority to a save
+        // targeting bridge B. An unresolvable legacy manifest in the room
+        // fails the whole proof closed: identity that cannot be attributed
+        // can neither prove a predecessor nor prove its absence.
+        let predecessorChain = bridgeStoredChainOwnership[
+            BridgeNativeOwnershipKey(bridgeKey: bridgeID, roomID: room.id)] ?? []
+        let hadAmbiguousRoomManifest = bridgeAnimationStore.allManifests().contains {
+            $0.roomID == room.id && resolvedBridgeID(for: $0) == nil
+        }
+        let provenExactPredecessor = !predecessorChain.isEmpty
+            && !hadAmbiguousRoomManifest
+            && predecessorChain.isSubset(
+                of: Set(exactManifests(bridgeID: bridgeID, roomID: room.id).map(\.id)))
+        // Round 4f: the presentation fence for the two destructive-failure
+        // arms, captured before ANY suspension. The attempt below awaits the
+        // bridge; a newer playback can take this exact bridge+room while it
+        // is suspended, and destroying the predecessor's claims must then
+        // leave the newer look's presentation alone. The fence is the same
+        // exactness rule the stop path uses: ownership generation, exact
+        // playback generation (nil preserved), and no standing live claim.
+        let savePlaybackKey = CompositionPlaybackKey(
+            bridgeKey: bridgeID, roomID: room.id)
+        let fencedOwnershipGeneration = roomOwnershipGeneration(
+            bridgeID: bridgeID, roomID: room.id)
+        let fencedPlaybackGeneration = compositionGenerations[savePlaybackKey]
+        func presentationFenceStillHeld() -> Bool {
+            let standingClaim = compositionTransportClaims[savePlaybackKey]
+            return roomOwnershipGeneration(bridgeID: bridgeID, roomID: room.id)
+                    == fencedOwnershipGeneration
+                && compositionGenerations[savePlaybackKey] == fencedPlaybackGeneration
+                && standingClaim != .rest && standingClaim != .entertainment
+        }
+        func mintedPresentationFence() -> SavedLookPresentationFence {
+            SavedLookPresentationFence(
+                bridgeID: bridgeID, roomID: room.id,
+                roomOwnershipGeneration: fencedOwnershipGeneration,
+                playbackGeneration: fencedPlaybackGeneration)
+        }
+        let lightIDs: [String]
+        switch await resolveCompositionLights(for: room, api: api) {
+        case .noneInRoom:
+            return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNoLights)
+        case .unresolved:
+            return .nothingRecorded(reason: BridgeSaveCopy.saveFailedLightsUnresolved)
+        case .lights(let ids):
+            lightIDs = ids
+        }
+        let gamut: HueColorUtils.Gamut
+        if let gamutOverride { gamut = gamutOverride }
+        else { gamut = await resolveCompositionGamut(for: room, api: api) }
+
+        // ── The attempt: bridge and manifest store only ──
+        switch await attemptBridgeStoredSave(
+            room: room, preset: preset, lightIDs: lightIDs,
+            gamut: gamut, bridgeID: bridgeID, api: api) {
+
+        case .saved(let owned):
+            // ── COMMIT: only now does playback state change ──
+            //
+            // The chain is confirmed running on the bridge, so the app-driven
+            // look must yield — two engines driving one room fight over every
+            // light. This is the same replacement ordinary play performs at
+            // its head, done at the tail instead, where failure can no longer
+            // reach it.
+            let roomID = room.id
+            let playbackKey = CompositionPlaybackKey(
+                bridgeID: room.bridgeID, roomID: roomID)
+            let nextGeneration = (compositionGenerations[playbackKey] ?? 0) + 1
+            compositionGenerations[playbackKey] = nextGeneration
+            beginComposerTelemetrySession(
+                sessionKey: ComposerTelemetrySessionKey(
+                    bridgeKey: room.bridgeID ?? "legacy",
+                    scope: RestScope(roomID: roomID, owner: .composer)),
+                generation: nextGeneration)
+            // Confirmed running — the ownership ledger's standard of
+            // evidence (round 4c). This is the strict save's ONLY ledger
+            // write; savedNotConfirmedRunning below never records. The record
+            // also raises the exact `.bridgeStored` transport claim (4e).
+            recordBridgeStoredChainOwnership(
+                bridgeID: bridgeID, roomID: roomID, manifestID: owned.id)
+            noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
+            debugLog("[Composer] ⚡ Bridge-stored animation active! \(owned.stepCount) steps, \(owned.intervalSeconds)s/step")
+            await sendBridgeStoredPrimeFrame(
+                preset: preset, gamut: gamut,
+                api: api, groupedLightID: groupedLightID, roomName: room.name)
+            return .savedAndRunning(manifestID: owned.id, bridgeID: bridgeID)
+
+        case .savedNotConfirmedRunning(let owned):
+            // The chain never started. For an app-driven current look this
+            // means it keeps playing untouched; for a PROVEN bridge-stored
+            // predecessor on this exact bridge, the replacement cleanup
+            // already removed it, so exactly those claims are stale and fall
+            // here — nothing is running. The new inert manifest is retained
+            // as the exact stoppable identity but never enters the ownership
+            // ledger, and a predecessor belonging to another bridge (or an
+            // unproven one) clears NOTHING.
+            let previousLookRemoved = provenExactPredecessor
+                && exactManifests(bridgeID: bridgeID, roomID: room.id)
+                    .allSatisfy { $0.id == owned.id }
+            let fenceHeld = presentationFenceStillHeld()
+            if previousLookRemoved {
+                withdrawDestroyedBridgeStoredClaims(
+                    bridgeID: bridgeID, roomID: room.id,
+                    destroyedManifestIDs: predecessorChain,
+                    ownershipEvidence: predecessorChain,
+                    presentationFenceHeld: fenceHeld,
+                    retainedManifestIDs: [owned.id])
+            }
+            return .savedNotConfirmedRunning(
+                manifestID: owned.id, bridgeID: bridgeID,
+                previousLookRemoved: previousLookRemoved,
+                presentationFence: (previousLookRemoved && fenceHeld)
+                    ? mintedPresentationFence() : nil)
+
+        case .replacementBlocked:
+            // Cleanup did NOT complete, so the previous chain (and its
+            // claims) may genuinely survive — nothing to clear.
+            return .nothingRecorded(reason: BridgeSaveCopy.saveFailedReplacementBlocked)
+
+        case .uploadFailed, .compensatedNothingRemains:
+            // Nothing new exists. If THIS bridge was provably playing a
+            // bridge-stored look in this room, the required replacement
+            // cleanup removed it before the failure — verify the exact chain
+            // is provably gone and say THAT, typed, with every claim
+            // belonging to it (and only it) cleared. A bare "nothing was
+            // saved" notice would leave the UI asserting a look that no
+            // longer exists — but a claim belonging to another bridge, or an
+            // absence the store cannot prove exactly (an ambiguous legacy
+            // manifest remains in the room), returns the ordinary honest
+            // failure and clears NOTHING.
+            if provenExactPredecessor,
+               exactManifests(bridgeID: bridgeID, roomID: room.id).isEmpty,
+               !bridgeAnimationStore.allManifests().contains(where: {
+                   $0.roomID == room.id && resolvedBridgeID(for: $0) == nil
+               }) {
+                let fenceHeld = presentationFenceStillHeld()
+                withdrawDestroyedBridgeStoredClaims(
+                    bridgeID: bridgeID, roomID: room.id,
+                    destroyedManifestIDs: predecessorChain,
+                    ownershipEvidence: predecessorChain,
+                    presentationFenceHeld: fenceHeld)
+                return .previousLookRemovedSaveFailed(
+                    bridgeID: bridgeID,
+                    presentationFence: fenceHeld ? mintedPresentationFence() : nil)
+            }
+            return .nothingRecorded(reason: BridgeSaveCopy.saveFailedNothingRecorded)
+
+        case .partialCleanup(let manifestID, let manifestBridgeID, let recoverable):
+            let message = recoverable
+                ? BridgeSaveCopy.partialCleanupRecoverable
+                : BridgeSaveCopy.partialCleanupNotDurable
+            return .partialCleanupFailure(
+                manifestID: manifestID, bridgeID: manifestBridgeID,
+                recoverableAfterRelaunch: recoverable, reason: message)
+        }
+    }
+
+    /// May a returned presentation-withdrawal authorization still be applied?
+    ///
+    /// The token is minted in one synchronous main-actor turn, but its
+    /// CONSUMER resumes in a later one — and between those turns another
+    /// task can start a new playback on the same exact bridge+room. Studio
+    /// calls this immediately before removing its running row and active
+    /// composition box; a stale token preserves the newer look's mirrors.
+    /// Same exactness rule as minting: ownership generation, exact playback
+    /// generation (nil-versus-value compared exactly), and no standing live
+    /// `.rest`/`.entertainment` claim on the key.
+    func presentationFenceHolds(_ fence: SavedLookPresentationFence) -> Bool {
+        let playbackKey = CompositionPlaybackKey(
+            bridgeKey: fence.bridgeID, roomID: fence.roomID)
+        let standingClaim = compositionTransportClaims[playbackKey]
+        return roomOwnershipGeneration(bridgeID: fence.bridgeID, roomID: fence.roomID)
+                == fence.roomOwnershipGeneration
+            && compositionGenerations[playbackKey] == fence.playbackGeneration
+            && standingClaim != .rest && standingClaim != .entertainment
+    }
+
+    /// Stop and remove exactly one saved look, by manifest identity.
+    ///
+    /// The immediate counterpart of the recovered-row Stop, for a look that was
+    /// saved but never confirmed running: its resources exist and are tracked,
+    /// so the user must be able to remove them NOW rather than waiting for a
+    /// relaunch to surface a row.
+    ///
+    /// Exact by construction — the manifest names its own resources, and the
+    /// bridge client is resolved from the manifest's recorded bridge id.
+    ///
+    /// Round 4f: the outcome is typed, because "removed" alone cannot say
+    /// WHAT was removed. An inert saved-not-confirmed manifest and the
+    /// room's confirmed-running bridge look retire through the same funnel,
+    /// and only the ownership ledger — read BEFORE retirement destroys it —
+    /// can tell them apart. The evidence capture, the retirement, the
+    /// withdrawal and the fence verification all run in the same main-actor
+    /// turn after the single bridge await, so nothing can change between
+    /// them.
+    @discardableResult
+    func stopSavedBridgeLook(manifestID: UUID) async -> SavedLookStopOutcome {
+        guard let manifest = bridgeAnimationStore.manifest(id: manifestID) else {
+            // Already gone. Nothing to remove is a success, not a failure.
+            return .alreadyAbsent
+        }
+        guard let bridgeID = resolvedBridgeID(for: manifest),
+              let api = hueClient(for: bridgeID),
+              let v1Client = try? api.makeV1Client() else {
+            debugLog("[Composer] Cannot reach the bridge holding manifest \(manifestID) — retaining it")
+            return .failed
+        }
+        // Round 4f: capture the destructive-ownership evidence and the
+        // presentation fence BEFORE the bridge suspension. `retireManifest`
+        // below funnels through `forgetManifestRecord`, which subtracts this
+        // manifest from the ownership ledger — after that, the ledger can no
+        // longer distinguish a confirmed-running chain whose entry just
+        // emptied from an inert chain that never had one.
+        let ownershipKey = BridgeNativeOwnershipKey(
+            bridgeKey: bridgeID, roomID: manifest.roomID)
+        let playbackKey = CompositionPlaybackKey(
+            bridgeKey: bridgeID, roomID: manifest.roomID)
+        let ownedBeforeRetirement = bridgeStoredChainOwnership[ownershipKey] ?? []
+        let wasRunningOwner = ownedBeforeRetirement.contains(manifest.id)
+        let fencedOwnershipGeneration = roomOwnershipGeneration(
+            bridgeID: bridgeID, roomID: manifest.roomID)
+        let fencedPlaybackGeneration = compositionGenerations[playbackKey]
+        let result = await bridgeAnimationEngine.stop(manifest: manifest, v1Client: v1Client)
+        // Freshness stays fail-closed: if the manifest changed while the
+        // deletes were in flight, `retireManifest` retires nothing and the
+        // captured evidence is discarded with it.
+        guard retireManifest(manifest, after: result) else { return .failed }
+        // Everything from the capture check to the withdrawal below is
+        // synchronous on the main actor — no await separates the evidence
+        // from the mutation it authorizes.
+        let exactOwnershipSetEmptied =
+            wasRunningOwner && bridgeStoredChainOwnership[ownershipKey] == nil
+        let standingClaim = compositionTransportClaims[playbackKey]
+        let presentationFenceHeld =
+            roomOwnershipGeneration(bridgeID: bridgeID, roomID: manifest.roomID)
+                == fencedOwnershipGeneration
+            && compositionGenerations[playbackKey] == fencedPlaybackGeneration
+            && standingClaim != .rest && standingClaim != .entertainment
+        // Withdraw the room's claims only when they are THIS chain's claims
+        // (round 4). Round 4c makes that exact: only the stopped manifest's
+        // id is subtracted from its own bridge's ownership, the Now Playing
+        // row falls only when that bridge's set emptied, and the shared
+        // transport entry survives while ANY chain still claims the room.
+        // Round 4f makes the emptying itself provable: the ledger membership
+        // captured above is the evidence — a saved-but-not-confirmed
+        // manifest is inert (never in the ledger) while the room's current
+        // look keeps playing on REST, and removing the inert manifest must
+        // not unpublish that look; stopping bridge B's chain must not
+        // unpublish or unlabel bridge A's same-room-id one; and a newer
+        // playback that took this exact key during the suspension keeps its
+        // publication because the fence above no longer holds.
+        withdrawDestroyedBridgeStoredClaims(
+            bridgeID: bridgeID, roomID: manifest.roomID,
+            destroyedManifestIDs: [manifest.id],
+            ownershipEvidence: ownedBeforeRetirement,
+            presentationFenceHeld: presentationFenceHeld)
+        var presentationFence: SavedLookPresentationFence?
+        if exactOwnershipSetEmptied, presentationFenceHeld {
+            presentationFence = SavedLookPresentationFence(
+                bridgeID: bridgeID, roomID: manifest.roomID,
+                roomOwnershipGeneration: fencedOwnershipGeneration,
+                playbackGeneration: fencedPlaybackGeneration)
+            // The room's running look was THIS chain, and nothing newer took
+            // the key — so the app-driven runtime the save-commit replaced
+            // (generation already bumped there; the runtime itself was left
+            // standing) is provably stale. Retire it exactly: this playback
+            // key's runtime, scheduler membership and Composer telemetry
+            // session, nothing else. A standing live claim means the runtime
+            // belongs to a newer look and every piece of it survives.
+            if compositionTransportClaims[playbackKey] == nil {
+                compositionRuntimes.removeValue(forKey: playbackKey)
+                compositionOrder.removeAll { $0 == playbackKey }
+                if compositionRuntimes.isEmpty {
+                    compositionSchedulerTask?.cancel()
+                    compositionSchedulerTask = nil
+                }
+                deactivateComposerTelemetrySession(
+                    sessionKey: ComposerTelemetrySessionKey(
+                        bridgeKey: bridgeID,
+                        scope: RestScope(roomID: manifest.roomID, owner: .composer)),
+                    pendingRemovalReported: false)
+            }
+        }
+        return .removed(
+            manifestID: manifest.id, bridgeID: bridgeID, roomID: manifest.roomID,
+            removedRunningOwnership: wasRunningOwner,
+            exactOwnershipSetEmptied: exactOwnershipSetEmptied,
+            presentationFence: presentationFence)
+    }
+
+    /// The ONE place a manifest record is dropped from the store.
+    ///
+    /// Packet 8's rule is that manifest evidence may only ever be destroyed
+    /// through an exact-identity funnel, because a manifest is the sole record
+    /// that can stop what it names. Every caller has already earned the right
+    /// to forget — proved absence, a confirmed teardown, a purge report, or a
+    /// write that never landed — and this keeps that right expressed in one
+    /// place rather than scattered across four.
+    private func forgetManifestRecord(id: UUID) {
+        let roomID = bridgeAnimationStore.manifest(id: id)?.roomID
+        bridgeAnimationStore.remove(id: id)
+        // The evidence is gone, so no ownership claim may outlive it (round
+        // 4c). Exact by manifest id — no other chain on any key is touched.
+        subtractBridgeStoredChainOwnership(manifestID: id)
+        // Round 4e: destroyed evidence may have been the only thing keeping a
+        // retained room label alive — recompute the display aggregate.
+        if let roomID {
+            recomputeCompositionTransportAggregate(roomID: roomID)
+        }
+    }
+
+    /// Every bridge this app can actually reach, in stable id order.
+    var registeredBridgeIDs: [String] { clients.keys.sorted() }
+
+    /// After a bridge sweep, forget only the manifests it PROVED it removed.
+    ///
+    /// The purge used to leave every manifest on disk, so the next
+    /// reconciliation pass found their resources absent and pruned them as a
+    /// side effect. Doing it here, from proof, keeps the ownership store honest
+    /// at the moment of the deletion — and, more importantly, keeps the
+    /// manifests whose resources may still exist. A refused delete or an
+    /// unreadable category means something might still be running, and the
+    /// manifest is the only thing that could ever stop it.
+    ///
+    /// Bridge-exact by construction: manifests are selected by resolved bridge
+    /// id, so a sweep on one bridge can never forget another's records.
+    @discardableResult
+    func forgetManifestsProvenRemoved(
+        by report: BridgeAnimationEngine.PurgeReport,
+        onBridge bridgeID: String
+    ) -> Int {
+        var forgotten = 0
+        for manifest in bridgeAnimationStore.allManifests() {
+            guard resolvedBridgeID(for: manifest) == bridgeID else { continue }
+            guard report.provesFullyRemoved(manifest) else {
+                debugLog("[Settings] Retaining manifest \(manifest.id) — its resources were not proven removed")
+                continue
+            }
+            forgetManifestRecord(id: manifest.id)
+            forgetRecoveredBridgeAnimation(
+                RecoveredBridgeAnimationKey(bridgeID: bridgeID, manifestID: manifest.id))
+            forgotten += 1
+        }
+        return forgotten
+    }
+
+    /// A bridge label that is always safe to show a person.
+    ///
+    /// Never falls back to the IP. An address identifies a route, not a box on
+    /// a shelf: during multi-bridge testing "192.0.2.4" tells the user nothing
+    /// about which bridge is about to be changed, and printing it in a
+    /// confirmation is how the wrong bridge gets approved.
+    func bridgeLabel(for bridgeID: String) -> String {
+        let name = bridgeName(for: bridgeID)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let name, !name.isEmpty { return name }
+        return "your bridge"
     }
 
     /// Returns the first available working API client.
@@ -8004,6 +9789,10 @@ enum EntertainmentConsentCopy {
     static let takeOver      = "Take Over"
     static let takeoverFailed = "Couldn't take over these lights. The other app is still in control."
     static let bridgeUnreadable = "Couldn't reach your bridge, so nothing was changed."
+    /// The session was ours and then it wasn't. Says what the user can see —
+    /// their lights answering to something else — without naming an app the
+    /// bridge never identified.
+    static let controllerResumed = "Another app is controlling these lights again."
 }
 
 /// User-facing copy for ChromaGlow's own looks trading places on a bridge.
@@ -8040,6 +9829,122 @@ enum EntertainmentAvailabilityCopy {
         "There's no compatible Entertainment Area for that room, so nothing was changed."
     static let couldNotCheck = "Streaming availability could not be checked right now."
     static let couldNotStart = "Streaming couldn't start for that room, so nothing was changed."
+}
+
+/// User-facing copy for choosing between Entertainment Areas.
+///
+/// Its own home, like every other prompt vocabulary in this file, and free of
+/// protocol words for the same reason: the person reading it owns lights and
+/// rooms, not configurations. Nothing here names a configuration id — the
+/// chooser identifies areas the way the user named them in the Hue app.
+enum EntertainmentAreaChoiceCopy {
+    static let title = "Which lights should this play on?"
+    static let message = "More than one Entertainment Area covers this room."
+    static let cancel = "Cancel"
+    /// Shown on a candidate that reaches beyond the requested room. The scope
+    /// has to be stated BEFORE the tap, not explained after the lights change.
+    static func expandsScope(room: String) -> String {
+        "Also controls lights outside \(room)"
+    }
+    static func lightSummary(inRoom: Int, outside: Int) -> String {
+        let lights = "\(inRoom) light\(inRoom == 1 ? "" : "s")"
+        guard outside > 0 else { return lights }
+        return "\(lights) here · \(outside) elsewhere"
+    }
+    static let staleSelection =
+        "That Entertainment Area isn't available for this room any more, so nothing was changed."
+}
+
+/// User-facing copy for saving a look onto the bridge.
+///
+/// Four outcomes, kept distinct because they oblige the user to do four
+/// different things. On hardware, effects were seen still running after a
+/// force-close with no recovered row and no Stop anywhere — the app had no
+/// vocabulary for "this is on the bridge now" versus "this stops when you
+/// close me", so the user could not tell which state they were in.
+///
+/// No manifest ids, no resource ids, no REST or DTLS. A person who saved a
+/// look wants to know where it lives and how to stop it.
+enum BridgeSaveCopy {
+    static let savedAndRunning = TransportVocabulary.bridgeRunTruth
+    /// Resources exist and are tracked, but the chain did not start. NOT a
+    /// success: claiming "running" here would send the user looking for lights
+    /// that are not moving.
+    static let savedNotConfirmedRunning =
+        "Saved to your bridge, but it isn't confirmed running. You can stop it from the room's Now Playing row."
+    static let saveFailedNothingRecorded =
+        "Couldn't save that look to your bridge. Nothing was left behind."
+    /// The honest worst case: creation partly succeeded and cleanup did not
+    /// finish. Naming it is what makes it recoverable — silence here is what
+    /// produces a resource set the user cannot find.
+    static let saveFailedResourcesRemain =
+        "Couldn't finish saving that look, and some of it may still be on your bridge. Use Clean Bridge Resources in Settings."
+    /// A native Hue dynamic scene. Genuinely bridge-run — and genuinely NOT
+    /// something ChromaGlow can stop, because no ownership manifest exists for
+    /// it. Promising a Stop we cannot deliver is worse than saying so.
+    static let savedAsSceneNotStoppable =
+        "Saved to your bridge as a scene. It keeps playing with the app closed — start or stop it from Scenes, or in the Hue app."
+    static let noLocalPreset =
+        "This lives on your bridge only — no copy was added to My Creations."
+    /// Said BEFORE anything is attempted. The bridge has no microphone, so a
+    /// reactive look cannot live there — and starting it from the phone and
+    /// calling that a save would be the lie this whole slice exists to remove.
+    static let ineligibleReactive =
+        "Looks that react to sound can't be saved to the bridge — the bridge has no microphone. Nothing was saved."
+    static let ineligibleMotion =
+        "This look moves in a way the bridge can't reproduce on its own, so it can't be saved there. Nothing was saved."
+    /// The room resolved to zero lights — a real answer about the room, not a
+    /// transport failure, and it must not read like one.
+    static let saveFailedNoLights =
+        "This room has no lights to save the look for. Nothing was saved."
+    /// The bridge could not be read, so the room's membership is unknown.
+    /// Deliberately a different sentence from the one above: "your room is
+    /// empty" and "I couldn't check" call for different next steps.
+    static let saveFailedLightsUnresolved =
+        "Couldn't confirm this room's lights, so nothing was saved. Check the bridge connection and try again."
+    /// The previous bridge look could not be provably cleaned up first. Save
+    /// words, not start words — this is reached only through Save to Bridge.
+    static let saveFailedReplacementBlocked =
+        "Couldn't save — the previous look is still on the bridge. Try again in a moment."
+    /// A save for this room is already running. The second tap changed
+    /// nothing, and saying so beats two saves racing over the same lights.
+    static let saveAlreadyInProgress =
+        "This look is still being saved. Nothing extra was changed."
+    /// Partial compensation, with a durable recovery record: some of the look
+    /// is still on the bridge, an exact Remove is offered right now, and a
+    /// relaunch will recover the same handle.
+    static let partialCleanupRecoverable =
+        "Couldn't finish saving that look — some of it is still on your bridge. Remove it now, or ChromaGlow will offer it again after a relaunch."
+    /// Partial compensation AND the recovery record could not be written.
+    /// The exact Remove still works right now; what cannot be promised is
+    /// recovery after the app closes, and that is said plainly.
+    static let partialCleanupNotDurable =
+        "Couldn't finish saving that look — some of it is still on your bridge. Remove it now: if the app closes first, ChromaGlow may not be able to find it again."
+    /// The exceptional replacement failure (round 4b): the room's previous
+    /// bridge look had to be removed before the new one could be created,
+    /// and the new one then failed. Both halves of that are said — what was
+    /// lost, and that nothing runs on the bridge now.
+    static let previousLookRemovedSaveFailed =
+        "The previous bridge look was removed to make room, but the new one couldn't be saved. Nothing is playing on your bridge now."
+    /// The same removal, but the new look DID save — it just isn't confirmed
+    /// running (round 4c). Both halves are said: what was removed, and that
+    /// the saved look is not playing.
+    static let savedNotConfirmedPreviousLookRemoved =
+        "The previous bridge look was removed to make room. The new one is saved to your bridge, but it isn't confirmed running — nothing is playing there now, and you can stop the saved look from here."
+    /// Round 4f: the SAME bridge facts as `previousLookRemovedSaveFailed`,
+    /// told when the presentation fence is nil or stale at apply time.
+    /// Playback changed while the save was in flight — but a stale fence
+    /// proves only the CHANGE: the newer look may itself have stopped by
+    /// now, so this wording claims neither "nothing is playing" nor "a look
+    /// is playing". Chosen at apply time from the revalidated fence, never
+    /// frozen into the outcome.
+    static let previousLookRemovedSaveFailedPlaybackChanged =
+        "The previous bridge look was removed to make room, but the new one couldn't be saved. Playback changed while the save completed — ChromaGlow preserved the newer state."
+    /// Round 4f: `savedNotConfirmedPreviousLookRemoved` under a nil or stale
+    /// fence — the saved chain is durable and stoppable, and no claim is
+    /// made about what is or isn't playing now.
+    static let savedNotConfirmedPreviousLookRemovedPlaybackChanged =
+        "The previous bridge look was removed to make room. The new one is saved to your bridge, but it isn't confirmed running. Playback changed while the save completed — ChromaGlow preserved the newer state. You can stop the saved look from here."
 }
 
 /// Safety refusals shared between Studio and Perform.
@@ -8088,6 +9993,14 @@ extension UnifiedOrchestrator {
         case ambiguous
         /// The bridge could not be read. Unknown is not "free". Fail closed.
         case unreadable
+        /// Several areas could serve this room (hardware convergence slice A).
+        /// Deliberately NOT merged with `.ambiguous`: that one is about who
+        /// owns the bridge and fails closed, this one is about which area the
+        /// user meant and is answerable. One case for both would make a
+        /// question the user can settle look like a refusal.
+        case choiceRequired([EntertainmentAreaChoice])
+        /// A previously chosen area no longer serves this room. Starts nothing.
+        case staleSelection
     }
 
     /// Warm, resolve, and freeze this room's stream in one place — or nil when
@@ -8098,20 +10011,179 @@ extension UnifiedOrchestrator {
     /// warm and its own selection, so a cache refresh landing between them lets
     /// the prompt describe one area while the start opens another. One capture
     /// site makes that divergence unrepresentable.
-    func frozenStartPlan(for room: RoomDisplayItem) async -> EntertainmentTakeoverPlan? {
+    func frozenStartPlan(for room: RoomDisplayItem,
+                         selectedConfigID: String? = nil) async -> EntertainmentTakeoverPlan? {
         guard let bridgeID = room.bridgeID else { return nil }
         await warmEntertainmentCaches(for: room, force: true)
-        guard let resolved = entertainmentStartPlan(for: room) else { return nil }
+        guard let resolved = entertainmentStartPlan(for: room,
+                                                    preferredConfigID: selectedConfigID) else { return nil }
         return EntertainmentTakeoverPlan(bridgeID: bridgeID, roomID: room.id,
                                          config: resolved.config, channelIDs: resolved.channelIDs)
     }
 
+    /// One Entertainment Area, described the way a person picking one needs it.
+    ///
+    /// Everything here is user-facing. The bridge is named by its label, never
+    /// its IP — an address is not an identity, and on a two-bridge home it is
+    /// the one thing the user cannot map back to the box on the shelf.
+    struct EntertainmentAreaChoice: Identifiable, Equatable, Sendable {
+        var id: String { configID }
+        let configID: String
+        let areaName: String
+        let bridgeID: String
+        let bridgeLabel: String
+        /// Rooms this area reaches, resolved from real room records. Never
+        /// guessed: an unresolvable room is omitted rather than invented.
+        let roomNames: [String]
+        /// Lights it drives inside the room that was asked for.
+        let lightCount: Int
+        /// Lights it drives outside that room. Non-zero is the disclosure that
+        /// selecting this area controls more than the user asked about.
+        let extraLightCount: Int
+        /// The exact stream this row promises, frozen when the sheet opened.
+        ///
+        /// A configuration id alone is not enough to keep that promise. While
+        /// the sheet is open the area can be re-scoped to different lights or
+        /// have its channels rearranged, and an answer replayed on the id would
+        /// then open something the user never saw. Confirmation compares this
+        /// whole value against a freshly resolved one.
+        let plan: EntertainmentTakeoverPlan
+        var expandsScope: Bool { extraLightCount > 0 }
+    }
+
+    /// The exact target for one streaming request — or the honest reason there
+    /// isn't one yet (hardware convergence slice A).
+    ///
+    /// Six outcomes, deliberately not collapsed into an optional plan. They ask
+    /// for six different things from the caller: start · ask the user · fall
+    /// back to Room mode · fail closed · discard a stale choice · refuse to
+    /// guess between owners. The optional that used to stand here made the
+    /// honest failures indistinguishable from "nothing matches", which is how a
+    /// room served by two areas came to report that it had none.
+    enum ExactTargetDecision: Equatable {
+        /// Exactly one safe area. Frozen and ready to start.
+        case plan(EntertainmentTakeoverPlan)
+        /// Several areas could serve this room. Only the user can choose.
+        case choiceRequired([EntertainmentAreaChoice])
+        /// Nothing on this bridge can stream to this room.
+        case noCompatiblePlan
+        /// The bridge could not be read. Unknown is not "free" and not "empty".
+        case unreadableBridge
+        /// A previously chosen area no longer serves this room — deleted,
+        /// re-scoped, moved, or changed membership. Starts nothing.
+        case staleSelection
+        /// Several controllers hold this bridge. Nothing to name, nothing to ask.
+        case ambiguousOwnership
+    }
+
+    /// Resolve a room to its exact stream target, forcing fresh bridge reads.
+    ///
+    /// `selectedConfigID` carries a choice the user already made. It is
+    /// revalidated here rather than trusted: between the chooser appearing and
+    /// this call the area can be deleted, re-scoped to different lights, or
+    /// lose the channels the render loop needs, and replaying it then would
+    /// stream somewhere nobody was ever shown.
+    func exactTargetDecision(
+        for room: RoomDisplayItem,
+        selectedConfigID: String? = nil
+    ) async -> ExactTargetDecision {
+        guard let bridgeID = room.bridgeID else { return .noCompatiblePlan }
+        await warmEntertainmentCaches(for: room, force: true)
+
+        // Two different silences, and they must not be confused. The BRIDGE
+        // failing to answer is unreadable — unknown is not "free", so it fails
+        // closed. This room's lights failing to resolve is not: the bridge
+        // spoke, we simply cannot name an area for this room, which is the
+        // long-standing honest Room-mode fallback. Treating the second as the
+        // first turns a working fallback into a refusal.
+        guard entertainmentConfigsByBridge[bridgeID] != nil,
+              entertainmentMembershipByBridge[bridgeID] != nil else {
+            return .unreadableBridge
+        }
+        guard let decision = cachedAreaDecision(for: room, selectedConfigID: selectedConfigID) else {
+            return selectedConfigID == nil ? .noCompatiblePlan : .staleSelection
+        }
+
+        switch decision {
+        case .exact(let config):
+            guard let channelIDs = EntertainmentAreaSelector.validatedChannelIDs(for: config) else {
+                return selectedConfigID == nil ? .noCompatiblePlan : .staleSelection
+            }
+            return .plan(EntertainmentTakeoverPlan(bridgeID: bridgeID, roomID: room.id,
+                                                   config: config, channelIDs: channelIDs))
+
+        case .choiceRequired(let candidates):
+            let choices = candidates.compactMap {
+                areaChoice($0, bridgeID: bridgeID, room: room)
+            }
+            // Every candidate was eligibility-checked, so losing one here means
+            // it cannot actually be streamed — and an option that cannot be
+            // honoured must not be offered.
+            return choices.isEmpty ? .noCompatiblePlan : .choiceRequired(choices)
+
+        case .noCompatible:
+            // A selection that no longer resolves is stale, not absent. The
+            // distinction matters: "nothing fits" invites Room mode, while a
+            // vanished choice must start nothing at all.
+            return selectedConfigID == nil ? .noCompatiblePlan : .staleSelection
+        }
+    }
+
+    /// Describe one candidate for the chooser. Rooms are resolved from real
+    /// records on the SAME bridge — a room id that only exists on another
+    /// bridge is not this area's room, and is never borrowed to fill the gap.
+    private func areaChoice(
+        _ candidate: EntertainmentAreaSelector.ExactAreaCandidate,
+        bridgeID: String,
+        room: RoomDisplayItem
+    ) -> EntertainmentAreaChoice? {
+        guard let channelIDs = EntertainmentAreaSelector.validatedChannelIDs(for: candidate.config)
+        else { return nil }
+        let membership = entertainmentMembershipByBridge[bridgeID] ?? [:]
+        let areaLightIDs = EntertainmentAreaSelector.mappedLightIDs(
+            for: candidate.config, entertainmentToLightMap: membership)
+
+        var names: [String] = []
+        for candidateRoom in allRooms where candidateRoom.bridgeID == bridgeID {
+            guard let lights = cachedRawLights(for: bridgeID) else { break }
+            let ids = Set(CompositionLightResolver.resolveLightIDs(
+                childResourceRefs: candidateRoom.childResourceRefs, lights: lights))
+            if !ids.isDisjoint(with: areaLightIDs) { names.append(candidateRoom.name) }
+        }
+
+        return EntertainmentAreaChoice(
+            configID: candidate.config.id,
+            areaName: candidate.config.name,
+            bridgeID: bridgeID,
+            bridgeLabel: bridgeLabel(for: bridgeID),
+            roomNames: names.sorted(),
+            lightCount: candidate.lightIDs.count,
+            extraLightCount: candidate.extraLightIDs.count,
+            plan: EntertainmentTakeoverPlan(bridgeID: bridgeID, roomID: room.id,
+                                            config: candidate.config, channelIDs: channelIDs)
+        )
+    }
+
     func foreignTakeoverPreflight(
         for room: RoomDisplayItem,
-        requestsEntertainment: Bool
+        requestsEntertainment: Bool,
+        selectedConfigID: String? = nil
     ) async -> ForeignTakeoverPreflight {
         guard requestsEntertainment, let bridgeID = room.bridgeID else { return .notRequested }
-        guard let plan = await frozenStartPlan(for: room) else { return .noStreamableArea }
+
+        // One resolution path for every entry point — the Streaming row, a
+        // saved Streaming preset, Party, Thunderstorm. A second path that
+        // "just picks something" is exactly how two surfaces come to disagree
+        // about which area a room streams to.
+        let plan: EntertainmentTakeoverPlan
+        switch await exactTargetDecision(for: room, selectedConfigID: selectedConfigID) {
+        case .plan(let resolved):          plan = resolved
+        case .choiceRequired(let options): return .choiceRequired(options)
+        case .staleSelection:              return .staleSelection
+        case .noCompatiblePlan:            return .noStreamableArea
+        case .unreadableBridge:            return .unreadable
+        case .ambiguousOwnership:          return .ambiguous
+        }
 
         guard let snapshot = await entertainmentActivity(onBridge: bridgeID) else {
             return .unreadable
@@ -8141,6 +10213,11 @@ extension UnifiedOrchestrator {
         let id = UUID()
         let client: HueEntertainmentClient
         let plan: EntertainmentTakeoverPlan
+        /// The consent that authorized this candidate, if any. Carried to the
+        /// commit so it is spent only on a session that actually committed —
+        /// and so the final verification knows whether a release of this
+        /// exact configuration was genuinely observed earlier.
+        let consent: EntertainmentConsent?
         /// The captured configuration, not a freshly selected one.
         var config: EntertainmentConfig { plan.capturedConfig }
         var channelIDs: [UInt8] { plan.channelIDs }
@@ -8197,7 +10274,7 @@ extension UnifiedOrchestrator {
         switch await acquireEntertainment(room: room, plan: plan, consent: consent,
                                           requester: requester) {
         case .started(let client):
-            let candidate = PreparedEntertainment(client: client, plan: plan)
+            let candidate = PreparedEntertainment(client: client, plan: plan, consent: consent)
             // Outstanding until it is committed or rolled back.
             outstandingEntertainmentCandidates[candidate.id] = candidate
             return .prepared(candidate)
@@ -8214,8 +10291,180 @@ extension UnifiedOrchestrator {
         }
     }
 
-    /// Install a prepared session — the "commit" half. Only called once the
-    /// caller has decided the start is definitely going ahead.
+    /// How the final pre-commit verification ended.
+    enum EntertainmentCommitVerdict {
+        /// Every verification passed; the session is installed and ownership
+        /// published. The consent, if any, was spent here and nowhere else.
+        case committed
+        /// A foreign controller was proven at the commit boundary. The
+        /// candidate was released; nothing is installed, nothing published,
+        /// the consent unspent. The snapshot presents the contested
+        /// configuration as foreign so the caller can re-prompt honestly.
+        case contested(snapshot: EntertainmentActivitySnapshot, targetConfigID: String)
+        /// The final activity read could not be taken. Unknown is not
+        /// verified: the candidate was released and the caller must refuse
+        /// with "nothing was changed" — no commit, no fallback, no prompt.
+        case verificationUnavailable
+        /// Our release was requested but the target was NEVER observed
+        /// inactive. The configuration may genuinely still be active, so the
+        /// caller must start NOTHING — REST writes underneath an unreleased
+        /// stream is the exact condition refused everywhere else. No prompt
+        /// either: nothing proved a foreign owner.
+        case releaseNotProven
+        /// The session died and the target was observed inactive and stayed
+        /// inactive. A plain ChromaGlow session failure — the caller refuses
+        /// with the explicit streaming-failed answer rather than silently
+        /// changing transport. No prompt.
+        case sessionFailed
+    }
+
+    /// How many fresh activity reads the post-release observation makes
+    /// before giving up on ever seeing the target inactive.
+    private static let postReleaseReadLimit = 3
+
+    /// The final verification, immediately before commitment — fresh bridge
+    /// activity combined with a second exact session-health check.
+    ///
+    /// This is the only place same-configuration reacquisition can be
+    /// honestly detected, and even here it takes a full observed chain. An
+    /// active target plus a dead client proves nothing by itself: our own
+    /// `action=start` can leave the configuration active briefly after the
+    /// DTLS session dies, and the activity reader classifies the target as
+    /// ours because `startSession` registered it before activation. So when
+    /// the exact client is found dead, this requests OUR release first (a
+    /// stop request is never release proof — it can fail, and even a 2xx
+    /// only means the bridge accepted it), then performs bounded fresh
+    /// reads, and claims a reacquisition only for a target that was
+    /// **observed inactive after our release and then observed active
+    /// again**. A target never observed inactive is recorded exactly as
+    /// that — release not proven — and raises no prompt.
+    func verifyAndCommitEntertainment(_ prepared: PreparedEntertainment) async -> EntertainmentCommitVerdict {
+        let bridgeID = prepared.plan.bridgeID
+        let targetID = prepared.plan.targetConfigID
+
+        // Fresh activity first, then the exact client. In this order a
+        // healthy answer covers the read too: the session was alive after
+        // the snapshot was taken.
+        //
+        // FAIL CLOSED on the read itself (round 4): an unreadable final
+        // bridge state is UNKNOWN, not verified. Committing a healthy client
+        // over a nil read would publish ownership on a bridge whose actual
+        // occupancy nobody saw.
+        guard let fresh = await entertainmentActivity(onBridge: bridgeID) else {
+            debugLog("[Handoff] Final activity read on \(bridgeID) unavailable — releasing rather than committing unverified")
+            outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
+            await prepared.client.stopSession()
+            noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+            return .verificationUnavailable
+        }
+        let healthy = await prepared.client.hasStartedSession()
+
+        // A DIFFERENT foreign configuration active at the boundary is
+        // directly observed — no release gymnastics needed. The target is
+        // EXCLUDED here (round 4): asynchronous terminal teardown can release
+        // our own ledger entries before this read, making the target itself
+        // read as foreign — and calling that "another configuration" would
+        // bypass the observed-transition proof the same-target case requires.
+        let foreignOthers = fresh.foreign.subtracting([targetID])
+        if !foreignOthers.isEmpty {
+            noteTakeoverEvent(.foreignConfigurationReacquiredOtherConfig,
+                              bridgeID: bridgeID, configID: foreignOthers.first)
+            debugLog("[Handoff] A controller claimed \(bridgeID) at the commit boundary — releasing rather than claiming ownership")
+            outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
+            await prepared.client.stopSession()
+            noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+            return .contested(snapshot: fresh, targetConfigID: targetID)
+        }
+
+        // The target reading as foreign — whatever the cause — means our
+        // claim on it is not clean, so it takes the same observed-transition
+        // path as a dead client. It is never labelled a reacquisition here.
+        let targetAppearsForeign = fresh.foreign.contains(targetID)
+
+        if healthy && !targetAppearsForeign {
+            commitEntertainment(prepared)
+            // The takeover has now actually produced a VERIFIED, COMMITTED
+            // session, so the token is spent. Spending it earlier would burn
+            // the user's consent on a session that died before commit.
+            if let consent = prepared.consent { consumeEntertainmentConsent(consent) }
+            return .committed
+        }
+
+        // The exact client is dead (or the target's ownership is no longer
+        // cleanly ours). Request our release, then observe.
+        outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
+        let stopRequest = await prepared.client.stopSession()
+        if stopRequest == .requestFailed {
+            debugLog("[Handoff] Our own action=stop on \(targetID) failed — release can only be less certain")
+        }
+
+        // Bounded observation: was the target ever seen inactive, and did it
+        // come back afterwards? Reads are what carry the truth here — the
+        // count is small and fixed, and the tests drive it purely by staged
+        // reads.
+        var observedInactive = false
+        var activeAfterInactive = false
+        var lastRead: EntertainmentActivitySnapshot?
+        for _ in 0..<Self.postReleaseReadLimit {
+            guard let read = await entertainmentActivity(onBridge: bridgeID) else { continue }
+            lastRead = read
+            let targetActive = read.processOwned.contains(targetID)
+                || read.persistedOwned.contains(targetID)
+                || read.foreign.contains(targetID)
+            if !targetActive {
+                observedInactive = true
+            } else if observedInactive {
+                activeAfterInactive = true
+                break
+            }
+        }
+
+        noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+
+        if activeAfterInactive, let lastRead {
+            // The full observed chain for a SAME-configuration reacquisition:
+            // the original foreign target was seen inactive at consent time,
+            // our exact client died, our release request completed, the
+            // target was again seen inactive, and then seen active. Only
+            // with the consent-time observation is the reacquisition event
+            // recorded; without it the re-prompt still happens, but nothing
+            // asserts a transition nobody watched.
+            if let consent = prepared.consent, consent.foreignConfigID == targetID {
+                noteTakeoverEvent(.foreignConfigurationReacquiredSameConfig,
+                                  bridgeID: bridgeID, configID: targetID)
+            }
+            debugLog("[Handoff] \(targetID) came back after our observed release on \(bridgeID) — asking rather than claiming")
+            // Whatever the ledger says, a configuration active after our own
+            // observed release is not ours. Present it as foreign so the
+            // re-prompt tells the truth.
+            let snapshot = EntertainmentActivitySnapshot(
+                bridgeID: lastRead.bridgeID,
+                processOwned: lastRead.processOwned.subtracting([targetID]),
+                persistedOwned: lastRead.persistedOwned.subtracting([targetID]),
+                foreign: lastRead.foreign.union([targetID])
+            )
+            return .contested(snapshot: snapshot, targetConfigID: targetID)
+        }
+
+        if observedInactive {
+            // Died and stayed down: a ChromaGlow session failure, nothing
+            // more. No prompt — there is no foreign owner to ask about.
+            noteTakeoverEvent(.chromaGlowSessionNotUsable, bridgeID: bridgeID, configID: targetID)
+            return .sessionFailed
+        }
+        // Never seen inactive. That may be another controller — or our own
+        // start not yet torn down. Say only what was observed, and let the
+        // caller start NOTHING: the configuration may genuinely still be
+        // streaming, and REST writes underneath an unreleased stream is the
+        // exact condition refused everywhere else.
+        noteTakeoverEvent(.chromaGlowReleaseNotProven, bridgeID: bridgeID, configID: targetID)
+        return .releaseNotProven
+    }
+
+    /// Install a prepared session — the "commit" half. In production this is
+    /// called only from `verifyAndCommitEntertainment`, once every final
+    /// verification has passed (guard 12 pins that); the transaction tests
+    /// call it directly to prove the candidate-ledger semantics.
     ///
     /// Committing is also what marks the candidate no longer outstanding: a
     /// session is either installed here exactly once, or stopped by the
@@ -8226,6 +10475,11 @@ extension UnifiedOrchestrator {
         // concurrent transaction's candidate and leak its session.
         outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
         studioEntClients[prepared.plan.bridgeID] = prepared.client
+        // This IS the moment ownership becomes real — every verification has
+        // passed and the session is now the app's. Recording it here rather
+        // than at the caller keeps the event tied to the commit itself.
+        noteTakeoverEvent(.ownershipPublished, bridgeID: prepared.plan.bridgeID,
+                          configID: prepared.plan.targetConfigID)
     }
 
     /// Stop a session that was prepared but never committed.
@@ -8254,13 +10508,22 @@ extension UnifiedOrchestrator {
     /// Re-resolve this room's start plan and confirm it still describes the
     /// stream the user was shown. Used immediately before a takeover stop.
     ///
-    /// Deliberately re-selects WITHOUT preferring the captured id: the question
-    /// is whether that area still safely and uniquely serves this room, and
-    /// forcing the preference would answer a different, easier question.
+    /// Re-resolves by the plan's OWN area id, then compares the whole value.
+    ///
+    /// This used to re-select blind, so that "still uniquely the winner" was
+    /// part of the test. That question is now the user's to answer: on a bridge
+    /// where two areas can serve one room, blind re-selection resolves to
+    /// nothing and every takeover refuses itself. Naming the captured id asks
+    /// the question that actually protects the user — is the area the user was
+    /// SHOWN still an eligible, streamable area for this room — and
+    /// `plan.matches` still fails closed on any change to its channels,
+    /// members, or positions, so a re-scoped area cannot slip through.
     func revalidateTakeoverPlan(_ plan: EntertainmentTakeoverPlan,
                                 room: RoomDisplayItem) async -> Bool {
         await warmEntertainmentCaches(for: room, force: true)
-        guard let resolved = entertainmentStartPlan(for: room) else { return false }
+        guard let resolved = entertainmentStartPlan(for: room,
+                                                    preferredConfigID: plan.targetConfigID)
+        else { return false }
         return plan.matches(config: resolved.config, channelIDs: resolved.channelIDs)
     }
 
@@ -8278,6 +10541,22 @@ extension UnifiedOrchestrator {
         foreignConfigID: String
     ) async -> ForeignTakeoverResolution {
         let bridgeID = plan.bridgeID
+
+        // 1. Spend the REQUEST token before the first await.
+        //
+        // Its own ledger, deliberately — a third one. `consumedEntertainmentConsents`
+        // is spent much later, when a session actually opens, which is correct
+        // for what it guards but useless here: this method suspends several
+        // times before reaching it, so two confirmations in flight together
+        // would both sail past and both send a stop, the second landing on
+        // whatever started in between. Sharing a set with the Studio handoff
+        // would let one kind of answer spend the other's token.
+        guard !consumedForeignTakeoverRequests.contains(requestID) else {
+            debugLog("[Handoff] Foreign takeover \(requestID) was already acted on — refusing to replay it")
+            return .failed(message: EntertainmentConsentCopy.takeoverFailed)
+        }
+        consumedForeignTakeoverRequests.insert(requestID)
+
         guard let client = clients[bridgeID] else {
             return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
         }
@@ -8323,8 +10602,59 @@ extension UnifiedOrchestrator {
         } catch {
             // Never claim a takeover that did not happen.
             debugLog("[Handoff] Takeover stop failed: \(error.localizedDescription)")
+            noteTakeoverEvent(.foreignStopRequestFailed, bridgeID: bridgeID, configID: foreignConfigID)
+            noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
             return .failed(message: EntertainmentConsentCopy.takeoverFailed)
         }
+
+        // ── Verify the stop actually released the area ──────────────
+        //
+        // Sending a stop is not proof that stopping worked. The PUT returning
+        // 2xx says the bridge accepted the request, not that the other
+        // controller let go — and on hardware it frequently had not: Hue Sync
+        // stayed in control, or took the area straight back. Publishing
+        // ownership on the strength of the PUT is how ChromaGlow came to claim
+        // a takeover the user could see had not happened.
+        guard let after = await entertainmentActivity(onBridge: bridgeID) else {
+            // Unknown is not "released". Refuse rather than start on top of a
+            // session we cannot see.
+            debugLog("[Handoff] Bridge unreadable immediately after the stop — claiming nothing")
+            return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+        }
+
+        if after.foreign.contains(foreignConfigID) {
+            // Record ONLY what was observed.
+            //
+            // This single read cannot distinguish "the stop never released it"
+            // from "it released and was reclaimed in the gap" — no inactive
+            // state was ever seen, so claiming reacquisition here would be
+            // inventing a transition. Both mean "start nothing"; only one of
+            // them is a fact. Same-configuration reacquisition is recorded
+            // later, in `acquireEntertainment`, where an inactive state HAS
+            // been observed first.
+            debugLog("[Handoff] \(foreignConfigID) is still active after its stop — release not proven, starting nothing")
+            noteTakeoverEvent(.foreignConfigurationRemainedActive,
+                              bridgeID: bridgeID, configID: foreignConfigID)
+            noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+            return .changedOwner(after)
+        }
+
+        noteTakeoverEvent(.foreignConfigurationStopped, bridgeID: bridgeID, configID: foreignConfigID)
+
+        // A DIFFERENT controller arrived in the gap. The user agreed to replace
+        // one specific session; this is not that session, and old consent may
+        // not reach it.
+        if !after.foreign.isEmpty {
+            // The consented configuration WAS observed inactive above, so this
+            // is a genuine reacquisition by a different session — a transition
+            // we actually saw, not one we inferred.
+            debugLog("[Handoff] A different session claimed \(bridgeID) after the stop — old consent stops nothing")
+            noteTakeoverEvent(.foreignConfigurationReacquiredOtherConfig,
+                              bridgeID: bridgeID, configID: after.foreign.first)
+            noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
+            return .changedOwner(after)
+        }
+
         return .resolved(consent)
     }
 
@@ -8701,6 +11031,75 @@ extension UnifiedOrchestrator {
 struct SSEEvent: Decodable {
     let type: String
     let data: [SSEResourceUpdate]
+}
+
+// MARK: - Stop-audit diagnostics types (PR #60 stop-isolation)
+//
+// Inert value types, defined unconditionally so the DEBUG-defaulted `context`
+// parameters keep a single signature in both configurations. All storage and
+// recording is #if DEBUG — in Release these types carry no behavior.
+extension UnifiedOrchestrator {
+
+    /// Which surface or internal path initiated a stop chain.
+    enum StopAuditRoute: String, Sendable {
+        case explicitStop             // Studio card / tray / param-sheet Stop
+        case stopAll                  // Studio toolbar Stop All
+        case nowPlaying               // Dashboard / Siri via LiveEffectStopTarget
+        case applyReplacement         // apply: same-room replacement
+        case applyEngineSingleton     // apply: same-bridge app-driven eviction
+        case applyEntertainmentScoped // apply: same-bridge entertainment eviction
+        case applyLightOverlap        // apply: same-bridge light-overlap eviction
+        case reconcileAfterLoop       // engine-loop tail reconciliation
+        case bridgeRemoval
+        case stopStudioMode           // forget-all global teardown
+        case handoff
+        case unattributed
+    }
+
+    /// Immutable per-stop context, passed by value through the exact call
+    /// chain — concurrent stops on two bridges can never overwrite or inherit
+    /// one another's route.
+    struct StopAuditContext: Sendable {
+        let route: StopAuditRoute
+        let cardOrEffectID: String?
+
+        init(route: StopAuditRoute, cardOrEffectID: String? = nil) {
+            self.route = route
+            self.cardOrEffectID = cardOrEffectID
+        }
+
+        static let unattributed = StopAuditContext(route: .unattributed)
+    }
+
+    /// One destructive stop operation the audit can observe.
+    enum StopAuditOperation: String, Sendable {
+        case stopRequested
+        case taskCancelled
+        case restScopeCleared
+        case entertainmentGuardSkipped
+        case clientStopSession
+        case actionStopSent
+        case actionStopSuppressed
+        case rowRemoved
+        case nowPlayingRemoved
+        case stopAllInvoked
+        case stopStudioModeInvoked
+        case reconcileCleanup
+    }
+
+    /// One recorded stop operation, with full identity and outcome.
+    struct StopAuditEvent: Sendable {
+        let sequence: Int
+        let timestamp: Date
+        let route: StopAuditRoute
+        let bridgeID: String?
+        let roomID: String?
+        let cardOrEffectID: String?
+        let runtimeToken: String?
+        let clientID: String?
+        let operation: StopAuditOperation
+        let outcomeReason: String?
+    }
 }
 
 /// DEBUG-only console diagnostics (house convention — prints are #if DEBUG,

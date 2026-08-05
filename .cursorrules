@@ -18,7 +18,7 @@ It contains the full development history, architecture decisions, API constraint
 
 2. **Use `childResourceRefs` from RoomDisplayItem for room membership** — already in memory, no runtime API calls needed.
 
-3. **Entertainment configs are bridge-wide** — only 1 DTLS session at a time. Never pretend they're room-scoped.
+3. **Entertainment configs are bridge-wide, sessions are PER BRIDGE** — at most 1 DTLS session per bridge; bridges stream independently and simultaneously (round 4g). Never pretend sessions are room-scoped, and never treat them as one global slot.
 
 4. **All Hashable display items must hash ALL volatile fields** — not just `id`. SwiftUI ForEach uses collection hashing to decide whether to re-diff. ID-only hashing makes ForEach blind to property changes.
 

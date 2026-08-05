@@ -13,19 +13,121 @@
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
   (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **46**).
+- **HARDWARE CONVERGENCE SLICE A (2026-08-03): exact area targeting, verified takeover, and
+  bridge-run truth.** Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+  `checkpoint/pre-hardware-convergence-entertainment-targeting` (at `3479243`), PR open and
+  **unmerged**. Brian's device pass on merged PR #59 confirmed the row fix, the reachable
+  takeover prompt and non-destructive Keep Existing — and found four new defects. (1) A bridge
+  with an area over *bedroom+bathroom* and another over *bedroom+hallway* reported "no compatible
+  Entertainment Area" for hallway and bathroom: the selector was right to refuse to guess, the UI
+  was wrong to render that refusal as absence. There is now a typed decision in which every
+  eligible configuration stays its own named candidate — identical light sets are never collapsed
+  — and a chooser sheet showing area name, bridge label, rooms covered, light counts and an
+  expanded-scope warning. (2) Take Over reported success while Hue Sync kept control: a 2xx on the
+  stop PUT was read as proof of release, and `startSession` returning as proof of a session (it
+  was not even true internally — the DTLS `.ready` handler resumed beside the task that commits
+  `.streaming`). Both are now verified, same-configuration reacquisition counts as a new conflict,
+  and Take Over has its own request ledger. (3) The three Studio engine loops never checked
+  `isTerminallyFailed`, so a reclaimed area kept publishing a dead stream. (4) The room wheel was
+  covered by the effect panel because a room change forced the tray open. Bridge saves now persist
+  the manifest **before** activating anything, and the save result states which bridge, which
+  room, whether it is bridge-run, whether a local preset exists and whether Stop survives a
+  relaunch. Suite 1348/1348 green (xcresulttool), Guard 12 added. **ROUND 3 (2026-08-03): the
+  review's four residual blockers are resolved** (rollback tag
+  `checkpoint/pre-hardware-convergence-round-3` at `a5b8839`, four commits): the final takeover
+  verification moved to the commit boundary and same-configuration reacquisition is proven by
+  observed release — never inferred from an active target plus a dead client; the strict bridge
+  save refuses typed before the REST tail on empty/unresolved rooms, is serialized per
+  bridge+room, and the shared outcome mailbox is gone; partial-cleanup evidence is quarantined
+  durably and its exact Stop survives a failed attempt and a relaunch; and the Clean Bridge
+  confirmation speaks only about its frozen id, so selected-B/B-disappears/A-remains deletes
+  nothing. **ROUND 4 (2026-08-03): three residual production-path blockers resolved** (rollback
+  tag `checkpoint/pre-hardware-convergence-round-4` at `3304f27`, one commit): the final
+  verification fails closed on an unreadable read and excludes the target from the other-config
+  branch; release-not-proven and session-failed verdicts refuse instead of falling back to
+  REST; and Save to Bridge is transactional — zero playback mutations until a chain is
+  confirmed running, so a failed save can no longer stop the look it was saving. Suite
+  1365/1365 green twice consecutively (xcresulttool), all 12 guards. **ROUND 4b (2026-08-03)**
+  typed the one orphanable failed-save state (`previousLookRemovedSaveFailed`, suite
+  1367/1367 ×2). **ROUND 4c (2026-08-04): exact identity under duplicate room ids** (rollback
+  tag `checkpoint/pre-hardware-convergence-round-4c` at `b4f6cd2`): round 4b's cleanup was
+  room-id-keyed, so bridge B's failed save could erase bridge A's same-room-id claims. A
+  confirmed-running ownership ledger (bridge+room → exact manifest ids) is now the only
+  destructive proof, one shared withdraw rule subtracts exact ids for both save failures and
+  the exact Stop, live Now Playing rows and Studio's running rows are bridge-exact-keyed so
+  same-room-id looks coexist and fall individually, and ambiguous legacy identity fails
+  closed. Suite 1372/1372 ×2, MultiBridgeRoutingTests 327/327, guard 12 sub-check (j).
+  **ROUND 4d (2026-08-04): exact identity kept through the stop handoffs** — the live Now
+  Playing stop no longer downgrades an attributed entry to a bare room id (a collision used
+  to stop NEITHER bridge's look), and removed-group teardown matches recorded bridge+room
+  instead of comparing bare group ids with bridge-qualified presentation keys (doomed loops
+  used to survive bridge removal / room-zone deletion). Suite 1380/1380 ×2,
+  MultiBridgeRoutingTests 335/335, guard 12 sub-check (k). NOTE: `OrchestratorTests.swift`
+  is not a member of the test target (never has run — pbxproj fix deferred, forbidden here).
+  **ROUND 4e (2026-08-04): the runtime authority is exactly keyed** (rollback tag
+  `checkpoint/pre-hardware-convergence-round-4e` at `bdb30c5`): 4d's exact rows sat on a
+  room-ID-only core — the second same-room-id start overwrote the first bridge's real
+  runtime, and an exact stop could invalidate the other bridge's generation, evict it from
+  the scheduler, or tear down its Entertainment session picked by dictionary order.
+  `CompositionPlaybackKey` (bridge+room) now keys generations/runtimes/scheduler order and
+  the new exact transport claims (the room map is a recomputed display aggregate that
+  answers unknown on disagreement; an inert save claims nothing), `stopCompositionMode` is
+  exact throughout with bridge-authoritative Entertainment teardown, SSE suppression is
+  bridge+room exact, and Studio's composition boxes are `RoomEffectKey`-keyed. Suite
+  1384/1384 ×2, MultiBridgeRoutingTests 339/339, guard 12 sub-check (l).
+  **ROUND 4f (2026-08-04): saved-look Stop truth** (rollback tag
+  `checkpoint/pre-hardware-convergence-round-4f` at `87d9828`): `stopSavedBridgeLook`
+  retired the manifest FIRST and then read the ownership ledger the retirement had just
+  emptied — a nil key cannot tell an emptied running chain from an inert
+  saved-not-confirmed one, so the sheet's Remove on an inert manifest unpublished the
+  room's still-running REST look, and stopping a running one left Studio's row, box, and
+  the replaced runtime standing. Ownership evidence is now captured BEFORE retirement and
+  passed explicitly to the one shared withdraw (which never removes a publication on a
+  merely-nil key); the Stop returns a typed outcome carrying a revalidatable presentation
+  fence (ownership generation + exact playback generation + no standing live claim), which
+  Studio re-verifies at the moment it removes the exact row and box — a newer playback
+  that takes the key mid-suspension or in the continuation gap keeps everything; the two
+  destructive save-failure outcomes carry the same fence, and their empty-room wording is
+  chosen at apply time (a nil/stale fence gets neutral playback-changed copy claiming
+  neither emptiness nor playback). Suite 1392/1392 ×2, MultiBridgeRoutingTests 347/347,
+  guard 12 sub-check (m).
+  **ROUND 4G (2026-08-04): one Entertainment session per BRIDGE — the confirmed two-bridge
+  hardware defect** (rollback tag `checkpoint/pre-hardware-convergence-round-4g` at
+  `b14e94b`): Brian's Slice A device pass confirmed that starting a streaming look on
+  bridge 2 stopped bridge 1's stream. The stop was app-initiated: `StudioViewModel.apply`
+  stopped every streaming row on every bridge before a start ("only one DTLS session
+  allowed" was a stale global invariant — the real Hue constraint is per bridge), and the
+  orchestrator's engine task, live param box, and Studio REST scope were single global
+  slots, so bridge 2's start also cancelled bridge 1's 25–50fps render loop. The engine
+  runtime is now a per-bridge record (owning room + task + box), the three `apply` teardown
+  loops carry the same-bridge predicate (including the light-overlap loop — light ids are
+  bridge-local), `stopAppDrivenStudioEffect` proves exact bridge+room ownership before
+  cancelling or removing anything (a stale stop that loses the race to a newer same-bridge
+  start touches nothing), `removeBridge` clears exactly the removed bridge's runtime,
+  session, and owner record, and slider edits route to the selected room's bridge. Same-
+  bridge exclusivity is unchanged: a second room on the same bridge still replaces the
+  first, and a shared configuration is never stopped out from under its successor
+  (final-owner rule). Suite 1399/1399 ×2, MultiBridgeRoutingTests 354/354 (HCS-33..39),
+  guard 12 sub-check (n); §V gains hardware rows 19–22 (two-bridge simultaneous streaming,
+  cross-bridge stop isolation, per-bridge slider routing, same-bridge switch).
+  **Neither Packet 7 nor Packet 8 hardware validation is complete — Brian must run §V** in
+  `docs/ios/master-on-device-checklist.md`. Entries below.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
-  hardware.** Branch `fix/packet7-device-followups`, rollback tag
-  `checkpoint/pre-packet7-device-followups` (at `3c5f377`), PR open and **unmerged**. Brian's
-  device pass found the "Entertainment Area (Streaming)" row greyed out by a *cached* verdict that
-  only a tap on that same row could refresh — so §U items 4 failed and 5/6/9/10 were BLOCKED, not
-  failed. Also: a streaming composition started over our own Strobe opened a second session and
-  was silently demoted to REST underneath it, and the Reduce Motion refusal said nothing. The row
-  is now always tappable and re-reads the bridge before answering; app-driven ownership is a
-  question with its own third handoff prompt (separate type, slot, alert and token ledger from
-  third-party consent); and both Strobe surfaces now explain the Reduce Motion refusal — the
-  Perform pad, which never checked at all, now refuses. Suite 1291/1291 green (xcresulttool),
-  Guard 11 added. **Packet 7 hardware validation is NOT complete — Brian must run §U-R** in
-  `docs/ios/master-on-device-checklist.md`. Entry below.
+  hardware. MERGED — PR #59, merge `3479243`, and this is the build Brian tested.** Branch
+  `fix/packet7-device-followups`, rollback tag `checkpoint/pre-packet7-device-followups`
+  (at `3c5f377`). Brian's device pass found the "Entertainment Area (Streaming)" row greyed out
+  by a *cached* verdict that only a tap on that same row could refresh — so §U items 4 failed and
+  5/6/9/10 were BLOCKED, not failed. Also: a streaming composition started over our own Strobe
+  opened a second session and was silently demoted to REST underneath it, and the Reduce Motion
+  refusal said nothing. The row is now always tappable and re-reads the bridge before answering;
+  app-driven ownership is a question with its own third handoff prompt (separate type, slot, alert
+  and token ledger from third-party consent); and both Strobe surfaces now explain the Reduce
+  Motion refusal — the Perform pad, which never checked at all, now refuses. Suite 1291/1291 green
+  (xcresulttool), Guard 11 added. **Hardware verdicts from Brian's pass on this build: §U-R tests
+  1, 3, 4 PASS · test 2 UNPROVEN for the original exact-room scenario, with the overlapping-area
+  targeting defect CONFIRMED · test 5 FAIL pending instrumented root-cause distinction · test 6
+  BLOCKED · tests 7, 8, 9 UNPROVEN · test 10 Studio PASS, Perform UNPROVEN · tests 11, 12
+  UNPROVEN. Packet 7 hardware validation is NOT complete.** Entry below.
 - **COMPOSER 2 / PHASE 0 / PACKET 7 (2026-08-03): ChromaGlow now YIELDS to third-party
   Entertainment sessions.** Branch `fix/third-party-entertainment-consent`, rollback tag
   `checkpoint/pre-composer-packet-7` (at `446fd49`), PR open and **unmerged**. Automatic
@@ -442,6 +544,776 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-04 - [Claude] Hardware Convergence round 4g — one Entertainment session per bridge
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-4g` (at `b14e94b`), PR #60 open and **unmerged**.
+Two fix commits + this docs commit. No new source file, no `project.pbxproj` change, no
+version/build/signing change (verified against `3479243`). Brian's Slice A hardware pass
+confirmed the defect this round removes: start an Entertainment effect on bridge 1, start
+another on bridge 2 — bridge 2 begins streaming and **bridge 1's stream stops**. The stop
+was app-initiated, from two layers that each assumed one global streaming slot:
+
+**(1) The orchestrator's app-driven engine runtime was three global slots** — the engine
+loop task, the live param box, and the Studio REST scope. Any start cancelled whatever loop
+was running (starving the other bridge's 25–50fps DTLS feed even where no explicit stop
+landed), overwrote the live box (slider edits went to whichever engine started last), and
+cleared the other bridge's REST scope. All three are now keyed by bridge:
+`studioEngineRuntimesByBridge` holds one `StudioEngineRuntime` (owning roomID + task +
+paramBox) per bridge, `studioRestScopesByBridge` records each bridge's Studio REST owner,
+and `updateStudioParams(values:colors:bridgeID:)` routes to the exact bridge — the
+selected room's, so with two bridges streaming, the sliders follow the room being looked
+at. The composition path had already made this move (`compositionEntTasks[bridgeID]`);
+round 4g brings the `.appDriven` path — exactly the cards badged "Entertainment Area" —
+to the same shape.
+
+**(2) `StudioViewModel.apply` stopped every streaming row on every bridge.** The
+"only one DTLS session allowed" teardown loop iterated `runningEffects` with no bridge
+predicate — `RoomEffectKey` carries the bridgeID and the `where` clause ignored it — so a
+start on bridge 2 sent bridge 1 a real REST `action=stop` plus a DTLS cancel. The
+app-driven "engine is singleton" loop and the light-overlap loop had the same hole (light
+ids are bridge-local; an id match across bridges is a numbering coincidence, not a shared
+bulb). All three loops now require `rowKey.bridgeID == room.bridgeID`.
+
+**(3) Stops verify ownership before destroying anything.** `stopAppDrivenStudioEffect`
+used to cancel the global task at entry and then suspend three times before touching
+shared state — so a stale stop resuming after a newer same-bridge start could kill the
+newer effect. It now cancels the loop only when the recorded runtime's owning room is the
+exact room being stopped, and the DTLS teardown additionally requires that no newer
+runtime claimed the bridge across the settle suspension and that the session owner's room
+matches. `removeBridge` gains the exact-bridge backstop (runtime, param box, session
+client, owner record — the removed bridge's only), and `reconcileStudioSessionAfterLoop`
+drops the runtime record under the same client-identity guard it already used.
+
+**Same-bridge semantics are unchanged.** One session per bridge still holds: a second
+streaming room on the same bridge replaces the first (promptless within the app-driven
+surface; the handoff questions belong to the composition↔studio crossings), and the
+shared configuration is never stopped out from under its successor —
+`sendBestEffortStop`'s final-owner rule keeps the lights alive across the handover.
+
+**Why 347 multi-bridge tests missed it:** no test ever drove `vm.apply(streaming)` on
+bridge A and then bridge B — the two-bridge tests staged orchestrator state directly and
+left `vm.runningEffects` empty, so the guilty loops iterated an empty dictionary. The new
+tests drive the full production start path over the stubbed DTLS transport: HCS-33 (exact
+per-bridge teardown of scope/box/runtime/session/owner), HCS-34 (a stale stop for a
+replaced room leaves the newer same-bridge effect untouched — deterministic, via the
+staged-runtime seam), HCS-35 (start A then B: both stream, bridge A receives no stop),
+HCS-36 (stopping A leaves B untouched), HCS-37 (same-bridge replacement + final-owner
+stop truth), HCS-38 (slider isolation both ways), HCS-39 (B's start does not cancel A's
+render loop). Guard 12 gained sub-check (n): the per-bridge maps and bridge-aware
+`updateStudioParams` must exist, the dead global symbols (`activeStudioTask`,
+`activeParamBox`, `activeStudioRestScope`) may not return, all three teardown loops keep
+the same-bridge predicate, and the app-driven stop keeps both ownership checks.
+`.cursorrules` and `.cursor/rules/architecture.mdc` no longer teach the false "only ONE
+session can exist" constraint; §V gains rows 19–22 (two-bridge simultaneous streaming,
+cross-bridge stop isolation, per-bridge slider routing, same-bridge switch).
+
+### Validation
+
+Full suite **1399/1399** green (xcresulttool), **twice consecutively** (round 4f was
+1392/1392 ×2; +7 new tests). The two green runs were executed with
+`-parallel-testing-enabled NO`, and that choice is documented evidence, not a dodge:
+parallel-clone runs on this day crashed the test HOST at launch (SIGABRT,
+`swift_task_dealloc_specific` in the Swift Concurrency runtime, 0.000s duration) on
+exactly one test — `PairingPersistenceTests.testConfigureBuildsClientsForBothPairedBridges`
+— under heavy machine load. The crash was proven environmental, not a round-4g
+regression: the untouched round-4f head `b14e94b`, checked out to a clean worktree the
+same day, crashed identically at the same test under a parallel run, while that test
+passed 3/3 in isolation, passed alongside all seven new round-4g tests, and every test
+in the suite passed at least once under the round-4g commits (354/354 focused MBRT,
+1391/1392 with the new tests skipped, and the serial runs' 1399/1399 ×2).
+`MultiBridgeRoutingTests` **354/354** (347 + HCS-33..39). All hardening guards pass (12
+guards + sub-checks j, k, l, m, and the new n). No new source file, no
+`project.pbxproj` change, no version/build/signing change (verified against `3479243`).
+Hardware validation remains open: §V of `docs/ios/master-on-device-checklist.md`, now
+including the round-4g rows 19–22 — the two-bridge simultaneous-streaming retest is the
+merge gate for PR #60.
+
+---
+
+## 2026-08-04 - [Claude] Hardware Convergence round 4f — saved-look Stop truth
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-4f` (at `87d9828`), PR #60 open and **unmerged**.
+One fix commit + this docs commit. No new source file, no `project.pbxproj` change, no
+version/build/signing change (verified against `3479243`). Independent review verified round
+4e's exact live-runtime migration, exact transport claims, exact SSE suppression, and exact
+composition boxes, and found one blocking defect left in `stopSavedBridgeLook`: it called
+`retireManifest` FIRST — whose `forgetManifestRecord` funnel subtracts the stopped chain from
+`bridgeStoredChainOwnership` — and only then asked the shared withdraw whether the room's
+claims should fall, on the condition `bridgeStoredChainOwnership[key] == nil`. A nil key
+cannot distinguish a confirmed-running chain whose entry just emptied from an inert
+`savedNotConfirmedRunning` (or partial-cleanup, or quarantined) chain that never entered the
+ledger. Two opposite bugs: the result sheet's Remove on an INERT manifest removed the exact
+live Now Playing row of the room's still-running REST look (runtime, scheduler, `.rest`
+claim, telemetry, VM row and box all kept going — Dashboard falsely empty), and stopping a
+RUNNING saved look returned only a `Bool`, so Studio could not clean its own row, its editor
+box, or the stale replaced runtime the save-commit had left standing.
+
+**(1) Ownership evidence is captured before retirement and required at every withdraw.**
+`stopSavedBridgeLook` reads the exact key's ledger membership BEFORE its single bridge await;
+capture, retirement, withdrawal and fence verification then run in one synchronous main-actor
+turn (a raced manifest replacement still fails closed through `stillCurrent`). The save path
+had the same shape hidden inside it — `attemptBridgeStoredSave`'s replacement cleanup retires
+predecessors before the outcome arms run — so `withdrawDestroyedBridgeStoredClaims` now takes
+`ownershipEvidence` (the stop's pre-retirement membership; the save arms' pre-attempt
+`predecessorChain`) and `presentationFenceHeld` as REQUIRED parameters with no defaults and
+no ledger fallback. The removal branch fires only for a proven running chain whose exact
+bridge+room set emptied; an inert chain's Remove deletes its bridge resources and manifest
+evidence and touches nothing else.
+
+**(2) Presentation withdrawal is fenced against a newer owner, twice.** A newer playback can
+take the exact key while the bridge delete (or the save's upload) is suspended — and again
+between the orchestrator's return and the VM continuation that applies it. The Stop therefore
+returns a typed `SavedLookStopOutcome` whose `.removed` carries identity
+(`manifestID`/`bridgeID`/`roomID`), the two ownership truths (`removedRunningOwnership`,
+`exactOwnershipSetEmptied`), and an optional `SavedLookPresentationFence` (ownership
+generation + exact playback generation with nil-versus-value preserved + no standing
+`.rest`/`.entertainment` claim) minted only when withdrawal was authorized. Studio's factored
+sync appliers (`applySavedLookStopOutcome`, `applyBridgeSaveOutcome`) re-verify the fence via
+`presentationFenceHolds(_:)` immediately before removing the exact `runningEffects` row and
+`activeCompositionBoxes` entry — never on an unverified Bool, never room-id-only. When the
+running owner's set empties with the fence held, the orchestrator also retires the stale
+replaced runtime, its scheduler membership, and the Composer telemetry session — exactly that
+playback key, and only when no live claim stands on it.
+
+**(3) The destructive save failures carry the same fence, and their copy follows it.**
+`savedNotConfirmedRunning` gains `presentationFence`; `previousLookRemovedSaveFailed` gains
+it and LOSES its precomputed reason string — "nothing is playing on your bridge now" is a
+cross-continuation claim, so the wording is chosen at apply time: a valid fence removes the
+exact row + box and uses the empty-room sentences; a nil or stale fence preserves both and
+uses neutral playback-changed copy (`…PlaybackChanged`) that claims neither emptiness nor
+active playback, because the newer look may itself have stopped again before application.
+
+**Tests.** HCS-07 extended: after the inert Remove, the REST look retains runtime, unchanged
+generation, scheduler membership, exact + aggregate `.rest`, telemetry and publication, and
+still ACCEPTS a generation-matched work item before stopping normally. HCS-08 extended: the
+running Stop's typed outcome plus every-claim-gone assertions (manifest, resources,
+ownership, exact + aggregate claims, publication, telemetry, runtime, scheduler). HCS-10 and
+both HCS-13 variants additionally pin the destroyed predecessor's exact BOX removal (and the
+other bridge's box survival). HCS-14 pins the typed multiplicity truths: one-of-two owners
+subtracts without emptying (no fence); the last owner empties and mints. New: HCS-25 (VM
+inert sheet Remove preserves the live REST look completely, with another bridge's
+same-room-id look untouched), HCS-26 (VM running sheet Stop withdraws every exact claim),
+HCS-27 (A/B same-room-id running-stop isolation through the real sheet path; aggregate falls
+only with the last claimant), HCS-28 (newer REST playback staged mid-stop under a parked
+delete gate survives completely and still accepts work; outcome mints no fence), HCS-29
+(stale Stop outcome applied after a newer start: row/box preserved, sheet still dismisses),
+HCS-30 (stale save-failure outcome: neutral copy, newer look preserved; plus
+start-then-STOP-before-application — still neutral, no unsupported claim in either
+direction), HCS-31 (stale `savedNotConfirmedRunning` headline stays neutral), HCS-32 (the
+production save-path fence under a parked upload via `stageCreationGate`: predecessor retired
+exactly, no fence minted, newer playback fully intact and accepting work). Guard 12 gained
+sub-check (m): required evidence parameters with no ledger fallback, exactly one
+double-gated `removeActiveEffect` in the withdraw, capture-before-await-and-retirement line
+order in the stop body, typed outcome + fence minting, `presentationFenceHolds` existing,
+both VM appliers revalidating before row AND box removal with no room-only cleanup, empty-room
+copy only behind the fence check, and the outcome case carrying no frozen reason.
+
+### Validation
+
+Full suite **1392/1392** green (xcresulttool), **twice consecutively** (round 4e was
+1384/1384 ×2; +8 new tests). `MultiBridgeRoutingTests` **347/347** (339 + HCS-25..32).
+Focused `StudioEffectsV2Tests`/`DashboardDisplayModelBuilderTests`/
+`CompositionLightResolverTests`/`CompositionReactionTests`/
+`CompositionRoomPriorityScorerTests`/`CompositionStoreTests`: **100/100**. Focused
+`EntertainmentAvailabilityTests`/`BridgeAnimationCorrectnessTests`/`MixerTrayMetricsTests`:
+**45/45** (expanded sibling classes `CompositionRotationPlanTests`,
+`EntertainmentAreaSelectorTests`, `BridgeAnimationPacket8Tests` also ran green: 115/115 and
+121/121 in their file groups). All hardening guards pass (12 guards + sub-checks j, k, l, and
+the new m). No new source file, no `project.pbxproj` change, no version/build/signing change
+(verified against `3479243`). Hardware validation remains open: §V of
+`docs/ios/master-on-device-checklist.md`.
+
+---
+
+## 2026-08-04 - [Claude] Hardware Convergence round 4e — presentation identity and runtime identity converge
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-4e` (at `bdb30c5`), PR #60 open and **unmerged**.
+One fix commit + this docs commit. No new source file, no `project.pbxproj` change, no
+version/build/signing change (verified against `3479243`). Independent review verified round
+4d's stop-handoff and removed-group fixes and found a blocking **false exactness**
+underneath them: the VM and Now Playing rows were bridge+room exact, but the real
+composition runtime remained room-ID-only — `compositionGenerations: [String: Int]`,
+`compositionRuntimes: [String: CompositionRuntime]`, `compositionOrder: [String]`. Under
+HCS-16's own collision the second start silently **overwrote the first bridge's core
+runtime**, and `stopCompositionMode(roomID:bridgeID:)` still bumped the bare room's
+generation, removed the room-keyed transport and runtime, and picked the Entertainment
+bridge with `compositionEntRoomByBridge.first(where: { $0.value == roomID })` — dictionary
+order — so an exact stop of bridge A could destroy bridge B's runtime, transport,
+generation, scheduler membership, or Entertainment session while B's presentation rows
+misleadingly survived. The tests passed because they proved rows and telemetry, not
+playback.
+
+**(1) One exact playback key, and the runtime authority re-keyed.**
+`CompositionPlaybackKey {bridgeKey, roomID}` is the core-level exact identity (`bridgeID ??
+"legacy"` normalization — the same convention as `BridgeNativeOwnershipKey` and the
+telemetry keys; no Core dependency on Studio's `RoomEffectKey`). Generations, runtimes, and
+scheduler order are keyed by it end-to-end: start builds the key once; the scheduler's
+priority walk returns exact keys and its staleness eviction can only ever evict its own
+bridge's runtime; completion bookkeeping looks the runtime up by `token.bridgeKey`, making
+the old `restBridgeIdentity` fence structural; `forgetAllBridges` also clears
+`compositionOrder` (a pre-existing leak). SSE suppression stopped being a room-id set:
+`isAppDrivenGroup(bridgeID:roomID:)` is exact, every `applySSEEvent` site passes the
+event's own bridge, so bridge A's composition no longer swallows bridge B's legitimate
+same-room-id updates — and after A stops, B's ownership no longer keeps suppressing A.
+
+**(2) `stopCompositionMode` is exact throughout.** One playback key drives every mutation:
+only that exact generation is bumped, only that exact runtime and scheduler entry fall, and
+Entertainment teardown is **bridge-authoritative** — the caller's bridge is verified
+against `compositionEntRoomByBridge` and only that bridge's param box, task, room mapping,
+caches, and client are stopped. Never dictionary order.
+
+**(3) Exact transport claims; the room map is display only.** New
+`compositionTransportClaims` (playback key → transport) represents RUNNING ownership;
+`compositionTransportByRoom` is now a recomputed compatibility/display aggregate — all
+claimants agree → that value; claimants disagree → the entry is removed (the room-only key
+never silently picks a winner); destructive authority stays with the round-4c ownership
+ledger. `.bridgeStored` claims move WITH that ledger: the first confirmed-running manifest
+raises the claim, and only the exact bridge+room ownership set emptying lowers it — with
+the fail-closed evidence rule intact (standing manifests, ambiguous legacy included, retain
+the label; evidence destruction recomputes it). `savedNotConfirmedRunning` claims
+**nothing**: no ledger entry, no exact claim, no aggregate write — the manifest stays the
+exact stoppable identity and that is all (round 4c's "inert is not the room's look", now
+structural).
+
+**(4) Studio's editor boxes are exact.** `activeCompositionBoxes` is re-keyed by
+`RoomEffectKey` — two same-room-id composition rows no longer share or overwrite one
+editable `CompositionParamBox`, and a stop evicts only its own row's box. The
+Entertainment-handoff confirm resolves the exact owning key first (the room-only lookup
+had correctly failed closed on a collision and needlessly dropped to the blunt teardown
+arm).
+
+**Tests.** `playCollidingLiveLooks` now proves the collision ALL THE WAY DOWN before any
+stop: both exact runtimes, independent generations, scheduler membership, exact REST
+claims, telemetry sessions, rows, publications, and non-aliased boxes. HCS-16 additionally
+pins, after A's exact stop: A's runtime/order/claim/telemetry/box gone, B's runtime
+scheduled with its generation UNCHANGED, its claim/row/publication/box intact, and B still
+ACCEPTING a generation-matched work item (production prime lands its send bookkeeping on
+B's exact runtime — playback proof, not telemetry) — then B's own exact stop clears it.
+HCS-17/18 assert both exact runtimes exist before Stop All and that runtimes, order,
+claims, and telemetry are all gone after (Siri's no-group-off contract intact). HCS-13
+asserts the inert replacement holds no exact claim, plus a new same-room-id variant where
+the OTHER bridge's surviving claim keeps the room aggregate alive. Two SSE-exactness tests
+pin acceptance/suppression per exact bridge before and after a stop. HCS-24 stages
+simultaneous Entertainment ownership on both bridges (stubbed clients, inert tasks) and
+proves an exact stop of A tears down only A's task/client/mapping. HCS-11 was restaged so
+bridge B plays its own look — its old staging borrowed A's box through the room-only key,
+which was precisely the conflation under repair. Guard 12 sub-check (l) pins the keyed
+declarations, the exact stop body (no bare-room mutations, no `first(where:)`, the
+caller-bridge Entertainment guard, claim withdrawal), the no-claim rule for inert saves,
+and bridge+room SSE suppression. `OrchestratorTests.swift` source stays current (still NOT
+in the test target — pbxproj change remains forbidden here); the
+`CompositionRoomPriorityScorerTests` source pin follows the exact-key walk.
+
+### Validation
+
+Full suite **1384/1384** green (xcresulttool), **twice consecutively** (round 4d was
+1380/1380 ×2; +4 new tests). `MultiBridgeRoutingTests` **339/339** (335 + the HCS-13
+variant, two SSE-exactness tests, and HCS-24). Focused `StudioEffectsV2Tests`/
+`DashboardDisplayModelBuilderTests`/`CompositionLightResolverTests`/
+`CompositionReactionTests`/`CompositionRoomPriorityScorerTests`/`CompositionStoreTests`:
+**100/100**. Focused `EntertainmentAvailabilityTests`/`BridgeAnimationCorrectnessTests`/
+`MixerTrayMetricsTests`: **45/45**. All hardening guards pass (12 guards + sub-checks j, k,
+and the new l). No new source file, no `project.pbxproj` change, no version/build/signing
+change (verified against `3479243`). Hardware validation remains open: §V of
+`docs/ios/master-on-device-checklist.md`.
+
+---
+
+## 2026-08-04 - [Claude] Hardware Convergence round 4d — exact identity through Now Playing stops and removed-group teardown
+
+Branch `fix/hardware-convergence-entertainment-targeting`, PR #60 open and **unmerged**. One
+fix commit + this docs commit. No new source file, no `project.pbxproj` change, no
+version/build/signing change (verified against `3479243`). Independent review verified the
+round-4c ledger and manifest-granular cleanup, and found two blocking regressions the
+exact-key rekey itself exposed — both were places that still DOWNGRADED an exact entry to a
+bare room id.
+
+**(1) The live Now Playing stop lost its bridge at the handoff.**
+`requestNowPlayingStop(_ entry:)` treated recovered rows exactly but forwarded every live
+entry to the roomID-only overload, and `studioStopHandler` accepted only `(roomID,
+turnOffLights)`. With two live rows sharing one room id (exactly the state 4c made
+representable), Studio's room-only lookup correctly failed closed — so tapping EITHER exact
+Dashboard row, Dashboard Stop All, or Siri Stop All stopped **neither**. Now:
+`LiveEffectStopTarget {bridgeID, roomID, turnOffLights}` is the core-level exact stop target
+(no Core→UI dependency on `RoomEffectKey`); the handler carries it; an attributed entry
+routes through the new exact `requestNowPlayingStop(bridgeID:roomID:)`; and
+`stopFromNowPlaying(_ target:)` resolves the exact row directly. The roomID-only overload
+remains as the compatibility path: it works when exactly one bridge holds the room id and
+fails closed on a collision. Recovered rows keep their manifest routing untouched.
+
+**(2) Removed-group teardown compared bare group ids with presentation keys.**
+`stopEffectsForRemovedGroups([String])` matched `entry.id` — now the bridge-qualified
+`cg-live:<bridge>:<room>` — so normal live entries matched nothing and could survive bridge
+removal or room/zone deletion, leaving a render loop erroring against a deleted group. It now
+takes exact `RemovedGroupIdentity {bridgeID, roomID}` values and matches on the entry's
+RECORDED bridge + room: `removeBridge` passes only that bridge's rooms and zones,
+`deleteRoom`/`deleteZone` pass the item's exact bridge + group, and teardown routes each
+doomed ENTRY through `requestNowPlayingStop(entry, turnOffLights: false)` — so removing
+bridge A can no longer stop bridge B's same-room-id look, and a doomed loop actually dies.
+
+**Tests.** HCS-16 (exact Dashboard stop under a collision: A stops, B's row/publication/
+runtime survive, then B stops), HCS-17 (Dashboard Stop All stops both colliding entries),
+HCS-18 (Siri Stop All stops both and no group off-PUT reaches either bridge), HCS-19
+(removing bridge A tears down only A; B keeps row, publication, and telemetry session),
+HCS-20/21 (deleting a room/zone on A deletes and stops only A's), HCS-22 (room-only stop
+fails closed on a collision, works once unambiguous), HCS-23 (the handler receives the exact
+bridge+room; a room-only request invents no bridge). Guard 12 sub-check (k) pins the target
+type, the handler signature, the entry routing, and identity-matched removed-group teardown.
+
+**Structural finding, reported honestly:** `HueHomeTests/OrchestratorTests.swift` is NOT a
+member of the HueHomeTests target — zero `project.pbxproj` references and zero symbols in
+the built test bundle. Its tests (including the old removed-groups test) have never executed
+in any recorded suite total. Its source is updated to the new signatures for consistency,
+but the coverage it nominally held now lives in `MultiBridgeRoutingTests`, where it runs.
+Adding the file to the target needs a pbxproj change this PR is forbidden to make — flagging
+for a future run that may touch the project file.
+
+### Validation
+
+Full suite **1380/1380** green (xcresulttool), **twice consecutively** (round 4c was
+1372/1372 ×2). `MultiBridgeRoutingTests` **335/335** (327 + HCS-16..23). Focused
+`EntertainmentAvailabilityTests`/`StudioEffectsV2Tests`/`BridgeAnimationCorrectnessTests`/
+`MixerTrayMetricsTests`: 51/51. All hardening guards pass (12 guards + sub-checks j and k).
+No new source file, no `project.pbxproj` change, no version/build/signing change (verified
+against `3479243`). Hardware validation remains open: §V of
+`docs/ios/master-on-device-checklist.md`.
+
+---
+
+## 2026-08-04 - [Claude] Hardware Convergence round 4c — exact bridge-stored identity under duplicate room ids
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-4c` (at `b4f6cd2`), PR #60 open and **unmerged**.
+One fix commit + this docs commit. No new source file, no `project.pbxproj` change, no
+version/build/signing change (verified against `3479243`). An independent read-only review
+found a blocking defect in round 4b: **every destructive claim-clearing was keyed by room id
+alone**, and two bridges may use the same room id. Bridge B's failed save could erase bridge
+A's transport claim, Now Playing publication and running row; `stopSavedBridgeLook` on B's
+manifest could unlabel A's chain; and `previousLookRemovedSaveFailed` could fire on a
+"predecessor" bridge B never owned — `compositionTransportByRoom[room.id] == .bridgeStored`
+was standing in for ownership proof that the roomID-only key structurally cannot give.
+
+**(1) Ownership is a ledger, not a label.** New `bridgeStoredChainOwnership`
+(`BridgeNativeOwnershipKey` = bridge+room → exact manifest-id set) is THE destructive
+predecessor evidence. It is written at exactly three confirmed-running boundaries — the
+strict save's commit, ordinary play's `.saved` commit, and `publishRecovered` (which is also
+how it repopulates after a relaunch) — and **never** for a saved-but-not-confirmed-running
+chain: inert is not the room's look. Every destruction site subtracts exact manifest ids
+through the existing forget funnels (`forgetManifestRecord`, `forgetRecoveredBridgeAnimation`),
+and a bridge+room key survives while any other recorded chain remains. The save's predecessor
+proof is now `ledger entry present AND corroborated by exactManifests` — an exact-but-inert
+manifest proves nothing, a ledger entry the store no longer backs fails closed, and the
+transport map appears nowhere in the proof (it remains aggregate/display state).
+
+**(2) One exact cleanup rule.** `clearStaleBridgeStoredClaims(roomID:)` is deleted. Both
+save-failure paths and `stopSavedBridgeLook` route through
+`withdrawDestroyedBridgeStoredClaims(bridgeID:roomID:destroyedManifestIDs:retainedManifestIDs:)`:
+subtract ONLY the destroyed ids; remove the bridge-exact live Now Playing row only when that
+bridge's ownership set emptied; clear the shared room-keyed transport entry only when NOTHING
+still claims the room — no bridge's ledger entry, no manifest of any bridge (ambiguous legacy
+manifests count: unattributable identity is retained, never destroyed against), no recovered
+animation — excluding a just-saved inert manifest. `previousLookRemovedSaveFailed` now
+additionally requires exact-lookup proof that no target-bridge chain remains and no ambiguous
+legacy manifest in the room, and carries the destroyed chain's `bridgeID`;
+`savedNotConfirmedRunning` gains `previousLookRemoved`, withdrawing exactly the prior ids
+while the new manifest stays the exact stoppable identity (new honest copy literal for that
+sheet). An unresolved legacy manifest blocks both the entry proof and the absence proof —
+the failed save returns the ordinary non-destructive refusal and clears nothing.
+
+**(3) Same-room-id rows genuinely coexist.** Live `ActiveEffectEntry` rows are now
+bridge-qualified (`cg-live:<bridge>:<room>`, recorded `bridgeID`), with a bridge-exact
+removal; the room-only removal removes only an unambiguous single match and fails closed on
+a collision. `StudioViewModel.runningEffects` is re-keyed by `RoomEffectKey {bridgeID,
+roomID}` with `runningEffect(for:)` (exact) and `runningEffect(forRoomID:)` (exactly-one
+rule, nil on collision — the same fail-closed policy the old comment promised, now enforced
+at read time instead of by key destruction). Recovered-hydration display policy is unchanged
+(duplicate-room recovered rows still mirror for neither; test 6908 intact).
+
+**Tests.** HCS-11: bridge A's real chain on "shared-room" survives bridge B's failed save
+claim-by-claim (manifest, ledger, transport, publication, row) and B gets the ordinary
+refusal, never `previousLookRemovedSaveFailed`. HCS-12: BOTH bridges' rows and publications
+coexist (the collision the old key could not represent — asserted explicitly), then B's
+failed replacement removes exactly B's ids/row/publication while A's ledger still holds
+exactly its captured manifest id and the shared transport entry is retained. HCS-13:
+`savedNotConfirmedRunning` over a removed predecessor — old ids withdrawn, new manifest
+retained and NOT in the ledger, truthful sheet, working exact Stop. HCS-14: stops with
+duplicate room ids AND two chains on one bridge+room key — each stop subtracts exactly its
+own id, the label falls only after the last claim. HCS-15: ambiguous legacy identity fails
+closed. HCS-09 additionally pins the surviving Now Playing publication on ordinary failed
+saves; HCS-07/08/10 intact. Guard 12 sub-check (j): the ledger and shared withdraw must
+exist, `stopSavedBridgeLook` must route through it, `clearStaleBridgeStoredClaims` and the
+`hadBridgeStoredClaim` transport-as-ownership read must stay dead.
+
+### Validation
+
+Full suite **1372/1372** green (xcresulttool), **twice consecutively**.
+`MultiBridgeRoutingTests` **327/327** (322 + the five new HCS-11..15).
+`EntertainmentAvailabilityTests`/`OrchestratorTests`/`StudioEffectsV2Tests`/
+`BridgeAnimationCorrectnessTests` focused: 42/42. All hardening guards pass (12 guards +
+sub-check j). No new source file, no `project.pbxproj` change, no version/build/signing
+change (verified against `3479243`). NOTE: validation ran with default simulator signing —
+`CODE_SIGNING_ALLOWED=NO` strips the keychain entitlement on this machine (OSStatus −34018)
+and spuriously fails the ~87 tests that read bridge credentials; the CLAUDE.md/AGENTS
+canonical command (no signing override) is the correct one. Hardware validation remains
+open: §V of `docs/ios/master-on-device-checklist.md`.
+
+---
+
+## 2026-08-03 - [Claude] Hardware Convergence round 4 — commit-boundary honesty and the transactional save
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-4` (at `3304f27`), PR #60 open and **unmerged**.
+One commit. No new source file, no `project.pbxproj` change, no version/build/signing change.
+Review round 4 found three production-path blockers in round 3; all three are resolved here.
+
+**(1) The final verification fails closed.** `verifyAndCommitEntertainment` committed a healthy
+client even when the fresh activity read returned nil — an unreadable final bridge state was
+treated as verified. A nil read now releases the candidate and returns an explicit
+`verificationUnavailable` (no commit, no consent spend, no fallback, no prompt). The direct
+other-config branch counts only `fresh.foreign.subtracting([target])`: asynchronous terminal
+teardown can release our own ledgers before the read, making the target itself read as foreign
+— that case now routes through the same-target observed-transition proof and is never labelled
+an other-config reacquisition. HCT-19 (healthy client + unreadable read → no commit) and
+HCT-20 (target foreign at the boundary → neither reacquisition event, only
+`chromaGlowReleaseNotProven`) pin both, via a new deterministic on-start staging hook.
+
+**(2) Verification failures start nothing.** Round 3 collapsed release-not-proven and
+observed-inactive-stays into one verdict whose Studio caller started REST — REST writes
+underneath a possibly-unreleased stream, the exact condition refused everywhere else.
+`releaseNotProven` is now its own verdict and both callers (Studio and Composer) refuse with
+the explicit "nothing was changed" copy; the observed session failure propagates
+`couldNotStart` instead of silently changing transport; the fresh prompt is reserved for a
+genuinely proven foreign conflict. HCT-15/17 now assert no fallback runtime of any transport
+and a rendered refusal.
+
+**(3) Save to Bridge is transactional.** The strict save delegated to
+`startCompositionMode`, whose head — the generation bump, the telemetry session, the ownership
+note — replaces the room's current look before the bridge branch runs; the scheduler then
+removed the playing runtime as stale, so a save that went on to FAIL had already stopped the
+look it was supposed to save. The bridge/store work now lives in `attemptBridgeStoredSave`,
+shared by ordinary play and the save so the compensation/quarantine rules cannot drift;
+`saveLookToBridge` preflights (eligibility, gate, bridge, lights, gamut) with ZERO playback
+mutations, runs the core, and replaces the room's look only after a chain is CONFIRMED
+running. `savedNotConfirmedRunning` now preserves the playing look — the chain is inert, since
+activation is the only thing that starts it — and `stopSavedBridgeLook` withdraws the room's
+transport/Now Playing claims only when they belong to the bridge chain being stopped, so the
+result sheet's exact Stop for inert resources cannot erase a live REST look's records. HCS-07
+starts a real REST composition and proves generation, transport and telemetry survive every
+representative failed save (unreadable inventory, upload failure, blocked replacement,
+saved-not-confirmed); HCS-08 proves the successful save replaces the look exactly once, at
+commit. Guard 12: `saveLookToBridge` may not call `startCompositionMode`, and the shared core
+must exist.
+
+### Round 4b — the production-path self-review, and its one finding, closed
+
+The requested self-review of the three production paths confirmed paths 1 and 2 hold (all-nil
+bounded reads correctly yield release-not-proven; only commit-boundary failures refuse, while
+acquire-time failures keep their HCT-05-pinned REST fallback) and found ONE remaining orphanable
+state on path 3: a room whose current look is bridge-stored. Replacement cleanup must remove
+that chain before a new save's upload can fail, so the failure left the transport claim, the
+Now Playing publication, and the VM's running row all asserting a look that provably no longer
+existed. That state is now typed end-to-end: `BridgeSaveOutcome.previousLookRemovedSaveFailed`
+(returned only when the prior claim was `.bridgeStored` and the store provably holds no manifest
+for that room+bridge), every claim of the former chain withdrawn — orchestrator transport,
+active-effect publication, and the VM's `runningEffects` row — with honest copy stating both
+halves: the previous look was removed to make room, and nothing plays on the bridge now.
+`savedNotConfirmedRunning` over a bridge-stored predecessor clears the stale claims too;
+`replacementBlocked` clears nothing (cleanup did not complete, the chain may survive). HCS-07
+additionally pins `roomOwnershipGeneration` untouched by every failed save; HCS-09 (VM-level)
+pins the running-effect row of a playing REST composition surviving a failed save; HCS-10
+(VM-level) pins the exceptional state end-to-end while an unrelated room on the other bridge
+keeps its row and claim.
+
+### Validation
+
+Full suite **1367/1367** green (xcresulttool), **twice consecutively** (round 4b; the round-4
+commit alone was 1365/1365 twice). `MultiBridgeRoutingTests` 322/322. All 12 hardening guards
+pass. No new source file, no `project.pbxproj` change, no version/build/signing change
+(verified against `3479243`). Hardware validation remains open: §V of
+`docs/ios/master-on-device-checklist.md`.
+
+---
+
+## 2026-08-03 - [Claude] Hardware Convergence round 3 — four review blockers on PR #60
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-3` (at `a5b8839`), PR #60 open and **unmerged**.
+Four commits, one per blocker. No new source file, no `project.pbxproj` change, no
+version/build/signing change. Review round 3 found four residual blockers in the amendment
+commit; all four are resolved here. (Context: Adam's lane was blocked by an org-level
+Claude-subscription gate before any of this landed; this run took the lane over in the same
+worktree and branch.)
+
+**(1) Same-target reacquisition was structurally invisible — and is now proven, not inferred.**
+`startSession` registers the target configuration as process-owned *before* `action=start`
+(deliberately, so concurrent cleanup cannot kill our own handshake), which means the activity
+reader can never again call that configuration foreign — the old post-start check was blind to
+Hue Sync reclaiming the exact configuration we target, which is the ordinary one-bridge case.
+That check was also unreachable in every test (the harness's non-hex key fails DTLS first).
+The final verification now runs at the commit boundary (`verifyAndCommitEntertainment`: fresh
+activity read + a second exact session-health check, after the callers' eviction awaits), and
+an active target plus a dead client is *not* treated as proof of another controller — our own
+start can leave the config active briefly. When the exact client is found dead, OUR release is
+requested (`stopSession` now returns a typed `EntertainmentStopRequest`; request success is
+never release proof) and bounded fresh reads observe what actually happened: never-inactive →
+`chromaGlowReleaseNotProven`, no prompt; inactive-then-active-again → reacquisition (the
+`foreignConfigurationReacquiredSameConfig` event additionally requires the consent-time
+observed release), fresh prompt, nothing published; inactive-and-stays → session failure, no
+prompt. Consent is spent at the commit, so a session that dies pre-commit costs nothing.
+Production-path tests HCT-15..18 run over a stubbed DTLS transport with scripted health-check
+death — `.ownershipPublished` fires in a test for the first time.
+
+**(2) Strict bridge save is now structurally strict, and serialized.** Strictness lived only
+inside the bridge-stored do/catch; an empty room or an unreadable light inventory skipped the
+branch and fell through to the REST tail — an app-driven runtime started while the save
+reported "nothing recorded". And the shared `lastBridgeSaveOutcome` mailbox let overlapping
+saves read each other's `manifestID`, which the result sheet's destructive Stop then targeted.
+`strictBridgeSave: Bool` became `bridgeSaveRequestID: UUID?` with a per-request outcome map
+(read-and-removed in a `defer`); light resolution is typed
+(`lights`/`noneInRoom`/`unresolved`) with distinct sentences for "no lights" and "couldn't
+check"; the blocked-replacement refusal records itself in save words; and a per-bridge+room
+in-flight gate makes the second overlapping save return a typed `.saveAlreadyInProgress`
+having performed zero bridge writes (the tray button disables and shows progress). Ordinary
+Play keeps its fallback. Tests HCS-04..06; the V1 spy now answers the capability preflight
+offline (it used to burn a real 10-second timeout per strict-save test).
+
+**(3) Partial-cleanup evidence survives a relaunch.** When the manifest persist failed and
+compensation could not finish, the old block forgot the manifest unconditionally — before even
+inspecting the cleanup result — and the normal persist had *just failed*, so even the
+in-memory record died with the process. `BridgeAnimationStore` gains a quarantine sidecar: an
+independent file written durably *before* the failure is reported, merged by `load()` so a
+quarantined manifest is an ordinary manifest on the next launch (reconciler and
+`stopSavedBridgeLook` need no special path), and cleared only through the proven-deletion
+funnel. `partialCleanupFailure` now carries `manifestID`/`bridgeID`/`recoverableAfterRelaunch`;
+the VM shows it as the result sheet (titled "Save Failed") whose Stop is the immediate exact
+retry; a failed Stop keeps the sheet instead of dismissing the only exact control; and when
+even the quarantine write fails, the copy says plainly that recovery after closing the app is
+not guaranteed. Tests HCQ-01..05 include a simulated relaunch recovering the record and
+driving the exact Stop.
+
+**(4) The Clean Bridge confirmation speaks only about its frozen id.** The dialog's title,
+message and destructive capture read the *live* `cleanBridgeTargetID`, and `resolve()`
+auto-selects whenever exactly one bridge is registered — so selected-B / B-drops-off /
+A-remains silently re-rendered the open dialog as "Clean A?" and the tap wiped A. The exact id
+is now frozen into `cleanBridgeFrozenID` before any destructive confirmation is shown; cancel
+paths and the cleanup's defer clear it; `revalidate` then correctly refuses the gone bridge
+and nothing is deleted. HCC-03 re-commented as pre-confirmation-only; HCC-03b pins the
+reported case.
+
+### Guards
+
+Guard 12 extended (round 3): every Entertainment commit goes through
+`verifyAndCommitEntertainment` (exactly two lowercase `commitEntertainment(` occurrences); the
+`lastBridgeSaveOutcome` literal is banned repo-wide; the Clean Bridge confirmation dialogs may
+not contain `cleanBridgeTargetID` and the frozen id must exist.
+
+### Validation
+
+Full suite **1361/1361** green (xcresulttool), **twice consecutively**.
+`MultiBridgeRoutingTests` 316/316. All 12 hardening guards pass. No new source file, no
+`project.pbxproj` change, no version/build/signing change (verified against `3479243`).
+Hardware validation remains open: §V of `docs/ios/master-on-device-checklist.md` is Brian's
+gate, now including the round-3 distinction between "release not proven" and a genuine
+same-configuration reacquisition.
+
+---
+
+## 2026-08-03 - [Claude] Hardware Convergence Slice A — exact targeting, verified takeover, bridge-run truth
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-entertainment-targeting` (at `3479243`), PR open and
+**unmerged**. Three commits. No new source file, no `project.pbxproj` change, no version or build
+bump. Baseline: merge `3479243` (PR #59), which is the build Brian physically tested.
+
+### What the device pass found
+
+PR #59's fixes held: the cached-unavailable Streaming row is tappable (test 1 PASS), the exact
+copy appeared, external area edits were visible without a relaunch, the foreign takeover prompt
+is reachable (test 3 PASS), and Keep Existing preserved the Hue session without permanently
+blocking a later request (test 4 PASS).
+
+Four new defects, and one non-defect worth recording.
+
+**A. Overlapping areas could not be targeted.** Brian's bridge has an Entertainment Area spanning
+bedroom+bathroom and another spanning bedroom+hallway. Bedroom resolved to one area; hallway and
+bathroom both reported "There's no compatible Entertainment Area for that room". That sentence was
+false — there were two, and no surface let him say which he meant.
+`EntertainmentAreaSelector.select` was doing the right thing (three deliberate `return nil` sites);
+the UI was collapsing "I refuse to guess between several" into "there are none".
+
+**B. Take Over did not produce trustworthy ownership.** Take Over was tapped, Hue Sync stayed in
+control or reclaimed it immediately, ChromaGlow never visibly established control, and the pending
+look only applied once Hue Sync was manually disabled. Two assumptions were responsible, and the
+prompt was right to insist they be distinguished rather than blamed on "stronger Hue permissions":
+a 2xx on the stop PUT was treated as proof the other controller had let go, and `startSession`
+returning was treated as proof a session existed. The second was not even true internally — the
+DTLS `.ready` handler resumed its continuation *beside* the task that commits `.streaming`, so the
+call could return while the actor was still `.connecting`.
+
+**C. App-driven versus bridge-run was invisible.** Effects were observed continuing after a
+force-close, with no recovered Dashboard or Studio row and no exact Stop; other attempts stopped
+with the app, proving those were app-driven. The UI never stated which was which.
+
+**D. The Composer room/zone wheel was obstructed** by the active-effect panel, which could also
+appear and collapse immediately.
+
+### Commit 1 — exact area choice
+
+`EntertainmentAreaSelector.decide` returns a typed decision (`exact` / `choiceRequired` /
+`noCompatible`) alongside the untouched `select`, which still backs the cached availability verdict
+and its ~35 pinned tests. **Every eligible configuration stays its own candidate** under its own
+name and id: two areas over identical lights are two areas to the person who named them, and
+`min(by: id)` picking one is a hidden choice — indistinguishable from a wrong one. Sorting is
+display order only; array order, dictionary order, name, max-overlap and majority membership decide
+nothing, and a tie is escalated rather than broken.
+
+At the orchestrator, `ExactTargetDecision` names six outcomes an optional plan had collapsed into
+nil, and separates two silences that had become one: a bridge that did not answer is
+`unreadableBridge` and fails closed, while a bridge that answered "no areas" is the honest
+Room-mode fallback. Each candidate freezes a whole `EntertainmentTakeoverPlan`, so confirming a
+choice compares against what was on screen rather than replaying a bare configuration id — a
+re-scoped area fails closed instead of streaming somewhere nobody was shown.
+
+The chooser is a sheet (`EntertainmentAreaChooserSheet`, in-file on `StudioView`): area name,
+bridge label — never the IP — rooms covered, light counts, and an amber warning when selecting it
+also controls lights outside the requested room. Choosing an area is target fidelity only: it
+carries no token and authorises no takeover. Direct Streaming, saved Streaming presets, Party and
+Thunderstorm all reach it through the one preflight.
+
+### Commit 2 — verified takeover
+
+`resolveForeignTakeover` now: spends a request token before the first await (a **third** ledger,
+disjoint from the consent and Studio-handoff ledgers) → revalidates the frozen plan → re-reads
+activity → confirms the consented configuration is still the conflict → stops it once → **re-reads
+and verifies it actually went inactive** → and only then resolves. Reacquisition explicitly
+includes the *same* configuration coming back, because Hue Sync reclaiming what it just lost is the
+ordinary case; old consent does not reach it, and a fresh request id is minted.
+
+`HueEntertainmentClient` resumes its `.ready` continuation inside the task that commits
+`.streaming`, and gained `hasStartedSession()`. `acquireEntertainment` gates on it before spending
+consent or claiming anything. Studio's Now Playing badge reads `PlaybackStartOutcome.transport`
+instead of inferring streaming from a client being installed — a client installed is not a session
+streaming, which is precisely how AREA was displayed while Hue Sync held the lights.
+
+The three Studio engine loops (`strobe`/`party`/`thunderstorm`) now check `isTerminallyFailed` the
+way the composition loop always has, and a lost session downgrades ownership and Now Playing with
+an honest notice instead of streaming into a dead socket. New `TakeoverEvent` instrumentation
+separates the four candidate causes the device pass could not tell apart.
+
+Keep Existing is unchanged: zero awaits, zero writes, no token spent, and a later request raises a
+fresh prompt — now covered by a production-path regression test.
+
+### Commit 3 — bridge-run truth and the selector collision
+
+**Investigated before changing anything.** There are two unrelated bridge-save features and the app
+conflated them in the user's mind. The packet-8 *bridge-stored animation* is manifest-backed,
+reconciled and exactly stoppable — but had **no user-facing entry point at all**, being chosen
+implicitly inside `startCompositionMode`. "Save as Hue dynamic scene", buried under Palette → +N
+more, creates a native Hue **scene** that packet 8 never reconciles and ChromaGlow can never stop.
+Both survive a force-close; only one is recoverable. Reconciliation was therefore **not** altered
+speculatively — see the Packet 8 status below.
+
+`BridgeAnimationEngine.upload` no longer starts the chain it creates; `activate(manifest:)` does,
+and it runs only after `BridgeAnimationStore.save` — now `@discardableResult -> Bool`, because
+`persist()` swallowed its error — confirms the manifest reached disk. A failed persist deletes
+exactly the resources the manifest names; a failure to start keeps the manifest as ownership
+evidence and reports "saved but not confirmed running" rather than claiming playback. Every
+manifest removal in the orchestrator now goes through one `forgetManifestRecord` funnel (Guard 10
+caught the two new sites — the fix was to consolidate, not to relax the guard).
+
+The bridge save is a first-class action in the mixer tray, on the **manifest-backed** path, with
+the dynamic-scene export kept as a secondary route that now states its real limitation. The result
+sheet names the bridge, the room, whether it is bridge-run, whether a local preset exists, and
+whether Stop survives a relaunch. Two new `TransportVocabulary` constants carry the distinction.
+
+Clean Bridge Resources gained a confirmation naming the exact bridge and disclosing that it removes
+other rooms' running looks; it resolves the exact bridge client and **fails closed** if it cannot;
+`purgeAllChromaGlowResources` reports what it confirmed deleted; and only manifests whose resources
+are *provably* gone are forgotten — anything refused or unreadable is retained, because the
+manifest is the only record that could still stop what remains.
+
+Part D: `StudioMixerPresentation` holds two pure rules. A room change leaves the tray **collapsed**
+(it used to force it open, and the open tray's full-screen scrim then swallowed the next drag on
+the wheel — both the covering and the appear/collapse flicker came from that one line), and the
+wheel is unmounted only when a streaming look's tray is actually on screen.
+
+### Hardware status — neither packet is complete
+
+Packet 7 follow-up verdicts from Brian's pass on merge `3479243`: tests 1, 3, 4 **PASS** · test 2
+**UNPROVEN** for the original exact-room scenario, with the overlapping-area targeting defect
+**CONFIRMED** · test 5 **FAIL pending instrumented root-cause distinction** · test 6 **BLOCKED** ·
+tests 7, 8, 9 **UNPROVEN** · test 10 Studio **PASS**, Perform **UNPROVEN** · tests 11, 12
+**UNPROVEN**.
+
+Packet 8: the app-driven versus bridge-run setup was not visible enough to interpret what was seen;
+physical effects were observed continuing after force-close with no recovered UI and no Stop; and
+an exact manifest-backed reproduction still needs deterministic confirmation. Treated as a Packet 8
+**trust defect** unless instrumentation proves the affected resources were not manifest-backed —
+which the two-feature finding above makes a live possibility, not a conclusion. **Packet 8 hardware
+validation is NOT complete.**
+
+**Simulator limit, stated plainly:** the test harness pairs bridges with a deliberately non-hex
+client key, so `decodePSK` refuses before a socket is ever opened and **no DTLS handshake can
+succeed in the simulator on any run**. A genuinely stable takeover is therefore hardware-only. What
+is pinned deterministically is ordering, arithmetic, and the refusal to claim a session that did
+not open.
+
+### Review amendments
+
+Four trust defects were found reviewing the first push, and corrected on the same branch.
+
+**Instrumentation claimed a transition nobody watched.** The post-stop branch recorded both
+`foreignConfigurationRemainedActive` and `foreignConfigurationReacquiredSameConfig` from one read.
+Without ever observing an inactive state, a reacquisition is an inference — and an instrument that
+invents transitions sends the next device pass debugging a fiction. The "still active" branch now
+records only that release was not proven. Same-configuration reacquisition is recorded in
+`acquireEntertainment`, after our own start, where an inactive state genuinely was observed first.
+That is also the promised post-start / pre-commit revalidation: a foreign configuration active there
+means we did not win the bridge, so the session is released, the consent is not spent, and the user
+is asked about whatever is actually there. `ownershipPublished` is now emitted at
+`commitEntertainment` — the moment ownership becomes real — and every failure path records that Now
+Playing was withheld.
+
+**An explicit save could silently become app-driven playback.** `saveActiveLookToBridge` called
+`startCompositionMode`, whose bridge-upload catch falls back to REST. That is the right default for
+a tap meaning "play this" and the wrong one for a tap meaning "put this on the bridge": the user was
+shown a sheet titled "Saved" for a look running from the phone, and would have discovered it only
+when closing the app stopped the lights. There is now a strict path — `saveLookToBridge` with
+`strictBridgeSave` — which answers eligibility up front, never falls back, and returns a typed
+`BridgeSaveOutcome`. Ordinary playback keeps its fallback.
+
+**"Saved but not confirmed running" had no immediate Stop.** The manifest persisted and the result
+promised a Now Playing control that did not exist until a relaunch. The result now carries the
+manifest id and offers an exact `stopSavedBridgeLook` directly, and states "Playing now: Not
+confirmed" rather than implying it is running.
+
+**Cleanup picked a bridge for the user.** `registeredBridgeIDs.first` is the lowest-sorting id — not
+an answer to "which of my bridges are you about to wipe?". `CleanBridgeTarget` auto-selects only a
+single registered bridge, requires an explicit choice when there are several, freezes the id at
+confirmation, and revalidates it before deleting; a confirmed id that is no longer registered
+deletes nothing rather than retargeting.
+
+### A pre-existing flake, found and fixed (out of scope — flagging it)
+
+`testSubsetDispatchUsesAbsoluteFrameIndices` asserted a fixed arrival order over concurrently
+dispatched per-light writes. Verified **at merge `3479243`, with none of this slice's changes**: it
+fails **4 runs in 6**. Its actual intent is pairing — L4 receives frame 4, L5 receives frame 5 — so
+it now asserts exactly that and passes 6/6. `main` has therefore been intermittently red for this
+reason, and earlier green totals on this branch were partly luck on that one test.
+
+### Validation
+
+Suite **1348/1348** green (xcresulttool), **twice consecutively**. `MultiBridgeRoutingTests`
+303/303; narrow suites 190/190. All 12 hardening guards pass, including Guard 12
+`composer-hardware-convergence`, now extended to cover all four amendments. No `project.pbxproj`
+change, no version or build bump. Retest checklist: §V of
+`docs/ios/master-on-device-checklist.md`.
 
 ---
 

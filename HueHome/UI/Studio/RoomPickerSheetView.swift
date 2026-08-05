@@ -12,7 +12,7 @@ struct RoomPickerSheetView: View {
     let rooms: [RoomDisplayItem]
     let zones: [RoomDisplayItem]
     let selectedRoom: RoomDisplayItem?
-    let runningEffects: [String: RunningEffect]  // keyed by room ID
+    let runningEffects: [RoomEffectKey: RunningEffect]  // exact bridge+room key (round 4c)
     let onSelect: (RoomDisplayItem) -> Void
 
     @State private var searchText = ""
@@ -121,7 +121,7 @@ struct RoomPickerSheetView: View {
                 }
 
                 // Running effect indicator
-                if let effect = runningEffects[item.id] {
+                if let effect = runningEffects[RoomEffectKey(room: item)] {
                     HStack(spacing: 3) {
                         Circle()
                             .fill(effect.card.accentColor)

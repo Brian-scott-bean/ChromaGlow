@@ -377,26 +377,52 @@ final class OrchestratorTests: XCTestCase {
 
     func testRequestNowPlayingStop_routesThroughInstalledHandler() async {
         orchestrator.addActiveEffect(makeEntry(id: "room-1"))
-        var stopped: [(roomID: String, turnOffLights: Bool)] = []
-        orchestrator.studioStopHandler = { [weak orchestrator] roomID, turnOffLights in
-            stopped.append((roomID, turnOffLights))
-            orchestrator?.removeActiveEffect(roomID: roomID)
+        var stopped: [UnifiedOrchestrator.LiveEffectStopTarget] = []
+        orchestrator.studioStopHandler = { [weak orchestrator] target in
+            stopped.append(target)
+            orchestrator?.removeActiveEffect(roomID: target.roomID)
         }
 
         await orchestrator.requestNowPlayingStop(roomID: "room-1")
 
         XCTAssertEqual(stopped.map(\.roomID), ["room-1"])
+        XCTAssertEqual(stopped.map(\.bridgeID), [nil],
+                       "a room-only request carries no invented bridge")
         // Default is explicit-stop semantics — the Dashboard Stop contract.
         XCTAssertEqual(stopped.map(\.turnOffLights), [true])
+        XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
+    }
+
+    func testRequestNowPlayingStop_entryKeepsItsBridgeIdentity() async {
+        // Round 4d: a bridge-attributed live entry must reach the handler
+        // with its bridge intact — a downgraded room-only request would fail
+        // closed under a room-id collision and stop neither bridge's look.
+        let entry = ActiveEffectEntry(
+            liveBridgeID: "bridge-1", roomID: "room-1", roomName: "Room 1",
+            groupedLightID: "gl-1", effectID: "card", effectName: "Candle",
+            effectIcon: "flame.fill", isAppDriven: false)
+        orchestrator.addActiveEffect(entry)
+        var stopped: [UnifiedOrchestrator.LiveEffectStopTarget] = []
+        orchestrator.studioStopHandler = { [weak orchestrator] target in
+            stopped.append(target)
+            if let bridgeID = target.bridgeID {
+                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID)
+            }
+        }
+
+        await orchestrator.requestNowPlayingStop(entry)
+
+        XCTAssertEqual(stopped.map(\.bridgeID), ["bridge-1"])
+        XCTAssertEqual(stopped.map(\.roomID), ["room-1"])
         XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty)
     }
 
     func testRequestNowPlayingStop_threadsKeepLightsOnThrough() async {
         orchestrator.addActiveEffect(makeEntry(id: "room-1"))
         var received: [Bool] = []
-        orchestrator.studioStopHandler = { [weak orchestrator] roomID, turnOffLights in
-            received.append(turnOffLights)
-            orchestrator?.removeActiveEffect(roomID: roomID)
+        orchestrator.studioStopHandler = { [weak orchestrator] target in
+            received.append(target.turnOffLights)
+            orchestrator?.removeActiveEffect(roomID: target.roomID)
         }
 
         // Siri's "stop the lights" path: effects end, lights stay on.
@@ -415,21 +441,44 @@ final class OrchestratorTests: XCTestCase {
     }
 
     func testStopEffectsForRemovedGroups_stopsOnlyDoomedRooms() async {
-        orchestrator.addActiveEffect(makeEntry(id: "room-1", name: "Strobe"))
-        orchestrator.addActiveEffect(makeEntry(id: "room-2", name: "Candle"))
-        var stopped: [(roomID: String, turnOffLights: Bool)] = []
-        orchestrator.studioStopHandler = { [weak orchestrator] roomID, turnOffLights in
-            stopped.append((roomID, turnOffLights))
-            orchestrator?.removeActiveEffect(roomID: roomID)
+        // Round 4d: bridge-attributed entries (the normal live shape) and
+        // exact doomed identities. Matching is on recorded bridge + room —
+        // a bridge-qualified presentation id compared against a bare group
+        // id would match nothing, and the same room id on ANOTHER bridge is
+        // not doomed at all.
+        func attributed(_ bridgeID: String, _ roomID: String, _ name: String) -> ActiveEffectEntry {
+            ActiveEffectEntry(
+                liveBridgeID: bridgeID, roomID: roomID, roomName: roomID,
+                groupedLightID: "gl-\(roomID)", effectID: "card-\(name)",
+                effectName: name, effectIcon: "flame.fill", isAppDriven: false)
+        }
+        orchestrator.addActiveEffect(attributed("bridge-1", "room-1", "Strobe"))
+        orchestrator.addActiveEffect(attributed("bridge-1", "room-2", "Candle"))
+        orchestrator.addActiveEffect(attributed("bridge-2", "room-1", "Fire"))
+        var stopped: [UnifiedOrchestrator.LiveEffectStopTarget] = []
+        orchestrator.studioStopHandler = { [weak orchestrator] target in
+            stopped.append(target)
+            if let bridgeID = target.bridgeID {
+                orchestrator?.removeActiveEffect(bridgeID: bridgeID, roomID: target.roomID)
+            } else {
+                orchestrator?.removeActiveEffect(roomID: target.roomID)
+            }
         }
 
         // room-ghost has no entry — must be ignored, not crash or over-stop.
-        await orchestrator.stopEffectsForRemovedGroups(["room-1", "room-ghost"])
+        await orchestrator.stopEffectsForRemovedGroups([
+            .init(bridgeID: "bridge-1", roomID: "room-1"),
+            .init(bridgeID: "bridge-1", roomID: "room-ghost"),
+        ])
 
         XCTAssertEqual(stopped.map(\.roomID), ["room-1"])
+        XCTAssertEqual(stopped.map(\.bridgeID), ["bridge-1"],
+                       "the handler receives the exact bridge, not a bare room id")
         XCTAssertEqual(stopped.map(\.turnOffLights), [false],
                        "A doomed group keeps its lights as-is — no goodbye off-PUT")
-        XCTAssertEqual(orchestrator.activeEffectEntries.map(\.id), ["room-2"])
+        XCTAssertEqual(Set(orchestrator.activeEffectEntries.map(\.effectName)),
+                       ["Candle", "Fire"],
+                       "bridge-1's other room and bridge-2's same-room-id look both survive")
     }
 
     func testStopAppDrivenStudioEffect_leavesOtherRoomsAlone() async {
@@ -437,7 +486,10 @@ final class OrchestratorTests: XCTestCase {
         // stopping Room A's app-driven effect must not touch either.
         orchestrator.addActiveEffect(makeEntry(id: "room-A", name: "Strobe"))
         orchestrator.addActiveEffect(makeEntry(id: "room-B", name: "Ocean Waves"))
-        orchestrator.compositionTransportByRoom["room-B"] = .rest
+        // Round 4e: the transport map is a recomputed display aggregate — stage
+        // the exact claim through the runtime stage seam, never a direct write.
+        orchestrator.testStageRESTComposition(
+            roomID: "room-B", bridgeID: "bridge-1", api: client)
 
         await orchestrator.stopAppDrivenStudioEffect(roomID: "room-A", bridgeID: nil)
         // The entry removal for the stopping room happens in StudioViewModel's
@@ -532,12 +584,12 @@ final class OrchestratorTests: XCTestCase {
 
 // MARK: - Test-visible SSE hook
 
-/// A testable shim around the private applySSEEvent — exposed via a @discardableResult
-/// internal wrapper so tests can drive the SSE pipeline without subclassing.
+/// A testable shim around applySSEEvent — kept signature-current (round 4e:
+/// the apply path returns per-kind mutation flags and suppresses by EXACT
+/// bridge+room, so callers must pass the event's own bridge).
 extension UnifiedOrchestrator {
-    /// Internal test accessor — mirrors the private applySSEEvent signature.
     @discardableResult
-    func testApplySSEEvent(_ event: SSEEvent, bridgeID: String) -> Bool {
+    func testApplySSEEvent(_ event: SSEEvent, bridgeID: String) -> (rooms: Bool, zones: Bool) {
         applySSEEvent(event, bridgeID: bridgeID)
     }
 }

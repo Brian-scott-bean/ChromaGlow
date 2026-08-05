@@ -40,6 +40,38 @@
 #              and the third-party consent stay two concepts with two token
 #              ledgers; no unattended surface asks the ownership question; and
 #              the Reduce Motion refusal has exactly one literal.
+#  12. composer-hardware-convergence — the exact-target decision may not
+#              re-collapse into a silent pick, the three consent ledgers stay
+#              disjoint, a stop is never treated as proof of release, the
+#              bridge-save action stays reachable outside Palette → More, the
+#              room wheel is not force-covered by the effect panel, and the
+#              new suites carry no timing waits. Round 3: every Entertainment
+#              commit goes through verifyAndCommitEntertainment (no bare
+#              commit path), the shared save-outcome mailbox stays dead
+#              (bridgeSaveRequestID replaces it), and the Clean Bridge
+#              confirmation speaks only about its FROZEN id — never the live
+#              re-resolution. Round 4c (j): bridge-stored cleanup is exact
+#              identity (ownership ledger + one shared withdraw). Round 4d
+#              (k): the exact stop target survives the Now Playing handoff
+#              and removed-group teardown matches recorded bridge+room.
+#              Round 4e (l): the LIVE runtime authority is exactly keyed —
+#              CompositionPlaybackKey runtimes/generations/order, exact
+#              transport claims (inert saves claim nothing), bridge-
+#              authoritative Entertainment teardown, and bridge+room-exact
+#              SSE suppression. Round 4f (m): saved-look Stop truth — the
+#              withdraw takes caller-captured ownership evidence (a nil
+#              ledger key alone may not remove a live publication),
+#              stopSavedBridgeLook captures that evidence before retirement
+#              destroys it, Studio consumes the typed outcome and
+#              revalidates the presentation fence before every row/box
+#              removal, and invalid-fence copy stays neutral (no emptiness
+#              claim, no unproven active-playback claim). Round 4g (n): the
+#              app-driven engine runtime (loop task, live param box, Studio
+#              REST scope) is keyed by BRIDGE — the global slots whose
+#              teardown let a start on bridge 2 stop bridge 1's stream may
+#              not return, apply's teardown loops carry the same-bridge
+#              predicate, and the app-driven stop verifies exact bridge+room
+#              ownership before cancelling anything.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -526,6 +558,475 @@ p7f_wait_hits=$(grep -nE 'Task\.sleep|XCTWaiter|wait\(for:' "$P7F_TESTS" 2>/dev/
 if [[ -n "$p7f_wait_hits" ]]; then
     fail "composer-p7-followup" $'timing wait in the availability tests:\n'"$p7f_wait_hits"
 fi
+
+# ──────────────────────────────────────────────────────────────
+# Guard 12 (composer-hardware-convergence): the hardware pass's four defects
+# stay fixed.
+#
+# Brian's device pass on merged PR #59 found:
+#
+#  (a) A bridge with an area over bedroom+bathroom and another over
+#      bedroom+hallway reported "no compatible Entertainment Area" for the
+#      hallway and the bathroom. The selector was right to refuse to guess; the
+#      UI was wrong to render that refusal as absence. The fix is a typed
+#      decision in which every eligible configuration stays its own candidate —
+#      so the tie-break that must never come back is `min(by: id)` inside
+#      `decide`. Sorting is display order; it may not choose or hide a target.
+#
+#  (b) Take Over reported success while Hue Sync kept control. A 2xx on the
+#      stop PUT was read as proof the other controller had let go, and
+#      `startSession` returning was read as proof a session existed. Both
+#      verifications must stay present, and the takeover request ledger must
+#      stay disjoint from the other two.
+#
+#  (c) Effects kept running after a force-close with no recovered row and no
+#      Stop. The manifest must be durable BEFORE anything is activated, and the
+#      bridge-save action must be reachable without Palette → +N more.
+#
+#  (d) Scrolling the room wheel onto a room with a running effect threw the
+#      customization panel open over it. The room-change handler may not force
+#      the tray open.
+#
+# Behavioural proof lives in the suites; these are the source invariants that
+# would let the behaviour quietly regress.
+
+HC_ORCH="HueHome/Core/Network/UnifiedOrchestrator.swift"
+HC_VM="HueHome/UI/Studio/StudioViewModel.swift"
+HC_VIEW="HueHome/UI/Studio/StudioView.swift"
+HC_SELECTOR="HueHome/Core/Network/EntertainmentConfigManager.swift"
+
+# (a) The decision exists, and never breaks a tie by lowest id.
+for sym in 'static func decide(' 'case choiceRequired(' 'struct ExactAreaCandidate'; do
+    if ! grep -q "$sym" "$HC_SELECTOR"; then
+        fail "composer-hardware-convergence" "'$sym' is missing from $HC_SELECTOR — the exact-target decision collapsed back into an optional"
+    fi
+done
+
+hc_decide_body=$(awk '/static func decide\(/,/^    }$/' "$HC_SELECTOR" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_decide_body" | grep -qE 'min\(by:|\.min \{|\.first \{'; then
+    fail "composer-hardware-convergence" $'decide() breaks a tie instead of escalating it — identical light sets must stay separate candidates:\n'"$(echo "$hc_decide_body" | grep -nE 'min\(by:|\.min \{|\.first \{')"
+fi
+
+for sym in 'case choiceRequired(' 'case staleSelection' 'case unreadableBridge' \
+           'case noCompatiblePlan' 'case ambiguousOwnership' 'func exactTargetDecision('; do
+    if ! grep -q "$sym" "$HC_ORCH"; then
+        fail "composer-hardware-convergence" "'$sym' is missing from $HC_ORCH — a named outcome was folded back into another"
+    fi
+done
+
+# The chooser is target fidelity only. It must never mint a consent token.
+hc_choice_body=$(awk '/func confirmAreaChoice\(/,/^    }$/' "$HC_VM" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_choice_body" | grep -qE 'EntertainmentConsent\(|consumedEntertainmentConsents|consumedForeignTakeoverRequests'; then
+    fail "composer-hardware-convergence" "confirmAreaChoice mints or spends a consent token — choosing WHERE is not agreeing to replace anyone"
+fi
+
+# (b) Verification present, and the three ledgers stay disjoint.
+for sym in 'func hasStartedSession('; do
+    if ! grep -q "$sym" "HueHome/Core/Network/HueEntertainmentClient.swift"; then
+        fail "composer-hardware-convergence" "'$sym' is missing — 'startSession returned' would again be treated as proof a session exists"
+    fi
+done
+if ! grep -q 'consumedForeignTakeoverRequests' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the foreign-takeover request ledger is missing from $HC_ORCH"
+fi
+
+hc_takeover_body=$(awk '/func resolveForeignTakeover\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+hc_activity_reads=$(echo "$hc_takeover_body" | grep -cE 'entertainmentActivity\(onBridge:' || echo 0)
+if [[ "$hc_activity_reads" -lt 2 ]]; then
+    fail "composer-hardware-convergence" "resolveForeignTakeover reads bridge activity $hc_activity_reads time(s): it must read once BEFORE the stop and again AFTER it — sending a stop is not proof of release"
+fi
+
+# One answer may not spend another question's token.
+hc_ledger_mix=$(grep -nE '(consumedForeignTakeoverRequests.*consumedStudioHandoffRequests|consumedStudioHandoffRequests.*consumedForeignTakeoverRequests|consumedForeignTakeoverRequests.*consumedEntertainmentConsents|consumedEntertainmentConsents.*consumedForeignTakeoverRequests)' \
+    "$HC_ORCH" 2>/dev/null | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_ledger_mix" ]]; then
+    fail "composer-hardware-convergence" $'two consent ledgers are used on one line — a token spendable by the wrong question is not a token:\n'"$hc_ledger_mix"
+fi
+
+# (c) Durable before running, and reachable outside Palette → More.
+if ! grep -q 'func activate(manifest:' "HueHome/Core/Network/BridgeAnimationEngine.swift"; then
+    fail "composer-hardware-convergence" "BridgeAnimationEngine.activate is missing — upload would again start the chain before the manifest is durable"
+fi
+hc_upload_body=$(awk '/func upload\(/,/^    }$/' "HueHome/Core/Network/BridgeAnimationEngine.swift" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_upload_body" | grep -q 'setSensorStatus'; then
+    fail "composer-hardware-convergence" "upload() starts the chain itself — resources would run before the manifest that names them is on disk"
+fi
+if ! grep -q 'func saveActiveLookToBridge(' "$HC_VM"; then
+    fail "composer-hardware-convergence" "the first-class bridge-save action is missing from $HC_VM"
+fi
+hc_save_entry=$(grep -rln 'saveActiveLookToBridge' HueHome/UI 2>/dev/null \
+    | grep -v 'StudioViewModel.swift' || true)
+if [[ -z "$hc_save_entry" ]]; then
+    fail "composer-hardware-convergence" "no UI surface invokes saveActiveLookToBridge — the bridge save would be reachable only through Palette → More again"
+fi
+
+# (d) Landing on a room may not force the effect panel open over the wheel.
+if ! grep -q 'static let collapsedOnRoomChange = true' "$HC_VIEW"; then
+    fail "composer-hardware-convergence" "the room-change collapse rule is missing or inverted in $HC_VIEW — the tray would cover the room wheel mid-scroll again"
+fi
+hc_roomchange=$(awk '/onChange\(of: vm.selectedRoom\?.id\)/,/^        }$/' "$HC_VIEW" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_roomchange" | grep -qE 'isMixerCollapsed = false'; then
+    fail "composer-hardware-convergence" "the room-change handler forces the mixer open — that is the selector collision"
+fi
+
+# (e) Instrumentation may only record what was observed.
+#
+# The first version recorded BOTH "remained active" and "reacquired the same
+# configuration" from one post-stop read. Without ever seeing an inactive
+# state, a reacquisition is a transition nobody watched — and an instrument
+# that invents transitions sends the next device pass debugging a fiction.
+hc_remained_body=$(awk '/if after.foreign.contains\(foreignConfigID\)/,/^        }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_remained_body" | grep -q 'foreignConfigurationReacquiredSameConfig'; then
+    fail "composer-hardware-convergence" "the 'still active' branch claims a reacquisition it never observed — no inactive state was seen there"
+fi
+
+# Ownership publication is recorded at the commit, and nowhere else.
+hc_publish_sites=$(grep -cE 'noteTakeoverEvent\(\.ownershipPublished' "$HC_ORCH" 2>/dev/null || echo 0)
+if [[ "$hc_publish_sites" -ne 1 ]]; then
+    fail "composer-hardware-convergence" "expected exactly 1 ownershipPublished emission (at the commit), found $hc_publish_sites"
+fi
+hc_commit_body=$(awk '/func commitEntertainment\(/,/^    }$/' "$HC_ORCH" 2>/dev/null || true)
+if ! echo "$hc_commit_body" | grep -q 'ownershipPublished'; then
+    fail "composer-hardware-convergence" "commitEntertainment does not record ownershipPublished — the event would drift from the moment ownership becomes real"
+fi
+
+# (f) An explicit save may never become app-driven playback.
+if ! grep -q 'func saveLookToBridge(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the strict bridge-save entry point is missing from $HC_ORCH"
+fi
+if ! grep -q 'func attemptBridgeStoredSave(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the shared bridge-save core is gone — the save and ordinary-play paths would drift apart again"
+fi
+# Round 4: the save is TRANSACTIONAL. saveLookToBridge may never re-enter
+# startCompositionMode — its head replaces the room's current look (the
+# generation bump invalidates the running runtime), so a save that failed
+# there had already stopped the look it was supposed to save.
+hc_save_body=$(awk '/func saveLookToBridge\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_save_body" | grep -q 'startCompositionMode('; then
+    fail "composer-hardware-convergence" "saveLookToBridge calls startCompositionMode — a failed save would invalidate the running look before the refusal"
+fi
+# The shared save-outcome mailbox stays dead (round 3). A single slot read
+# across suspension points is how one save's Stop button ended up pointed at
+# another save's manifest.
+if grep -rq 'lastBridgeSaveOutcome' HueHome/; then
+    fail "composer-hardware-convergence" "lastBridgeSaveOutcome is back — overlapping saves would read each other's outcome again"
+fi
+hc_vm_save=$(awk '/func saveActiveLookToBridge\(/,/^    }$/' "$HC_VM" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_vm_save" | grep -q 'startCompositionMode('; then
+    fail "composer-hardware-convergence" "the first-class save calls startCompositionMode directly — its upload catch falls back to app-driven REST, which would show a 'Saved' sheet for a look that was never saved"
+fi
+
+# (g) A saved-but-not-running look must be removable immediately.
+if ! grep -q 'func stopSavedBridgeLook(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the immediate exact Stop for a saved look is missing from $HC_ORCH"
+fi
+if ! grep -q 'stoppableManifestID' "$HC_VM"; then
+    fail "composer-hardware-convergence" "the save result no longer carries a manifest to stop — resources would exist with no way to remove them before a relaunch"
+fi
+
+# (h) The destructive sweep may not pick a bridge for the user.
+hc_settings="HueHome/UI/Settings/SettingsView.swift"
+if ! grep -q 'enum CleanBridgeTarget' "$hc_settings"; then
+    fail "composer-hardware-convergence" "CleanBridgeTarget is missing — bridge selection for a destructive sweep would be inline and unprovable"
+fi
+hc_arbitrary=$(grep -nE 'registeredBridgeIDs\.first|clients\.values\.first|HueAPIClient\.shared' "$hc_settings" 2>/dev/null \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_arbitrary" ]]; then
+    fail "composer-hardware-convergence" $'Clean Bridge Resources picks a bridge arbitrarily — lowest-sorting id is not an answer to "which bridge are you about to wipe?":\n'"$hc_arbitrary"
+fi
+# (h2, round 3) The OPEN destructive dialog may not consult the live
+# resolution. cleanBridgeTargetID re-resolves from the current registry; with
+# bridge B chosen and lost mid-dialog, one remaining bridge auto-selects and
+# the dialog silently retargets. Only the frozen id may appear from the first
+# confirmationDialog to the end of the sweep's message.
+hc_dialogs=$(awk '/confirmationDialog\(/,/other bridges aren.t touched/' "$hc_settings" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_dialogs" | grep -q 'cleanBridgeTargetID'; then
+    fail "composer-hardware-convergence" "a Clean Bridge confirmation dialog reads the LIVE cleanBridgeTargetID — an open destructive dialog must speak only about its frozen id"
+fi
+if ! grep -q 'cleanBridgeFrozenID' "$hc_settings"; then
+    fail "composer-hardware-convergence" "the frozen cleanup identity is gone — the confirmation would re-resolve its target from live state again"
+fi
+
+# (i, round 3) Every Entertainment commit goes through the final
+# verification. Exactly two lowercase call-shaped occurrences may exist: the
+# definition and the one call inside verifyAndCommitEntertainment. (The
+# wrapper's own name contains a capital C and does not match.)
+hc_commit_calls=$(grep -c 'commitEntertainment(' "$HC_ORCH" 2>/dev/null || echo 0)
+if [[ "$hc_commit_calls" -ne 2 ]]; then
+    fail "composer-hardware-convergence" "expected exactly 2 'commitEntertainment(' occurrences (definition + the verified call), found $hc_commit_calls — an unverified commit path is growing back"
+fi
+if ! grep -q 'func verifyAndCommitEntertainment(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "verifyAndCommitEntertainment is missing — commits would no longer be preceded by the final fresh-read + session-health verification"
+fi
+
+# (j, round 4c) Bridge-stored cleanup is exact identity, never room-id-only.
+# The ownership ledger (bridge + room → manifest ids) is the sole destructive
+# proof, one shared withdraw rule serves both the save failures and the exact
+# Stop, and the round-4b room-id-only clearing may not grow back.
+if grep -rq 'clearStaleBridgeStoredClaims' HueHome/; then
+    fail "composer-hardware-convergence" "clearStaleBridgeStoredClaims is back — room-id-only clearing erases another bridge's same-room-id claims"
+fi
+if ! grep -q 'bridgeStoredChainOwnership' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the exact bridge-stored ownership ledger is gone — destructive predecessor proof would fall back to the roomID-keyed transport map"
+fi
+if ! grep -q 'private func withdrawDestroyedBridgeStoredClaims(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "withdrawDestroyedBridgeStoredClaims is missing — save and stop cleanup would diverge again"
+fi
+hc_stop_body=$(awk '/func stopSavedBridgeLook\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if ! echo "$hc_stop_body" | grep -q 'withdrawDestroyedBridgeStoredClaims('; then
+    fail "composer-hardware-convergence" "stopSavedBridgeLook no longer routes through the shared exact withdraw — stopping bridge B's manifest could unlabel bridge A's same-room-id chain"
+fi
+if echo "$hc_save_body" | grep -q 'hadBridgeStoredClaim'; then
+    fail "composer-hardware-convergence" "saveLookToBridge reads the room-id-only transport claim as ownership proof again — bridge A's claim must never lend destructive authority to a save on bridge B"
+fi
+
+# (k, round 4d) The exact-key rekey must not be undone at the stop handoff:
+# a bridge-attributed Now Playing entry keeps its bridge identity all the way
+# to Studio, and removed-group teardown matches recorded bridge + room —
+# never bare group ids against bridge-qualified presentation keys.
+if ! grep -q 'struct LiveEffectStopTarget' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "LiveEffectStopTarget is gone — the stop handler would fall back to a bare room id and fail closed under a room-id collision, stopping neither bridge's look"
+fi
+if ! grep -q 'var studioStopHandler: (@MainActor (LiveEffectStopTarget) async -> Void)?' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "studioStopHandler no longer carries the exact bridge+room target"
+fi
+hc_entry_stop=$(awk '/func requestNowPlayingStop\(_ entry:/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if ! echo "$hc_entry_stop" | grep -q 'bridgeID: bridgeID'; then
+    fail "composer-hardware-convergence" "requestNowPlayingStop(_ entry:) downgrades attributed entries to the roomID-only overload — tapping either exact Dashboard row under a collision would stop neither"
+fi
+hc_removed_groups=$(awk '/func stopEffectsForRemovedGroups\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if echo "$hc_removed_groups" | grep -qE 'entry\.id|\$0\.id'; then
+    fail "composer-hardware-convergence" "stopEffectsForRemovedGroups compares presentation keys — bridge-qualified live ids match no bare group id, so doomed effects would survive removal"
+fi
+if ! echo "$hc_removed_groups" | grep -q 'RemovedGroupIdentity'; then
+    fail "composer-hardware-convergence" "stopEffectsForRemovedGroups lost its exact-identity input"
+fi
+hc_removed_ids=$(grep -c 'RemovedGroupIdentity(bridgeID:' "$HC_ORCH" 2>/dev/null || echo 0)
+if [[ "$hc_removed_ids" -lt 3 ]]; then
+    fail "composer-hardware-convergence" "expected bridge removal + room delete + zone delete to pass exact RemovedGroupIdentity values (>=3 sites), found $hc_removed_ids"
+fi
+
+# (l, round 4e) The LIVE runtime authority is exactly keyed. Rounds 4c/4d
+# made the presentation and the destructive bridge-stored cleanup exact while
+# the real playback runtime stayed room-id-keyed: the second same-room-id
+# start silently overwrote the first bridge's runtime, and an exact stop of
+# bridge A could invalidate bridge B's generation, evict B from the
+# scheduler, or tear down B's Entertainment session picked by dictionary
+# order. These pins keep the runtime authority — not just the rows — keyed
+# by CompositionPlaybackKey.
+if ! grep -q 'struct CompositionPlaybackKey' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "CompositionPlaybackKey is gone — the runtime authority would fall back to bare room ids"
+fi
+for sym in 'compositionGenerations: \[CompositionPlaybackKey: Int\]' \
+           'compositionRuntimes: \[CompositionPlaybackKey: CompositionRuntime\]' \
+           'compositionOrder: \[CompositionPlaybackKey\]' \
+           'compositionTransportClaims: \[CompositionPlaybackKey: CompositionTransport\]'; do
+    if ! grep -qE "$sym" "$HC_ORCH"; then
+        fail "composer-hardware-convergence" "'$sym' is missing — a runtime structure lost its exact playback key"
+    fi
+done
+hc_bare_keys=$(grep -nE 'compositionGenerations: \[String:|compositionRuntimes: \[String:|compositionOrder: \[String\]' "$HC_ORCH" 2>/dev/null \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_bare_keys" ]]; then
+    fail "composer-hardware-convergence" $'a composition runtime structure is keyed by bare room id again:\n'"$hc_bare_keys"
+fi
+hc_stop_comp_body=$(awk '/func stopCompositionMode\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+hc_stop_room_keyed=$(echo "$hc_stop_comp_body" | grep -nE 'compositionRuntimes\.removeValue\(forKey: roomID\)|compositionGenerations\[roomID\]|compositionEntRoomByBridge\.first\(where:' || true)
+if [[ -n "$hc_stop_room_keyed" ]]; then
+    fail "composer-hardware-convergence" $'stopCompositionMode mutates by bare room id or picks an Entertainment bridge by dictionary order — an exact stop of one bridge would destroy the other bridge\047s same-room-id runtime:\n'"$hc_stop_room_keyed"
+fi
+if ! echo "$hc_stop_comp_body" | grep -q 'compositionEntRoomByBridge\[entBridgeKey\] == roomID'; then
+    fail "composer-hardware-convergence" "stopCompositionMode no longer verifies the CALLER's bridge owns the room before Entertainment teardown"
+fi
+if ! echo "$hc_stop_comp_body" | grep -q 'removeCompositionTransportClaim('; then
+    fail "composer-hardware-convergence" "stopCompositionMode does not withdraw the exact transport claim — another bridge's same-room-id claim would fall with it"
+fi
+if ! grep -q 'func recomputeCompositionTransportAggregate(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the transport aggregate recompute is gone — the room-only map would become writable authority again"
+fi
+# An inert saved-not-confirmed chain may never create a transport claim.
+hc_snc_arms=$(awk '/case \.savedNotConfirmedRunning/,/return \./' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+hc_snc_claims=$(echo "$hc_snc_arms" | grep -nE 'setCompositionTransportClaim\(|compositionTransportByRoom\[[^]]*\][[:space:]]*=' || true)
+if [[ -n "$hc_snc_claims" ]]; then
+    fail "composer-hardware-convergence" $'a savedNotConfirmedRunning arm writes a transport claim — an inert chain is not the room\047s look:\n'"$hc_snc_claims"
+fi
+# SSE suppression is bridge+room exact — never a rebuilt room-id set.
+if ! grep -q 'func isAppDrivenGroup(bridgeID:' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "the exact SSE-suppression predicate is missing — suppression would conflate bridges sharing a room id"
+fi
+hc_sse_room_set=$(grep -nE 'appDrivenGroupIDs|compositionRuntimes\.keys\.map\(\\?\.roomID\)' "$HC_ORCH" 2>/dev/null \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_sse_room_set" ]]; then
+    fail "composer-hardware-convergence" $'a room-id-only app-driven suppression set is back — bridge A\047s composition would suppress bridge B\047s legitimate SSE:\n'"$hc_sse_room_set"
+fi
+hc_sse_body=$(awk '/func applySSEEvent\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if ! echo "$hc_sse_body" | grep -q 'isAppDrivenGroup(bridgeID: bridgeID'; then
+    fail "composer-hardware-convergence" "applySSEEvent does not pass the event's bridge into the suppression check"
+fi
+
+# (m, round 4f) Saved-look Stop truth. `retireManifest` subtracts the
+# ownership ledger BEFORE the shared withdraw runs, so a nil ledger key
+# cannot distinguish "this chain's ownership just emptied" from "this chain
+# never ran" — and removing a live publication on a merely-nil key is how an
+# inert manifest's Remove unpublished the room's still-running REST look.
+# The withdraw therefore takes caller-captured evidence and a caller-verified
+# newer-owner fence; the stop captures both before retirement; Studio
+# consumes the typed outcome and revalidates the fence at the moment it
+# mutates presentation state; and invalid-fence copy claims neither
+# emptiness nor active playback.
+hc_withdraw_body=$(awk '/private func withdrawDestroyedBridgeStoredClaims\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if ! echo "$hc_withdraw_body" | grep -q 'ownershipEvidence: Set<UUID>'; then
+    fail "composer-hardware-convergence" "withdrawDestroyedBridgeStoredClaims lost its required ownershipEvidence — destructive ownership would be inferred from the post-cleanup ledger again"
+fi
+if echo "$hc_withdraw_body" | grep -qE 'ownershipEvidence: Set<UUID>[[:space:]]*=|presentationFenceHeld: Bool[[:space:]]*='; then
+    fail "composer-hardware-convergence" "the withdraw's evidence or fence parameter grew a default — every caller must capture and pass its own proof"
+fi
+if ! echo "$hc_withdraw_body" | grep -q 'presentationFenceHeld: Bool'; then
+    fail "composer-hardware-convergence" "withdrawDestroyedBridgeStoredClaims lost its presentation fence — a newer playback's publication could be withdrawn by an old look's cleanup"
+fi
+if ! echo "$hc_withdraw_body" | grep -q 'destroyedWereRunningOwners'; then
+    fail "composer-hardware-convergence" "the withdraw no longer derives running ownership from caller evidence — an inert manifest's Remove could unpublish the room's live look"
+fi
+if echo "$hc_withdraw_body" | grep -qE '^[[:space:]]*if bridgeStoredChainOwnership\[key\] == nil \{'; then
+    fail "composer-hardware-convergence" "the withdraw removes on a merely-nil ownership key again — nil cannot distinguish an emptied running chain from a chain that never ran"
+fi
+hc_withdraw_removes=$(echo "$hc_withdraw_body" | grep -c 'removeActiveEffect(' || true)
+if [[ "$hc_withdraw_removes" -ne 1 ]]; then
+    fail "composer-hardware-convergence" "expected exactly one gated removeActiveEffect in the withdraw, found $hc_withdraw_removes — publication removal must sit behind the evidence and fence gates"
+fi
+if ! echo "$hc_withdraw_body" | grep -q 'if presentationFenceHeld {'; then
+    fail "composer-hardware-convergence" "the withdraw's publication removal is not fenced — a newer playback that took the key mid-suspension would lose its Now Playing row"
+fi
+# The stop must capture its evidence BEFORE the bridge await and BEFORE
+# retirement destroys it (hc_stop_body extracted in sub-check j).
+hc_stop_capture_line=$(echo "$hc_stop_body" | grep -n 'bridgeStoredChainOwnership\[' | head -1 | cut -d: -f1)
+hc_stop_await_line=$(echo "$hc_stop_body" | grep -n 'bridgeAnimationEngine\.stop(' | head -1 | cut -d: -f1)
+hc_stop_retire_line=$(echo "$hc_stop_body" | grep -n 'retireManifest(' | head -1 | cut -d: -f1)
+if [[ -z "$hc_stop_capture_line" || -z "$hc_stop_await_line" || -z "$hc_stop_retire_line" ]] \
+    || [[ "$hc_stop_capture_line" -ge "$hc_stop_await_line" ]] \
+    || [[ "$hc_stop_capture_line" -ge "$hc_stop_retire_line" ]]; then
+    fail "composer-hardware-convergence" "stopSavedBridgeLook no longer captures its ownership evidence before the bridge await and the retirement — after retireManifest the ledger cannot say whether the stopped chain was running"
+fi
+if ! echo "$hc_stop_body" | grep -q 'SavedLookStopOutcome'; then
+    fail "composer-hardware-convergence" "stopSavedBridgeLook no longer returns the typed outcome — Studio cannot tell an inert removal from a running-look withdrawal"
+fi
+if ! echo "$hc_stop_body" | grep -q 'SavedLookPresentationFence'; then
+    fail "composer-hardware-convergence" "stopSavedBridgeLook mints no presentation fence — the VM would mutate rows and boxes on an unverifiable authorization"
+fi
+if ! grep -q 'func presentationFenceHolds(' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "presentationFenceHolds is gone — a returned authorization could not be revalidated after the orchestrator→VM continuation gap"
+fi
+# Studio's appliers: typed consumption, fence revalidation before EVERY
+# row/box removal, no room-only cleanup, and apply-time copy truth.
+hc_apply_stop=$(awk '/func applySavedLookStopOutcome\(/,/^    }$/' "$HC_VM" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+hc_apply_save=$(awk '/func applyBridgeSaveOutcome\(/,/^    }$/' "$HC_VM" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if [[ -z "$hc_apply_stop" || -z "$hc_apply_save" ]]; then
+    fail "composer-hardware-convergence" "the factored VM outcome appliers are gone — the continuation-gap race would be untestable and the fence unverified at mutation time"
+fi
+if ! echo "$hc_apply_stop" | grep -q 'case .removed'; then
+    fail "composer-hardware-convergence" "Studio no longer switches on the typed saved-look Stop outcome"
+fi
+for body_name in hc_apply_stop hc_apply_save; do
+    body=${!body_name}
+    fence_line=$(echo "$body" | grep -n 'presentationFenceHolds(' | head -1 | cut -d: -f1)
+    row_line=$(echo "$body" | grep -n 'runningEffects\.removeValue' | head -1 | cut -d: -f1)
+    box_line=$(echo "$body" | grep -n 'activeCompositionBoxes\.removeValue' | head -1 | cut -d: -f1)
+    if [[ -z "$fence_line" || -z "$row_line" || -z "$box_line" ]] \
+        || [[ "$fence_line" -ge "$row_line" ]] || [[ "$fence_line" -ge "$box_line" ]]; then
+        fail "composer-hardware-convergence" "$body_name mutates a running row or composition box without first revalidating the presentation fence — a look that started after the outcome returned would be erased"
+    fi
+    if echo "$body" | grep -qE 'removeActiveEffect\(roomID:|runningEffect\(forRoomID:'; then
+        fail "composer-hardware-convergence" "$body_name uses room-id-only cleanup — presentation removal must be exact bridge+room identity"
+    fi
+done
+# Copy truth: the empty-room sentences may be chosen only behind the
+# apply-time fence check, and the invalid-fence branch may use only the
+# neutral superseded-state wording. The outcome itself may not freeze an
+# emptiness claim.
+hc_save_fence_line=$(echo "$hc_apply_save" | grep -n 'fenceValid' | head -1 | cut -d: -f1)
+hc_save_empty_line=$(echo "$hc_apply_save" | grep -nE 'BridgeSaveCopy\.(previousLookRemovedSaveFailed|savedNotConfirmedPreviousLookRemoved)$' | head -1 | cut -d: -f1)
+if [[ -z "$hc_save_fence_line" || -z "$hc_save_empty_line" ]] \
+    || [[ "$hc_save_fence_line" -ge "$hc_save_empty_line" ]]; then
+    fail "composer-hardware-convergence" "applyBridgeSaveOutcome selects the empty-room wording without an apply-time fence check — the UI could claim 'nothing is playing' over a newer look's playback"
+fi
+if ! echo "$hc_apply_save" | grep -q 'previousLookRemovedSaveFailedPlaybackChanged' \
+    || ! echo "$hc_apply_save" | grep -q 'savedNotConfirmedPreviousLookRemovedPlaybackChanged'; then
+    fail "composer-hardware-convergence" "the neutral superseded-state wording is gone — an invalid fence would have to claim emptiness or playback it cannot prove"
+fi
+if grep -qE 'case previousLookRemovedSaveFailed\(bridgeID: String, reason' "$HC_ORCH"; then
+    fail "composer-hardware-convergence" "previousLookRemovedSaveFailed carries a precomputed reason again — the emptiness claim would be frozen before the continuation gap it cannot see across"
+fi
+
+# (n, round 4g) One app-driven engine per BRIDGE. The hardware pass proved
+# the defect: the engine task, live param box, and Studio REST scope were
+# single global slots, and StudioViewModel.apply stopped every streaming row
+# on every bridge before a start — so starting Entertainment on bridge 2
+# stopped bridge 1's stream. The per-bridge maps must stay, the dead global
+# symbols may not return, the VM's teardown loops must keep their same-bridge
+# predicate, and the app-driven stop must keep proving exact bridge+room
+# ownership before it cancels or removes anything.
+for sym in 'studioEngineRuntimesByBridge: [String: StudioEngineRuntime]' \
+           'studioRestScopesByBridge: [String: RestScope]' \
+           'func updateStudioParams(values: [String: Double], colors: [String: Color], bridgeID: String?)'; do
+    if ! grep -qF "$sym" "$HC_ORCH"; then
+        fail "composer-hardware-convergence" "'$sym' is missing from $HC_ORCH — the per-bridge app-driven engine runtime collapsed back toward a global slot"
+    fi
+done
+hc_global_slots=$(grep -nE 'activeStudioTask|activeParamBox|activeStudioRestScope' "$HC_ORCH" "$HC_VM" \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_global_slots" ]]; then
+    fail "composer-hardware-convergence" $'a dead global studio slot symbol is back — one bridge\'s start could again destroy another bridge\'s runtime:\n'"$hc_global_slots"
+fi
+hc_unscoped_ent_loop=$(grep -nE 'in runningEffects where effect\.isEntertainment' "$HC_VM" \
+    | grep -v 'rowKey.bridgeID == room.bridgeID' || true)
+if [[ -n "$hc_unscoped_ent_loop" ]]; then
+    fail "composer-hardware-convergence" $'apply\'s entertainment teardown loop lost its same-bridge predicate — starting on one bridge would stop every bridge\'s stream again:\n'"$hc_unscoped_ent_loop"
+fi
+hc_bridge_predicates=$(grep -c 'rowKey.bridgeID == room.bridgeID' "$HC_VM" || true)
+if [[ "$hc_bridge_predicates" -lt 3 ]]; then
+    fail "composer-hardware-convergence" "expected the same-bridge predicate on all three of apply's teardown loops (engine-singleton, entertainment, light-overlap), found $hc_bridge_predicates"
+fi
+hc_appstop_body=$(awk '/func stopAppDrivenStudioEffect\(/,/^    }$/' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+if ! echo "$hc_appstop_body" | grep -q 'runtime.roomID == roomID'; then
+    fail "composer-hardware-convergence" "stopAppDrivenStudioEffect no longer verifies the runtime's owning room before cancelling — a stale stop could kill a newer same-bridge effect's loop"
+fi
+if ! echo "$hc_appstop_body" | grep -q 'studioEngineRuntimesByBridge\[bid\] == nil'; then
+    fail "composer-hardware-convergence" "stopAppDrivenStudioEffect no longer checks for a newer runtime across its settle suspension — a stale stop could tear down a successor's session"
+fi
+
+# No timing waits in the suites that carry this slice's behaviour.
+HC_TESTS=(
+    "HueHomeTests/MultiBridgeRoutingTests.swift"
+    "HueHomeTests/EntertainmentAvailabilityTests.swift"
+    "HueHomeTests/BridgeAnimationCorrectnessTests.swift"
+)
+for f in "${HC_TESTS[@]}"; do
+    [[ -f "$f" ]] || continue
+    hc_wait_hits=$(grep -nE 'Task\.sleep|XCTWaiter|wait\(for:' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    if [[ -n "$hc_wait_hits" ]]; then
+        fail "composer-hardware-convergence" $'timing wait in a hardware-convergence suite: '"$f"$':\n'"$hc_wait_hits"
+    fi
+done
 
 # ──────────────────────────────────────────────────────────────
 
