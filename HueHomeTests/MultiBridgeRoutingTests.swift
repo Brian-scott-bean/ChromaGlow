@@ -12000,4 +12000,200 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         await stopBothStreams(vm)
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Stop-isolation diagnostics (PR #60): audit-proven stop routes
+    // ──────────────────────────────────────────────
+    //
+    // Brian's Round 4g hardware retest failed checklist §V row 20: with party
+    // streaming on bridge 1 and strobe on bridge 2, stopping the strobe from
+    // its own Studio surface also killed bridge 1's stream — its Now Playing
+    // row vanished and its bulbs froze on the last frame (no restore, so no
+    // action=stop reached it). No static path reproduces that at this head;
+    // these tests drive the EXACT user route over the stub transport with the
+    // DEBUG stop-audit ledger recording every destructive operation, so the
+    // same evidence exists in tests and on the instrumented device build.
+
+    /// The strobe card — Brian's bridge-2 effect in the failing hardware run.
+    private func strobeCard(_ vm: StudioViewModel) throws -> StudioCard {
+        try XCTUnwrap(vm.liveModeCards.first { $0.id == "strobe" })
+    }
+
+    /// Bounded deterministic progress proof: yield until the bridge's client
+    /// records MORE send attempts than `snapshot`. Yield-only — this suite
+    /// bans timing waits — with a generous bound because the render loops
+    /// pace themselves on their own 20 ms frame cadence. Fails loudly if the
+    /// loop never advances; a stalled loop is exactly the hardware symptom.
+    private func expectSendProgress(onBridge bridgeID: String, beyond snapshot: Int,
+                                    _ message: String) async {
+        for _ in 0..<200_000 {
+            await Task.yield()
+            if let now = await orchestrator.testSendAttempts(forBridge: bridgeID),
+               now > snapshot { return }
+        }
+        XCTFail("no send progress on \(bridgeID) beyond \(snapshot) — \(message)")
+    }
+
+    /// Drain the post-stop asynchronous tail deterministically: a cancelled
+    /// engine loop's reconciliation ALWAYS records its outcome to the audit
+    /// ledger, so waiting (bounded, yield-only) for that exact event replaces
+    /// any sleep and fails clearly if the tail never runs.
+    private func drainUntilReconcileRecorded(bridgeID: String, roomID: String) async {
+        for _ in 0..<200_000 {
+            if orchestrator.stopAuditEvents.contains(where: {
+                $0.operation == .reconcileCleanup
+                    && $0.bridgeID == bridgeID && $0.roomID == roomID
+            }) { return }
+            await Task.yield()
+        }
+        XCTFail("the \(bridgeID)/\(roomID) engine loop never recorded its reconciliation — post-stop tail did not drain")
+    }
+
+    /// HCS-40 — the hardware row-20 sequence, through the exact user route:
+    /// party on bridge A, strobe on bridge B, wheel on B's room, stop via
+    /// explicitStop (the card / tray / param-sheet Stop). Bridge B must fall
+    /// exactly and completely; bridge A must keep its row, runtime, task,
+    /// client, and owner AND keep producing frames; and the audit ledger must
+    /// name bridge B alone.
+    func testExplicitStopOfStrobeOnBridgeBLeavesPartyOnBridgeAStreaming() async throws {
+        let vm = armDualBridgeStreaming()
+        let party = try streamingCard(vm)
+        let strobe = try strobeCard(vm)
+        let roomA = streamRoomOnA()
+        let roomB = streamRoomOnB()
+
+        await vm.apply(party, roomOverride: roomA, preferEntertainmentOverride: true)
+        await vm.apply(strobe, roomOverride: roomB, preferEntertainmentOverride: true)
+        XCTAssertEqual(bridgeA.entertainmentStarts, ["area-a"],
+            "precondition: A streams (status: \(vm.statusMessage))")
+        XCTAssertEqual(bridgeB.entertainmentStarts, ["area-b"],
+            "precondition: B streams (status: \(vm.statusMessage))")
+
+        // Both loops are genuinely producing frames before the stop.
+        let sendsA0Read = await orchestrator.testSendAttempts(forBridge: "bridge-a")
+        let sendsB0Read = await orchestrator.testSendAttempts(forBridge: "bridge-b")
+        let sendsA0 = try XCTUnwrap(sendsA0Read)
+        let sendsB0 = try XCTUnwrap(sendsB0Read)
+        await expectSendProgress(onBridge: "bridge-a", beyond: sendsA0, "party loop before the stop")
+        await expectSendProgress(onBridge: "bridge-b", beyond: sendsB0, "strobe loop before the stop")
+
+        // The hardware route: wheel on B's room, Stop from strobe's surface.
+        vm.selectedRoom = roomB
+        orchestrator.testResetStopAudit()
+        await vm.explicitStop(strobe)
+        await drainUntilReconcileRecorded(bridgeID: "bridge-b", roomID: roomB.id)
+
+        // B received exactly one intended stop, as one coherent audit chain.
+        let events = orchestrator.stopAuditEvents
+        XCTAssertEqual(bridgeB.entertainmentStops, ["area-b"],
+            "B's stop reached B's bridge, once, for the exact area")
+        let opsForB = events.filter { $0.bridgeID == "bridge-b" }.map(\.operation)
+        XCTAssertTrue(opsForB.contains(.taskCancelled), "B's loop was cancelled")
+        XCTAssertTrue(opsForB.contains(.clientStopSession), "B's client was stopped")
+        XCTAssertTrue(opsForB.contains(.actionStopSent), "B's action=stop went out")
+        XCTAssertTrue(opsForB.contains(.rowRemoved), "B's Studio row was removed")
+        XCTAssertTrue(opsForB.contains(.nowPlayingRemoved), "B's Now Playing row was removed")
+        for event in events where event.route != .reconcileAfterLoop {
+            XCTAssertEqual(event.route, .explicitStop,
+                "every stop op came from the explicitStop route: \(event)")
+        }
+
+        // Bridge A appears in NO audit event and keeps everything.
+        let strayEvents = events.filter { $0.bridgeID == "bridge-a" }
+        XCTAssertTrue(strayEvents.isEmpty,
+            "no teardown operation of any kind touched bridge A: \(strayEvents)")
+        XCTAssertTrue(bridgeA.entertainmentStops.isEmpty,
+            "no action=stop of any kind reached bridge A")
+        XCTAssertNotNil(vm.runningEffect(forRoomID: roomA.id), "A's row survives")
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-a"),
+            "A's session client remains installed")
+        XCTAssertEqual(orchestrator.testStudioEngineTaskIsCancelled(forBridge: "bridge-a"), false,
+            "A's render loop was not cancelled")
+        XCTAssertNotNil(orchestrator.testStudioEntertainmentOwner(onBridge: "bridge-a"),
+            "A's owner record remains")
+        XCTAssertNotNil(liveNowPlayingRow(bridgeID: "bridge-a", roomID: roomA.id),
+            "A's Now Playing row remains")
+
+        // …and A KEEPS producing frames after B's teardown fully drained.
+        let sendsA1Read = await orchestrator.testSendAttempts(forBridge: "bridge-a")
+        let sendsA1 = try XCTUnwrap(sendsA1Read)
+        await expectSendProgress(onBridge: "bridge-a", beyond: sendsA1, "party loop after B's stop")
+
+        // B's structures are genuinely gone.
+        XCTAssertNil(vm.runningEffect(forRoomID: roomB.id), "B's row is gone")
+        XCTAssertFalse(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+            "B's session client was released")
+        XCTAssertFalse(orchestrator.testHasStudioEngineTask(forBridge: "bridge-b"),
+            "B's engine runtime is gone")
+        XCTAssertNil(liveNowPlayingRow(bridgeID: "bridge-b", roomID: roomB.id))
+
+        // Exact final cleanup: stop A through the same user route.
+        vm.selectedRoom = roomA
+        orchestrator.testResetStopAudit()
+        await vm.explicitStop(party)
+        await drainUntilReconcileRecorded(bridgeID: "bridge-a", roomID: roomA.id)
+        XCTAssertEqual(bridgeA.entertainmentStops, ["area-a"],
+            "A's own stop reached A, once, for the exact area")
+        XCTAssertNil(vm.runningEffect(forRoomID: roomA.id))
+        XCTAssertFalse(orchestrator.testHasEntertainmentClient(forBridge: "bridge-a"))
+        XCTAssertFalse(orchestrator.testHasStudioEngineTask(forBridge: "bridge-a"))
+    }
+
+    /// HCS-41 — control: the explicitStop route is a single-row stop. It must
+    /// never record a Stop All invocation or reach the forget-all teardown,
+    /// and it requests exactly one row-level stop.
+    func testExplicitStopDoesNotInvokeStopAll() async throws {
+        let vm = armDualBridgeStreaming()
+        let party = try streamingCard(vm)
+        let strobe = try strobeCard(vm)
+        await vm.apply(party, roomOverride: streamRoomOnA(), preferEntertainmentOverride: true)
+        await vm.apply(strobe, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
+
+        vm.selectedRoom = streamRoomOnB()
+        orchestrator.testResetStopAudit()
+        await vm.explicitStop(strobe)
+        await drainUntilReconcileRecorded(bridgeID: "bridge-b", roomID: streamRoomOnB().id)
+
+        let events = orchestrator.stopAuditEvents
+        XCTAssertFalse(events.contains { $0.operation == .stopAllInvoked },
+            "explicitStop never records a Stop All invocation")
+        XCTAssertFalse(events.contains { $0.operation == .stopStudioModeInvoked },
+            "…and never reaches the forget-all global teardown")
+        XCTAssertEqual(events.filter { $0.operation == .stopRequested
+                                        && $0.outcomeReason == "rowStop" }.count, 1,
+            "exactly one row-level stop was requested")
+
+        await stopBothStreams(vm)
+    }
+
+    /// HCS-42 — diagnostic pin of TODAY's behavior, not a fix: when a
+    /// composition claim holds the bridge, the app-driven stop cancels the
+    /// loop but silently skips the Entertainment teardown, leaving the client
+    /// installed and the session unstopped. The audit must record that skip
+    /// with its exact reason so the hardware trace can name it.
+    func testAppDrivenStopRecordsSilentEntertainmentTeardownSkip() async {
+        orchestrator.testInstallStudioEngineRuntime(
+            bridgeKey: "bridge-b", roomID: "room-b", values: ["speed": 60])
+        _ = await seededStudioOwner(
+            suite: "MultiBridgeRoutingTests.hcs42", bridgeID: "bridge-b",
+            ip: "192.0.2.2", roomID: "room-b", configID: "cfg-b", spy: bridgeB)
+        orchestrator.testSetCompositionEntRoom(bridgeID: "bridge-b", roomID: "room-x")
+
+        orchestrator.testResetStopAudit()
+        await orchestrator.stopAppDrivenStudioEffect(roomID: "room-b", bridgeID: "bridge-b")
+
+        let events = orchestrator.stopAuditEvents
+        XCTAssertTrue(events.contains { $0.operation == .taskCancelled && $0.bridgeID == "bridge-b" },
+            "the engine loop was cancelled")
+        let skip = events.first { $0.operation == .entertainmentGuardSkipped }
+        XCTAssertEqual(skip?.bridgeID, "bridge-b", "the skip names its bridge")
+        XCTAssertEqual(skip?.outcomeReason, "compositionClaim room=room-x",
+            "…and the exact guard that refused")
+        XCTAssertFalse(events.contains { $0.operation == .clientStopSession },
+            "no client stop ran — the session was silently abandoned (recorded, unchanged)")
+        XCTAssertTrue(bridgeB.entertainmentStops.isEmpty,
+            "no action=stop reached the bridge")
+        XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
+            "today's skip leaves the client installed — pinned as a diagnostic fact")
+    }
 }
