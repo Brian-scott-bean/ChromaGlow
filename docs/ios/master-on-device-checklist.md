@@ -832,6 +832,10 @@ with an explanation is the designed answer; a silent no-op is not.
 | 16 | Two bridge-run looks in two rooms | Both recover; stopping one leaves the other running | |
 | 17 | Clean Bridge Resources | Confirmation names the exact bridge; result states what was removed and what was not | |
 | 18 | Scroll the room wheel onto a room with a running effect | Wheel stays visible and usable; the panel does not cover it or flicker | |
+| 19 | **Round 4g.** Start a streaming look (Party/Strobe/Thunderstorm) on bridge 1, then start one on bridge 2 | BOTH bridges stream at the same time; bridge 1's lights keep animating after bridge 2 starts | |
+| 20 | **Round 4g.** With both bridges streaming, stop ONE of them | The other bridge's stream keeps running, its Now Playing row stays, and its controls still work | |
+| 21 | **Round 4g.** With both bridges streaming, move a slider in each room | The edit changes only that room's bridge; the other bridge's look is unaffected | |
+| 22 | **Round 4g.** With bridge 2 streaming, start a second streaming room on bridge 2 | The app ASKS (switch prompt); confirming stops the old room and streams the new one — same-bridge exclusivity unchanged | |
 
 Items 6, 7 and 8 need a second controller (Hue Sync or the Hue app) and cannot be
 produced in the simulator — the test harness deliberately cannot complete a DTLS

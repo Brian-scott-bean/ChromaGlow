@@ -91,6 +91,25 @@
   chosen at apply time (a nil/stale fence gets neutral playback-changed copy claiming
   neither emptiness nor playback). Suite 1392/1392 ×2, MultiBridgeRoutingTests 347/347,
   guard 12 sub-check (m).
+  **ROUND 4G (2026-08-04): one Entertainment session per BRIDGE — the confirmed two-bridge
+  hardware defect** (rollback tag `checkpoint/pre-hardware-convergence-round-4g` at
+  `b14e94b`): Brian's Slice A device pass confirmed that starting a streaming look on
+  bridge 2 stopped bridge 1's stream. The stop was app-initiated: `StudioViewModel.apply`
+  stopped every streaming row on every bridge before a start ("only one DTLS session
+  allowed" was a stale global invariant — the real Hue constraint is per bridge), and the
+  orchestrator's engine task, live param box, and Studio REST scope were single global
+  slots, so bridge 2's start also cancelled bridge 1's 25–50fps render loop. The engine
+  runtime is now a per-bridge record (owning room + task + box), the three `apply` teardown
+  loops carry the same-bridge predicate (including the light-overlap loop — light ids are
+  bridge-local), `stopAppDrivenStudioEffect` proves exact bridge+room ownership before
+  cancelling or removing anything (a stale stop that loses the race to a newer same-bridge
+  start touches nothing), `removeBridge` clears exactly the removed bridge's runtime,
+  session, and owner record, and slider edits route to the selected room's bridge. Same-
+  bridge exclusivity is unchanged: a second room on the same bridge still replaces the
+  first, and a shared configuration is never stopped out from under its successor
+  (final-owner rule). Suite 1399/1399 ×2, MultiBridgeRoutingTests 354/354 (HCS-33..39),
+  guard 12 sub-check (n); §V gains hardware rows 19–22 (two-bridge simultaneous streaming,
+  cross-bridge stop isolation, per-bridge slider routing, same-bridge switch).
   **Neither Packet 7 nor Packet 8 hardware validation is complete — Brian must run §V** in
   `docs/ios/master-on-device-checklist.md`. Entries below.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
@@ -525,6 +544,93 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-08-04 - [Claude] Hardware Convergence round 4g — one Entertainment session per bridge
+
+Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
+`checkpoint/pre-hardware-convergence-round-4g` (at `b14e94b`), PR #60 open and **unmerged**.
+Two fix commits + this docs commit. No new source file, no `project.pbxproj` change, no
+version/build/signing change (verified against `3479243`). Brian's Slice A hardware pass
+confirmed the defect this round removes: start an Entertainment effect on bridge 1, start
+another on bridge 2 — bridge 2 begins streaming and **bridge 1's stream stops**. The stop
+was app-initiated, from two layers that each assumed one global streaming slot:
+
+**(1) The orchestrator's app-driven engine runtime was three global slots** — the engine
+loop task, the live param box, and the Studio REST scope. Any start cancelled whatever loop
+was running (starving the other bridge's 25–50fps DTLS feed even where no explicit stop
+landed), overwrote the live box (slider edits went to whichever engine started last), and
+cleared the other bridge's REST scope. All three are now keyed by bridge:
+`studioEngineRuntimesByBridge` holds one `StudioEngineRuntime` (owning roomID + task +
+paramBox) per bridge, `studioRestScopesByBridge` records each bridge's Studio REST owner,
+and `updateStudioParams(values:colors:bridgeID:)` routes to the exact bridge — the
+selected room's, so with two bridges streaming, the sliders follow the room being looked
+at. The composition path had already made this move (`compositionEntTasks[bridgeID]`);
+round 4g brings the `.appDriven` path — exactly the cards badged "Entertainment Area" —
+to the same shape.
+
+**(2) `StudioViewModel.apply` stopped every streaming row on every bridge.** The
+"only one DTLS session allowed" teardown loop iterated `runningEffects` with no bridge
+predicate — `RoomEffectKey` carries the bridgeID and the `where` clause ignored it — so a
+start on bridge 2 sent bridge 1 a real REST `action=stop` plus a DTLS cancel. The
+app-driven "engine is singleton" loop and the light-overlap loop had the same hole (light
+ids are bridge-local; an id match across bridges is a numbering coincidence, not a shared
+bulb). All three loops now require `rowKey.bridgeID == room.bridgeID`.
+
+**(3) Stops verify ownership before destroying anything.** `stopAppDrivenStudioEffect`
+used to cancel the global task at entry and then suspend three times before touching
+shared state — so a stale stop resuming after a newer same-bridge start could kill the
+newer effect. It now cancels the loop only when the recorded runtime's owning room is the
+exact room being stopped, and the DTLS teardown additionally requires that no newer
+runtime claimed the bridge across the settle suspension and that the session owner's room
+matches. `removeBridge` gains the exact-bridge backstop (runtime, param box, session
+client, owner record — the removed bridge's only), and `reconcileStudioSessionAfterLoop`
+drops the runtime record under the same client-identity guard it already used.
+
+**Same-bridge semantics are unchanged.** One session per bridge still holds: a second
+streaming room on the same bridge replaces the first (promptless within the app-driven
+surface; the handoff questions belong to the composition↔studio crossings), and the
+shared configuration is never stopped out from under its successor —
+`sendBestEffortStop`'s final-owner rule keeps the lights alive across the handover.
+
+**Why 347 multi-bridge tests missed it:** no test ever drove `vm.apply(streaming)` on
+bridge A and then bridge B — the two-bridge tests staged orchestrator state directly and
+left `vm.runningEffects` empty, so the guilty loops iterated an empty dictionary. The new
+tests drive the full production start path over the stubbed DTLS transport: HCS-33 (exact
+per-bridge teardown of scope/box/runtime/session/owner), HCS-34 (a stale stop for a
+replaced room leaves the newer same-bridge effect untouched — deterministic, via the
+staged-runtime seam), HCS-35 (start A then B: both stream, bridge A receives no stop),
+HCS-36 (stopping A leaves B untouched), HCS-37 (same-bridge replacement + final-owner
+stop truth), HCS-38 (slider isolation both ways), HCS-39 (B's start does not cancel A's
+render loop). Guard 12 gained sub-check (n): the per-bridge maps and bridge-aware
+`updateStudioParams` must exist, the dead global symbols (`activeStudioTask`,
+`activeParamBox`, `activeStudioRestScope`) may not return, all three teardown loops keep
+the same-bridge predicate, and the app-driven stop keeps both ownership checks.
+`.cursorrules` and `.cursor/rules/architecture.mdc` no longer teach the false "only ONE
+session can exist" constraint; §V gains rows 19–22 (two-bridge simultaneous streaming,
+cross-bridge stop isolation, per-bridge slider routing, same-bridge switch).
+
+### Validation
+
+Full suite **1399/1399** green (xcresulttool), **twice consecutively** (round 4f was
+1392/1392 ×2; +7 new tests). The two green runs were executed with
+`-parallel-testing-enabled NO`, and that choice is documented evidence, not a dodge:
+parallel-clone runs on this day crashed the test HOST at launch (SIGABRT,
+`swift_task_dealloc_specific` in the Swift Concurrency runtime, 0.000s duration) on
+exactly one test — `PairingPersistenceTests.testConfigureBuildsClientsForBothPairedBridges`
+— under heavy machine load. The crash was proven environmental, not a round-4g
+regression: the untouched round-4f head `b14e94b`, checked out to a clean worktree the
+same day, crashed identically at the same test under a parallel run, while that test
+passed 3/3 in isolation, passed alongside all seven new round-4g tests, and every test
+in the suite passed at least once under the round-4g commits (354/354 focused MBRT,
+1391/1392 with the new tests skipped, and the serial runs' 1399/1399 ×2).
+`MultiBridgeRoutingTests` **354/354** (347 + HCS-33..39). All hardening guards pass (12
+guards + sub-checks j, k, l, m, and the new n). No new source file, no
+`project.pbxproj` change, no version/build/signing change (verified against `3479243`).
+Hardware validation remains open: §V of `docs/ios/master-on-device-checklist.md`, now
+including the round-4g rows 19–22 — the two-bridge simultaneous-streaming retest is the
+merge gate for PR #60.
 
 ---
 

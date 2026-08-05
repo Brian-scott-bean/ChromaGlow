@@ -9,7 +9,7 @@ globs:
 ## Critical Hue Bridge Constraints
 1. **NEVER send `effects` field to `grouped_light`** — the bridge silently ignores it. Effects are per-light ONLY via `setLightNativeEffect()`.
 2. **Use `childResourceRefs` for room membership** — resolve lights from in-memory data, never call API at apply time.
-3. **Entertainment API (DTLS) is bridge-wide** — only ONE session can exist. Starting a new one kills the old one. UX must communicate this.
+3. **Entertainment API (DTLS) is one session PER BRIDGE** — each bridge holds at most one session, and different bridges stream independently and simultaneously. Starting a new session on a bridge replaces that bridge's old one (with consent); it must never touch another bridge's. UX must communicate the same-bridge exclusivity.
 4. **Rate limits**: grouped_light = ~1 PUT/sec, individual light = ~10 PUT/sec. Use `RestSender.enqueue()` for all REST calls in render loops.
 
 ## State Management
