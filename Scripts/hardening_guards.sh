@@ -668,10 +668,28 @@ fi
 if ! grep -q 'static let collapsedOnRoomChange = true' "$HC_VIEW"; then
     fail "composer-hardware-convergence" "the room-change collapse rule is missing or inverted in $HC_VIEW — the tray would cover the room wheel mid-scroll again"
 fi
-hc_roomchange=$(awk '/onChange\(of: vm.selectedRoom\?.id\)/,/^        }$/' "$HC_VIEW" 2>/dev/null \
+# The anchor tracks the handler, not one spelling of its key: Track A C1
+# re-keyed it from `vm.selectedRoom?.id` to the exact StudioSelectionKey, and a
+# pattern pinned to the old spelling would have matched nothing and passed
+# vacuously — a guard that cannot fail is not a guard.
+hc_roomchange=$(awk '/onChange\(of: vm.selectedRoom/,/^        }$/' "$HC_VIEW" 2>/dev/null \
     | grep -vE '^[[:space:]]*//' || true)
+if [[ -z "$hc_roomchange" ]]; then
+    fail "composer-hardware-convergence" "the selectedRoom onChange handler is gone from $HC_VIEW — the room-change collapse rule is unenforceable"
+fi
 if echo "$hc_roomchange" | grep -qE 'isMixerCollapsed = false'; then
     fail "composer-hardware-convergence" "the room-change handler forces the mixer open — that is the selector collision"
+fi
+
+# (d2, Track A C1) Selection-keyed side effects stay EXACT. Two bridges can
+# expose the same Hue room id, so a bare-id key means the coverage task never
+# refires and Deck 0 labels bridge A's capabilities as bridge B's room. The
+# per-BRIDGE entertainment sweep at the same site is deliberately excluded — it
+# is keyed by bridgeID on purpose.
+hc_bare_selection=$(grep -nE '\.(task|onChange)\(of: vm\.selectedRoom\?\.id\)|\.task\(id: vm\.selectedRoom\?\.id\)' "$HC_VIEW" 2>/dev/null \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_bare_selection" ]]; then
+    fail "composer-hardware-convergence" $'a Studio selection side effect is keyed by bare room id again — it will not refire between two bridges sharing a room id:\n'"$hc_bare_selection"
 fi
 
 # (e) Instrumentation may only record what was observed.

@@ -310,13 +310,22 @@ struct StudioView: View {
         // the selector became unusable. Arriving collapsed keeps the wheel
         // free; the "Live Controls" pill is right there when the editor is
         // what the user actually wants.
-        .onChange(of: vm.selectedRoom?.id) { _, _ in
+        //
+        // Keyed EXACTLY (bridge + group + kind), not by bare room id: two
+        // bridges can share a Hue room id, and switching between them is a room
+        // change the user can see — a bare-id key would leave the tray open over
+        // the wheel for the arriving room.
+        .onChange(of: vm.selectedRoom.map(StudioSelectionKey.init)) { _, _ in
             isMixerCollapsed = StudioMixerPresentation.collapsedOnRoomChange
             isMixerExpanded = false
         }
-        // Coverage badges for Deck 0 — refires on room switch, auto-cancels
+        // Coverage badges for Deck 0 — refires on selection switch, auto-cancels
         // stale fetches on rapid rolodex scrubs (R4 Effects port).
-        .task(id: vm.selectedRoom?.id) {
+        //
+        // Exact-keyed for the same reason: under a duplicate room id across two
+        // bridges this did not refire at all, so Deck 0 kept showing bridge A's
+        // "N OF M LIGHTS" against bridge B's room.
+        .task(id: vm.selectedRoom.map(StudioSelectionKey.init)) {
             await vm.refreshCoverage()
         }
         // Warms the entertainment-config cache so the transport menu can say
@@ -328,6 +337,12 @@ struct StudioView: View {
         // launch stayed invisible until a force-quit. Re-entering the tab is a
         // deliberate arrival, so it also forces a whole-home re-ask that the
         // background throttle cannot swallow (packet 7 follow-up).
+        //
+        // DELIBERATELY bridge-keyed, and it must stay that way. Unlike the two
+        // above, this is a per-BRIDGE sweep: re-running it for every room on the
+        // same bridge would re-ask questions already answered for that bridge,
+        // which is the repeated-refresh defect this slice exists to remove. Do
+        // not "fix" this to StudioSelectionKey for consistency.
         .task(id: vm.selectedRoom?.bridgeID) {
             orchestrator.refreshEntertainmentAvailability(reason: .userInitiated)
             await orchestrator.refreshEntertainmentConfigs(for: vm.selectedRoom)

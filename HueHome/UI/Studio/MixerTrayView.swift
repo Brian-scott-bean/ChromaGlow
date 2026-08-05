@@ -488,7 +488,12 @@ struct MixerTrayView: View {
         )
         .shadow(color: .black.opacity(0.45), radius: 20, y: -2)
         .padding(.horizontal, HueSpacing.sm)
-        .id(vm.currentRoomEffect?.cardID ?? vm.selectedRoom?.id)
+        // Exact selection identity, not a bare room id: two bridges sharing a
+        // Hue room id produced the SAME view identity, so SwiftUI reused this
+        // subtree across a real room change and carried the previous bridge's
+        // state into it.
+        .id(vm.currentRoomEffect?.cardID
+            ?? vm.selectedRoom.map { StudioSelectionKey(room: $0).stableID })
         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
     }
 
@@ -589,7 +594,11 @@ struct MixerTrayView: View {
     ) -> (text: String, tint: Color)? {
         guard case .composition = card.strategy else { return nil }
 
-        if orchestrator.compositionTransportByRoom[effect.room.id] == .bridgeStored {
+        // Exact bridge+room, not the room-only aggregate: under a duplicate room
+        // id across two bridges the aggregate answers nil on disagreement, which
+        // rendered this sentence against the wrong bridge's playback.
+        if orchestrator.compositionTransport(
+            bridgeID: effect.room.bridgeID, roomID: effect.room.id) == .bridgeStored {
             return (TransportVocabulary.bridgeStoredStatus,
                     HuePalette.amber.opacity(0.9))
         }
@@ -620,8 +629,10 @@ struct MixerTrayView: View {
     /// we fell back, what bridge-stored means — lives in `transportStatus`'s
     /// sentence directly beneath it, where there is room to say it properly.
     private func composerTransportBadgeText(for effect: RunningEffect) -> String {
-        // Bridge-stored animations run on the bridge hardware itself
-        if orchestrator.compositionTransportByRoom[effect.room.id] == .bridgeStored {
+        // Bridge-stored animations run on the bridge hardware itself. Exact
+        // bridge+room — see `transportStatus`.
+        if orchestrator.compositionTransport(
+            bridgeID: effect.room.bridgeID, roomID: effect.room.id) == .bridgeStored {
             return TransportVocabulary.badgeBridge
         }
         return composerIsStreaming(effect)
@@ -633,7 +644,8 @@ struct MixerTrayView: View {
     /// truth survives a mid-session DTLS→REST failover; the RunningEffect's
     /// `isEntertainment` is a snapshot from apply time and does not.
     private func composerIsStreaming(_ effect: RunningEffect) -> Bool {
-        if let transport = orchestrator.compositionTransportByRoom[effect.room.id] {
+        if let transport = orchestrator.compositionTransport(
+            bridgeID: effect.room.bridgeID, roomID: effect.room.id) {
             return transport == .entertainment
         }
         return effect.isEntertainment

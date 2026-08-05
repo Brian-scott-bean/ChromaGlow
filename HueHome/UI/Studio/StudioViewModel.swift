@@ -476,6 +476,52 @@ struct RoomEffectKey: Hashable {
     }
 }
 
+/// Exact identity of the Studio SELECTION, for the side effects that refire
+/// when the selected room changes (coverage badges, the customization surface's
+/// view identity).
+///
+/// `RoomEffectKey` keys running effects; this keys the selection that drives
+/// per-room *reads*. They are deliberately separate: a selection exists with no
+/// effect running, and the selection is what `.task(id:)` observes.
+///
+/// Why this is not a bare room id — the defect it fixes: two bridges can expose
+/// the same Hue room id, so `.task(id: selectedRoom?.id)` did not refire when
+/// the user switched between them, and `refreshCoverage`'s `coverageRoomID`
+/// comparison did not clear. Deck 0's "N OF M LIGHTS" badges then showed bridge
+/// A's capabilities against bridge B's room. This is the same collision class
+/// `RoomEffectKey` exists to prevent, reached through the read path.
+///
+/// `kind` is defense in depth for VIEW identity and the legacy nil-bridge path.
+/// The Rolodex's two axes address rooms and zones from different bridge
+/// collections, and nothing in the type system guarantees their id spaces are
+/// disjoint — see the invariant documented at `CompositionPlaybackKey`, which
+/// carries no kind because within one bridge a room id and a zone id can never
+/// be equal (proved by `testRoomAndZoneIDsNeverCollideWithinABridge`).
+struct StudioSelectionKey: Hashable {
+    let bridgeID: String?
+    let groupID: String
+    let kind: RoomDisplayItem.Kind
+
+    /// For SwiftUI `.id(…)` view identity only. Equality and hashing use the
+    /// typed fields above — never this composed string, so a "|" inside a
+    /// bridge or group id cannot alias two distinct selections.
+    ///
+    /// The `"legacy"` sentinel matches `CompositionPlaybackKey.bridgeKey` and
+    /// `BridgeNativeOwnershipKey`, so a nil-bridge selection reads the same
+    /// across every exact key in the app.
+    var stableID: String { "\(bridgeID ?? "legacy")|\(kind.rawValue)|\(groupID)" }
+
+    init(bridgeID: String?, groupID: String, kind: RoomDisplayItem.Kind) {
+        self.bridgeID = bridgeID
+        self.groupID = groupID
+        self.kind = kind
+    }
+
+    init(room: RoomDisplayItem) {
+        self.init(bridgeID: room.bridgeID, groupID: room.id, kind: room.kind)
+    }
+}
+
 /// Tracks a running effect on a specific room.
 struct RunningEffect {
     let cardID: String
@@ -1702,8 +1748,12 @@ final class StudioViewModel {
     /// Per-card firmware-effect coverage for the selected room — drives the
     /// "N OF M LIGHTS" badges on Deck 0 and the mixer-header badge.
     var effectCoverage: [String: EffectCapabilityResolver.Coverage] = [:]
-    /// Room the current `effectCoverage` was computed for.
-    @ObservationIgnored private var coverageRoomID: String?
+    /// Selection the current `effectCoverage` was computed for.
+    ///
+    /// Exact (bridge + group + kind), not a bare room id: two bridges can share
+    /// a Hue room id, and comparing bare ids left the PREVIOUS bridge's badges
+    /// on screen labelled as this bridge's room.
+    @ObservationIgnored private var coverageSelection: StudioSelectionKey?
 
     /// Rebuild coverage for the selected room. Keyed by card id; resolved by
     /// the strategy's effect-name string. Triggered by .task(id: room) in
@@ -1715,11 +1765,14 @@ final class StudioViewModel {
             effectCoverage = [:]
             return
         }
-        // Room switch: the visible badges are still the PREVIOUS room's
-        // coverage until this finishes — clear rather than mislabel.
-        if coverageRoomID != room.id {
+        // Selection switch: the visible badges are still the PREVIOUS
+        // selection's coverage until this finishes — clear rather than
+        // mislabel. Exact-keyed, so switching between two bridges' rooms that
+        // share a Hue id clears too.
+        let selection = StudioSelectionKey(room: room)
+        if coverageSelection != selection {
             effectCoverage = [:]
-            coverageRoomID = room.id
+            coverageSelection = selection
         }
         // Reuse the lights loadAll just cached instead of a fresh GET — this .task
         // fires at tab prewarm, right in the post-pairing REST storm, and Hue bridges

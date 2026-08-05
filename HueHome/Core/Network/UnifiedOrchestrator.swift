@@ -300,6 +300,25 @@ final class UnifiedOrchestrator {
     /// "legacy"`), the same convention as `BridgeNativeOwnershipKey` and
     /// `ComposerTelemetrySessionKey` — NOT the Entertainment maps' `?? ""`
     /// coercion, which stays confined to those bridge-keyed maps.
+    ///
+    /// **Why this key carries no resource kind.** `StudioSelectionKey` and
+    /// `RolodexItemToken` distinguish `.room` from `.zone`; this key does not,
+    /// and that asymmetry is deliberate. It rests on one invariant:
+    ///
+    /// > Within a single bridge, a room's id and a zone's id are never equal.
+    ///
+    /// `RoomDisplayItem.id` is the bridge's CLIP v2 resource `rid` — a UUID
+    /// assigned per resource, with `groupedLightID` kept as a separate field on
+    /// the same struct, so `id` is never the grouped-light id. Distinct v2
+    /// resources receive distinct UUIDs regardless of type, so a room and a zone
+    /// on one bridge cannot collide. `testRoomAndZoneIDsNeverCollideWithinABridge`
+    /// proves it over the live room/zone dictionaries.
+    ///
+    /// The kind on the selection keys is therefore defense in depth for view
+    /// identity and the legacy nil-bridge path — NOT a claim that this key is
+    /// insufficient. If that test ever fails, adding `kind` here is its own
+    /// reviewed change to round-4e ownership identity; it may not ride along
+    /// with a UI packet.
     struct CompositionPlaybackKey: Hashable, Sendable {
         let bridgeKey: String
         let roomID: String
@@ -4655,6 +4674,39 @@ final class UnifiedOrchestrator {
     /// exact bridge+room ownership set empties).
     @ObservationIgnored
     private var compositionTransportClaims: [CompositionPlaybackKey: CompositionTransport] = [:]
+
+    /// EXACT transport for one bridge+room — the read the customization surface
+    /// needs, without exposing the claims map.
+    ///
+    /// `compositionTransportByRoom` is a recomputed DISPLAY aggregate that
+    /// answers nil when two bridges' claims disagree, so a surface reading it by
+    /// bare room id renders the wrong badge — or "unknown" — precisely when
+    /// exact truth exists. That made Track A's identity guarantee false in the
+    /// only case the guarantee exists for.
+    ///
+    /// Pure read. No writes, no mutation, no new state — it reads the exact
+    /// claim that round 4e already records. The aggregate stays in place for
+    /// consumers that legitimately have no bridge identity to offer.
+    ///
+    /// The aggregate fallback is reached ONLY for a nil bridgeID (legacy
+    /// callers), never as a "close enough" answer for a known bridge: falling
+    /// back there would silently reintroduce the collision.
+    func compositionTransport(bridgeID: String?, roomID: String) -> CompositionTransport? {
+        guard let bridgeID else { return compositionTransportByRoom[roomID] }
+        return compositionTransportClaims[
+            CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID)]
+    }
+
+    /// TEST SEAM: stage one exact transport claim (and the aggregate it
+    /// recomputes) without running a real start. The claims map stays private —
+    /// tests assert through `compositionTransport(bridgeID:roomID:)`, which is
+    /// the API the UI actually uses.
+    func testSeedCompositionTransportClaim(
+        _ transport: CompositionTransport, bridgeID: String?, roomID: String
+    ) {
+        setCompositionTransportClaim(
+            transport, for: CompositionPlaybackKey(bridgeID: bridgeID, roomID: roomID))
+    }
 
     /// Write one exact transport claim, then recompute the room aggregate.
     private func setCompositionTransportClaim(

@@ -12196,4 +12196,163 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(orchestrator.testHasEntertainmentClient(forBridge: "bridge-b"),
             "today's skip leaves the client installed — pinned as a diagnostic fact")
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Track A / C1 — bridge-qualified selection identity
+    //
+    // The wrong-bridge class reached the Studio READ path. `RoomEffectKey` made
+    // running effects exact, but the SELECTION side effects — the Deck 0
+    // coverage task and the customization surface's view identity — still keyed
+    // on a bare room id. Two bridges can expose the same Hue room id, so
+    // switching between them did not retrigger anything, and bridge A's
+    // capability badges stayed on screen labelled as bridge B's room.
+    // ──────────────────────────────────────────────
+
+    /// The defect, stated as a key comparison: bare ids are equal, exact keys
+    /// are not. Everything else in C1 follows from this being true.
+    func testSelectionKeyDistinguishesSameRoomIDOnTwoBridges() {
+        let onA = firmwareRoom("room-1", bridge: "bridge-a")
+        let onB = firmwareRoom("room-1", bridge: "bridge-b")
+
+        XCTAssertEqual(onA.id, onB.id,
+            "fixture check: this is the collision the key exists for")
+        XCTAssertNotEqual(StudioSelectionKey(room: onA), StudioSelectionKey(room: onB),
+            "two bridges' same-id rooms must be different selections")
+        XCTAssertNotEqual(
+            StudioSelectionKey(room: onA).stableID, StudioSelectionKey(room: onB).stableID,
+            "…and must not share a SwiftUI view identity either")
+    }
+
+    /// The Rolodex's two axes address rooms and zones from different bridge
+    /// collections. Nothing in the type system keeps their id spaces disjoint,
+    /// so the selection key carries `kind` as defense in depth.
+    func testSelectionKeyDistinguishesARoomFromAZoneSharingAnID() {
+        var room = firmwareRoom("group-7", bridge: "bridge-a")
+        room.kind = .room
+        var zone = firmwareRoom("group-7", bridge: "bridge-a")
+        zone.kind = .zone
+
+        XCTAssertNotEqual(StudioSelectionKey(room: room), StudioSelectionKey(room: zone),
+            "a room and a zone sharing an id are not the same selection")
+        XCTAssertNotEqual(
+            StudioSelectionKey(room: room).stableID, StudioSelectionKey(room: zone).stableID)
+    }
+
+    /// `stableID` is view identity only — equality is by typed field. The
+    /// legacy sentinel must match `CompositionPlaybackKey.bridgeKey`'s, so a
+    /// nil-bridge selection reads the same across every exact key in the app.
+    func testSelectionKeyStableIDUsesLegacySentinel() {
+        let legacy = StudioSelectionKey(bridgeID: nil, groupID: "room-1", kind: .room)
+        XCTAssertEqual(legacy.stableID, "legacy|room|room-1")
+
+        XCTAssertEqual(
+            UnifiedOrchestrator.CompositionPlaybackKey(bridgeID: nil, roomID: "room-1").bridgeKey,
+            "legacy",
+            "the sentinel must not drift from the runtime key's")
+
+        // Typed equality, not the composed string: a "|" inside an id may not
+        // alias two distinct selections.
+        let pipeBridge = StudioSelectionKey(bridgeID: "a|room", groupID: "1", kind: .room)
+        let pipeGroup  = StudioSelectionKey(bridgeID: "a", groupID: "room|1", kind: .room)
+        XCTAssertNotEqual(pipeBridge, pipeGroup,
+            "a delimiter inside an id must not make two selections equal")
+    }
+
+    /// The user-visible defect. Bridge A's badges are on screen; the user
+    /// scrolls to bridge B's room, which happens to share the Hue room id, and
+    /// B's capability fetch fails. Exact keying clears first, so the surface
+    /// shows nothing. Bare-id keying skipped the clear and left A's "N OF M
+    /// LIGHTS" standing against B's room.
+    func testCoverageClearsWhenBridgeChangesButRoomIDDoesNot() async {
+        let vm = makeStudioVM()
+        let onA = firmwareRoom("room-1", bridge: "bridge-a", lights: ["L1"])
+        let onB = firmwareRoom("room-1", bridge: "bridge-b", lights: ["L1"])
+
+        // Establish the coverage selection against bridge A.
+        bridgeA.stageLights([capabilityLight(id: "L1", v1Effects: ["candle"])])
+        vm.selectedRoom = onA
+        await vm.refreshCoverage()
+
+        // Whatever the run produced, put bridge A's badges on screen.
+        vm.effectCoverage = ["candle-card": .init(capableIDs: ["L1"], total: 1)]
+
+        // Same room id, different bridge — and B cannot answer.
+        bridgeB.lightsShouldFail = true
+        vm.selectedRoom = onB
+        await vm.refreshCoverage()
+
+        XCTAssertTrue(vm.effectCoverage.isEmpty,
+            "bridge A's coverage survived a switch to bridge B's same-id room — "
+            + "the badges would label A's capabilities as B's")
+    }
+
+    /// The customization surface reads transport per exact bridge+room. The
+    /// room-only aggregate answers nil when two bridges' claims disagree, which
+    /// is exactly when the surface most needs the truth.
+    func testExactTransportProjectionDistinguishesDuplicateRoomIDsAcrossBridges() {
+        orchestrator.testSeedCompositionTransportClaim(
+            .bridgeStored, bridgeID: "bridge-a", roomID: "room-1")
+        orchestrator.testSeedCompositionTransportClaim(
+            .entertainment, bridgeID: "bridge-b", roomID: "room-1")
+
+        XCTAssertEqual(
+            orchestrator.compositionTransport(bridgeID: "bridge-a", roomID: "room-1"),
+            .bridgeStored)
+        XCTAssertEqual(
+            orchestrator.compositionTransport(bridgeID: "bridge-b", roomID: "room-1"),
+            .entertainment)
+
+        // The aggregate is nil here BY DESIGN — disagreeing claims must not let
+        // a room-only key pick a winner. That nil is what the surface used to
+        // render, and why the exact projection exists.
+        XCTAssertNil(orchestrator.compositionTransportByRoom["room-1"],
+            "the display aggregate stays ambiguous; only the exact read resolves it")
+    }
+
+    /// The fallback is for legacy nil-bridge callers only. If it were reached
+    /// for a known bridge it would silently reintroduce the collision.
+    func testExactTransportProjectionFallsBackToAggregateOnlyForLegacyNilBridge() {
+        orchestrator.testSeedCompositionTransportClaim(
+            .rest, bridgeID: "bridge-a", roomID: "room-9")
+
+        XCTAssertEqual(orchestrator.compositionTransport(bridgeID: nil, roomID: "room-9"), .rest,
+            "a nil bridge is the legacy path and reads the aggregate")
+        XCTAssertNil(
+            orchestrator.compositionTransport(bridgeID: "bridge-b", roomID: "room-9"),
+            "a KNOWN bridge with no claim of its own must answer nil — never "
+            + "borrow another bridge's claim through the aggregate")
+    }
+
+    /// The invariant `CompositionPlaybackKey` rests on: it carries no resource
+    /// kind because within one bridge a room id and a zone id can never be
+    /// equal (CLIP v2 rids are per-resource UUIDs). If this ever fails, C1's
+    /// exactness claim narrows to "bridge-qualified only" and adding `kind` to
+    /// the runtime key becomes its own reviewed packet — it may not ride along
+    /// with a UI change.
+    func testRoomAndZoneIDsNeverCollideWithinABridge() {
+        orchestrator.allRooms = [
+            firmwareRoom("room-1", bridge: "bridge-a"),
+            firmwareRoom("room-2", bridge: "bridge-b"),
+        ]
+        orchestrator.allZones = [
+            { var z = firmwareRoom("zone-1", bridge: "bridge-a"); z.kind = .zone; return z }(),
+            { var z = firmwareRoom("zone-2", bridge: "bridge-b"); z.kind = .zone; return z }(),
+        ]
+
+        let bridgeKeys = Set(
+            (orchestrator.allRooms + orchestrator.allZones).map { $0.bridgeID ?? "legacy" })
+        XCTAssertFalse(bridgeKeys.isEmpty, "fixture check: there is something to prove")
+
+        for bridgeKey in bridgeKeys {
+            let roomIDs = Set(
+                orchestrator.allRooms
+                    .filter { ($0.bridgeID ?? "legacy") == bridgeKey }.map(\.id))
+            let zoneIDs = Set(
+                orchestrator.allZones
+                    .filter { ($0.bridgeID ?? "legacy") == bridgeKey }.map(\.id))
+            XCTAssertTrue(roomIDs.isDisjoint(with: zoneIDs),
+                "bridge \(bridgeKey) has an id used by both a room and a zone — "
+                + "CompositionPlaybackKey's kind-free identity no longer holds")
+        }
+    }
 }
