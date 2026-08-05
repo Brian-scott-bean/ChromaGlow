@@ -1438,3 +1438,158 @@ final class StudioAIPresentationTests: XCTestCase {
         XCTAssertFalse(p.focusIsCurrent(token), "and nothing to focus")
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// N1c — AI composer keyboard-layout stabilization.
+//
+// THE DEVICE DEFECT (build 50, Brian): N1b held the deck — Composer stayed
+// selected as the keyboard rose — but the expanded panel collapsed. Header,
+// prompt field, suggestion chips, Cancel and Generate shared the same
+// vertical space, deck content showed through, and tap targets were
+// ambiguous. The keyboard was BELOW the panel, so this was never the keyboard
+// covering the buttons.
+//
+// The mechanism is arithmetic. The panel is a child of Zone B, which is
+// `.frame(maxHeight: .infinity)` among VStack siblings that all hold
+// intrinsic heights, inside a root GeometryReader that honestly shrinks with
+// the keyboard. With the keyboard up the region offers roughly 150pt; the
+// rows need roughly 220pt; and a VStack handed less than its ideal compresses
+// rows that — being fixed-padding capsules and a `reservesSpace` field —
+// cannot compress, so they overlap. The old `.frame(minHeight: 146)` was a
+// MINIMUM below what the region was already offering: it never bound, and
+// changing that number alone would have fixed nothing.
+//
+// These tests drive `StudioAIComposerLayout` — the same metrics and the same
+// `fit(availableHeight:)` the production panel consumes. They prove the
+// POLICY, not the pixels: no unit test here claims anything about exact
+// physical rendering, which only Brian's device pass can show.
+// ─────────────────────────────────────────────────────────────────────────
+@MainActor
+final class StudioAIComposerLayoutTests: XCTestCase {
+
+    private typealias L = StudioAIComposerLayout
+
+    // ── 1. A roomy region seats everything, nothing scrolls ─────────
+
+    func testNormalAvailableHeightSelectsTheCompleteNonScrollingLayout() {
+        XCTAssertEqual(L.fit(availableHeight: L.idealHeight), .full)
+        XCTAssertEqual(L.fit(availableHeight: L.idealHeight + 200), .full)
+    }
+
+    // ── 2. A keyboard-constrained region falls back, never compresses ─
+
+    func testKeyboardConstrainedHeightSelectsTheScrollFallback() {
+        // Zone B with the keyboard up, measured in the shape the device hit.
+        let constrained = L.idealHeight - 60
+        guard case let .scrolling(contentHeight) = L.fit(availableHeight: constrained) else {
+            return XCTFail("a region below ideal must scroll, not compress into overlap")
+        }
+        XCTAssertLessThan(contentHeight, L.idealHeight - L.fixedChromeHeight,
+            "the fallback must actually give up middle height")
+        XCTAssertGreaterThanOrEqual(contentHeight, L.minimumContentHeight)
+    }
+
+    // ── 3. The fallback keeps dedicated space for all three regions ──
+
+    func testFallbackPreservesDedicatedSpaceForHeaderContentAndActionRow() {
+        for available in stride(from: CGFloat(80), through: L.idealHeight, by: 17) {
+            let content: CGFloat
+            switch L.fit(availableHeight: available) {
+            case .full:                       content = L.idealHeight - L.fixedChromeHeight
+            case .scrolling(let c):           content = c
+            }
+            XCTAssertGreaterThanOrEqual(content, L.minimumContentHeight,
+                "at \(available)pt the prompt field lost its own space")
+            XCTAssertGreaterThan(L.headerHeight, 0, "the header is never zero-height")
+            XCTAssertGreaterThan(L.actionRowHeight, 0, "the action row is never zero-height")
+            // The three regions are additive, never overlapping allocations.
+            XCTAssertGreaterThanOrEqual(
+                L.headerHeight + content + L.actionRowHeight,
+                L.headerHeight + L.minimumContentHeight + L.actionRowHeight)
+        }
+    }
+
+    // ── 4. The legacy compact allocation is rejected ─────────────────
+
+    /// ~146pt was the expanded branch's old `minHeight`, carried over from the
+    /// compact hero era. It is not enough for the expanded panel, and the
+    /// policy must say so rather than seat everything and overlap.
+    func testLegacyCompactAllocationIsRejectedAsInsufficient() {
+        XCTAssertNotEqual(L.fit(availableHeight: 146), .full,
+            "146pt must never select the complete non-scrolling layout")
+        XCTAssertGreaterThan(L.idealHeight, 146,
+            "the expanded panel's ideal height must exceed the legacy compact number")
+        XCTAssertGreaterThan(L.minimumHeight, L.fixedChromeHeight,
+            "the floor must reserve middle space, not just chrome")
+    }
+
+    // ── 5. The action row is outside the scrolling region ────────────
+
+    /// Structural guard, supplementing (not replacing) the policy tests: the
+    /// production panel's Cancel/Generate row must be a sibling of the
+    /// ScrollView, never inside it.
+    func testActionRowIsNotInsideTheScrollableMiddle() throws {
+        let source = try Self.studioViewSource()
+        // Bound the window on the REAL property boundaries, so the guard cannot
+        // pass vacuously by stopping short of the row it is checking.
+        let open = try XCTUnwrap(source.range(of: "private var aiComposerPanel"))
+        let close = try XCTUnwrap(
+            source.range(of: "private var aiComposerContent", range: open.upperBound..<source.endIndex))
+        let body = String(source[open.upperBound..<close.lowerBound])
+
+        XCTAssertTrue(body.contains("ScrollView(showsIndicators: false) { aiComposerContent }"),
+            "the scroll fallback must wrap ONLY the extracted middle")
+        XCTAssertTrue(body.contains("StudioAIComposerLayout.actionRowHeight"),
+            "the action row must claim its own fixed height outside the scroll")
+        XCTAssertTrue(body.contains("StudioAIComposerLayout.headerHeight"),
+            "the header must claim its own fixed height outside the scroll")
+        // Exactly one ScrollView in the panel, and it is the single-line form
+        // wrapping the extracted middle — nothing else can drift inside it.
+        XCTAssertEqual(body.components(separatedBy: "ScrollView").count - 1, 1,
+            "the panel must contain exactly one ScrollView, around the middle only")
+    }
+
+    // ── 6. Presentation does not move the deck ──────────────────────
+
+    func testOverlayPresentationDoesNotChangeTheAcceptedDeck() {
+        var p = StudioAIPresentation(deck: 0)
+        p.propose(2)
+        p.open()
+        XCTAssertEqual(p.deck, 2, "opening the layout-corrected overlay must not move the deck")
+        XCTAssertTrue(p.isOverlayVisible)
+    }
+
+    // ── 7 & 8. Covered content is inert, and recovers on dismissal ───
+
+    func testCoveredLowerContentIsNoninteractiveWhileTheOverlayIsVisible() {
+        XCTAssertFalse(L.lowerContentIsInteractive(overlayVisible: true),
+            "a tap aimed at Cancel must not reach a deck card behind it")
+        XCTAssertTrue(L.lowerContentIsInteractive(overlayVisible: false))
+    }
+
+    func testDismissalRestoresOrdinaryLowerContentInteraction() {
+        var p = StudioAIPresentation(deck: 0)
+        p.propose(2)
+        p.open()
+        XCTAssertFalse(L.lowerContentIsInteractive(overlayVisible: p.isOverlayVisible))
+
+        let settle = p.beginDismissal()
+        XCTAssertTrue(L.lowerContentIsInteractive(overlayVisible: p.isOverlayVisible),
+            "the pager takes touches again as soon as the overlay leaves")
+        p.finishDismissal(token: settle)
+        XCTAssertEqual(p.deck, 2, "and the user is still on the Composer deck")
+    }
+
+    // ── source access for the structural guard ──────────────────────
+
+    private static func studioViewSource() throws -> String {
+        // HueHomeTests runs from the repo's build products; walk up to the
+        // checkout the same way the guards script does.
+        var dir = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // HueHomeTests
+            .deletingLastPathComponent()   // repo root
+        let path = dir.appendingPathComponent("HueHome/UI/Studio/StudioView.swift")
+        dir = path
+        return try String(contentsOf: path, encoding: .utf8)
+    }
+}

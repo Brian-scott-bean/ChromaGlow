@@ -245,12 +245,19 @@ struct StudioView: View {
                         }
 
                     // ── Deck page indicator ───────────────────────
-                    if !showCustomization {
+                    // Hidden while the AI composer is up. Two reasons, both
+                    // load-bearing: deck selection is FENCED during the
+                    // presentation so these pills could only refuse a tap, and
+                    // their ~74pt (with the pill below) is exactly the vertical
+                    // space the panel was short of when the keyboard shrank
+                    // Zone B.
+                    if !showCustomization && !aiPresentation.isOverlayVisible {
                         deckDots
                             .padding(.bottom, HueSpacing.sm)
                     }
 
-                    if hasCurrentRoomEffect && regionMode == .decks {
+                    if hasCurrentRoomEffect && regionMode == .decks
+                        && !aiPresentation.isOverlayVisible {
                         Button {
                             expandMixer()
                             HapticManager.shared.selection()
@@ -661,6 +668,11 @@ struct StudioView: View {
             ZStack {
                 cardGrid
                     .ignoresSafeArea(.keyboard, edges: .bottom)
+                    // MOUNTED but inert while the composer is up: a tap aimed
+                    // at Cancel must never reach a deck card behind it.
+                    .allowsHitTesting(
+                        StudioAIComposerLayout.lowerContentIsInteractive(
+                            overlayVisible: aiPresentation.isOverlayVisible))
 
                 if aiPresentation.isOverlayVisible {
                     aiComposerPanel
@@ -955,116 +967,142 @@ struct StudioView: View {
     /// place. Out here the pager stays mounted and untouched underneath, and
     /// this panel keeps ordinary keyboard avoidance.
     private var aiComposerPanel: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: HueRadius.xl)
-                .fill(Color.black.opacity(0.55))
+        GeometryReader { proxy in
+            let fit = StudioAIComposerLayout.fit(availableHeight: proxy.size.height)
+            ZStack {
+                // Near-opaque, unlike the 0.55 that let the deck grid show
+                // through and "compete with the panel" on device.
+                RoundedRectangle(cornerRadius: HueRadius.xl)
+                    .fill(Color.black.opacity(0.94))
 
-            AIHeroBorderSweep(paused: !isTabActive || reduceMotion)
+                AIHeroBorderSweep(paused: !isTabActive || reduceMotion)
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "wand.and.stars")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(HuePalette.amber)
-                    Text("Generate with AI")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Spacer()
-                    if vm.isGeneratingAIComposition {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                            .tint(HuePalette.amber)
-                    }
-                }
-
-                TextField("Describe the vibe (e.g. ocean calm with soft pulse)", text: aiPromptText, axis: .vertical)
-                    .focused($aiPromptFocused)
-                    // Fixed height: a growing field re-lays-out the whole
-                    // deck grid under it on every wrap.
-                    .lineLimit(2, reservesSpace: true)
-                    .font(.system(size: 13, weight: .medium))
+                VStack(alignment: .leading, spacing: StudioAIComposerLayout.rowSpacing) {
+                    // FIXED — never scrolls, never compresses.
+            HStack(spacing: 8) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(HuePalette.amber)
+                Text("Generate with AI")
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
-                    .textInputAutocapitalization(.sentences)
-                    .autocorrectionDisabled(false)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.black.opacity(0.22))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-                    )
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(vm.suggestedAIPrompts, id: \.self) { suggestion in
-                            Button {
-                                aiPresentation.promptText = suggestion
-                                triggerAIGeneration(with: suggestion)
-                                HapticManager.shared.selection()
-                            } label: {
-                                Text(suggestion)
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.9))
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        Capsule().fill(Color.white.opacity(0.08))
-                                    )
-                                    .overlay(
-                                        Capsule()
-                                            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(vm.isGeneratingAIComposition)
-                        }
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    Button("Cancel") {
-                        dismissAIComposer(clearingDraft: true)
-                        vm.aiGenerationErrorMessage = nil
-                        HapticManager.shared.light()
-                    }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(
-                        Capsule().fill(Color.white.opacity(0.08))
-                    )
-                    .buttonStyle(.plain)
-                    .disabled(vm.isGeneratingAIComposition)
-
-                    Spacer()
-
-                    Button {
-                        triggerAIGeneration(with: aiPresentation.promptText)
-                    } label: {
-                        Text(vm.isGeneratingAIComposition ? "Generating..." : "Generate")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.black.opacity(vm.isGeneratingAIComposition ? 0.5 : 0.9))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule().fill(HuePalette.amber.opacity(vm.isGeneratingAIComposition ? 0.45 : 0.95))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(vm.isGeneratingAIComposition || aiPresentation.promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Spacer()
+                if vm.isGeneratingAIComposition {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(HuePalette.amber)
                 }
             }
-            .padding(HueSpacing.lg)
+                    .frame(height: StudioAIComposerLayout.headerHeight)
+
+                    // FLEXIBLE — the only region allowed to lose room, and it
+                    // scrolls rather than overlapping when it does.
+                    Group {
+                        switch fit {
+                        case .full:
+                            aiComposerContent
+                        case .scrolling:
+                            ScrollView(showsIndicators: false) { aiComposerContent }
+                        }
+                    }
+                    .frame(maxHeight: .infinity, alignment: .top)
+
+                    // FIXED — Cancel and Generate stay outside the scrolling
+                    // middle, so they are never scrolled out of reach.
+            HStack(spacing: 8) {
+                Button("Cancel") {
+                    dismissAIComposer(clearingDraft: true)
+                    vm.aiGenerationErrorMessage = nil
+                    HapticManager.shared.light()
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule().fill(Color.white.opacity(0.08))
+                )
+                .buttonStyle(.plain)
+                .disabled(vm.isGeneratingAIComposition)
+
+                Spacer()
+
+                Button {
+                    triggerAIGeneration(with: aiPresentation.promptText)
+                } label: {
+                    Text(vm.isGeneratingAIComposition ? "Generating..." : "Generate")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.black.opacity(vm.isGeneratingAIComposition ? 0.5 : 0.9))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule().fill(HuePalette.amber.opacity(vm.isGeneratingAIComposition ? 0.45 : 0.95))
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.isGeneratingAIComposition || aiPresentation.promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+                    .frame(height: StudioAIComposerLayout.actionRowHeight)
+                }
+                .padding(HueSpacing.lg)
+            }
         }
-        .frame(maxWidth: .infinity)
-        .frame(minHeight: 146)
+        .frame(minHeight: StudioAIComposerLayout.minimumHeight)
         .padding(.horizontal, HueSpacing.screenH)
         .transition(.opacity)
+    }
+
+    /// The scrolling middle: the prompt field and the suggestion strip.
+    private var aiComposerContent: some View {
+        VStack(alignment: .leading, spacing: StudioAIComposerLayout.rowSpacing) {
+            TextField("Describe the vibe (e.g. ocean calm with soft pulse)", text: aiPromptText, axis: .vertical)
+                .focused($aiPromptFocused)
+                // Fixed height: a growing field re-lays-out the whole
+                // deck grid under it on every wrap.
+                .lineLimit(2, reservesSpace: true)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white)
+                .textInputAutocapitalization(.sentences)
+                .autocorrectionDisabled(false)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.black.opacity(0.22))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                )
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(vm.suggestedAIPrompts, id: \.self) { suggestion in
+                        Button {
+                            aiPresentation.promptText = suggestion
+                            triggerAIGeneration(with: suggestion)
+                            HapticManager.shared.selection()
+                        } label: {
+                            Text(suggestion)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .lineLimit(1)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule().fill(Color.white.opacity(0.08))
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(vm.isGeneratingAIComposition)
+                    }
+                }
+            }
+        }
     }
 
     private func composerGrid(deckIndex: Int) -> some View {
@@ -2421,6 +2459,91 @@ enum StudioMixerPresentation {
         created: Bool, current: StudioRegionMode
     ) -> StudioRegionMode {
         created ? modeOnDeliberateActivation : current
+    }
+}
+
+/// The expanded AI composer's layout policy (N1c).
+///
+/// THE DEVICE DEFECT (build 50, Brian): the deck redirect was gone, but the
+/// expanded panel collapsed — header, prompt field, suggestion chips, Cancel
+/// and Generate all sharing the same vertical space, with the deck content
+/// visible through it. The keyboard was BELOW the panel, so this was never the
+/// keyboard covering the buttons.
+///
+/// The mechanism is arithmetic, not a stray modifier. The panel is a child of
+/// Zone B, and Zone B is `.frame(maxHeight: .infinity)` inside a VStack whose
+/// other children all hold intrinsic heights, inside a root `GeometryReader`
+/// that honestly shrinks with the keyboard. With the keyboard up on a 874pt
+/// phone the region is left with roughly 150pt, while the panel's rows need
+/// roughly 220pt. A `VStack` handed less than its ideal compresses — and rows
+/// built from fixed-padding capsules and a `reservesSpace` field cannot
+/// compress, so they overlap.
+///
+/// Note what is NOT the cause: the old `.frame(minHeight: 146)` is a MINIMUM,
+/// and 146 is below the height the region was actually offering, so it never
+/// bound. Removing it alone would have changed nothing.
+///
+/// So the fix is a real layout policy rather than a bigger number: the header
+/// and the Cancel/Generate row are FIXED and always laid out, and the middle
+/// scrolls when the region cannot seat everything. Every metric below is the
+/// one the production panel uses, which is what lets the tests exercise the
+/// real policy instead of a parallel model.
+enum StudioAIComposerLayout {
+
+    /// "Generate with AI" + the in-flight spinner.
+    static let headerHeight: CGFloat = 24
+    /// The Cancel / Generate capsule row.
+    static let actionRowHeight: CGFloat = 34
+    /// The prompt field: two reserved lines plus its own vertical padding.
+    static let promptFieldHeight: CGFloat = 60
+    /// The horizontal suggestion-chip strip.
+    static let suggestionRowHeight: CGFloat = 32
+    static let rowSpacing: CGFloat = 10
+    /// `.padding(HueSpacing.lg)`, top and bottom.
+    static let verticalPadding: CGFloat = 40
+
+    /// The least the scrolling middle may ever be given: the prompt field
+    /// itself, which is the one control the panel exists for.
+    static let minimumContentHeight: CGFloat = promptFieldHeight
+
+    /// Chrome that never scrolls and never compresses.
+    static var fixedChromeHeight: CGFloat {
+        headerHeight + actionRowHeight + verticalPadding + rowSpacing * 2
+    }
+
+    /// Everything seated at full size, nothing scrolling.
+    static var idealHeight: CGFloat {
+        fixedChromeHeight + promptFieldHeight + suggestionRowHeight + rowSpacing
+    }
+
+    /// Below this the panel cannot honour its own contract, and the caller
+    /// should give it more room rather than let it compress.
+    static var minimumHeight: CGFloat {
+        fixedChromeHeight + minimumContentHeight
+    }
+
+    /// What the panel does with the height it was actually offered.
+    enum Fit: Equatable {
+        /// Enough room for every row at full size.
+        case full
+        /// Not enough: the header and the action row keep their space and the
+        /// middle scrolls inside `contentHeight`.
+        case scrolling(contentHeight: CGFloat)
+    }
+
+    static func fit(availableHeight: CGFloat) -> Fit {
+        guard availableHeight >= idealHeight else {
+            let slack = availableHeight - fixedChromeHeight
+            return .scrolling(contentHeight: max(minimumContentHeight, slack))
+        }
+        return .full
+    }
+
+    /// While the composer is up, the pager underneath stays MOUNTED — its
+    /// selection, offsets and canvases must survive — but it must not take
+    /// touches. A tap aimed at Cancel may not reach a deck card behind it.
+    static func lowerContentIsInteractive(overlayVisible: Bool) -> Bool {
+        !overlayVisible
     }
 }
 
