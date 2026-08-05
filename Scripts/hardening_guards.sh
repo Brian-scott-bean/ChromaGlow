@@ -665,20 +665,26 @@ if [[ -z "$hc_save_entry" ]]; then
 fi
 
 # (d) Landing on a room may not force the effect panel open over the wheel.
-if ! grep -q 'static let collapsedOnRoomChange = true' "$HC_VIEW"; then
-    fail "composer-hardware-convergence" "the room-change collapse rule is missing or inverted in $HC_VIEW — the tray would cover the room wheel mid-scroll again"
+# Track A C4 renamed the rule's vocabulary (`collapsedOnRoomChange = true` →
+# `modeOnRoomChange: StudioRegionMode = .decks`) without changing the rule. The
+# guard tracks the RULE: arriving on a room must return the region to the decks.
+if ! grep -qE 'static let modeOnRoomChange: StudioRegionMode = \.decks' "$HC_VIEW"; then
+    fail "composer-hardware-convergence" "the room-change rule is missing or inverted in $HC_VIEW — the tray would cover the room wheel mid-scroll again"
 fi
 # The anchor tracks the handler, not one spelling of its key: Track A C1
 # re-keyed it from `vm.selectedRoom?.id` to the exact StudioSelectionKey, and a
 # pattern pinned to the old spelling would have matched nothing and passed
 # vacuously — a guard that cannot fail is not a guard.
-hc_roomchange=$(awk '/onChange\(of: vm.selectedRoom/,/^        }$/' "$HC_VIEW" 2>/dev/null \
+# C4 moved this handler into the same-file StudioRegionWiring modifier, so the
+# awk end-anchor is indentation-agnostic now — a range pinned to one nesting
+# depth would have matched nothing and passed vacuously.
+hc_roomchange=$(awk '/onChange\(of: vm.selectedRoom/,/^[[:space:]]*}$/' "$HC_VIEW" 2>/dev/null \
     | grep -vE '^[[:space:]]*//' || true)
 if [[ -z "$hc_roomchange" ]]; then
-    fail "composer-hardware-convergence" "the selectedRoom onChange handler is gone from $HC_VIEW — the room-change collapse rule is unenforceable"
+    fail "composer-hardware-convergence" "the selectedRoom onChange handler is gone from $HC_VIEW — the room-change rule is unenforceable"
 fi
-if echo "$hc_roomchange" | grep -qE 'isMixerCollapsed = false'; then
-    fail "composer-hardware-convergence" "the room-change handler forces the mixer open — that is the selector collision"
+if echo "$hc_roomchange" | grep -qE 'isMixerCollapsed = false|regionMode = \.customization'; then
+    fail "composer-hardware-convergence" "the room-change handler opens the customization region — that is the selector collision"
 fi
 
 # (d2, Track A C1) Selection-keyed side effects stay EXACT. Two bridges can

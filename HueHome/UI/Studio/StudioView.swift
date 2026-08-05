@@ -125,7 +125,11 @@ struct StudioView: View {
     // ── Harmony Engine ────────────────────────────────────────
     @State private var activeHarmonyRule: HarmonyRule = .none
     @State private var editingSwatch: SwatchEditItem? = nil
-    @State private var isMixerCollapsed = false
+    /// Which region is showing below the rolodex. Exactly the bit the old
+    /// `isMixerCollapsed` carried (`.decks` == collapsed), under an honest name.
+    /// C4 renames it and nothing else — the tray is still a bottom-anchored
+    /// overlay with its scrim, height maths and dismiss gesture intact.
+    @State private var regionMode: StudioRegionMode = .customization
     @State private var isMixerExpanded = false
     @State private var showCompositionTransportPrompt = false
     @State private var pendingCompositionCard: StudioCard?
@@ -162,7 +166,7 @@ struct StudioView: View {
     var body: some View {
         GeometryReader { geo in
             let hasCurrentRoomEffect = vm.currentRoomEffect != nil
-            let mixerVisible = hasCurrentRoomEffect && !isMixerCollapsed
+            let mixerVisible = hasCurrentRoomEffect && regionMode == .customization
             let mixerHeight: CGFloat = mixerVisible ? resolvedMixerHeight(proxy: geo) : 0
             let isEntertainmentRunning = vm.currentRoomEffect?.card.isEntertainmentScoped ?? false
 
@@ -210,7 +214,7 @@ struct StudioView: View {
                     deckDots
                         .padding(.bottom, HueSpacing.sm)
 
-                    if hasCurrentRoomEffect && isMixerCollapsed {
+                    if hasCurrentRoomEffect && regionMode == .decks {
                         Button {
                             expandMixer()
                             HapticManager.shared.selection()
@@ -300,25 +304,10 @@ struct StudioView: View {
                 withAnimation(.easeIn(duration: 0.4)) { blurReady = true }
             }
         }
-        // Landing on a room does NOT throw its editor open.
-        //
-        // This used to set `isMixerCollapsed = false`, which made the tray
-        // appear the instant the wheel touched a room with a running effect.
-        // The tray takes up to 92% of the screen and mounts a full-screen
-        // invisible scrim, so the next drag on the wheel hit the scrim and
-        // collapsed the tray instead — the panel flashing open and shut while
-        // the selector became unusable. Arriving collapsed keeps the wheel
-        // free; the "Live Controls" pill is right there when the editor is
-        // what the user actually wants.
-        //
-        // Keyed EXACTLY (bridge + group + kind), not by bare room id: two
-        // bridges can share a Hue room id, and switching between them is a room
-        // change the user can see — a bare-id key would leave the tray open over
-        // the wheel for the arriving room.
-        .onChange(of: vm.selectedRoom.map(StudioSelectionKey.init)) { _, _ in
-            isMixerCollapsed = StudioMixerPresentation.collapsedOnRoomChange
-            isMixerExpanded = false
-        }
+        // Region state: the room-change rule and the effect-teardown reset.
+        // Extracted verbatim — see `StudioRegionWiring`.
+        .modifier(StudioRegionWiring(
+            vm: vm, regionMode: $regionMode, isMixerExpanded: $isMixerExpanded))
         // Coverage badges for Deck 0 — refires on selection switch, auto-cancels
         // stale fetches on rapid rolodex scrubs (R4 Effects port).
         //
@@ -346,12 +335,6 @@ struct StudioView: View {
         .task(id: vm.selectedRoom?.bridgeID) {
             orchestrator.refreshEntertainmentAvailability(reason: .userInitiated)
             await orchestrator.refreshEntertainmentConfigs(for: vm.selectedRoom)
-        }
-        .onChange(of: vm.runningCardID) { _, newValue in
-            if newValue == nil {
-                isMixerCollapsed = false
-                isMixerExpanded = false
-            }
         }
         .onChange(of: vm.restoredHarmonyRule) { _, rule in
             // `.none` is the programmatic-clear sentinel (album colors);
@@ -708,14 +691,14 @@ struct StudioView: View {
                         }()
                     ) {
                         if vm.runningCardID == card.id {
-                            if isMixerCollapsed {
+                            if regionMode == .decks {
                                 expandMixer()
                                 HapticManager.shared.selection()
                             } else {
                                 Task { await vm.explicitStop(card) }
                             }
                         } else {
-                            isMixerCollapsed = false
+                            regionMode = .customization
                             applyCardWithTransportPrompt(card)
                         }
                     }
@@ -1133,14 +1116,14 @@ struct StudioView: View {
                 previewSpec: LookPreviewSpec(preset: preset)
             ) {
                 if vm.runningCardID == card.id {
-                    if isMixerCollapsed {
+                    if regionMode == .decks {
                         expandMixer()
                         HapticManager.shared.selection()
                     } else {
                         Task { await vm.explicitStop(card) }
                     }
                 } else {
-                    isMixerCollapsed = false
+                    regionMode = .customization
                     applyCardWithTransportPrompt(card)
                 }
             }
@@ -1229,14 +1212,14 @@ struct StudioView: View {
 
     private func collapseMixer() {
         withAnimation(HueAnimation.fast) {
-            isMixerCollapsed = true
+            regionMode = .decks
             isMixerExpanded = false
         }
     }
 
     private func expandMixer() {
         withAnimation(HueAnimation.fast) {
-            isMixerCollapsed = false
+            regionMode = .customization
         }
     }
 
@@ -1359,7 +1342,7 @@ struct StudioView: View {
             HapticManager.shared.selection()
             return
         }
-        isMixerCollapsed = false
+        regionMode = .customization
         transportSwitchInFlightRoomIDs.insert(roomID)
         Task {
             await vm.apply(
@@ -1387,13 +1370,13 @@ struct StudioView: View {
         case .defaultStudioRules:
             applyCardWithTransportPrompt(card)
         case .streaming:
-            isMixerCollapsed = false
+            regionMode = .customization
             Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: true) }
         case .roomREST:
-            isMixerCollapsed = false
+            regionMode = .customization
             Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: false) }
         case .matchSavedPreset:
-            isMixerCollapsed = false
+            regionMode = .customization
             Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: nil) }
         }
     }
@@ -2163,15 +2146,32 @@ private struct BridgeSaveResultSheet: ViewModifier {
 /// room with a running effect made the customization panel cover the wheel —
 /// and that the panel could "appear and collapse immediately", which is the
 /// scrim eating the very next drag.
+/// Which region occupies the space below the rolodex.
+///
+/// C4 introduces this ONLY to name the state that `isMixerCollapsed` already
+/// carried — `.decks` is exactly the old `true`. It is not yet a layout
+/// decision: the customization surface is still the bottom-anchored overlay
+/// tray, with its scrim, its height calculations and its dismiss gesture. C5
+/// is what turns `.customization` into an inline single-scroll region.
+enum StudioRegionMode: Equatable {
+    /// The three-deck card pager.
+    case decks
+    /// The customization surface for the selected room.
+    case customization
+}
+
 enum StudioMixerPresentation {
 
-    /// Arriving on a new room leaves the tray CLOSED.
+    /// Arriving on a new room returns the region to the decks.
     ///
-    /// The editor is not lost — `hasCurrentRoomEffect && isMixerCollapsed`
+    /// The editor is not lost — `hasCurrentRoomEffect && regionMode == .decks`
     /// shows the "Live Controls" pill that opens it. What is gained is that the
     /// wheel keeps working: no tray over it, and no full-screen scrim between
     /// the finger and the next scroll.
-    static let collapsedOnRoomChange = true
+    ///
+    /// Same rule and same reason as the old `collapsedOnRoomChange = true`,
+    /// stated in the new vocabulary.
+    static let modeOnRoomChange: StudioRegionMode = .decks
 
     /// The wheel is unmounted only when a streaming look's tray is actually on
     /// screen — never merely because a streaming look exists.
@@ -2336,6 +2336,56 @@ private struct StudioNoticeAlert: ViewModifier {
         // No message body, for the same reason as ForeignTakeoverAlert: the
         // whole explanation is the sentence in the title, and a second line
         // would have to invent detail we do not have.
+    }
+}
+
+/// The region's state rules, lifted out of `StudioView.body`.
+///
+/// `StudioView.body` sits at the Swift type-checker's ceiling, so new behaviour
+/// lands as a same-file `ViewModifier` beside `StudioDrainWiring` and
+/// `StudioMusicWiring`. C4 moves the two existing region rules here VERBATIM and
+/// changes nothing else — no layout, no presentation, no new rule.
+///
+/// Both rules answer the same question: when does the region stop showing
+/// customization on its own?
+struct StudioRegionWiring: ViewModifier {
+
+    let vm: StudioViewModel
+    @Binding var regionMode: StudioRegionMode
+    @Binding var isMixerExpanded: Bool
+
+    func body(content: Content) -> some View {
+        content
+            // Landing on a room does NOT throw its editor open.
+            //
+            // This used to set `isMixerCollapsed = false`, which made the tray
+            // appear the instant the wheel touched a room with a running
+            // effect. The tray takes up to 92% of the screen and mounts a
+            // full-screen invisible scrim, so the next drag on the wheel hit
+            // the scrim and collapsed the tray instead — the panel flashing
+            // open and shut while the selector became unusable. Arriving on
+            // `.decks` keeps the wheel free; the "Live Controls" pill is right
+            // there when the editor is what the user actually wants.
+            //
+            // Keyed EXACTLY (bridge + group + kind), not by bare room id: two
+            // bridges can share a Hue room id, and switching between them is a
+            // room change the user can see — a bare-id key would leave the tray
+            // open over the wheel for the arriving room.
+            .onChange(of: vm.selectedRoom.map(StudioSelectionKey.init)) { _, _ in
+                regionMode = StudioMixerPresentation.modeOnRoomChange
+                isMixerExpanded = false
+            }
+            // The effect that the customization surface was editing is gone, so
+            // there is nothing left to customize. Unchanged from the pre-C4
+            // `runningCardID` handler, including the fact that it resets to
+            // `.customization` rather than `.decks` — that asymmetry is
+            // existing behaviour and C4 does not touch it.
+            .onChange(of: vm.runningCardID) { _, newValue in
+                if newValue == nil {
+                    regionMode = .customization
+                    isMixerExpanded = false
+                }
+            }
     }
 }
 

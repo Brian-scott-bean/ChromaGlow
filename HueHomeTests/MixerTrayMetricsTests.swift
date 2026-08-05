@@ -92,9 +92,12 @@ final class MixerTrayMetricsTests: XCTestCase {
     // next drag on the wheel.
 
     /// HCD-01 — arriving on a room leaves the editor closed.
+    ///
+    /// C4 renamed the constant (`collapsedOnRoomChange = true` →
+    /// `modeOnRoomChange = .decks`). Same rule, same assertion.
     func testLandingOnARoomDoesNotThrowTheEffectPanelOpen() {
-        XCTAssertTrue(StudioMixerPresentation.collapsedOnRoomChange,
-            "a room change must leave the tray COLLAPSED — an auto-opened tray covers the "
+        XCTAssertEqual(StudioMixerPresentation.modeOnRoomChange, .decks,
+            "a room change must leave the region on the DECKS — an auto-opened tray covers the "
             + "wheel and its scrim eats the next scroll, which is the reported collision")
     }
 
@@ -119,5 +122,26 @@ final class MixerTrayMetricsTests: XCTestCase {
             StudioMixerPresentation.rolodexHidden(isEntertainmentRunning: true,
                                                   mixerVisible: true),
             "both conditions together are what reclaims the space")
+    }
+
+    // ── Track A / C4 — StudioRegionWiring extraction ──────────────────
+
+    /// The room-change rule, in the new vocabulary. Arriving on a room returns
+    /// the region to the DECKS — it never opens customization over the wheel.
+    ///
+    /// This is the same rule the old `collapsedOnRoomChange = true` carried;
+    /// C4 renamed the state and moved the handler into `StudioRegionWiring`
+    /// without changing behaviour, and this pins the direction so the rename
+    /// cannot quietly invert it.
+    func testRegionModeOnRoomChangeIsDecks() {
+        XCTAssertEqual(StudioMixerPresentation.modeOnRoomChange, .decks,
+            "landing on a room must return the region to the decks — opening "
+            + "customization there is the selector collision that put a "
+            + "full-screen scrim between the finger and the room wheel")
+
+        // `.decks` is exactly the bit the old `isMixerCollapsed == true` meant,
+        // and the two modes are distinct — a rename that collapsed them would
+        // make the rule above unfalsifiable.
+        XCTAssertNotEqual(StudioRegionMode.decks, .customization)
     }
 }
