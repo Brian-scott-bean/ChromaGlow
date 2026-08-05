@@ -53,11 +53,12 @@ struct StudioCustomizationHost: View {
     /// Transport switch for a running composition (in-flight guard lives in StudioView).
     let onTransportSwitch: (RunningEffect, Bool) -> Void
 
-    @State private var showParamSheet = false
-    /// Was `isMixerExpanded`, a HEIGHT job on a fixed-height box. Full-region
-    /// there is no height to expand, so the surviving job — revealing the
-    /// advanced params inline instead of in a sheet — becomes host-local.
-    @State private var showAdvanced = false
+    // No disclosure state. `showAdvanced` and `showParamSheet` are GONE: the host
+    // is one continuous page, so every control for the selected card is simply
+    // rendered and the user scrolls to it. A reveal affordance here was the
+    // build-47 row-36 defect in both its forms — the sheet it opened was a
+    // detached surface, and the inline branch it gated was never reachable
+    // because nothing ever wrote `showAdvanced = true`.
 
     /// ONE vertical scroll surface for the whole customization region.
     ///
@@ -485,7 +486,6 @@ struct StudioCustomizationHost: View {
                     // beat auto-anchor moved up to the host's single surface.
                     CompositionEditorPanel(
                         vm: vm,
-                        isExpanded: showAdvanced,
                         activeCompositionTab: $activeCompositionTab,
                         activeHarmonyRule: $activeHarmonyRule,
                         editingSwatch: $editingSwatch
@@ -494,29 +494,31 @@ struct StudioCustomizationHost: View {
                     .padding(.top, HueSpacing.md)
                     .padding(.bottom, HueSpacing.md)
                 } else {
-                    // ── Inline params: essentials + the color row (color is the
-                    // most-hunted adjustment — it costs one row to keep it out
-                    // of the sheet). Remaining advanced params live behind
-                    // "+N more", or inline when the tray is dragged up.
+                    // ── Every param for this card, in one continuous column:
+                    // essentials and the color row first, then the rest under an
+                    // ADVANCED caption. No reveal, no sheet — you scroll down and
+                    // the controls are there.
                     let inlineParams = MixerTrayMetrics.inlineParams(for: card)
                     let overflowParams = MixerTrayMetrics.overflowParams(for: card)
 
-                    if !inlineParams.isEmpty {
+                    if !inlineParams.isEmpty || !overflowParams.isEmpty {
                         // FLATTENED, same reason as the composition panel.
                         VStack(spacing: HueSpacing.md) {
                             ForEach(inlineParams) { param in
                                 StudioParamRow(param: param, cardID: card.id, vm: vm)
                             }
 
-                            // The disclosure that replaced the dragged-up tray:
-                            // everything inline, no sheet hunting.
-                            if showAdvanced && !overflowParams.isEmpty {
+                            // A landmark in the page, not a gate. The caption tells
+                            // the user what they have scrolled into; it hides
+                            // nothing.
+                            if !overflowParams.isEmpty {
                                 Text("ADVANCED")
                                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                                     .tracking(1.2)
                                     .foregroundStyle(.white.opacity(0.38))
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.top, 6)
+                                    .id("studioAdvancedControls")
                                 ForEach(overflowParams) { param in
                                     StudioParamRow(param: param, cardID: card.id, vm: vm)
                                 }
@@ -526,25 +528,7 @@ struct StudioCustomizationHost: View {
                         .padding(.top, HueSpacing.md)
                         .padding(.bottom, HueSpacing.md)
                     }
-
-                    // ── More params reveal ───────────────────────
-                    //
-                    // PRESERVED: `StudioParamSheet` and `StageMoreButton` are
-                    // Track B's, and C5 does not touch them. Inline, the button
-                    // now also has a local disclosure available.
-                    if !overflowParams.isEmpty && !showAdvanced {
-                        StageMoreButton(count: overflowParams.count) {
-                            showParamSheet = true
-                        }
-                    }
                 }
-
-                // ── Param sheet (inside if-let for unwrapped card) ──
-                Color.clear.frame(height: 0)
-                    .sheet(isPresented: $showParamSheet) {
-                        // StageSheetScaffold owns detents / drag indicator / background interaction.
-                        StudioParamSheet(card: card, vm: vm)
-                    }
             }
         }
     }

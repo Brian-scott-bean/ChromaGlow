@@ -54,14 +54,9 @@ struct CompositionEditorPanel: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let vm: StudioViewModel
-    /// True while the mixer tray is dragged up near-full-screen — advanced
-    /// controls render inline instead of behind the "+N more" sheet.
-    let isExpanded: Bool
     @Binding var activeCompositionTab: CompositionLayerTab
     @Binding var activeHarmonyRule: HarmonyRule
     @Binding var editingSwatch: SwatchEditItem?
-
-    @State private var showLayerSheet = false
 
     var body: some View {
         compositionMixerBody
@@ -127,24 +122,16 @@ struct CompositionEditorPanel: View {
             .transition(.opacity.combined(with: .scale(scale: 0.985)))
             .animation(HueAnimation.fast, value: activeCompositionTab)
 
-            // ── Progressive disclosure (COMPOSER_SPEC): essentials above,
-            // the rest behind "+N more" — or inline when dragged up.
+            // Essentials above, the rest below — in the SAME column. The panel
+            // renders inside Studio's single continuous customization surface, so
+            // "advanced" is a position on the page, not a second surface to open.
             let advancedCount = ComposerControlCatalog.advancedCount(
                 tab: activeCompositionTab, box: vm.activeCompositionBox)
             if advancedCount > 0 {
-                if isExpanded {
-                    StageCard(title: "Advanced") {
-                        ComposerAdvancedControls(vm: vm, tab: activeCompositionTab)
-                    }
-                } else {
-                    StageMoreButton(count: advancedCount) {
-                        showLayerSheet = true
-                    }
+                StageCard(title: "Advanced") {
+                    ComposerAdvancedControls(vm: vm, tab: activeCompositionTab)
                 }
             }
-        }
-        .sheet(isPresented: $showLayerSheet) {
-            ComposerLayerSheet(vm: vm, tab: activeCompositionTab)
         }
     }
 

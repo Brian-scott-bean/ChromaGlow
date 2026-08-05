@@ -110,6 +110,34 @@ final class StudioScrollStabilityTests: XCTestCase {
         return seen.count
     }
 
+    /// Fraction of a strip painted in the amber a StageKit slider fills its track
+    /// with. Unlike `distinctColors`, this cannot be satisfied by the card's own
+    /// gradient — an empty stretch of the host surface scores zero, a rendered
+    /// control row does not. That distinction is the whole point of the row-36
+    /// probes: a band that merely "has colors in it" proves nothing.
+    private func amberFraction(in image: UIImage, stripY: ClosedRange<CGFloat>, of height: CGFloat) -> Double {
+        guard let cg = image.cgImage else { return 0 }
+        let scale = CGFloat(cg.height) / height
+        let y0 = Int(stripY.lowerBound * scale), y1 = min(cg.height - 1, Int(stripY.upperBound * scale))
+        guard y1 > y0, let cropped = cg.cropping(to: CGRect(x: 0, y: y0, width: cg.width, height: y1 - y0)) else { return 0 }
+        let w = 96, h = 48
+        guard let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: w * 4, space: srgb,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return 0 }
+        ctx.interpolationQuality = .none
+        ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let data = ctx.data else { return 0 }
+        let buf = data.bindMemory(to: UInt8.self, capacity: w * h * 4)
+        var amber = 0
+        for i in stride(from: 0, to: w * h * 4, by: 4) {
+            let r = Int(buf[i]), g = Int(buf[i + 1]), b = Int(buf[i + 2])
+            if r > 150, g > 90, b < 90, r > b + 80 { amber += 1 }
+        }
+        return Double(amber) / Double(w * h)
+    }
+
     // MARK: Tests
     //
     // NOTE: offset-stability tests were removed — on iOS 26 SwiftUI's
@@ -161,8 +189,14 @@ final class StudioScrollStabilityTests: XCTestCase {
                             kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                 StudioParam(id: "intensity", label: "Intensity",
                             kind: .slider(min: 0, max: 100), defaultValue: 70, tier: .essential),
+                // TWO advanced params, deliberately. The row-36 probes assert that
+                // advanced controls RENDER inline, and a single param could be
+                // satisfied by a caption over near-empty space — the fixture has to
+                // make a block tall enough to be unambiguous.
                 StudioParam(id: "warmth", label: "Warmth",
                             kind: .slider(min: 0, max: 100), defaultValue: 30, tier: .advanced),
+                StudioParam(id: "transition", label: "Transition",
+                            kind: .slider(min: 0, max: 100), defaultValue: 40, tier: .advanced),
             ],
             strategy: .bridgeNative(effect: "candle"),
             compositionLayerActivity: nil)
@@ -293,7 +327,113 @@ final class StudioScrollStabilityTests: XCTestCase {
             + "did not render into the host's scroll surface")
     }
 
+    // ── Build-47 device finding 3 (row 36) — one continuous surface ───
+    //
+    // The host scrolled continuously, but the advanced disclosure and "+N MORE"
+    // presented a detached card/sheet. Worse, `showAdvanced` was never written
+    // `true` anywhere in the repo, so the inline branch was unreachable and
+    // "+N MORE" could ONLY open `StudioParamSheet`. Advanced controls now render
+    // in the same column as the essentials, with no affordance to tap at all.
+
+    /// The claim in one line: advanced controls are on the page already.
+    func testAdvancedControlsRenderInlineInTheHostWithoutATap() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let (vm, room) = stagedEntertainmentEffect()
+        let host = hostRolodexAboveCustomization(vm: vm, room: room, orchestrator: orchestrator)
+        pump(0.4)
+
+        // Not one tap, not one state write — just render and look.
+        let image = attachRender(of: host, named: "row36-advanced-inline-no-tap")
+
+        // The fixture's card is essentials (speed ~y=371, intensity ~y=434) then
+        // ADVANCED (warmth ~y=526, transition ~y=589). This band is the advanced
+        // block alone, and it is measured by SLIDER FILL rather than colour
+        // variety: the card's own gradient satisfies "has colours in it" whether
+        // or not anything rendered, so a distinctColors probe here passes
+        // vacuously. Amber track fill appears only if those two rows actually drew.
+        XCTAssertGreaterThan(amberFraction(in: image, stripY: 500...620, of: 874), 0.005,
+            "no slider fill in the advanced band — the advanced controls did not "
+            + "render inline, which is the row-36 defect")
+
+        // The detector's own control: bare host surface below the last row must
+        // score zero, or the assertion above would mean nothing.
+        XCTAssertEqual(amberFraction(in: image, stripY: 650...800, of: 874), 0, accuracy: 0.001,
+            "empty host surface is scoring as control fill — the probe cannot "
+            + "distinguish rendered controls from background")
+    }
+
+    /// Nothing in this host may present a detached surface. `StudioParamSheet`
+    /// and `ComposerLayerSheet` are no longer presented from the Studio path.
+    func testNoSheetIsPresentedFromTheStudioHost() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let (vm, room) = stagedEntertainmentEffect()
+        let host = hostRolodexAboveCustomization(vm: vm, room: room, orchestrator: orchestrator)
+        pump(0.4)
+
+        XCTAssertNil(host.presentedViewController,
+            "the Studio host presented a sheet — advanced controls must expand in place")
+
+        // …and it stays nil once everything has settled: a `.sheet` bound to a
+        // state that flips during layout would land on a later runloop turn.
+        pump(0.5)
+        XCTAssertNil(host.presentedViewController,
+            "a sheet appeared after the host settled")
+    }
+
+    /// The advanced rows CONTINUE the essentials' column rather than living on a
+    /// surface of their own.
+    ///
+    /// Probed by pixels, for the same reason the header test is: on iOS 26 SwiftUI
+    /// renders through display lists and vends no per-row UIView to walk. The
+    /// structural half of this claim — exactly one vertical ScrollView, and no
+    /// sheet modifier in the host at all — is enforced by hardening_guards
+    /// Guard 13, which is where a source-level claim belongs.
+    func testAdvancedControlsShareTheHostsSingleScrollSurface() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let (vm, room) = stagedEntertainmentEffect()
+        let host = hostRolodexAboveCustomization(vm: vm, room: room, orchestrator: orchestrator)
+        pump(0.4)
+
+        let image = attachRender(of: host, named: "row36-single-surface")
+
+        // Controls run UNBROKEN from the essentials into the advanced rows: both
+        // halves carry slider fill, in the same column, with no surface boundary
+        // between them. If the advanced controls lived on a sheet, the lower band
+        // would be bare host surface — which is what the empty band below proves
+        // this probe can actually detect.
+        let essentials = amberFraction(in: image, stripY: 350...450, of: 874)
+        let advanced = amberFraction(in: image, stripY: 500...620, of: 874)
+        let belowEverything = amberFraction(in: image, stripY: 650...800, of: 874)
+
+        XCTAssertGreaterThan(essentials, 0.005, "the essential rows did not render")
+        XCTAssertGreaterThan(advanced, 0.005,
+            "the advanced rows are not in the same column as the essentials")
+        XCTAssertEqual(belowEverything, 0, accuracy: 0.001,
+            "the probe scores bare surface as content — the two assertions above "
+            + "would then hold no matter what rendered")
+
+        // The host still owns one tall region below the wheel, not two stacked ones.
+        let hostTop = deepestSubviewTop(in: host.view, minHeight: 200)
+        XCTAssertGreaterThan(hostTop, wheelBand.upperBound - 1,
+            "the host region starts at y=\(hostTop), inside the wheel band")
+    }
+
+    /// The wheel stays visible and unobstructed with the taller content.
+    func testRolodexBandStaysVisibleWithAdvancedControlsRendered() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let (vm, room) = stagedEntertainmentEffect()
+        let host = hostRolodexAboveCustomization(vm: vm, room: room, orchestrator: orchestrator)
+        pump(0.4)
+
+        let image = attachRender(of: host, named: "row36-wheel-with-advanced-inline")
+        XCTAssertGreaterThan(distinctColors(in: image, stripY: wheelBand, of: 874), 4,
+            "the wheel band went flat once the advanced controls were rendered — "
+            + "the taller host is covering the selector")
+    }
+
     // ── Probing helpers ───────────────────────────────────────────
+
+
 
     /// Top edge (in the root's coordinate space) of the tallest subview that is
     /// not the root itself — the customization region in this harness.
