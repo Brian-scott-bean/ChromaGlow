@@ -3579,6 +3579,60 @@ final class StudioViewModel {
         }
     }
 
+    /// What ONE AI generation's application actually accomplished.
+    ///
+    /// Same discipline as `NewCompositionCreation`: every field is measured against
+    /// the room captured WHEN THE OPERATION STARTED, never against whatever
+    /// `selectedRoom` points at after the awaits. The `presetID` names the exact
+    /// generated preset, so a caller holding several overlapping operations can
+    /// tell whose result this is.
+    struct AIGenerationApplication {
+        enum Disposition: Equatable {
+            /// `apply` left the generated card running in `target`.
+            case applied
+            /// `apply` returned without starting it (a refusal surface, a missing
+            /// room, or any of apply's early returns).
+            case refused
+            /// The view is holding the generated preset behind the transport
+            /// prompt; nothing has been applied yet.
+            case transportPromptPending
+            /// The selection moved away from `target` before application; nothing
+            /// was applied and no editor may open.
+            case staleSelection
+            /// A newer AI operation was started; this one must do nothing.
+            case superseded
+            /// Generation itself failed; there is no preset to apply.
+            case failed
+        }
+        /// The exact selection captured at the operation start.
+        let target: StudioSelectionKey?
+        /// The generated preset's identity.
+        let presetID: UUID?
+        let disposition: Disposition
+    }
+
+    /// Apply an AI-generated preset to the room captured at the operation start.
+    ///
+    /// `room` is passed explicitly for the same reason `createStarterComposition`
+    /// passes it: `roomOverride: nil` resolves the selection at APPLY time, so a
+    /// scrub during the await could start playback in a room the user had left.
+    func applyGeneratedComposition(
+        _ preset: CompositionPreset,
+        in room: RoomDisplayItem?,
+        preferEntertainmentOverride: Bool?
+    ) async -> AIGenerationApplication {
+        guard let room else {
+            return AIGenerationApplication(target: nil, presetID: preset.id, disposition: .refused)
+        }
+        let card = studioCard(for: preset)
+        await apply(card, roomOverride: room, preferEntertainmentOverride: preferEntertainmentOverride)
+        let applied = runningEffect(for: room)?.cardID == card.id
+        return AIGenerationApplication(
+            target: StudioSelectionKey(room: room),
+            presetID: preset.id,
+            disposition: applied ? .applied : .refused)
+    }
+
     /// Persist the currently running composition params as a new user preset.
     func saveActiveComposition(
         name rawName: String,

@@ -133,6 +133,18 @@ struct StudioView: View {
     @State private var showCompositionTransportPrompt = false
     @State private var pendingCompositionCard: StudioCard?
     @State private var pendingCompositionRoom: RoomDisplayItem?
+    // ── AI generation (N1) ────────────────────────────────────
+    /// Monotonic operation ids: the newest trigger supersedes every older one.
+    /// A selection key alone cannot tell two overlapping generations for the
+    /// SAME room apart, so every stale-guard below compares tokens, not rooms.
+    @State private var aiOperationCounter = 0
+    /// Raised only while an AI application is in flight for the CURRENT
+    /// selection; `StudioRegionWiring` suppresses the passive teardown close
+    /// while it matches. Cleared only by the operation that raised it.
+    @State private var aiEditingIntentFence: AIEditingIntentFence?
+    /// The generated preset held behind the transport prompt — the response
+    /// applies EXACTLY this preset, once; it never regenerates.
+    @State private var pendingAIGeneration: PendingAIGeneration?
     @State private var transportSwitchInFlightRoomIDs: Set<String> = []
     @State private var compositionDeleteTarget: CompositionPreset?
     @FocusState private var aiPromptFocused: Bool
@@ -279,7 +291,7 @@ struct StudioView: View {
         // Region state: the room-change rule and the effect-teardown reset.
         // Extracted verbatim — see `StudioRegionWiring`.
         .modifier(StudioRegionWiring(
-            vm: vm, regionMode: $regionMode))
+            vm: vm, regionMode: $regionMode, aiFence: aiEditingIntentFence))
         // Coverage badges for Deck 0 — refires on selection switch, auto-cancels
         // stale fetches on rapid rolodex scrubs (R4 Effects port).
         //
@@ -427,20 +439,32 @@ struct StudioView: View {
             Button(TransportVocabulary.streamingMenuLabel) {
                 vm.compositionTransportPreference = .entertainmentArea
                 vm.isCompositionTransportPromptEnabled = false
-                guard let card = pendingCompositionCard else { return }
-                let room = pendingCompositionRoom
-                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true) }
+                if let ai = pendingAIGeneration {
+                    // Continue with the EXACT generated preset — never regenerate,
+                    // never apply twice. Currency is re-proven inside.
+                    Task { await completeAIGeneration(ai, preferEntertainment: true) }
+                } else if let card = pendingCompositionCard {
+                    let room = pendingCompositionRoom
+                    Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true) }
+                }
                 clearPendingCompositionTransportPrompt()
             }
             Button(TransportVocabulary.roomOnlyMenuLabel) {
                 vm.compositionTransportPreference = .roomOnly
                 vm.isCompositionTransportPromptEnabled = false
-                guard let card = pendingCompositionCard else { return }
-                let room = pendingCompositionRoom
-                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false) }
+                if let ai = pendingAIGeneration {
+                    Task { await completeAIGeneration(ai, preferEntertainment: false) }
+                } else if let card = pendingCompositionCard {
+                    let room = pendingCompositionRoom
+                    Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false) }
+                }
                 clearPendingCompositionTransportPrompt()
             }
             Button("Cancel", role: .cancel) {
+                // For an AI-generated pending preset this is pure state clearing:
+                // no fence was ever raised (that happens only in
+                // completeAIGeneration), no playback is touched, and the generated
+                // preset stays in the library as the preserved draft.
                 clearPendingCompositionTransportPrompt()
             }
         } message: {
@@ -1227,18 +1251,116 @@ struct StudioView: View {
         }
     }
 
+    /// The generated preset held while the transport prompt is up. The prompt
+    /// response continues with EXACTLY this value — never a regeneration — and
+    /// only after re-proving the operation is still current.
+    private struct PendingAIGeneration {
+        let token: Int
+        let preset: CompositionPreset
+        let room: RoomDisplayItem
+        let target: StudioSelectionKey
+    }
+
+    /// AI generation is deliberate editing intent, exactly like "+ Create" —
+    /// and before N1 it was the ONE creation path with no opener, so the result
+    /// landed wherever `regionMode` happened to be (usually the decks, because
+    /// `apply`'s teardown nils `runningCardID` and the passive rule closes on
+    /// nil). The token + fence machinery below is what lets the deliberate path
+    /// open the editor WITHOUT weakening that passive rule for anyone else.
     private func triggerAIGeneration(with prompt: String) {
+        aiOperationCounter += 1
+        let token = aiOperationCounter
+        // The exact room, captured before any await.
         let roomSnapshot = vm.selectedRoom
         Task {
-            if let preset = await vm.generateCompositionFromPrompt(prompt) {
-                await vm.apply(vm.studioCard(for: preset), roomOverride: roomSnapshot, preferEntertainmentOverride: nil)
-                aiPromptText = ""
-                isAIPromptExpanded = false
-                aiPromptFocused = false
-                HapticManager.shared.medium()
-            } else {
+            guard let preset = await vm.generateCompositionFromPrompt(prompt) else {
+                // Generation failed: the hero stays open showing
+                // `aiGenerationErrorMessage`; the region and any draft are untouched.
                 HapticManager.shared.light()
+                return
             }
+            // A newer operation superseded this one while it generated. The
+            // preset is in the library; applying it now would stomp the newer
+            // operation's playback and editor.
+            guard StudioAIGeneration.operationIsCurrent(
+                token: token, newestToken: aiOperationCounter) else { return }
+            guard let room = roomSnapshot else {
+                HapticManager.shared.light()
+                return
+            }
+            aiPromptText = ""
+            isAIPromptExpanded = false
+            aiPromptFocused = false
+
+            let pending = PendingAIGeneration(
+                token: token, preset: preset, room: room,
+                target: StudioSelectionKey(room: room))
+            // Transport-prompt parity with `applyCardWithTransportPrompt`: the
+            // old path called `apply` directly, so AI starts never got the
+            // Streaming-vs-Room-Only choice every other composition start gets.
+            let card = vm.studioCard(for: preset)
+            if card.compositionTier != .bridgeOptimized && vm.isCompositionTransportPromptEnabled {
+                pendingAIGeneration = pending
+                showCompositionTransportPrompt = true
+            } else {
+                await completeAIGeneration(pending, preferEntertainment: nil)
+            }
+        }
+    }
+
+    /// Applies a generated preset exactly once, fenced. Every guard is the pure
+    /// rule in `StudioAIGeneration`, so the token/stale semantics are the ones
+    /// the unit tests exercise.
+    private func completeAIGeneration(
+        _ pending: PendingAIGeneration, preferEntertainment: Bool?
+    ) async {
+        switch StudioAIGeneration.completionAction(
+            token: pending.token,
+            newestToken: aiOperationCounter,
+            target: pending.target,
+            currentSelection: vm.selectedRoom.map(StudioSelectionKey.init)) {
+        case .supersededDoNothing, .staleSelectionDoNothing:
+            // Zero playback mutations, zero region changes, and — critically —
+            // zero fence writes: a stale completion may not clear or replace a
+            // newer operation's fence.
+            return
+        case .proceed:
+            break
+        }
+
+        aiEditingIntentFence = AIEditingIntentFence(
+            token: pending.token, target: pending.target, presetID: pending.preset.id)
+        defer {
+            // Only the operation that raised the fence may lower it. If a newer
+            // operation replaced it mid-apply, this deliberately leaves the
+            // newer fence standing.
+            if StudioAIGeneration.shouldClearFence(
+                aiEditingIntentFence, completingToken: pending.token) {
+                aiEditingIntentFence = nil
+            }
+        }
+
+        let outcome = await vm.applyGeneratedComposition(
+            pending.preset, in: pending.room, preferEntertainmentOverride: preferEntertainment)
+
+        // Re-prove currency AFTER the awaits: a newer operation or a moved
+        // wheel means this result may not touch the region.
+        guard StudioAIGeneration.operationIsCurrent(
+                  token: pending.token, newestToken: aiOperationCounter),
+              vm.selectedRoom.map(StudioSelectionKey.init) == pending.target
+        else { return }
+
+        if outcome.disposition == .applied {
+            withAnimation(HueAnimation.fast) {
+                regionMode = StudioAIGeneration.modeAfterAIGeneration(
+                    applied: true, current: regionMode)
+            }
+            HapticManager.shared.medium()
+        } else {
+            // apply's refusal paths present their own surfaces (mic prompt, area
+            // chooser, takeover consent); a second alert here would collide with
+            // them. The region and the generated draft stay untouched.
+            HapticManager.shared.light()
         }
     }
 
@@ -1260,6 +1382,7 @@ struct StudioView: View {
     private func clearPendingCompositionTransportPrompt() {
         pendingCompositionCard = nil
         pendingCompositionRoom = nil
+        pendingAIGeneration = nil
     }
 
     // ──────────────────────────────────────────────
@@ -2226,6 +2349,93 @@ enum StudioMixerPresentation {
     }
 }
 
+/// The AI editing-intent fence (N1). Raised only while an AI application is in
+/// flight, and identified by ALL THREE of: a unique operation token, the exact
+/// selection captured at generation, and the generated preset's id.
+///
+/// Why a token and not just the selection key: two overlapping AI operations can
+/// target the SAME room, so a key-only fence would let the older operation's
+/// completion clear — or ride on — the newer operation's fence. Only the
+/// operation whose token matches may clear its fence or move the region.
+struct AIEditingIntentFence: Equatable {
+    let token: Int
+    let target: StudioSelectionKey
+    let presetID: UUID
+}
+
+/// The pure rules of the AI creation path (N1). `triggerAIGeneration` and
+/// `completeAIGeneration` consume exactly these, so the unit tests exercise the
+/// decisions the view actually makes.
+enum StudioAIGeneration {
+
+    /// Whether `StudioRegionWiring` must swallow a passive `runningCardID`
+    /// change. TRUE only for the teardown event (`nil`) while a fence for the
+    /// CURRENT selection is up — that nil is `apply`'s own mid-flight teardown
+    /// of the room's previous look, not the user leaving. Everything else —
+    /// no fence, a non-nil change, a fence for a selection the user has since
+    /// left — passes through to `modeAfterRunningCardChange` unchanged, which
+    /// is what keeps the passive rule intact for every non-AI path.
+    static func passiveCloseSuppressed(
+        fence: AIEditingIntentFence?,
+        currentSelection: StudioSelectionKey?,
+        newRunningCardID: String?
+    ) -> Bool {
+        guard let fence, newRunningCardID == nil else { return false }
+        return fence.target == currentSelection
+    }
+
+    /// A completion belonging to `token` may act only while it is the newest
+    /// operation. Monotonic counter, so "newer supersedes older" is a single
+    /// integer comparison.
+    static func operationIsCurrent(token: Int, newestToken: Int) -> Bool {
+        token == newestToken
+    }
+
+    /// What a generation completion (direct, or a transport-prompt response
+    /// arriving arbitrarily late) is allowed to do.
+    enum CompletionAction: Equatable {
+        /// Apply the held preset, fenced.
+        case proceed
+        /// A newer AI operation exists: apply nothing, move nothing, and never
+        /// touch the newer operation's fence or draft.
+        case supersededDoNothing
+        /// The selection left the captured target: applying would start playback
+        /// in — or open the editor over — a room the user is no longer in.
+        case staleSelectionDoNothing
+    }
+
+    static func completionAction(
+        token: Int,
+        newestToken: Int,
+        target: StudioSelectionKey,
+        currentSelection: StudioSelectionKey?
+    ) -> CompletionAction {
+        guard operationIsCurrent(token: token, newestToken: newestToken) else {
+            return .supersededDoNothing
+        }
+        guard currentSelection == target else { return .staleSelectionDoNothing }
+        return .proceed
+    }
+
+    /// Only the operation that raised the fence may lower it — a stale
+    /// completion finishing after a newer operation replaced the fence must
+    /// leave the newer fence standing.
+    static func shouldClearFence(
+        _ fence: AIEditingIntentFence?, completingToken: Int
+    ) -> Bool {
+        fence?.token == completingToken
+    }
+
+    /// AI generation is deliberate editing intent — the same rule shape as
+    /// `modeAfterNewCompositionCreated`, and deliberately a decision about an
+    /// APPLICATION RESULT, never an observer of runtime state.
+    static func modeAfterAIGeneration(
+        applied: Bool, current: StudioRegionMode
+    ) -> StudioRegionMode {
+        applied ? StudioMixerPresentation.modeOnDeliberateActivation : current
+    }
+}
+
 /// "Which lights should this play on?" — the exact-area chooser
 /// (hardware convergence slice A).
 ///
@@ -2393,6 +2603,9 @@ struct StudioRegionWiring: ViewModifier {
 
     let vm: StudioViewModel
     @Binding var regionMode: StudioRegionMode
+    /// Non-nil only while an AI application is in flight (N1). See
+    /// `StudioAIGeneration.passiveCloseSuppressed` for exactly what it gates.
+    let aiFence: AIEditingIntentFence?
 
     func body(content: Content) -> some View {
         content
@@ -2424,7 +2637,20 @@ struct StudioRegionWiring: ViewModifier {
             // bridge animation reconciling, an external teardown — and none of
             // those may open customization. Opening it is now reachable only
             // from a deliberate card activation or the "Live Controls" pill.
+            // N1: while an AI application is in flight for the CURRENT
+            // selection, `apply`'s own teardown nils `runningCardID` for a
+            // moment — that transient nil is the machinery of the deliberate
+            // start, not an effect ending, and letting it through is exactly
+            // how the AI result used to land on the decks. The fence is
+            // token-identified and selection-exact; with it down or
+            // mismatched, the passive rule below runs untouched.
             .onChange(of: vm.runningCardID) { _, newValue in
+                if StudioAIGeneration.passiveCloseSuppressed(
+                    fence: aiFence,
+                    currentSelection: vm.selectedRoom.map(StudioSelectionKey.init),
+                    newRunningCardID: newValue) {
+                    return
+                }
                 regionMode = StudioMixerPresentation.modeAfterRunningCardChange(
                     newValue, current: regionMode)
             }

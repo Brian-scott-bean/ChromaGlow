@@ -236,3 +236,197 @@ final class MixerTrayMetricsTests: XCTestCase {
             + "only a creation RESULT may")
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// N1 — AI creation stays in place.
+//
+// The defect: `triggerAIGeneration` was the ONE creation path with no opener,
+// and `apply`'s teardown nils `runningCardID` mid-flight, which the passive
+// rule maps to `.decks` — so the generated result landed on the effects decks
+// instead of the editor. The fix is an operation-token-identified editing-
+// intent fence, and these tests exercise the exact pure rules the view
+// consumes (`StudioAIGeneration`), including the transition SEQUENCE — a
+// final-state-only assertion would miss an intermediate decks flash.
+// ─────────────────────────────────────────────────────────────────────────
+@MainActor
+final class StudioAIGenerationTests: XCTestCase {
+
+    private let kitchenA = StudioSelectionKey(bridgeID: "bridge-A", groupID: "room-7", kind: .room)
+    private let kitchenB = StudioSelectionKey(bridgeID: "bridge-B", groupID: "room-7", kind: .room)
+    private let presetX = UUID()
+    private let presetY = UUID()
+
+    /// Replays `runningCardID` events through EXACTLY the two rules
+    /// `StudioRegionWiring` composes, recording the mode after every event.
+    private func replay(
+        initial: StudioRegionMode,
+        fence: AIEditingIntentFence?,
+        selection: StudioSelectionKey?,
+        events: [String?]
+    ) -> [StudioRegionMode] {
+        var mode = initial
+        var trace: [StudioRegionMode] = []
+        for event in events {
+            if !StudioAIGeneration.passiveCloseSuppressed(
+                fence: fence, currentSelection: selection, newRunningCardID: event) {
+                mode = StudioMixerPresentation.modeAfterRunningCardChange(event, current: mode)
+            }
+            trace.append(mode)
+        }
+        return trace
+    }
+
+    // ── The transition-sequence regression ────────────────────────────
+
+    /// An AI application over a running look emits teardown-nil then the new
+    /// card id. With the fence up for the current selection, the region must
+    /// never pass through `.decks` — not merely end elsewhere.
+    func testAIApplicationEmitsNoIntermediateDecksMode() {
+        let fence = AIEditingIntentFence(token: 1, target: kitchenA, presetID: presetX)
+        let applicationEvents: [String?] = [nil, "comp_\(presetX.uuidString)"]
+
+        // From an open editor: no step may be .decks at all.
+        let fromEditor = replay(
+            initial: .customization, fence: fence, selection: kitchenA,
+            events: applicationEvents)
+        XCTAssertFalse(fromEditor.contains(.decks),
+            "the fenced application let an intermediate .decks through: \(fromEditor)")
+
+        // From the decks (the AI hero's home): the teardown must not RE-assert
+        // .decks after the result opens the editor — replaying the same events
+        // after the deliberate open must keep it open.
+        let afterOpen = replay(
+            initial: StudioAIGeneration.modeAfterAIGeneration(applied: true, current: .decks),
+            fence: fence, selection: kitchenA,
+            events: applicationEvents)
+        XCTAssertEqual(afterOpen, [.customization, .customization],
+            "late-delivered application events knocked the opened editor back to the decks")
+    }
+
+    /// NEGATIVE CONTROL — with the fence down, the identical event replay MUST
+    /// hit `.decks`. This proves the sequence assertion above can fail, and
+    /// that the fence (not some other coincidence) is what carries the fix.
+    func testWithoutTheFenceTheSameSequenceHitsDecks() {
+        let trace = replay(
+            initial: .customization, fence: nil, selection: kitchenA,
+            events: [nil, "comp_\(presetX.uuidString)"])
+        XCTAssertTrue(trace.contains(.decks),
+            "the unfenced teardown no longer closes — the passive rule was weakened, "
+            + "which is explicitly out of N1's authority")
+    }
+
+    // ── Fence scope: exactly the AI teardown, nothing else ────────────
+
+    func testSuppressionIsExactlyScoped() {
+        let fence = AIEditingIntentFence(token: 3, target: kitchenA, presetID: presetX)
+
+        // Suppressed: the teardown nil, for the fenced selection.
+        XCTAssertTrue(StudioAIGeneration.passiveCloseSuppressed(
+            fence: fence, currentSelection: kitchenA, newRunningCardID: nil))
+
+        // Not suppressed: no fence.
+        XCTAssertFalse(StudioAIGeneration.passiveCloseSuppressed(
+            fence: nil, currentSelection: kitchenA, newRunningCardID: nil))
+        // Not suppressed: a non-nil change (the passive rule is a no-op there anyway).
+        XCTAssertFalse(StudioAIGeneration.passiveCloseSuppressed(
+            fence: fence, currentSelection: kitchenA, newRunningCardID: "any-card"))
+        // Not suppressed: the user moved to another bridge's same-id room —
+        // the fence is selection-EXACT, not room-id-keyed.
+        XCTAssertFalse(StudioAIGeneration.passiveCloseSuppressed(
+            fence: fence, currentSelection: kitchenB, newRunningCardID: nil))
+        // Not suppressed: no selection at all.
+        XCTAssertFalse(StudioAIGeneration.passiveCloseSuppressed(
+            fence: fence, currentSelection: nil, newRunningCardID: nil))
+    }
+
+    // ── Overlapping operations: older finishes LAST ───────────────────
+
+    /// Two AI operations on the SAME room; the older one completes after the
+    /// newer one started. It must not apply its preset, must not move the
+    /// region, and must not clear the newer operation's fence — a selection
+    /// key alone could never make these distinctions, which is why the fence
+    /// carries a token.
+    func testOlderOperationFinishingLastIsInert() {
+        let older = 1, newer = 2
+
+        // The older completion may not proceed…
+        XCTAssertEqual(
+            StudioAIGeneration.completionAction(
+                token: older, newestToken: newer,
+                target: kitchenA, currentSelection: kitchenA),
+            .supersededDoNothing,
+            "an older AI operation acted after being superseded — same room, so "
+            + "only the token can catch this")
+
+        // …and may not lower the newer operation's fence.
+        let newerFence = AIEditingIntentFence(token: newer, target: kitchenA, presetID: presetY)
+        XCTAssertFalse(
+            StudioAIGeneration.shouldClearFence(newerFence, completingToken: older),
+            "the older operation cleared the newer operation's fence")
+        // The newer operation itself still can.
+        XCTAssertTrue(
+            StudioAIGeneration.shouldClearFence(newerFence, completingToken: newer))
+        // And with no fence standing there is nothing for anyone to clear.
+        XCTAssertFalse(StudioAIGeneration.shouldClearFence(nil, completingToken: newer))
+
+        // Same room + same token but a different generated preset is a
+        // DIFFERENT fence: preset identity is part of the fence, per N1.
+        XCTAssertNotEqual(
+            AIEditingIntentFence(token: newer, target: kitchenA, presetID: presetX),
+            newerFence)
+    }
+
+    /// A transport-prompt response can arrive arbitrarily late. After the
+    /// selection moved — including to another bridge's room with the SAME room
+    /// id — it must apply nothing and open nothing.
+    func testStalePromptResponseAfterSelectionChangeAppliesNothing() {
+        XCTAssertEqual(
+            StudioAIGeneration.completionAction(
+                token: 2, newestToken: 2,
+                target: kitchenA, currentSelection: kitchenB),
+            .staleSelectionDoNothing)
+        XCTAssertEqual(
+            StudioAIGeneration.completionAction(
+                token: 2, newestToken: 2,
+                target: kitchenA, currentSelection: nil),
+            .staleSelectionDoNothing)
+        // The happy path still proceeds — the guards must not be over-broad.
+        XCTAssertEqual(
+            StudioAIGeneration.completionAction(
+                token: 2, newestToken: 2,
+                target: kitchenA, currentSelection: kitchenA),
+            .proceed)
+    }
+
+    // ── The deliberate-open rule ──────────────────────────────────────
+
+    /// Same shape and same direction as `modeAfterNewCompositionCreated`: an
+    /// APPLIED result opens the editor from anywhere; anything less leaves the
+    /// region exactly where it was (refusals present their own surfaces).
+    func testAIGenerationOpensOnlyOnAnAppliedResult() {
+        for current in [StudioRegionMode.decks, .customization] {
+            XCTAssertEqual(
+                StudioAIGeneration.modeAfterAIGeneration(applied: true, current: current),
+                .customization,
+                "an applied AI result must open the editor (from \(current))")
+            XCTAssertEqual(
+                StudioAIGeneration.modeAfterAIGeneration(applied: false, current: current),
+                current,
+                "a refused AI application moved the region (from \(current))")
+        }
+    }
+
+    /// The typed outcome carries the three identities N1 requires: the exact
+    /// captured selection, the generated preset's id, and a typed disposition.
+    /// (Compile-time shape pin — if a field is renamed or dropped, this stops
+    /// building rather than silently narrowing the contract.)
+    func testAIOutcomeCarriesTargetPresetAndDisposition() {
+        let outcome = StudioViewModel.AIGenerationApplication(
+            target: kitchenA, presetID: presetX, disposition: .staleSelection)
+        XCTAssertEqual(outcome.target, kitchenA)
+        XCTAssertEqual(outcome.presetID, presetX)
+        XCTAssertEqual(outcome.disposition, .staleSelection)
+        XCTAssertNotEqual(
+            StudioViewModel.AIGenerationApplication.Disposition.applied, .refused)
+    }
+}
