@@ -1194,3 +1194,217 @@ final class RolodexSelectionMachineTests: XCTestCase {
             "C3 must commit exactly once, after the wheel stops")
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// N1b — AI presentation stabilization.
+//
+// THE DEVICE DEFECT (build 49, Brian): tapping the wand on the Composer deck
+// sent the app straight back to the Effects deck. His own observation named
+// the mechanism — "as the keyboard comes up we are then directed to effects
+// page. maybe it pushes us there because there isn't enough room?" The AI
+// prompt's keyboard shrank the bottom safe area, Studio's root GeometryReader
+// handed the entire collapse to the deck region (every sibling holds an
+// intrinsic height), and the crushed page-style TabView — a
+// UIPageViewController underneath — recovered by writing its FIRST page back
+// through the selection binding. Deck 0 is Effects.
+//
+// The proof that this could only be the pager: nothing in ChromaGlow ever
+// assigns deck 0. So the fix REFUSES the write rather than repairing it after.
+//
+// These tests drive `StudioAIPresentation` — the same value the wand button,
+// the Cancel action, the pager's selection binding, the overlay's visibility
+// and the delayed focus callback all go through. There is no parallel model
+// here: `open()`, `propose(_:)`, `beginDismissal()`, `finishDismissal(token:)`
+// and `focusIsCurrent(_:)` are literally the methods StudioView calls.
+//
+// N1's `StudioAIGeneration` rules (commit 906525d) are untouched and still
+// required — they protect the APPLICATION phase, a second and a half later.
+// ─────────────────────────────────────────────────────────────────────────
+@MainActor
+final class StudioAIPresentationTests: XCTestCase {
+
+    private let composerDeck = 2
+    private let effectsDeck = 0
+
+    /// A presentation sitting on the Composer deck, exactly where Brian is.
+    private func onComposerDeck() -> StudioAIPresentation {
+        var p = StudioAIPresentation(deck: 0)
+        p.propose(composerDeck)
+        XCTAssertEqual(p.deck, composerDeck, "fixture: an unfenced proposal must land")
+        return p
+    }
+
+    // ── 1. Opening captures and holds the originating deck ──────────
+
+    func testOpeningAIComposerFromComposerDeckCapturesAndHoldsIt() {
+        var p = onComposerDeck()
+        p.open()
+
+        XCTAssertEqual(p.deck, composerDeck, "opening the composer may not move the user")
+        XCTAssertTrue(p.isFenced, "the originating deck must be captured on open")
+        XCTAssertTrue(p.isOverlayVisible, "the overlay is what the user tapped for")
+    }
+
+    // ── 2. The pager's deck-0 write-back, while the overlay is open ──
+
+    func testDeckZeroProposedWhileOverlayIsOpenIsRejected() {
+        var p = onComposerDeck()
+        p.open()
+
+        // This is the exact event the keyboard's relayout produces.
+        p.propose(effectsDeck)
+
+        XCTAssertEqual(p.deck, composerDeck,
+            "the pager wrote Effects through the selection binding and it was accepted — "
+            + "this is the build-49 defect")
+    }
+
+    /// NC-1 — the fence is load-bearing. Without it the SAME call reaches
+    /// Effects, which is precisely what build 49 does.
+    func testWithoutTheFenceTheSameProposalReachesEffects() {
+        var p = onComposerDeck()
+        // No open() — no fence.
+        p.propose(effectsDeck)
+
+        XCTAssertEqual(p.deck, effectsDeck,
+            "negative control: an unfenced presentation MUST accept deck 0, otherwise "
+            + "the fenced tests above would pass for the wrong reason")
+    }
+
+    // ── 3. The dismissal window ─────────────────────────────────────
+
+    func testDeckZeroProposedDuringOverlayAndKeyboardDismissalIsRejected() {
+        var p = onComposerDeck()
+        p.open()
+        let settle = p.beginDismissal()
+
+        // The overlay is gone but the keyboard is still animating away, and its
+        // dismissal relayout proposes deck 0 exactly as its appearance did.
+        XCTAssertFalse(p.isOverlayVisible, "the overlay closes at beginDismissal")
+        XCTAssertTrue(p.isFenced,
+            "NC-2: releasing the fence when the overlay closes reopens the defect — "
+            + "the keyboard has not finished leaving yet")
+
+        p.propose(effectsDeck)
+        XCTAssertEqual(p.deck, composerDeck, "a dismissal-time deck-0 write must be refused")
+
+        p.finishDismissal(token: settle)
+        XCTAssertEqual(p.deck, composerDeck,
+            "Cancel must leave the user on the deck they opened AI from")
+        XCTAssertFalse(p.isFenced, "the fence releases only after the keyboard is gone")
+    }
+
+    // ── 4. Cancel before the delayed focus callback fires ───────────
+
+    func testImmediateCancelBeforeDelayedFocusCallbackRejectsIt() {
+        var p = onComposerDeck()
+        let focus = p.open()
+        XCTAssertTrue(p.focusIsCurrent(focus), "fixture: the callback is valid while presenting")
+
+        p.beginDismissal()   // the user cancelled inside the 0.1s window
+
+        XCTAssertFalse(p.focusIsCurrent(focus),
+            "a focus callback belonging to a cancelled presentation must raise nothing")
+    }
+
+    // ── 5. A stale callback from an older presentation ──────────────
+
+    func testStaleFocusCallbackFromAnOlderPresentationIsRejected() {
+        var p = onComposerDeck()
+        let older = p.open()
+        let settle = p.beginDismissal()
+        p.finishDismissal(token: settle)
+
+        let newer = p.open()
+
+        XCTAssertFalse(p.focusIsCurrent(older),
+            "the older presentation's callback must not raise the keyboard for the newer one")
+        XCTAssertTrue(p.focusIsCurrent(newer), "the current presentation's callback is valid")
+        XCTAssertNotEqual(older, newer, "tokens must be monotonic, not reused")
+
+        // And a settle callback from the superseded presentation cannot release
+        // the newer presentation's fence.
+        p.finishDismissal(token: settle)
+        XCTAssertTrue(p.isFenced, "a stale settle callback must not lower a newer fence")
+    }
+
+    // ── 6. Normal selection resumes after full release ──────────────
+
+    func testNormalDeckChangesResumeAfterTheFenceIsFullyReleased() {
+        var p = onComposerDeck()
+        p.open()
+        let settle = p.beginDismissal()
+        p.finishDismissal(token: settle)
+
+        p.propose(effectsDeck)
+        XCTAssertEqual(p.deck, effectsDeck, "an explicit deck change must work again after Cancel")
+        p.propose(1)
+        XCTAssertEqual(p.deck, 1, "and keep working")
+    }
+
+    // ── 7. The full device sequence, asserted at EVERY step ─────────
+
+    /// Composer deck → AI tapped → overlay opens → keyboard rises (the pager
+    /// proposes 0, repeatedly, as SwiftUI re-lays out) → Cancel → keyboard
+    /// leaves (more proposals) → settled. A final-state-only assertion would
+    /// miss an intermediate Effects flash, so every step is checked.
+    func testKeyboardRelayoutTraceNeverLeavesTheComposerDeck() {
+        var p = onComposerDeck()
+        var trace: [Int] = []
+
+        p.open();                       trace.append(p.deck)
+        p.propose(effectsDeck);         trace.append(p.deck)   // keyboardWillShow relayout
+        p.propose(effectsDeck);         trace.append(p.deck)   // and again on the next pass
+        p.propose(1);                   trace.append(p.deck)   // a mid-animation intermediate
+        let settle = p.beginDismissal();trace.append(p.deck)   // Cancel
+        p.propose(effectsDeck);         trace.append(p.deck)   // keyboardWillHide relayout
+        p.finishDismissal(token: settle);trace.append(p.deck)
+
+        XCTAssertEqual(trace, Array(repeating: composerDeck, count: 7),
+            "the user must stay on the Composer deck at every step: \(trace)")
+        XCTAssertFalse(p.isFenced, "and end with ordinary selection restored")
+    }
+
+    // ── 8. Opening mutates nothing else ─────────────────────────────
+
+    /// `StudioAIPresentation` holds no reference to `StudioViewModel`, the
+    /// orchestrator, or any transport API, so "opening the AI composer performs
+    /// zero playback mutations" is true BY CONSTRUCTION — there is nothing
+    /// reachable from `open()` that could start, stop or retarget anything.
+    /// (No claim is made here about reading a mounted `StudioView`'s private
+    /// view model; that is not possible and is not attempted.) What this pins
+    /// is the rest of the mutation surface.
+    func testOpeningTouchesOnlyPresentationStateAndPreservesTheDraft() {
+        var p = onComposerDeck()
+        p.promptText = "ocean calm with soft pulse"
+        let before = p
+
+        p.open()
+
+        XCTAssertEqual(p.deck, before.deck, "open() must not move the deck")
+        XCTAssertEqual(p.promptText, before.promptText, "open() must not touch the draft")
+        XCTAssertNotEqual(p, before, "…but it IS a state change: phase, origin and token")
+
+        let settle = p.beginDismissal()
+        p.finishDismissal(token: settle)
+        XCTAssertEqual(p.promptText, "ocean calm with soft pulse",
+            "a draft the caller did not clear must survive the whole presentation")
+        XCTAssertEqual(p.deck, composerDeck)
+    }
+
+    // ── 9. Guards on the reducer's own edges ────────────────────────
+
+    func testOutOfOrderTransitionsAreInert() {
+        var p = onComposerDeck()
+
+        // finishDismissal without a dismissal in flight.
+        p.finishDismissal(token: 99)
+        XCTAssertEqual(p.phase, .idle)
+        XCTAssertFalse(p.isFenced)
+
+        // beginDismissal without a presentation.
+        let token = p.beginDismissal()
+        XCTAssertEqual(p.phase, .idle, "there was nothing to dismiss")
+        XCTAssertFalse(p.focusIsCurrent(token), "and nothing to focus")
+    }
+}

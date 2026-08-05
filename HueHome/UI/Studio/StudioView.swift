@@ -91,8 +91,26 @@ struct StudioView: View {
     // The inline two-axis rolodex (RoomRolodexView) is the room/zone selector;
     // it lives at the top of the Studio content and owns its own state.
 
-    // ── Deck paging ───────────────────────────────────────
-    @State private var currentDeck: Int = 0  // 0 = Effects, 1 = Live, 2 = Composer
+    // ── Deck paging + AI presentation ─────────────────────
+    //
+    // ONE value, not three (N1b). The deck selection, the AI overlay's
+    // visibility, the prompt draft and the focus token live together because
+    // they are one interaction: the old split let the wand raise a keyboard
+    // through `aiPromptFocused` while the pager quietly rewrote a completely
+    // separate `currentDeck` to 0. See `StudioAIPresentation`.
+    @State private var aiPresentation = StudioAIPresentation(deck: 0)
+
+    /// The pager's selection binding. Its setter is a PROPOSAL, not an
+    /// assignment — while the AI composer is presented or dismissing, the
+    /// keyboard-relayout write-back is refused here.
+    private var deckSelection: Binding<Int> {
+        Binding(
+            get: { aiPresentation.deck },
+            set: { aiPresentation.propose($0) }
+        )
+    }
+
+    private var currentDeck: Int { aiPresentation.deck }
 
     // ── Composer (Deck 3) ──────────────────────────────────
     @State private var composerCategory: PresetCategory = .all
@@ -119,8 +137,14 @@ struct StudioView: View {
     @State private var compositionSaveAccent = "#FFB340"
     @State private var compositionSaveTransport: CompositionSaveTransportOption = .entertainmentArea
     @State private var compositionSaveCategory: PresetCategory = .myCreations
-    @State private var isAIPromptExpanded = false
-    @State private var aiPromptText = ""
+    /// The prompt draft lives in `aiPresentation`; this is the writable view of
+    /// it the TextField binds to.
+    private var aiPromptText: Binding<String> {
+        Binding(
+            get: { aiPresentation.promptText },
+            set: { aiPresentation.promptText = $0 }
+        )
+    }
 
     // ── Harmony Engine ────────────────────────────────────────
     @State private var activeHarmonyRule: HarmonyRule = .none
@@ -404,7 +428,7 @@ struct StudioView: View {
         .sheet(item: $importRequest) { request in
             ImportSceneSheet(scene: request.scene, store: vm.compositionStore) { preset in
                 // Land on the deck that now holds it, filtered so it is visible.
-                currentDeck = 2
+                aiPresentation.propose(2)
                 composerCategory = preset.category
             }
         }
@@ -611,8 +635,21 @@ struct StudioView: View {
             )
             .transition(.opacity)
         } else {
-            cardGrid
-                .transition(.opacity)
+            // The pager stays MOUNTED underneath the AI composer — it is never
+            // swapped out — so its selection, scroll offsets and card canvases
+            // survive the whole AI interaction. `.ignoresSafeArea(.keyboard)`
+            // keeps the keyboard from crushing it ("there isn't enough room"),
+            // and is scoped to the pager alone so `aiComposerPanel` keeps its
+            // own ordinary keyboard avoidance.
+            ZStack {
+                cardGrid
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
+
+                if aiPresentation.isOverlayVisible {
+                    aiComposerPanel
+                }
+            }
+            .transition(.opacity)
         }
     }
 
@@ -650,7 +687,7 @@ struct StudioView: View {
     // ──────────────────────────────────────────────
 
     private var cardGrid: some View {
-        TabView(selection: $currentDeck) {
+        TabView(selection: deckSelection) {
             // Deck 0: Effects — built-ins, then Composer creations that move
             deckGrid(cards: vm.effectCards, deckIndex: 0,
                      composerPresets: vm.composerEffectPresets)
@@ -814,6 +851,8 @@ struct StudioView: View {
         .buttonStyle(.plain)
     }
 
+    /// The collapsed hero: "+ Create" and the wand. The EXPANDED AI composer is
+    /// deliberately no longer here — see `aiComposerPanel`.
     private func composerCreateHero(visible: Bool) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: HueRadius.xl)
@@ -825,210 +864,190 @@ struct StudioView: View {
                 .opacity(0.5)
                 .allowsHitTesting(false)
 
-            // Wall-clock-driven border sweep (3s/rev) — pausable, unlike the old
-            // repeatForever CoreAnimation drive that kept a 60fps angular-gradient
-            // animation running directly behind the AI-prompt TextField.
-            TimelineView(.animation(
-                minimumInterval: 1.0 / 20.0,
-                // `visible` only tracks the deck pager — without isTabActive
-                // this 20fps sweep kept redrawing behind whichever tab the
-                // user switched to (the hidden-tab clock class every sibling
-                // animation gates on).
-                paused: !visible || !isTabActive || reduceMotion || KeyboardState.shared.isKeyboardUp
-            )) { timeline in
-                let phase = (timeline.date.timeIntervalSinceReferenceDate / 3.0)
-                    .truncatingRemainder(dividingBy: 1.0)
-                RoundedRectangle(cornerRadius: HueRadius.xl)
-                    .strokeBorder(
-                        AngularGradient(
-                            colors: [
-                                HuePalette.amber,
-                                Color(hex: "#8C59FF"),
-                                HuePalette.amber.opacity(0.35),
-                                HuePalette.amber
-                            ],
-                            center: .center,
-                            angle: .degrees(phase * 360)
-                        ),
-                        lineWidth: 2
-                    )
-            }
+            AIHeroBorderSweep(paused: !visible || !isTabActive || reduceMotion)
 
-            Group {
-                if isAIPromptExpanded {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "wand.and.stars")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(HuePalette.amber)
-                            Text("Generate with AI")
-                                .font(.system(size: 14, weight: .semibold))
+            HStack(spacing: HueSpacing.md) {
+                Button {
+                    // The exact room, captured before any await.
+                    let target = vm.selectedRoom
+                    Task {
+                        let outcome = await vm.createStarterComposition(in: target)
+                        // Creating a new composition is deliberate editing
+                        // intent, so it opens the editor — but only if the
+                        // target is STILL selected. If the wheel moved during
+                        // the await, opening would present a surface for a
+                        // room the user has already left.
+                        guard outcome.createdNewComposition,
+                              vm.selectedRoom.map(StudioSelectionKey.init) == outcome.target
+                        else { return }
+                        withAnimation(HueAnimation.fast) {
+                            regionMode = StudioMixerPresentation.modeAfterNewCompositionCreated(
+                                created: true, current: regionMode)
+                        }
+                    }
+                    HapticManager.shared.medium()
+                } label: {
+                    HStack(spacing: HueSpacing.md) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(HuePalette.amber)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("+ Create")
+                                .font(.system(size: 16, weight: .semibold))
                                 .foregroundStyle(.white)
-                            Spacer()
-                            if vm.isGeneratingAIComposition {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                    .tint(HuePalette.amber)
-                            }
+                            Text("Build your own effect")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.42))
+                                .fixedSize(horizontal: false, vertical: true)
                         }
+                        Spacer(minLength: 0)
+                    }
+                }
+                .buttonStyle(.plain)
 
-                        TextField("Describe the vibe (e.g. ocean calm with soft pulse)", text: $aiPromptText, axis: .vertical)
-                            .focused($aiPromptFocused)
-                            // Fixed height: a growing field re-lays-out the whole
-                            // deck grid under it on every wrap.
-                            .lineLimit(2, reservesSpace: true)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white)
-                            .textInputAutocapitalization(.sentences)
-                            .autocorrectionDisabled(false)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.black.opacity(0.22))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-                            )
+                Button {
+                    openAIComposer()
+                } label: {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(HuePalette.amber)
+                        .padding(10)
+                        .background(
+                            Circle().fill(HuePalette.amber.opacity(0.14))
+                        )
+                        .overlay(
+                            Circle().strokeBorder(HuePalette.amber.opacity(0.35), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Generate with AI")
+            }
+            .padding(HueSpacing.lg)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 76)
+        .opacity(visible ? 1 : 0.999)
+    }
 
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(vm.suggestedAIPrompts, id: \.self) { suggestion in
-                                    Button {
-                                        aiPromptText = suggestion
-                                        triggerAIGeneration(with: suggestion)
-                                        HapticManager.shared.selection()
-                                    } label: {
-                                        Text(suggestion)
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundStyle(.white.opacity(0.9))
-                                            .lineLimit(1)
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 6)
-                                            .background(
-                                                Capsule().fill(Color.white.opacity(0.08))
-                                            )
-                                            .overlay(
-                                                Capsule()
-                                                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
-                                            )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .disabled(vm.isGeneratingAIComposition)
-                                }
-                            }
-                        }
+    /// The AI composer, mounted as a SIBLING of the deck pager rather than as
+    /// page-2 content (N1b).
+    ///
+    /// Its `TextField` was the only keyboard trigger inside the pager, and a
+    /// first responder living inside a `UIPageViewController`-backed pager is
+    /// what dragged the pager through the keyboard's relayout in the first
+    /// place. Out here the pager stays mounted and untouched underneath, and
+    /// this panel keeps ordinary keyboard avoidance.
+    private var aiComposerPanel: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: HueRadius.xl)
+                .fill(Color.black.opacity(0.55))
 
-                        HStack(spacing: 8) {
-                            Button("Cancel") {
-                                isAIPromptExpanded = false
-                                aiPromptText = ""
-                                aiPromptFocused = false
-                                vm.aiGenerationErrorMessage = nil
-                                HapticManager.shared.light()
-                            }
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.75))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule().fill(Color.white.opacity(0.08))
-                            )
-                            .buttonStyle(.plain)
-                            .disabled(vm.isGeneratingAIComposition)
+            AIHeroBorderSweep(paused: !isTabActive || reduceMotion)
 
-                            Spacer()
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(HuePalette.amber)
+                    Text("Generate with AI")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    if vm.isGeneratingAIComposition {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .tint(HuePalette.amber)
+                    }
+                }
 
+                TextField("Describe the vibe (e.g. ocean calm with soft pulse)", text: aiPromptText, axis: .vertical)
+                    .focused($aiPromptFocused)
+                    // Fixed height: a growing field re-lays-out the whole
+                    // deck grid under it on every wrap.
+                    .lineLimit(2, reservesSpace: true)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+                    .textInputAutocapitalization(.sentences)
+                    .autocorrectionDisabled(false)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black.opacity(0.22))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(vm.suggestedAIPrompts, id: \.self) { suggestion in
                             Button {
-                                triggerAIGeneration(with: aiPromptText)
+                                aiPresentation.promptText = suggestion
+                                triggerAIGeneration(with: suggestion)
+                                HapticManager.shared.selection()
                             } label: {
-                                Text(vm.isGeneratingAIComposition ? "Generating..." : "Generate")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(.black.opacity(vm.isGeneratingAIComposition ? 0.5 : 0.9))
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 7)
+                                Text(suggestion)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.9))
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
                                     .background(
-                                        Capsule().fill(HuePalette.amber.opacity(vm.isGeneratingAIComposition ? 0.45 : 0.95))
+                                        Capsule().fill(Color.white.opacity(0.08))
+                                    )
+                                    .overlay(
+                                        Capsule()
+                                            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
                                     )
                             }
                             .buttonStyle(.plain)
-                            .disabled(vm.isGeneratingAIComposition || aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(vm.isGeneratingAIComposition)
                         }
                     }
-                    .padding(HueSpacing.lg)
-                } else {
-                    HStack(spacing: HueSpacing.md) {
-                        Button {
-                            // The exact room, captured before any await.
-                            let target = vm.selectedRoom
-                            Task {
-                                let outcome = await vm.createStarterComposition(in: target)
-                                // Creating a new composition is deliberate editing
-                                // intent, so it opens the editor — but only if the
-                                // target is STILL selected. If the wheel moved during
-                                // the await, opening would present a surface for a
-                                // room the user has already left.
-                                guard outcome.createdNewComposition,
-                                      vm.selectedRoom.map(StudioSelectionKey.init) == outcome.target
-                                else { return }
-                                withAnimation(HueAnimation.fast) {
-                                    regionMode = StudioMixerPresentation.modeAfterNewCompositionCreated(
-                                        created: true, current: regionMode)
-                                }
-                            }
-                            HapticManager.shared.medium()
-                        } label: {
-                            HStack(spacing: HueSpacing.md) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.system(size: 22, weight: .semibold))
-                                    .foregroundStyle(HuePalette.amber)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("+ Create")
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundStyle(.white)
-                                    Text("Build your own effect")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.white.opacity(0.42))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                Spacer(minLength: 0)
-                            }
-                        }
-                        .buttonStyle(.plain)
+                }
 
-                        Button {
-                            withAnimation(HueAnimation.fast) {
-                                isAIPromptExpanded = true
-                            }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                aiPromptFocused = true
-                            }
-                            vm.aiGenerationErrorMessage = nil
-                            HapticManager.shared.selection()
-                        } label: {
-                            Image(systemName: "wand.and.stars")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(HuePalette.amber)
-                                .padding(10)
-                                .background(
-                                    Circle().fill(HuePalette.amber.opacity(0.14))
-                                )
-                                .overlay(
-                                    Circle().strokeBorder(HuePalette.amber.opacity(0.35), lineWidth: 1)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Generate with AI")
+                HStack(spacing: 8) {
+                    Button("Cancel") {
+                        dismissAIComposer(clearingDraft: true)
+                        vm.aiGenerationErrorMessage = nil
+                        HapticManager.shared.light()
                     }
-                    .padding(HueSpacing.lg)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(
+                        Capsule().fill(Color.white.opacity(0.08))
+                    )
+                    .buttonStyle(.plain)
+                    .disabled(vm.isGeneratingAIComposition)
+
+                    Spacer()
+
+                    Button {
+                        triggerAIGeneration(with: aiPresentation.promptText)
+                    } label: {
+                        Text(vm.isGeneratingAIComposition ? "Generating..." : "Generate")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.black.opacity(vm.isGeneratingAIComposition ? 0.5 : 0.9))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule().fill(HuePalette.amber.opacity(vm.isGeneratingAIComposition ? 0.45 : 0.95))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.isGeneratingAIComposition || aiPresentation.promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .padding(HueSpacing.lg)
         }
         .frame(maxWidth: .infinity)
-        .frame(minHeight: isAIPromptExpanded ? 146 : 76)
-        .animation(HueAnimation.fast, value: isAIPromptExpanded)
-        .opacity(visible ? 1 : 0.999)
+        .frame(minHeight: 146)
+        .padding(.horizontal, HueSpacing.screenH)
+        .transition(.opacity)
     }
 
     private func composerGrid(deckIndex: Int) -> some View {
@@ -1215,7 +1234,7 @@ struct StudioView: View {
         HStack(spacing: 6) {
             ForEach(Array(Self.deckNames.enumerated()), id: \.offset) { i, name in
                 Button {
-                    withAnimation(HueAnimation.fast) { currentDeck = i }
+                    withAnimation(HueAnimation.fast) { aiPresentation.propose(i) }
                     HapticManager.shared.selection()
                 } label: {
                     Text(name)
@@ -1232,6 +1251,47 @@ struct StudioView: View {
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(currentDeck == i ? .isSelected : [])
             }
+        }
+    }
+
+    // ── AI composer presentation (N1b) ───────────────────────
+    //
+    // Every AI presentation transition goes through these two, so the deck fence
+    // and the focus token can never drift apart the way three separate `@State`
+    // flags did.
+
+    /// The wand. Captures the originating deck, raises the fence, and requests
+    /// focus behind a token so a cancelled presentation's callback is inert.
+    private func openAIComposer() {
+        let token = withAnimation(HueAnimation.fast) {
+            aiPresentation.open()
+        }
+        // The 0.1s delay is the field's mount window, unchanged. What IS new:
+        // this callback proves it still belongs to the presentation that
+        // scheduled it before it raises a keyboard.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            guard aiPresentation.focusIsCurrent(token) else { return }
+            aiPromptFocused = true
+        }
+        vm.aiGenerationErrorMessage = nil
+        HapticManager.shared.selection()
+    }
+
+    /// Teardown, in the ONE order that survives the keyboard: resign focus,
+    /// close the overlay, HOLD the fence while the keyboard animates away, then
+    /// release and restore the originating deck. Releasing at overlay-close
+    /// would reopen the defect — the dismissal relayout proposes deck 0 exactly
+    /// as the appearance relayout did.
+    private func dismissAIComposer(clearingDraft: Bool) {
+        aiPromptFocused = false
+        let token = withAnimation(HueAnimation.fast) {
+            aiPresentation.beginDismissal()
+        }
+        if clearingDraft { aiPresentation.promptText = "" }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + StudioAIPresentation.dismissalSettle
+        ) {
+            aiPresentation.finishDismissal(token: token)
         }
     }
 
@@ -1288,9 +1348,7 @@ struct StudioView: View {
                 HapticManager.shared.light()
                 return
             }
-            aiPromptText = ""
-            isAIPromptExpanded = false
-            aiPromptFocused = false
+            dismissAIComposer(clearingDraft: true)
 
             let pending = PendingAIGeneration(
                 token: token, preset: preset, room: room,
@@ -2347,6 +2405,167 @@ enum StudioMixerPresentation {
     ) -> StudioRegionMode {
         created ? modeOnDeliberateActivation : current
     }
+}
+
+/// The hero's wall-clock border sweep (3s/rev), extracted to its OWN view (N1b).
+///
+/// It reads `KeyboardState.shared` — an `@Observable` singleton — and that read
+/// used to sit inside `StudioView`'s own body, so every keyboard show/hide
+/// invalidated the entire Studio view including the deck pager. Every other
+/// call site in the app already reads it from a child body; this one now does
+/// too, which is the pattern, not an exception.
+private struct AIHeroBorderSweep: View {
+
+    /// Everything the PARENT knows about pausing (visibility, tab activity,
+    /// Reduce Motion). The keyboard term is added here so the observation stays
+    /// scoped to this view.
+    let paused: Bool
+
+    var body: some View {
+        TimelineView(.animation(
+            minimumInterval: 1.0 / 20.0,
+            paused: paused || KeyboardState.shared.isKeyboardUp
+        )) { timeline in
+            let phase = (timeline.date.timeIntervalSinceReferenceDate / 3.0)
+                .truncatingRemainder(dividingBy: 1.0)
+            RoundedRectangle(cornerRadius: HueRadius.xl)
+                .strokeBorder(
+                    AngularGradient(
+                        colors: [
+                            HuePalette.amber,
+                            Color(hex: "#8C59FF"),
+                            HuePalette.amber.opacity(0.35),
+                            HuePalette.amber
+                        ],
+                        center: .center,
+                        angle: .degrees(phase * 360)
+                    ),
+                    lineWidth: 2
+                )
+        }
+    }
+}
+
+/// The AI composer's authoritative presentation model (N1b).
+///
+/// THE DEVICE DEFECT this exists to fix: the AI prompt's keyboard shrank the
+/// bottom safe area, Studio's root `GeometryReader` handed the whole collapse to
+/// the deck region (every sibling holds an intrinsic height), and the crushed
+/// page-style `TabView` — a `UIPageViewController` underneath — recovered by
+/// writing its FIRST page back through the selection binding. Deck 0 is Effects.
+/// Nothing in ChromaGlow ever assigns 0 (the only writes are `.propose` from a
+/// deck pill and the import landing), so the pager's own write-back was the only
+/// possible source, and the only way to stop it is to REFUSE the write.
+///
+/// So this is one value, not three. It owns the accepted deck, the deck the
+/// composer was opened from, the presentation phase, the prompt draft, and a
+/// generation token — and the wand button, Cancel, the pager binding, the
+/// overlay's visibility and the delayed focus callback all go through it. A
+/// split model is what let the old code raise the keyboard from one `@State`
+/// while a completely different `@State` silently moved the user.
+///
+/// TWO ORDERING RULES CARRY THE FIX:
+///
+///  1. The fence spans BOTH `.presenting` and `.dismissing`. Releasing it when
+///     the overlay closes would be too early: the keyboard is still leaving, and
+///     its dismissal relayout produces exactly the same pager write-back its
+///     appearance did. Only `finishDismissal` — after the keyboard is gone —
+///     restores the originating deck and releases.
+///  2. Every phase change bumps `generation`, so a delayed focus callback from a
+///     cancelled or superseded presentation can raise nothing and mutate
+///     nothing.
+///
+/// Deliberately a plain value type with NO reference to `StudioViewModel`, the
+/// orchestrator, or any transport API: "opening the AI composer mutates no
+/// playback" is then true by construction rather than by review.
+struct StudioAIPresentation: Equatable {
+
+    /// `.dismissing` is not cosmetic — it is the window in which the keyboard is
+    /// still animating away and the pager is still free to propose deck 0.
+    enum Phase: Equatable {
+        case idle
+        case presenting
+        case dismissing
+    }
+
+    /// The accepted deck selection. 0 = Effects, 1 = Live, 2 = Composer.
+    private(set) var deck: Int
+    /// Captured when the composer opens; non-nil means the fence is up.
+    private(set) var originDeck: Int?
+    private(set) var phase: Phase
+    /// The typed prompt. Survives open → dismissal untouched.
+    var promptText: String
+    /// Monotonic presentation/focus token.
+    private(set) var generation: Int
+
+    init(deck: Int = 0,
+         originDeck: Int? = nil,
+         phase: Phase = .idle,
+         promptText: String = "",
+         generation: Int = 0) {
+        self.deck = deck
+        self.originDeck = originDeck
+        self.phase = phase
+        self.promptText = promptText
+        self.generation = generation
+    }
+
+    var isOverlayVisible: Bool { phase == .presenting }
+
+    /// True across `.presenting` AND `.dismissing` — see ordering rule 1.
+    var isFenced: Bool { originDeck != nil }
+
+    /// Every selection proposal funnels here: the pager's own write-back, a deck
+    /// pill, the scene-import landing. While fenced the originating deck is held
+    /// and the proposal is dropped — including the deck-0 write that is this
+    /// packet's entire defect.
+    mutating func propose(_ proposed: Int) {
+        guard originDeck == nil else { return }
+        deck = proposed
+    }
+
+    /// The wand. Captures the originating deck and mints the focus token the
+    /// delayed callback must present.
+    @discardableResult
+    mutating func open() -> Int {
+        generation += 1
+        originDeck = deck
+        phase = .presenting
+        return generation
+    }
+
+    /// Step 1 of teardown (Cancel, or a completed generation): focus has been
+    /// cleared and the overlay closes. The fence STAYS UP. Returns the token the
+    /// settle callback must present.
+    @discardableResult
+    mutating func beginDismissal() -> Int {
+        guard phase == .presenting else { return generation }
+        generation += 1
+        phase = .dismissing
+        return generation
+    }
+
+    /// Step 2: the keyboard is gone. Restores the originating deck — which is
+    /// still the accepted deck, because nothing was allowed to move it — and
+    /// releases the fence so ordinary deck selection resumes.
+    mutating func finishDismissal(token: Int) {
+        guard phase == .dismissing, token == generation else { return }
+        if let originDeck { deck = originDeck }
+        originDeck = nil
+        phase = .idle
+    }
+
+    /// A delayed focus callback may raise the keyboard only for the presentation
+    /// that minted its token, and only while that presentation is still up.
+    func focusIsCurrent(_ token: Int) -> Bool {
+        token == generation && phase == .presenting
+    }
+
+    /// How long the fence is held after the overlay closes — the keyboard's
+    /// dismissal animation plus a margin. Deliberately a constant rather than an
+    /// observation of `KeyboardState`: reading that `@Observable` from Studio's
+    /// own body is what re-evaluated the whole view on every keyboard event.
+    static let dismissalSettle: TimeInterval = 0.45
 }
 
 /// The AI editing-intent fence (N1). Raised only while an AI application is in
