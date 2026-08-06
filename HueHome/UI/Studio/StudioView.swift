@@ -968,7 +968,35 @@ struct StudioView: View {
     /// this panel keeps ordinary keyboard avoidance.
     private var aiComposerPanel: some View {
         GeometryReader { proxy in
-            let fit = StudioAIComposerLayout.fit(availableHeight: proxy.size.height)
+            let metrics = StudioAIComposerLayout.card(
+                availableHeight: proxy.size.height,
+                hasSuggestions: !vm.suggestedAIPrompts.isEmpty,
+                hasStatusContent: aiComposerHasStatusContent)
+            // The GeometryReader still fills the region — but that height now
+            // belongs to the SHIELD, not to the card. The shield dims the deck
+            // behind the composer and swallows stray taps; the card is sized
+            // from its content.
+            ZStack {
+                Color.black.opacity(0.45)
+                    .contentShape(Rectangle())
+
+                aiComposerCard(metrics: metrics)
+                    .frame(height: metrics.renderedHeight)
+                    .padding(.horizontal, HueSpacing.screenH)
+            }
+        }
+        .transition(.opacity)
+    }
+
+    /// True when a status or error line is occupying a row in the card.
+    private var aiComposerHasStatusContent: Bool {
+        vm.isGeneratingAIComposition
+            || !(vm.aiGenerationErrorMessage ?? "").isEmpty
+    }
+
+    /// The visible card. Content-sized by `metrics`, and — critically — built
+    /// from ONE subtree in every layout mode (N1d).
+    private func aiComposerCard(metrics: StudioAIComposerLayout.CardMetrics) -> some View {
             ZStack {
                 // Near-opaque, unlike the 0.55 that let the deck grid show
                 // through and "compete with the panel" on device.
@@ -997,15 +1025,19 @@ struct StudioView: View {
 
                     // FLEXIBLE — the only region allowed to lose room, and it
                     // scrolls rather than overlapping when it does.
-                    Group {
-                        switch fit {
-                        case .full:
-                            aiComposerContent
-                        case .scrolling:
-                            ScrollView(showsIndicators: false) { aiComposerContent }
-                        }
-                    }
-                    .frame(maxHeight: .infinity, alignment: .top)
+                    // ONE always-mounted scroll container wrapping ONE
+                    // always-mounted prompt subtree. Build 51 had a `switch`
+                    // here — a
+                    // `_ConditionalContent` whose two branches each carried
+                    // their OWN TextField. The keyboard's rise shrank the
+                    // region, `fit` flipped, SwiftUI tore down the branch
+                    // holding the first responder and inserted a different
+                    // one, and the keyboard fell straight back down. Scrolling
+                    // is now a CONFIGURATION of one hierarchy, never a
+                    // replacement of it.
+                    ScrollView(showsIndicators: false) { aiComposerContent }
+                        .scrollDisabled(!metrics.scrolls)
+                        .frame(height: metrics.contentHeight, alignment: .top)
 
                     // FIXED — Cancel and Generate stay outside the scrolling
                     // middle, so they are never scrolled out of reach.
@@ -1046,10 +1078,6 @@ struct StudioView: View {
                 }
                 .padding(HueSpacing.lg)
             }
-        }
-        .frame(minHeight: StudioAIComposerLayout.minimumHeight)
-        .padding(.horizontal, HueSpacing.screenH)
-        .transition(.opacity)
     }
 
     /// The scrolling middle: the prompt field and the suggestion strip.
@@ -1101,6 +1129,16 @@ struct StudioView: View {
                         .disabled(vm.isGeneratingAIComposition)
                     }
                 }
+            }
+
+            // Status/error lives INSIDE the card, so it occupies a row the
+            // sizing policy already counts (`hasStatusContent`) instead of
+            // appearing behind the composer on the deck.
+            if let error = vm.aiGenerationErrorMessage, !error.isEmpty {
+                Text(error)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(HuePalette.Noir.destructive)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -2537,6 +2575,57 @@ enum StudioAIComposerLayout {
             return .scrolling(contentHeight: max(minimumContentHeight, slack))
         }
         return .full
+    }
+
+    /// A status or error line, when one is present.
+    static let statusRowHeight: CGFloat = 30
+
+    /// What the VISIBLE card should measure, given what it actually contains
+    /// and how much keyboard-safe room the region is offering (N1d).
+    ///
+    /// The build-51 card filled the whole Studio region with a large empty
+    /// middle, because the panel's root was a `GeometryReader` — which always
+    /// accepts every point its parent proposes — and the middle carried
+    /// `.frame(maxHeight: .infinity)`. Height was being taken because it was
+    /// available, not because anything needed it. So the card is sized from its
+    /// CONTENT and only capped when the safe region is genuinely smaller.
+    struct CardMetrics: Equatable {
+        /// Everything at full size — what the card wants.
+        let idealHeight: CGFloat
+        /// What the card is actually drawn at: `min(ideal, available)`.
+        let renderedHeight: CGFloat
+        /// What the scrolling middle gets inside `renderedHeight`.
+        let contentHeight: CGFloat
+        /// True only when the region could not seat the ideal.
+        let scrolls: Bool
+    }
+
+    /// The middle's ideal height for exactly the rows that are present.
+    static func idealContentHeight(
+        hasSuggestions: Bool, hasStatusContent: Bool
+    ) -> CGFloat {
+        var height = promptFieldHeight
+        if hasSuggestions { height += rowSpacing + suggestionRowHeight }
+        if hasStatusContent { height += rowSpacing + statusRowHeight }
+        return height
+    }
+
+    static func card(
+        availableHeight: CGFloat,
+        hasSuggestions: Bool,
+        hasStatusContent: Bool
+    ) -> CardMetrics {
+        let content = idealContentHeight(
+            hasSuggestions: hasSuggestions, hasStatusContent: hasStatusContent)
+        let ideal = fixedChromeHeight + content
+        // A GeometryReader's first pass can report 0; never render a zero card.
+        let safe = availableHeight > 0 ? availableHeight : ideal
+        let rendered = min(ideal, safe)
+        return CardMetrics(
+            idealHeight: ideal,
+            renderedHeight: rendered,
+            contentHeight: max(minimumContentHeight, rendered - fixedChromeHeight),
+            scrolls: rendered < ideal)
     }
 
     /// While the composer is up, the pager underneath stays MOUNTED — its

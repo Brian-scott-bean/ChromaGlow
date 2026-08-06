@@ -1593,3 +1593,198 @@ final class StudioAIComposerLayoutTests: XCTestCase {
         return try String(contentsOf: path, encoding: .utf8)
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// N1d — AI focus retention and content-sized card.
+//
+// DEVICE EVIDENCE (build 51, Brian). N1b and N1c held: no Effects redirect,
+// Composer stays selected. Two failures remained.
+//
+// FAIL 1, focus: tapping the prompt began to raise the keyboard and it
+// immediately fell back down, so nothing could be typed. The evidence
+// suggests that the keyboard-driven layout-mode transition replaced or
+// remounted the focused TextField, causing focus loss; the exact
+// focus-clearing event was not directly observed. What IS directly visible in
+// the build-51 source is the shape that would cause it: the panel's middle
+// was a `switch fit { case .full: … case .scrolling: … }` — a
+// `_ConditionalContent` whose two branches each carried their OWN TextField.
+// The keyboard's rise shrinks the region, `fit` flips, and SwiftUI tears down
+// the branch holding the first responder and inserts a different one.
+//
+// FAIL 2, card size: the card filled the whole Studio region with a large
+// empty middle. Its root was a `GeometryReader`, which always accepts every
+// point its parent proposes, and the middle carried
+// `.frame(maxHeight: .infinity)`. Height was taken because it was available,
+// not because anything needed it.
+//
+// These tests drive `StudioAIComposerLayout.card(…)` — the production sizing
+// policy the panel consumes — plus a structural guard over the real source.
+// They prove POLICY and STRUCTURE. No test here claims anything about
+// physical keyboard rendering; only Brian's device pass can show that.
+// ─────────────────────────────────────────────────────────────────────────
+@MainActor
+final class StudioAIComposerCardTests: XCTestCase {
+
+    private typealias L = StudioAIComposerLayout
+
+    private func metrics(
+        available: CGFloat, suggestions: Bool = true, status: Bool = false
+    ) -> L.CardMetrics {
+        L.card(availableHeight: available, hasSuggestions: suggestions, hasStatusContent: status)
+    }
+
+    // ── 1. Content-sized, not parent-sized ──────────────────────────
+
+    func testNormalAvailableHeightRendersTheIdealContentHeightNotTheFullRegion() {
+        let m = metrics(available: 500)
+        XCTAssertEqual(m.renderedHeight, m.idealHeight,
+            "a roomy region must render the card at its CONTENT height")
+        XCTAssertLessThan(m.renderedHeight, 500,
+            "the card must not take 500pt merely because 500pt was offered")
+        XCTAssertFalse(m.scrolls, "nothing needs to scroll when everything fits")
+    }
+
+    /// The policy must be flat in available height once the ideal fits — the
+    /// exact "no empty-fill" invariant.
+    func testMoreParentHeightNeverGrowsTheCard() {
+        let base = metrics(available: 400).renderedHeight
+        for available in [CGFloat(500), 700, 1200, 4000] {
+            XCTAssertEqual(metrics(available: available).renderedHeight, base,
+                "the card grew to \(available)pt of offered height")
+        }
+    }
+
+    // ── 2. Constrained: cap to the safe height and scroll the middle ─
+
+    func testConstrainedHeightCapsTheCardAndScrollsTheMiddle() {
+        let ideal = metrics(available: 1000).idealHeight
+        let squeezed = ideal - 70
+        let m = metrics(available: squeezed)
+
+        XCTAssertEqual(m.renderedHeight, squeezed,
+            "below ideal the card must cap to the keyboard-safe height")
+        XCTAssertTrue(m.scrolls, "and the middle must scroll rather than compress")
+        XCTAssertGreaterThanOrEqual(m.contentHeight, L.minimumContentHeight,
+            "the prompt field keeps its own space at every height")
+    }
+
+    // ── 3. Optional content changes the ideal height ─────────────────
+
+    func testRemovingOptionalContentShrinksTheIdealCard() {
+        let full = metrics(available: 1000, suggestions: true, status: true).idealHeight
+        let noStatus = metrics(available: 1000, suggestions: true, status: false).idealHeight
+        let bare = metrics(available: 1000, suggestions: false, status: false).idealHeight
+
+        XCTAssertLessThan(noStatus, full, "dropping the status row must shrink the card")
+        XCTAssertLessThan(bare, noStatus, "dropping the suggestion strip must shrink it again")
+        XCTAssertEqual(full - noStatus, L.rowSpacing + L.statusRowHeight,
+            "the status row costs exactly its own height plus one gap")
+        XCTAssertEqual(noStatus - bare, L.rowSpacing + L.suggestionRowHeight)
+    }
+
+    /// The worked example from the packet.
+    func testWorkedExample() {
+        let m = metrics(available: 500)
+        XCTAssertEqual(m.renderedHeight, m.idealHeight)
+        XCTAssertEqual(m.contentHeight, m.idealHeight - L.fixedChromeHeight)
+        XCTAssertNotEqual(m.renderedHeight, 500)
+    }
+
+    // ── 4. A degenerate first layout pass never yields a zero card ────
+
+    func testZeroAvailableHeightFallsBackToTheIdealRatherThanCollapsing() {
+        let m = metrics(available: 0)
+        XCTAssertEqual(m.renderedHeight, m.idealHeight,
+            "a GeometryReader's first pass reports 0; the card must not vanish")
+        XCTAssertFalse(m.scrolls)
+    }
+
+    // ── 5 & 7. ONE prompt hierarchy, in the real production source ────
+
+    /// The build-51 defect shape, guarded structurally: the prompt subtree
+    /// must not be duplicated across mutually exclusive layout branches, and
+    /// scrolling must be a CONFIGURATION rather than a branch replacement.
+    func testPromptHierarchyIsNotDuplicatedAcrossLayoutBranches() throws {
+        let source = try Self.studioViewSource()
+        let open = try XCTUnwrap(source.range(of: "private var aiComposerPanel"))
+        let close = try XCTUnwrap(
+            source.range(of: "private func composerGrid", range: open.upperBound..<source.endIndex))
+        let region = String(source[open.upperBound..<close.lowerBound])
+
+        XCTAssertEqual(region.components(separatedBy: "TextField(").count - 1, 1,
+            "exactly ONE TextField may exist in the composer panel + card + content")
+        XCTAssertEqual(region.components(separatedBy: ".focused($aiPromptFocused)").count - 1, 1,
+            "exactly ONE view may bind the AI focus state")
+        XCTAssertEqual(region.components(separatedBy: "aiComposerContent").count - 1, 2,
+            "the middle is referenced once and declared once — never branched")
+        XCTAssertTrue(region.contains(".scrollDisabled("),
+            "scrolling must be configured on one container, not switched between two")
+        XCTAssertFalse(region.contains("case .full:"),
+            "the mutually exclusive full/scrolling content branches must stay gone")
+    }
+
+    /// The card must not claim height merely because a parent offers it.
+    func testVisibleCardDoesNotUseUnrestrictedVerticalExpansion() throws {
+        let source = try Self.studioViewSource()
+        let open = try XCTUnwrap(source.range(of: "private func aiComposerCard"))
+        let close = try XCTUnwrap(
+            source.range(of: "private var aiComposerContent", range: open.upperBound..<source.endIndex))
+        let card = String(source[open.upperBound..<close.lowerBound])
+
+        XCTAssertFalse(card.contains("maxHeight: .infinity"),
+            "the visible card must be content-sized; only the shield may fill the region")
+        XCTAssertTrue(card.contains("metrics.contentHeight"),
+            "the middle must take its height from the sizing policy")
+    }
+
+    // ── 6. A layout transition disturbs no presentation state ────────
+
+    func testLayoutTransitionDoesNotDisturbThePresentation() {
+        var p = StudioAIPresentation(deck: 0)
+        p.propose(2)
+        let focus = p.open()
+        let before = p
+
+        // The keyboard rises: available height collapses and the sizing policy
+        // moves from fitting to constrained. Nothing about the presentation may
+        // change — this is a pure layout recomputation.
+        let roomy = metrics(available: 500)
+        let squeezed = metrics(available: 120)
+        XCTAssertNotEqual(roomy, squeezed, "fixture: the modes really do differ")
+
+        XCTAssertEqual(p, before, "a layout transition must not mutate presentation state")
+        XCTAssertTrue(p.isOverlayVisible, "it must not close the composer")
+        XCTAssertEqual(p.deck, 2, "it must not alter the accepted deck")
+        XCTAssertTrue(p.focusIsCurrent(focus),
+            "it must not invalidate the token, i.e. must not request focus dismissal")
+    }
+
+    // ── 8. Focus lifecycle is unchanged by the sizing work ───────────
+
+    func testOpeningRequestsFocusOnceAndCancelStillClearsIt() {
+        var p = StudioAIPresentation(deck: 0)
+        p.propose(2)
+        let first = p.open()
+        XCTAssertTrue(p.focusIsCurrent(first), "opening requests focus exactly once…")
+
+        // No layout event mints a second request.
+        _ = metrics(available: 120)
+        XCTAssertTrue(p.focusIsCurrent(first), "…and no relayout re-requests it")
+
+        let settle = p.beginDismissal()          // Cancel clears focus first
+        XCTAssertFalse(p.focusIsCurrent(first), "Cancel must invalidate the pending request")
+        p.finishDismissal(token: settle)
+
+        let second = p.open()
+        XCTAssertFalse(p.focusIsCurrent(first), "a stale callback stays rejected")
+        XCTAssertTrue(p.focusIsCurrent(second))
+    }
+
+    private static func studioViewSource() throws -> String {
+        let path = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("HueHome/UI/Studio/StudioView.swift")
+        return try String(contentsOf: path, encoding: .utf8)
+    }
+}
