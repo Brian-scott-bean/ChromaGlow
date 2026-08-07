@@ -50,6 +50,15 @@ ChromaGlow is a native iOS Philips Hue app (production anchor **`main`, 1.0.0 bu
   `CURRENT_PROJECT_VERSION` (all 12 pbxproj entries) each device-test round so stale installs are
   detectable; one independently shippable commit per fix.
 - `main` has no GitHub branch protection (verified 2026-07-07 via API — returns 404).
+- **Composer 2 Phase 1 is complete and NOT landed** (2026-08-07). Nine linear packets 1A→1D,
+  final implementation HEAD `6ead505`, governance candidate on `landing/composer2-phase1`,
+  rollback tag `checkpoint/pre-composer2-phase1-landing`. It is a typed foundation with **zero
+  runtime consumers** — no arbitration, no transport selection, no ownership migration, no
+  resolution execution, no user-visible behavior, and no hardware validation. Do not treat any
+  Composer 2 type as live. Landing is Option A (preserve the stack, fast-forward, no rebase)
+  sequenced before Track A, and needs Brian's explicit authorization. Read
+  `docs/ios/composer2-phase1-landing-record-2026-08-07.md` before touching anything named
+  `Composer2*`.
 - Always run:
 
 ```bash

@@ -13,6 +13,19 @@
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
   (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **46**).
+- **COMPOSER 2 / PHASE 1 COMPLETE AND VALIDATED — NOT LANDED (2026-08-07).** Nine linear
+  packets 1A→1D, final implementation HEAD `6ead505`, branched from `main` @ `320ebaf`.
+  Phase 1 is a typed foundation with **zero runtime consumers**: five production files that
+  name things plus one pure function, and nothing in the shipping runtime calls any of them.
+  No arbitration, no transport selection, no ownership migration, no resolution execution,
+  no user-visible behavior, and **no hardware validation of any of it**. Registered suite
+  **1573/1573 ×2**. Landing topology is Option A — preserve the stack, no rebase or rewrite;
+  `main` is the merge-base so a fast-forward is available and all nine accepted SHAs stay
+  intact. Sequenced **before** Track A, which preserves that fast-forward. Governance
+  candidate on `landing/composer2-phase1`, rollback tag
+  `checkpoint/pre-composer2-phase1-landing` (at `6ead505`). **Nothing merged, nothing
+  pushed; final landing needs Brian's explicit authorization.** Full record, evidence debt
+  and unresolved policy: `docs/ios/composer2-phase1-landing-record-2026-08-07.md`.
 - **HARDWARE CONVERGENCE SLICE A (2026-08-03): exact area targeting, verified takeover, and
   bridge-run truth.** Branch `fix/hardware-convergence-entertainment-targeting`, rollback tag
   `checkpoint/pre-hardware-convergence-entertainment-targeting` (at `3479243`), PR open and
@@ -691,6 +704,84 @@ vacuous pass.
 bisect anchor), then C3 (the actual defect: preview while dragging, commit after settling, tap
 activates — one atomic commit per settled decision 17), C4, C5, C6. Nothing here is on device
 yet; the §V hardware rows 23–35 land with C6.
+## 2026-08-07 - [Claude] Composer 2 / Phase 1 — landing & governance validation (NOT landed)
+
+### Branch
+- `landing/composer2-phase1` (governance candidate on top of `6ead505`)
+- rollback tag `checkpoint/pre-composer2-phase1-landing` at `6ead505`
+
+### Did
+- Recorded the accepted Phase 1 chain 1A→1D as one coherent foundation. Final
+  implementation HEAD `6ead505854317bc8243a73b1dee51be3c5c15820`; nine linear,
+  merge-free commits branched from `main` @ `320ebaf`.
+- Determined landing topology from repository evidence, not aesthetics. `main` is
+  itself the merge-base and has **not moved** since Phase 1A branched — 0 commits
+  exist on `main` that Phase 1D lacks — so a fast-forward is available and no
+  rebase is needed. Option A (preserve the stack) approved; rebase and
+  integration-branch options rejected as remedies for a divergence that does not
+  exist.
+- Audited Track A overlap honestly. Track A and Phase 1 share two paths
+  (`project.pbxproj`, `UnifiedOrchestrator.swift`), but path overlap is not
+  conflict: `git merge-tree` reports a clean merge. Re-simulated against the final
+  governance HEAD after the DEVLOG change.
+- Resolved a discrepancy raised in review. An earlier audit pass of mine claimed
+  1C1's `testCaptureCompositionEntertainmentTask(forBridge:)` was ungated. It is
+  not: it sits inside the **pre-existing** `#if DEBUG` block spanning 3453–4119,
+  present verbatim at line 3453 in `ea2d13e`'s parent. Independently re-verified
+  by Release build + symbol scan with non-vacuous controls (`UnifiedOrchestrator`
+  symbols 9,778; `startCompositionMode` 232 present; all six DEBUG seams 0 in both
+  `nm` and `strings`). The 1C1 acceptance claim was accurate; the error was mine,
+  and it is corrected in the landing record rather than normalized away.
+- Dispositioned every evidence and policy debt item — deliberately **dispositioned,
+  not resolved**. Several are unresolved product policy and must not be given an
+  engineering answer merely to close paperwork. None blocks landing.
+
+### Working
+- Governance documentation only: this entry, the AGENTS.md pointer, and
+  `docs/ios/composer2-phase1-landing-record-2026-08-07.md`.
+- Zero production Swift changed. The four accepted Composer 2 contracts
+  (`Composer2Domain`, `Composer2Registration`, `Composer2ConsumerContracts`,
+  `Composer2Resolver`) are SHA-identical to their accepted ancestry.
+- Zero test registration changed. `OrchestratorTests.swift` stays tracked,
+  unregistered, unrun, and excluded from all counts (27 tests).
+
+### Left
+- **Landing itself.** Nothing merged, nothing pushed. `main` is untouched.
+- Track A / PR #61 untouched: not checked out, edited, merged, closed, rebased,
+  retargeted, or pushed. Sequencing after Phase 1 is the recommendation; the
+  decision stays Brian's.
+- Evidence debt before runtime integration: foreign-controller consent lifecycle,
+  and counter-absence semantics for `restScopeEpoch` / `roomOwnership` /
+  `allDayPlayback`. Deferred until runtime integration: multi-holder evidence and
+  `anyBridgeHosting` hosting lookup.
+- Fifteen unresolved product-policy questions (precedence, coexistence,
+  transport selection, cross-runtime stopping rights, automatic replacement,
+  light→room implication, arbiter topology, …). All block runtime integration;
+  none blocks landing.
+- A registered guard pinning the DEBUG seam block's Release absence — worthwhile
+  hardening, deferred so this packet stays governance-only.
+
+### Validation
+- Focused Composer 2 foundation: 171 tests across 8 suites.
+- Full registered suite twice consecutively; counts via `xcresulttool`.
+- `./Scripts/hardening_guards.sh`, both metadata script tests, `git diff --check`.
+- Zero `Composer2Flag` runtime consumers; zero resolver runtime consumers.
+- Track A ↔ governance HEAD merge simulation re-run after the DEVLOG change.
+
+### Gotchas
+- A diff shows what changed, **not** the conditional-compilation context it changed
+  inside. `git diff | grep '^+' | grep -c '#if DEBUG'` cannot see a pre-existing
+  enclosing guard, and git's hunk header will happily print the enclosing `final
+  class …` instead of the `#if`. Walk the file's directive nesting, then confirm
+  against a real Release binary — with controls, or a zero result proves nothing.
+  My first symbol scan hit the widget extension and returned 0 for the seams *and*
+  0 for the controls; that result was vacuous and was discarded, not reported.
+- "Zero runtime Composer 2 consumers" is true. "Phase 1 touched no production file"
+  is **false** — 1C1 added 29 DEBUG-only lines to `UnifiedOrchestrator.swift`. Both
+  statements matter and they are not the same statement.
+- Appending to DEVLOG.md creates a Track A overlap that did not previously exist
+  (Track A inserts near the same two regions). It is a markdown insertion and
+  merges cleanly today; re-simulate if either side moves.
 
 ---
 
