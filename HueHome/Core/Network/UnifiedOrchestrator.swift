@@ -3550,6 +3550,20 @@ final class UnifiedOrchestrator {
         compositionEntTasks[bridgeID] != nil
     }
 
+    /// The exact `Task` handle currently installed for this bridge's
+    /// composition Entertainment loop — handed to a test BEFORE any
+    /// replacement, so the test holds the identity it means to await rather
+    /// than re-reading a slot a replacement may already have overwritten.
+    ///
+    /// A pure slot read: the dictionary is not mutated, nothing is retained
+    /// beyond the caller's own copy, nothing is awaited, and cancellation and
+    /// replacement order are untouched. `Task` is a handle, not the job — a
+    /// copy stays valid after the entry is replaced or removed, and copying
+    /// it neither extends nor shortens the job's life.
+    func testCaptureCompositionEntertainmentTask(forBridge bridgeID: String) -> Task<Void, Never>? {
+        compositionEntTasks[bridgeID]
+    }
+
     /// The per-bridge acquisition gate, exactly as `startCompositionMode` asks it.
     func testCanAcquireEntertainment(onBridge bridgeID: String) -> Bool {
         canAcquireEntertainment(onBridge: bridgeID)
@@ -5179,6 +5193,21 @@ final class UnifiedOrchestrator {
         let stopBid = room.bridgeID ?? ""
         if let previous = studioEngineRuntimesByBridge.removeValue(forKey: stopBid) {
             previous.task.cancel()
+            // The same-bridge engine eviction the apply route already names
+            // (`applyEngineSingleton`) but that no recorder ever observed: the
+            // ViewModel's pre-stop loop only covers rooms in `runningEffects`,
+            // so THIS eviction — the orchestrator's own — was unaudited.
+            // Recorded after the cancel, so ordering is unchanged, and wrapped
+            // whole: `recordStopAudit`'s body is DEBUG-only but its arguments
+            // are not, and `stopAuditToken` would otherwise hash and allocate
+            // in Release for a value that is immediately discarded.
+            #if DEBUG
+            recordStopAudit(StopAuditContext(route: .applyEngineSingleton,
+                                             cardOrEffectID: key),
+                            operation: .taskCancelled,
+                            bridgeID: room.bridgeID, roomID: previous.roomID,
+                            runtimeToken: Self.stopAuditToken(previous.paramBox))
+            #endif
         }
         // Clear THIS bridge's previously recorded Studio scope and forget it —
         // even when the new card targets a different room on it. Clearing only
