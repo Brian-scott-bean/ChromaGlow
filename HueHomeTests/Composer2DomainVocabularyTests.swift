@@ -571,15 +571,20 @@ final class Composer2DomainVocabularyTests: XCTestCase {
         XCTAssertTrue(rootExists && isDirectory.boolValue,
                       "production-source root must resolve; the scan is the proof")
 
-        // Exactly three declaration files may name the vocabulary. Anything
+        // Exactly four declaration files may name the vocabulary. Anything
         // else under HueHome/ is a runtime consumer and is not authorized.
+        // Phase 1D adds the resolver seam, which is written IN this vocabulary
+        // and is still consumed by no runtime. It is pinned by exact filename:
+        // there is deliberately no directory-wide Composer2 exemption, because
+        // that would admit the first real consumer silently.
         let vocabularyFile = "Composer2Domain.swift"
         let registrationFile = "Composer2Registration.swift"
         let consumerContractsFile = "Composer2ConsumerContracts.swift"
+        let resolverFile = "Composer2Resolver.swift"
         let declarationFiles: Set<String> = [vocabularyFile, registrationFile,
-                                             consumerContractsFile]
-        XCTAssertEqual(declarationFiles.count, 3,
-                       "the allowlist is exactly the three declaration files")
+                                             consumerContractsFile, resolverFile]
+        XCTAssertEqual(declarationFiles.count, 4,
+                       "the allowlist is exactly the four declaration files")
 
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(
             at: productionRoot, includingPropertiesForKeys: nil))
@@ -587,6 +592,7 @@ final class Composer2DomainVocabularyTests: XCTestCase {
         var definitionSource: String?
         var sawRegistrationFile = false
         var sawConsumerContractsFile = false
+        var sawResolverFile = false
         var offenders: [String] = []
         for case let url as URL in enumerator where url.pathExtension == "swift" {
             let source = try String(contentsOf: url, encoding: .utf8)
@@ -595,6 +601,7 @@ final class Composer2DomainVocabularyTests: XCTestCase {
                 if url.lastPathComponent == vocabularyFile { definitionSource = source }
                 if url.lastPathComponent == registrationFile { sawRegistrationFile = true }
                 if url.lastPathComponent == consumerContractsFile { sawConsumerContractsFile = true }
+                if url.lastPathComponent == resolverFile { sawResolverFile = true }
                 continue
             }
             for type in canonicalTypes where source.contains(type) {
@@ -610,6 +617,9 @@ final class Composer2DomainVocabularyTests: XCTestCase {
         XCTAssertTrue(sawConsumerContractsFile,
                       "the allowlisted consumer-contracts file must exist and be scanned, "
                       + "or the allowlist is silently weakening this guard")
+        XCTAssertTrue(sawResolverFile,
+                      "the allowlisted resolver file must exist and be scanned, "
+                      + "or the allowlist is silently weakening this guard")
         let definition = try XCTUnwrap(definitionSource,
                                        "the scan must have visited the domain file itself")
         for type in canonicalTypes {
@@ -617,7 +627,7 @@ final class Composer2DomainVocabularyTests: XCTestCase {
                           "\(type) must exist in the domain file, or this guard is stale")
         }
         XCTAssertTrue(offenders.isEmpty,
-                      "no runtime consumer is authorized through Phase 1C4: \(offenders)")
+                      "no runtime consumer is authorized through Phase 1D: \(offenders)")
     }
 
     // ──────────────────────────────────────────────

@@ -860,7 +860,16 @@ final class Composer2ConsumerContractsTests: XCTestCase {
     /// production source naming any of the six new types is the declaration
     /// file itself — this packet ships contracts, not consumers.
     func testNoProductionCodeConsumesTheConsumerContractTypes() throws {
+        // Exactly two foundation files may name these types. Phase 1D adds the
+        // resolver seam, whose input IS the request contract — naming it is
+        // what a seam does, and it is still consumed by no runtime. Pinned by
+        // exact filename: no directory-wide Composer2 exemption, because that
+        // would admit the first real consumer silently.
         let definitionFile = "Composer2ConsumerContracts.swift"
+        let resolverFile = "Composer2Resolver.swift"
+        let foundationFiles: Set<String> = [definitionFile, resolverFile]
+        XCTAssertEqual(foundationFiles.count, 2,
+                       "the allowlist is exactly the two foundation files")
 
         let productionRoot = repoRoot().appendingPathComponent("HueHome")
         var isDirectory: ObjCBool = false
@@ -873,12 +882,14 @@ final class Composer2ConsumerContractsTests: XCTestCase {
             at: productionRoot, includingPropertiesForKeys: nil))
         var scannedCount = 0
         var definitionSource: String?
+        var sawResolverFile = false
         var offenders: [String] = []
         for case let url as URL in enumerator where url.pathExtension == "swift" {
             let source = try String(contentsOf: url, encoding: .utf8)
             scannedCount += 1
-            guard url.lastPathComponent != definitionFile else {
-                definitionSource = source
+            guard !foundationFiles.contains(url.lastPathComponent) else {
+                if url.lastPathComponent == definitionFile { definitionSource = source }
+                if url.lastPathComponent == resolverFile { sawResolverFile = true }
                 continue
             }
             for type in newTypeNames where source.contains(type) {
@@ -888,6 +899,9 @@ final class Composer2ConsumerContractsTests: XCTestCase {
 
         XCTAssertGreaterThan(scannedCount, 0,
                              "an empty scan proves nothing — the walk must cover sources")
+        XCTAssertTrue(sawResolverFile,
+                      "the allowlisted resolver file must exist and be scanned, "
+                      + "or the allowlist is silently weakening this guard")
         let definition = try XCTUnwrap(definitionSource,
                                        "the scan must have visited the consumer contracts file")
         for type in newTypeNames {
@@ -895,7 +909,7 @@ final class Composer2ConsumerContractsTests: XCTestCase {
                           "\(type) must exist in the contracts file, or this guard is stale")
         }
         XCTAssertTrue(offenders.isEmpty,
-                      "no runtime consumer is authorized in Phase 1C4: \(offenders)")
+                      "no runtime consumer is authorized in Phase 1D: \(offenders)")
     }
 
     // ──────────────────────────────────────────────
