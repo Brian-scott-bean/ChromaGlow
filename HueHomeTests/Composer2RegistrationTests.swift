@@ -715,7 +715,15 @@ final class Composer2RegistrationTests: XCTestCase {
     }
 
     /// No RUNTIME production file consumes the registration contracts. The only
-    /// production sources naming them are the two declaration files.
+    /// production sources naming them are the two FOUNDATION declaration files:
+    /// this packet's own, and the Phase 1C4 consumer contracts, which reuse
+    /// `Composer2ProducerIntent` rather than declaring a second operation
+    /// vocabulary.
+    ///
+    /// The allowlist is pinned to exact filenames — deliberately not a
+    /// directory-wide rule — and every allowlisted file must actually be
+    /// visited, so an entry naming a file the walk never sees would weaken the
+    /// guard without failing it.
     func testNoProductionCodeConsumesTheRegistrationTypes() throws {
         let registrationTypes = [
             "Composer2RegistrationProvenance", "Composer2ProducerIntent",
@@ -726,6 +734,10 @@ final class Composer2RegistrationTests: XCTestCase {
         // Deliberately NOT the substring "Composer2": the registration file's
         // legitimate use of the accepted 1C2 vocabulary must not trip this.
         let definitionFile = "Composer2Registration.swift"
+        let consumerContractsFile = "Composer2ConsumerContracts.swift"
+        let foundationFiles: Set<String> = [definitionFile, consumerContractsFile]
+        XCTAssertEqual(foundationFiles.count, 2,
+                       "the allowlist is exactly the two foundation files")
 
         let productionRoot = repoRoot().appendingPathComponent("HueHome")
         var isDirectory: ObjCBool = false
@@ -738,12 +750,14 @@ final class Composer2RegistrationTests: XCTestCase {
             at: productionRoot, includingPropertiesForKeys: nil))
         var scannedCount = 0
         var definitionSource: String?
+        var sawConsumerContractsFile = false
         var offenders: [String] = []
         for case let url as URL in enumerator where url.pathExtension == "swift" {
             let source = try String(contentsOf: url, encoding: .utf8)
             scannedCount += 1
-            guard url.lastPathComponent != definitionFile else {
-                definitionSource = source
+            guard !foundationFiles.contains(url.lastPathComponent) else {
+                if url.lastPathComponent == definitionFile { definitionSource = source }
+                if url.lastPathComponent == consumerContractsFile { sawConsumerContractsFile = true }
                 continue
             }
             for type in registrationTypes where source.contains(type) {
@@ -755,12 +769,15 @@ final class Composer2RegistrationTests: XCTestCase {
                              "an empty scan proves nothing — the walk must cover sources")
         let definition = try XCTUnwrap(definitionSource,
                                        "the scan must have visited the registration file itself")
+        XCTAssertTrue(sawConsumerContractsFile,
+                      "the allowlisted consumer-contracts file must exist and be scanned, "
+                      + "or the allowlist is silently weakening this guard")
         for type in registrationTypes {
             XCTAssertTrue(definition.contains(type),
                           "\(type) must exist in the registration file, or this guard is stale")
         }
         XCTAssertTrue(offenders.isEmpty,
-                      "no runtime consumer is authorized in Phase 1C3: \(offenders)")
+                      "no runtime consumer is authorized through Phase 1C4: \(offenders)")
     }
 
     // ──────────────────────────────────────────────

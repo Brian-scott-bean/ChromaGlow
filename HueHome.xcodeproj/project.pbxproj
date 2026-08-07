@@ -144,6 +144,8 @@
 		A1C20003C2C20003C2C20003 /* Composer2DomainVocabularyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */; };
 		A1C30001C3C30001C3C30001 /* Composer2Registration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C30002C3C30002C3C30002 /* Composer2Registration.swift */; };
 		A1C30003C3C30003C3C30003 /* Composer2RegistrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C30004C3C30004C3C30004 /* Composer2RegistrationTests.swift */; };
+		A1C40001C4C40001C4C40001 /* Composer2ConsumerContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C40002C4C40002C4C40002 /* Composer2ConsumerContracts.swift */; };
+		A1C40003C4C40003C4C40003 /* Composer2ConsumerContractsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C40004C4C40004C4C40004 /* Composer2ConsumerContractsTests.swift */; };
 		F51DE0ED2FAC712CA0433AD5 /* Composer2OwnershipCharacterizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E281D0733D865D3EF524F20 /* Composer2OwnershipCharacterizationTests.swift */; };
 		A1C10001C1C10001C1C10001 /* Composer2SeamCharacterizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C10002C1C10002C1C10002 /* Composer2SeamCharacterizationTests.swift */; };
 		98370CEBD9A64016AAC08FA2 /* MockMusicSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A48446A2F5B16431E585E443 /* MockMusicSource.swift */; };
@@ -541,6 +543,8 @@
 		A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2DomainVocabularyTests.swift; path = HueHomeTests/Composer2DomainVocabularyTests.swift; sourceTree = "<group>"; };
 		A1C30002C3C30002C3C30002 /* Composer2Registration.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2Registration.swift; path = HueHome/Core/Composer2Registration.swift; sourceTree = "<group>"; };
 		A1C30004C3C30004C3C30004 /* Composer2RegistrationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2RegistrationTests.swift; path = HueHomeTests/Composer2RegistrationTests.swift; sourceTree = "<group>"; };
+		A1C40002C4C40002C4C40002 /* Composer2ConsumerContracts.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2ConsumerContracts.swift; path = HueHome/Core/Composer2ConsumerContracts.swift; sourceTree = "<group>"; };
+		A1C40004C4C40004C4C40004 /* Composer2ConsumerContractsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2ConsumerContractsTests.swift; path = HueHomeTests/Composer2ConsumerContractsTests.swift; sourceTree = "<group>"; };
 		A1C8D43ABEA2DF3F97E70CAA /* HueAppShortcuts.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueAppShortcuts.swift; path = ./HueHome/Intents/HueAppShortcuts.swift; sourceTree = "<group>"; };
 		A2386EBB36B78EB6A3160432 /* SavedColorStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SavedColorStore.swift; path = ./HueHome/Core/Models/SavedColorStore.swift; sourceTree = "<group>"; };
 		A38ACEC1527D7223CD105C53 /* BridgeManagerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeManagerView.swift; path = ./HueHome/UI/BridgeManager/BridgeManagerView.swift; sourceTree = "<group>"; };
@@ -1430,6 +1434,7 @@
 				A1C10002C1C10002C1C10002 /* Composer2SeamCharacterizationTests.swift */,
 				A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */,
 				A1C30004C3C30004C3C30004 /* Composer2RegistrationTests.swift */,
+				A1C40004C4C40004C4C40004 /* Composer2ConsumerContractsTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1455,6 +1460,7 @@
 				B2E25E76210CA413702830AB /* FlagStore.swift */,
 				A1C20002C2C20002C2C20002 /* Composer2Domain.swift */,
 				A1C30002C3C30002C3C30002 /* Composer2Registration.swift */,
+				A1C40002C4C40002C4C40002 /* Composer2ConsumerContracts.swift */,
 			);
 			name = Core;
 			sourceTree = "<group>";
@@ -1981,6 +1987,7 @@
 				5D543ACC668E8C044EC28470 /* FlagStore.swift in Sources */,
 				A1C20001C2C20001C2C20001 /* Composer2Domain.swift in Sources */,
 				A1C30001C3C30001C3C30001 /* Composer2Registration.swift in Sources */,
+				A1C40001C4C40001C4C40001 /* Composer2ConsumerContracts.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2078,6 +2085,7 @@
 				A1C10001C1C10001C1C10001 /* Composer2SeamCharacterizationTests.swift in Sources */,
 				A1C20003C2C20003C2C20003 /* Composer2DomainVocabularyTests.swift in Sources */,
 				A1C30003C3C30003C3C30003 /* Composer2RegistrationTests.swift in Sources */,
+				A1C40003C4C40003C4C40003 /* Composer2ConsumerContractsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

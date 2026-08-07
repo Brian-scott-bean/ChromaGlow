@@ -542,15 +542,18 @@ final class Composer2DomainVocabularyTests: XCTestCase {
     }
 
     /// No RUNTIME production code consumes the vocabulary: the only production
-    /// sources naming any canonical type are the two DECLARATION files — the
-    /// vocabulary itself and the Phase 1C3 registration contracts, which are
-    /// written in terms of it by design.
+    /// sources naming any canonical type are the three DECLARATION files — the
+    /// vocabulary itself, the Phase 1C3 registration contracts, and the Phase
+    /// 1C4 consumer contracts, all of which are written in terms of it by
+    /// design.
     ///
     /// Phase 1C3 narrowed this claim from "nothing consumes the vocabulary" to
-    /// "no runtime file consumes it". The allowlist is pinned below so a third
-    /// file cannot join it silently, and the registration file must actually be
-    /// visited — an allowlist that names a file the walk never sees would
-    /// weaken the guard without failing it.
+    /// "no runtime file consumes it"; Phase 1C4 admits one more FOUNDATION file
+    /// and nothing else. The allowlist is pinned to exact filenames below — it
+    /// is deliberately not a directory-wide rule — so a fourth file cannot join
+    /// it silently, and each allowlisted file must actually be visited: an
+    /// allowlist naming a file the walk never sees would weaken the guard
+    /// without failing it.
     func testNoProductionCodeReferencesTheNewVocabularyYet() throws {
         let canonicalTypes = [
             "Composer2BridgeIdentity", "Composer2GroupIdentity", "Composer2GroupScope",
@@ -568,19 +571,22 @@ final class Composer2DomainVocabularyTests: XCTestCase {
         XCTAssertTrue(rootExists && isDirectory.boolValue,
                       "production-source root must resolve; the scan is the proof")
 
-        // Exactly two declaration files may name the vocabulary. Anything else
-        // under HueHome/ is a runtime consumer and is not authorized.
+        // Exactly three declaration files may name the vocabulary. Anything
+        // else under HueHome/ is a runtime consumer and is not authorized.
         let vocabularyFile = "Composer2Domain.swift"
         let registrationFile = "Composer2Registration.swift"
-        let declarationFiles: Set<String> = [vocabularyFile, registrationFile]
-        XCTAssertEqual(declarationFiles.count, 2,
-                       "the allowlist is exactly the two declaration files")
+        let consumerContractsFile = "Composer2ConsumerContracts.swift"
+        let declarationFiles: Set<String> = [vocabularyFile, registrationFile,
+                                             consumerContractsFile]
+        XCTAssertEqual(declarationFiles.count, 3,
+                       "the allowlist is exactly the three declaration files")
 
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(
             at: productionRoot, includingPropertiesForKeys: nil))
         var scannedCount = 0
         var definitionSource: String?
         var sawRegistrationFile = false
+        var sawConsumerContractsFile = false
         var offenders: [String] = []
         for case let url as URL in enumerator where url.pathExtension == "swift" {
             let source = try String(contentsOf: url, encoding: .utf8)
@@ -588,6 +594,7 @@ final class Composer2DomainVocabularyTests: XCTestCase {
             guard !declarationFiles.contains(url.lastPathComponent) else {
                 if url.lastPathComponent == vocabularyFile { definitionSource = source }
                 if url.lastPathComponent == registrationFile { sawRegistrationFile = true }
+                if url.lastPathComponent == consumerContractsFile { sawConsumerContractsFile = true }
                 continue
             }
             for type in canonicalTypes where source.contains(type) {
@@ -600,6 +607,9 @@ final class Composer2DomainVocabularyTests: XCTestCase {
         XCTAssertTrue(sawRegistrationFile,
                       "the allowlisted registration file must exist and be scanned, "
                       + "or the allowlist is silently weakening this guard")
+        XCTAssertTrue(sawConsumerContractsFile,
+                      "the allowlisted consumer-contracts file must exist and be scanned, "
+                      + "or the allowlist is silently weakening this guard")
         let definition = try XCTUnwrap(definitionSource,
                                        "the scan must have visited the domain file itself")
         for type in canonicalTypes {
@@ -607,7 +617,7 @@ final class Composer2DomainVocabularyTests: XCTestCase {
                           "\(type) must exist in the domain file, or this guard is stale")
         }
         XCTAssertTrue(offenders.isEmpty,
-                      "no consumer is authorized in Phase 1C2: \(offenders)")
+                      "no runtime consumer is authorized through Phase 1C4: \(offenders)")
     }
 
     // ──────────────────────────────────────────────
