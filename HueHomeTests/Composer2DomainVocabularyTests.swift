@@ -541,8 +541,16 @@ final class Composer2DomainVocabularyTests: XCTestCase {
         }
     }
 
-    /// No production code consumes the vocabulary in this packet: the only
-    /// production source naming any canonical type is its own definition.
+    /// No RUNTIME production code consumes the vocabulary: the only production
+    /// sources naming any canonical type are the two DECLARATION files — the
+    /// vocabulary itself and the Phase 1C3 registration contracts, which are
+    /// written in terms of it by design.
+    ///
+    /// Phase 1C3 narrowed this claim from "nothing consumes the vocabulary" to
+    /// "no runtime file consumes it". The allowlist is pinned below so a third
+    /// file cannot join it silently, and the registration file must actually be
+    /// visited — an allowlist that names a file the walk never sees would
+    /// weaken the guard without failing it.
     func testNoProductionCodeReferencesTheNewVocabularyYet() throws {
         let canonicalTypes = [
             "Composer2BridgeIdentity", "Composer2GroupIdentity", "Composer2GroupScope",
@@ -560,16 +568,26 @@ final class Composer2DomainVocabularyTests: XCTestCase {
         XCTAssertTrue(rootExists && isDirectory.boolValue,
                       "production-source root must resolve; the scan is the proof")
 
+        // Exactly two declaration files may name the vocabulary. Anything else
+        // under HueHome/ is a runtime consumer and is not authorized.
+        let vocabularyFile = "Composer2Domain.swift"
+        let registrationFile = "Composer2Registration.swift"
+        let declarationFiles: Set<String> = [vocabularyFile, registrationFile]
+        XCTAssertEqual(declarationFiles.count, 2,
+                       "the allowlist is exactly the two declaration files")
+
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(
             at: productionRoot, includingPropertiesForKeys: nil))
         var scannedCount = 0
         var definitionSource: String?
+        var sawRegistrationFile = false
         var offenders: [String] = []
         for case let url as URL in enumerator where url.pathExtension == "swift" {
             let source = try String(contentsOf: url, encoding: .utf8)
             scannedCount += 1
-            guard url.lastPathComponent != "Composer2Domain.swift" else {
-                definitionSource = source
+            guard !declarationFiles.contains(url.lastPathComponent) else {
+                if url.lastPathComponent == vocabularyFile { definitionSource = source }
+                if url.lastPathComponent == registrationFile { sawRegistrationFile = true }
                 continue
             }
             for type in canonicalTypes where source.contains(type) {
@@ -579,6 +597,9 @@ final class Composer2DomainVocabularyTests: XCTestCase {
 
         XCTAssertGreaterThan(scannedCount, 0,
                              "an empty scan proves nothing — the walk must cover sources")
+        XCTAssertTrue(sawRegistrationFile,
+                      "the allowlisted registration file must exist and be scanned, "
+                      + "or the allowlist is silently weakening this guard")
         let definition = try XCTUnwrap(definitionSource,
                                        "the scan must have visited the domain file itself")
         for type in canonicalTypes {
