@@ -91,8 +91,26 @@ struct StudioView: View {
     // The inline two-axis rolodex (RoomRolodexView) is the room/zone selector;
     // it lives at the top of the Studio content and owns its own state.
 
-    // ── Deck paging ───────────────────────────────────────
-    @State private var currentDeck: Int = 0  // 0 = Effects, 1 = Live, 2 = Composer
+    // ── Deck paging + AI presentation ─────────────────────
+    //
+    // ONE value, not three (N1b). The deck selection, the AI overlay's
+    // visibility, the prompt draft and the focus token live together because
+    // they are one interaction: the old split let the wand raise a keyboard
+    // through `aiPromptFocused` while the pager quietly rewrote a completely
+    // separate `currentDeck` to 0. See `StudioAIPresentation`.
+    @State private var aiPresentation = StudioAIPresentation(deck: 0)
+
+    /// The pager's selection binding. Its setter is a PROPOSAL, not an
+    /// assignment — while the AI composer is presented or dismissing, the
+    /// keyboard-relayout write-back is refused here.
+    private var deckSelection: Binding<Int> {
+        Binding(
+            get: { aiPresentation.deck },
+            set: { aiPresentation.propose($0) }
+        )
+    }
+
+    private var currentDeck: Int { aiPresentation.deck }
 
     // ── Composer (Deck 3) ──────────────────────────────────
     @State private var composerCategory: PresetCategory = .all
@@ -119,17 +137,38 @@ struct StudioView: View {
     @State private var compositionSaveAccent = "#FFB340"
     @State private var compositionSaveTransport: CompositionSaveTransportOption = .entertainmentArea
     @State private var compositionSaveCategory: PresetCategory = .myCreations
-    @State private var isAIPromptExpanded = false
-    @State private var aiPromptText = ""
+    /// The prompt draft lives in `aiPresentation`; this is the writable view of
+    /// it the TextField binds to.
+    private var aiPromptText: Binding<String> {
+        Binding(
+            get: { aiPresentation.promptText },
+            set: { aiPresentation.promptText = $0 }
+        )
+    }
 
     // ── Harmony Engine ────────────────────────────────────────
     @State private var activeHarmonyRule: HarmonyRule = .none
     @State private var editingSwatch: SwatchEditItem? = nil
-    @State private var isMixerCollapsed = false
-    @State private var isMixerExpanded = false
+    /// Which region is showing below the rolodex. Exactly the bit the old
+    /// `isMixerCollapsed` carried (`.decks` == collapsed), under an honest name.
+    /// C4 renames it and nothing else — the tray is still a bottom-anchored
+    /// overlay with its scrim, height maths and dismiss gesture intact.
+    @State private var regionMode: StudioRegionMode = .customization
     @State private var showCompositionTransportPrompt = false
     @State private var pendingCompositionCard: StudioCard?
     @State private var pendingCompositionRoom: RoomDisplayItem?
+    // ── AI generation (N1) ────────────────────────────────────
+    /// Monotonic operation ids: the newest trigger supersedes every older one.
+    /// A selection key alone cannot tell two overlapping generations for the
+    /// SAME room apart, so every stale-guard below compares tokens, not rooms.
+    @State private var aiOperationCounter = 0
+    /// Raised only while an AI application is in flight for the CURRENT
+    /// selection; `StudioRegionWiring` suppresses the passive teardown close
+    /// while it matches. Cleared only by the operation that raised it.
+    @State private var aiEditingIntentFence: AIEditingIntentFence?
+    /// The generated preset held behind the transport prompt — the response
+    /// applies EXACTLY this preset, once; it never regenerates.
+    @State private var pendingAIGeneration: PendingAIGeneration?
     @State private var transportSwitchInFlightRoomIDs: Set<String> = []
     @State private var compositionDeleteTarget: CompositionPreset?
     @FocusState private var aiPromptFocused: Bool
@@ -162,43 +201,42 @@ struct StudioView: View {
     var body: some View {
         GeometryReader { geo in
             let hasCurrentRoomEffect = vm.currentRoomEffect != nil
-            let mixerVisible = hasCurrentRoomEffect && !isMixerCollapsed
-            let mixerHeight: CGFloat = mixerVisible ? resolvedMixerHeight(proxy: geo) : 0
-            let isEntertainmentRunning = vm.currentRoomEffect?.card.isEntertainmentScoped ?? false
+            let showCustomization = hasCurrentRoomEffect && regionMode == .customization
 
             ZStack {
                 ambientBackground
 
-                if mixerVisible {
-                    Color.black.opacity(0.001)
-                        .ignoresSafeArea()
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            hideKeyboard()
-                            collapseMixer()
-                            HapticManager.shared.light()
-                        }
-                }
+                // The full-screen invisible scrim is DELETED. It was the direct
+                // cause of "the panel appears and collapses immediately": an
+                // open tray mounted a scrim over the whole screen, so the next
+                // drag intended for the room wheel hit the scrim and dismissed
+                // the tray instead. Nothing replaces it — an inline region has
+                // nothing to dismiss by tapping outside of.
 
                 VStack(spacing: 0) {
                     // ── Zone A: Inline two-axis room/zone rolodex ─
                     //
-                    // Hidden only while a streaming look is ACTUALLY on screen,
-                    // not merely running. Keyed on `isEntertainmentRunning`
-                    // alone, scrolling the wheel onto a streaming room deleted
-                    // the wheel mid-gesture — the selector destroyed by the
-                    // very selection it was making.
-                    if !StudioMixerPresentation.rolodexHidden(
-                        isEntertainmentRunning: isEntertainmentRunning,
-                        mixerVisible: mixerVisible) {
-                        roomRolodex
-                            .padding(.horizontal, HueSpacing.lg)
-                            .padding(.vertical, HueSpacing.xs)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
+                    // ALWAYS MOUNTED. `StudioMixerPresentation.rolodexHidden`
+                    // and its conditional wrapper are deleted, and nothing
+                    // replaces them: the mid-gesture-unmount bug — "the selector
+                    // destroyed by the very selection it was making" — is now
+                    // fixed BY CONSTRUCTION rather than by a predicate that has
+                    // to stay correct.
+                    roomRolodex
+                        .padding(.horizontal, HueSpacing.lg)
+                        .padding(.vertical, HueSpacing.xs)
 
-                    // ── Zone B: Living Card Grid ──────────────────
-                    cardGrid
+                    // ── Zone B: the region — decks OR customization ──
+                    //
+                    // A MODE SWITCH, not a stack. The deck pager is a
+                    // TabView(.page) of three vertically-scrolling pages; it can
+                    // never live inside a vertical parent scroll, and stacking
+                    // two vertical scrollers would break "one continuous
+                    // surface". So each mode owns exactly one scroll surface.
+                    // Deck access while an effect runs is preserved by the two
+                    // return tickets below: deckDots and the "Live Controls"
+                    // pill.
+                    studioRegion(showCustomization: showCustomization)
                         .frame(maxHeight: .infinity)
                         .onReceive(NotificationCenter.default.publisher(for: .compositionMicPermissionDenied)) { _ in
                             // Previously a dead wire: mic denial during a
@@ -207,10 +245,19 @@ struct StudioView: View {
                         }
 
                     // ── Deck page indicator ───────────────────────
-                    deckDots
-                        .padding(.bottom, HueSpacing.sm)
+                    // Hidden while the AI composer is up. Two reasons, both
+                    // load-bearing: deck selection is FENCED during the
+                    // presentation so these pills could only refuse a tap, and
+                    // their ~74pt (with the pill below) is exactly the vertical
+                    // space the panel was short of when the keyboard shrank
+                    // Zone B.
+                    if !showCustomization && !aiPresentation.isOverlayVisible {
+                        deckDots
+                            .padding(.bottom, HueSpacing.sm)
+                    }
 
-                    if hasCurrentRoomEffect && isMixerCollapsed {
+                    if hasCurrentRoomEffect && regionMode == .decks
+                        && !aiPresentation.isOverlayVisible {
                         Button {
                             expandMixer()
                             HapticManager.shared.selection()
@@ -241,36 +288,25 @@ struct StudioView: View {
 
                     studioBottomClearance
                 }
-
-                if mixerVisible {
-                    VStack {
-                        Spacer()
-                    MixerTrayView(
-                        vm: vm,
-                        isMixerExpanded: $isMixerExpanded,
-                        performVM: $performVM,
-                        activeCompositionTab: $activeCompositionTab,
-                        activeHarmonyRule: $activeHarmonyRule,
-                        editingSwatch: $editingSwatch,
-                        onCollapse: { collapseMixer() },
-                        onSaveComposition: { card in
-                            compositionSaveName = card.name == "New Composition" ? "" : card.name
-                            compositionSaveIcon = card.icon
-                            compositionSaveTransport = vm.compositionTransportPreference == .roomOnly ? .roomOnly : .entertainmentArea
-                            showCompositionSaveSheet = true
-                        },
-                        onTransportSwitch: { effect, preferEntertainment in
-                            switchRunningCompositionTransport(effect, preferEntertainment: preferEntertainment)
-                        }
-                    )
-                    .frame(height: mixerHeight)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                    .padding(.bottom, MixerTrayMetrics.bottomClearance(
-                        bottomInset: geo.safeAreaInsets.bottom, barMounted: mixerBarMounted))
-                }
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            // The customization region UNMOUNTS the whole deck ZStack — pager
+            // and AI overlay together — and it can do that while the composer
+            // is open: the rolodex (Zone A, above) and the "Live Controls" pill
+            // (below) both sit OUTSIDE the overlay and both route through
+            // `expandMixer()`, as do the Siri/deep-link drains.
+            //
+            // Without this the presentation would be torn off the screen while
+            // its model still said `.presenting`, and since only
+            // `finishDismissal` lowers the fence, the deck pager would stay
+            // fenced FOREVER — every pill tap and every swipe refused until a
+            // relaunch. That is a worse failure than the bug this packet fixes,
+            // so the takeover runs the same ordered teardown any other close
+            // does. The draft is kept: the user never cancelled.
+            .onChange(of: showCustomization) { _, tookOver in
+                guard tookOver, aiPresentation.isOverlayVisible else { return }
+                dismissAIComposer(clearingDraft: false)
+            }
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
@@ -300,23 +336,17 @@ struct StudioView: View {
                 withAnimation(.easeIn(duration: 0.4)) { blurReady = true }
             }
         }
-        // Landing on a room does NOT throw its editor open.
-        //
-        // This used to set `isMixerCollapsed = false`, which made the tray
-        // appear the instant the wheel touched a room with a running effect.
-        // The tray takes up to 92% of the screen and mounts a full-screen
-        // invisible scrim, so the next drag on the wheel hit the scrim and
-        // collapsed the tray instead — the panel flashing open and shut while
-        // the selector became unusable. Arriving collapsed keeps the wheel
-        // free; the "Live Controls" pill is right there when the editor is
-        // what the user actually wants.
-        .onChange(of: vm.selectedRoom?.id) { _, _ in
-            isMixerCollapsed = StudioMixerPresentation.collapsedOnRoomChange
-            isMixerExpanded = false
-        }
-        // Coverage badges for Deck 0 — refires on room switch, auto-cancels
+        // Region state: the room-change rule and the effect-teardown reset.
+        // Extracted verbatim — see `StudioRegionWiring`.
+        .modifier(StudioRegionWiring(
+            vm: vm, regionMode: $regionMode, aiFence: aiEditingIntentFence))
+        // Coverage badges for Deck 0 — refires on selection switch, auto-cancels
         // stale fetches on rapid rolodex scrubs (R4 Effects port).
-        .task(id: vm.selectedRoom?.id) {
+        //
+        // Exact-keyed for the same reason: under a duplicate room id across two
+        // bridges this did not refire at all, so Deck 0 kept showing bridge A's
+        // "N OF M LIGHTS" against bridge B's room.
+        .task(id: vm.selectedRoom.map(StudioSelectionKey.init)) {
             await vm.refreshCoverage()
         }
         // Warms the entertainment-config cache so the transport menu can say
@@ -328,15 +358,15 @@ struct StudioView: View {
         // launch stayed invisible until a force-quit. Re-entering the tab is a
         // deliberate arrival, so it also forces a whole-home re-ask that the
         // background throttle cannot swallow (packet 7 follow-up).
+        //
+        // DELIBERATELY bridge-keyed, and it must stay that way. Unlike the two
+        // above, this is a per-BRIDGE sweep: re-running it for every room on the
+        // same bridge would re-ask questions already answered for that bridge,
+        // which is the repeated-refresh defect this slice exists to remove. Do
+        // not "fix" this to StudioSelectionKey for consistency.
         .task(id: vm.selectedRoom?.bridgeID) {
             orchestrator.refreshEntertainmentAvailability(reason: .userInitiated)
             await orchestrator.refreshEntertainmentConfigs(for: vm.selectedRoom)
-        }
-        .onChange(of: vm.runningCardID) { _, newValue in
-            if newValue == nil {
-                isMixerCollapsed = false
-                isMixerExpanded = false
-            }
         }
         .onChange(of: vm.restoredHarmonyRule) { _, rule in
             // `.none` is the programmatic-clear sentinel (album colors);
@@ -422,7 +452,7 @@ struct StudioView: View {
         .sheet(item: $importRequest) { request in
             ImportSceneSheet(scene: request.scene, store: vm.compositionStore) { preset in
                 // Land on the deck that now holds it, filtered so it is visible.
-                currentDeck = 2
+                aiPresentation.propose(2)
                 composerCategory = preset.category
             }
         }
@@ -457,20 +487,32 @@ struct StudioView: View {
             Button(TransportVocabulary.streamingMenuLabel) {
                 vm.compositionTransportPreference = .entertainmentArea
                 vm.isCompositionTransportPromptEnabled = false
-                guard let card = pendingCompositionCard else { return }
-                let room = pendingCompositionRoom
-                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true) }
+                if let ai = pendingAIGeneration {
+                    // Continue with the EXACT generated preset — never regenerate,
+                    // never apply twice. Currency is re-proven inside.
+                    Task { await completeAIGeneration(ai, preferEntertainment: true) }
+                } else if let card = pendingCompositionCard {
+                    let room = pendingCompositionRoom
+                    Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: true) }
+                }
                 clearPendingCompositionTransportPrompt()
             }
             Button(TransportVocabulary.roomOnlyMenuLabel) {
                 vm.compositionTransportPreference = .roomOnly
                 vm.isCompositionTransportPromptEnabled = false
-                guard let card = pendingCompositionCard else { return }
-                let room = pendingCompositionRoom
-                Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false) }
+                if let ai = pendingAIGeneration {
+                    Task { await completeAIGeneration(ai, preferEntertainment: false) }
+                } else if let card = pendingCompositionCard {
+                    let room = pendingCompositionRoom
+                    Task { await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false) }
+                }
                 clearPendingCompositionTransportPrompt()
             }
             Button("Cancel", role: .cancel) {
+                // For an AI-generated pending preset this is pure state clearing:
+                // no fence was ever raised (that happens only in
+                // completeAIGeneration), no playback is touched, and the generated
+                // preset stays in the library as the preserved draft.
                 clearPendingCompositionTransportPrompt()
             }
         } message: {
@@ -518,35 +560,11 @@ struct StudioView: View {
         }
     }
 
-    /// Caps tray height to available tab content so the mixer can use most of the screen on SE while keeping the deck visible.
-    /// When expanded (dragged up), grows to near-full-screen so the whole composition editor is visible.
-    private func resolvedMixerHeight(proxy: GeometryProxy) -> CGFloat {
-        let inset = proxy.safeAreaInsets.bottom
-        // Every point the tray stops spending on bottom padding becomes panel
-        // height. Added AFTER both existing caps — which are known-good on
-        // device — so the top edge lands exactly where it does today and the
-        // tray grows DOWNWARD only, to rest just above the music card. Zero
-        // when the bar is suppressed, so ≤700pt phones are unchanged.
-        let reclaimed = MixerTrayMetrics.tabBarClearance(bottomInset: inset)
-            - MixerTrayMetrics.bottomClearance(bottomInset: inset, barMounted: mixerBarMounted)
-
-        let half = min(computeMixerHeight(), max(300, proxy.size.height * 0.88))
-        guard isMixerExpanded else { return half + reclaimed }
-        // Near-full-screen: leave a small top peek and clear the floating tab bar below.
-        let expanded = proxy.size.height
-            - proxy.safeAreaInsets.top
-            - MixerTrayMetrics.tabBarClearance(bottomInset: inset)
-            - 24
-        return max(half, min(expanded, proxy.size.height * 0.92)) + reclaimed
-    }
-
-    private func computeMixerHeight() -> CGFloat {
-        guard let effect = vm.currentRoomEffect else { return 0 }
-        if case .composition = effect.card.strategy {
-            return MixerTrayMetrics.compositionHeight(isCompact: isCompactStudio)
-        }
-        return MixerTrayMetrics.engineHeight(for: effect.card, isCompact: isCompactStudio)
-    }
+    // DELETED in Track A C5: `resolvedMixerHeight` and `computeMixerHeight`.
+    // They sized a fixed-height bottom-anchored box. The customization host is
+    // an inline region that takes the space the decks would have taken, so
+    // there is no height to resolve. `bottomClearance` is NOT dead — see
+    // `studioBottomClearance`, which still preserves the build-46 fix.
 
     private var allCards: [StudioCard] {
         vm.effectCards + vm.liveModeCards
@@ -610,6 +628,61 @@ struct StudioView: View {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Zone B: the region (decks OR customization)
+    // ──────────────────────────────────────────────
+
+    /// One mode, one scroll surface. In `.customization` the deck pager is
+    /// UNMOUNTED, which is what stops every `LookPreviewCanvas` clock for free —
+    /// there is no hidden pager animating behind the editor.
+    @ViewBuilder
+    private func studioRegion(showCustomization: Bool) -> some View {
+        if showCustomization {
+            StudioCustomizationHost(
+                vm: vm,
+                performVM: $performVM,
+                activeCompositionTab: $activeCompositionTab,
+                activeHarmonyRule: $activeHarmonyRule,
+                editingSwatch: $editingSwatch,
+                onBackToDecks: {
+                    hideKeyboard()
+                    collapseMixer()
+                },
+                onSaveComposition: { card in
+                    compositionSaveName = card.name == "New Composition" ? "" : card.name
+                    compositionSaveIcon = card.icon
+                    compositionSaveTransport = vm.compositionTransportPreference == .roomOnly ? .roomOnly : .entertainmentArea
+                    showCompositionSaveSheet = true
+                },
+                onTransportSwitch: { effect, preferEntertainment in
+                    switchRunningCompositionTransport(effect, preferEntertainment: preferEntertainment)
+                }
+            )
+            .transition(.opacity)
+        } else {
+            // The pager stays MOUNTED underneath the AI composer — it is never
+            // swapped out — so its selection, scroll offsets and card canvases
+            // survive the whole AI interaction. `.ignoresSafeArea(.keyboard)`
+            // keeps the keyboard from crushing it ("there isn't enough room"),
+            // and is scoped to the pager alone so `aiComposerPanel` keeps its
+            // own ordinary keyboard avoidance.
+            ZStack {
+                cardGrid
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
+                    // MOUNTED but inert while the composer is up: a tap aimed
+                    // at Cancel must never reach a deck card behind it.
+                    .allowsHitTesting(
+                        StudioAIComposerLayout.lowerContentIsInteractive(
+                            overlayVisible: aiPresentation.isOverlayVisible))
+
+                if aiPresentation.isOverlayVisible {
+                    aiComposerPanel
+                }
+            }
+            .transition(.opacity)
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - Zone A: Inline Room Rolodex
     // Two-axis wheel: vertical = rooms, horizontal = zones. A search affordance
     // inside reveals RoomPickerSheetView as a large-library / a11y fallback.
@@ -621,10 +694,19 @@ struct StudioView: View {
             zones: orchestrator.allZones,
             selectedRoom: vm.selectedRoom,
             runningEffects: vm.runningEffects,
-            onSelect: { room in
+            // Fires ONCE, after the wheel has stopped. Selection assignment
+            // only — no playback API is reachable from here, which is the
+            // contract `testSelectionChangeNeverMutatesPlayback` locks.
+            onCommit: { room in
                 withAnimation(HueAnimation.fast) {
                     vm.selectedRoom = room
                 }
+            },
+            // Deliberate activation: open customization for the item the user
+            // tapped. Assigns nothing and starts, stops or restarts nothing —
+            // which is why tapping an ALREADY-selected room still works.
+            onActivate: { _ in
+                expandMixer()
             }
         )
     }
@@ -634,7 +716,7 @@ struct StudioView: View {
     // ──────────────────────────────────────────────
 
     private var cardGrid: some View {
-        TabView(selection: $currentDeck) {
+        TabView(selection: deckSelection) {
             // Deck 0: Effects — built-ins, then Composer creations that move
             deckGrid(cards: vm.effectCards, deckIndex: 0,
                      composerPresets: vm.composerEffectPresets)
@@ -684,14 +766,14 @@ struct StudioView: View {
                         }()
                     ) {
                         if vm.runningCardID == card.id {
-                            if isMixerCollapsed {
+                            if regionMode == .decks {
                                 expandMixer()
                                 HapticManager.shared.selection()
                             } else {
                                 Task { await vm.explicitStop(card) }
                             }
                         } else {
-                            isMixerCollapsed = false
+                            expandMixer()   // deliberate activation
                             applyCardWithTransportPrompt(card)
                         }
                     }
@@ -798,6 +880,8 @@ struct StudioView: View {
         .buttonStyle(.plain)
     }
 
+    /// The collapsed hero: "+ Create" and the wand. The EXPANDED AI composer is
+    /// deliberately no longer here — see `aiComposerPanel`.
     private func composerCreateHero(visible: Bool) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: HueRadius.xl)
@@ -809,194 +893,254 @@ struct StudioView: View {
                 .opacity(0.5)
                 .allowsHitTesting(false)
 
-            // Wall-clock-driven border sweep (3s/rev) — pausable, unlike the old
-            // repeatForever CoreAnimation drive that kept a 60fps angular-gradient
-            // animation running directly behind the AI-prompt TextField.
-            TimelineView(.animation(
-                minimumInterval: 1.0 / 20.0,
-                // `visible` only tracks the deck pager — without isTabActive
-                // this 20fps sweep kept redrawing behind whichever tab the
-                // user switched to (the hidden-tab clock class every sibling
-                // animation gates on).
-                paused: !visible || !isTabActive || reduceMotion || KeyboardState.shared.isKeyboardUp
-            )) { timeline in
-                let phase = (timeline.date.timeIntervalSinceReferenceDate / 3.0)
-                    .truncatingRemainder(dividingBy: 1.0)
-                RoundedRectangle(cornerRadius: HueRadius.xl)
-                    .strokeBorder(
-                        AngularGradient(
-                            colors: [
-                                HuePalette.amber,
-                                Color(hex: "#8C59FF"),
-                                HuePalette.amber.opacity(0.35),
-                                HuePalette.amber
-                            ],
-                            center: .center,
-                            angle: .degrees(phase * 360)
-                        ),
-                        lineWidth: 2
-                    )
-            }
+            AIHeroBorderSweep(paused: !visible || !isTabActive || reduceMotion)
 
-            Group {
-                if isAIPromptExpanded {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "wand.and.stars")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(HuePalette.amber)
-                            Text("Generate with AI")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.white)
-                            Spacer()
-                            if vm.isGeneratingAIComposition {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                    .tint(HuePalette.amber)
-                            }
-                        }
-
-                        TextField("Describe the vibe (e.g. ocean calm with soft pulse)", text: $aiPromptText, axis: .vertical)
-                            .focused($aiPromptFocused)
-                            // Fixed height: a growing field re-lays-out the whole
-                            // deck grid under it on every wrap.
-                            .lineLimit(2, reservesSpace: true)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white)
-                            .textInputAutocapitalization(.sentences)
-                            .autocorrectionDisabled(false)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.black.opacity(0.22))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-                            )
-
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(vm.suggestedAIPrompts, id: \.self) { suggestion in
-                                    Button {
-                                        aiPromptText = suggestion
-                                        triggerAIGeneration(with: suggestion)
-                                        HapticManager.shared.selection()
-                                    } label: {
-                                        Text(suggestion)
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundStyle(.white.opacity(0.9))
-                                            .lineLimit(1)
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 6)
-                                            .background(
-                                                Capsule().fill(Color.white.opacity(0.08))
-                                            )
-                                            .overlay(
-                                                Capsule()
-                                                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
-                                            )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .disabled(vm.isGeneratingAIComposition)
-                                }
-                            }
-                        }
-
-                        HStack(spacing: 8) {
-                            Button("Cancel") {
-                                isAIPromptExpanded = false
-                                aiPromptText = ""
-                                aiPromptFocused = false
-                                vm.aiGenerationErrorMessage = nil
-                                HapticManager.shared.light()
-                            }
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.75))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule().fill(Color.white.opacity(0.08))
-                            )
-                            .buttonStyle(.plain)
-                            .disabled(vm.isGeneratingAIComposition)
-
-                            Spacer()
-
-                            Button {
-                                triggerAIGeneration(with: aiPromptText)
-                            } label: {
-                                Text(vm.isGeneratingAIComposition ? "Generating..." : "Generate")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(.black.opacity(vm.isGeneratingAIComposition ? 0.5 : 0.9))
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 7)
-                                    .background(
-                                        Capsule().fill(HuePalette.amber.opacity(vm.isGeneratingAIComposition ? 0.45 : 0.95))
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(vm.isGeneratingAIComposition || aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            HStack(spacing: HueSpacing.md) {
+                Button {
+                    // The exact room, captured before any await.
+                    let target = vm.selectedRoom
+                    Task {
+                        let outcome = await vm.createStarterComposition(in: target)
+                        // Creating a new composition is deliberate editing
+                        // intent, so it opens the editor — but only if the
+                        // target is STILL selected. If the wheel moved during
+                        // the await, opening would present a surface for a
+                        // room the user has already left.
+                        guard outcome.createdNewComposition,
+                              vm.selectedRoom.map(StudioSelectionKey.init) == outcome.target
+                        else { return }
+                        withAnimation(HueAnimation.fast) {
+                            regionMode = StudioMixerPresentation.modeAfterNewCompositionCreated(
+                                created: true, current: regionMode)
                         }
                     }
-                    .padding(HueSpacing.lg)
-                } else {
+                    HapticManager.shared.medium()
+                } label: {
                     HStack(spacing: HueSpacing.md) {
-                        Button {
-                            Task { await vm.applyStarterComposition() }
-                            HapticManager.shared.medium()
-                        } label: {
-                            HStack(spacing: HueSpacing.md) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.system(size: 22, weight: .semibold))
-                                    .foregroundStyle(HuePalette.amber)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("+ Create")
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundStyle(.white)
-                                    Text("Build your own effect")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.white.opacity(0.42))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                Spacer(minLength: 0)
-                            }
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(HuePalette.amber)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("+ Create")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.white)
+                            Text("Build your own effect")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.42))
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            withAnimation(HueAnimation.fast) {
-                                isAIPromptExpanded = true
-                            }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                aiPromptFocused = true
-                            }
-                            vm.aiGenerationErrorMessage = nil
-                            HapticManager.shared.selection()
-                        } label: {
-                            Image(systemName: "wand.and.stars")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(HuePalette.amber)
-                                .padding(10)
-                                .background(
-                                    Circle().fill(HuePalette.amber.opacity(0.14))
-                                )
-                                .overlay(
-                                    Circle().strokeBorder(HuePalette.amber.opacity(0.35), lineWidth: 1)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Generate with AI")
+                        Spacer(minLength: 0)
                     }
-                    .padding(HueSpacing.lg)
                 }
+                .buttonStyle(.plain)
+
+                Button {
+                    openAIComposer()
+                } label: {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(HuePalette.amber)
+                        .padding(10)
+                        .background(
+                            Circle().fill(HuePalette.amber.opacity(0.14))
+                        )
+                        .overlay(
+                            Circle().strokeBorder(HuePalette.amber.opacity(0.35), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Generate with AI")
             }
+            .padding(HueSpacing.lg)
         }
         .frame(maxWidth: .infinity)
-        .frame(minHeight: isAIPromptExpanded ? 146 : 76)
-        .animation(HueAnimation.fast, value: isAIPromptExpanded)
+        .frame(minHeight: 76)
         .opacity(visible ? 1 : 0.999)
+    }
+
+    /// The AI composer, mounted as a SIBLING of the deck pager rather than as
+    /// page-2 content (N1b).
+    ///
+    /// Its `TextField` was the only keyboard trigger inside the pager, and a
+    /// first responder living inside a `UIPageViewController`-backed pager is
+    /// what dragged the pager through the keyboard's relayout in the first
+    /// place. Out here the pager stays mounted and untouched underneath, and
+    /// this panel keeps ordinary keyboard avoidance.
+    private var aiComposerPanel: some View {
+        GeometryReader { proxy in
+            let metrics = StudioAIComposerLayout.card(
+                availableHeight: proxy.size.height,
+                hasSuggestions: !vm.suggestedAIPrompts.isEmpty,
+                hasStatusContent: aiComposerHasStatusContent)
+            // The GeometryReader still fills the region — but that height now
+            // belongs to the SHIELD, not to the card. The shield dims the deck
+            // behind the composer and swallows stray taps; the card is sized
+            // from its content.
+            ZStack {
+                Color.black.opacity(0.45)
+                    .contentShape(Rectangle())
+
+                aiComposerCard(metrics: metrics)
+                    .frame(height: metrics.renderedHeight)
+                    .padding(.horizontal, HueSpacing.screenH)
+            }
+        }
+        .transition(.opacity)
+    }
+
+    /// True when a status or error line is occupying a row in the card.
+    private var aiComposerHasStatusContent: Bool {
+        vm.isGeneratingAIComposition
+            || !(vm.aiGenerationErrorMessage ?? "").isEmpty
+    }
+
+    /// The visible card. Content-sized by `metrics`, and — critically — built
+    /// from ONE subtree in every layout mode (N1d).
+    private func aiComposerCard(metrics: StudioAIComposerLayout.CardMetrics) -> some View {
+            ZStack {
+                // Near-opaque, unlike the 0.55 that let the deck grid show
+                // through and "compete with the panel" on device.
+                RoundedRectangle(cornerRadius: HueRadius.xl)
+                    .fill(Color.black.opacity(0.94))
+
+                AIHeroBorderSweep(paused: !isTabActive || reduceMotion)
+
+                VStack(alignment: .leading, spacing: StudioAIComposerLayout.rowSpacing) {
+                    // FIXED — never scrolls, never compresses.
+            HStack(spacing: 8) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(HuePalette.amber)
+                Text("Generate with AI")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                Spacer()
+                if vm.isGeneratingAIComposition {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(HuePalette.amber)
+                }
+            }
+                    .frame(height: StudioAIComposerLayout.headerHeight)
+
+                    // FLEXIBLE — the only region allowed to lose room, and it
+                    // scrolls rather than overlapping when it does.
+                    // ONE always-mounted scroll container wrapping ONE
+                    // always-mounted prompt subtree. Build 51 had a `switch`
+                    // here — a
+                    // `_ConditionalContent` whose two branches each carried
+                    // their OWN TextField. The keyboard's rise shrank the
+                    // region, `fit` flipped, SwiftUI tore down the branch
+                    // holding the first responder and inserted a different
+                    // one, and the keyboard fell straight back down. Scrolling
+                    // is now a CONFIGURATION of one hierarchy, never a
+                    // replacement of it.
+                    ScrollView(showsIndicators: false) { aiComposerContent }
+                        .scrollDisabled(!metrics.scrolls)
+                        .frame(height: metrics.contentHeight, alignment: .top)
+
+                    // FIXED — Cancel and Generate stay outside the scrolling
+                    // middle, so they are never scrolled out of reach.
+            HStack(spacing: 8) {
+                Button("Cancel") {
+                    dismissAIComposer(clearingDraft: true)
+                    vm.aiGenerationErrorMessage = nil
+                    HapticManager.shared.light()
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule().fill(Color.white.opacity(0.08))
+                )
+                .buttonStyle(.plain)
+                .disabled(vm.isGeneratingAIComposition)
+
+                Spacer()
+
+                Button {
+                    triggerAIGeneration(with: aiPresentation.promptText)
+                } label: {
+                    Text(vm.isGeneratingAIComposition ? "Generating..." : "Generate")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.black.opacity(vm.isGeneratingAIComposition ? 0.5 : 0.9))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule().fill(HuePalette.amber.opacity(vm.isGeneratingAIComposition ? 0.45 : 0.95))
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.isGeneratingAIComposition || aiPresentation.promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+                    .frame(height: StudioAIComposerLayout.actionRowHeight)
+                }
+                .padding(HueSpacing.lg)
+            }
+    }
+
+    /// The scrolling middle: the prompt field and the suggestion strip.
+    private var aiComposerContent: some View {
+        VStack(alignment: .leading, spacing: StudioAIComposerLayout.rowSpacing) {
+            TextField("Describe the vibe (e.g. ocean calm with soft pulse)", text: aiPromptText, axis: .vertical)
+                .focused($aiPromptFocused)
+                // Fixed height: a growing field re-lays-out the whole
+                // deck grid under it on every wrap.
+                .lineLimit(2, reservesSpace: true)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white)
+                .textInputAutocapitalization(.sentences)
+                .autocorrectionDisabled(false)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.black.opacity(0.22))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                )
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(vm.suggestedAIPrompts, id: \.self) { suggestion in
+                        Button {
+                            aiPresentation.promptText = suggestion
+                            triggerAIGeneration(with: suggestion)
+                            HapticManager.shared.selection()
+                        } label: {
+                            Text(suggestion)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .lineLimit(1)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule().fill(Color.white.opacity(0.08))
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(vm.isGeneratingAIComposition)
+                    }
+                }
+            }
+
+            // Status/error lives INSIDE the card, so it occupies a row the
+            // sizing policy already counts (`hasStatusContent`) instead of
+            // appearing behind the composer on the deck.
+            if let error = vm.aiGenerationErrorMessage, !error.isEmpty {
+                Text(error)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(HuePalette.Noir.destructive)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private func composerGrid(deckIndex: Int) -> some View {
@@ -1109,14 +1253,14 @@ struct StudioView: View {
                 previewSpec: LookPreviewSpec(preset: preset)
             ) {
                 if vm.runningCardID == card.id {
-                    if isMixerCollapsed {
+                    if regionMode == .decks {
                         expandMixer()
                         HapticManager.shared.selection()
                     } else {
                         Task { await vm.explicitStop(card) }
                     }
                 } else {
-                    isMixerCollapsed = false
+                    expandMixer()   // deliberate activation
                     applyCardWithTransportPrompt(card)
                 }
             }
@@ -1183,7 +1327,7 @@ struct StudioView: View {
         HStack(spacing: 6) {
             ForEach(Array(Self.deckNames.enumerated()), id: \.offset) { i, name in
                 Button {
-                    withAnimation(HueAnimation.fast) { currentDeck = i }
+                    withAnimation(HueAnimation.fast) { aiPresentation.propose(i) }
                     HapticManager.shared.selection()
                 } label: {
                     Text(name)
@@ -1203,31 +1347,171 @@ struct StudioView: View {
         }
     }
 
+    // ── AI composer presentation (N1b) ───────────────────────
+    //
+    // Every AI presentation transition goes through these two, so the deck fence
+    // and the focus token can never drift apart the way three separate `@State`
+    // flags did.
+
+    /// The wand. Captures the originating deck, raises the fence, and requests
+    /// focus behind a token so a cancelled presentation's callback is inert.
+    private func openAIComposer() {
+        let token = withAnimation(HueAnimation.fast) {
+            aiPresentation.open()
+        }
+        // The 0.1s delay is the field's mount window, unchanged. What IS new:
+        // this callback proves it still belongs to the presentation that
+        // scheduled it before it raises a keyboard.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            guard aiPresentation.focusIsCurrent(token) else { return }
+            aiPromptFocused = true
+        }
+        vm.aiGenerationErrorMessage = nil
+        HapticManager.shared.selection()
+    }
+
+    /// Teardown, in the ONE order that survives the keyboard: resign focus,
+    /// close the overlay, HOLD the fence while the keyboard animates away, then
+    /// release and restore the originating deck. Releasing at overlay-close
+    /// would reopen the defect — the dismissal relayout proposes deck 0 exactly
+    /// as the appearance relayout did.
+    private func dismissAIComposer(clearingDraft: Bool) {
+        aiPromptFocused = false
+        let token = withAnimation(HueAnimation.fast) {
+            aiPresentation.beginDismissal()
+        }
+        if clearingDraft { aiPresentation.promptText = "" }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + StudioAIPresentation.dismissalSettle
+        ) {
+            aiPresentation.finishDismissal(token: token)
+        }
+    }
+
     private func collapseMixer() {
         withAnimation(HueAnimation.fast) {
-            isMixerCollapsed = true
-            isMixerExpanded = false
+            regionMode = .decks
         }
     }
 
+    /// The single deliberate opener. Every path that may present customization
+    /// — a card tap that starts an effect, the "Live Controls" pill, the
+    /// rolodex's `onActivate` — routes through here, which is what keeps the
+    /// passive paths structurally unable to open it.
     private func expandMixer() {
         withAnimation(HueAnimation.fast) {
-            isMixerCollapsed = false
+            regionMode = StudioMixerPresentation.modeOnDeliberateActivation
         }
     }
 
+    /// The generated preset held while the transport prompt is up. The prompt
+    /// response continues with EXACTLY this value — never a regeneration — and
+    /// only after re-proving the operation is still current.
+    private struct PendingAIGeneration {
+        let token: Int
+        let preset: CompositionPreset
+        let room: RoomDisplayItem
+        let target: StudioSelectionKey
+    }
+
+    /// AI generation is deliberate editing intent, exactly like "+ Create" —
+    /// and before N1 it was the ONE creation path with no opener, so the result
+    /// landed wherever `regionMode` happened to be (usually the decks, because
+    /// `apply`'s teardown nils `runningCardID` and the passive rule closes on
+    /// nil). The token + fence machinery below is what lets the deliberate path
+    /// open the editor WITHOUT weakening that passive rule for anyone else.
     private func triggerAIGeneration(with prompt: String) {
+        aiOperationCounter += 1
+        let token = aiOperationCounter
+        // The exact room, captured before any await.
         let roomSnapshot = vm.selectedRoom
         Task {
-            if let preset = await vm.generateCompositionFromPrompt(prompt) {
-                await vm.apply(vm.studioCard(for: preset), roomOverride: roomSnapshot, preferEntertainmentOverride: nil)
-                aiPromptText = ""
-                isAIPromptExpanded = false
-                aiPromptFocused = false
-                HapticManager.shared.medium()
-            } else {
+            guard let preset = await vm.generateCompositionFromPrompt(prompt) else {
+                // Generation failed: the hero stays open showing
+                // `aiGenerationErrorMessage`; the region and any draft are untouched.
                 HapticManager.shared.light()
+                return
             }
+            // A newer operation superseded this one while it generated. The
+            // preset is in the library; applying it now would stomp the newer
+            // operation's playback and editor.
+            guard StudioAIGeneration.operationIsCurrent(
+                token: token, newestToken: aiOperationCounter) else { return }
+            guard let room = roomSnapshot else {
+                HapticManager.shared.light()
+                return
+            }
+            dismissAIComposer(clearingDraft: true)
+
+            let pending = PendingAIGeneration(
+                token: token, preset: preset, room: room,
+                target: StudioSelectionKey(room: room))
+            // Transport-prompt parity with `applyCardWithTransportPrompt`: the
+            // old path called `apply` directly, so AI starts never got the
+            // Streaming-vs-Room-Only choice every other composition start gets.
+            let card = vm.studioCard(for: preset)
+            if card.compositionTier != .bridgeOptimized && vm.isCompositionTransportPromptEnabled {
+                pendingAIGeneration = pending
+                showCompositionTransportPrompt = true
+            } else {
+                await completeAIGeneration(pending, preferEntertainment: nil)
+            }
+        }
+    }
+
+    /// Applies a generated preset exactly once, fenced. Every guard is the pure
+    /// rule in `StudioAIGeneration`, so the token/stale semantics are the ones
+    /// the unit tests exercise.
+    private func completeAIGeneration(
+        _ pending: PendingAIGeneration, preferEntertainment: Bool?
+    ) async {
+        switch StudioAIGeneration.completionAction(
+            token: pending.token,
+            newestToken: aiOperationCounter,
+            target: pending.target,
+            currentSelection: vm.selectedRoom.map(StudioSelectionKey.init)) {
+        case .supersededDoNothing, .staleSelectionDoNothing:
+            // Zero playback mutations, zero region changes, and — critically —
+            // zero fence writes: a stale completion may not clear or replace a
+            // newer operation's fence.
+            return
+        case .proceed:
+            break
+        }
+
+        aiEditingIntentFence = AIEditingIntentFence(
+            token: pending.token, target: pending.target, presetID: pending.preset.id)
+        defer {
+            // Only the operation that raised the fence may lower it. If a newer
+            // operation replaced it mid-apply, this deliberately leaves the
+            // newer fence standing.
+            if StudioAIGeneration.shouldClearFence(
+                aiEditingIntentFence, completingToken: pending.token) {
+                aiEditingIntentFence = nil
+            }
+        }
+
+        let outcome = await vm.applyGeneratedComposition(
+            pending.preset, in: pending.room, preferEntertainmentOverride: preferEntertainment)
+
+        // Re-prove currency AFTER the awaits: a newer operation or a moved
+        // wheel means this result may not touch the region.
+        guard StudioAIGeneration.operationIsCurrent(
+                  token: pending.token, newestToken: aiOperationCounter),
+              vm.selectedRoom.map(StudioSelectionKey.init) == pending.target
+        else { return }
+
+        if outcome.disposition == .applied {
+            withAnimation(HueAnimation.fast) {
+                regionMode = StudioAIGeneration.modeAfterAIGeneration(
+                    applied: true, current: regionMode)
+            }
+            HapticManager.shared.medium()
+        } else {
+            // apply's refusal paths present their own surfaces (mic prompt, area
+            // chooser, takeover consent); a second alert here would collide with
+            // them. The region and the generated draft stay untouched.
+            HapticManager.shared.light()
         }
     }
 
@@ -1249,6 +1533,7 @@ struct StudioView: View {
     private func clearPendingCompositionTransportPrompt() {
         pendingCompositionCard = nil
         pendingCompositionRoom = nil
+        pendingAIGeneration = nil
     }
 
     // ──────────────────────────────────────────────
@@ -1335,7 +1620,7 @@ struct StudioView: View {
             HapticManager.shared.selection()
             return
         }
-        isMixerCollapsed = false
+        expandMixer()   // deliberate activation
         transportSwitchInFlightRoomIDs.insert(roomID)
         Task {
             await vm.apply(
@@ -1363,13 +1648,13 @@ struct StudioView: View {
         case .defaultStudioRules:
             applyCardWithTransportPrompt(card)
         case .streaming:
-            isMixerCollapsed = false
+            expandMixer()   // deliberate activation
             Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: true) }
         case .roomREST:
-            isMixerCollapsed = false
+            expandMixer()   // deliberate activation
             Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: false) }
         case .matchSavedPreset:
-            isMixerCollapsed = false
+            expandMixer()   // deliberate activation
             Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: nil) }
         }
     }
@@ -2139,25 +2424,463 @@ private struct BridgeSaveResultSheet: ViewModifier {
 /// room with a running effect made the customization panel cover the wheel —
 /// and that the panel could "appear and collapse immediately", which is the
 /// scrim eating the very next drag.
+/// Which region occupies the space below the rolodex.
+///
+/// C4 introduces this ONLY to name the state that `isMixerCollapsed` already
+/// carried — `.decks` is exactly the old `true`. It is not yet a layout
+/// decision: the customization surface is still the bottom-anchored overlay
+/// tray, with its scrim, its height calculations and its dismiss gesture. C5
+/// is what turns `.customization` into an inline single-scroll region.
+enum StudioRegionMode: Equatable {
+    /// The three-deck card pager.
+    case decks
+    /// The customization surface for the selected room.
+    case customization
+}
+
 enum StudioMixerPresentation {
 
-    /// Arriving on a new room leaves the tray CLOSED.
+    /// Arriving on a new room returns the region to the decks.
     ///
-    /// The editor is not lost — `hasCurrentRoomEffect && isMixerCollapsed`
+    /// The editor is not lost — `hasCurrentRoomEffect && regionMode == .decks`
     /// shows the "Live Controls" pill that opens it. What is gained is that the
     /// wheel keeps working: no tray over it, and no full-screen scrim between
     /// the finger and the next scroll.
-    static let collapsedOnRoomChange = true
-
-    /// The wheel is unmounted only when a streaming look's tray is actually on
-    /// screen — never merely because a streaming look exists.
     ///
-    /// Both conditions matter. `isEntertainmentRunning` alone removed the
-    /// selector the moment the wheel landed on a streaming room, destroying the
-    /// gesture in progress; dropping the check entirely would put the wheel
-    /// underneath a full-height tray.
-    static func rolodexHidden(isEntertainmentRunning: Bool, mixerVisible: Bool) -> Bool {
-        isEntertainmentRunning && mixerVisible
+    /// Same rule and same reason as the old `collapsedOnRoomChange = true`,
+    /// stated in the new vocabulary.
+    static let modeOnRoomChange: StudioRegionMode = .decks
+
+    /// The rolodex is ALWAYS MOUNTED. `rolodexHidden` is deleted, and nothing
+    /// replaces it.
+    ///
+    /// The historical bug is worth keeping in view: keying the unmount on
+    /// `isEntertainmentRunning` alone deleted the wheel mid-gesture — "the
+    /// selector destroyed by the very selection it was making" — and the
+    /// two-condition version that fixed it only narrowed when the wheel could
+    /// vanish. Inline, the customization region no longer covers the wheel at
+    /// all, so there is nothing to hide it FOR. This constant is pinned by a
+    /// unit test and a host-render probe, so regressing it costs a constant and
+    /// two named tests.
+    static let rolodexAlwaysMounted = true
+
+    /// What a PASSIVE runtime change does to the region.
+    ///
+    /// `runningCardID` goes nil for reasons the user never asked for: a stop
+    /// completing, a recovered bridge animation reconciling, an external
+    /// teardown, a failed start rolling back. None of those may present a
+    /// deliberate surface, so this can only CLOSE customization — never open
+    /// it. Before C5 the same handler set `.customization`, which is exactly
+    /// the "unexpectedly opened over the wheel" class Track A exists to end.
+    static func modeAfterRunningCardChange(
+        _ newRunningCardID: String?, current: StudioRegionMode
+    ) -> StudioRegionMode {
+        newRunningCardID == nil ? .decks : current
+    }
+
+    /// The ONLY thing that opens customization: a deliberate act — tapping a
+    /// card to start it, tapping the centred room, the picker sheet, or the
+    /// "Live Controls" pill. All of them route through `expandMixer()`.
+    static let modeOnDeliberateActivation: StudioRegionMode = .customization
+
+    /// Creating a NEW composition is deliberate editing intent, so it opens the
+    /// host — the one case where the editor should appear without the user having
+    /// aimed at an existing card.
+    ///
+    /// Starting or selecting an EXISTING saved composition is NOT routed here:
+    /// those taps already carry their own explicit opener at the card. And this is
+    /// deliberately a decision about a CREATION RESULT, not an observer — attaching
+    /// it to `runningCardID`, `selectedRoom`, `runningEffects` or transport state
+    /// would reopen the "unexpectedly opened over the wheel" class, because every
+    /// one of those also changes for reasons the user never asked for.
+    static func modeAfterNewCompositionCreated(
+        created: Bool, current: StudioRegionMode
+    ) -> StudioRegionMode {
+        created ? modeOnDeliberateActivation : current
+    }
+}
+
+/// The expanded AI composer's layout policy (N1c).
+///
+/// THE DEVICE DEFECT (build 50, Brian): the deck redirect was gone, but the
+/// expanded panel collapsed — header, prompt field, suggestion chips, Cancel
+/// and Generate all sharing the same vertical space, with the deck content
+/// visible through it. The keyboard was BELOW the panel, so this was never the
+/// keyboard covering the buttons.
+///
+/// The mechanism is arithmetic, not a stray modifier. The panel is a child of
+/// Zone B, and Zone B is `.frame(maxHeight: .infinity)` inside a VStack whose
+/// other children all hold intrinsic heights, inside a root `GeometryReader`
+/// that honestly shrinks with the keyboard. With the keyboard up on a 874pt
+/// phone the region is left with roughly 150pt, while the panel's rows need
+/// roughly 220pt. A `VStack` handed less than its ideal compresses — and rows
+/// built from fixed-padding capsules and a `reservesSpace` field cannot
+/// compress, so they overlap.
+///
+/// Note what is NOT the cause: the old `.frame(minHeight: 146)` is a MINIMUM,
+/// and 146 is below the height the region was actually offering, so it never
+/// bound. Removing it alone would have changed nothing.
+///
+/// So the fix is a real layout policy rather than a bigger number: the header
+/// and the Cancel/Generate row are FIXED and always laid out, and the middle
+/// scrolls when the region cannot seat everything. Every metric below is the
+/// one the production panel uses, which is what lets the tests exercise the
+/// real policy instead of a parallel model.
+enum StudioAIComposerLayout {
+
+    /// "Generate with AI" + the in-flight spinner.
+    static let headerHeight: CGFloat = 24
+    /// The Cancel / Generate capsule row.
+    static let actionRowHeight: CGFloat = 34
+    /// The prompt field: two reserved lines plus its own vertical padding.
+    static let promptFieldHeight: CGFloat = 60
+    /// The horizontal suggestion-chip strip.
+    static let suggestionRowHeight: CGFloat = 32
+    static let rowSpacing: CGFloat = 10
+    /// `.padding(HueSpacing.lg)`, top and bottom.
+    static let verticalPadding: CGFloat = 40
+
+    /// The least the scrolling middle may ever be given: the prompt field
+    /// itself, which is the one control the panel exists for.
+    static let minimumContentHeight: CGFloat = promptFieldHeight
+
+    /// Chrome that never scrolls and never compresses.
+    static var fixedChromeHeight: CGFloat {
+        headerHeight + actionRowHeight + verticalPadding + rowSpacing * 2
+    }
+
+    /// Everything seated at full size, nothing scrolling.
+    static var idealHeight: CGFloat {
+        fixedChromeHeight + promptFieldHeight + suggestionRowHeight + rowSpacing
+    }
+
+    /// Below this the panel cannot honour its own contract, and the caller
+    /// should give it more room rather than let it compress.
+    static var minimumHeight: CGFloat {
+        fixedChromeHeight + minimumContentHeight
+    }
+
+    /// What the panel does with the height it was actually offered.
+    enum Fit: Equatable {
+        /// Enough room for every row at full size.
+        case full
+        /// Not enough: the header and the action row keep their space and the
+        /// middle scrolls inside `contentHeight`.
+        case scrolling(contentHeight: CGFloat)
+    }
+
+    static func fit(availableHeight: CGFloat) -> Fit {
+        guard availableHeight >= idealHeight else {
+            let slack = availableHeight - fixedChromeHeight
+            return .scrolling(contentHeight: max(minimumContentHeight, slack))
+        }
+        return .full
+    }
+
+    /// A status or error line, when one is present.
+    static let statusRowHeight: CGFloat = 30
+
+    /// What the VISIBLE card should measure, given what it actually contains
+    /// and how much keyboard-safe room the region is offering (N1d).
+    ///
+    /// The build-51 card filled the whole Studio region with a large empty
+    /// middle, because the panel's root was a `GeometryReader` — which always
+    /// accepts every point its parent proposes — and the middle carried
+    /// `.frame(maxHeight: .infinity)`. Height was being taken because it was
+    /// available, not because anything needed it. So the card is sized from its
+    /// CONTENT and only capped when the safe region is genuinely smaller.
+    struct CardMetrics: Equatable {
+        /// Everything at full size — what the card wants.
+        let idealHeight: CGFloat
+        /// What the card is actually drawn at: `min(ideal, available)`.
+        let renderedHeight: CGFloat
+        /// What the scrolling middle gets inside `renderedHeight`.
+        let contentHeight: CGFloat
+        /// True only when the region could not seat the ideal.
+        let scrolls: Bool
+    }
+
+    /// The middle's ideal height for exactly the rows that are present.
+    static func idealContentHeight(
+        hasSuggestions: Bool, hasStatusContent: Bool
+    ) -> CGFloat {
+        var height = promptFieldHeight
+        if hasSuggestions { height += rowSpacing + suggestionRowHeight }
+        if hasStatusContent { height += rowSpacing + statusRowHeight }
+        return height
+    }
+
+    static func card(
+        availableHeight: CGFloat,
+        hasSuggestions: Bool,
+        hasStatusContent: Bool
+    ) -> CardMetrics {
+        let content = idealContentHeight(
+            hasSuggestions: hasSuggestions, hasStatusContent: hasStatusContent)
+        let ideal = fixedChromeHeight + content
+        // A GeometryReader's first pass can report 0; never render a zero card.
+        let safe = availableHeight > 0 ? availableHeight : ideal
+        let rendered = min(ideal, safe)
+        return CardMetrics(
+            idealHeight: ideal,
+            renderedHeight: rendered,
+            contentHeight: max(minimumContentHeight, rendered - fixedChromeHeight),
+            scrolls: rendered < ideal)
+    }
+
+    /// While the composer is up, the pager underneath stays MOUNTED — its
+    /// selection, offsets and canvases must survive — but it must not take
+    /// touches. A tap aimed at Cancel may not reach a deck card behind it.
+    static func lowerContentIsInteractive(overlayVisible: Bool) -> Bool {
+        !overlayVisible
+    }
+}
+
+/// The hero's wall-clock border sweep (3s/rev), extracted to its OWN view (N1b).
+///
+/// It reads `KeyboardState.shared` — an `@Observable` singleton — and that read
+/// used to sit inside `StudioView`'s own body, so every keyboard show/hide
+/// invalidated the entire Studio view including the deck pager. Every other
+/// call site in the app already reads it from a child body; this one now does
+/// too, which is the pattern, not an exception.
+private struct AIHeroBorderSweep: View {
+
+    /// Everything the PARENT knows about pausing (visibility, tab activity,
+    /// Reduce Motion). The keyboard term is added here so the observation stays
+    /// scoped to this view.
+    let paused: Bool
+
+    var body: some View {
+        TimelineView(.animation(
+            minimumInterval: 1.0 / 20.0,
+            paused: paused || KeyboardState.shared.isKeyboardUp
+        )) { timeline in
+            let phase = (timeline.date.timeIntervalSinceReferenceDate / 3.0)
+                .truncatingRemainder(dividingBy: 1.0)
+            RoundedRectangle(cornerRadius: HueRadius.xl)
+                .strokeBorder(
+                    AngularGradient(
+                        colors: [
+                            HuePalette.amber,
+                            Color(hex: "#8C59FF"),
+                            HuePalette.amber.opacity(0.35),
+                            HuePalette.amber
+                        ],
+                        center: .center,
+                        angle: .degrees(phase * 360)
+                    ),
+                    lineWidth: 2
+                )
+        }
+    }
+}
+
+/// The AI composer's authoritative presentation model (N1b).
+///
+/// THE DEVICE DEFECT this exists to fix: the AI prompt's keyboard shrank the
+/// bottom safe area, Studio's root `GeometryReader` handed the whole collapse to
+/// the deck region (every sibling holds an intrinsic height), and the crushed
+/// page-style `TabView` — a `UIPageViewController` underneath — recovered by
+/// writing its FIRST page back through the selection binding. Deck 0 is Effects.
+/// Nothing in ChromaGlow ever assigns 0 (the only writes are `.propose` from a
+/// deck pill and the import landing), so the pager's own write-back was the only
+/// possible source, and the only way to stop it is to REFUSE the write.
+///
+/// So this is one value, not three. It owns the accepted deck, the deck the
+/// composer was opened from, the presentation phase, the prompt draft, and a
+/// generation token — and the wand button, Cancel, the pager binding, the
+/// overlay's visibility and the delayed focus callback all go through it. A
+/// split model is what let the old code raise the keyboard from one `@State`
+/// while a completely different `@State` silently moved the user.
+///
+/// TWO ORDERING RULES CARRY THE FIX:
+///
+///  1. The fence spans BOTH `.presenting` and `.dismissing`. Releasing it when
+///     the overlay closes would be too early: the keyboard is still leaving, and
+///     its dismissal relayout produces exactly the same pager write-back its
+///     appearance did. Only `finishDismissal` — after the keyboard is gone —
+///     restores the originating deck and releases.
+///  2. Every phase change bumps `generation`, so a delayed focus callback from a
+///     cancelled or superseded presentation can raise nothing and mutate
+///     nothing.
+///
+/// Deliberately a plain value type with NO reference to `StudioViewModel`, the
+/// orchestrator, or any transport API: "opening the AI composer mutates no
+/// playback" is then true by construction rather than by review.
+struct StudioAIPresentation: Equatable {
+
+    /// `.dismissing` is not cosmetic — it is the window in which the keyboard is
+    /// still animating away and the pager is still free to propose deck 0.
+    enum Phase: Equatable {
+        case idle
+        case presenting
+        case dismissing
+    }
+
+    /// The accepted deck selection. 0 = Effects, 1 = Live, 2 = Composer.
+    private(set) var deck: Int
+    /// Captured when the composer opens; non-nil means the fence is up.
+    private(set) var originDeck: Int?
+    private(set) var phase: Phase
+    /// The typed prompt. Survives open → dismissal untouched.
+    var promptText: String
+    /// Monotonic presentation/focus token.
+    private(set) var generation: Int
+
+    init(deck: Int = 0,
+         originDeck: Int? = nil,
+         phase: Phase = .idle,
+         promptText: String = "",
+         generation: Int = 0) {
+        self.deck = deck
+        self.originDeck = originDeck
+        self.phase = phase
+        self.promptText = promptText
+        self.generation = generation
+    }
+
+    var isOverlayVisible: Bool { phase == .presenting }
+
+    /// True across `.presenting` AND `.dismissing` — see ordering rule 1.
+    var isFenced: Bool { originDeck != nil }
+
+    /// Every selection proposal funnels here: the pager's own write-back, a deck
+    /// pill, the scene-import landing. While fenced the originating deck is held
+    /// and the proposal is dropped — including the deck-0 write that is this
+    /// packet's entire defect.
+    mutating func propose(_ proposed: Int) {
+        guard originDeck == nil else { return }
+        deck = proposed
+    }
+
+    /// The wand. Captures the originating deck and mints the focus token the
+    /// delayed callback must present.
+    @discardableResult
+    mutating func open() -> Int {
+        generation += 1
+        originDeck = deck
+        phase = .presenting
+        return generation
+    }
+
+    /// Step 1 of teardown (Cancel, or a completed generation): focus has been
+    /// cleared and the overlay closes. The fence STAYS UP. Returns the token the
+    /// settle callback must present.
+    @discardableResult
+    mutating func beginDismissal() -> Int {
+        guard phase == .presenting else { return generation }
+        generation += 1
+        phase = .dismissing
+        return generation
+    }
+
+    /// Step 2: the keyboard is gone. Restores the originating deck — which is
+    /// still the accepted deck, because nothing was allowed to move it — and
+    /// releases the fence so ordinary deck selection resumes.
+    mutating func finishDismissal(token: Int) {
+        guard phase == .dismissing, token == generation else { return }
+        if let originDeck { deck = originDeck }
+        originDeck = nil
+        phase = .idle
+    }
+
+    /// A delayed focus callback may raise the keyboard only for the presentation
+    /// that minted its token, and only while that presentation is still up.
+    func focusIsCurrent(_ token: Int) -> Bool {
+        token == generation && phase == .presenting
+    }
+
+    /// How long the fence is held after the overlay closes — the keyboard's
+    /// dismissal animation plus a margin. Deliberately a constant rather than an
+    /// observation of `KeyboardState`: reading that `@Observable` from Studio's
+    /// own body is what re-evaluated the whole view on every keyboard event.
+    static let dismissalSettle: TimeInterval = 0.45
+}
+
+/// The AI editing-intent fence (N1). Raised only while an AI application is in
+/// flight, and identified by ALL THREE of: a unique operation token, the exact
+/// selection captured at generation, and the generated preset's id.
+///
+/// Why a token and not just the selection key: two overlapping AI operations can
+/// target the SAME room, so a key-only fence would let the older operation's
+/// completion clear — or ride on — the newer operation's fence. Only the
+/// operation whose token matches may clear its fence or move the region.
+struct AIEditingIntentFence: Equatable {
+    let token: Int
+    let target: StudioSelectionKey
+    let presetID: UUID
+}
+
+/// The pure rules of the AI creation path (N1). `triggerAIGeneration` and
+/// `completeAIGeneration` consume exactly these, so the unit tests exercise the
+/// decisions the view actually makes.
+enum StudioAIGeneration {
+
+    /// Whether `StudioRegionWiring` must swallow a passive `runningCardID`
+    /// change. TRUE only for the teardown event (`nil`) while a fence for the
+    /// CURRENT selection is up — that nil is `apply`'s own mid-flight teardown
+    /// of the room's previous look, not the user leaving. Everything else —
+    /// no fence, a non-nil change, a fence for a selection the user has since
+    /// left — passes through to `modeAfterRunningCardChange` unchanged, which
+    /// is what keeps the passive rule intact for every non-AI path.
+    static func passiveCloseSuppressed(
+        fence: AIEditingIntentFence?,
+        currentSelection: StudioSelectionKey?,
+        newRunningCardID: String?
+    ) -> Bool {
+        guard let fence, newRunningCardID == nil else { return false }
+        return fence.target == currentSelection
+    }
+
+    /// A completion belonging to `token` may act only while it is the newest
+    /// operation. Monotonic counter, so "newer supersedes older" is a single
+    /// integer comparison.
+    static func operationIsCurrent(token: Int, newestToken: Int) -> Bool {
+        token == newestToken
+    }
+
+    /// What a generation completion (direct, or a transport-prompt response
+    /// arriving arbitrarily late) is allowed to do.
+    enum CompletionAction: Equatable {
+        /// Apply the held preset, fenced.
+        case proceed
+        /// A newer AI operation exists: apply nothing, move nothing, and never
+        /// touch the newer operation's fence or draft.
+        case supersededDoNothing
+        /// The selection left the captured target: applying would start playback
+        /// in — or open the editor over — a room the user is no longer in.
+        case staleSelectionDoNothing
+    }
+
+    static func completionAction(
+        token: Int,
+        newestToken: Int,
+        target: StudioSelectionKey,
+        currentSelection: StudioSelectionKey?
+    ) -> CompletionAction {
+        guard operationIsCurrent(token: token, newestToken: newestToken) else {
+            return .supersededDoNothing
+        }
+        guard currentSelection == target else { return .staleSelectionDoNothing }
+        return .proceed
+    }
+
+    /// Only the operation that raised the fence may lower it — a stale
+    /// completion finishing after a newer operation replaced the fence must
+    /// leave the newer fence standing.
+    static func shouldClearFence(
+        _ fence: AIEditingIntentFence?, completingToken: Int
+    ) -> Bool {
+        fence?.token == completingToken
+    }
+
+    /// AI generation is deliberate editing intent — the same rule shape as
+    /// `modeAfterNewCompositionCreated`, and deliberately a decision about an
+    /// APPLICATION RESULT, never an observer of runtime state.
+    static func modeAfterAIGeneration(
+        applied: Bool, current: StudioRegionMode
+    ) -> StudioRegionMode {
+        applied ? StudioMixerPresentation.modeOnDeliberateActivation : current
     }
 }
 
@@ -2312,6 +3035,73 @@ private struct StudioNoticeAlert: ViewModifier {
         // No message body, for the same reason as ForeignTakeoverAlert: the
         // whole explanation is the sentence in the title, and a second line
         // would have to invent detail we do not have.
+    }
+}
+
+/// The region's state rules, lifted out of `StudioView.body`.
+///
+/// `StudioView.body` sits at the Swift type-checker's ceiling, so new behaviour
+/// lands as a same-file `ViewModifier` beside `StudioDrainWiring` and
+/// `StudioMusicWiring`. C4 moves the two existing region rules here VERBATIM and
+/// changes nothing else — no layout, no presentation, no new rule.
+///
+/// Both rules answer the same question: when does the region stop showing
+/// customization on its own?
+struct StudioRegionWiring: ViewModifier {
+
+    let vm: StudioViewModel
+    @Binding var regionMode: StudioRegionMode
+    /// Non-nil only while an AI application is in flight (N1). See
+    /// `StudioAIGeneration.passiveCloseSuppressed` for exactly what it gates.
+    let aiFence: AIEditingIntentFence?
+
+    func body(content: Content) -> some View {
+        content
+            // Landing on a room does NOT throw its editor open.
+            //
+            // This used to set `isMixerCollapsed = false`, which made the tray
+            // appear the instant the wheel touched a room with a running
+            // effect. The tray takes up to 92% of the screen and mounts a
+            // full-screen invisible scrim, so the next drag on the wheel hit
+            // the scrim and collapsed the tray instead — the panel flashing
+            // open and shut while the selector became unusable. Arriving on
+            // `.decks` keeps the wheel free; the "Live Controls" pill is right
+            // there when the editor is what the user actually wants.
+            //
+            // Keyed EXACTLY (bridge + group + kind), not by bare room id: two
+            // bridges can share a Hue room id, and switching between them is a
+            // room change the user can see — a bare-id key would leave the tray
+            // open over the wheel for the arriving room.
+            .onChange(of: vm.selectedRoom.map(StudioSelectionKey.init)) { _, _ in
+                regionMode = StudioMixerPresentation.modeOnRoomChange
+            }
+            // The effect the customization surface was editing is gone, so
+            // there is nothing left to customize: return to the decks.
+            //
+            // C4 moved this verbatim and flagged the asymmetry; C5 resolves it.
+            // It used to set `.customization`, which is a PASSIVE runtime change
+            // asking for a deliberate surface. `runningCardID` goes nil for
+            // reasons the user never asked for — a stop completing, a recovered
+            // bridge animation reconciling, an external teardown — and none of
+            // those may open customization. Opening it is now reachable only
+            // from a deliberate card activation or the "Live Controls" pill.
+            // N1: while an AI application is in flight for the CURRENT
+            // selection, `apply`'s own teardown nils `runningCardID` for a
+            // moment — that transient nil is the machinery of the deliberate
+            // start, not an effect ending, and letting it through is exactly
+            // how the AI result used to land on the decks. The fence is
+            // token-identified and selection-exact; with it down or
+            // mismatched, the passive rule below runs untouched.
+            .onChange(of: vm.runningCardID) { _, newValue in
+                if StudioAIGeneration.passiveCloseSuppressed(
+                    fence: aiFence,
+                    currentSelection: vm.selectedRoom.map(StudioSelectionKey.init),
+                    newRunningCardID: newValue) {
+                    return
+                }
+                regionMode = StudioMixerPresentation.modeAfterRunningCardChange(
+                    newValue, current: regionMode)
+            }
     }
 }
 

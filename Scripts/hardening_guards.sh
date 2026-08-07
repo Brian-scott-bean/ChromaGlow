@@ -665,13 +665,37 @@ if [[ -z "$hc_save_entry" ]]; then
 fi
 
 # (d) Landing on a room may not force the effect panel open over the wheel.
-if ! grep -q 'static let collapsedOnRoomChange = true' "$HC_VIEW"; then
-    fail "composer-hardware-convergence" "the room-change collapse rule is missing or inverted in $HC_VIEW — the tray would cover the room wheel mid-scroll again"
+# Track A C4 renamed the rule's vocabulary (`collapsedOnRoomChange = true` →
+# `modeOnRoomChange: StudioRegionMode = .decks`) without changing the rule. The
+# guard tracks the RULE: arriving on a room must return the region to the decks.
+if ! grep -qE 'static let modeOnRoomChange: StudioRegionMode = \.decks' "$HC_VIEW"; then
+    fail "composer-hardware-convergence" "the room-change rule is missing or inverted in $HC_VIEW — the tray would cover the room wheel mid-scroll again"
 fi
-hc_roomchange=$(awk '/onChange\(of: vm.selectedRoom\?.id\)/,/^        }$/' "$HC_VIEW" 2>/dev/null \
+# The anchor tracks the handler, not one spelling of its key: Track A C1
+# re-keyed it from `vm.selectedRoom?.id` to the exact StudioSelectionKey, and a
+# pattern pinned to the old spelling would have matched nothing and passed
+# vacuously — a guard that cannot fail is not a guard.
+# C4 moved this handler into the same-file StudioRegionWiring modifier, so the
+# awk end-anchor is indentation-agnostic now — a range pinned to one nesting
+# depth would have matched nothing and passed vacuously.
+hc_roomchange=$(awk '/onChange\(of: vm.selectedRoom/,/^[[:space:]]*}$/' "$HC_VIEW" 2>/dev/null \
     | grep -vE '^[[:space:]]*//' || true)
-if echo "$hc_roomchange" | grep -qE 'isMixerCollapsed = false'; then
-    fail "composer-hardware-convergence" "the room-change handler forces the mixer open — that is the selector collision"
+if [[ -z "$hc_roomchange" ]]; then
+    fail "composer-hardware-convergence" "the selectedRoom onChange handler is gone from $HC_VIEW — the room-change rule is unenforceable"
+fi
+if echo "$hc_roomchange" | grep -qE 'isMixerCollapsed = false|regionMode = \.customization'; then
+    fail "composer-hardware-convergence" "the room-change handler opens the customization region — that is the selector collision"
+fi
+
+# (d2, Track A C1) Selection-keyed side effects stay EXACT. Two bridges can
+# expose the same Hue room id, so a bare-id key means the coverage task never
+# refires and Deck 0 labels bridge A's capabilities as bridge B's room. The
+# per-BRIDGE entertainment sweep at the same site is deliberately excluded — it
+# is keyed by bridgeID on purpose.
+hc_bare_selection=$(grep -nE '\.(task|onChange)\(of: vm\.selectedRoom\?\.id\)|\.task\(id: vm\.selectedRoom\?\.id\)' "$HC_VIEW" 2>/dev/null \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$hc_bare_selection" ]]; then
+    fail "composer-hardware-convergence" $'a Studio selection side effect is keyed by bare room id again — it will not refire between two bridges sharing a room id:\n'"$hc_bare_selection"
 fi
 
 # (e) Instrumentation may only record what was observed.
@@ -1027,6 +1051,62 @@ for f in "${HC_TESTS[@]}"; do
         fail "composer-hardware-convergence" $'timing wait in a hardware-convergence suite: '"$f"$':\n'"$hc_wait_hits"
     fi
 done
+
+# ──────────────────────────────────────────────────────────────
+# Guard 13 (build-47 device finding 3, checklist row 36): the Studio
+# customization host is ONE CONTINUOUS SURFACE.
+#
+# The host scrolled continuously, but its advanced disclosure and "+N MORE"
+# presented a detached sheet — and `showAdvanced` was never written `true`
+# anywhere, so the inline branch was unreachable and "+N MORE" could only open
+# `StudioParamSheet`. Advanced controls now render in the same column as the
+# essentials, with no affordance to tap.
+#
+# These are STRUCTURAL claims the test suite cannot make: on iOS 26 SwiftUI's
+# ScrollView is not UIKit-backed, so there is no UIScrollView to count in-process
+# and no way to assert "a sheet modifier does not exist" from a render.
+R36_HOST="HueHome/UI/Studio/MixerTrayView.swift"
+R36_PANEL="HueHome/UI/Composer/CompositionEditorPanel.swift"
+
+# (a) No detached presentation from either file on this path. `StudioParamSheet`,
+# `ComposerLayerSheet` and `StageMoreButton` stay DEFINED — Track B owns them —
+# but nothing here may present them.
+for f in "$R36_HOST" "$R36_PANEL"; do
+    [[ -f "$f" ]] || fail "studio-one-surface" "$f is missing — the row-36 rule is unenforceable"
+    r36_present=$(grep -nE '\.sheet\(|\.fullScreenCover\(|StudioParamSheet\(|ComposerLayerSheet\(|StageMoreButton\(' "$f" 2>/dev/null \
+        | grep -vE ':[[:space:]]*//' || true)
+    if [[ -n "$r36_present" ]]; then
+        fail "studio-one-surface" $'the customization host presents a detached surface for its controls again — advanced controls must expand in place:\n'"$f"$':\n'"$r36_present"
+    fi
+done
+
+# (b) The disclosure state may not return. Either spelling reintroduces a gate
+# in front of controls that are supposed to be on the page already.
+r36_state=$(grep -nE 'showAdvanced|showParamSheet|showLayerSheet|isExpanded' "$R36_HOST" "$R36_PANEL" 2>/dev/null \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$r36_state" ]]; then
+    fail "studio-one-surface" $'a disclosure gate is back in the customization host — the advanced controls are meant to be scrolled to, not revealed:\n'"$r36_state"
+fi
+
+# (c) Exactly ONE vertical scroll surface in the host. The horizontal badge lane
+# and the composer chip scroller are explicitly permitted and excluded by their
+# `.horizontal` axis; a second VERTICAL scroller is the nested-scrolling defect
+# C5 flattened away.
+r36_vertical=$(grep -nE 'ScrollView\(' "$R36_HOST" 2>/dev/null \
+    | grep -vE '\.horizontal' | grep -vE ':[[:space:]]*//' || true)
+r36_vcount=$(printf '%s' "$r36_vertical" | grep -c . || true)
+if [[ "$r36_vcount" -ne 1 ]]; then
+    fail "studio-one-surface" $'the host must have exactly ONE vertical ScrollView, found '"$r36_vcount"$':\n'"$r36_vertical"
+fi
+
+# (d) The beat auto-anchor must keep targeting the host's real scroll surface —
+# the whole point of C5 hoisting the ScrollViewReader out of the inner boxes.
+if ! grep -q 'scrollTo("reactionBeatControls"' "$R36_HOST"; then
+    fail "studio-one-surface" "the beat auto-anchor is gone from $R36_HOST — enabling a beat source would no longer scroll its controls into view"
+fi
+if ! grep -q '\.id("reactionBeatControls")' "$R36_PANEL"; then
+    fail "studio-one-surface" "the \"reactionBeatControls\" anchor target is gone from $R36_PANEL — the host's scrollTo would resolve to nothing"
+fi
 
 # ──────────────────────────────────────────────────────────────
 

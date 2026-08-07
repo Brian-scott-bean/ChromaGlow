@@ -476,6 +476,52 @@ struct RoomEffectKey: Hashable {
     }
 }
 
+/// Exact identity of the Studio SELECTION, for the side effects that refire
+/// when the selected room changes (coverage badges, the customization surface's
+/// view identity).
+///
+/// `RoomEffectKey` keys running effects; this keys the selection that drives
+/// per-room *reads*. They are deliberately separate: a selection exists with no
+/// effect running, and the selection is what `.task(id:)` observes.
+///
+/// Why this is not a bare room id — the defect it fixes: two bridges can expose
+/// the same Hue room id, so `.task(id: selectedRoom?.id)` did not refire when
+/// the user switched between them, and `refreshCoverage`'s `coverageRoomID`
+/// comparison did not clear. Deck 0's "N OF M LIGHTS" badges then showed bridge
+/// A's capabilities against bridge B's room. This is the same collision class
+/// `RoomEffectKey` exists to prevent, reached through the read path.
+///
+/// `kind` is defense in depth for VIEW identity and the legacy nil-bridge path.
+/// The Rolodex's two axes address rooms and zones from different bridge
+/// collections, and nothing in the type system guarantees their id spaces are
+/// disjoint — see the invariant documented at `CompositionPlaybackKey`, which
+/// carries no kind because within one bridge a room id and a zone id can never
+/// be equal (proved by `testRoomAndZoneIDsNeverCollideWithinABridge`).
+struct StudioSelectionKey: Hashable {
+    let bridgeID: String?
+    let groupID: String
+    let kind: RoomDisplayItem.Kind
+
+    /// For SwiftUI `.id(…)` view identity only. Equality and hashing use the
+    /// typed fields above — never this composed string, so a "|" inside a
+    /// bridge or group id cannot alias two distinct selections.
+    ///
+    /// The `"legacy"` sentinel matches `CompositionPlaybackKey.bridgeKey` and
+    /// `BridgeNativeOwnershipKey`, so a nil-bridge selection reads the same
+    /// across every exact key in the app.
+    var stableID: String { "\(bridgeID ?? "legacy")|\(kind.rawValue)|\(groupID)" }
+
+    init(bridgeID: String?, groupID: String, kind: RoomDisplayItem.Kind) {
+        self.bridgeID = bridgeID
+        self.groupID = groupID
+        self.kind = kind
+    }
+
+    init(room: RoomDisplayItem) {
+        self.init(bridgeID: room.bridgeID, groupID: room.id, kind: room.kind)
+    }
+}
+
 /// Tracks a running effect on a specific room.
 struct RunningEffect {
     let cardID: String
@@ -1702,8 +1748,12 @@ final class StudioViewModel {
     /// Per-card firmware-effect coverage for the selected room — drives the
     /// "N OF M LIGHTS" badges on Deck 0 and the mixer-header badge.
     var effectCoverage: [String: EffectCapabilityResolver.Coverage] = [:]
-    /// Room the current `effectCoverage` was computed for.
-    @ObservationIgnored private var coverageRoomID: String?
+    /// Selection the current `effectCoverage` was computed for.
+    ///
+    /// Exact (bridge + group + kind), not a bare room id: two bridges can share
+    /// a Hue room id, and comparing bare ids left the PREVIOUS bridge's badges
+    /// on screen labelled as this bridge's room.
+    @ObservationIgnored private var coverageSelection: StudioSelectionKey?
 
     /// Rebuild coverage for the selected room. Keyed by card id; resolved by
     /// the strategy's effect-name string. Triggered by .task(id: room) in
@@ -1715,11 +1765,14 @@ final class StudioViewModel {
             effectCoverage = [:]
             return
         }
-        // Room switch: the visible badges are still the PREVIOUS room's
-        // coverage until this finishes — clear rather than mislabel.
-        if coverageRoomID != room.id {
+        // Selection switch: the visible badges are still the PREVIOUS
+        // selection's coverage until this finishes — clear rather than
+        // mislabel. Exact-keyed, so switching between two bridges' rooms that
+        // share a Hue id clears too.
+        let selection = StudioSelectionKey(room: room)
+        if coverageSelection != selection {
             effectCoverage = [:]
-            coverageRoomID = room.id
+            coverageSelection = selection
         }
         // Reuse the lights loadAll just cached instead of a fresh GET — this .task
         // fires at tab prewarm, right in the post-pairing REST storm, and Hue bridges
@@ -3391,8 +3444,14 @@ final class StudioViewModel {
     }
 
     /// Ensures the hidden starter template exists so `.composition(starterID)` resolves in `apply()`.
-    func ensureComposerStarterDraft() {
-        guard !compositionStore.presets.contains(where: { $0.id == Self.composerStarterDraftPresetID }) else { return }
+    ///
+    /// Returns whether the draft is present and usable afterwards. This is a READINESS
+    /// result, not a novelty claim: the sentinel id is fixed, so the draft is minted once
+    /// and reused forever. "Did this tap start something new" is carried separately by
+    /// `NewCompositionCreation.wasAlreadyRunning`.
+    @discardableResult
+    func ensureComposerStarterDraft() -> Bool {
+        guard !compositionStore.presets.contains(where: { $0.id == Self.composerStarterDraftPresetID }) else { return true }
         let now = Date()
         let draft = CompositionPreset(
             id: Self.composerStarterDraftPresetID,
@@ -3416,12 +3475,55 @@ final class StudioViewModel {
             providerModel: nil
         )
         compositionStore.save(draft)
+        return compositionStore.presets.contains(where: { $0.id == Self.composerStarterDraftPresetID })
     }
 
-    func applyStarterComposition() async {
-        ensureComposerStarterDraft()
-        // +Create should stay scoped to the selected room by default.
-        await apply(starterCompositionCard(), roomOverride: nil, preferEntertainmentOverride: false)
+    /// What ONE "+ Create" tap actually accomplished.
+    ///
+    /// Every field is measured against the room captured AT THE TAP. Inferring success
+    /// from `currentRoomEffect` instead would be wrong twice over: it follows
+    /// `selectedRoom`, so a mid-await scrub makes it report on a room the user was not
+    /// creating in, and it cannot tell a fresh start from the starter card that was
+    /// already running before the tap.
+    struct NewCompositionCreation {
+        /// The selection captured at the tap, before any await.
+        let target: StudioSelectionKey?
+        /// The starter draft exists and is usable.
+        let draftReady: Bool
+        /// The starter card was ALREADY running in `target` before we applied — this
+        /// tap started nothing new, so it is a re-entry, not a creation.
+        let wasAlreadyRunning: Bool
+        /// `apply` left the starter card running in `target` specifically.
+        let applied: Bool
+
+        /// A new composition was created BY THIS TAP. Anything less — no room, a
+        /// refused or cancelled apply, a re-entry on an already-running card — is not
+        /// deliberate creation and must not open the editor.
+        var createdNewComposition: Bool { draftReady && applied && !wasAlreadyRunning }
+    }
+
+    /// "+ Create": mint the starter draft if needed and start it in `room`.
+    ///
+    /// `room` is passed explicitly rather than resolved from `selectedRoom` inside
+    /// `apply`. `roomOverride: nil` resolves the selection at APPLY time, so a scrub
+    /// during the await could start playback in a room the user had already left. Every
+    /// other apply site captures a `roomSnapshot` the same way.
+    func createStarterComposition(in room: RoomDisplayItem?) async -> NewCompositionCreation {
+        guard let room else {
+            return NewCompositionCreation(
+                target: nil, draftReady: false, wasAlreadyRunning: false, applied: false)
+        }
+        let draftReady = ensureComposerStarterDraft()
+        let card = starterCompositionCard()
+        let wasAlreadyRunning = runningEffect(for: room)?.cardID == card.id
+
+        await apply(card, roomOverride: room, preferEntertainmentOverride: false)
+
+        return NewCompositionCreation(
+            target: StudioSelectionKey(room: room),
+            draftReady: draftReady,
+            wasAlreadyRunning: wasAlreadyRunning,
+            applied: runningEffect(for: room)?.cardID == card.id)
     }
 
     func generateCompositionFromPrompt(_ rawPrompt: String) async -> CompositionPreset? {
@@ -3475,6 +3577,60 @@ final class StudioViewModel {
             statusMessage = "⚠ \(message)"
             return nil
         }
+    }
+
+    /// What ONE AI generation's application actually accomplished.
+    ///
+    /// Same discipline as `NewCompositionCreation`: every field is measured against
+    /// the room captured WHEN THE OPERATION STARTED, never against whatever
+    /// `selectedRoom` points at after the awaits. The `presetID` names the exact
+    /// generated preset, so a caller holding several overlapping operations can
+    /// tell whose result this is.
+    struct AIGenerationApplication {
+        enum Disposition: Equatable {
+            /// `apply` left the generated card running in `target`.
+            case applied
+            /// `apply` returned without starting it (a refusal surface, a missing
+            /// room, or any of apply's early returns).
+            case refused
+            /// The view is holding the generated preset behind the transport
+            /// prompt; nothing has been applied yet.
+            case transportPromptPending
+            /// The selection moved away from `target` before application; nothing
+            /// was applied and no editor may open.
+            case staleSelection
+            /// A newer AI operation was started; this one must do nothing.
+            case superseded
+            /// Generation itself failed; there is no preset to apply.
+            case failed
+        }
+        /// The exact selection captured at the operation start.
+        let target: StudioSelectionKey?
+        /// The generated preset's identity.
+        let presetID: UUID?
+        let disposition: Disposition
+    }
+
+    /// Apply an AI-generated preset to the room captured at the operation start.
+    ///
+    /// `room` is passed explicitly for the same reason `createStarterComposition`
+    /// passes it: `roomOverride: nil` resolves the selection at APPLY time, so a
+    /// scrub during the await could start playback in a room the user had left.
+    func applyGeneratedComposition(
+        _ preset: CompositionPreset,
+        in room: RoomDisplayItem?,
+        preferEntertainmentOverride: Bool?
+    ) async -> AIGenerationApplication {
+        guard let room else {
+            return AIGenerationApplication(target: nil, presetID: preset.id, disposition: .refused)
+        }
+        let card = studioCard(for: preset)
+        await apply(card, roomOverride: room, preferEntertainmentOverride: preferEntertainmentOverride)
+        let applied = runningEffect(for: room)?.cardID == card.id
+        return AIGenerationApplication(
+            target: StudioSelectionKey(room: room),
+            presetID: preset.id,
+            disposition: applied ? .applied : .refused)
     }
 
     /// Persist the currently running composition params as a new user preset.

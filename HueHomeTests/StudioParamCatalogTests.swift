@@ -20,6 +20,101 @@ final class StudioParamCatalogTests: XCTestCase {
 
     private var allCards: [StudioCard] { vm.effectCards + vm.liveModeCards }
 
+    // ── Build-47 device finding 2 — "+ Create" reports what it actually did ──
+    //
+    // The outcome is measured against the room captured AT THE TAP. Inferring it
+    // from `currentRoomEffect` would be wrong twice: that follows `selectedRoom`,
+    // so a mid-await scrub reports on a room the user was not creating in, and it
+    // cannot tell a fresh start from the starter card that was already running.
+
+    private func room(_ id: String, bridge: String = "bridge-a") -> RoomDisplayItem {
+        RoomDisplayItem(
+            id: id, name: id, archetype: nil, isOn: true, brightness: 60,
+            groupedLightID: nil, lightCount: 2, bridgeID: bridge, childResourceRefs: [])
+    }
+
+    /// No room means nothing was created — `apply` refuses and the editor stays shut.
+    func testCreateWithNoRoomSelectedReportsNoCreation() async {
+        let before = vm.runningEffects
+        let outcome = await vm.createStarterComposition(in: nil)
+
+        XCTAssertFalse(outcome.createdNewComposition, "a refused creation must not open the editor")
+        XCTAssertNil(outcome.target)
+        XCTAssertFalse(outcome.draftReady)
+        XCTAssertFalse(outcome.applied)
+        XCTAssertEqual(before.count, vm.runningEffects.count, "…and must not touch playback")
+    }
+
+    /// Tapping "+ Create" while the starter card is ALREADY running in that room
+    /// starts nothing new. This is exactly what a `currentRoomEffect?.cardID ==
+    /// card.id` check could not see — it would report success for a re-entry.
+    func testCreateReportsNoCreationWhenTheStarterCardWasAlreadyRunning() async {
+        let target = room("room-a")
+        let card = vm.starterCompositionCard()
+        vm.selectedRoom = target
+        vm.runningEffects[RoomEffectKey(room: target)] = RunningEffect(
+            cardID: card.id, card: card, room: target, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false)
+
+        let outcome = await vm.createStarterComposition(in: target)
+
+        XCTAssertTrue(outcome.wasAlreadyRunning, "the starter card was already running here")
+        XCTAssertFalse(outcome.createdNewComposition,
+            "a re-entry on an already-running card is not a creation and must not open the editor")
+    }
+
+    /// The outcome names the room passed in, not whatever the wheel settled on
+    /// while the creation was in flight.
+    func testCreationOutcomeCarriesTheTargetCapturedAtTheTap() async {
+        let tapped = room("room-a")
+        let scrolledTo = room("room-b")
+        vm.selectedRoom = tapped
+
+        let outcome = await vm.createStarterComposition(in: tapped)
+        vm.selectedRoom = scrolledTo   // the user scrubbed during the await
+
+        XCTAssertEqual(outcome.target, StudioSelectionKey(room: tapped))
+        XCTAssertNotEqual(outcome.target, StudioSelectionKey(room: scrolledTo))
+    }
+
+    /// Room-exactness of the MEASUREMENT: `wasAlreadyRunning` is read off the
+    /// captured room even when the live selection has moved elsewhere. A
+    /// `currentRoomEffect` check would have read room-b here and reported false.
+    func testCreationOutcomeIsMeasuredAgainstTheCapturedRoomNotTheLiveSelection() async {
+        let tapped = room("room-a")
+        let elsewhere = room("room-b")
+        let card = vm.starterCompositionCard()
+        vm.runningEffects[RoomEffectKey(room: tapped)] = RunningEffect(
+            cardID: card.id, card: card, room: tapped, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false)
+        vm.selectedRoom = elsewhere
+
+        let outcome = await vm.createStarterComposition(in: tapped)
+
+        XCTAssertTrue(outcome.wasAlreadyRunning,
+            "the outcome must describe the captured room, not the live selection")
+        XCTAssertEqual(outcome.target, StudioSelectionKey(room: tapped))
+    }
+
+    /// The async race, evaluated exactly as the "+ Create" call site does. Even a
+    /// genuine creation must not open the editor once the user has scrubbed away —
+    /// it would present a surface for a room they already left.
+    func testScrubbingAwayDuringCreationDoesNotSatisfyTheOpenGuard() {
+        let tapped = room("room-a")
+        let outcome = StudioViewModel.NewCompositionCreation(
+            target: StudioSelectionKey(room: tapped),
+            draftReady: true, wasAlreadyRunning: false, applied: true)
+        XCTAssertTrue(outcome.createdNewComposition, "fixture: this IS a real creation")
+
+        vm.selectedRoom = tapped
+        XCTAssertEqual(vm.selectedRoom.map(StudioSelectionKey.init), outcome.target,
+            "still on the tapped room — the editor opens")
+
+        vm.selectedRoom = room("room-b")
+        XCTAssertNotEqual(vm.selectedRoom.map(StudioSelectionKey.init), outcome.target,
+            "scrubbed away — the guard must fail even though creation succeeded")
+    }
+
     // ── Density ───────────────────────────────────────────────
 
     /// The compact tray shows essential params inline — keep it scannable.
@@ -142,26 +237,10 @@ final class StudioParamCatalogTests: XCTestCase {
 
     /// Tray height is derived from content now — more inline rows must never
     /// produce a shorter tray, and the compact cap must hold.
-    func testEngineHeightIsMonotonicInRowCountAndCapped() {
-        let sorted = allCards.sorted {
-            MixerTrayMetrics.inlineParams(for: $0).count < MixerTrayMetrics.inlineParams(for: $1).count
-        }
-        var lastRows = -1
-        var lastHeight: CGFloat = -1
-        for card in sorted {
-            let rows = MixerTrayMetrics.inlineParams(for: card).count
-            let height = MixerTrayMetrics.engineHeight(for: card, isCompact: false)
-            if rows > lastRows && lastHeight >= 0 {
-                XCTAssertGreaterThanOrEqual(height, lastHeight,
-                                            "\(card.id): more rows produced a shorter tray")
-            }
-            XCTAssertGreaterThanOrEqual(height, MixerTrayMetrics.grabBarHeight + MixerTrayMetrics.headerHeight)
-            XCTAssertLessThanOrEqual(MixerTrayMetrics.engineHeight(for: card, isCompact: true),
-                                     MixerTrayMetrics.compactHeightCap)
-            lastRows = rows
-            lastHeight = height
-        }
-    }
+    // DELETED in Track A C5 with `MixerTrayMetrics.engineHeight` /
+    // `compactHeightCap`: they sized a fixed-height bottom-anchored tray, and
+    // the customization host has no height to compute. `inlineParams` /
+    // `overflowParams` are still covered by the tests around this one.
 
     // ── Three-row header ──────────────────────────────────────
     //
@@ -195,12 +274,9 @@ final class StudioParamCatalogTests: XCTestCase {
         XCTAssertGreaterThan(MixerTrayMetrics.headerBlockHeight(hasStatusLine: true),
                              MixerTrayMetrics.headerBlockHeight(hasStatusLine: false))
 
-        for isCompact in [true, false] {
-            XCTAssertGreaterThanOrEqual(
-                MixerTrayMetrics.compositionHeight(isCompact: isCompact),
-                MixerTrayMetrics.headerBlockHeight(hasStatusLine: true),
-                "composition tray is shorter than its own header (compact=\(isCompact))")
-        }
+        // The `compositionHeight` assertion that stood here died with the
+        // fixed-height tray in Track A C5; the header arithmetic above is the
+        // part that outlived it.
     }
 
     /// Inline + overflow must partition the catalog exactly — no param can

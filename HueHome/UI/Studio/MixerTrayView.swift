@@ -1,7 +1,27 @@
 // MixerTrayView.swift
-// CastChroma — Zone C mixer tray (extracted from StudioView in Round 4, R4-2).
+// CastChroma — Zone C customization host (extracted from StudioView in Round 4,
+// R4-2; converted from a bottom-anchored tray to an inline region in Track A C5).
 //
-// The bottom tray that springs up when an effect runs: a three-row header —
+// FILENAME NOTE: this file holds `StudioCustomizationHost`, not `MixerTrayView`.
+// Renaming the FILE is a `project.pbxproj` edit (the app target uses an explicit
+// sources phase), which this packet forbids. The rename is a queued chore.
+//
+// The inline customization region below the permanently mounted rolodex. It owns
+// exactly ONE vertical scroll surface; the header rides as a pinned section
+// header so Stop / Perform / Save / Revert and "Back to decks" stay reachable at
+// any scroll offset. Horizontal scrollers (the badge lane, composer chips) and
+// StageKit drag controls keep their own containers — horizontal-in-vertical
+// nests cleanly and is not the conflict this change exists to remove.
+//
+// What the overlay era left behind, and why it is gone: the tray was a
+// fixed-height box, so its content needed inner `GeometryReader { ScrollViewReader
+// { ScrollView } }` wrappers to be reachable at all, and it mounted a
+// full-screen invisible scrim that swallowed the next drag on the wheel. Both
+// are deleted. `isMixerExpanded` was a HEIGHT job; full-region there is no
+// height to expand, so only its advanced-params reveal survives, as host-local
+// state.
+//
+// Original description — a three-row header —
 // (1) icon, name, room, and the revert/Perform/save/stop circles; (2) a
 // horizontally scrolling badge lane (LIVE, coverage, beat chip, transport
 // badge, room count); (3) the transport status sentence at full width — plus
@@ -17,50 +37,122 @@
 
 import SwiftUI
 
-struct MixerTrayView: View {
+struct StudioCustomizationHost: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
 
     let vm: StudioViewModel
-    @Binding var isMixerExpanded: Bool
     @Binding var performVM: PerformanceViewModel?
     @Binding var activeCompositionTab: CompositionLayerTab
     @Binding var activeHarmonyRule: HarmonyRule
     @Binding var editingSwatch: SwatchEditItem?
-    /// Full dismissal (tray → "Live Controls" pill). Owned by StudioView.
-    let onCollapse: () -> Void
+    /// Return to the card decks. Owned by StudioView (it also owns the
+    /// "Live Controls" pill that comes back here).
+    let onBackToDecks: () -> Void
     /// Populate + present the composition save sheet (state lives in StudioView).
     let onSaveComposition: (StudioCard) -> Void
     /// Transport switch for a running composition (in-flight guard lives in StudioView).
     let onTransportSwitch: (RunningEffect, Bool) -> Void
 
-    @State private var mixerDragOffset: CGFloat = 0
-    @State private var showParamSheet = false
+    // No disclosure state. `showAdvanced` and `showParamSheet` are GONE: the host
+    // is one continuous page, so every control for the selected card is simply
+    // rendered and the user scrolls to it. A reveal affordance here was the
+    // build-47 row-36 defect in both its forms — the sheet it opened was a
+    // detached surface, and the inline branch it gated was never reachable
+    // because nothing ever wrote `showAdvanced = true`.
 
+    /// ONE vertical scroll surface for the whole customization region.
+    ///
+    /// The tray used to be a fixed-height box, so its content needed its own
+    /// inner `GeometryReader { ScrollViewReader { ScrollView } }` to be
+    /// reachable. Inline, that inner scroller is what would fight the parent —
+    /// so the wrappers are gone and this is the only vertical scroller here.
+    /// The header rides along as a pinned section header, which keeps Stop /
+    /// Perform / Save / Revert and "Back to decks" reachable at any offset.
     var body: some View {
-        mixerTray
-            .offset(y: mixerDragOffset)
-            .gesture(mixerDismissDragGesture)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    Section {
+                        hostContent
+                    } header: {
+                        hostHeader
+                    }
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+            // Auto-anchor: enabling a beat source scrolls the beat controls
+            // into view. It now scrolls the REAL surface, not an inner box.
+            .onChange(of: vm.activeCompositionBox?.reaction.source) { _, newSource in
+                guard let newSource,
+                      newSource == .beat || newSource == .onset || newSource == .tapTempo
+                else { return }
+                withAnimation(HueAnimation.fast) {
+                    proxy.scrollTo("reactionBeatControls", anchor: .center)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: HueRadius.xl, style: .continuous)
+                .fill(StagePalette.surface)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
+        .overlay(
+            RoundedRectangle(cornerRadius: HueRadius.xl, style: .continuous)
+                .strokeBorder(StagePalette.line, lineWidth: 1)
+        )
+        .padding(.horizontal, HueSpacing.sm)
+        // Exact selection identity, not a bare room id: two bridges sharing a
+        // Hue room id produced the SAME view identity, so SwiftUI reused this
+        // subtree across a real room change and carried the previous bridge's
+        // state into it.
+        .id(vm.currentRoomEffect?.cardID
+            ?? vm.selectedRoom.map { StudioSelectionKey(room: $0).stableID })
     }
 
-    private var mixerTray: some View {
-        let effect = vm.currentRoomEffect
+    // ── Pinned header ─────────────────────────────────────────────────
 
-        return VStack(spacing: 0) {
-            if let effect {
-                let card = effect.card
+    @ViewBuilder
+    private var hostHeader: some View {
+        if let effect = vm.currentRoomEffect {
+            let card = effect.card
 
-                // Full-width, taller grab-bar hit area: tap anywhere on the top bar to close.
-                Capsule()
-                    .fill(Color.white.opacity(0.28))
-                    .frame(width: 36, height: 4)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: MixerTrayMetrics.grabBarHeight)
-                    .contentShape(Rectangle().inset(by: -4))
-                    .onTapGesture {
-                        onCollapse()
-                        HapticManager.shared.light()
-                    }
+            VStack(spacing: 0) {
+                // Replaces the grab bar. The capsule's only job was "drag or tap
+                // to dismiss", and dismissal is now a named destination rather
+                // than a gesture that competed with every child control.
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("Back to decks")
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                }
+                .foregroundStyle(.white.opacity(0.7))
+                .padding(.horizontal, HueSpacing.screenH)
+                .frame(height: MixerTrayMetrics.backToDecksRowHeight)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onBackToDecks()
+                    HapticManager.shared.light()
+                }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Back to decks")
 
+                headerRows(effect: effect, card: card)
+
+                // ── Separator ────────────────────────────────
+                Rectangle()
+                    .fill(StagePalette.line)
+                    .frame(height: 0.5)
+                    .padding(.horizontal, HueSpacing.screenH)
+            }
+            // Opaque: a pinned header scrolls content underneath itself.
+            .background(StagePalette.surface)
+        }
+    }
+
+    @ViewBuilder
+    private func headerRows(effect: RunningEffect, card: StudioCard) -> some View {
                 // ── Header (Perform grammar: 40pt circles, mono tags, bold name) ──
                 //
                 // Three rows, because one row cannot hold this much. Up to four
@@ -358,13 +450,16 @@ struct MixerTrayView: View {
                 .padding(.horizontal, HueSpacing.screenH)
                 .padding(.top, HueSpacing.md)
                 .padding(.bottom, HueSpacing.sm)
+    }
 
-                // ── Separator ────────────────────────────────
-                Rectangle()
-                    .fill(StagePalette.line)
-                    .frame(height: 0.5)
-                    .padding(.horizontal, HueSpacing.screenH)
+    // ── Scrolling content ─────────────────────────────────────────────
 
+    @ViewBuilder
+    private var hostContent: some View {
+        if let effect = vm.currentRoomEffect {
+            let card = effect.card
+
+            VStack(spacing: 0) {
                 if case .composition = card.strategy,
                    card.compositionTier == .bridgeOptimized {
                     // One-shot scene: no live box, so the editor's bindings
@@ -384,166 +479,60 @@ struct MixerTrayView: View {
                     .padding(.horizontal, HueSpacing.screenH * 2)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if case .composition = card.strategy {
-                    GeometryReader { scrollGeo in
-                        ScrollViewReader { proxy in
-                            ScrollView(showsIndicators: false) {
-                                CompositionEditorPanel(
-                                    vm: vm,
-                                    isExpanded: isMixerExpanded,
-                                    activeCompositionTab: $activeCompositionTab,
-                                    activeHarmonyRule: $activeHarmonyRule,
-                                    editingSwatch: $editingSwatch
-                                )
-                                .padding(.horizontal, HueSpacing.screenH)
-                                .padding(.top, HueSpacing.md)
-                                .padding(.bottom, HueSpacing.md)
-                            }
-                            // No .basedOnSize here: the tab content swapped by
-                            // .id() changes height under the ScrollView, and
-                            // basedOnSize's stale fit-evaluation rubber-bands
-                            // the drag back before the bottom is reachable.
-                            .scrollDismissesKeyboard(.interactively)
-                            .frame(height: scrollGeo.size.height)
-                            // Auto-anchor: enabling a beat source scrolls the
-                            // beat controls into view — no hunting.
-                            .onChange(of: vm.activeCompositionBox?.reaction.source) { _, newSource in
-                                guard let newSource,
-                                      newSource == .beat || newSource == .onset || newSource == .tapTempo
-                                else { return }
-                                withAnimation(HueAnimation.fast) {
-                                    proxy.scrollTo("reactionBeatControls", anchor: .center)
-                                }
-                            }
-                        }
-                    }
+                    // FLATTENED. The GeometryReader / ScrollViewReader /
+                    // ScrollView wrappers here existed only because the tray was
+                    // a fixed-height box; inline they would be a second vertical
+                    // scroller fighting the parent. The ScrollViewReader and the
+                    // beat auto-anchor moved up to the host's single surface.
+                    CompositionEditorPanel(
+                        vm: vm,
+                        activeCompositionTab: $activeCompositionTab,
+                        activeHarmonyRule: $activeHarmonyRule,
+                        editingSwatch: $editingSwatch
+                    )
+                    .padding(.horizontal, HueSpacing.screenH)
+                    .padding(.top, HueSpacing.md)
+                    .padding(.bottom, HueSpacing.md)
                 } else {
-                    // ── Inline params: essentials + the color row (color is the
-                    // most-hunted adjustment — it costs one row to keep it out
-                    // of the sheet). Remaining advanced params live behind
-                    // "+N more", or inline when the tray is dragged up.
+                    // ── Every param for this card, in one continuous column:
+                    // essentials and the color row first, then the rest under an
+                    // ADVANCED caption. No reveal, no sheet — you scroll down and
+                    // the controls are there.
                     let inlineParams = MixerTrayMetrics.inlineParams(for: card)
                     let overflowParams = MixerTrayMetrics.overflowParams(for: card)
 
-                    if !inlineParams.isEmpty {
-                        GeometryReader { scrollGeo in
-                            ScrollView(showsIndicators: false) {
-                                VStack(spacing: HueSpacing.md) {
-                                    ForEach(inlineParams) { param in
-                                        StudioParamRow(param: param, cardID: card.id, vm: vm)
-                                    }
-
-                                    // Dragged-up tray shows everything inline —
-                                    // no sheet hunting for power users.
-                                    if isMixerExpanded && !overflowParams.isEmpty {
-                                        Text("ADVANCED")
-                                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                            .tracking(1.2)
-                                            .foregroundStyle(.white.opacity(0.38))
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .padding(.top, 6)
-                                        ForEach(overflowParams) { param in
-                                            StudioParamRow(param: param, cardID: card.id, vm: vm)
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal, HueSpacing.screenH)
-                                .padding(.top, HueSpacing.md)
-                                .padding(.bottom, HueSpacing.md)
+                    if !inlineParams.isEmpty || !overflowParams.isEmpty {
+                        // FLATTENED, same reason as the composition panel.
+                        VStack(spacing: HueSpacing.md) {
+                            ForEach(inlineParams) { param in
+                                StudioParamRow(param: param, cardID: card.id, vm: vm)
                             }
-                            // Same rule as the composition panel above: inline
-                            // param counts change (expanded tray adds ADVANCED
-                            // rows) — basedOnSize goes stale and blocks the
-                            // scroll to the bottom rows.
-                            .scrollDismissesKeyboard(.interactively)
-                            .frame(height: scrollGeo.size.height)
-                        }
-                    }
 
-                    // ── More params reveal ───────────────────────
-                    if !overflowParams.isEmpty && !isMixerExpanded {
-                        StageMoreButton(count: overflowParams.count) {
-                            showParamSheet = true
+                            // A landmark in the page, not a gate. The caption tells
+                            // the user what they have scrolled into; it hides
+                            // nothing.
+                            if !overflowParams.isEmpty {
+                                Text("ADVANCED")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .tracking(1.2)
+                                    .foregroundStyle(.white.opacity(0.38))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.top, 6)
+                                    .id("studioAdvancedControls")
+                                ForEach(overflowParams) { param in
+                                    StudioParamRow(param: param, cardID: card.id, vm: vm)
+                                }
+                            }
                         }
+                        .padding(.horizontal, HueSpacing.screenH)
+                        .padding(.top, HueSpacing.md)
+                        .padding(.bottom, HueSpacing.md)
                     }
                 }
-
-                // ── Param sheet (inside if-let for unwrapped card) ──
-                Color.clear.frame(height: 0)
-                    .sheet(isPresented: $showParamSheet) {
-                        // StageSheetScaffold owns detents / drag indicator / background interaction.
-                        StudioParamSheet(card: card, vm: vm)
-                    }
             }
         }
-        // Flat stage surface (Perform grammar) — no live blur over the
-        // animating card grid.
-        .background(
-            RoundedRectangle(cornerRadius: HueRadius.xl, style: .continuous)
-                .fill(StagePalette.surface)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl))
-        .overlay(
-            RoundedRectangle(cornerRadius: HueRadius.xl, style: .continuous)
-                .strokeBorder(StagePalette.line, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.45), radius: 20, y: -2)
-        .padding(.horizontal, HueSpacing.sm)
-        .id(vm.currentRoomEffect?.cardID ?? vm.selectedRoom?.id)
-        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
     }
 
-    /// Bidirectional tray drag: up expands to near-full-screen, down collapses expanded→half,
-    /// then half→dismiss (to the "Live Controls" pill). Only captures drags that begin near the
-    /// tray header so child controls (like the hue/saturation pad) keep their own drag semantics.
-    private var mixerDismissDragGesture: some Gesture {
-        DragGesture(minimumDistance: 8)
-            .onChanged { value in
-                guard value.startLocation.y <= 64 else { return }
-                if value.translation.height >= 0 {
-                    mixerDragOffset = value.translation.height
-                } else {
-                    // Small rubber-band hint on upward drags.
-                    mixerDragOffset = max(value.translation.height, -48)
-                }
-            }
-            .onEnded { value in
-                guard value.startLocation.y <= 64 else {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                        mixerDragOffset = 0
-                    }
-                    return
-                }
-                let dragDistance = value.translation.height
-                let predictedDistance = value.predictedEndTranslation.height
-                let shouldExpand = dragDistance < -60 || predictedDistance < -120
-                let shouldCollapse = dragDistance > 100 || predictedDistance > 160
-
-                if shouldExpand && !isMixerExpanded {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                        isMixerExpanded = true
-                        mixerDragOffset = 0
-                    }
-                    HapticManager.shared.medium()
-                } else if shouldCollapse && isMixerExpanded {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                        isMixerExpanded = false
-                        mixerDragOffset = 0
-                    }
-                    HapticManager.shared.light()
-                } else if shouldCollapse {
-                    hideMixerKeyboard()
-                    onCollapse()
-                    HapticManager.shared.medium()
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                        mixerDragOffset = 0
-                    }
-                } else {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                        mixerDragOffset = 0
-                    }
-                }
-            }
-    }
 
     // ── Beat binding for Studio engine cards ─────────────────
 
@@ -589,7 +578,11 @@ struct MixerTrayView: View {
     ) -> (text: String, tint: Color)? {
         guard case .composition = card.strategy else { return nil }
 
-        if orchestrator.compositionTransportByRoom[effect.room.id] == .bridgeStored {
+        // Exact bridge+room, not the room-only aggregate: under a duplicate room
+        // id across two bridges the aggregate answers nil on disagreement, which
+        // rendered this sentence against the wrong bridge's playback.
+        if orchestrator.compositionTransport(
+            bridgeID: effect.room.bridgeID, roomID: effect.room.id) == .bridgeStored {
             return (TransportVocabulary.bridgeStoredStatus,
                     HuePalette.amber.opacity(0.9))
         }
@@ -620,8 +613,10 @@ struct MixerTrayView: View {
     /// we fell back, what bridge-stored means — lives in `transportStatus`'s
     /// sentence directly beneath it, where there is room to say it properly.
     private func composerTransportBadgeText(for effect: RunningEffect) -> String {
-        // Bridge-stored animations run on the bridge hardware itself
-        if orchestrator.compositionTransportByRoom[effect.room.id] == .bridgeStored {
+        // Bridge-stored animations run on the bridge hardware itself. Exact
+        // bridge+room — see `transportStatus`.
+        if orchestrator.compositionTransport(
+            bridgeID: effect.room.bridgeID, roomID: effect.room.id) == .bridgeStored {
             return TransportVocabulary.badgeBridge
         }
         return composerIsStreaming(effect)
@@ -633,7 +628,8 @@ struct MixerTrayView: View {
     /// truth survives a mid-session DTLS→REST failover; the RunningEffect's
     /// `isEntertainment` is a snapshot from apply time and does not.
     private func composerIsStreaming(_ effect: RunningEffect) -> Bool {
-        if let transport = orchestrator.compositionTransportByRoom[effect.room.id] {
+        if let transport = orchestrator.compositionTransport(
+            bridgeID: effect.room.bridgeID, roomID: effect.room.id) {
             return transport == .entertainment
         }
         return effect.isEntertainment

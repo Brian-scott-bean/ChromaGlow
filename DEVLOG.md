@@ -125,6 +125,43 @@
   cross-bridge stop isolation, per-bridge slider routing, same-bridge switch).
   **Neither Packet 7 nor Packet 8 hardware validation is complete — Brian must run §V** in
   `docs/ios/master-on-device-checklist.md`. Entries below.
+- **TRACK A — UNIFIED CUSTOMIZATION ENGINE (2026-08-05): the Rolodex and the customization
+  surface stop fighting each other. Branch `fix/unified-rolodex-host`, rollback tag
+  `checkpoint/pre-unified-rolodex-host` (at `320ebaf`), five commits, UNMERGED, and
+  ZERO hardware rows executed.** C1 `fd03ecb` closed the wrong-bridge class on the Studio
+  READ path — two bridges can share a Hue room id, so `.task(id: selectedRoom?.id)` never
+  refired between them and Deck 0 showed bridge A's "N OF M LIGHTS" against bridge B's room;
+  `StudioSelectionKey` (bridge + group + kind) re-keys the coverage task, the room-change
+  handler, `refreshCoverage`'s state and the host's view identity, and a read-only exact
+  transport projection replaces three bare-room-id reads. C2 `afed54f` extracted
+  `RolodexSelectionMachine` mechanically, preserving the per-detent commit that IS the defect
+  so the commit stays an honest bisect anchor. C3 `1c01b14` is the correction, atomic per
+  settled decision 17: detent crossings preview WHEEL-LOCALLY (there is no `onPreview` and no
+  Studio preview state), release enters `.settling` and emits no commit, a token-matching
+  settle completion or watchdog commits exactly ONCE, Reduce Motion runs the same rule with no
+  spring, `.activate` is separate from `.commit` so tapping an already-selected room still
+  opens customization, a deferred external selection supersedes a stale settle target (one
+  write, zero user commits), and roster changes rebase by token — a reorder 3→8 produces no
+  effect at all. C4 `d73760c` extracted `StudioRegionWiring` and renamed `isMixerCollapsed`
+  to `regionMode: StudioRegionMode`. C5 `757a1ea` replaced the bottom-anchored overlay with
+  the inline host: the rolodex is now mounted UNCONDITIONALLY (`rolodexHidden` deleted, the
+  mid-gesture-unmount bug fixed by construction), the full-screen scrim is deleted, the region
+  is a mode switch with exactly ONE vertical scroll surface, the grab bar became "Back to
+  decks" in a pinned header, and the passive `runningCardID` handler can no longer OPEN
+  customization — only deliberate activation does. Suite **1440 passed / 0 failed / 96
+  suites**, all 12 hardening guards pass, tracked tree clean (untracked `.cnvs/` and
+  `.cursor/mcp.json` remain excluded, as throughout). **NONE OF THAT IS HARDWARE EVIDENCE.**
+  C5's layout probes render a harness MIRRORING `StudioView`'s composition order rather than
+  the real screen, because `StudioView`'s view model is `@State private` and a running effect
+  cannot be injected into it — so real-screen placement, gesture routing and the feel of the
+  settle are **hardware-UNPROVEN**. The drag-up advanced reveal was removed with the overlay
+  (`isMixerExpanded` was a height job on a fixed-height box); advanced params are now reached
+  only through the host disclosure and the existing "+N more" sheet, which is why §V-A row 36
+  exists. §V-A adds rows **23–35 (approved set, verbatim) plus row 36 (C5 amendment)**, every
+  one marked **UNPROVEN**. No `project.pbxproj` edit was permitted in this packet, so
+  `CURRENT_PROJECT_VERSION` still needs its own bump before Brian installs. **Track A is not
+  complete and not merge-ready until rows 23–36 are physically tested.** Track B (the unified
+  control grammar) remains blocked on Composer 2 Phase 1–2.
 - **PACKET 7 HARDWARE FOLLOW-UP (2026-08-03): the takeover prompt was UNREACHABLE on real
   hardware. MERGED — PR #59, merge `3479243`, and this is the build Brian tested.** Branch
   `fix/packet7-device-followups`, rollback tag `checkpoint/pre-packet7-device-followups`
@@ -560,6 +597,113 @@
 
 ---
 
+## 2026-08-05 - [Claude] Unified Customization Engine, Track A / C2 — RolodexSelectionMachine extraction
+
+Branch `fix/unified-rolodex-host`, rollback tag `checkpoint/pre-unified-rolodex-host` (at
+`320ebaf`). One refactor commit (`afed54f`), on top of C1 (`fd03ecb`). No new source file, no
+`project.pbxproj` change, no version/build/signing change. **Not merged** — settled decision 19.
+
+**Mechanical extraction, and deliberately nothing more.** The rolodex's seven `@State` scalars
+(`selRoom`, `selZone`, `liveRoom`, `liveZone`, `lockAxis`, `activeAxis`, `drag`) became one
+`RolodexSelectionMachine`, and the two detent expressions moved into `RolodexKinematics`
+unchanged. The machine **still emits a selection event at every detent crossing** — which is the
+defect Track A exists to fix. No settling phase, no deliberate activation, no delayed commit, no
+settle token, no watchdog, no Reduce Motion path, no token-based rebasing. All of that is C3.
+Keeping C2 behaviour-identical is what makes it an honest bisect anchor: if the feel of the wheel
+changes, `git bisect` lands on C3, not here.
+
+`RolodexItemToken` is introduced as **data only** — nothing consults it yet. C3 keys rebasing on
+it, and minting it here means C3 does not have to prove the minting and the rebasing at once.
+
+**Two structural changes, both argued inert.**
+- `isSyncing` deleted. Its only job was the `!isSyncing` guard in `updateLive()`, and it could
+  never be true during a drag — `select(_:)` and the external-sync handler each set and cleared
+  it synchronously with no gesture callback in between. `.externalSync` now encodes the same rule
+  structurally: it emits nothing.
+- The end of a drag still runs **two** transactions (the spring, then a second
+  `HueAnimation.card` transaction re-applying the same indices and firing the selection and
+  haptic). The second writes identical values, but it can retarget the still-running spring, so
+  C2 keeps it; C3 collapses them. The sync and picker paths now write the axis inside the same
+  transaction as the indices rather than just before them — the stage's
+  `.animation(HueAnimation.normal, value: activeAxis)` still scopes the axis crossfade, so the
+  resolved animation is unchanged.
+
+**Validation.** 6 tests in the existing registered `StudioScrollStabilityTests.swift`, as a
+second `final class` (no new file, no pbxproj edit): `testDetentMathMatchesLegacyRounding`,
+`testSettleTargetUsesPredictedTranslation`, `testAxisLockRequiresSixPointsAndNeverFlips`,
+`testZeroCountAxisIsInert`, `testLegacyEventStreamMatchesPreExtractionBehaviour`,
+`testTokenMintingIsStableAndBridgeQualified`.
+
+The extraction proof transcribes the pre-extraction gesture code **verbatim** as a reference and
+drives both it and the machine through the same 15-sample drag plus an overshooting flick,
+asserting an identical event stream and identical committed/live/axis state — and asserting the
+per-detent commits are still present, so C3's change must show up in a diff rather than arrive
+alongside an extraction. Negative-controlled: swapping the haptic/commit order in the machine
+makes it fail.
+
+Full `HueHomeTests` suite green — **1414 passed, 0 failed, 96 suites**;
+`Scripts/hardening_guards.sh` clean. (One simulator clone hit a transient
+`FBSOpenApplicationServiceErrorDomain` launch denial and retried; the C1 and C2 tests were
+verified present in the passing set.)
+
+**Next.** C3 — the actual defect: preview while dragging, commit after settling, tap activates.
+One atomic commit (settled decision 17); it introduces `.activate`, the `.settling` phase,
+`settleFinished`, generation tokens, the watchdog and the Reduce Motion path together, because
+they are one correctness boundary. Not yet authorized. Nothing in Track A is on device yet.
+
+---
+
+## 2026-08-05 - [Claude] Unified Customization Engine, Track A / C1 — bridge-qualified selection identity
+
+Branch `fix/unified-rolodex-host`, rollback tag `checkpoint/pre-unified-rolodex-host` (at
+`320ebaf`). One fix commit (`fd03ecb`). No new source file, no `project.pbxproj` change, no
+version/build/signing change. **Not merged** — settled decision 19 authorizes no merge.
+
+Implementation packet (approved, 1041 lines) lives outside the repo at
+`~/Library/Application Support/CNVS/claude-accounts/cec652db/plans/next-prompt-unified-abundant-narwhal.md`.
+It is the source of truth for Track A; this entry records only what landed.
+
+**What C1 fixed.** `RoomEffectKey` closed the wrong-bridge class on the write path in round 4c.
+The Studio *read* path was still open: two bridges can expose the same Hue room id, and every
+selection-keyed side effect keyed on a bare one. `.task(id: vm.selectedRoom?.id)` never refired
+between two bridges' same-id rooms, so Deck 0 showed bridge A's "N OF M LIGHTS" against bridge
+B's room; `refreshCoverage`'s `coverageRoomID != room.id` skipped its clear for the same reason;
+the customization host's `.id(…)` gave both rooms one SwiftUI identity; and the surface read
+transport from `compositionTransportByRoom`, a display aggregate that answers nil when two
+bridges' claims disagree — exactly when exact truth is needed.
+
+**What landed.**
+- `StudioSelectionKey` (bridgeID + groupID + `RoomDisplayItem.Kind`) beside `RoomEffectKey`.
+  `kind` is defense in depth for view identity and the legacy nil-bridge path — the Rolodex's
+  two axes address rooms and zones from different bridge collections.
+- Re-keyed the coverage `.task`, the room-change `.onChange`, `refreshCoverage`'s internal
+  state (`coverageRoomID` → `coverageSelection`), and `MixerTrayView`'s `.id(…)`.
+- `UnifiedOrchestrator.compositionTransport(bridgeID:roomID:)` — a **read-only** exact
+  projection over the existing round-4e claims. No writes, no new state, no playback mutation.
+  The three bare-id reads in `MixerTrayView` now use it. The aggregate stays for consumers with
+  no bridge identity; the fallback is reached only for a nil bridgeID.
+- `.task(id: vm.selectedRoom?.bridgeID)` stays **deliberately** bridge-keyed (per-bridge sweep)
+  and now documents that in place so nobody "fixes" it for consistency.
+- Documented at `CompositionPlaybackKey` the invariant its kind-free identity rests on — within
+  one bridge a room id and a zone id can never be equal, CLIP v2 rids being per-resource UUIDs —
+  and proved it. **Track A does not expand the PR #60 runtime ownership keys.** If that test
+  ever fails, adding `kind` to `CompositionPlaybackKey` is its own reviewed packet.
+
+**Guard repair worth noting.** Guard 12(d) anchored its awk range on the literal
+`onChange(of: vm.selectedRoom?.id)`. After the re-key it would have matched nothing and passed
+vacuously. Its anchor now tracks the handler rather than one spelling of its key, it fails if
+the handler disappears, and a new sub-check (d2) bans a bare-id selection key coming back.
+
+**Validation.** 7 new tests in the existing registered `MultiBridgeRoutingTests.swift` (no
+pbxproj edit — `HueHomeTests` uses an explicit sources phase). Full `HueHomeTests` suite green,
+`Scripts/hardening_guards.sh` clean. `testCoverageClearsWhenBridgeChangesButRoomIDDoesNot` was
+negative-controlled: reverting the comparison to the bare room id makes it fail, so it is not a
+vacuous pass.
+
+**Next.** C2 (mechanical `RolodexSelectionMachine` extraction, no behaviour change — an honest
+bisect anchor), then C3 (the actual defect: preview while dragging, commit after settling, tap
+activates — one atomic commit per settled decision 17), C4, C5, C6. Nothing here is on device
+yet; the §V hardware rows 23–35 land with C6.
 ## 2026-08-07 - [Claude] Composer 2 / Phase 1 — landing & governance validation (NOT landed)
 
 ### Branch
