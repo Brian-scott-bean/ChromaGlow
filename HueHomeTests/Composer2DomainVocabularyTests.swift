@@ -257,13 +257,23 @@ final class Composer2DomainVocabularyTests: XCTestCase {
     func testProducerIdentitiesAreDistinctAndCoverObservedWriters() {
         let all = Composer2Producer.allCases
 
-        XCTAssertEqual(all.count, 8)
-        XCTAssertEqual(Set(all).count, 8, "no two producer identities may collide")
+        XCTAssertEqual(all.count, 9)
+        XCTAssertEqual(Set(all).count, 9, "no two producer identities may collide")
 
-        for expected: Composer2Producer in [.composer, .studio, .allDay, .widget,
-                                            .siri, .watch, .manual, .foreignController] {
+        for expected: Composer2Producer in [.composer, .studio, .allDay, .automation,
+                                            .widget, .siri, .watch, .manual,
+                                            .foreignController] {
             XCTAssertTrue(all.contains(expected), "\(expected) must be part of the vocabulary")
         }
+
+        // A scheduled automation firing is not a tap, and the vocabulary must
+        // not let one stand in for the other: the foreground delivery path runs
+        // with no interaction, and the firmware-effect write it performs is
+        // reachable from no other origin.
+        XCTAssertNotEqual(Composer2Producer.automation, .manual,
+                          "an unattended automation is not manual control")
+        XCTAssertNotEqual(Composer2Producer.automation, .allDay,
+                          "two unattended origins are still two origins")
     }
 
     /// A producer case says where an intent came from — never who wins.
@@ -282,7 +292,7 @@ final class Composer2DomainVocabularyTests: XCTestCase {
         }
 
         XCTAssertEqual(caseNames(in: body),
-                       ["composer", "studio", "allDay", "widget",
+                       ["composer", "studio", "allDay", "automation", "widget",
                         "siri", "watch", "manual", "foreignController"])
     }
 

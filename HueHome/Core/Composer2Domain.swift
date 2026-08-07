@@ -87,12 +87,24 @@ struct Composer2ConfigurationIdentity: Hashable, Sendable {
 /// answer a question this packet is not allowed to answer.
 ///
 /// The list is wider than any single existing owner enum because the audited
-/// writer set is wider: four of these produce light state today without
+/// writer set is wider: five of these produce light state today without
 /// carrying any ownership token at all, and one of them is not this app.
 enum Composer2Producer: Hashable, Sendable, CaseIterable {
     case composer
     case studio
     case allDay
+    /// A scheduled automation firing, which is nobody's tap.
+    ///
+    /// Its own subsystem end to end: a persisted action, a calendar trigger, a
+    /// notification delegate, and a cold-start buffer for the case where the
+    /// app was killed. The foreground delivery path runs with no interaction at
+    /// all, so this is not `manual` wearing a different hat — and the write it
+    /// performs reaches a firmware effect no other producer can originate.
+    ///
+    /// Grouped next to `allDay` because both are unattended and time-driven.
+    /// That adjacency is descriptive; it confers no precedence, exactly as for
+    /// every other case here.
+    case automation
     case widget
     case siri
     case watch
