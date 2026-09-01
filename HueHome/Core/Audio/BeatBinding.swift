@@ -44,8 +44,15 @@ struct BeatBinding: Codable, Hashable, Sendable {
     init(mode: Mode = .off, beatsPerCycle: Double = 1, phaseOffsetBeats: Double = 0) {
         self.mode = mode
         self.beatsPerCycle = Self.snappedStep(beatsPerCycle)
-        self.phaseOffsetBeats = min(max(phaseOffsetBeats, Self.phaseOffsetRange.lowerBound),
-                                    Self.phaseOffsetRange.upperBound)
+        // Finite-guarded exactly like `snappedStep`: a NaN offset survives the
+        // min/max clamp untouched (every comparison against NaN is false), and
+        // `BeatMath.cycleIndex` would then evaluate `Int(floor(.nan))` — a trap,
+        // not a wrong colour. Persisted values can be hand-edited or corrupt, so
+        // the invalid case resolves to "no offset" instead of crashing the loop.
+        self.phaseOffsetBeats = phaseOffsetBeats.isFinite
+            ? min(max(phaseOffsetBeats, Self.phaseOffsetRange.lowerBound),
+                  Self.phaseOffsetRange.upperBound)
+            : 0
     }
 
     init(from decoder: Decoder) throws {
@@ -128,7 +135,10 @@ enum BeatMath {
             UInt64(entertainmentFrameDuration * 1_000_000_000)
         }
 
-        /// Shortest legal wall-clock spacing between two flash onsets (1/3 s).
+        /// The WCAG rate expressed as a period (1/3 s). This is the *planning*
+        /// constant — what `minCycleFrames` rounds UP from. It is deliberately
+        /// NOT what the runtime ledger enforces: 1/3 s is not realizable on the
+        /// 20 ms grid, so the gate uses `minOnsetLedgerPeriod` (0.34 s) instead.
         static let minOnsetPeriod = 1.0 / maxFlashHz
 
         /// Planning floor for a requested rate. The catalog's slowest flash
@@ -158,6 +168,68 @@ enum BeatMath {
         /// bands step to the next beat division (spec §24).
         static var entertainmentMaxLockHz: Double {
             1.0 / (Double(minCycleFrames()) * entertainmentFrameDuration)
+        }
+
+        /// What the runtime ledger actually enforces: the invariant's OWN unit,
+        /// `minCycleFrames` × the frame duration = **0.34 s** — not `minOnsetPeriod`
+        /// (1/3 s).
+        ///
+        /// The two differ by 6.67 ms, and that gap used to be real slack in the
+        /// only place that could not afford any. Within one run the frame plans
+        /// already guarantee ≥ 17 frames, so the 6.67 ms was never consumed. The
+        /// CROSS-run path has no plan behind it — a card switch, a stop/start or a
+        /// session re-establishment starts a loop whose very first frame wants to
+        /// flash, and the ledger is the *only* thing standing there. Worse, the
+        /// ledger stamps the moment an onset is ADMITTED, not the moment the frame
+        /// reaches the wire: an actor hop plus main-actor jitter can push the
+        /// emission tens of milliseconds past the stamp. A period stated at 1/3 s
+        /// therefore permits a realized 0.333 s − and, with jitter, a realized
+        /// spacing that is short at BOTH ends. Stating the period in the same
+        /// frames the invariant is stated in removes the discrepancy entirely.
+        static var minOnsetLedgerPeriod: Double {
+            Double(minCycleFrames()) * entertainmentFrameDuration
+        }
+
+        /// IEEE rounding tolerance for the gate's interval comparison — **1 ns**,
+        /// and nothing more.
+        ///
+        /// This is not safety slack. `Double(n + 17) * 0.02 − Double(n) * 0.02`
+        /// lands up to ~2 × 10⁻¹⁶ s BELOW `17 × 0.02` for a little over half of
+        /// all grid positions, so a bare `<` would refuse arithmetically-exact
+        /// 17-frame spacings and stall an extra frame every other cycle. At 1 ns
+        /// the tolerance is seven orders of magnitude smaller than one frame: it
+        /// can never admit a 16-frame (20 ms short) interval, which is the defect
+        /// the gate exists to catch.
+        static let onsetComparisonTolerance = 1e-9
+
+        /// How far the rendered brightness may climb before the climb counts as a
+        /// flash ONSET rather than a fade artefact (2% of full scale).
+        ///
+        /// A flash-class loop's onset is not "the cycle index changed" — it is
+        /// "the light got brighter". Anything that moves the cycle phase BACKWARDS
+        /// (a BeatClock epoch correction from `driveFromTrack`/`ingest`, which
+        /// lands 1–2×/s while a track is playing; a phase nudge) or moves the
+        /// hold/fade split FORWARD (dragging smoothness down) restores peak
+        /// brightness inside the SAME cycle index. Gating the index alone lets
+        /// that rise through ungated, and the genuine boundary milliseconds later
+        /// is then admitted on top of it.
+        static let flashRiseEpsilon = 0.02
+
+        /// Finite-guarded `Int(_: Double)` for a value read out of a live param
+        /// box. `Int(Double.nan)`, `Int(.infinity)` and `Int(1e300)` all TRAP —
+        /// a param box holds whatever a slider, a decoded preset or a hand-edited
+        /// JSON put there, so the conversion has to be total before any range
+        /// clamp downstream gets a chance to run. Truncates toward zero, exactly
+        /// like the `Int(_:)` it replaces.
+        static func clampedInt(_ value: Double, default fallback: Int,
+                               range: ClosedRange<Int>) -> Int {
+            guard value.isFinite else {
+                return min(max(fallback, range.lowerBound), range.upperBound)
+            }
+            let truncated = value < 0 ? value.rounded(.up) : value.rounded(.down)
+            let clamped = min(max(truncated, Double(range.lowerBound)),
+                              Double(range.upperBound))
+            return Int(clamped)
         }
 
         // ── Whole-cycle planning ────────────────────────────────────
@@ -198,7 +270,8 @@ enum BeatMath {
         // ── Wall-clock backstop ─────────────────────────────────────
 
         /// Pure decision half of the runtime gate: admits an onset only when
-        /// at least `minPeriod` has passed since the last admitted one.
+        /// at least `minPeriod` (0.34 s — `minOnsetLedgerPeriod`, the invariant's
+        /// own frame-stated unit) has passed since the last admitted one.
         /// A refusal means DELAY (stream a hold frame and ask again), never
         /// "skip this flash" — skipping would change the look, delaying only
         /// moves it by ≤ one frame.
@@ -209,13 +282,27 @@ enum BeatMath {
 
             /// `t` is a monotonic host time (CACurrentMediaTime). A NaN/infinite
             /// time is refused outright — an unmeasurable interval is not a
-            /// proven-safe one. A time BEFORE the last onset cannot happen on a
-            /// monotonic clock; if it somehow does, the ledger re-bases on it.
+            /// proven-safe one.
+            ///
+            /// A time BEFORE the last onset is refused too, and — critically —
+            /// does NOT move the reference point. `CACurrentMediaTime()` is
+            /// sampled by each caller *outside* this lock, so during the
+            /// un-awaited cancel window two loop instances on one bridge can
+            /// present their samples out of order. The old `t >= last` qualifier
+            /// meant such an inversion fell straight through to `lastOnset = t`:
+            /// the ledger admitted the onset AND re-based backwards, so the next
+            /// onset was measured from a point in the past and could land well
+            /// inside a frame of the one just realized. The ledger's reference
+            /// point may only ever move forward.
             mutating func tryOnset(at t: Double,
-                                   minPeriod: Double = FlashSafety.minOnsetPeriod) -> Bool {
+                                   minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Bool {
                 guard t.isFinite else { return false }
-                let period = (minPeriod.isFinite && minPeriod > 0) ? minPeriod : FlashSafety.minOnsetPeriod
-                if let last = lastOnset, t >= last, t - last < period - 1e-9 { return false }
+                let period = (minPeriod.isFinite && minPeriod > 0) ? minPeriod
+                                                                   : FlashSafety.minOnsetLedgerPeriod
+                if let last = lastOnset {
+                    guard t >= last else { return false }
+                    if t - last < period - FlashSafety.onsetComparisonTolerance { return false }
+                }
                 lastOnset = t
                 return true
             }
@@ -238,7 +325,7 @@ enum BeatMath {
             }
 
             func tryOnset(at t: Double,
-                          minPeriod: Double = FlashSafety.minOnsetPeriod) -> Bool {
+                          minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Bool {
                 lock.lock(); defer { lock.unlock() }
                 return gate.tryOnset(at: t, minPeriod: minPeriod)
             }

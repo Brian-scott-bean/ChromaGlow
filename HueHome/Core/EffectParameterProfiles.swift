@@ -123,9 +123,27 @@ enum EffectParameterProfiles {
     }
 
     /// The verified-parameter sets for `CustomizationTargetSnapshot`, per
-    /// effect: parameters with a code-proven LIVE path. Hardware-pending
-    /// rows are deliberately absent — the resolver then answers `.unknown`,
-    /// which renders staged/unavailable rather than faking active.
+    /// effect: parameters with a code-proven LIVE path. Hardware-pending rows
+    /// are deliberately absent.
+    ///
+    /// WHAT THAT ABSENCE ACTUALLY DOES (corrected — the old comment here
+    /// claimed a mechanism that does not exist):
+    ///
+    /// `verifiedEffectParameters` is read by exactly one requirement shape,
+    /// `.effectParameter(effect:parameter:)`, and NONE of the five profiles
+    /// above uses it — each states the hardware fact it really needs
+    /// (`.effectsV2`, `.color`, `.colorTemperature`, `.dimming`, `.none`),
+    /// because "we have not physically watched this parameter work" is not a
+    /// reason to take a shipping control away from the user.
+    ///
+    /// So this set does not gate availability. What carries the pending check
+    /// to the screen is `StudioBoardResolution.isHardwareUnverified`: the
+    /// board funnel reads `profile.evidence` (plus the v1-only grouped-fallback
+    /// case for `base_color`/`warmth`) and renders such a control EDITABLE but
+    /// quieted, with "UNVERIFIED ON THESE LIGHTS" — never as fully live. This
+    /// set stays the machine-readable inventory of what is code-proven, which
+    /// is what the capability matrix and `pendingHardwareChecks` are generated
+    /// against.
     static func verifiedLiveParameters(for effect: String,
                                        declaredParamIDs: [String]) -> Set<String> {
         Set(declaredParamIDs.filter { id in

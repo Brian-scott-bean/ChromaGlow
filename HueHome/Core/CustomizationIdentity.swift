@@ -244,6 +244,21 @@ struct CustomizationGeneration: Hashable, Sendable, Comparable {
 ///    a selection move must not invalidate the OTHER target's pending writes.
 ///  * `.roomRemoved`       — reached as `.stopped` through the row teardown
 ///    above, so a second reason for the same event would double-bump.
+
+/// ACCEPTED GAP, named rather than implied: room MEMBERSHIP changes.
+///
+/// `RunningEffect.lightIDs` and `v2CapableLightIDs` are APPLY-TIME snapshots.
+/// A light moved into or out of the room (or a fixture that gains or loses
+/// `effects_v2` after a firmware update) changes neither the identity nor the
+/// generation, so writes captured before the change keep passing the fence and
+/// keep addressing the light set the apply resolved. The consequences are
+/// bounded: a light ADDED to the room is not driven until the look is
+/// restarted, and a light REMOVED receives a write it answers with a 400 that
+/// the send path already discards. Nothing lands on a target the user did not
+/// aim at — the bridge+group+kind key is unchanged by membership — which is
+/// why this is a staleness gap and not a routing defect. Closing it needs a
+/// membership feed the app does not have yet (SSE reports light state, not
+/// group composition); until then, restarting the look is the answer.
 @MainActor
 final class CustomizationGenerationCounter {
     private(set) var current: CustomizationGeneration = .initial

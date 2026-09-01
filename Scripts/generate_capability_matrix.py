@@ -18,8 +18,11 @@ Usage:
         longer verifies against the source.
 
     python3 Scripts/generate_capability_matrix.py --check
-        Exits non-zero if the committed doc is stale OR if any cited evidence
-        no longer verifies. Safe for CI.
+        Exits non-zero if the committed doc is stale, if any cited evidence no
+        longer verifies, OR if DISCOVERY disagrees with the citations — a new
+        uncited `paramBox.colors[...]` read in a run loop, a citation whose
+        consumer is gone, or a loop reading a param outside ENGINE_READS.
+        Safe for CI, and the only mode that can catch a consumer being ADDED.
 
     python3 Scripts/generate_capability_matrix.py --refresh-citations
         The ONE command to run after the orchestrator run* loops move: it
@@ -33,8 +36,13 @@ Why the citations are verified rather than trusted
 citation is worse than none: it reads as proof while pointing at unrelated
 code. So every citation here is CHECKED — the cited line must literally contain
 the consuming read `paramBox.colors["<param>"]` for that exact param, and it
-must sit inside a run* loop belonging to that exact card. A mismatch fails
-loudly instead of printing a lie.
+must sit inside a run* loop belonging to that exact card, and it must not be
+a `//` comment. A mismatch fails loudly instead of printing a lie.
+
+Verification alone is one-directional, though: it can only ask about the
+citations already written down. `--check` therefore also runs DISCOVERY in the
+opposite direction and fails on any disagreement, so a newly added consumer
+cannot ship uncited and an allowlist cannot quietly fall behind the loops.
 """
 
 import argparse
@@ -79,10 +87,10 @@ ENGINE_READS_PROOF = ("HueHomeTests/StudioParamCatalogTests.swift",
 # the line numbers; run `--refresh-citations` after touching the run* loops.
 # BEGIN CITED_CONSUMERS
 CITED_CONSUMERS = {
-    ("strobe", "flash_color"): "UnifiedOrchestrator.swift:8035",
-    ("party", "color"): "UnifiedOrchestrator.swift:8193,8293",
-    ("thunderstorm", "ambient_color"): "UnifiedOrchestrator.swift:8380,8404,8438,8480",
-    ("thunderstorm", "flash_color"): "UnifiedOrchestrator.swift:8424,8481",
+    ("strobe", "flash_color"): "UnifiedOrchestrator.swift:8194",
+    ("party", "color"): "UnifiedOrchestrator.swift:8362,8486",
+    ("thunderstorm", "ambient_color"): "UnifiedOrchestrator.swift:8579,8596,8630,8677,8718",
+    ("thunderstorm", "flash_color"): "UnifiedOrchestrator.swift:8650,8719",
 }
 # END CITED_CONSUMERS
 
@@ -146,18 +154,55 @@ EFFECT_PROFILES = {
 }
 
 
+# Every hardware check the Swift table still OWES, mirroring
+# `EffectParameterProfiles.pendingHardwareChecks`. This is not the same set as
+# the `hardwarePending` evidence class, and conflating the two is how the
+# totals used to under-describe the ledger: only `brightness` classifies as
+# hardwarePending, but four parameter shapes owe a physical check — the other
+# three ship a code-proven SEND whose VISIBLE behaviour is still unverified.
+# Parsed back out of the Swift file on every run (see verify_allowlist_sources)
+# so this list cannot quietly diverge from it.
+PENDING_HARDWARE_PARAMS = {"brightness", "base_color", "warmth", "speed"}
+
+
 # ── Citation verification ────────────────────────────────────────────
+# A `//`-prefixed line is NOT evidence. Both the verifier and the discoverer
+# strip them, so commenting a consuming read out can never keep its citation
+# alive, and a commented-out read can never be discovered as one.
+def _is_comment(line):
+    return line.lstrip().startswith("//")
+
+
+_FUNC_DECL = re.compile(r"\bfunc\s+[A-Za-z0-9_`]+\s*[(<]")
+_MARK_BANNER = re.compile(r"^\s*// MARK:")
+
+
 def _loop_functions(text):
-    """[(name, first_line, last_line)] for every `func run…(` in the file."""
+    """[(name, first_line, last_line)] for every `func run…(` in the file.
+
+    A span ENDS at the first following line that opens another function or a
+    `// MARK:` banner — not at the next `run*` declaration. Spanning
+    decl-to-next-run-decl swallowed every helper defined between two loops and
+    credited its reads to the preceding card, which is exactly the kind of
+    quiet misattribution the citations exist to prevent.
+    """
     lines = text.splitlines()
     starts = []
     for i, line in enumerate(lines, start=1):
+        if _is_comment(line):
+            continue
         m = re.search(r"\bfunc (run[A-Za-z0-9_]*)\s*\(", line)
         if m:
             starts.append((m.group(1), i))
     spans = []
-    for idx, (name, first) in enumerate(starts):
-        last = starts[idx + 1][1] - 1 if idx + 1 < len(starts) else len(lines)
+    for name, first in starts:
+        last = len(lines)
+        for j in range(first + 1, len(lines) + 1):
+            line = lines[j - 1]
+            if _MARK_BANNER.match(line) or (not _is_comment(line)
+                                            and _FUNC_DECL.search(line)):
+                last = j - 1
+                break
         spans.append((name, first, last))
     return spans
 
@@ -200,6 +245,10 @@ def discover_citations():
             if card is None:
                 continue
             for lineno in range(first, last + 1):
+                # A commented-out read is not a consumer. Discovering one would
+                # mint a citation for a parameter nothing reads.
+                if _is_comment(lines[lineno - 1]):
+                    continue
                 for m in re.finditer(r'paramBox\.colors\["([A-Za-z0-9_]+)"\]',
                                      lines[lineno - 1]):
                     param = m.group(1)
@@ -239,6 +288,12 @@ def verify_citations():
                 errors.append("%s.%s: cited line %s is past the end of %s (%d lines)"
                               % (card, param, lineno, basename, len(lines)))
                 continue
+            if _is_comment(lines[lineno - 1]):
+                errors.append(
+                    "%s.%s: %s:%d is a COMMENT, not a consumer — commenting a "
+                    "read out does not keep its citation alive:\n      %s"
+                    % (card, param, basename, lineno, lines[lineno - 1].strip()))
+                continue
             if needle not in lines[lineno - 1]:
                 errors.append(
                     "%s.%s: %s:%d no longer contains %s — it reads:\n      %s"
@@ -251,6 +306,70 @@ def verify_citations():
                     "%s.%s: %s:%d is inside %s, which is not a %s loop — the "
                     "citation would credit the wrong card"
                     % (card, param, basename, lineno, owner or "no run* loop", card))
+    return errors
+
+
+def _swift_profile_evidence(text):
+    """paramID → 'codeProven' | 'hardwarePending', read out of the Swift table.
+
+    `profile(effect:paramID:)` maps each paramID to a named profile constant;
+    the constant's `evidence:` argument carries the class. Both hops are
+    parsed, so renaming a constant or flipping one evidence case is caught.
+    """
+    mapping = dict(re.findall(
+        r'case\s+"([A-Za-z0-9_]+)":\s*return\s+([A-Za-z0-9_]+)', text))
+    out = {}
+    for param, const in mapping.items():
+        m = re.search(r"let\s+%s\s*=\s*EffectParameterProfile\(" % re.escape(const), text)
+        if not m:
+            continue
+        seg = text[m.end():]
+        cut = re.search(r"\n\s*(?:private\s+)?static\s+(?:let|var|func)\b", seg)
+        if cut:
+            seg = seg[:cut.start()]
+        if ".hardwarePending" in seg:
+            out[param] = "hardwarePending"
+        elif ".codeProven" in seg:
+            out[param] = "codeProven"
+    return out
+
+
+def _swift_pending_hardware_params(text):
+    """The paramIDs named by Swift `pendingHardwareChecks`, or None."""
+    m = re.search(r"var pendingHardwareChecks:.*?\[(.*?)\n\s*\]\s*\n", text, re.DOTALL)
+    if not m:
+        return None
+    # A commented-out row owes nothing: without this, `//("speed", …)` still
+    # parses as an owed check and the ledger silently keeps counting it.
+    body = "\n".join(l for l in m.group(1).splitlines() if not _is_comment(l))
+    return set(re.findall(r'\(\s*"([A-Za-z0-9_]+)"\s*,', body))
+
+
+def verify_discovery():
+    """[] when the live source discovers EXACTLY the cited consumer set.
+
+    verify_citations() only asks whether the citations it already holds still
+    point at a real read — a check that is blind in the direction that matters
+    most: a NEW `paramBox.colors[...]` read added to a run loop and never
+    cited is invisible to it, and so is an allowlist drifting behind the
+    loops. Discovery is the other direction, and it is FATAL here rather than
+    a printed warning: an uncited consumer means the matrix is describing a
+    smaller engine than the one that ships.
+    """
+    discovered, warnings = discover_citations()
+    errors = list(warnings)
+    for key in sorted(set(discovered) - set(CITED_CONSUMERS)):
+        errors.append("%s.%s is read in a run loop (%s) but has NO citation — a new "
+                      "consumer landed and the matrix never noticed"
+                      % (key[0], key[1], discovered[key]))
+    for key in sorted(set(CITED_CONSUMERS) - set(discovered)):
+        errors.append("%s.%s is cited (%s) but no run-loop read discovers it — the "
+                      "citation outlived its consumer"
+                      % (key[0], key[1], CITED_CONSUMERS[key]))
+    for key in sorted(set(CITED_CONSUMERS) & set(discovered)):
+        if CITED_CONSUMERS[key] != discovered[key]:
+            errors.append("%s.%s cites %s but the loops now read at %s"
+                          % (key[0], key[1], CITED_CONSUMERS[key], discovered[key]))
     return errors
 
 
@@ -277,6 +396,34 @@ def verify_allowlist_sources():
                 errors.append("EFFECT_PROFILES row %r has no `case \"%s\":` in %s — "
                               "the Swift table no longer declares it"
                               % (param, param, PROFILE_SOURCE))
+        # Existence is not agreement. The evidence CLASS drives the totals
+        # split, so a Swift row flipped from codeProven to hardwarePending (or
+        # back) must not leave this table printing the old answer.
+        swift_evidence = _swift_profile_evidence(text)
+        for param in sorted(EFFECT_PROFILES):
+            mine = EFFECT_PROFILES[param][4]
+            theirs = swift_evidence.get(param)
+            if theirs is None:
+                errors.append("EFFECT_PROFILES row %r: could not read an evidence "
+                              "case for it out of %s — the profile constant or its "
+                              "`evidence:` argument was renamed"
+                              % (param, PROFILE_SOURCE))
+            elif theirs != mine:
+                errors.append("EFFECT_PROFILES row %r says %s, but %s says %s — "
+                              "the matrix would print the wrong evidence class"
+                              % (param, mine, PROFILE_SOURCE, theirs))
+        # The hardware ledger is a separate set from the evidence class, and
+        # the fourth totals line is computed from it.
+        swift_pending = _swift_pending_hardware_params(text)
+        if swift_pending is None:
+            errors.append("could not read `pendingHardwareChecks` out of %s — the "
+                          "hardware-check total cannot be computed honestly"
+                          % PROFILE_SOURCE)
+        elif swift_pending != PENDING_HARDWARE_PARAMS:
+            errors.append("PENDING_HARDWARE_PARAMS is %s, but %s.pendingHardwareChecks "
+                          "owes %s — the hardware-check total would be wrong"
+                          % (sorted(PENDING_HARDWARE_PARAMS), PROFILE_SOURCE,
+                             sorted(swift_pending)))
     return errors
 
 
@@ -394,6 +541,22 @@ def render(cards):
         for p in c["params"]:
             counts[classify(c, p)] += 1
     unproven = counts["pending"] + counts["dead"]
+    # The hardware ledger is NOT the hardwarePending count. Only `brightness`
+    # carries the hardwarePending evidence class, but
+    # EffectParameterProfiles.pendingHardwareChecks owes four checks — so every
+    # bridge-native row declaring `speed`, `base_color` or `warmth` is
+    # code-proven on the SEND and still unverified in its VISIBLE behaviour.
+    # Those rows were being counted as plain code-proven while carrying
+    # "(hardware-pending: …)" prose in their availability column; the count
+    # below names them.
+    owed_rows = [(c["id"], p["id"]) for c in cards for p in c["params"]
+                 if c["strategy"] == "bridgeNative"
+                 and p["id"] in PENDING_HARDWARE_PARAMS
+                 and classify(c, p) == "codeProven"]
+    hardware_owed = len(owed_rows)
+    owed_by_param = {}
+    for _, param_id in owed_rows:
+        owed_by_param[param_id] = owed_by_param.get(param_id, 0) + 1
 
     out = []
     A = out.append
@@ -420,15 +583,28 @@ def render(cards):
     A(f"| **Total** | **{len(cards)}** | **{total}** |\n")
     A("\n### Evidence split\n")
     A("\n| Evidence | Controls | Meaning |\n| --- | ---: | --- |\n")
-    A(f"| Code-proven | {counts['codeProven']} / {total} | A live-path consumer read in the "
-      "shipping source (app-driven), or a `codeProven` profile citing the send path "
-      "(bridge-native). |\n")
-    A(f"| Hardware-pending | {counts['hardwarePending']} / {total} | The send path exists and is "
-      "cited, but the physical behaviour is NOT validated. Audit §7 still owes this evidence. |\n")
+    A(f"| Code-proven SEND PATH | {counts['codeProven']} / {total} | A live-path consumer read in "
+      "the shipping source (app-driven), or a `codeProven` profile citing the send path "
+      "(bridge-native). Proves the write leaves the app — nothing more. |\n")
+    A(f"| No code-proven send path (hardware-pending evidence) | {counts['hardwarePending']} / "
+      f"{total} | The parameter can be sent, but no code path proves it reaches the effect: the "
+      "Swift profile classifies it `hardwarePending`. Audit §7 still owes this evidence. |\n")
     dead_note = (f" Includes {counts['dead']} dead sentinel(s), which render hidden."
                  if counts["dead"] else "")
     A(f"| Pending / unknown | {unproven} / {total} | No proof at all — the control must not "
       f"render as active (audit §29).{dead_note} |\n")
+    owed_breakdown = ", ".join("`%s` x%d" % (k, owed_by_param[k])
+                               for k in sorted(owed_by_param))
+    A(f"\n**Rows whose send path is code-proven but whose visible behaviour still owes a hardware "
+      f"check: {hardware_owed} / {total}** (see `EffectParameterProfiles.pendingHardwareChecks`). "
+      "This is a SUBSET of the code-proven row above, not a fourth bucket — those rows are counted "
+      f"as code-proven. Broken out: {owed_breakdown}. "
+      f"`pendingHardwareChecks` owes {len(PENDING_HARDWARE_PARAMS)} checks — "
+      f"{', '.join('`%s`' % x for x in sorted(PENDING_HARDWARE_PARAMS))} — while only "
+      "`brightness` classifies as `hardwarePending`; the other three ship a proven send whose "
+      "effect on a light nobody has watched. Where the owed check is about the legacy grouped "
+      "fallback (`base_color`, `warmth`), the availability column says so inline; `speed` owes a "
+      "per-effect, per-model firmware-response check that no column can express.\n")
     A("\n**Hardware evidence is still owed.** Audit §7 counts a row as proven only when a physical "
       "bridge has shown the behaviour. The hardware-pending rows above name the exact check still "
       "outstanding (see `pendingHardwareChecks` in `HueHome/Core/EffectParameterProfiles.swift` and "
@@ -497,6 +673,10 @@ def main():
         globals()["CITED_CONSUMERS"] = citations
 
     errors = verify_citations() + verify_allowlist_sources()
+    # --check is the CI gate, so it also runs discovery: the citations being
+    # individually intact says nothing about whether they are COMPLETE.
+    if args.check:
+        errors += verify_discovery()
     if errors:
         print("capability matrix: cited evidence no longer verifies —", file=sys.stderr)
         for e in errors:

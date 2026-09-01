@@ -163,6 +163,34 @@ struct LookDetailsPanel: View {
 
     private var library: StudioLookLibraryStore { .shared }
 
+    /// The audition this panel's card owns, if any.
+    ///
+    /// `vm.isPreviewingLive` is ONE global flag; this panel is per CARD.
+    /// Gating Keep It / Put It Back on the flag alone meant re-pointing the
+    /// panel at another look (chip context menu → "Details & Setup") offered
+    /// that card an undo it did not own, and "Keep It" recorded the WRONG card
+    /// as applied. The audition's identity names its card — compare it.
+    private var isThisCardsAudition: Bool {
+        vm.isPreviewingLive && vm.previewAuditionCardID == card.id
+    }
+
+    /// An audition is running, but for a DIFFERENT card than this panel shows.
+    private var otherAuditionCardName: String? {
+        guard vm.isPreviewingLive,
+              let auditionID = vm.previewAuditionCardID,
+              auditionID != card.id else { return nil }
+        return vm.lookCard(forID: auditionID)?.name ?? "another look"
+    }
+
+    /// The row this panel's card is running on the SELECTED room, if it is the
+    /// running look there. Non-nil is what makes the hero sliders live
+    /// controls rather than next-start defaults.
+    private var runningHere: RunningEffect? {
+        guard let effect = vm.currentRoomEffect,
+              effect.cardID == card.id, effect.recovered == nil else { return nil }
+        return effect
+    }
+
     /// The lightweight setup set: the look's designed hero parameter plus
     /// brightness — next-start defaults, not the live console.
     private var setupParams: [StudioParam] {
@@ -208,7 +236,7 @@ struct LookDetailsPanel: View {
                                     ? "Remove \(card.name) from favorites"
                                     : "Add \(card.name) to favorites")
                 Button {
-                    if vm.isPreviewingLive { Task { await vm.cancelPreviewLive() } }
+                    if isThisCardsAudition { Task { await vm.cancelPreviewLive() } }
                     onClose()
                     HapticManager.shared.light()
                 } label: {
@@ -221,26 +249,72 @@ struct LookDetailsPanel: View {
                 .accessibilityLabel("Close details")
             }
 
-            // Lightweight next-start setup (defaults; not the live console).
+            // Lightweight setup. These sliders write next-start DEFAULTS when
+            // the card is idle here, and the LIVE instance when it is the look
+            // running on the selected room — so when they are live they must
+            // pass the same capability funnel the board does. Strobe's
+            // `speed` is streaming-only: shown here bare, it was a knob that
+            // moved while reaching nothing, with no note saying why.
             ForEach(setupParams) { param in
                 if case .slider(let min, let max) = param.kind {
-                    StageSlider(
-                        title: param.label,
-                        value: Binding(
-                            get: { vm.paramValue(for: card.id, paramID: param.id,
-                                                 default: param.defaultValue) },
-                            set: { vm.commitParam(cardID: card.id, paramID: param.id, value: $0) }
-                        ),
-                        range: min...max,
-                        format: param.format ?? { "\(Int($0.rounded()))" }
-                    )
+                    let resolution = runningHere.flatMap {
+                        StudioBoardAvailability.resolve(
+                            card: card, param: param,
+                            snapshot: vm.targetSnapshot(for: $0))
+                    }
+                    let note = resolution.flatMap {
+                        StudioBoardAvailability.note(for: $0, isColor: false)
+                    }
+                    let interactive = resolution
+                        .map { StudioBoardAvailability.isInteractive($0.availability) } ?? true
+                    let opacity = resolution
+                        .map { StudioBoardAvailability.opacity($0.availability) } ?? 1
+                    VStack(alignment: .leading, spacing: 3) {
+                        StageSlider(
+                            title: param.label,
+                            value: Binding(
+                                get: { vm.paramValue(for: card.id, paramID: param.id,
+                                                     default: param.defaultValue) },
+                                set: { vm.commitParam(cardID: card.id, paramID: param.id, value: $0) }
+                            ),
+                            range: min...max,
+                            format: param.format ?? { "\(Int($0.rounded()))" }
+                        )
+                        if let note {
+                            Text(note)
+                                .font(HueFont.stageTag)
+                                .tracking(0.8)
+                                .foregroundStyle(HuePalette.amber.opacity(0.65))
+                                .accessibilityLabel("\(param.label): \(note)")
+                        } else if runningHere == nil {
+                            // Honest about WHICH value this edits: nothing is
+                            // running here, so the write is a next-start
+                            // default and changes no light right now.
+                            Text("SETS THE NEXT START")
+                                .font(HueFont.stageTag)
+                                .tracking(0.8)
+                                .foregroundStyle(.white.opacity(0.38))
+                                .accessibilityLabel("\(param.label): sets the value this look starts at")
+                        }
+                    }
+                    .disabled(!interactive)
+                    .opacity(opacity)
                 }
             }
 
             HStack(spacing: 10) {
-                if vm.isPreviewingLive {
+                if let runningName = otherAuditionCardName {
+                    // An audition owned by ANOTHER card is playing on the
+                    // selected room. Offering this card's Apply / PREVIEW LIVE
+                    // here would queue a second audition behind a live one; say
+                    // what is running instead.
+                    Text("A preview of \(runningName) is running")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .accessibilityLabel("A preview of \(runningName) is running; finish it first")
+                } else if isThisCardsAudition {
                     Button {
-                        vm.commitPreviewLive()
+                        Task { await vm.commitPreviewLive() }
                         StudioLookLibraryStore.shared.noteApplied(card.id)
                         onClose()
                         HapticManager.shared.medium()

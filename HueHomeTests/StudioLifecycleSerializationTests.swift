@@ -244,6 +244,34 @@ final class StudioLifecycleSerializationTests: XCTestCase {
         XCTAssertFalse(vm.lifecycleReentrancyDetected,
                        "every production entry point reaches the chain from outside it")
     }
+
+    /// The task-local LEAKS into unstructured tasks.
+    ///
+    /// `isInside` is a `@TaskLocal`, and task-locals are COPIED into every
+    /// `Task {}` spawned while they are set. The engine and frame loops
+    /// `startStudioMode` / `startCompositionMode` spawn therefore inherited
+    /// "we are inside a lifecycle body" for the whole life of the look — so a
+    /// later call from one of those loops into a serialized entry point would
+    /// run INLINE, silently bypassing the FIFO. `applyCore` resets the value
+    /// across those two start calls; this is that reset, proven.
+    func testATaskSpawnedAcrossTheStartResetSeesItselfOutsideTheChain() async {
+        var insideAtSpawn: Bool?
+        var insideUnderReset: Bool?
+        await vm.serialized {
+            await StudioLifecycleContext.$isInside.withValue(false) {
+                await Task { insideUnderReset = StudioLifecycleContext.isInside }.value
+            }
+            await Task { insideAtSpawn = StudioLifecycleContext.isInside }.value
+        }
+        XCTAssertEqual(insideUnderReset, false, """
+            a task spawned across the reset must not inherit the flag: it \
+            outlives this body, and re-entering the chain from it would run \
+            inline instead of queueing
+            """)
+        XCTAssertEqual(insideAtSpawn, true,
+                       "…while an ordinary spawn inside the body still inherits it, "
+                       + "which is exactly why the reset has to be explicit")
+    }
     #endif
 
     // ── The belt: one live scope per place ──────────────────────

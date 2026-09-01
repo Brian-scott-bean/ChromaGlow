@@ -551,14 +551,78 @@ final class FlashSafetyTests: XCTestCase {
     // MARK: - Onset gate / ledger
     // ══════════════════════════════════════════════════════════════
 
-    func testGateAdmitsTheFirstOnsetAndOneExactlyAPeriodLater() {
+    func testGateEnforcesTheSeventeenFramePeriodNotTheWCAGPeriod() {
+        // The gate's period is the invariant's OWN unit — 17 frames = 0.34 s —
+        // not the 1/3 s the WCAG rate implies. The 6.67 ms between them was
+        // slack the cross-run path (card switch, restart) could not afford: no
+        // frame plan stands behind it there, and the ledger stamps the moment an
+        // onset is ADMITTED, not the moment the frame reaches the wire.
+        XCTAssertEqual(FS.minOnsetLedgerPeriod,
+                       Double(FS.minCycleFrames()) * FS.entertainmentFrameDuration,
+                       accuracy: 1e-15)
+        XCTAssertEqual(FS.minOnsetLedgerPeriod, 0.34, accuracy: 1e-15)
+        XCTAssertGreaterThan(FS.minOnsetLedgerPeriod, FS.minOnsetPeriod,
+                             "the enforced period must not be shorter than the planned one")
+
         var gate = FS.OnsetGate()
         XCTAssertNil(gate.lastOnset)
         XCTAssertTrue(gate.tryOnset(at: 10))
         XCTAssertEqual(gate.lastOnset, 10)
-        XCTAssertTrue(gate.tryOnset(at: 10 + FS.minOnsetPeriod),
-                      "exactly 1/3 s is admissible — the invariant is ≥, not >")
-        XCTAssertEqual(gate.lastOnset ?? 0, 10 + FS.minOnsetPeriod, accuracy: 1e-12)
+        XCTAssertFalse(gate.tryOnset(at: 10 + FS.minOnsetPeriod),
+                       "1/3 s is NO LONGER admissible — 16.67 frames is not a thing the grid can render")
+        XCTAssertEqual(gate.lastOnset, 10, "a refusal must not move the reference point")
+        XCTAssertTrue(gate.tryOnset(at: 10 + FS.minOnsetLedgerPeriod),
+                      "exactly 17 frames is admissible — the invariant is ≥, not >")
+        XCTAssertEqual(gate.lastOnset ?? 0, 10 + FS.minOnsetLedgerPeriod, accuracy: 1e-12)
+    }
+
+    func testGateAdmitsAnArithmeticallyExactSeventeenFrameSpacingAtEveryGridPosition() {
+        // `Double(n + 17) * 0.02 − Double(n) * 0.02` lands a couple of ULPs BELOW
+        // `17 × 0.02` for a little over half of all n. `onsetComparisonTolerance`
+        // exists for exactly that and for nothing else: 1 ns, seven orders of
+        // magnitude under one frame, so it can never admit a 16-frame interval.
+        XCTAssertEqual(FS.onsetComparisonTolerance, 1e-9, accuracy: 0)
+        XCTAssertLessThan(FS.onsetComparisonTolerance, FS.entertainmentFrameDuration / 1_000_000)
+        var stalledAtSeventeen: [Int] = []
+        var admittedAtSixteen: [Int] = []
+        for n in 0..<4_000 {
+            var exact = FS.OnsetGate()
+            _ = exact.tryOnset(at: Double(n) * fd)
+            if !exact.tryOnset(at: Double(n + minFrames) * fd) { stalledAtSeventeen.append(n) }
+            var short = FS.OnsetGate()
+            _ = short.tryOnset(at: Double(n) * fd)
+            if short.tryOnset(at: Double(n + minFrames - 1) * fd) { admittedAtSixteen.append(n) }
+        }
+        XCTAssertEqual(stalledAtSeventeen, [], "17 frames must be admitted at every grid position")
+        XCTAssertEqual(admittedAtSixteen, [], "16 frames is the R1-Q defect and must never be admitted")
+    }
+
+    func testGateRefusesATimeThatMovesBACKWARDSAndKeepsItsReference() {
+        // Every caller samples `CACurrentMediaTime()` OUTSIDE the ledger's lock,
+        // so during the un-awaited cancel window two loop instances on one bridge
+        // can present their samples out of order. The old `t >= last` qualifier
+        // let an inverted sample fall through to `lastOnset = t`: it ADMITTED the
+        // onset and re-based the reference backwards, so the next onset was
+        // measured from a point in the past.
+        var gate = FS.OnsetGate()
+        XCTAssertTrue(gate.tryOnset(at: 100.0))
+        XCTAssertFalse(gate.tryOnset(at: 99.9), "a backwards time is not a proven-safe interval")
+        XCTAssertEqual(gate.lastOnset, 100.0, "the reference point may only ever move forward")
+        XCTAssertFalse(gate.tryOnset(at: 0.0))
+        XCTAssertFalse(gate.tryOnset(at: -1.0))
+        XCTAssertEqual(gate.lastOnset, 100.0)
+
+        // The concrete hazard: an inverted sample followed by one a hair later.
+        // Re-basing on 99.9 would have made 100.24 look like a legal 0.34 s.
+        XCTAssertFalse(gate.tryOnset(at: 100.24))
+        XCTAssertTrue(gate.tryOnset(at: 100.34))
+
+        // Same through the reference-typed ledger the loops actually share.
+        let ledger = FS.OnsetLedger()
+        XCTAssertTrue(ledger.tryOnset(at: 50.0))
+        XCTAssertFalse(ledger.tryOnset(at: 49.5))
+        XCTAssertEqual(ledger.lastOnset, 50.0)
+        XCTAssertFalse(ledger.tryOnset(at: 49.5 + 0.34))
     }
 
     func testGateRefusesThirtyTwoMillisecondsShortAndKeepsItsLastOnset() {
@@ -653,6 +717,205 @@ final class FlashSafetyTests: XCTestCase {
     }
 
     // ══════════════════════════════════════════════════════════════
+    // MARK: - Beat-branch rise gating (the R1-RG blocker)
+    // ══════════════════════════════════════════════════════════════
+    //
+    // The beat branches used to gate on a CYCLE-INDEX change. But what a
+    // photosensitive viewer perceives is not an index — it is the rendered
+    // brightness going up. Both loops compute that brightness from live inputs
+    // that can move WITHOUT the index moving, and every such move restored full
+    // brightness with no gate call at all:
+    //
+    //   • Party, `phase < hold ? peak : ramp`: `phase` runs backwards on a
+    //     BeatClock epoch correction (driveFromTrack/ingest, 1–2×/s against a
+    //     playing track) and `hold` runs forward when smoothness is dragged down.
+    //   • Strobe, `wantsBright ? peak : minBri`: raising min_brightness while the
+    //     strobe sits in its dark half raises the rendered level with no duty
+    //     flip to notice.
+    //
+    // Each model below mirrors the loop body frame-for-frame on the 20 ms grid
+    // and measures RENDERED RISES, not gate calls. `riseGated: false`
+    // reproduces the shipped-and-reviewed loop so the defect is pinned as a
+    // failure, and `riseGated: true` mirrors the fix.
+
+    func testPartyBeatEpochCorrectionCannotRestorePeakBrightnessUngated() {
+        // 176 BPM × 1 beat (capped to ×1 — 2.933 Hz is just under the 2.941 Hz
+        // ceiling, so the cycle is 17.05 frames), shipped smoothness 20. The
+        // clock re-bases its epoch by +68 ms — an ordinary `driveFromTrack`
+        // correction — and the phase snaps BACKWARDS out of the fade and into
+        // the hold, restoring peak brightness inside one cycle index.
+        //
+        // Swept over every correction frame in a whole cycle, so the pin is the
+        // BEHAVIOUR and not one lucky frame number.
+        var worstUngated = Double.infinity
+        for correctionFrame in 90..<120 {
+            let snapshotAt: (Int) -> BeatSnapshot = { frame in
+                BeatSnapshot(bpm: 176, beatEpoch: frame < correctionFrame ? 0 : 0.0682)
+            }
+            let ungated = partyBeatRenderedRises(frames: 400, riseGated: false,
+                                                 snapshotAt: snapshotAt, smoothnessAt: { _ in 0.20 })
+            worstUngated = min(worstUngated, minimumGap(ungated) ?? .infinity)
+
+            let gated = partyBeatRenderedRises(frames: 400, riseGated: true,
+                                               snapshotAt: snapshotAt, smoothnessAt: { _ in 0.20 })
+            XCTAssertGreaterThan(gated.count, 2, "frame \(correctionFrame): the model must render flashes")
+            assertOnsetsRespectTheFloor(gated, label: "party epoch correction @\(correctionFrame)")
+        }
+        XCTAssertLessThan(worstUngated, FS.minOnsetLedgerPeriod,
+                          "the index-only gate must be SHOWN to let an epoch correction through ungated — otherwise this test proves nothing")
+    }
+
+    func testPartySmoothnessDragCannotRestorePeakBrightnessUngated() {
+        // Smoothness dragged 100 → 0 late in the fade: `hold` jumps from 0 to
+        // the whole cycle (and the `smoothness <= 0` arm fires), so the rendered
+        // level goes 0.11 → 0.90 in a single frame with no index change to
+        // notice it — and the genuine boundary a few frames later is admitted on
+        // top of it. Swept over every drag frame in two cycles.
+        let snapshotAt: (Int) -> BeatSnapshot = { _ in BeatSnapshot(bpm: 176, beatEpoch: 0) }
+        var worstUngated = Double.infinity
+        for dragFrame in 85..<120 {
+            let smoothnessAt: (Int) -> Double = { $0 < dragFrame ? 1.0 : 0.0 }
+            let ungated = partyBeatRenderedRises(frames: 400, riseGated: false,
+                                                 snapshotAt: snapshotAt, smoothnessAt: smoothnessAt)
+            worstUngated = min(worstUngated, minimumGap(ungated) ?? .infinity)
+
+            let gated = partyBeatRenderedRises(frames: 400, riseGated: true,
+                                               snapshotAt: snapshotAt, smoothnessAt: smoothnessAt)
+            XCTAssertGreaterThan(gated.count, 2, "frame \(dragFrame): the model must render flashes")
+            assertOnsetsRespectTheFloor(gated, label: "party smoothness drag @\(dragFrame)")
+        }
+        XCTAssertLessThan(worstUngated, FS.minOnsetLedgerPeriod,
+                          "the index-only gate must be SHOWN to let a smoothness drag through ungated")
+        XCTAssertLessThanOrEqual(worstUngated, FS.entertainmentFrameDuration + 1e-12,
+                                 "the worst case is two rendered rises ONE FRAME apart — 50 Hz")
+    }
+
+    func testPartyBeatBranchSurvivesSeededEpochAndSmoothnessChurn() {
+        // Both hazards at once, driven hard: a tempo change every ~2 s, an epoch
+        // correction every ~0.5 s (both directions), and a smoothness drag every
+        // ~1 s — for 200 s of frames at every tempo the ceiling admits.
+        var rng = SeededGenerator(seed: 0xF1A5_04E7)
+        var bpm = 120.0
+        var epoch = 0.0
+        var smoothness = 0.2
+        var bpmByFrame: [Double] = []
+        var epochByFrame: [Double] = []
+        var smoothnessByFrame: [Double] = []
+        for frame in 0..<10_000 {
+            if frame % 101 == 0 { bpm = Double.random(in: 20...300, using: &rng) }
+            if frame % 27 == 0 { epoch += Double.random(in: -0.25...0.25, using: &rng) }
+            if frame % 53 == 0 { smoothness = Double.random(in: 0...1, using: &rng) }
+            bpmByFrame.append(bpm)
+            epochByFrame.append(epoch)
+            smoothnessByFrame.append(smoothness)
+        }
+        let gated = partyBeatRenderedRises(
+            frames: 10_000, riseGated: true,
+            snapshotAt: { BeatSnapshot(bpm: bpmByFrame[$0], beatEpoch: epochByFrame[$0]) },
+            smoothnessAt: { smoothnessByFrame[$0] })
+        XCTAssertGreaterThan(gated.count, 10, "the churn model must have produced onsets")
+        assertOnsetsRespectTheFloor(gated, label: "party churn")
+    }
+
+    func testStrobeBeatBranchGatesAMinBrightnessRaiseWhileDark() {
+        // 120 BPM × 1 (2 Hz, 25 frames), duty 50 %. min_brightness is dragged
+        // 0 → 50 at frame 65, which falls in the DARK half: no duty flip, so the
+        // edge flag notices nothing and the light goes from off to half power
+        // ungated — 10 frames (0.2 s) before the next genuine rising edge.
+        let snapshot = BeatSnapshot(bpm: 120, beatEpoch: 0)
+        let minBriAt: (Int) -> Double = { $0 < 65 ? 0.0 : 0.5 }
+
+        let ungated = strobeBeatRenderedRises(frames: 400, riseGated: false, snapshot: snapshot,
+                                              dutyCycle: 0.5, peakBri: 1.0, minBriAt: minBriAt)
+        XCTAssertLessThan(minimumGap(ungated) ?? .infinity, FS.minOnsetLedgerPeriod,
+                          "the edge-only gate must be shown to let the min_brightness raise through")
+
+        let gated = strobeBeatRenderedRises(frames: 400, riseGated: true, snapshot: snapshot,
+                                            dutyCycle: 0.5, peakBri: 1.0, minBriAt: minBriAt)
+        XCTAssertGreaterThan(gated.count, 2, "the model must actually render flashes")
+        assertOnsetsRespectTheFloor(gated, label: "strobe min_brightness raise")
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // MARK: - Total conversions (no input traps a live loop)
+    // ══════════════════════════════════════════════════════════════
+
+    func testClampedIntSurvivesEveryDegenerateParamBoxValue() {
+        // `Int(Double.nan)`, `Int(.infinity)` and `Int(1e300)` all TRAP. The
+        // storm loop read `flash_length` and `afterglow` straight out of the
+        // live param box through a bare `Int(_:)`, so the crash sat one corrupt
+        // preset ahead of the ranges that were supposed to clamp it.
+        let flash = { FS.clampedInt($0, default: 3, range: 1...60) }
+        XCTAssertEqual(flash(.nan), 3, "NaN resolves to the caller's default")
+        XCTAssertEqual(flash(.infinity), 3)
+        XCTAssertEqual(flash(-Double.infinity), 3)
+        XCTAssertEqual(flash(1e300), 60, "a finite monster clamps to the range, it does not trap")
+        XCTAssertEqual(flash(-1e300), 1)
+        XCTAssertEqual(flash(0), 1)
+        XCTAssertEqual(flash(-7), 1)
+        XCTAssertEqual(flash(1_000), 60)
+        // Truncation toward zero, exactly like the `Int(_:)` it replaces.
+        XCTAssertEqual(flash(3.9), 3)
+        XCTAssertEqual(flash(3.0), 3)
+        XCTAssertEqual(FS.clampedInt(-3.9, default: 0, range: -60...60), -3)
+
+        let afterglow = { FS.clampedInt($0, default: 1, range: 0...60) }
+        XCTAssertEqual(afterglow(.nan), 1)
+        XCTAssertEqual(afterglow(0), 0, "0 still disables the afterglow outright")
+        XCTAssertEqual(afterglow(-5), 0)
+        XCTAssertEqual(afterglow(1e300), 60)
+
+        // A default outside the range is itself clamped — the result is always
+        // inside the range the caller stated.
+        XCTAssertEqual(FS.clampedInt(.nan, default: 999, range: 1...60), 60)
+        XCTAssertEqual(FS.clampedInt(.nan, default: -999, range: 1...60), 1)
+
+        // And the ranges downstream accept whatever it returns.
+        for raw in [Double.nan, .infinity, -Double.infinity, 1e300, -1e300, 0, 3, 61] {
+            let fl = FS.clampedInt(raw, default: 3, range: 1...60)
+            XCTAssertFalse(FS.ThunderstormPlan.flashFrameRange(flashLength: fl).isEmpty)
+            let ag = FS.clampedInt(raw, default: 1, range: 0...60)
+            XCTAssertFalse(FS.ThunderstormPlan.afterglowFrameRange(afterglow: ag).isEmpty)
+        }
+    }
+
+    func testNonFinitePhaseOffsetCannotTrapTheCycleMath() {
+        // `beat_phase` reaches the loops as a raw Double out of the param box.
+        // `min(max(nan, -8), 8)` is still NaN (every NaN comparison is false), so
+        // the clamp let it through and `BeatMath.cycleIndex` evaluated
+        // `Int(floor(.nan))` — a trap on the render path, once per frame.
+        for raw in [Double.nan, .infinity, -Double.infinity] {
+            let binding = BeatBinding(mode: .beatLocked, beatsPerCycle: 1, phaseOffsetBeats: raw)
+            XCTAssertEqual(binding.phaseOffsetBeats, 0, "\(raw) must resolve to no offset")
+            XCTAssertTrue(binding.phaseOffsetBeats.isFinite)
+        }
+        // Through the param-box bridge the loops actually use, and all the way
+        // into the two conversions that would trap.
+        for raw in [Double.nan, .infinity, -Double.infinity] {
+            let binding = BeatBinding.fromStudioValues([
+                BeatBinding.studioModeKey: 1,
+                BeatBinding.studioPerCycleKey: raw,
+                BeatBinding.studioPhaseKey: raw,
+            ])
+            XCTAssertTrue(binding.phaseOffsetBeats.isFinite)
+            XCTAssertTrue(binding.beatsPerCycle.isFinite)
+            let snapshot = BeatSnapshot(bpm: 120, beatEpoch: 0)
+            let idx = BeatMath.cycleIndex(at: 12.5, snapshot: snapshot,
+                                          beatsPerCycle: binding.beatsPerCycle,
+                                          phaseOffsetBeats: binding.phaseOffsetBeats)
+            let phase = BeatMath.cyclePhase(at: 12.5, snapshot: snapshot,
+                                            beatsPerCycle: binding.beatsPerCycle,
+                                            phaseOffsetBeats: binding.phaseOffsetBeats)
+            XCTAssertEqual(idx, 25)
+            XCTAssertTrue((0..<1).contains(phase))
+        }
+        // A legal offset still survives untouched, and the range still clamps.
+        XCTAssertEqual(BeatBinding(phaseOffsetBeats: 2.5).phaseOffsetBeats, 2.5)
+        XCTAssertEqual(BeatBinding(phaseOffsetBeats: 99).phaseOffsetBeats, 8)
+        XCTAssertEqual(BeatBinding(phaseOffsetBeats: -99).phaseOffsetBeats, -8)
+    }
+
+    // ══════════════════════════════════════════════════════════════
     // MARK: - Simulation helpers (pure; no clocks, no sleeps)
     // ══════════════════════════════════════════════════════════════
 
@@ -667,6 +930,120 @@ final class FlashSafetyTests: XCTestCase {
             if held > 64 { break }
         }
         return held
+    }
+
+    /// Smallest interval between successive entries, or nil for fewer than two.
+    private func minimumGap(_ times: [Double]) -> Double? {
+        guard times.count > 1 else { return nil }
+        return (1..<times.count).map { times[$0] - times[$0 - 1] }.min()
+    }
+
+    private func assertOnsetsRespectTheFloor(_ times: [Double], label: String,
+                                             file: StaticString = #filePath, line: UInt = #line) {
+        for i in 1..<max(times.count, 1) {
+            XCTAssertGreaterThanOrEqual(times[i] - times[i - 1],
+                                        FS.minOnsetLedgerPeriod - FS.onsetComparisonTolerance,
+                                        "\(label): rise \(i) at \(times[i]) is too close to \(times[i - 1])",
+                                        file: file, line: line)
+        }
+    }
+
+    /// Pure mirror of the beat branch of `runPartyEntertainment`, frame by frame
+    /// on the 20 ms grid. Returns every host time at which the RENDERED
+    /// brightness rose by more than `flashRiseEpsilon` — what a viewer sees, as
+    /// opposed to what the loop happens to call a gate on.
+    ///
+    /// `riseGated: false` is the pre-fix loop (gate on cycle-index change only).
+    private func partyBeatRenderedRises(
+        frames: Int,
+        riseGated: Bool,
+        peakBri: Double = 0.90,
+        minBri: Double = 0.05,
+        snapshotAt: (Int) -> BeatSnapshot,
+        smoothnessAt: (Int) -> Double
+    ) -> [Double] {
+        let ledger = FS.OnsetLedger()
+        var renderedIdx: Int?
+        var lastBri: Double?
+        var rises: [Double] = []
+        var frame = 0
+        while frame < frames {
+            let snapshot = snapshotAt(frame)
+            let smoothness = smoothnessAt(frame)
+            let perCycle = BeatMath.wcagSafeBeatsPerCycle(requested: 1, bpm: snapshot.bpm,
+                                                          maxHz: FS.entertainmentMaxLockHz)
+            let t = Double(frame) * fd
+            let idx = BeatMath.cycleIndex(at: t, snapshot: snapshot, beatsPerCycle: perCycle)
+            let phase = BeatMath.cyclePhase(at: t, snapshot: snapshot, beatsPerCycle: perCycle)
+            let hold = 1.0 - smoothness
+            let bri: Double
+            if phase < hold || smoothness <= 0 {
+                bri = peakBri
+            } else {
+                bri = peakBri + (minBri - peakBri) * ((phase - hold) / max(smoothness, 0.001))
+            }
+            let isRise = bri > (lastBri ?? -1) + FS.flashRiseEpsilon
+            let needsGate = riseGated ? (idx != renderedIdx || isRise) : (idx != renderedIdx)
+            if needsGate {
+                // `streamUntilOnsetAdmitted`: hold the last streamed frame and
+                // ask again next frame. A refusal is a delay, never a skip.
+                var held = 0
+                while !ledger.tryOnset(at: Double(frame + held) * fd,
+                                       minPeriod: FS.minOnsetLedgerPeriod) {
+                    held += 1
+                    if frame + held >= frames { return rises }
+                }
+                frame += held
+                renderedIdx = idx
+            }
+            if isRise { rises.append(Double(frame) * fd) }
+            lastBri = bri
+            frame += 1
+        }
+        return rises
+    }
+
+    /// Pure mirror of the beat branch of `runStrobeEntertainment`.
+    /// `riseGated: false` is the pre-fix loop (gate on the duty EDGE only).
+    private func strobeBeatRenderedRises(
+        frames: Int,
+        riseGated: Bool,
+        snapshot: BeatSnapshot,
+        dutyCycle: Double,
+        peakBri: Double,
+        minBriAt: (Int) -> Double
+    ) -> [Double] {
+        let ledger = FS.OnsetLedger()
+        let perCycle = BeatMath.wcagSafeBeatsPerCycle(requested: 1, bpm: snapshot.bpm,
+                                                      maxHz: FS.entertainmentMaxLockHz)
+        var isBright = false
+        var lastBri: Double?
+        var rises: [Double] = []
+        var frame = 0
+        while frame < frames {
+            let minBri = minBriAt(frame)
+            let phase = BeatMath.cyclePhase(at: Double(frame) * fd, snapshot: snapshot,
+                                            beatsPerCycle: perCycle)
+            let wantsBright = phase < dutyCycle
+            let bri = wantsBright ? peakBri : minBri
+            let isRise = bri > (lastBri ?? -1) + FS.flashRiseEpsilon
+            let edge = wantsBright && !isBright
+            let needsGate = riseGated ? (edge || isRise) : edge
+            if needsGate {
+                var held = 0
+                while !ledger.tryOnset(at: Double(frame + held) * fd,
+                                       minPeriod: FS.minOnsetLedgerPeriod) {
+                    held += 1
+                    if frame + held >= frames { return rises }
+                }
+                frame += held
+            }
+            if isRise { rises.append(Double(frame) * fd) }
+            isBright = wantsBright
+            lastBri = bri
+            frame += 1
+        }
+        return rises
     }
 
     /// Frame-index gaps between successive rising edges of `isBright`, sampled

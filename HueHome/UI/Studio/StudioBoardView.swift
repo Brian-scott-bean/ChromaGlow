@@ -100,54 +100,69 @@ struct StudioBoardView: View {
         if let param = card.params.first(where: { $0.id == control.paramID }) {
             let resolution = StudioBoardAvailability.resolve(card: card, param: param,
                                                              snapshot: snapshot)
-            let note = resolution.flatMap {
-                StudioBoardAvailability.note(for: $0, isColor: false)
-            }
-            let interactive = resolution
-                .map { StudioBoardAvailability.isInteractive($0.availability) } ?? true
-            let opacity = resolution
-                .map { StudioBoardAvailability.opacity($0.availability) } ?? 1
-            VStack(alignment: .leading, spacing: 3) {
-                switch control.primitive {
-                case .knob:
-                    StudioContinuousControl(param: param, cardID: card.id, vm: vm,
-                                            style: .knob, isHero: isHero)
-                case .fader:
-                    StudioContinuousControl(param: param, cardID: card.id, vm: vm,
-                                            style: .fader, isHero: isHero)
-                case .chips:
-                    chipsControl(param)
-                case .toggle:
-                    StageToggleRow(
-                        title: param.label,
-                        isOn: Binding(
-                            get: { vm.paramValue(for: card.id, paramID: param.id,
-                                                 default: param.defaultValue) > 0.5 },
-                            set: { vm.commitParam(cardID: card.id, paramID: param.id,
-                                                  value: $0 ? 1 : 0) }
-                        )
-                    )
-                case .colorEditor:
-                    EmptyView()   // color renders in its own section
+            // Hidden means DO NOT RENDER (spec §17). A dimmed dead control is
+            // the state Hidden exists to avoid, not a lighter version of it.
+            if StudioBoardAvailability.rendersControl(resolution) {
+                let note = StudioBoardAvailability.note(for: resolution,
+                                                        strategy: card.strategy,
+                                                        isColor: false)
+                let interactive = StudioBoardAvailability.isInteractive(
+                    resolution: resolution, strategy: card.strategy)
+                let opacity = StudioBoardAvailability.opacity(resolution: resolution,
+                                                              strategy: card.strategy)
+                VStack(alignment: .leading, spacing: 3) {
+                    // The opacity belongs to the CONTROL, not to the pair: a
+                    // note nested inside a 0.45 wrapper rendered at ≈0.29 —
+                    // the least legible thing on the board was the sentence
+                    // explaining why the control was dead.
+                    Group {
+                        switch control.primitive {
+                        case .knob:
+                            StudioContinuousControl(param: param, cardID: card.id, vm: vm,
+                                                    style: .knob, isHero: isHero,
+                                                    isInteractive: interactive)
+                        case .fader:
+                            StudioContinuousControl(param: param, cardID: card.id, vm: vm,
+                                                    style: .fader, isHero: isHero,
+                                                    isInteractive: interactive)
+                        case .chips:
+                            chipsControl(param, isInteractive: interactive)
+                        case .toggle:
+                            StageToggleRow(
+                                title: param.label,
+                                isOn: Binding(
+                                    get: { vm.paramValue(for: card.id, paramID: param.id,
+                                                         default: param.defaultValue) > 0.5 },
+                                    set: { newValue in
+                                        guard interactive else { return }
+                                        vm.commitParam(cardID: card.id, paramID: param.id,
+                                                       value: newValue ? 1 : 0)
+                                    }
+                                )
+                            )
+                        case .colorEditor:
+                            EmptyView()   // color renders in its own section
+                        }
+                    }
+                    .opacity(opacity)
+                    if let note {
+                        // Capability truth beside the control it affects — only
+                        // where it materially changes what the control can do.
+                        // Exactly ONE note per control: the funnel already folded
+                        // the old separate entOnly hint into this line.
+                        Text(note)
+                            .font(HueFont.stageTag)
+                            .tracking(0.8)
+                            .foregroundStyle(HuePalette.amber.opacity(0.65))
+                            .accessibilityLabel("\(param.label): \(note)")
+                    }
                 }
-                if let note {
-                    // Capability truth beside the control it affects — only
-                    // where it materially changes what the control can do.
-                    // Exactly ONE note per control: the funnel already folded
-                    // the old separate entOnly hint into this line.
-                    Text(note)
-                        .font(HueFont.stageTag)
-                        .tracking(0.8)
-                        .foregroundStyle(HuePalette.amber.opacity(0.65))
-                        .accessibilityLabel("\(param.label): \(note)")
-                }
+                .disabled(!interactive)
             }
-            .disabled(!interactive)
-            .opacity(opacity)
         }
     }
 
-    private func chipsControl(_ param: StudioParam) -> some View {
+    private func chipsControl(_ param: StudioParam, isInteractive: Bool) -> some View {
         let options: [(label: String, value: Double)]
         if case .segmented(let opts) = param.kind { options = opts } else { options = [] }
         return StageSteppedEncoder(
@@ -160,7 +175,13 @@ struct StudioBoardView: View {
                     return options.min { abs($0.value - current) < abs($1.value - current) }?.value
                         ?? param.defaultValue
                 },
-                set: { vm.commitParam(cardID: card.id, paramID: param.id, value: $0) }
+                // Belt-and-braces with the wrapper's `.disabled`: a raw tap
+                // gesture inside a stepped encoder is not a Button, and only
+                // the setter is on every write path.
+                set: { newValue in
+                    guard isInteractive else { return }
+                    vm.commitParam(cardID: card.id, paramID: param.id, value: newValue)
+                }
             ),
             prominence: .chips
         )
@@ -177,40 +198,58 @@ struct StudioBoardView: View {
     /// already badges "n OF m LIGHTS" beside its own chip (spec §13).
     @ViewBuilder
     private func colorSection(_ section: BoardSection) -> some View {
+        // ONE snapshot, built once and handed to both readers. Asking the view
+        // model twice (here and again inside `colorCapabilityContext`) scanned
+        // the whole light cache twice per render pass and could — between the
+        // two calls — describe two different instants of truth.
         let snapshot = self.snapshot
-        let context = vm.colorCapabilityContext(for: effect)
+        let context = vm.colorCapabilityContext(for: effect, snapshot: snapshot)
         ForEach(section.controls, id: \.paramID) { control in
             if let param = card.params.first(where: { $0.id == control.paramID }) {
                 let resolution = StudioBoardAvailability.resolve(card: card, param: param,
                                                                  snapshot: snapshot)
-                let note = resolution.flatMap {
-                    StudioBoardAvailability.note(for: $0, isColor: true)
-                }
-                let interactive = resolution
-                    .map { StudioBoardAvailability.isInteractive($0.availability) } ?? true
-                let opacity = resolution
-                    .map { StudioBoardAvailability.opacity($0.availability) } ?? 1
-                VStack(alignment: .leading, spacing: 3) {
-                    StageColorEditor(
-                        title: param.label,
-                        current: vm.paramColor(for: card.id, paramID: param.id),
-                        context: context,
-                        isExpanded: colorExpansionBinding(
-                            CustomizationControlID(cardID: card.id, paramID: param.id)),
-                        onApply: { color in
-                            vm.commitColorParam(cardID: card.id, paramID: param.id, color: color)
+                if StudioBoardAvailability.rendersControl(resolution) {
+                    let note = StudioBoardAvailability.note(for: resolution,
+                                                            strategy: card.strategy,
+                                                            isColor: true)
+                    let interactive = StudioBoardAvailability.isInteractive(
+                        resolution: resolution, strategy: card.strategy)
+                    let opacity = StudioBoardAvailability.opacity(resolution: resolution,
+                                                                  strategy: card.strategy)
+                    let controlID = CustomizationControlID(cardID: card.id, paramID: param.id)
+                    VStack(alignment: .leading, spacing: 3) {
+                        StageColorEditor(
+                            title: param.label,
+                            current: vm.paramColor(for: card.id, paramID: param.id),
+                            context: context,
+                            isInteractive: interactive,
+                            // A collapsed editor when the control is dead: the
+                            // hue/saturation pad is a raw drag surface, and
+                            // leaving it open under a disabled wrapper invites
+                            // exactly the gesture path we mean to close (L6).
+                            isExpanded: colorExpansionBinding(controlID,
+                                                              isInteractive: interactive),
+                            // Belt-and-braces: the wrapper's `.disabled` is the
+                            // gate, this is the floor. Nothing the editor's own
+                            // gestures do can reach the view model.
+                            onApply: interactive
+                                ? { color in
+                                    vm.commitColorParam(cardID: card.id,
+                                                        paramID: param.id, color: color)
+                                }
+                                : { _ in }
+                        )
+                        .opacity(opacity)
+                        if let note {
+                            Text(note)
+                                .font(HueFont.stageTag)
+                                .tracking(0.8)
+                                .foregroundStyle(HuePalette.amber.opacity(0.65))
+                                .accessibilityLabel("\(param.label): \(note)")
                         }
-                    )
-                    if let note {
-                        Text(note)
-                            .font(HueFont.stageTag)
-                            .tracking(0.8)
-                            .foregroundStyle(HuePalette.amber.opacity(0.65))
-                            .accessibilityLabel("\(param.label): \(note)")
                     }
+                    .disabled(!interactive)
                 }
-                .disabled(!interactive)
-                .opacity(opacity)
             }
         }
     }
@@ -218,11 +257,19 @@ struct StudioBoardView: View {
     /// Expansion lives in the SESSION working memory keyed by exact target —
     /// it survives switching between active rooms (spec §14.4) and clears
     /// when the session ends.
-    private func colorExpansionBinding(_ controlID: CustomizationControlID) -> Binding<Bool> {
+    /// A non-interactive control reads as COLLAPSED and refuses to expand,
+    /// without erasing the stored expansion: the moment the transport or the
+    /// inventory arrives, the editor the user left open is open again.
+    private func colorExpansionBinding(_ controlID: CustomizationControlID,
+                                       isInteractive: Bool) -> Binding<Bool> {
         let target = effect.identity.targetKey
         return Binding(
-            get: { vm.sessionMemory.state(for: target).expandedColorControlID == controlID },
+            get: {
+                guard isInteractive else { return false }
+                return vm.sessionMemory.state(for: target).expandedColorControlID == controlID
+            },
             set: { expanded in
+                guard isInteractive else { return }
                 vm.sessionMemory.update(target) {
                     $0.expandedColorControlID = expanded ? controlID : nil
                 }
@@ -244,6 +291,15 @@ private struct StudioContinuousControl: View {
     @Bindable var vm: StudioViewModel
     let style: Style
     var isHero: Bool = false
+    /// The funnel's verdict, carried INTO the control.
+    ///
+    /// `.disabled()` on the wrapper is the gate; this is the floor beneath it.
+    /// A knob's drag, its long-press-to-type field and its accessibility
+    /// adjust action are raw gestures, not `Control`s, and every one of them
+    /// writes through the binding below — so short-circuiting the setter (and
+    /// the edit-session bracket) closes all three at once, whatever the
+    /// wrapper does.
+    var isInteractive: Bool = true
 
     @State private var localValue: Double = 0
     @State private var isAdjusting = false
@@ -274,6 +330,9 @@ private struct StudioContinuousControl: View {
         let binding = Binding(
             get: { localValue },
             set: { newValue in
+                // Not interactive: the value does not move either, so a gesture
+                // that slipped past `.disabled` cannot even LOOK like it worked.
+                guard isInteractive else { return }
                 localValue = newValue
                 if let session = editSession {
                     vm.updateParamEdit(session, value: newValue)
@@ -283,6 +342,10 @@ private struct StudioContinuousControl: View {
             }
         )
         let editingChanged: (Bool) -> Void = { editing in
+            // No session for a control the user may not edit — an opened-and-
+            // never-closed edit bracket would hold a generation fence over a
+            // target nobody is editing.
+            guard isInteractive else { return }
             isAdjusting = editing
             if editing {
                 editSession = vm.beginParamEdit(cardID: cardID, paramID: param.id)

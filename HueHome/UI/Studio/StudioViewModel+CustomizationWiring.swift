@@ -91,14 +91,42 @@ extension StudioViewModel {
         for retired in valueScopes.stopRunning(atPlace: room.bridgeID,
                                                groupID: room.id, kind: room.kind) {
             retirePendingSends(for: retired)
+            // The retired scope's working memory (expansions, board position)
+            // described a run that no longer exists. Leaving it behind hands
+            // the successor another look's UI state under the same key.
+            sessionMemory.clear(for: retired)
         }
         let identity = RunningLookIdentity(
             bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
             cardID: card.id, execution: execution,
             generation: generationCounter.bump(.cardReplaced))
-        valueScopes.startRunning(identity)
+        valueScopes.startRunning(identity, seed: startSeed(for: card))
         bumpLiveValuesTick()
         return identity
+    }
+
+    /// The COMPLETE value set a new instance starts from: every parameter the
+    /// card declares, materialized at its catalog default, with the card's
+    /// persisted next-start defaults layered on top.
+    ///
+    /// Completeness is the point (cross-instance leak). `live(for:)` layers an
+    /// instance's own values over the card's CURRENT defaults, and defaults
+    /// track last-used — so a param missing from the running set resolved
+    /// against whatever ANOTHER instance had written since. Materializing the
+    /// catalog default here means the running set answers for every control
+    /// from the first frame, and the layering can never reach past it.
+    ///
+    /// Colour params are deliberately NOT given a number: their catalog
+    /// `defaultValue` is a placeholder for a control that stores a colour, and
+    /// writing it into `numbers` would publish a meaningless value under a
+    /// colour param's id.
+    private func startSeed(for card: StudioCard) -> CustomizationValueSet<Color> {
+        var catalog = CustomizationValueSet<Color>()
+        for param in card.params {
+            if case .colorPicker = param.kind { continue }
+            catalog.numbers[param.id] = param.defaultValue
+        }
+        return valueScopes.defaults(forCard: card.id).layered(over: catalog)
     }
 
     /// Forget the scopes entry and cancel the pending send for the row at
@@ -172,6 +200,31 @@ extension StudioViewModel {
 
     // ── Preview Live (spec §16.5) ───────────────────────────────
 
+    /// True while ANY lifecycle question is on screen waiting for the user.
+    ///
+    /// A prompt is not a refusal. An `applyCore` that ends with one of these
+    /// standing has neither started nor declined the look — it has DEFERRED
+    /// it, and the confirmation path will run the same apply for real. Preview
+    /// Live has to tell the two apart: treating a deferred apply as a refusal
+    /// is what rolled the restore's defaults back under an open prompt, so the
+    /// confirmation then applied the wrong values.
+    var hasPendingLifecyclePrompt: Bool {
+        entertainmentHandoffPrompt != nil
+            || studioHandoffRequest != nil
+            || foreignTakeoverRequest != nil
+            || areaChoiceRequest != nil
+    }
+
+    /// The card the LIVE audition is playing, if one is playing.
+    ///
+    /// `isPreviewingLive` is a single global flag while the details panel is
+    /// PER CARD: re-pointing the panel at another look (chip context menu →
+    /// "Details & Setup") used to show that card Keep It / Put It Back, and
+    /// "Keep It" then recorded the wrong card as applied. The panel gates on
+    /// this instead, so the audition's controls belong to the audition's card
+    /// and to no other.
+    var previewAuditionCardID: String? { previewLive.previewIdentity?.cardID }
+
     /// Opt-in audition on the EXACT selected target: snapshot the previous
     /// running look and its exact live values, then start the candidate
     /// through the normal apply path.
@@ -184,6 +237,53 @@ extension StudioViewModel {
 
     private func beginPreviewLiveCore(card: StudioCard) async {
         guard let room = selectedRoom else { return }
+        let key = StudioSelectionKey(room: room)
+
+        // ── Refuse rather than arm a snapshot that cannot be honoured ──
+
+        // M1. A chained audition on a DIFFERENT room would move
+        // `previewIdentity` to room B while `previewLiveRoom` still named room
+        // A: the cancel would then fence B's audition against A's row, drop,
+        // and A's original look would be unrecoverable. One audition, one
+        // room — say which room, and change nothing.
+        if previewLive.isPreviewing, let armed = previewLiveRoom,
+           StudioSelectionKey(room: armed) != key {
+            studioNotice = StudioNotice(
+                message: PreviewLiveCopy.finishPreviewFirst(in: armed.name))
+            statusMessage = "⚠ \(PreviewLiveCopy.finishPreviewFirst(in: armed.name))"
+            return
+        }
+
+        if let previous = runningEffects[key] {
+            // B1. A recovered bridge-stored animation has no app-side runtime
+            // and no restartable card — "Put It Back" could not put it back.
+            if previous.recovered != nil {
+                studioNotice = StudioNotice(message: PreviewLiveCopy.recoveredCannotBePreviewedOver)
+                statusMessage = "⚠ \(PreviewLiveCopy.recoveredCannotBePreviewedOver)"
+                return
+            }
+            // B1. The snapshot holds NUMBERS AND COLOURS. A running
+            // composition's live state is its `CompositionParamBox` — palette,
+            // motion, envelope, reaction — which the audition's replacement
+            // stop evicts and which "Put It Back" would rebuild from the SAVED
+            // preset. Every unsaved composer edit would be destroyed by the one
+            // button that promises an exact undo. Nothing here can snapshot
+            // that box honestly, so the audition is refused and NOTHING is
+            // mutated: no snapshot, no flag, no room.
+            if case .composition = previous.card.strategy,
+               hasLiveCompositionBox(at: key) {
+                studioNotice = StudioNotice(message: PreviewLiveCopy.compositionCannotBePreviewedOver)
+                statusMessage = "⚠ \(PreviewLiveCopy.compositionCannotBePreviewedOver)"
+                return
+            }
+        }
+
+        // Captured BEFORE the apply. "Did the audition start" cannot be
+        // `started.cardID == card.id` alone: when the audition card IS the
+        // card already running, a refusal leaves that row untouched and the
+        // test passes on the PREVIOUS instance (H2). Every real start mints a
+        // new generation, so a changed identity is the only honest evidence.
+        let previousIdentity = runningEffects[key]?.identity
 
         // A SECOND audition chains onto the ORIGINAL snapshot. Re-snapshotting
         // here would capture the FIRST audition as "the previous look", so
@@ -195,6 +295,10 @@ extension StudioViewModel {
             _ = previewLive.begin(
                 previous: previous?.identity,
                 previousValues: previous.map { valueScopes.live(for: $0.identity) },
+                // M5: the OBSERVED transport, not the requested one. A look
+                // that asked for streaming and fell back to REST has
+                // `isEntertainment == false` by the time it is snapshotted, and
+                // the restore must reproduce THAT, not the ambition.
                 previousWasStreaming: previous?.isEntertainment ?? false)
             previewLiveRoom = room
         }
@@ -206,15 +310,17 @@ extension StudioViewModel {
         await applyCore(card, roomOverride: room, preferEntertainmentOverride: nil)
         setAuditionInFlight(false)
 
-        if let started = runningEffect(for: room), started.cardID == card.id {
-            previewLive.previewStarted(started.identity)
-            // Only NOW is there an audition to put back. Setting this before
-            // the apply meant a refusal (handoff prompt, Reduce Motion, an
-            // unsupported room) left the browser showing "Keep It / Put It
-            // Back" for a look that never started.
-            setPreviewingLive(true)
+        if notePreviewAuditionOutcome(card: card, room: room,
+                                      previousIdentity: previousIdentity) {
             return
         }
+
+        // M5. A lifecycle prompt is standing: the audition is WAITING, not
+        // refused. Keep the snapshot and the armed room exactly as they are —
+        // the confirmation path re-runs `notePreviewAuditionOutcome`, so the
+        // audition arms Put It Back if and when it actually starts, and the
+        // matching cancel consumes the snapshot instead.
+        if hasPendingLifecyclePrompt { return }
 
         // The apply refused and nothing changed. When this call took the
         // snapshot, the machine now holds one with no audition — consume it, so
@@ -228,6 +334,72 @@ extension StudioViewModel {
             previewLiveRoom = nil
             setPreviewingLive(false)
         }
+    }
+
+    /// Did an audition actually START on `room`? Arms "Put It Back" when it
+    /// did, and reports the answer.
+    ///
+    /// Shared by `beginPreviewLiveCore` and by every confirmation core, so an
+    /// audition deferred behind a prompt is armed by the confirmation that
+    /// finally starts it rather than being silently forgotten (M5).
+    ///
+    /// The identity comparison is the whole test (H2). `cardID` alone answers
+    /// "yes" for a refused apply of the card that was ALREADY running there:
+    /// the row is untouched, but it names the audition's card, so Put It Back
+    /// would stop and restart an unchanged look.
+    @discardableResult
+    func notePreviewAuditionOutcome(card: StudioCard,
+                                    room: RoomDisplayItem,
+                                    previousIdentity: RunningLookIdentity?) -> Bool {
+        guard previewLive.isPreviewing,
+              let armed = previewLiveRoom,
+              StudioSelectionKey(room: armed) == StudioSelectionKey(room: room),
+              let started = runningEffect(for: room),
+              started.cardID == card.id,
+              started.identity != previousIdentity else { return false }
+        previewLive.previewStarted(started.identity)
+        // Only NOW is there an audition to put back. Setting this before the
+        // apply meant a refusal (handoff prompt, Reduce Motion, an unsupported
+        // room) left the browser showing "Keep It / Put It Back" for a look
+        // that never started.
+        setPreviewingLive(true)
+        return true
+    }
+
+    /// A lifecycle prompt was DISMISSED. An audition that was waiting behind it
+    /// never started, so its snapshot describes a world nothing changed —
+    /// consume it rather than leave a fence a later cancel could measure
+    /// against. An audition that HAD started keeps everything: it is still
+    /// playing and still restorable.
+    func discardArmedPreviewIfNotStarted() {
+        guard previewLive.isPreviewing, previewLive.previewIdentity == nil else { return }
+        _ = previewLive.cancelVerdict(live: nil)
+        previewLiveRoom = nil
+        setPreviewingLive(false)
+    }
+
+    /// A row was REMOVED by a path that does not run `stopEffect`
+    /// (`replayStudioHandoff`, a lost Entertainment session). If it was the
+    /// live audition's row, the snapshot can never be restored onto it now —
+    /// consume the machine rather than leave "Put It Back" offering an undo
+    /// that would land on whatever takes the room next, and SAY so, because
+    /// the affordance disappearing with no sentence is the silent-drop defect.
+    ///
+    /// One implementation, three call sites (`stopEffect`, the handoff replay,
+    /// the session-lost removal) — the three ways a row can vanish.
+    ///
+    /// No double restore: `cancelPreviewLive` computes its verdict (which nils
+    /// `previewIdentity`) BEFORE the restore apply reaches here, and an
+    /// audition's own replacement stop runs while `isAuditionInFlight` is true
+    /// — which is precisely what that flag exists to distinguish.
+    func notePreviewRowRemoved(rowKey: StudioSelectionKey) {
+        guard !isAuditionInFlight,
+              previewLive.previewIdentity?.selectionKey == rowKey else { return }
+        _ = previewLive.cancelVerdict(live: nil)
+        previewLiveRoom = nil
+        setPreviewingLive(false)
+        studioNotice = StudioNotice(message: PreviewLiveCopy.restoreDropped)
+        statusMessage = "⚠ \(PreviewLiveCopy.restoreDropped)"
     }
 
     /// Cancel: restore the previous look EXACTLY — fenced on the audition's
@@ -264,8 +436,14 @@ extension StudioViewModel {
                   let values = snapshot.previousValues,
                   let card = lookCard(forID: previous.cardID) else {
                 // The target was idle before the audition — cancel just stops
-                // the preview and leaves the room as it was.
-                await stopActiveTargetCore(StudioSelectionKey(room: room))
+                // the preview and leaves the room AS IT WAS.
+                //
+                // M3: NOT the explicit stop. "Idle" means no look was running,
+                // not that the room was dark: `stopActiveTargetCore` sets
+                // `isExplicitStop`, which turns the lights OFF. Putting the
+                // room back is not the same as switching it off, and the user
+                // has no undo for that from here.
+                await stopPreviewTargetPreservingLights(StudioSelectionKey(room: room))
                 return
             }
             // Reinstate the EXACT values by seeding the card's next-start
@@ -283,9 +461,25 @@ extension StudioViewModel {
             valueScopes.setDefaults(values, forCard: previous.cardID)
             persistDefaults(immediately: false)
             bumpLiveValuesTick()
+            // M5: the observed transport, both ways. `true : nil` let a
+            // previous look that had FALLEN BACK to REST come back streaming,
+            // because nil re-derives the preference from the preset instead of
+            // reproducing what was actually there. App-driven cards ignore the
+            // override entirely, so passing `false` costs them nothing.
             await applyCore(card, roomOverride: room,
-                            preferEntertainmentOverride: snapshot.previousWasStreaming ? true : nil)
+                            preferEntertainmentOverride: snapshot.previousWasStreaming)
             guard runningEffect(for: room)?.cardID != previous.cardID else { return }
+
+            // H3. A prompt is standing: the restore is DEFERRED, not refused.
+            // Rolling the defaults back here would leave the confirmation's
+            // apply seeded from the PRE-RESTORE values — the exact wrong ones —
+            // and would spend a "we couldn't put it back" sentence on a
+            // question the user has not answered yet. Leave the snapshot values
+            // in place for the confirmation to start from, say nothing, and
+            // keep the machine consumed (this cancel has spent the audition
+            // either way).
+            if hasPendingLifecyclePrompt { return }
+
             valueScopes.setDefaults(before, forCard: previous.cardID)
             persistDefaults(immediately: false)
             bumpLiveValuesTick()
@@ -295,10 +489,17 @@ extension StudioViewModel {
     }
 
     /// Apply: the audition is the keeper — discard the snapshot.
-    func commitPreviewLive() {
-        previewLive.commit()
-        previewLiveRoom = nil
-        setPreviewingLive(false)
+    ///
+    /// Serialized like every other preview transition (L3): it mutates the
+    /// lifecycle state the apply/cancel bodies read, so it must not interleave
+    /// with one of them.
+    func commitPreviewLive() async {
+        await serialized { [weak self] in
+            guard let self else { return }
+            self.previewLive.commit()
+            self.previewLiveRoom = nil
+            self.setPreviewingLive(false)
+        }
     }
 
     // ── Board plumbing ──────────────────────────────────────────
@@ -323,6 +524,16 @@ extension StudioViewModel {
     /// snapshot, so controls resolve unavailable-with-retry instead of
     /// standing on nothing.
     func targetSnapshot(for effect: RunningEffect) -> CustomizationTargetSnapshot {
+        // OBSERVATION DEPENDENCY, not dead code. `lightsByBridge` is
+        // @ObservationIgnored infrastructure, so a board that resolved
+        // "CHECKING WHAT THESE LIGHTS SUPPORT" against an empty cache would sit
+        // there forever: the inventory landing later mutated nothing SwiftUI
+        // was watching, so nothing re-rendered and the note never went away.
+        // Reading the orchestrator's inventory generation here enrolls every
+        // board that resolves through this snapshot in exactly one observable
+        // fact — "a fresh light inventory arrived" — so the answer re-resolves
+        // the moment the bridge finally answers.
+        _ = orchestrator?.capabilityInventoryGeneration
         let transport: CustomizationTransport
         switch effect.card.strategy {
         case .bridgeNative:
@@ -364,9 +575,18 @@ extension StudioViewModel {
     /// on a target whose lights were never read. It previously built its own
     /// `.known` coverage unconditionally, which made "we could not read these
     /// lights" indistinguishable from "all of them do colour".
-    func colorCapabilityContext(for effect: RunningEffect) -> ColorCapabilityContext {
+    ///
+    /// `snapshot:` lets a caller that has ALREADY built the snapshot hand it
+    /// over rather than pay for a second scan of the light cache. The board
+    /// builds one per render pass for its resolutions and then asked for the
+    /// colour context, which built a second one — two passes over every light,
+    /// and two separate instants of truth describing one control.
+    func colorCapabilityContext(
+        for effect: RunningEffect,
+        snapshot: CustomizationTargetSnapshot? = nil
+    ) -> ColorCapabilityContext {
         var context = ColorCapabilityContext()
-        context.coverage = targetSnapshot(for: effect).color
+        context.coverage = snapshot?.color ?? targetSnapshot(for: effect).color
         guard let lights = orchestrator?.cachedRawLights(for: effect.room.bridgeID),
               !effect.lightIDs.isEmpty else { return context }
         let idSet = Set(effect.lightIDs)
@@ -536,6 +756,11 @@ extension StudioViewModel {
         paramSendTasks[key]?.cancel()
         paramSendTasks[key] = nil
         pendingParamSends[key] = nil
+        // The window already handed to the mailbox dies here too: it was
+        // authored against a run that no longer exists, so carrying it into a
+        // successor's window would re-send exactly the values this teardown
+        // exists to fence.
+        inFlightParamSends[key] = nil
     }
 
     /// Accumulate this commit into the target's window and (re)arm the single
@@ -547,6 +772,16 @@ extension StudioViewModel {
                                     number: Double?, color: Color?) {
         let targetKey = session.identity.targetKey
         var pending = pendingParamSends[targetKey] ?? PendingStudioSend(session: session)
+        // CROSS-WINDOW LOSS (M3). `RestSender` keeps a latest-wins mailbox per
+        // scope, so the closure a previous window enqueued can be DROPPED for
+        // this one — and that window's fields were removed from
+        // `pendingParamSends` when it was enqueued, so they would simply be
+        // gone. Carry anything still in flight into this window; newer values
+        // win, and re-sending a field whose closure did run is idempotent.
+        if let inFlight = inFlightParamSends[targetKey] {
+            pending.numbers.merge(inFlight.numbers) { mine, _ in mine }
+            pending.colors.merge(inFlight.colors) { mine, _ in mine }
+        }
         pending.session = session
         if let number { pending.numbers[session.control.paramID] = number }
         if let color { pending.colors[session.control.paramID] = color }
@@ -665,17 +900,53 @@ extension StudioViewModel {
         let brightness = groupedBrightness
         let xy = groupedXY
         let mirek = groupedMirek
+        let identity = session.identity
+        let targetKey = identity.targetKey
 
-        await orchestrator.enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { stillCurrent in
+        // The window is now IN FLIGHT: recorded here so a successor window can
+        // carry its fields if the mailbox drops this closure (M3), cleared by
+        // the closure the moment it actually runs.
+        inFlightParamSends[targetKey] = window
+
+        await orchestrator.enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { [weak self] scopeIsCurrent in
+            self?.inFlightParamSends[targetKey] = nil
             // Cooperative cancellation before EVERY send, including the first
             // (packet 3) — Task.isCancelled is inert inside the mailbox's
             // unstructured flush task.
+            //
+            // AND the identity fence. `stillCurrent` is bound to the Studio
+            // `RestScope` EPOCH, which only the `.appDriven` teardown bumps —
+            // so for a bridge-native row a closure already enqueued when Stop
+            // landed kept sending `effects_v2` bodies AFTER the `no_effect`
+            // sweep, re-arming the firmware effect on lights the user had just
+            // turned off. The scopes know: every teardown path retires the
+            // instance, so `isCurrent` is false for exactly the runs whose
+            // writes must not land, on every strategy.
+            let stillCurrent: @MainActor () async -> Bool = {
+                guard await scopeIsCurrent() else { return false }
+                guard let self, self.valueScopes.isCurrent(identity) else { return false }
+                return true
+            }
             if needsGrouped, let groupedLightID {
+                // MUTUALLY EXCLUSIVE CLIP FIELDS. `setGroupedLightEffect`
+                // writes `color` and `color_temperature` into ONE body, and the
+                // bridge rejects a grouped body carrying both — `try?` then
+                // swallowed the rejection, so a window that changed colour AND
+                // warmth silently lost its brightness too. They travel as two
+                // PUTs: dimming + xy first, then the mirek.
                 guard await stillCurrent() else { return }
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: nil,
-                    brightness: brightness, xy: xy, mirek: mirek,
+                    brightness: brightness, xy: xy,
+                    mirek: xy == nil ? mirek : nil,
                     duration: transitionMs)
+                if xy != nil, let mirek {
+                    guard await stillCurrent() else { return }
+                    try? await api.setGroupedLightEffect(
+                        id: groupedLightID, on: nil,
+                        brightness: nil, xy: nil, mirek: mirek,
+                        duration: transitionMs)
+                }
             }
             if let v2Body {
                 for id in capable {

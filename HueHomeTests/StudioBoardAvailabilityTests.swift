@@ -71,6 +71,7 @@ final class StudioBoardAvailabilityTests: XCTestCase {
     private func target(card: StudioCard,
                         lights: Int = 3,
                         color: CapabilityCoverage? = nil,
+                        colorTemperature: CapabilityCoverage? = nil,
                         transport: CustomizationTransport = .entertainment,
                         running: Bool = true) -> CustomizationTargetSnapshot {
         CustomizationTargetSnapshot(
@@ -79,7 +80,7 @@ final class StudioBoardAvailabilityTests: XCTestCase {
             reachableLights: lights,
             dimming: .all(total: lights),
             color: color ?? .all(total: lights),
-            colorTemperature: .all(total: lights),
+            colorTemperature: colorTemperature ?? .all(total: lights),
             mirekRange: MirekRange(minMirek: 153, maxMirek: 500),
             gradient: .all(total: lights),
             effectsV2: .all(total: lights),
@@ -218,7 +219,8 @@ final class StudioBoardAvailabilityTests: XCTestCase {
         XCTAssertEqual(remediation, .retryCapabilityFetch)
         XCTAssertFalse(StudioBoardAvailability.isInteractive(resolution!.availability))
         XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: true),
-                       "CHECKING WHAT THESE LIGHTS SUPPORT")
+                       "CHECKING WHAT THESE LIGHTS SUPPORT — REFRESHES WHEN THE BRIDGE ANSWERS",
+                       "the note must say what happens next, not name a dead end")
     }
 
     // ──────────────────────────────────────────────────────────
@@ -308,6 +310,203 @@ final class StudioBoardAvailabilityTests: XCTestCase {
             return parts.contains { mentionsEntertainmentTransport($0) }
         default:                          return false
         }
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 8. Evidence survives the funnel (audit §7)
+    // ──────────────────────────────────────────────────────────
+
+    /// `brightness` on a bridge-native effect is a GROUPED light-state write.
+    /// The send is code-proven; whether it visibly scales a running firmware
+    /// effect is the hardware check `EffectParameterProfiles` still owes. The
+    /// first cut of this funnel threw `profile.evidence` away, so the control
+    /// rendered fully live with no note — the exact thing the capability
+    /// matrix says must not happen. It stays EDITABLE (the write ships), but
+    /// it says what it does not know.
+    func testHardwarePendingBrightnessIsEditableButLabelledUnverified() {
+        let card = effectCard("opal")
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "brightness"),
+            snapshot: target(card: card, transport: .bridgeEffectV2))
+
+        XCTAssertEqual(resolution?.availability, .active,
+                       "the send path works — nothing here may take the control away")
+        XCTAssertEqual(resolution?.isHardwareUnverified, true)
+        XCTAssertTrue(StudioBoardAvailability.isInteractive(
+            resolution: resolution, strategy: card.strategy))
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: false),
+                       "UNVERIFIED ON THESE LIGHTS")
+        XCTAssertEqual(StudioBoardAvailability.opacity(resolution: resolution,
+                                                       strategy: card.strategy),
+                       StudioBoardAvailability.stagedOpacity,
+                       "unproven must not LOOK like proven")
+    }
+
+    /// `base_color` is code-proven only on its per-light `effects_v2` path. On
+    /// a v1-only room the shipping fallback is a grouped xy write — an
+    /// approximation whose behaviour against a running firmware effect is
+    /// still a pending hardware check.
+    func testBaseColorOnV1OnlyRoomIsLabelledUnverified() {
+        let card = effectCard("opal")
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"),
+            snapshot: target(card: card, transport: .legacy))
+
+        XCTAssertEqual(resolution?.availability, .active)
+        XCTAssertEqual(resolution?.isHardwareUnverified, true)
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: true),
+                       "UNVERIFIED ON THESE LIGHTS",
+                       "the colour section suppresses COVERAGE, never the evidence caveat")
+    }
+
+    /// The same control on a room whose lights took `effects_v2`: the
+    /// per-light path IS the proof, so this one is fully live and silent.
+    func testBaseColorOnV2RoomIsFullyLiveAndSilent() {
+        let card = effectCard("opal")
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"),
+            snapshot: target(card: card, transport: .bridgeEffectV2))
+
+        XCTAssertEqual(resolution?.availability, .active)
+        XCTAssertEqual(resolution?.isHardwareUnverified, false)
+        XCTAssertNil(StudioBoardAvailability.note(for: resolution!, isColor: true))
+        XCTAssertEqual(StudioBoardAvailability.opacity(resolution: resolution,
+                                                       strategy: card.strategy), 1)
+    }
+
+    /// A control the resolver has already refused says the refusal, not the
+    /// caveat: two problems stacked on one control read as two problems.
+    func testUnavailableControlDoesNotAlsoClaimUnverified() {
+        let card = effectCard("opal")
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"),
+            snapshot: target(card: card, color: .none(total: 3), transport: .legacy))
+
+        XCTAssertEqual(resolution?.isHardwareUnverified, false)
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: true),
+                       "NO COLOR LIGHTS HERE")
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 9. App-driven numerics that are really hardware axes
+    // ──────────────────────────────────────────────────────────
+
+    /// `ambient.warmth` is a mirek slider. Its catalog kind is `.slider`, so
+    /// the first cut — which translated only `entOnly` — resolved it `.active`
+    /// on a room with no CT-capable light at all, writing colour temperature
+    /// into fixtures that cannot honour it.
+    func testAmbientWarmthWithoutCTCapableLightsIsUnavailable() {
+        let card = liveCard("ambient")
+        let warmth = param(card, "warmth")
+        XCTAssertFalse(warmth.entOnly)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: warmth,
+            snapshot: target(card: card, colorTemperature: .none(total: 3),
+                             transport: .roomREST))
+
+        XCTAssertEqual(resolution?.availability,
+                       .unavailable(reason: .noCTCapableLights,
+                                    remediation: .addCapableLights))
+        XCTAssertFalse(StudioBoardAvailability.isInteractive(
+            resolution: resolution, strategy: card.strategy))
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: false),
+                       "NO WHITE-TONE LIGHTS HERE")
+    }
+
+    /// …and on a room that CAN do white tones it is live as before. The gate
+    /// is the hardware fact, not the param name.
+    func testAmbientWarmthWithCTCapableLightsStaysActive() {
+        let card = liveCard("ambient")
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "warmth"),
+            snapshot: target(card: card, transport: .roomREST))
+
+        XCTAssertEqual(resolution?.availability, .active)
+        XCTAssertNil(StudioBoardAvailability.note(for: resolution!, isColor: false))
+    }
+
+    /// Dimming stays universal: adding a hardware gate to Brightness would put
+    /// a caveat on every Live card for nothing.
+    func testAppDrivenBrightnessCarriesNoHardwareRequirement() {
+        let card = liveCard("ambient")
+        let descriptor = StudioBoardAvailability.descriptor(card: card,
+                                                            param: param(card, "brightness"))
+        XCTAssertEqual(descriptor?.requirement, CapabilityRequirement.none)
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 10. The nil answer, and the empty room
+    // ──────────────────────────────────────────────────────────
+
+    /// nil used to mean "interactive". For a bridge-native param absent from
+    /// the audit-§7 table that is fail-OPEN: there is no proven send path at
+    /// all, so a live-looking control is the original defect in a new place.
+    func testUnprofiledBridgeNativeParamIsNotInteractive() {
+        let card = StudioCard(
+            id: "opal", name: "Opal", tagline: "", icon: "circle",
+            accentColor: .white, requiresForeground: true,
+            params: [StudioParam(id: "not_in_the_table", label: "Mystery",
+                                 kind: .slider(min: 0, max: 1),
+                                 defaultValue: 0, tier: .support)],
+            strategy: .bridgeNative(effect: "opal"),
+            compositionLayerActivity: nil)
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: card.params[0],
+            snapshot: target(card: card, transport: .bridgeEffectV2))
+
+        XCTAssertNil(resolution, "no profile — the funnel has nothing to stand on")
+        XCTAssertFalse(StudioBoardAvailability.isInteractive(resolution: resolution,
+                                                             strategy: card.strategy))
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution, strategy: card.strategy,
+                                                    isColor: false),
+                       "NOT AVAILABLE FOR THESE LIGHTS")
+        XCTAssertEqual(StudioBoardAvailability.opacity(resolution: resolution,
+                                                       strategy: card.strategy),
+                       StudioBoardAvailability.disabledOpacity)
+    }
+
+    /// Composition boards keep the old nil answer: they declare no params
+    /// here, so nil means "not this funnel's business", not "unproven".
+    func testNilOnACompositionCardStaysInteractive() {
+        let strategy = StudioStrategy.composition(presetID: UUID())
+        XCTAssertTrue(StudioBoardAvailability.isInteractive(resolution: nil,
+                                                            strategy: strategy))
+        XCTAssertNil(StudioBoardAvailability.note(for: nil, strategy: strategy,
+                                                  isColor: false))
+        XCTAssertEqual(StudioBoardAvailability.opacity(resolution: nil, strategy: strategy), 1)
+    }
+
+    /// A target with no lights is not "still checking" — nothing will ever
+    /// answer. CHECKING there is a spinner that never resolves.
+    func testTargetWithNoLightsSaysThereAreNone() {
+        let card = liveCard("party")
+        let snapshot = CustomizationSnapshotBuilder.unreadable(
+            identity: identity(for: card), totalLights: 0,
+            transport: .roomREST, running: true)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "color"), snapshot: snapshot)
+
+        XCTAssertFalse(StudioBoardAvailability.isInteractive(
+            resolution: resolution, strategy: card.strategy))
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: true),
+                       "NO LIGHTS HERE")
+    }
+
+    /// Hidden is "do not render", not "render dimmed" (spec §17). The board
+    /// asks this before it builds anything.
+    func testHiddenResolutionRendersNothing() {
+        let hidden = StudioBoardResolution(
+            resolution: CustomizationResolution(
+                control: CustomizationControlID(cardID: "party", paramID: "color"),
+                availability: .hidden, behavior: .staged),
+            isHardwareUnverified: false,
+            totalLights: 3)
+
+        XCTAssertFalse(StudioBoardAvailability.rendersControl(hidden))
+        XCTAssertTrue(StudioBoardAvailability.rendersControl(nil),
+                      "a control the funnel does not govern still renders")
     }
 
     // ── Composition boards stay Composer-owned ──────────────────

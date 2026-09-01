@@ -13,6 +13,11 @@ shipping source on every run and are always current. Evidence columns are only a
 the proof behind them: a cited file:line, a passing test allowlist, or `PENDING`.
 **`PENDING` means unproven, and audit §29 forbids rendering an unproven control as active.**
 
+Every `file:line` citation below is machine-verified on every run: the cited line must
+still contain the consuming read for that exact parameter, inside a run loop belonging to
+that exact card. `--check` fails if a citation has rotted; `--refresh-citations` re-finds
+the line numbers after the loops move.
+
 ## Totals
 
 | | Cards | Controls |
@@ -21,7 +26,17 @@ the proof behind them: a cited file:line, a passing test allowlist, or `PENDING`
 | Live (app-driven) | 4 | 23 |
 | **Total** | **15** | **68** |
 
-Controls with a proven runtime consumer or verified send path today: **68 / 68**. Bridge-native rows are backed by the audit-§7 profile table in `HueHome/Core/EffectParameterProfiles.swift`; rows named hardware-pending state the exact physical check still owed and must not render as fully live until it runs.
+### Evidence split
+
+| Evidence | Controls | Meaning |
+| --- | ---: | --- |
+| Code-proven SEND PATH | 57 / 68 | A live-path consumer read in the shipping source (app-driven), or a `codeProven` profile citing the send path (bridge-native). Proves the write leaves the app — nothing more. |
+| No code-proven send path (hardware-pending evidence) | 11 / 68 | The parameter can be sent, but no code path proves it reaches the effect: the Swift profile classifies it `hardwarePending`. Audit §7 still owes this evidence. |
+| Pending / unknown | 0 / 68 | No proof at all — the control must not render as active (audit §29). |
+
+**Rows whose send path is code-proven but whose visible behaviour still owes a hardware check: 23 / 68** (see `EffectParameterProfiles.pendingHardwareChecks`). This is a SUBSET of the code-proven row above, not a fourth bucket — those rows are counted as code-proven. Broken out: `base_color` x9, `speed` x11, `warmth` x3. `pendingHardwareChecks` owes 4 checks — `base_color`, `brightness`, `speed`, `warmth` — while only `brightness` classifies as `hardwarePending`; the other three ship a proven send whose effect on a light nobody has watched. Where the owed check is about the legacy grouped fallback (`base_color`, `warmth`), the availability column says so inline; `speed` owes a per-effect, per-model firmware-response check that no column can express.
+
+**Hardware evidence is still owed.** Audit §7 counts a row as proven only when a physical bridge has shown the behaviour. The hardware-pending rows above name the exact check still outstanding (see `pendingHardwareChecks` in `HueHome/Core/EffectParameterProfiles.swift` and the §V-B on-device checklist); until those checks run, those controls must not be described or rendered as fully live. Code-proven means the write provably leaves the app — not that anyone has watched a light obey it.
 
 ---
 
@@ -35,7 +50,7 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `party.speed` | Speed | slider | essential | yes | party engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `party.brightness` | Brightness | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `party.color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8074,8148 | Entertainment + Room REST | immediate | active while running |
+| `party.color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8362,8486 | Entertainment + Room REST | immediate | active while running |
 | `party.min_brightness` | Fade Floor | slider | support | yes | party engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `party.smoothness` | Smoothness | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 
@@ -45,7 +60,7 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `strobe.speed` | Speed | slider | essential | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `strobe.brightness` | Brightness | slider | essential |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `strobe.flash_color` | Flash Color | colorPicker | color | yes | UnifiedOrchestrator.swift:7950 | Entertainment only | immediate | active while streaming / staged on Room REST |
+| `strobe.flash_color` | Flash Color | colorPicker | color | yes | UnifiedOrchestrator.swift:8194 | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `strobe.min_brightness` | Min Brightness | slider | support |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `strobe.duty_cycle` | Duty Cycle | slider | support | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 
@@ -55,8 +70,8 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `thunderstorm.frequency` | Storm Intensity | slider | essential |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.flash_intensity` | Flash Brightness | slider | essential |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.ambient_color` | Ambient Color | colorPicker | color |  | UnifiedOrchestrator.swift:8219,8239 | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.flash_color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8256,8295 | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.ambient_color` | Ambient Color | colorPicker | color |  | UnifiedOrchestrator.swift:8579,8596,8630,8677,8718 | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.flash_color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8650,8719 | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.min_brightness` | Ambient Level | slider | support |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.strike_rate` | Strike Chance | slider | support |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.flash_length` | Flash Length | slider | support | yes | thunderstorm engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
@@ -195,4 +210,5 @@ Written as card + param pairs. A substring check for `ambient.color` also matche
 
 - Composer controls: Composer keeps its own semantic model and is outside generic `StudioParam` ownership (spec §20). Slice 3 covers convergence.
 - Beat: no Live card declares a Beat param; Beat reaches engines through the orchestrator. Per-engine consumption must be proven before any inline Beat control (spec §21).
+- Per-effect differences in a bridge-native parameter: the profile table is keyed by paramID only, mirroring `profile(effect:paramID:)`, which ignores its `effect:` argument. Recorded Slice 3 debt.
 - Hardware validation: nothing in this matrix has been validated on a physical bridge in this slice.

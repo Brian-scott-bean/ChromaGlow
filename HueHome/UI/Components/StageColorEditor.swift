@@ -30,6 +30,13 @@ struct StageColorEditor: View {
     let current: Color?
     var swatches: [Color] = StudioViewModel.presetColors
     var context: ColorCapabilityContext = ColorCapabilityContext()
+    /// May the user touch this editor at all (the board's availability funnel
+    /// decides)? The caller's `.disabled` is the gate; this is the floor.
+    /// `HueSaturationPad`'s drag and `SavedColorStrip`'s tap/drag/context menu
+    /// are raw gestures rather than `Control`s, so each write path is closed
+    /// here too — and the pad, a drag surface with nothing else to say, does
+    /// not render at all.
+    var isInteractive: Bool = true
     /// Caller-owned inline expansion (session working memory).
     @Binding var isExpanded: Bool
     let onApply: (Color) -> Void
@@ -39,6 +46,7 @@ struct StageColorEditor: View {
             HStack(spacing: 8) {
                 // Current color chip — tap to expand/collapse the pad inline.
                 Button {
+                    guard isInteractive else { return }
                     withAnimation(HueAnimation.fast) { isExpanded.toggle() }
                     HapticManager.shared.light()
                 } label: {
@@ -71,6 +79,7 @@ struct StageColorEditor: View {
                 swatches: swatches,
                 selected: current,
                 onSelect: { color in
+                    guard isInteractive else { return }
                     withAnimation(HueAnimation.fast) { onApply(color) }
                 }
             )
@@ -82,6 +91,7 @@ struct StageColorEditor: View {
                         .tracking(1.2)
                         .foregroundStyle(.white.opacity(0.45))
                     SavedColorStrip { saved in
+                        guard isInteractive else { return }
                         // Mirek-only swatches carry no xy; skip rather than guess.
                         guard let x = saved.x, let y = saved.y else { return }
                         let hsb = HueColorUtils.hsb(fromX: x, y: y, brightness: 100)
@@ -92,7 +102,7 @@ struct StageColorEditor: View {
                 }
             }
 
-            if isExpanded {
+            if isExpanded && isInteractive {
                 HueSaturationPad(
                     title: "Fine Tune",
                     hue: currentHueSat.hue,

@@ -143,8 +143,28 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
     /// Register a look as running, seeding its live values from the card's
     /// persisted defaults.
     func startRunning(_ identity: RunningLookIdentity) {
+        startRunning(identity, seed: defaults(forCard: identity.cardID))
+    }
+
+    /// Register a look as running with an EXPLICIT seed.
+    ///
+    /// THE LEAK THIS CLOSES. `live(for:)` layers the instance's own set over
+    /// the card's CURRENT defaults, and defaults track last-used values. So an
+    /// instance started while `defaults` was empty (or merely missing a param)
+    /// held no entry for that param — and every later read of it fell through
+    /// to whatever ANOTHER instance had since written into the defaults. Two
+    /// rooms running one card, edit room A's speed, and room B's live speed
+    /// moved with it.
+    ///
+    /// The fix is to make the seed COMPLETE at start: the caller materializes
+    /// every parameter the card declares (catalog default) with the persisted
+    /// overrides layered on top, so `runningValues[key]` answers for every
+    /// control from the first frame and the layering in `live(for:)` can never
+    /// reach past it.
+    func startRunning(_ identity: RunningLookIdentity,
+                      seed: CustomizationValueSet<ColorValue>) {
         let key = identity.targetKey
-        runningValues[key] = defaults(forCard: identity.cardID)
+        runningValues[key] = seed
         runningGenerations[key] = identity.generation
     }
 
