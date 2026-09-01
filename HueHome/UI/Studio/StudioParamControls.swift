@@ -137,7 +137,7 @@ struct StudioParamRow: View {
 
     @ViewBuilder
     private func colorPickerRow(param: StudioParam) -> some View {
-        // sendColorParam persists via setParamColor AND live-tints running
+        // commitColorParam persists as the next-start default AND live-tints running
         // bridge-native effects per-light — the old row only persisted,
         // leaving base_color dead while an effect ran.
         VStack(alignment: .leading, spacing: 10) {
@@ -147,7 +147,7 @@ struct StudioParamRow: View {
                 selected: vm.paramColor(for: cardID, paramID: param.id),
                 onSelect: { color in
                     withAnimation(HueAnimation.fast) {
-                        vm.sendColorParam(cardID: cardID, paramID: param.id, color: color)
+                        vm.commitColorParam(cardID: cardID, paramID: param.id, color: color)
                     }
                 }
             )
@@ -163,7 +163,7 @@ struct StudioParamRow: View {
                     gamut: .c,
                     height: 120,
                     onChanged: { hue, sat, _ in
-                        vm.sendColorParam(
+                        vm.commitColorParam(
                             cardID: cardID, paramID: param.id,
                             color: Color(hue: hue, saturation: sat, brightness: 1.0)
                         )
@@ -180,7 +180,7 @@ struct StudioParamRow: View {
                             // Mirek-only swatches carry no xy; skip rather than guess.
                             guard let x = saved.x, let y = saved.y else { return }
                             let hsb = HueColorUtils.hsb(fromX: x, y: y, brightness: 100)
-                            vm.sendColorParam(
+                            vm.commitColorParam(
                                 cardID: cardID, paramID: param.id,
                                 color: Color(hue: hsb.h, saturation: hsb.s, brightness: 1.0)
                             )
@@ -208,7 +208,7 @@ struct StudioParamRow: View {
             title: param.label,
             isOn: Binding(
                 get: { vm.paramValue(for: cardID, paramID: param.id, default: param.defaultValue) > 0.5 },
-                set: { vm.setParamValue(for: cardID, paramID: param.id, value: $0 ? 1 : 0) }
+                set: { vm.commitParam(cardID: cardID, paramID: param.id, value: $0 ? 1 : 0) }
             )
         )
     }
@@ -228,8 +228,10 @@ struct StudioParamRow: View {
                         return options.min { abs($0.value - current) < abs($1.value - current) }?.value ?? param.defaultValue
                     },
                     set: { newValue in
-                        vm.setParamValue(for: cardID, paramID: param.id, value: newValue)
-                        vm.sendParam(cardID: cardID, paramID: param.id, value: newValue)
+                        // commitParam captures the exact running identity at
+                        // call time, commits through the fence, pushes the
+                        // engine box, and schedules the debounced bridge send.
+                        vm.commitParam(cardID: cardID, paramID: param.id, value: newValue)
                     }
                 )
             )
@@ -253,6 +255,11 @@ private struct StudioSliderRow: View {
     @State private var localValue: Double = 0
     @State private var isDragging = false
     @State private var seeded = false
+    /// The exact identity + routing facts captured when THIS gesture began.
+    /// Every tick commits against it — a selection change, stop, reset, or
+    /// card replacement mid-drag makes the remaining ticks drop instead of
+    /// landing on whatever is selected now.
+    @State private var editSession: StudioParamSession?
 
     var body: some View {
         StageSlider(
@@ -261,26 +268,37 @@ private struct StudioSliderRow: View {
                 get: { localValue },
                 set: { newValue in
                     localValue = newValue
-                    vm.setParamValue(for: cardID, paramID: param.id, value: newValue)
-                    // Same debounce + latest-wins mailbox discipline as before —
-                    // sendParam itself debounces 150 ms and enqueues.
-                    vm.sendParam(cardID: cardID, paramID: param.id, value: newValue)
+                    if let session = editSession {
+                        vm.updateParamEdit(session, value: newValue)
+                    } else {
+                        // No captured session (gesture began with the card not
+                        // running here, or a tick arrived before the editing
+                        // bracket) — one-shot capture-at-call is still exact.
+                        vm.commitParam(cardID: cardID, paramID: param.id, value: newValue)
+                    }
                 }
             ),
             range: min...max,
             format: param.format ?? { "\(Int($0.rounded()))" },
-            onEditingChanged: { isDragging = $0 }
+            onEditingChanged: { editing in
+                isDragging = editing
+                if editing {
+                    editSession = vm.beginParamEdit(cardID: cardID, paramID: param.id)
+                } else {
+                    if let session = editSession { vm.endParamEdit(session) }
+                    editSession = nil
+                }
+            }
         )
         .onAppear {
             guard !seeded else { return }
             localValue = vm.paramValue(for: cardID, paramID: param.id, default: param.defaultValue)
             seeded = true
         }
-        .onChange(of: vm.paramValues[cardID]?[param.id]) { _, newValue in
+        .onChange(of: vm.paramValue(for: cardID, paramID: param.id, default: param.defaultValue)) { _, newValue in
             guard !isDragging else { return }
-            // nil = the card was reset to defaults — snap back to the default.
-            let resolved = newValue ?? param.defaultValue
-            if resolved != localValue { localValue = resolved }
+            // Reset / target switch / external write — snap to the resolved value.
+            if newValue != localValue { localValue = newValue }
         }
     }
 }

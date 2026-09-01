@@ -1007,13 +1007,20 @@ fi
 # symbols may not return, the VM's teardown loops must keep their same-bridge
 # predicate, and the app-driven stop must keep proving exact bridge+room
 # ownership before it cancels or removes anything.
+# Slice 2 production wiring strengthened the update path: it must name the
+# room as well as the bridge, and the runtime's owning room must match —
+# the same exact-ownership proof stopAppDrivenStudioEffect carries.
 for sym in 'studioEngineRuntimesByBridge: [String: StudioEngineRuntime]' \
            'studioRestScopesByBridge: [String: RestScope]' \
-           'func updateStudioParams(values: [String: Double], colors: [String: Color], bridgeID: String?)'; do
+           'bridgeID: String?, roomID: String'; do
     if ! grep -qF "$sym" "$HC_ORCH"; then
         fail "composer-hardware-convergence" "'$sym' is missing from $HC_ORCH — the per-bridge app-driven engine runtime collapsed back toward a global slot"
     fi
 done
+hc_update_guard=$(awk '/func updateStudioParams\(/,/^    }/' "$HC_ORCH" | grep -cF 'runtime.roomID == roomID' || true)
+if [[ "$hc_update_guard" -lt 1 ]]; then
+    fail "composer-hardware-convergence" "updateStudioParams lost its runtime.roomID == roomID guard — a live edit could land on a sibling room's engine on the same bridge"
+fi
 hc_global_slots=$(grep -nE 'activeStudioTask|activeParamBox|activeStudioRestScope' "$HC_ORCH" "$HC_VM" \
     | grep -vE ':[[:space:]]*//' || true)
 if [[ -n "$hc_global_slots" ]]; then
@@ -1037,11 +1044,16 @@ if ! echo "$hc_appstop_body" | grep -q 'studioEngineRuntimesByBridge\[bid\] == n
     fail "composer-hardware-convergence" "stopAppDrivenStudioEffect no longer checks for a newer runtime across its settle suspension — a stale stop could tear down a successor's session"
 fi
 
-# No timing waits in the suites that carry this slice's behaviour.
+# No timing waits in the suites that carry this slice's behaviour. The
+# unified-customization suites (Slice 1 foundation + Slice 2 production
+# wiring) express every race as call ordering against the pure fence.
 HC_TESTS=(
     "HueHomeTests/MultiBridgeRoutingTests.swift"
     "HueHomeTests/EntertainmentAvailabilityTests.swift"
     "HueHomeTests/BridgeAnimationCorrectnessTests.swift"
+    "HueHomeTests/CustomizationIdentityTests.swift"
+    "HueHomeTests/CustomizationResolverTests.swift"
+    "HueHomeTests/StudioProductionWiringTests.swift"
 )
 for f in "${HC_TESTS[@]}"; do
     [[ -f "$f" ]] || continue

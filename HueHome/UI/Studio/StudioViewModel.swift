@@ -531,6 +531,12 @@ struct RunningEffect {
     let isEntertainment: Bool  // true = DTLS session active
     let requestedTransport: CompositionPreferredTransport?
     let transportFallback: Bool
+    /// The exact running identity (Slice 2 production wiring): bridge + group +
+    /// kind + look + execution + generation. Every mutation captured against
+    /// this row is fenced on THIS value at commit/send time — the weaker
+    /// place-level keys never decide at a mutation boundary. `var` because
+    /// reset/rekey advance the generation in place.
+    var identity: RunningLookIdentity
     /// Lights whose firmware accepted the effects_v2 upgrade — live
     /// speed/color slider writes target exactly these (bridgeNative only).
     var v2CapableLightIDs: [String] = []
@@ -562,21 +568,23 @@ final class StudioViewModel {
     // ── Selection state ───────────────────────────────────────
     var selectedRoom: RoomDisplayItem? = nil
 
-    /// All currently running effects, keyed by EXACT bridge + room identity
-    /// (round 4c). Multiple rooms can have independent effects running
-    /// simultaneously — including the same room id on two bridges, which the
-    /// old room-id-only key could not represent: one bridge's row silently
-    /// overwrote the other's before any exact cleanup could even be attempted.
-    var runningEffects: [RoomEffectKey: RunningEffect] = [:]
+    /// All currently running effects, keyed by EXACT bridge + group + KIND
+    /// identity (Slice 2 production wiring). Round 4c fixed the same-room-id-
+    /// on-two-bridges overwrite with `RoomEffectKey`; this migration adds the
+    /// room-vs-zone axis the Slice 1 identity contract requires — a room and a
+    /// zone sharing an identifier are two rows here, never one. Multiple
+    /// targets can have independent effects running simultaneously.
+    var runningEffects: [StudioSelectionKey: RunningEffect] = [:]
 
     /// The exact row for a room the caller can fully identify.
     func runningEffect(for room: RoomDisplayItem) -> RunningEffect? {
-        runningEffects[RoomEffectKey(room: room)]
+        runningEffects[StudioSelectionKey(room: room)]
     }
 
-    /// Room-only compatibility read: the row when EXACTLY ONE bridge holds
-    /// this room id, nil otherwise. Fail closed on a collision — a caller
-    /// that cannot say which bridge must not be handed either bridge's row.
+    /// Room-only compatibility read: the row when EXACTLY ONE target holds
+    /// this group id, nil otherwise. Fail closed on a collision — a caller
+    /// that cannot say which bridge (or which kind) must not be handed an
+    /// arbitrary row.
     func runningEffect(forRoomID id: String) -> RunningEffect? {
         guard let key = runningEffectKey(forRoomID: id) else { return nil }
         return runningEffects[key]
@@ -584,8 +592,21 @@ final class StudioViewModel {
 
     /// Same exactly-one rule, resolving the key itself (for stops that enter
     /// with a bare room id from the Dashboard bar, Siri, or a handoff record).
-    private func runningEffectKey(forRoomID id: String) -> RoomEffectKey? {
-        let keys = runningEffects.keys.filter { $0.roomID == id }
+    private func runningEffectKey(forRoomID id: String) -> StudioSelectionKey? {
+        let keys = runningEffects.keys.filter { $0.groupID == id }
+        guard keys.count == 1 else { return nil }
+        return keys.first
+    }
+
+    /// Bridge-attributed compatibility resolution for records that carry
+    /// bridge + group id but no kind (saved-look outcomes, handoff prompts,
+    /// stop targets minted before the kind-aware key existed). Resolves the
+    /// unique matching row and fails closed when a room and a zone share the
+    /// id on that bridge — such a caller cannot say which one it means.
+    func runningKey(bridgeID: String?, groupID: String) -> StudioSelectionKey? {
+        let keys = runningEffects.keys.filter {
+            $0.bridgeID == bridgeID && $0.groupID == groupID
+        }
         guard keys.count == 1 else { return nil }
         return keys.first
     }
@@ -916,7 +937,10 @@ final class StudioViewModel {
             let fenceValid = previousLookRemoved
                 && presentationFence.map { orchestrator?.presentationFenceHolds($0) ?? false } ?? false
             if fenceValid {
-                let key = RoomEffectKey(bridgeID: savedBridgeID, roomID: room.id)
+                // The outcome names the bridge; the room record supplies the
+                // kind, so the removal stays exact under the kind-aware key.
+                let key = StudioSelectionKey(bridgeID: savedBridgeID, groupID: room.id, kind: room.kind)
+                stopRunningScopes(forRowAt: key)
                 runningEffects.removeValue(forKey: key)
                 activeCompositionBoxes.removeValue(forKey: key)
             }
@@ -964,7 +988,8 @@ final class StudioViewModel {
             let fenceValid = presentationFence
                 .map { orchestrator?.presentationFenceHolds($0) ?? false } ?? false
             if fenceValid {
-                let key = RoomEffectKey(bridgeID: failedBridgeID, roomID: room.id)
+                let key = StudioSelectionKey(bridgeID: failedBridgeID, groupID: room.id, kind: room.kind)
+                stopRunningScopes(forRowAt: key)
                 runningEffects.removeValue(forKey: key)
                 activeCompositionBoxes.removeValue(forKey: key)
             }
@@ -1022,9 +1047,15 @@ final class StudioViewModel {
             // dismisses.
             if let fence = presentationFence, let orchestrator,
                orchestrator.presentationFenceHolds(fence) {
-                let key = RoomEffectKey(bridgeID: bridgeID, roomID: roomID)
-                runningEffects.removeValue(forKey: key)
-                activeCompositionBoxes.removeValue(forKey: key)
+                // The outcome carries bridge + room id but no kind — resolve
+                // the unique row and fail closed on a room/zone collision.
+                if let key = runningKey(bridgeID: bridgeID, groupID: roomID) {
+                    stopRunningScopes(forRowAt: key)
+                    runningEffects.removeValue(forKey: key)
+                    activeCompositionBoxes.removeValue(forKey: key)
+                } else if let boxKey = activeCompositionBoxKey(bridgeID: bridgeID, groupID: roomID) {
+                    activeCompositionBoxes.removeValue(forKey: boxKey)
+                }
             }
             bridgeSaveResult = nil
             studioNotice = StudioNotice(message: "\(result.lookName) was removed from \(result.bridgeLabel).")
@@ -1106,13 +1137,35 @@ final class StudioViewModel {
         currentRoomEffect?.cardID
     }
 
-    // ── Param values (namespaced: cardID → paramID → value) ──
-    // Composition-ready: each card gets its own param namespace.
-    var paramValues:  [String: [String: Double]] = [:]
-    var paramColors:  [String: [String: Color]]  = [:]
+    // ── Param values — three separated scopes (Slice 2 production wiring) ──
+    //
+    // The old card-global `paramValues`/`paramColors` dictionaries served
+    // persisted defaults, live running-instance values, and mid-drag drafts at
+    // once — the exact-state defect audit §2A documents. They are gone. The
+    // scopes engine keys live values by exact running target (bridge + group +
+    // kind + card + execution) and fences every commit on the full identity.
+    @ObservationIgnored let valueScopes = CustomizationValueScopes<Color>()
+
+    /// The app's ONLY generation counter. Bumped for every event that makes
+    /// in-flight writes untrustworthy; the fence compares against it.
+    @ObservationIgnored let generationCounter = CustomizationGenerationCounter()
+
+    /// Observation bridge: `valueScopes` is a plain class the Observation
+    /// runtime cannot see into, so every committed mutation/reset/stop bumps
+    /// this. Accessors read it, which is what re-renders the rows.
+    private(set) var liveValuesTick: UInt64 = 0
+    func bumpLiveValuesTick() { liveValuesTick &+= 1 }
+
+    /// Debounced bridge sends, one slot per exact running target — latest
+    /// wins PER TARGET, so two rooms' edits never cancel each other (the old
+    /// single global `paramTask` did exactly that, and re-read `selectedRoom`
+    /// after its sleep).
+    @ObservationIgnored var paramSendTasks: [RunningLookTargetKey: Task<Void, Never>] = [:]
 
     // ── Engine reference (set in configure()) ─────────────────
-    private weak var orchestrator: UnifiedOrchestrator?
+    // Getter internal so the customization-wiring extension (separate file)
+    // can route sends; the setter stays private to `configure`.
+    private(set) weak var orchestrator: UnifiedOrchestrator?
 
     // ── Safety: Strobe compliance ─────────────────────────────
     /// Whether the user has acknowledged the strobe warning (persisted).
@@ -1181,7 +1234,8 @@ final class StudioViewModel {
     /// bridge+room, so a collision test can prove two same-room-id rows do
     /// NOT alias one `CompositionParamBox` instance (`===`/`!==`).
     func testActiveCompositionBox(bridgeID: String?, roomID: String) -> CompositionParamBox? {
-        activeCompositionBoxes[RoomEffectKey(bridgeID: bridgeID, roomID: roomID)]
+        guard let key = activeCompositionBoxKey(bridgeID: bridgeID, groupID: roomID) else { return nil }
+        return activeCompositionBoxes[key]
     }
     #endif
     private let aiGenerator = AICompositionGenerator()
@@ -1212,13 +1266,24 @@ final class StudioViewModel {
     /// Stable card id for `+ Create` (not `comp_{uuid}`).
     static let composerStarterCardID = "composer_starter"
 
-    /// Live composition param boxes, keyed by EXACT bridge + room identity
-    /// (round 4e) — the render loops read these each frame. UI writes on
+    /// Live composition param boxes, keyed by EXACT bridge + group + kind
+    /// identity (round 4e re-keyed by bridge+room; Slice 2 adds the room-vs-
+    /// zone axis) — the render loops read these each frame. UI writes on
     /// slider drag for instant response. A bare room-id key made two
     /// same-room-id composition rows share one editable box: the second apply
     /// overwrote the first bridge's live editor state, and either stop evicted
     /// the other's box while its render loop still read it.
-    private var activeCompositionBoxes: [RoomEffectKey: CompositionParamBox] = [:]
+    private var activeCompositionBoxes: [StudioSelectionKey: CompositionParamBox] = [:]
+
+    /// Fail-closed box resolution for callers carrying bridge + group id but
+    /// no kind — same rule as `runningKey(bridgeID:groupID:)`.
+    private func activeCompositionBoxKey(bridgeID: String?, groupID: String) -> StudioSelectionKey? {
+        let keys = activeCompositionBoxes.keys.filter {
+            $0.bridgeID == bridgeID && $0.groupID == groupID
+        }
+        guard keys.count == 1 else { return nil }
+        return keys.first
+    }
 
     /// The editable box for the CURRENTLY SELECTED room. A single slot here
     /// meant the tray edited whatever room applied LAST, not the room on
@@ -1227,7 +1292,7 @@ final class StudioViewModel {
     /// reference; the two ownership writes go straight to the dict.
     var activeCompositionBox: CompositionParamBox? {
         guard let room = selectedRoom else { return nil }
-        return activeCompositionBoxes[RoomEffectKey(room: room)]
+        return activeCompositionBoxes[StudioSelectionKey(room: room)]
     }
 
     // ── Status ────────────────────────────────────────────────
@@ -1292,7 +1357,7 @@ final class StudioViewModel {
         // one's row rather than leave a now-unsafe owner in place.
         for (rowKey, effect) in runningEffects {
             guard let key = effect.recovered else { continue }
-            if live[key] == nil || recoveredCountByRoomID[rowKey.roomID, default: 0] > 1 {
+            if live[key] == nil || recoveredCountByRoomID[rowKey.groupID, default: 0] > 1 {
                 runningEffects.removeValue(forKey: rowKey)
             }
         }
@@ -1320,14 +1385,23 @@ final class StudioViewModel {
             // stays stoppable either way because Stop routes on the manifest.
             let displayName = currentPresetName ?? animation.displayName
 
-            runningEffects[RoomEffectKey(room: room)] = RunningEffect(
-                cardID: Self.recoveredCardID(manifestID: key.manifestID),
+            // Identity minted for fencing uniformity; NOT registered with the
+            // value scopes — a recovered mirror has no live box and no editable
+            // controls, so there is nothing for a commit to land on.
+            let recoveredCardID = Self.recoveredCardID(manifestID: key.manifestID)
+            runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
+                cardID: recoveredCardID,
                 card: recoveredCard(for: animation, displayName: displayName),
                 room: room,
                 lightIDs: [],
                 isEntertainment: false,
                 requestedTransport: nil,
                 transportFallback: false,
+                identity: RunningLookIdentity(
+                    bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
+                    cardID: recoveredCardID,
+                    execution: .composition(presetID: animation.manifest.presetID),
+                    generation: generationCounter.bump(.cardReplaced)),
                 recovered: key)
             // NO publishNowPlaying: the orchestrator is the sole publisher of
             // recovered rows. Two publishers is exactly how duplicates appear.
@@ -1410,10 +1484,11 @@ final class StudioViewModel {
                                       bridgeID: target.bridgeID, roomID: target.roomID,
                                       outcomeReason: "nowPlayingEntry turnOffLights=\(target.turnOffLights)")
         isExplicitStop = target.turnOffLights
-        let resolvedKey: RoomEffectKey?
+        let resolvedKey: StudioSelectionKey?
         if let bridgeID = target.bridgeID {
-            let exact = RoomEffectKey(bridgeID: bridgeID, roomID: target.roomID)
-            resolvedKey = runningEffects[exact] != nil ? exact : nil
+            // Bridge-attributed target without a kind: resolve the unique row
+            // and fail closed when a room and a zone share the id there.
+            resolvedKey = runningKey(bridgeID: bridgeID, groupID: target.roomID)
         } else {
             resolvedKey = runningEffectKey(forRoomID: target.roomID)
         }
@@ -1453,34 +1528,74 @@ final class StudioViewModel {
         statusMessage = ""
     }
 
-    /// Restore per-card last-used params (clamped by the store). Values set
-    /// earlier this session win over the persisted snapshot.
+    /// Restore per-card last-used params into SCOPE 1 (persisted defaults),
+    /// clamped by the store. Defaults set earlier this session win over the
+    /// persisted snapshot.
     private var didRestoreParams = false
     private func restoreLastUsedParams() {
         guard !didRestoreParams else { return }
         didRestoreParams = true
         let restored = StudioParamStore.shared.load(cards: effectCards + liveModeCards)
-        paramValues.merge(restored.values) { session, _ in session }
-        paramColors.merge(restored.colors) { session, _ in session }
+        for cardID in Set(restored.values.keys).union(restored.colors.keys) {
+            var set = CustomizationValueSet<Color>(
+                numbers: restored.values[cardID] ?? [:],
+                colors: restored.colors[cardID] ?? [:])
+            let session = valueScopes.defaults(forCard: cardID)
+            // Session-set defaults win over the persisted snapshot.
+            set = session.layered(over: set)
+            valueScopes.setDefaults(set, forCard: cardID)
+        }
+        bumpLiveValuesTick()
     }
 
-    /// Wipe a card back to factory defaults — dicts, persistence, and the
-    /// running effect if it's live (app-driven loops fall back to their own
-    /// defaults on an empty box; bridge-native re-applies v1+v2 defaults).
+    /// Reset ONE exact running instance to factory defaults (Slice 2
+    /// production wiring). Only the SELECTED target's instance is touched:
+    /// the same card running on another room or bridge keeps its values —
+    /// the old card-global nil-out reset every bridge at once.
+    ///
+    /// Persistent policy (spec §22): factory defaults become the card's
+    /// next-start state, so the persisted custom defaults are cleared too.
     func resetParams(for card: StudioCard) async {
-        paramValues[card.id] = nil
-        paramColors[card.id] = nil
-        StudioParamStore.shared.saveNow(values: paramValues, colors: paramColors)
-        guard card.id == runningCardID else { return }
+        valueScopes.clearDefaults(forCard: card.id)
+        persistDefaults()
+        defer { bumpLiveValuesTick() }
+        guard let effect = currentRoomEffect, effect.cardID == card.id else { return }
+
+        // Older in-flight writes for THIS instance lose the fence; the new
+        // identity is written back so subsequent gestures capture it.
+        paramSendTasks[effect.identity.targetKey]?.cancel()
+        paramSendTasks[effect.identity.targetKey] = nil
+        let newIdentity = valueScopes.reset(
+            effect.identity, newGeneration: generationCounter.bump(.reset))
+        runningEffects[StudioSelectionKey(room: effect.room)]?.identity = newIdentity
+
         switch card.strategy {
         case .appDriven:
+            // Empty box = the engine loop falls back to catalog defaults.
             orchestrator?.updateStudioParams(
                 values: [:], colors: [:],
-                bridgeID: currentRoomEffect?.room.bridgeID)
+                bridgeID: effect.room.bridgeID, roomID: effect.room.id)
         case .bridgeNative:
-            await apply(card)
+            await apply(card)   // restart re-applies v1+v2 defaults and re-mints identity
         case .composition:
             break   // compositions revert via revertActiveComposition()
+        }
+    }
+
+    /// Serialize SCOPE 1 through the existing store (same UserDefaults key,
+    /// same shape — no migration).
+    func persistDefaults(immediately: Bool = true) {
+        var values: [String: [String: Double]] = [:]
+        var colors: [String: [String: Color]] = [:]
+        for card in effectCards + liveModeCards {
+            let set = valueScopes.defaults(forCard: card.id)
+            if !set.numbers.isEmpty { values[card.id] = set.numbers }
+            if !set.colors.isEmpty { colors[card.id] = set.colors }
+        }
+        if immediately {
+            StudioParamStore.shared.saveNow(values: values, colors: colors)
+        } else {
+            StudioParamStore.shared.scheduleSave(values: values, colors: colors)
         }
     }
 
@@ -1553,48 +1668,37 @@ final class StudioViewModel {
     // ──────────────────────────────────────────────
 
     /// Read a param value for a specific card, falling back to the param's default.
+    ///
+    /// Selection-aware (Slice 2 production wiring): when the SELECTED room is
+    /// running this card, this returns that exact instance's live value —
+    /// switching between two rooms running the same card shows each room's own
+    /// numbers. Otherwise it returns the card's persisted default.
     func paramValue(for cardID: String, paramID: String, default defaultVal: Double) -> Double {
-        paramValues[cardID]?[paramID] ?? defaultVal
-    }
-
-    /// Write a param value for a specific card.
-    func setParamValue(for cardID: String, paramID: String, value: Double) {
-        if paramValues[cardID] == nil { paramValues[cardID] = [:] }
-        paramValues[cardID]?[paramID] = value
-        // Push live update to running engine loop (if this card is running).
-        // Round 4g: routed to the SELECTED room's bridge — `runningCardID`
-        // derives from `currentRoomEffect`, so the two always agree, and with
-        // two bridges streaming the edit lands on the room being looked at.
-        if cardID == runningCardID {
-            orchestrator?.updateStudioParams(
-                values: paramValues[cardID] ?? [:],
-                colors: paramColors[cardID] ?? [:],
-                bridgeID: currentRoomEffect?.room.bridgeID
-            )
+        _ = liveValuesTick   // observation dependency on scope mutations
+        if let effect = currentRoomEffect, effect.cardID == cardID, effect.recovered == nil {
+            return valueScopes.live(for: effect.identity).numbers[paramID] ?? defaultVal
         }
-        StudioParamStore.shared.scheduleSave(values: paramValues, colors: paramColors)
+        return valueScopes.defaults(forCard: cardID).numbers[paramID] ?? defaultVal
     }
 
-    /// Read a param color for a specific card.
+    /// Read a param color for a specific card — same selection-aware rule as
+    /// `paramValue(for:paramID:default:)`.
     func paramColor(for cardID: String, paramID: String) -> Color? {
-        paramColors[cardID]?[paramID]
+        _ = liveValuesTick
+        if let effect = currentRoomEffect, effect.cardID == cardID, effect.recovered == nil {
+            return valueScopes.live(for: effect.identity).colors[paramID]
+        }
+        return valueScopes.defaults(forCard: cardID).colors[paramID]
     }
 
-    /// Write a param color for a specific card.
-    func setParamColor(for cardID: String, paramID: String, color: Color) {
-        if paramColors[cardID] == nil { paramColors[cardID] = [:] }
-        paramColors[cardID]?[paramID] = color
-        // Push live update to running engine loop (round 4g: exact bridge —
-        // see setParamValue above).
-        if cardID == runningCardID {
-            orchestrator?.updateStudioParams(
-                values: paramValues[cardID] ?? [:],
-                colors: paramColors[cardID] ?? [:],
-                bridgeID: currentRoomEffect?.room.bridgeID
-            )
-        }
-        StudioParamStore.shared.scheduleSave(values: paramValues, colors: paramColors)
-    }
+    // The old `setParamValue` / `setParamColor` / `sendParam` /
+    // `sendColorParam` quartet is GONE. Writes go through the exact-identity
+    // session API in `StudioViewModel+CustomizationWiring.swift`
+    // (`beginParamEdit` / `updateParamEdit` / `endParamEdit`, and the one-shot
+    // `commitParam` / `commitColorParam`). Those capture the running identity
+    // when the gesture starts and fence every commit and every debounced
+    // bridge send on it — a drag that outlives the selection can no longer
+    // land on the newly selected room.
 
     // ──────────────────────────────────────────────
     // MARK: - Apply / Stop
@@ -1726,10 +1830,11 @@ final class StudioViewModel {
             colorXY = CGPoint(x: xy.x, y: xy.y)
         }
         // Warmth rides the same v2 apply — but only when the user actually
-        // set it, so untouched cards keep the firmware's default look.
+        // set it (a stored default exists), so untouched cards keep the
+        // firmware's default look.
         var mirek: Int? = nil
         if card.params.contains(where: { $0.id == "warmth" }),
-           let raw = paramValues[card.id]?["warmth"] {
+           let raw = valueScopes.defaults(forCard: card.id).numbers["warmth"] {
             mirek = Int(raw.rounded())
         }
         guard speed != nil || colorXY != nil || mirek != nil else { return v2Capable.map(\.id) }
@@ -2308,7 +2413,7 @@ final class StudioViewModel {
             let existingCard = existing.card
             debugLog("[Studio] Replacing '\(existingCard.name)' on \(room.name)")
             isExplicitStop = false
-            await stopEffect(on: RoomEffectKey(room: room),
+            await stopEffect(on: StudioSelectionKey(room: room),
                              context: UnifiedOrchestrator.StopAuditContext(
                                  route: .applyReplacement, cardOrEffectID: card.id))
 
@@ -2336,7 +2441,7 @@ final class StudioViewModel {
         }()
         if newUsesStudioEngine {
             for (rowKey, effect) in runningEffects
-            where rowKey != RoomEffectKey(room: room) && rowKey.bridgeID == room.bridgeID {
+            where rowKey != StudioSelectionKey(room: room) && rowKey.bridgeID == room.bridgeID {
                 let effectUsesStudioEngine: Bool = {
                     switch effect.card.strategy {
                     case .appDriven: return true
@@ -2493,10 +2598,14 @@ final class StudioViewModel {
             // effect's own. Marking it transferred is what keeps the defer above
             // from releasing it on the way out of this scope.
             ownershipTransferred = true
-            runningEffects[RoomEffectKey(room: room)] = RunningEffect(
+            let identity = installRunningIdentity(
+                room: room, card: card,
+                execution: .bridgeNative(effect: effectName))
+            runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
                 cardID: card.id, card: card, room: room,
                 lightIDs: drivenIDs, isEntertainment: false,
                 requestedTransport: nil, transportFallback: false,
+                identity: identity,
                 v2CapableLightIDs: v2Capable,
                 bridgeNativeOwnership: bridgeNativeOwnership
             )
@@ -2513,8 +2622,14 @@ final class StudioViewModel {
             // The Reduce Motion refusal lives at the very top of `apply` now —
             // refusing here would already have prepared a session and torn the
             // previous look down.
-            var flatValues = paramValues[card.id] ?? [:]
-            let flatColors = paramColors[card.id] ?? [:]
+            //
+            // Slice 2: the engine box is seeded from SCOPE 1 (the card's
+            // persisted next-start defaults). The exact running instance's
+            // scope-2 values are registered from the same set the moment the
+            // identity is installed below, so box and scopes agree at start.
+            let startSet = valueScopes.defaults(forCard: card.id)
+            var flatValues = startSet.numbers
+            let flatColors = startSet.colors
 
             if engineKey == "strobe" && isDimFlashingLightsEnabled {
                 flatValues["brightness"] = min(flatValues["brightness"] ?? 100, 30)
@@ -2540,10 +2655,14 @@ final class StudioViewModel {
             // AREA while Hue Sync still owned the lights. The outcome is the
             // only value that knows which branch ran.
             let isEnt = outcome.startedStreaming
-            runningEffects[RoomEffectKey(room: room)] = RunningEffect(
+            let identity = installRunningIdentity(
+                room: room, card: card,
+                execution: .appDriven(engineKey: engineKey))
+            runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
                 cardID: card.id, card: card, room: room,
                 lightIDs: newLightIDs, isEntertainment: isEnt,
-                requestedTransport: nil, transportFallback: false
+                requestedTransport: nil, transportFallback: false,
+                identity: identity
             )
             publishNowPlaying(room: room, card: card)
             let transport = isEnt ? TransportVocabulary.toastStreaming
@@ -2597,7 +2716,7 @@ final class StudioViewModel {
                 await micHeadStart
                 activeCompositionGamut = await gamutTask
                 let box = CompositionParamBox(preset: preset)
-                activeCompositionBoxes[RoomEffectKey(room: room)] = box
+                activeCompositionBoxes[StudioSelectionKey(room: room)] = box
                 // Restore persisted harmony rule for re-edit
                 if let savedRule = preset.palette.harmonyRule,
                    let rule = HarmonyRule(rawValue: savedRule) {
@@ -2637,11 +2756,15 @@ final class StudioViewModel {
                 // Same rule as the app-driven arm above: the transport comes
                 // from what the start returned, never from a registry peek.
                 let isEnt = outcome.startedStreaming
-                runningEffects[RoomEffectKey(room: room)] = RunningEffect(
+                let identity = installRunningIdentity(
+                    room: room, card: card,
+                    execution: .composition(presetID: presetID))
+                runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
                     cardID: card.id, card: card, room: room,
                     lightIDs: newLightIDs, isEntertainment: isEnt,
                     requestedTransport: requestedTransport,
-                    transportFallback: requestedTransport == .entertainmentArea && !isEnt
+                    transportFallback: requestedTransport == .entertainmentArea && !isEnt,
+                    identity: identity
                 )
                 publishNowPlaying(room: room, card: card)
                 let transport = isEnt ? TransportVocabulary.toastStreaming
@@ -2653,10 +2776,13 @@ final class StudioViewModel {
                 debugLog("[Studio] Active effects: \(runningEffects.count) rooms")
                 return
             }
-            runningEffects[RoomEffectKey(room: room)] = RunningEffect(
+            runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
                 cardID: card.id, card: card, room: room,
                 lightIDs: newLightIDs, isEntertainment: false,
-                requestedTransport: nil, transportFallback: false
+                requestedTransport: nil, transportFallback: false,
+                identity: installRunningIdentity(
+                    room: room, card: card,
+                    execution: .composition(presetID: presetID))
             )
             publishNowPlaying(room: room, card: card)
             statusMessage = "🟢 \(card.name) → \(room.name) · \(TransportVocabulary.toastOneShot)"
@@ -2673,10 +2799,20 @@ final class StudioViewModel {
     /// (once ownership existed) the room suppressed from All-Day forever. Only
     /// the effect and the orchestrator are actually needed to begin teardown;
     /// every network step below is best-effort.
-    private func stopEffect(on rowKey: RoomEffectKey,
+    private func stopEffect(on rowKey: StudioSelectionKey,
                             context: UnifiedOrchestrator.StopAuditContext = .unattributed) async {
         guard let effect = runningEffects[rowKey], let orchestrator else { return }
-        let roomID = rowKey.roomID
+        let roomID = rowKey.groupID
+
+        // Slice 2 production wiring: fence FIRST, before any suspension.
+        // Pending debounced sends for this exact instance are cancelled, and
+        // the scopes forget it so anything already in flight drops as
+        // `.nothingRunning` at its commit/enqueue re-check.
+        paramSendTasks[effect.identity.targetKey]?.cancel()
+        paramSendTasks[effect.identity.targetKey] = nil
+        valueScopes.stopRunning(effect.identity)
+        generationCounter.bump(.stopped)
+        bumpLiveValuesTick()
         orchestrator.recordStopAudit(context, operation: .stopRequested,
                                      bridgeID: rowKey.bridgeID, roomID: roomID,
                                      cardOrEffectID: effect.cardID,
@@ -2813,9 +2949,10 @@ final class StudioViewModel {
         // its exact key first. The room-only lookup fails closed on a
         // same-room-id collision, which used to drop a perfectly attributable
         // stop to the blunt direct-teardown arm below.
-        let exactOwningKey = RoomEffectKey(
-            bridgeID: prompt.owningBridgeID, roomID: prompt.owningRoomID)
-        if runningEffects[exactOwningKey] != nil {
+        // The prompt carries bridge + room id but no kind — resolve the unique
+        // row under the kind-aware key and fail closed on a room/zone collision.
+        if let exactOwningKey = runningKey(bridgeID: prompt.owningBridgeID,
+                                           groupID: prompt.owningRoomID) {
             // Studio knows this composition: its own stop path already routes to
             // stopCompositionMode and clears the Now-Playing registry.
             await stopEffect(on: exactOwningKey)
@@ -2827,7 +2964,10 @@ final class StudioViewModel {
             // silently orphaned.
             await orchestrator.stopCompositionMode(roomID: prompt.owningRoomID,
                                                    bridgeID: prompt.owningBridgeID)
-            activeCompositionBoxes.removeValue(forKey: exactOwningKey)
+            if let boxKey = activeCompositionBoxKey(bridgeID: prompt.owningBridgeID,
+                                                    groupID: prompt.owningRoomID) {
+                activeCompositionBoxes.removeValue(forKey: boxKey)
+            }
             if let owningBridgeID = prompt.owningBridgeID {
                 orchestrator.removeActiveEffect(
                     bridgeID: owningBridgeID, roomID: prompt.owningRoomID)
@@ -2919,8 +3059,11 @@ final class StudioViewModel {
         // exact — the owner names its bridge — and a recovered bridge-stored
         // row (keyed by its manifest) structurally cannot be reached from
         // either.
-        runningEffects.removeValue(forKey: RoomEffectKey(
-            bridgeID: request.owner.bridgeID, roomID: request.owner.roomID))
+        if let key = runningKey(bridgeID: request.owner.bridgeID,
+                                groupID: request.owner.roomID) {
+            stopRunningScopes(forRowAt: key)
+            runningEffects.removeValue(forKey: key)
+        }
         orchestrator?.removeActiveEffect(
             bridgeID: request.owner.bridgeID, roomID: request.owner.roomID)
 
@@ -3086,7 +3229,7 @@ final class StudioViewModel {
                                       cardOrEffectID: card.id,
                                       outcomeReason: "explicitStopEntry selectedRoom=\(room.id)")
         isExplicitStop = true
-        await stopEffect(on: RoomEffectKey(room: room), context: context)
+        await stopEffect(on: StudioSelectionKey(room: room), context: context)
         statusMessage = ""
     }
 
@@ -3101,205 +3244,26 @@ final class StudioViewModel {
         for rowKey in rowKeys {
             await stopEffect(on: rowKey, context: context)
         }
+        // Belt over the per-row stops: every pending send and every live
+        // scope entry dies with the session, whatever the row keys were.
+        for task in paramSendTasks.values { task.cancel() }
+        paramSendTasks.removeAll()
+        valueScopes.stopAll()
+        generationCounter.bump(.stopped)
+        bumpLiveValuesTick()
         statusMessage = ""
     }
 
     // ──────────────────────────────────────────────
     // MARK: - Live Param Updates
     // ──────────────────────────────────────────────
+    //
+    // The old `sendParam` / `sendColorParam` pair — one GLOBAL debounce task
+    // that re-read `selectedRoom` after its sleep — is gone. Debounced bridge
+    // sends now live in `StudioViewModel+CustomizationWiring.swift`, keyed by
+    // exact running target and fenced on the identity captured when the
+    // gesture began.
 
-    private var paramTask: Task<Void, Never>?
-
-    /// Debounced param update — dispatches to the correct API call based on param ID.
-    /// Waits 150ms after last change, then sends one PUT.
-    func sendParam(cardID: String, paramID: String, value: Double) {
-        paramTask?.cancel()
-        paramTask = Task {
-            try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled else { return }
-
-            guard let room = selectedRoom,
-                  let groupedLightID = room.groupedLightID,
-                  let orchestrator,
-                  let api = orchestrator.hueClient(for: room.bridgeID) else { return }
-
-            // Read current transition setting for this card (used as duration)
-            let card = (effectCards + liveModeCards + composerStudioCards + [starterCompositionCard()]).first(where: { $0.id == cardID })
-            let transitionMs = Int(paramValue(for: cardID, paramID: "transition", default: card?.params.first(where: { $0.id == "transition" })?.defaultValue ?? 400))
-
-            // Live param PUTs go through this ROOM's Studio mailbox slot on its
-            // OWN bridge (packet 3) — a direct api call here (with only the
-            // 150 ms debounce) could stack behind in-flight frames and replay
-            // stale slider values, and the pre-packet-3 shared mailbox let
-            // another room's stop discard this write entirely.
-            switch paramID {
-            case "brightness":
-                await orchestrator.enqueueStudioRestWrite(
-                    roomID: room.id, bridgeID: room.bridgeID
-                ) { _ in
-                    try? await api.setGroupedLightEffect(
-                        id: groupedLightID, on: nil,
-                        brightness: value, xy: nil, mirek: nil,
-                        duration: transitionMs
-                    )
-                }
-            case "warmth":
-                let mirek = Int(value.rounded())
-                // R5: while a bridge-native effect runs on v2-capable lights,
-                // re-parameterize the EFFECT's color_temperature per-light —
-                // a grouped mirek PUT fights the running firmware effect.
-                // Mirrors the speed case below; grouped stays the v1 fallback.
-                if let effect = runningEffect(for: room),
-                   effect.cardID == cardID,
-                   case .bridgeNative(let effectName) = effect.card.strategy,
-                   !effect.v2CapableLightIDs.isEmpty {
-                    let gate = orchestrator.commandGate(for: room.bridgeID)
-                    let capable = effect.v2CapableLightIDs
-                    await orchestrator.enqueueStudioRestWrite(
-                        roomID: room.id, bridgeID: room.bridgeID
-                    ) { stillCurrent in
-                        // Packet 3 — COOPERATIVE CANCELLATION. The gate paces
-                        // these at ~10/sec, so a 20-light room used to sweep
-                        // for ~2 s with NO way to stop it: the gate's own
-                        // cancellation guards are inert in here (the mailbox's
-                        // flush task is unstructured and never cancelled, so
-                        // Task.isCancelled is permanently false). The probe is
-                        // backed by the Studio scope epoch and must be checked
-                        // before EVERY send, including the first light —
-                        // checking once before the loop is not enough.
-                        for id in capable {
-                            guard await stillCurrent() else { return }
-                            _ = await gate.send(retry: false) {
-                                try await api.setLightEffectV2(
-                                    id: id,
-                                    body: EffectsV2Body(effect: effectName, mirek: mirek)
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    await orchestrator.enqueueStudioRestWrite(
-                        roomID: room.id, bridgeID: room.bridgeID
-                    ) { _ in
-                        try? await api.setGroupedLightEffect(
-                            id: groupedLightID, on: nil,
-                            brightness: nil, xy: nil, mirek: mirek,
-                            duration: transitionMs
-                        )
-                    }
-                }
-            case "transition":
-                // Stored locally — affects subsequent brightness/warmth/color sends.
-                // No immediate bridge command needed.
-                break
-            case "speed":
-                // R4 Effects port: while a bridge-native effect runs on
-                // v2-capable lights, the speed slider re-parameterizes the
-                // effect itself per-light (latest-wins mailbox + gate pacing).
-                if let effect = runningEffect(for: room),
-                   effect.cardID == cardID,
-                   case .bridgeNative(let effectName) = effect.card.strategy,
-                   !effect.v2CapableLightIDs.isEmpty {
-                    let clamped = min(1.0, max(0.0, value / 100.0))
-                    let gate = orchestrator.commandGate(for: room.bridgeID)
-                    let capable = effect.v2CapableLightIDs
-                    await orchestrator.enqueueStudioRestWrite(
-                        roomID: room.id, bridgeID: room.bridgeID
-                    ) { stillCurrent in
-                        // Packet 3 — cooperative cancellation before EVERY
-                        // send, including the first light. See the warmth path.
-                        for id in capable {
-                            guard await stillCurrent() else { return }
-                            _ = await gate.send(retry: false) {
-                                try await api.setLightEffectV2(
-                                    id: id,
-                                    body: EffectsV2Body(effect: effectName, speed: clamped)
-                                )
-                            }
-                        }
-                    }
-                }
-            case "saturation":
-                // Bridge-native effects don't expose runtime saturation.
-                // Value stored for app-driven engines.
-                break
-            default:
-                // App-driven params (speed, sensitivity, min_brightness, duty_cycle, etc.)
-                // are read by the engine loop directly from paramValues — no bridge call needed.
-                break
-            }
-        }
-    }
-
-    /// Send a color param change to the bridge (for base_color, flash_color, etc.).
-    /// Converts SwiftUI Color to CIE xy using HueColorUtils.
-    func sendColorParam(cardID: String, paramID: String, color: Color) {
-        setParamColor(for: cardID, paramID: paramID, color: color)
-
-        // Only send to bridge for base_color on bridge-native effects
-        guard paramID == "base_color" else { return }
-        let card = (effectCards + liveModeCards).first(where: { $0.id == cardID })
-        guard case .bridgeNative = card?.strategy else { return }
-
-        paramTask?.cancel()
-        paramTask = Task {
-            try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled else { return }
-
-            guard let room = selectedRoom,
-                  let groupedLightID = room.groupedLightID,
-                  let orchestrator,
-                  let api = orchestrator.hueClient(for: room.bridgeID) else { return }
-
-            // Extract HSB from Color
-            let uiColor = UIColor(color)
-            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0
-            uiColor.getHue(&h, saturation: &s, brightness: &b, alpha: nil)
-
-            let xy = HueColorUtils.xyFrom(hue: Double(h), saturation: Double(s), brightness: Double(b))
-            let transitionMs = Int(paramValue(for: cardID, paramID: "transition", default: 500))
-
-            // R4 Effects port: while this bridge-native effect runs on
-            // v2-capable lights, tint the EFFECT itself per-light; the
-            // grouped xy write below stays the v1-only path.
-            if let effect = runningEffect(for: room),
-               effect.cardID == cardID,
-               case .bridgeNative(let effectName) = effect.card.strategy,
-               !effect.v2CapableLightIDs.isEmpty {
-                let gate = orchestrator.commandGate(for: room.bridgeID)
-                let capable = effect.v2CapableLightIDs
-                let point = CGPoint(x: xy.x, y: xy.y)
-                await orchestrator.enqueueStudioRestWrite(
-                    roomID: room.id, bridgeID: room.bridgeID
-                ) { stillCurrent in
-                    // Packet 3 — cooperative cancellation before EVERY send,
-                    // including the first light. See the warmth path in
-                    // sendParam.
-                    for id in capable {
-                        guard await stillCurrent() else { return }
-                        _ = await gate.send(retry: false) {
-                            try await api.setLightEffectV2(
-                                id: id,
-                                body: EffectsV2Body(effect: effectName, colorXY: point)
-                            )
-                        }
-                    }
-                }
-                return
-            }
-
-            // Same scoped latest-wins routing as sendParam — see comment there.
-            await orchestrator.enqueueStudioRestWrite(
-                roomID: room.id, bridgeID: room.bridgeID
-            ) { _ in
-                try? await api.setGroupedLightEffect(
-                    id: groupedLightID, on: nil,
-                    brightness: nil, xy: (xy.x, xy.y), mirek: nil,
-                    duration: transitionMs
-                )
-            }
-        }
-    }
 
     // ──────────────────────────────────────────────
     // MARK: - Composer Cards (from store)
@@ -3696,7 +3660,10 @@ final class StudioViewModel {
                 lightIDs: effect.lightIDs,
                 isEntertainment: effect.isEntertainment,
                 requestedTransport: effect.requestedTransport,
-                transportFallback: effect.transportFallback
+                transportFallback: effect.transportFallback,
+                // A rename replaces the ROW, not the running instance — the
+                // identity (and its generation) carries over unchanged.
+                identity: effect.identity
             )
             publishNowPlaying(room: effect.room, card: freshCard)
         }

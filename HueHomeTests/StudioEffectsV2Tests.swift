@@ -222,7 +222,12 @@ final class StudioEffectsV2Tests: XCTestCase {
         await vm.apply(try cosmosCard(), roomOverride: nil, preferEntertainmentOverride: nil)
         let baseline = spy.v2Puts.count
 
-        vm.sendParam(cardID: "cosmos", paramID: "speed", value: 80)
+        // Slice 2: the write goes through the exact-identity session path —
+        // capture at gesture start, fenced commit, per-target debounced send.
+        let session = try XCTUnwrap(vm.beginParamEdit(cardID: "cosmos", paramID: "speed"),
+                                    "cosmos is running on the selected room")
+        vm.updateParamEdit(session, value: 80)
+        vm.endParamEdit(session)
 
         // 150 ms debounce + mailbox + gate pacing — poll up to 2 s.
         var newPuts: [(lightID: String, effect: String, speed: Double?, hasColor: Bool)] = []

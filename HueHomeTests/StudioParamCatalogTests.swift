@@ -27,6 +27,20 @@ final class StudioParamCatalogTests: XCTestCase {
     // so a mid-await scrub reports on a room the user was not creating in, and it
     // cannot tell a fresh start from the starter card that was already running.
 
+    /// Exact identity for an injected fixture row (Slice 2 wiring).
+    private func testIdentity(room: RoomDisplayItem, card: StudioCard) -> RunningLookIdentity {
+        let execution: CustomizationExecution
+        switch card.strategy {
+        case .bridgeNative(let effect): execution = .bridgeNative(effect: effect)
+        case .appDriven(let key):       execution = .appDriven(engineKey: key)
+        case .composition(let pid):     execution = .composition(presetID: pid)
+        }
+        return RunningLookIdentity(
+            bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
+            cardID: card.id, execution: execution,
+            generation: vm.generationCounter.bump(.cardReplaced))
+    }
+
     private func room(_ id: String, bridge: String = "bridge-a") -> RoomDisplayItem {
         RoomDisplayItem(
             id: id, name: id, archetype: nil, isOn: true, brightness: 60,
@@ -52,9 +66,10 @@ final class StudioParamCatalogTests: XCTestCase {
         let target = room("room-a")
         let card = vm.starterCompositionCard()
         vm.selectedRoom = target
-        vm.runningEffects[RoomEffectKey(room: target)] = RunningEffect(
+        vm.runningEffects[StudioSelectionKey(room: target)] = RunningEffect(
             cardID: card.id, card: card, room: target, lightIDs: ["L1"],
-            isEntertainment: false, requestedTransport: nil, transportFallback: false)
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: testIdentity(room: target, card: card))
 
         let outcome = await vm.createStarterComposition(in: target)
 
@@ -84,9 +99,10 @@ final class StudioParamCatalogTests: XCTestCase {
         let tapped = room("room-a")
         let elsewhere = room("room-b")
         let card = vm.starterCompositionCard()
-        vm.runningEffects[RoomEffectKey(room: tapped)] = RunningEffect(
+        vm.runningEffects[StudioSelectionKey(room: tapped)] = RunningEffect(
             cardID: card.id, card: card, room: tapped, lightIDs: ["L1"],
-            isEntertainment: false, requestedTransport: nil, transportFallback: false)
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: testIdentity(room: tapped, card: card))
         vm.selectedRoom = elsewhere
 
         let outcome = await vm.createStarterComposition(in: tapped)

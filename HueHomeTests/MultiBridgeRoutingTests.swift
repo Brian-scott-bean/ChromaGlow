@@ -1020,10 +1020,15 @@ final class MultiBridgeRoutingTests: XCTestCase {
         vm.configure(orchestrator: orchestrator)
         let compositionRoom = roomOnBridgeB(id: owningRoomID, name: "Aurora Room")
         let compositionCard = vm.studioCard(for: makePreset(named: "Aurora Drift"))
-        vm.runningEffects[RoomEffectKey(room: compositionRoom)] = RunningEffect(
+        vm.runningEffects[StudioSelectionKey(room: compositionRoom)] = RunningEffect(
             cardID: compositionCard.id, card: compositionCard, room: compositionRoom,
             lightIDs: [], isEntertainment: true,
-            requestedTransport: .entertainmentArea, transportFallback: false
+            requestedTransport: .entertainmentArea, transportFallback: false,
+            identity: RunningLookIdentity(
+                bridgeID: compositionRoom.bridgeID, groupID: compositionRoom.id,
+                kind: compositionRoom.kind, cardID: compositionCard.id,
+                execution: .composition(presetID: UUID()),
+                generation: vm.generationCounter.bump(.cardReplaced))
         )
         return (vm, compositionCard)
     }
@@ -4536,10 +4541,14 @@ final class MultiBridgeRoutingTests: XCTestCase {
     ) -> UnifiedOrchestrator.BridgeNativeOwnershipToken {
         let token = orchestrator.beginBridgeNativeOwnership(
             roomID: room.id, bridgeID: room.bridgeID)
-        vm.runningEffects[RoomEffectKey(room: room)] = RunningEffect(
+        vm.runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
             cardID: card.id, card: card, room: room,
             lightIDs: lightIDs, isEntertainment: false,
             requestedTransport: nil, transportFallback: false,
+            identity: RunningLookIdentity(
+                bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
+                cardID: card.id, execution: .bridgeNative(effect: "candle"),
+                generation: vm.generationCounter.bump(.cardReplaced)),
             v2CapableLightIDs: [], bridgeNativeOwnership: token)
         return token
     }
@@ -11956,19 +11965,19 @@ final class MultiBridgeRoutingTests: XCTestCase {
         await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
 
         vm.selectedRoom = streamRoomOnA()
-        vm.setParamValue(for: party.id, paramID: "speed", value: 97)
+        vm.commitParam(cardID: party.id, paramID: "speed", value: 97)
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 97,
             "the edit landed on the selected room's bridge")
 
         vm.selectedRoom = streamRoomOnB()
-        vm.setParamValue(for: party.id, paramID: "speed", value: 12)
+        vm.commitParam(cardID: party.id, paramID: "speed", value: 12)
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-b")?["speed"], 12,
             "selecting the other room routes to the other bridge")
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 97,
             "…without touching the first bridge's live box")
 
         vm.selectedRoom = streamRoomOnA()
-        vm.setParamValue(for: party.id, paramID: "speed", value: 33)
+        vm.commitParam(cardID: party.id, paramID: "speed", value: 33)
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 33,
             "…and back again")
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-b")?["speed"], 12,

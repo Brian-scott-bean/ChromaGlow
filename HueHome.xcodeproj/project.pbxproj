@@ -145,7 +145,9 @@
 		A1D00003D0D00003D0D00003 /* CustomizationCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00004D0D00004D0D00004 /* CustomizationCapability.swift */; };
 		A1D00005D0D00005D0D00005 /* CustomizationResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00006D0D00006D0D00006 /* CustomizationResolver.swift */; };
 		A1D00007D0D00007D0D00007 /* CustomizationValueScopes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00008D0D00008D0D00008 /* CustomizationValueScopes.swift */; };
+		A1D00021D0D00021D0D00021 /* StudioViewModel+CustomizationWiring.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00022D0D00022D0D00022 /* StudioViewModel+CustomizationWiring.swift */; };
 		A1D00009D0D00009D0D00009 /* CustomizationIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0000AD0D0000AD0D0000A /* CustomizationIdentityTests.swift */; };
+		A1D00023D0D00023D0D00023 /* StudioProductionWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */; };
 		A1D0000BD0D0000BD0D0000B /* CustomizationResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */; };
 		A1C20003C2C20003C2C20003 /* Composer2DomainVocabularyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */; };
 		A1C30001C3C30001C3C30001 /* Composer2Registration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C30002C3C30002C3C30002 /* Composer2Registration.swift */; };
@@ -452,6 +454,7 @@
 		2A4E5AC65C9D7C704980C395 /* HueSSEService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueSSEService.swift; path = HueHome/Core/Network/HueSSEService.swift; sourceTree = "<group>"; };
 		2C4AB0E6E513C840212308AC /* SceneRoomSectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneRoomSectionView.swift; path = ./HueHome/UI/Scenes/SceneRoomSectionView.swift; sourceTree = "<group>"; };
 		2EE597477398E04B557EF134 /* StudioParamControls.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioParamControls.swift; path = ./HueHome/UI/Studio/StudioParamControls.swift; sourceTree = "<group>"; };
+		A1D00022D0D00022D0D00022 /* StudioViewModel+CustomizationWiring.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StudioViewModel+CustomizationWiring.swift"; path = "./HueHome/UI/Studio/StudioViewModel+CustomizationWiring.swift"; sourceTree = "<group>"; };
 		2FF21DA93E891B1DDCFE009A /* HueZone.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Models/HueZone.swift; sourceTree = "<group>"; };
 		3000CEF6604AF34A2F38DA90 /* HueHome.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HueHome.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		304818D054AC8B4EFCF2AC92 /* HueTypography.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueTypography.swift; path = ./HueHome/UI/Components/HueTypography.swift; sourceTree = "<group>"; };
@@ -553,6 +556,7 @@
 		A1D00006D0D00006D0D00006 /* CustomizationResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationResolver.swift; path = HueHome/Core/CustomizationResolver.swift; sourceTree = "<group>"; };
 		A1D00008D0D00008D0D00008 /* CustomizationValueScopes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationValueScopes.swift; path = HueHome/Core/CustomizationValueScopes.swift; sourceTree = "<group>"; };
 		A1D0000AD0D0000AD0D0000A /* CustomizationIdentityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationIdentityTests.swift; path = HueHomeTests/CustomizationIdentityTests.swift; sourceTree = "<group>"; };
+		A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioProductionWiringTests.swift; path = HueHomeTests/StudioProductionWiringTests.swift; sourceTree = "<group>"; };
 		A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationResolverTests.swift; path = HueHomeTests/CustomizationResolverTests.swift; sourceTree = "<group>"; };
 		A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2DomainVocabularyTests.swift; path = HueHomeTests/Composer2DomainVocabularyTests.swift; sourceTree = "<group>"; };
 		A1C30002C3C30002C3C30002 /* Composer2Registration.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2Registration.swift; path = HueHome/Core/Composer2Registration.swift; sourceTree = "<group>"; };
@@ -1152,6 +1156,7 @@
 			isa = PBXGroup;
 			children = (
 				2EE597477398E04B557EF134 /* StudioParamControls.swift */,
+				A1D00022D0D00022D0D00022 /* StudioViewModel+CustomizationWiring.swift */,
 			);
 			name = Studio;
 			sourceTree = "<group>";
@@ -1450,6 +1455,7 @@
 				A1C10002C1C10002C1C10002 /* Composer2SeamCharacterizationTests.swift */,
 				A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */,
 				A1D0000AD0D0000AD0D0000A /* CustomizationIdentityTests.swift */,
+				A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */,
 				A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */,
 				A1C30004C3C30004C3C30004 /* Composer2RegistrationTests.swift */,
 				A1C40004C4C40004C4C40004 /* Composer2ConsumerContractsTests.swift */,
@@ -1944,6 +1950,7 @@
 				FFF8215FC86B7529C8791696 /* SceneCopyEngine.swift in Sources */,
 				0F0F1315A550084CFC7AED04 /* CopySceneSheet.swift in Sources */,
 				EC0B3D1FDBE6FE9085F580C0 /* StudioParamControls.swift in Sources */,
+				A1D00021D0D00021D0D00021 /* StudioViewModel+CustomizationWiring.swift in Sources */,
 				490529F81A5193DF91EF0836 /* ComposerLayerSheet.swift in Sources */,
 				337C09D50ECD05A4004456FC /* StudioParamStore.swift in Sources */,
 				11EB57C1B4BFB393DD2B9551 /* RoomAggregate.swift in Sources */,
@@ -2114,6 +2121,7 @@
 				A1C10001C1C10001C1C10001 /* Composer2SeamCharacterizationTests.swift in Sources */,
 				A1C20003C2C20003C2C20003 /* Composer2DomainVocabularyTests.swift in Sources */,
 				A1D00009D0D00009D0D00009 /* CustomizationIdentityTests.swift in Sources */,
+				A1D00023D0D00023D0D00023 /* StudioProductionWiringTests.swift in Sources */,
 				A1D0000BD0D0000BD0D0000B /* CustomizationResolverTests.swift in Sources */,
 				A1C30003C3C30003C3C30003 /* Composer2RegistrationTests.swift in Sources */,
 				A1C40003C4C40003C4C40003 /* Composer2ConsumerContractsTests.swift in Sources */,

@@ -201,9 +201,13 @@ final class StudioScrollStabilityTests: XCTestCase {
             strategy: .bridgeNative(effect: "candle"),
             compositionLayerActivity: nil)
         vm.selectedRoom = room
-        vm.runningEffects[RoomEffectKey(room: room)] = RunningEffect(
+        vm.runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
             cardID: card.id, card: card, room: room, lightIDs: ["L1"],
-            isEntertainment: true, requestedTransport: nil, transportFallback: false)
+            isEntertainment: true, requestedTransport: nil, transportFallback: false,
+            identity: RunningLookIdentity(
+                bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
+                cardID: card.id, execution: .bridgeNative(effect: "candle"),
+                generation: vm.generationCounter.bump(.cardReplaced)))
         XCTAssertNotNil(vm.currentRoomEffect, "fixture: an effect must be running")
         return (vm, room)
     }

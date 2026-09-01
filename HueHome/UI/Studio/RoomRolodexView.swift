@@ -22,7 +22,7 @@ struct RoomRolodexView: View {
     let rooms: [RoomDisplayItem]
     let zones: [RoomDisplayItem]
     let selectedRoom: RoomDisplayItem?
-    let runningEffects: [RoomEffectKey: RunningEffect]   // exact bridge+room key (round 4c)
+    let runningEffects: [StudioSelectionKey: RunningEffect]   // exact bridge+group+kind key
 
     /// The user chose this item. Fires ONCE, after the wheel has stopped —
     /// never mid-drag, and never when the finger merely lifts.
@@ -69,7 +69,7 @@ struct RoomRolodexView: View {
         rooms: [RoomDisplayItem],
         zones: [RoomDisplayItem],
         selectedRoom: RoomDisplayItem?,
-        runningEffects: [RoomEffectKey: RunningEffect],
+        runningEffects: [StudioSelectionKey: RunningEffect],
         onCommit: @escaping (RoomDisplayItem) -> Void,
         onActivate: @escaping (RoomDisplayItem) -> Void
     ) {
@@ -400,7 +400,7 @@ struct RoomRolodexView: View {
     private func wheelCell(
         item: RoomDisplayItem, isZone: Bool, isCenter: Bool, isCommitted: Bool
     ) -> some View {
-        let running = runningEffects[RoomEffectKey(room: item)]
+        let running = runningEffects[StudioSelectionKey(room: item)]
         return HStack(spacing: 7) {
             Image(systemName: isZone ? "square.3.layers.3d" : archetypeIcon(for: item.archetype))
                 .font(.system(size: 13, weight: .semibold))

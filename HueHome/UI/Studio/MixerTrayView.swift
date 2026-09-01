@@ -536,15 +536,17 @@ struct StudioCustomizationHost: View {
 
     // ── Beat binding for Studio engine cards ─────────────────
 
-    /// Routes beat-panel edits through setParamValue so they persist in the
-    /// card's param dict AND push live to the running engine's param box —
-    /// writing the box directly would be clobbered by the next slider change.
+    /// Routes beat-panel edits through commitParam so they land on the exact
+    /// running instance (fenced on identity captured at call time), persist as
+    /// the card's next-start defaults, AND push live to the running engine's
+    /// param box — writing the box directly would be clobbered by the next
+    /// slider change.
     private func studioBeatBinding(forCardID cardID: String) -> Binding<BeatBinding> {
         Binding(
-            get: { BeatBinding.fromStudioValues(vm.paramValues[cardID] ?? [:]) },
+            get: { BeatBinding.fromStudioValues(vm.paramNumbers(for: cardID)) },
             set: { newValue in
                 for (key, value) in newValue.studioValues {
-                    vm.setParamValue(for: cardID, paramID: key, value: value)
+                    vm.commitParam(cardID: cardID, paramID: key, value: value)
                 }
             }
         )

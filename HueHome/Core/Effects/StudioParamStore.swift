@@ -70,8 +70,8 @@ final class StudioParamStore {
         return (values, colors)
     }
 
-    /// Debounced (~1s) persist of the live dicts — called from every
-    /// setParamValue/setParamColor; trailing write wins.
+    /// Debounced (~1s) persist of the defaults dicts — called from every
+    /// committed customization write; trailing write wins.
     func scheduleSave(values: [String: [String: Double]],
                       colors: [String: [String: Color]]) {
         let colorArrays = colors.mapValues { $0.mapValues { $0.hsbaComponents() } }

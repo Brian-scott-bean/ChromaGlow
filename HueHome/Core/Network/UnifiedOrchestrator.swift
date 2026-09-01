@@ -3162,7 +3162,7 @@ final class UnifiedOrchestrator {
     /// keeps running.
     private var studioRestScopesByBridge: [String: RestScope] = [:]
 
-    /// Studio live-param writes (StudioViewModel sendParam/sendColorParam)
+    /// Studio live-param writes (the customization-wiring debounced sends)
     /// share the room's Studio mailbox slot: repeated writes to the same
     /// endpoint where only the newest value matters — a slider scrub can never
     /// stack PUTs behind stale frames, and the stop/handoff clear()s also drop
@@ -5152,10 +5152,20 @@ final class UnifiedOrchestrator {
     /// follows the SELECTED room's bridge instead of whichever engine started
     /// last. Isolated (both this type and the caller are @MainActor), so the
     /// map read is safe and the call stays synchronous.
-    func updateStudioParams(values: [String: Double], colors: [String: Color], bridgeID: String?) {
-        guard let box = studioEngineRuntimesByBridge[bridgeID ?? ""]?.paramBox else { return }
-        box.values = values
-        box.colors = colors
+    ///
+    /// Slice 2 production wiring: the write must ALSO name the room, and the
+    /// runtime's owning room must match — the same guard the stop path has
+    /// carried since round 4g. A bridge-only guard let a write authored on one
+    /// room land on a sibling room's engine on the same bridge after the
+    /// selection moved. The caller has already fenced on the full running
+    /// identity (bridge + group + kind + look + generation); this room check
+    /// is the orchestrator's own defense in depth, not the primary fence.
+    func updateStudioParams(values: [String: Double], colors: [String: Color],
+                            bridgeID: String?, roomID: String) {
+        guard let runtime = studioEngineRuntimesByBridge[bridgeID ?? ""],
+              runtime.roomID == roomID else { return }
+        runtime.paramBox.values = values
+        runtime.paramBox.colors = colors
     }
 
     /// Studio engine keys that stream over Entertainment. Only these can
