@@ -122,6 +122,54 @@ bridge-native Effect. Retiring it (spec §2.3) is Slice 2 work, not a Slice 1 co
 
 ---
 
+## 2B. Slice 1 validation evidence (2026-09-01)
+
+The §2A findings were read from source before the foundation compiled. They are now **executed**.
+
+**Destination:** `iPhone 17 Pro`, iOS 26.5 (23F77), `005EBEC4-ECF0-4E2C-8A9C-5389006C2A36`.
+Three simulators share the name `iPhone 17 Pro`; pin the UDID.
+
+| Gate | Result |
+| --- | --- |
+| Compile | 0 errors |
+| Slice 1 tests | **57 / 57 passed** |
+| Full registered suite ×2 | **1720/1720**, then **1723/1723** — 0 failed, 0 skipped |
+| `hardening_guards.sh` | all guards passed |
+| `generate_capability_matrix.py --check` | up to date |
+| `git diff --check` | clean |
+
+Registered-suite baseline is now **1723** (older DEVLOG entries record 1573).
+
+### Audit claims now proven by an executing test
+
+| Claim (§2A / §9 / §17 / §20) | Test |
+| --- | --- |
+| Two bridges may share a room id and stay distinct | `testSameRoomIDOnTwoBridgesAreDistinctIdentities` |
+| Same card on two bridges holds independent live values | `testSameCardOnTwoBridgesHoldsIndependentLiveValues` |
+| **Two rooms on ONE bridge stay independent** | `testTwoRoomsOnTheSameBridgeHoldIndependentLiveValues` |
+| **A write on one room cannot reach a sibling room on the same bridge** | `testWriteCapturedOnOneRoomDoesNotLandOnASiblingRoomOnTheSameBridge` |
+| `RoomEffectKey` drops `kind`; the new identity does not | `testRoomAndZoneSharingAnIDAreDistinctEvenThoughEffectKeysCollide` |
+| Reset isolates to one instance | `testResettingOneInstanceDoesNotDisturbTheOther` |
+| Unknown ≠ unsupported | `testUnreadableCapabilityIsDistinctFromUnsupported` |
+| CT claimed without a readable range is unknown | `testCTCapableButRangelessTargetIsUnknownNotActive` |
+| `entOnly` inventory is exactly the audited three | `testEntOnlyInventoryMatchesTheAuditedThree` |
+| No Live card declares a Beat param | `testNoLiveCardDeclaresABeatParamYet` |
+| `ambient.color` ≠ `thunderstorm.ambient_color` | `testDeadAmbientColorSentinelIsNotTheLiveThunderstormAmbientColor` |
+| `thunderstorm.ambient_color` still ships | `testThunderstormAmbientColorIsStillAShippingControl` |
+| Resolution order is deterministic | `testResolveAllIsDeterministicAndStablySorted` |
+
+### What is still NOT proven
+
+- **The production defect is not fixed.** The foundation has zero production consumers; the
+  card-global `paramValues` and bridge-only `updateStudioParams` routing described in §2A are
+  untouched on this branch. The tests above prove the *foundation* behaves correctly, not that the
+  shipping app does.
+- **No bridge-native Effect row is proven.** All 45 remain `PENDING` pending the per-effect verified
+  parameter profile required by §7.
+- **No hardware was exercised.** Everything above is simulator/unit evidence.
+
+---
+
 ## 3. Mandatory current-main audit before production edits
 
 Before implementing, run and record:

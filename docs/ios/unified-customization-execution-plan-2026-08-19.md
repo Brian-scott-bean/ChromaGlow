@@ -277,13 +277,13 @@ At minimum:
 - no network in pure resolver/catalog;
 - persistence defaults vs live state separation.
 
-### Slice 1 status — 2026-09-01
+### Slice 1 status — 2026-09-01: **VALIDATED / COMPLETE**
 
-**Foundation implemented; exit gate NOT cleared — validation is blocked on the toolchain, not on the code.**
+**Exit gate CLEARED.** Foundation compiles, all tests pass, all guards pass.
 
 | Deliverable | Status |
 | --- | --- |
-| Current-code capability matrix | **Done** — generated, self-checking (`Scripts/generate_capability_matrix.py`) |
+| Current-code capability matrix | **Done** — generated, self-checking (`Scripts/generate_capability_matrix.py --check`) |
 | Typed/semantic control identity | **Done** — `CustomizationControlID` |
 | Exact `RunningLookIdentity` | **Done**, plus `RunningLookTargetKey` and generation |
 | Persisted / running / draft separation | **Done** — `CustomizationValueScopes` |
@@ -292,16 +292,38 @@ At minimum:
 | Mutation behaviour metadata | **Done** — `CustomizationMutationBehavior` |
 | Stale-selection/generation fencing | **Done** — `CustomizationFence` |
 | Room-specific temporary UI working state | **Deferred to Slice 2** — needs the visual migration to be meaningful |
-| Deterministic unit tests | **Written (41), never executed** — see below |
+| Deterministic unit tests | **Done — 57 tests, all passing** |
 
-**Blocker.** `xcodebuild` on this machine reports **zero available destinations** for scheme
-`HueHome 1`. `simctl` lists iOS 17.0 / 26.3 / 26.4 simulators including `iPhone 17 Pro`, but
-`xcodebuild -showdestinations` offers none of them and rejects an explicit simulator UDID; the only
-destinations it knows are physical-device ones requiring an **iOS 26.5 platform that is not
-installed** (Xcode 26.6, build 17F113). Restarting `CoreSimulatorService` cleared a stale-version
-warning but did not restore destinations. Nothing in this slice has been compiled or run.
+**Validation evidence** (destination: `iPhone 17 Pro`, iOS 26.5, `005EBEC4-ECF0-4E2C-8A9C-5389006C2A36`):
 
-Until the toolchain is repaired, the Slice 1 exit gate stays closed and Slice 2 must not begin.
+| Gate | Result |
+| --- | --- |
+| Compile | 0 errors |
+| Slice 1 focused tests | 54/54 passed (before the same-bridge additions) |
+| Full registered suite, run 1 | 1720/1720 passed, 0 failed, 0 skipped |
+| Full registered suite, run 2 | 1723/1723 passed, 0 failed, 0 skipped |
+| `./Scripts/hardening_guards.sh` | all guards passed |
+| `generate_capability_matrix.py --check` | up to date |
+| `git diff --check` | clean |
+
+The registered-suite baseline is now **1723**, not the 1573 recorded in older DEVLOG entries.
+
+**Environment repair required to get here.** Three stacked toolchain problems, none in app source:
+a stale `CoreSimulatorService` (framework 1051.55 vs job 1051.50), a missing **iOS 26.5** platform
+(8.52 GB), and a missing **watchOS 26.5** platform (3.96 GB — the `HueHome 1` scheme embeds
+`LightShadeWatchApp`, so it cannot test without it). Each masked the next.
+
+**Note on the destination.** Three simulators are now named `iPhone 17 Pro` (26.3.1, 26.4.1, 26.5),
+so the bare `name=iPhone 17 Pro` in `CLAUDE.md` is ambiguous. Pin the UDID above for reproducibility.
+
+**One defect found and fixed during validation**, in a test fixture rather than the foundation:
+`testAnyRequirementSucceedsOnOneSatisfiedBranch` omitted `mirekRange`, so `.colorTemperature`
+correctly resolved `.unknown` and the `.any` had no satisfied branch. The resolver was right. Fixed,
+plus two companion tests pinning `.any`'s unknown-vs-unsupported distinction.
+
+**Slice 1 has ZERO production consumers.** The live cross-room/cross-bridge routing defect described
+in the audit is **NOT fixed** — the foundation that makes fixing it safe is merely ready to wire.
+Production routing changes are Slice 2.
 
 **Slice 1 exit gate**
 

@@ -303,11 +303,20 @@ final class CustomizationResolverTests: XCTestCase {
                        .unavailable(reason: .capabilityUnknown, remediation: .retryCapabilityFetch))
     }
 
+    /// A CT-only room: colour is unsupported, CT is fully supported WITH a
+    /// readable range. One satisfied branch carries `.any`.
+    ///
+    /// The `mirekRange` here is load-bearing, not decoration — omitting it makes
+    /// `.colorTemperature` resolve `.unknown` (see
+    /// `testCTCapableButRangelessTargetIsUnknownNotActive`) and there is then no
+    /// satisfied branch at all.
     func testAnyRequirementSucceedsOnOneSatisfiedBranch() {
         let target = CustomizationTargetSnapshot(
             identity: identity(), totalLights: 3,
             dimming: .all(total: 3), color: .none(total: 3),
-            colorTemperature: .all(total: 3), gradient: .none(total: 3),
+            colorTemperature: .all(total: 3),
+            mirekRange: MirekRange(minMirek: 153, maxMirek: 500),
+            gradient: .none(total: 3),
             effectsV2: .none(total: 3),
             entertainmentAvailable: .known, transport: .entertainment, running: true)
 
@@ -315,6 +324,44 @@ final class CustomizationResolverTests: XCTestCase {
             control: control("x", requirement: .any([.color, .colorTemperature])), on: target)
 
         XCTAssertEqual(resolution.availability, .active)
+    }
+
+    /// The companion case: no branch is satisfied and one is unknown, so the
+    /// whole `.any` is unknown rather than a flat "unsupported". This is the
+    /// shape the original version of the test above accidentally built, and it
+    /// is worth locking deliberately.
+    func testAnyRequirementIsUnknownWhenNoBranchIsSatisfiedAndOneIsUnreadable() {
+        let target = CustomizationTargetSnapshot(
+            identity: identity(), totalLights: 3,
+            dimming: .all(total: 3), color: .none(total: 3),
+            colorTemperature: .all(total: 3),
+            mirekRange: nil,                      // CT claimed, range unreadable
+            gradient: .none(total: 3),
+            effectsV2: .none(total: 3),
+            entertainmentAvailable: .known, transport: .entertainment, running: true)
+
+        let resolution = CustomizationResolver.resolve(
+            control: control("x", requirement: .any([.color, .colorTemperature])), on: target)
+
+        XCTAssertEqual(resolution.availability,
+                       .unavailable(reason: .capabilityUnknown,
+                                    remediation: .retryCapabilityFetch))
+    }
+
+    /// And when every branch is a hard no, `.any` is unsupported — not unknown.
+    func testAnyRequirementIsUnsupportedWhenEveryBranchIsAHardNo() {
+        let target = CustomizationTargetSnapshot(
+            identity: identity(), totalLights: 3,
+            dimming: .all(total: 3), color: .none(total: 3),
+            colorTemperature: .none(total: 3),
+            gradient: .none(total: 3), effectsV2: .none(total: 3),
+            entertainmentAvailable: .known, transport: .entertainment, running: true)
+
+        let resolution = CustomizationResolver.resolve(
+            control: control("x", requirement: .any([.color, .colorTemperature])), on: target)
+
+        XCTAssertEqual(resolution.availability,
+                       .unavailable(reason: .notApplicableToThisLook, remediation: nil))
     }
 
     // ──────────────────────────────────────────────────────────

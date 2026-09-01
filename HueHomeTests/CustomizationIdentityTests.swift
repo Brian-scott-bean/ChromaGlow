@@ -143,6 +143,65 @@ final class CustomizationIdentityTests: XCTestCase {
         XCTAssertEqual(scopes.runningTargetCount, 2)
     }
 
+    /// TWO ROOMS ON ONE BRIDGE — the exact shape of the production defect.
+    ///
+    /// `updateStudioParams` guards on `bridgeID` alone, so on current `main` a
+    /// write authored against room A reaches whichever engine that bridge is
+    /// running. Same bridge, different rooms is the case that boolean cannot
+    /// distinguish; the identity must.
+    func testTwoRoomsOnTheSameBridgeHoldIndependentLiveValues() {
+        let scopes = Scopes()
+        let living = identity(bridge: "bridge-A", group: "living-room")
+        let office = identity(bridge: "bridge-A", group: "office")
+
+        XCTAssertNotEqual(living.targetKey, office.targetKey)
+        XCTAssertFalse(living.addressesSamePlace(as: office))
+
+        scopes.startRunning(living)
+        scopes.startRunning(office)
+        scopes.commit(captured: living, control: speed(), number: 15)
+        scopes.commit(captured: office, control: speed(), number: 85)
+
+        XCTAssertEqual(scopes.live(for: living).numbers["speed"], 15)
+        XCTAssertEqual(scopes.live(for: office).numbers["speed"], 85)
+    }
+
+    /// The same-bridge cross-write, fenced. A drag begun in the living room
+    /// must not land on the office just because they share a bridge.
+    func testWriteCapturedOnOneRoomDoesNotLandOnASiblingRoomOnTheSameBridge() {
+        let scopes = Scopes()
+        let living = identity(bridge: "bridge-A", group: "living-room")
+        let office = identity(bridge: "bridge-A", group: "office")
+        scopes.startRunning(office)                 // only the office is running
+
+        // The living-room write was captured before its look stopped.
+        let verdict = CustomizationFence.verdict(captured: living,
+                                                 live: scopes.liveIdentity(for: living))
+        XCTAssertEqual(verdict.dropReason, .nothingRunning)
+
+        XCTAssertEqual(scopes.commit(captured: living, control: speed(), number: 15).dropReason,
+                       .nothingRunning)
+        XCTAssertNil(scopes.live(for: office).numbers["speed"],
+                     "the sibling room on the same bridge was never written")
+    }
+
+    /// Stopping one room on a bridge leaves its sibling on that same bridge
+    /// running — bridge-scoped teardown would take both.
+    func testStoppingOneRoomLeavesItsSiblingOnTheSameBridgeRunning() {
+        let scopes = Scopes()
+        let living = identity(bridge: "bridge-A", group: "living-room")
+        let office = identity(bridge: "bridge-A", group: "office")
+        scopes.startRunning(living)
+        scopes.startRunning(office)
+        scopes.commit(captured: office, control: speed(), number: 42)
+
+        scopes.stopRunning(living)
+
+        XCTAssertNil(scopes.liveIdentity(for: living))
+        XCTAssertNotNil(scopes.liveIdentity(for: office))
+        XCTAssertEqual(scopes.live(for: office).numbers["speed"], 42)
+    }
+
     func testStoppingOneBridgeLeavesTheOtherRunning() {
         let scopes = Scopes()
         let a = identity(bridge: "bridge-A")
