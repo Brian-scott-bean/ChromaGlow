@@ -53,6 +53,75 @@ The 2026-08-05 CNVS packets remain historical engineering evidence only.
 
 ---
 
+## 2A. Slice 1 verified evidence (2026-09-01, `main` @ `9404686`)
+
+Read directly from the shipping source this session. Everything not listed here remains unproven.
+
+### Catalog totals
+
+| | Cards | Controls |
+| --- | ---: | ---: |
+| Effects (bridge-native) | 11 | 45 |
+| Live (app-driven) | 4 | 23 |
+| **Total** | **15** | **68** |
+
+These match §6 and §8's expected inventories exactly. The generated matrix is
+`docs/ios/unified-customization-capability-matrix-2026-09-01.md`
+(regenerate/verify with `Scripts/generate_capability_matrix.py [--check]`).
+
+### The central state defect
+
+`StudioViewModel.paramValues` is `[String: [String: Double]]` **keyed by card id alone**
+(`StudioViewModel.swift:1111-1112`), and the orchestrator holds one live box **per bridge**
+(`studioEngineRuntimesByBridge[bridgeID]?.paramBox`, `UnifiedOrchestrator.swift:3091`, updated at
+`:5156`). Between them those serve all three of spec §18's scopes at once. Consequences verified in
+source, not inferred:
+
+1. **The same card on two bridges cannot hold different live values** — there is one dictionary per
+   card. This is the invariant §16 requires and current `main` cannot satisfy.
+2. **A param write is routed by bridge only.** `setParamValue` (`:1568-1576`) reads
+   `currentRoomEffect?.room.bridgeID` at call time and `updateStudioParams` guards on `bridgeID`
+   alone — neither checks the room or card the gesture began on. Two rooms on one bridge can
+   therefore cross-write.
+3. **`resetParams` (`:1469`) nils the card-global dict**, so resetting on one bridge blanks the
+   other bridge's displayed values.
+
+### Identity coverage
+
+| Key | Fields | Gap |
+| --- | --- | --- |
+| `RoomEffectKey` (`:465`) | bridge, room | no `kind`; a room and zone sharing an id collide |
+| `StudioSelectionKey` (`:500`) | bridge, group, kind | no look, no generation |
+
+Neither carries the running look or a generation, so no existing key can answer "is this pending
+write still addressed to what the user was touching?".
+
+### Transport encoding
+
+`StudioParam.entOnly` (`StudioViewModel.swift:86`, consumed `StudioParamControls.swift:119`) is set
+on exactly three params — `strobe.speed`, `strobe.flash_color`, `strobe.duty_cycle` — locked by
+`CustomizationCatalogFactsTests.testEntOnlyInventoryMatchesTheAuditedThree`.
+
+### Beat
+
+No Live card declares a Beat param; Beat reaches engines through the orchestrator
+(`BeatBinding.swift` + 4 referencing files). Locked by
+`CustomizationCatalogFactsTests.testNoLiveCardDeclaresABeatParamYet`.
+
+### Composer 2
+
+**Confirmed inert.** `Composer2Domain`, `Composer2Registration`, `Composer2Resolver` and
+`Composer2ConsumerContracts` have zero references outside their own files — the only external
+mention is a doc comment. Slice 1 did not activate them.
+
+### `ParamTier.advanced`
+
+Live and load-bearing: `StudioParamControls.swift:300` partitions an `advancedParams` section, and
+`.advanced` is applied to 7 Live params plus the `transition` (Smoothness) param on every
+bridge-native Effect. Retiring it (spec §2.3) is Slice 2 work, not a Slice 1 correction.
+
+---
+
 ## 3. Mandatory current-main audit before production edits
 
 Before implementing, run and record:

@@ -277,6 +277,32 @@ At minimum:
 - no network in pure resolver/catalog;
 - persistence defaults vs live state separation.
 
+### Slice 1 status — 2026-09-01
+
+**Foundation implemented; exit gate NOT cleared — validation is blocked on the toolchain, not on the code.**
+
+| Deliverable | Status |
+| --- | --- |
+| Current-code capability matrix | **Done** — generated, self-checking (`Scripts/generate_capability_matrix.py`) |
+| Typed/semantic control identity | **Done** — `CustomizationControlID` |
+| Exact `RunningLookIdentity` | **Done**, plus `RunningLookTargetKey` and generation |
+| Persisted / running / draft separation | **Done** — `CustomizationValueScopes` |
+| `CustomizationSession` equivalent | **Done** — `CustomizationTargetSnapshot` carries identity + capability + transport |
+| Pure capability/availability resolver | **Done** — `CustomizationResolver` |
+| Mutation behaviour metadata | **Done** — `CustomizationMutationBehavior` |
+| Stale-selection/generation fencing | **Done** — `CustomizationFence` |
+| Room-specific temporary UI working state | **Deferred to Slice 2** — needs the visual migration to be meaningful |
+| Deterministic unit tests | **Written (41), never executed** — see below |
+
+**Blocker.** `xcodebuild` on this machine reports **zero available destinations** for scheme
+`HueHome 1`. `simctl` lists iOS 17.0 / 26.3 / 26.4 simulators including `iPhone 17 Pro`, but
+`xcodebuild -showdestinations` offers none of them and rejects an explicit simulator UDID; the only
+destinations it knows are physical-device ones requiring an **iOS 26.5 platform that is not
+installed** (Xcode 26.6, build 17F113). Restarting `CoreSimulatorService` cleared a stale-version
+warning but did not restore destinations. Nothing in this slice has been compiled or run.
+
+Until the toolchain is repaired, the Slice 1 exit gate stays closed and Slice 2 must not begin.
+
 **Slice 1 exit gate**
 
 Do not proceed until exact-state/race tests are green and the capability matrix is sufficiently complete to drive the UI honestly.
