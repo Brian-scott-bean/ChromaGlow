@@ -79,9 +79,49 @@ final class MixerTrayMetricsTests: XCTestCase {
     /// C4 renamed the constant (`collapsedOnRoomChange = true` →
     /// `modeOnRoomChange = .decks`). Same rule, same assertion.
     func testLandingOnARoomDoesNotThrowTheEffectPanelOpen() {
-        XCTAssertEqual(StudioMixerPresentation.modeOnRoomChange, .decks,
-            "a room change must leave the region on the DECKS — an auto-opened tray covers the "
-            + "wheel and its scrim eats the next scroll, which is the reported collision")
+        // From the decks, arriving anywhere stays on the decks — the
+        // auto-open defect stays dead whatever the new room runs.
+        XCTAssertEqual(StudioMixerPresentation.modeOnRoomChange(
+            current: .decks, newTargetRunsALook: true), .decks,
+            "a room change from the decks must never open customization — an auto-opened "
+            + "tray covers the wheel and its scrim eats the next scroll")
+        XCTAssertEqual(StudioMixerPresentation.modeOnRoomChange(
+            current: .decks, newTargetRunsALook: false), .decks)
+    }
+
+    /// Slice 2 (spec §15.1): STOP ALL is always visible — the toolbar slot
+    /// renders unconditionally, not gated on anything running. Source
+    /// introspection, same idiom as the AI-card structure tests: SwiftUI
+    /// vends no toolbar view to walk, and the render harness mounts no nav
+    /// bar, so the source is the provable seam.
+    func testStopAllToolbarIsUnconditional() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // HueHomeTests
+            .deletingLastPathComponent()   // repo root
+            .appendingPathComponent("HueHome/UI/Studio/StudioView.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        guard let start = src.range(of: "ToolbarItem(placement: .navigationBarLeading)") else {
+            return XCTFail("the Stop All toolbar slot is gone from StudioView")
+        }
+        let block = String(src[start.lowerBound...].prefix(1400))
+        XCTAssertTrue(block.contains("vm.stopAll()"),
+                      "the leading toolbar slot must be Stop All")
+        XCTAssertFalse(block.prefix(400).contains("if vm.hasAnyRunningEffect"),
+                       "Stop All must render UNCONDITIONALLY (spec §15.1) — the old gate hid it")
+        XCTAssertTrue(block.contains("Stop all rooms"),
+                      "Stop All keeps its distinct accessibility label")
+    }
+
+    /// Slice 2 (spec §14.3): switching between ACTIVE targets keeps the
+    /// console open — an instant exact-instance switch, no decks detour.
+    /// Landing on an idle room still closes it.
+    func testActiveTargetSwitchKeepsCustomizationOpen() {
+        XCTAssertEqual(StudioMixerPresentation.modeOnRoomChange(
+            current: .customization, newTargetRunsALook: true), .customization,
+            "selecting another active room is an instant console switch")
+        XCTAssertEqual(StudioMixerPresentation.modeOnRoomChange(
+            current: .customization, newTargetRunsALook: false), .decks,
+            "an idle room has nothing to customize — back to the decks")
     }
 
     /// HCD-02/03, superseded by Track A C5 — `rolodexHidden` is DELETED.
@@ -170,8 +210,9 @@ final class MixerTrayMetricsTests: XCTestCase {
     /// without changing behaviour, and this pins the direction so the rename
     /// cannot quietly invert it.
     func testRegionModeOnRoomChangeIsDecks() {
-        XCTAssertEqual(StudioMixerPresentation.modeOnRoomChange, .decks,
-            "landing on a room must return the region to the decks — opening "
+        XCTAssertEqual(StudioMixerPresentation.modeOnRoomChange(
+            current: .decks, newTargetRunsALook: true), .decks,
+            "landing on a room from the decks must stay on the decks — opening "
             + "customization there is the selector collision that put a "
             + "full-screen scrim between the finger and the room wheel")
 

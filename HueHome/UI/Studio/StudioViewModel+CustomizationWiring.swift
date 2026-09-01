@@ -84,6 +84,122 @@ extension StudioViewModel {
         bumpLiveValuesTick()
     }
 
+    // ── Session manager: Apply Current Look (spec §14.6) ────────
+
+    /// Remember the last ACTIVE target the user was looking at — the source
+    /// for "Apply Current Look". Called by the selection-change wiring.
+    func noteSelectionChanged() {
+        if let room = selectedRoom, runningEffect(for: room) != nil {
+            lastViewedActiveTarget = StudioSelectionKey(room: room)
+        }
+    }
+
+    /// The look "Apply Current Look" would copy: the last active target the
+    /// user viewed, or the only active target when there is exactly one.
+    /// Nil when the SELECTED room is already active (nothing to offer), when
+    /// nothing runs, or when the source would be a guess.
+    var applyCurrentLookSource: RunningEffect? {
+        if let room = selectedRoom, runningEffect(for: room) != nil { return nil }
+        if let key = lastViewedActiveTarget,
+           let effect = runningEffects[key], effect.recovered == nil { return effect }
+        if runningEffects.count == 1,
+           let only = runningEffects.values.first, only.recovered == nil { return only }
+        return nil
+    }
+
+    /// The copy-once step: seed the source card's next-start defaults from
+    /// its CURRENT exact live values, so the apply that follows starts the
+    /// new instance from them. Returns the card to apply, or nil when there
+    /// is no unambiguous source. Extracted so the copy-once semantics are
+    /// directly testable on the production path.
+    @discardableResult
+    func seedApplyCurrentLook() -> StudioCard? {
+        guard let source = applyCurrentLookSource else { return nil }
+        let live = valueScopes.live(for: source.identity)
+        valueScopes.setDefaults(live, forCard: source.cardID)
+        persistDefaults(immediately: false)
+        bumpLiveValuesTick()
+        return source.card
+    }
+
+    /// Copy the source's CURRENT exact live settings ONCE, then start a new
+    /// independently keyed running instance on `room` through the normal
+    /// production path. Independence is automatic: `startRunning` registers
+    /// the new instance under its own target key, so later edits on either
+    /// side never link (spec §14.6/§14.7).
+    func applyCurrentLook(to room: RoomDisplayItem) async {
+        guard let card = seedApplyCurrentLook() else { return }
+        await apply(card, roomOverride: room, preferEntertainmentOverride: nil)
+    }
+
+    /// Card lookup across every catalog the browser can apply.
+    func lookCard(forID id: String) -> StudioCard? {
+        (effectCards + liveModeCards + composerStudioCards + [starterCompositionCard()])
+            .first { $0.id == id }
+    }
+
+    // ── Preview Live (spec §16.5) ───────────────────────────────
+
+    /// Opt-in audition on the EXACT selected target: snapshot the previous
+    /// running look and its exact live values, then start the candidate
+    /// through the normal apply path.
+    func beginPreviewLive(card: StudioCard) async {
+        guard let room = selectedRoom else { return }
+        let previous = runningEffect(for: room)
+        _ = previewLive.begin(
+            previous: previous?.identity,
+            previousValues: previous.map { valueScopes.live(for: $0.identity) },
+            previousWasStreaming: previous?.isEntertainment ?? false)
+        previewLiveRoom = room
+        setPreviewingLive(true)
+        await apply(card, roomOverride: room, preferEntertainmentOverride: nil)
+        if let started = runningEffect(for: room), started.cardID == card.id {
+            previewLive.previewStarted(started.identity)
+        }
+        // The apply refused (handoff prompt, unsupported room…): nothing was
+        // changed, so the machine holds a snapshot with no audition — cancel
+        // will correctly restore nothing.
+    }
+
+    /// Cancel: restore the previous look EXACTLY — fenced on the audition's
+    /// identity, so a target change, stop, replacement, or generation bump
+    /// in between drops the restore instead of crossing targets.
+    func cancelPreviewLive() async {
+        defer { previewLiveRoom = nil; setPreviewingLive(false) }
+        guard let room = previewLiveRoom else { _ = previewLive.cancelVerdict(live: nil); return }
+        let live = runningEffects[StudioSelectionKey(room: room)]?.identity
+        switch previewLive.cancelVerdict(live: live) {
+        case .drop:
+            return   // the world moved on — touch nothing
+        case .restore(let snapshot):
+            if let previous = snapshot.previous,
+               let values = snapshot.previousValues,
+               let card = lookCard(forID: previous.cardID) {
+                // Reinstate the EXACT values by seeding the card's next-start
+                // defaults from the snapshot (the copy-once idiom), then
+                // restart through the normal path. Defaults tracking live
+                // values is the established last-used behavior, so this is
+                // consistent, not a corruption.
+                valueScopes.setDefaults(values, forCard: previous.cardID)
+                persistDefaults(immediately: false)
+                bumpLiveValuesTick()
+                await apply(card, roomOverride: room,
+                            preferEntertainmentOverride: snapshot.previousWasStreaming ? true : nil)
+            } else {
+                // The target was idle before the audition — cancel just stops
+                // the preview and leaves the room as it was.
+                await stopActiveTarget(StudioSelectionKey(room: room))
+            }
+        }
+    }
+
+    /// Apply: the audition is the keeper — discard the snapshot.
+    func commitPreviewLive() {
+        previewLive.commit()
+        previewLiveRoom = nil
+        setPreviewingLive(false)
+    }
+
     // ── Board plumbing ──────────────────────────────────────────
 
     /// Beat-panel edits routed through `commitParam`, so they land on the

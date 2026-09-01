@@ -1,9 +1,14 @@
 // RoomPickerSheetView.swift
-// CastChroma — v0.16.0 Studio Room Picker
+// CastChroma — Slice 2 active-session manager + searchable room picker
+// (spec §14.2 / §15.3).
 //
-// Searchable half-sheet for selecting a room or zone.
-// Grouped by type (Rooms / Zones) with section headers.
-// Used by StudioView's swipeable nav title tap action.
+// ACTIVE targets first: each row names the room/zone, its running look, and
+// a tiny live indicator, and carries a one-tap Stop for THAT exact target —
+// no need to navigate to its console first. A stopped target leaves the
+// active section immediately and rejoins the searchable Rooms/Zones lists.
+// Selecting an active row is an instant switch to that room's real live
+// console. This sheet is room/session NAVIGATION, not customization — the
+// customization surface itself stays the host's one scroll (Guard 13).
 
 import SwiftUI
 
@@ -14,9 +19,23 @@ struct RoomPickerSheetView: View {
     let selectedRoom: RoomDisplayItem?
     let runningEffects: [StudioSelectionKey: RunningEffect]  // exact bridge+group+kind key
     let onSelect: (RoomDisplayItem) -> Void
+    /// One-tap stop for an ACTIVE row — exact key, never a sibling. Optional
+    /// so read-only presentations keep working.
+    var onStopActive: ((StudioSelectionKey) -> Void)? = nil
 
     @State private var searchText = ""
     @Environment(\.dismiss) private var dismiss
+
+    /// Active targets, stable-ordered (bridge, kind, name) — rooms the
+    /// session is playing come FIRST, before any search list.
+    private var activeEntries: [(key: StudioSelectionKey, effect: RunningEffect)] {
+        runningEffects
+            .map { (key: $0.key, effect: $0.value) }
+            .sorted {
+                ($0.effect.room.name, $0.key.bridgeID ?? "", $0.key.kind.rawValue)
+                    < ($1.effect.room.name, $1.key.bridgeID ?? "", $1.key.kind.rawValue)
+            }
+    }
 
     private var filteredRooms: [RoomDisplayItem] {
         if searchText.isEmpty { return rooms }
@@ -31,6 +50,20 @@ struct RoomPickerSheetView: View {
     var body: some View {
         NavigationStack {
             List {
+                // ── Active session, FIRST (spec §14.2) ────────
+                if !activeEntries.isEmpty && searchText.isEmpty {
+                    Section {
+                        ForEach(activeEntries, id: \.key) { entry in
+                            activeRow(entry.key, effect: entry.effect)
+                        }
+                    } header: {
+                        Text("PLAYING NOW")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(HuePalette.amber.opacity(0.8))
+                            .tracking(0.8)
+                    }
+                }
+
                 // ── Rooms section ─────────────────────────────
                 if !filteredRooms.isEmpty {
                     Section {
@@ -81,6 +114,62 @@ struct RoomPickerSheetView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    // ── Active row: room + running look + live dot + exact Stop ────
+
+    private func activeRow(_ key: StudioSelectionKey, effect: RunningEffect) -> some View {
+        let isSelected = selectedRoom.map { StudioSelectionKey(room: $0) } == key
+        return HStack(spacing: 12) {
+            Button {
+                onSelect(effect.room)
+            } label: {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(HuePalette.Noir.success)
+                        .frame(width: 7, height: 7)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(effect.room.name)
+                            .font(.system(size: 15, weight: isSelected ? .semibold : .medium))
+                            .foregroundStyle(.white)
+                        Text(effect.card.name)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(effect.card.accentColor.opacity(0.85))
+                    }
+                    Spacer()
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(HuePalette.amber)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(effect.room.name), playing \(effect.card.name)")
+            .accessibilityHint("Switches to this room's live controls")
+
+            if let onStopActive {
+                Button {
+                    onStopActive(key)
+                    HapticManager.shared.medium()
+                } label: {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(HuePalette.Noir.destructive)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle().fill(HuePalette.Noir.destructive.opacity(0.14))
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stop \(effect.card.name) in \(effect.room.name)")
+            }
+        }
+        .padding(.vertical, 4)
+        .listRowBackground(
+            isSelected ? HuePalette.amber.opacity(0.08) : Color.clear
+        )
     }
 
     // ── Row builder ───────────────────────────────────────

@@ -666,10 +666,18 @@ fi
 
 # (d) Landing on a room may not force the effect panel open over the wheel.
 # Track A C4 renamed the rule's vocabulary (`collapsedOnRoomChange = true` →
-# `modeOnRoomChange: StudioRegionMode = .decks`) without changing the rule. The
-# guard tracks the RULE: arriving on a room must return the region to the decks.
-if ! grep -qE 'static let modeOnRoomChange: StudioRegionMode = \.decks' "$HC_VIEW"; then
+# `modeOnRoomChange = .decks`); Slice 2 made it a pure POLICY FUNCTION so an
+# active-target switch can keep an already-open console (spec §14.3) — but
+# the defect-facing half of the rule is unchanged: from the DECKS, arriving
+# anywhere must stay on the decks. The guard tracks that half: the function
+# must exist, and its body may open customization only when the CURRENT mode
+# is already customization.
+if ! grep -qE 'static func modeOnRoomChange\(current: StudioRegionMode' "$HC_VIEW"; then
     fail "composer-hardware-convergence" "the room-change rule is missing or inverted in $HC_VIEW — the tray would cover the room wheel mid-scroll again"
+fi
+hc_room_rule=$(awk '/static func modeOnRoomChange\(/,/^    }/' "$HC_VIEW")
+if ! echo "$hc_room_rule" | grep -q 'current == .customization'; then
+    fail "composer-hardware-convergence" "modeOnRoomChange no longer conditions on the CURRENT mode — a room change from the decks could auto-open the tray over the wheel again"
 fi
 # The anchor tracks the handler, not one spelling of its key: Track A C1
 # re-keyed it from `vm.selectedRoom?.id` to the exact StudioSelectionKey, and a

@@ -156,6 +156,9 @@ struct StudioView: View {
     @State private var regionMode: StudioRegionMode = .customization
     @State private var showCompositionTransportPrompt = false
     @State private var pendingCompositionCard: StudioCard?
+    /// The look whose inline details/setup panel is expanded in the browser
+    /// band (spec §16.4) — same surface, never a sheet.
+    @State private var lookDetailsCard: StudioCard?
     @State private var pendingCompositionRoom: RoomDisplayItem?
     // ── AI generation (N1) ────────────────────────────────────
     /// Monotonic operation ids: the newest trigger supersedes every older one.
@@ -678,17 +681,32 @@ struct StudioView: View {
             // keeps the keyboard from crushing it ("there isn't enough room"),
             // and is scoped to the pager alone so `aiComposerPanel` keeps its
             // own ordinary keyboard avoidance.
-            ZStack {
-                cardGrid
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
-                    // MOUNTED but inert while the composer is up: a tap aimed
-                    // at Cancel must never reach a deck card behind it.
-                    .allowsHitTesting(
-                        StudioAIComposerLayout.lowerContentIsInteractive(
-                            overlayVisible: aiPresentation.isOverlayVisible))
+            VStack(spacing: HueSpacing.xs) {
+                // The unified look-browser band (spec §16): compact Favorites
+                // and Recents, the Apply-Current-Look fast path for an idle
+                // room, and the inline details/setup + Preview Live panel —
+                // same surface, above the three category decks.
+                StudioLookBrowserBand(
+                    vm: vm,
+                    onApply: { card in
+                        expandMixer()
+                        applyCardWithTransportPrompt(card)
+                    },
+                    detailsCard: $lookDetailsCard
+                )
 
-                if aiPresentation.isOverlayVisible {
-                    aiComposerPanel
+                ZStack {
+                    cardGrid
+                        .ignoresSafeArea(.keyboard, edges: .bottom)
+                        // MOUNTED but inert while the composer is up: a tap aimed
+                        // at Cancel must never reach a deck card behind it.
+                        .allowsHitTesting(
+                            StudioAIComposerLayout.lowerContentIsInteractive(
+                                overlayVisible: aiPresentation.isOverlayVisible))
+
+                    if aiPresentation.isOverlayVisible {
+                        aiComposerPanel
+                    }
                 }
             }
             .transition(.opacity)
@@ -720,6 +738,11 @@ struct StudioView: View {
             // which is why tapping an ALREADY-selected room still works.
             onActivate: { _ in
                 expandMixer()
+            },
+            // Session manager (spec §15.3): stop another active target
+            // directly from the expanded list — exact key, no console detour.
+            onStopActive: { key in
+                Task { await vm.stopActiveTarget(key) }
             }
         )
     }
@@ -788,6 +811,40 @@ struct StudioView: View {
                         } else {
                             expandMixer()   // deliberate activation
                             applyCardWithTransportPrompt(card)
+                        }
+                    }
+                    // Browser affordances (spec §16.1–§16.3): a subtle
+                    // always-visible favorite star, and long-press for the
+                    // favorite shortcut + the inline details/setup entry.
+                    .overlay(alignment: .topTrailing) {
+                        let fav = StudioLookLibraryStore.shared.isFavorite(card.id)
+                        Button {
+                            StudioLookLibraryStore.shared.toggleFavorite(card.id)
+                            HapticManager.shared.selection()
+                        } label: {
+                            Image(systemName: fav ? "star.fill" : "star")
+                                .font(.system(size: 11))
+                                .foregroundStyle(HuePalette.amber.opacity(fav ? 0.95 : 0.35))
+                                .frame(width: 32, height: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(fav ? "Remove \(card.name) from favorites"
+                                                : "Add \(card.name) to favorites")
+                    }
+                    .contextMenu {
+                        Button {
+                            StudioLookLibraryStore.shared.toggleFavorite(card.id)
+                        } label: {
+                            Label(StudioLookLibraryStore.shared.isFavorite(card.id)
+                                  ? "Remove Favorite" : "Add Favorite",
+                                  systemImage: StudioLookLibraryStore.shared.isFavorite(card.id)
+                                  ? "star.slash" : "star")
+                        }
+                        Button {
+                            withAnimation(HueAnimation.fast) { lookDetailsCard = card }
+                        } label: {
+                            Label("Details & Setup", systemImage: "slider.horizontal.3")
                         }
                     }
                 }
@@ -1529,6 +1586,8 @@ struct StudioView: View {
     }
 
     private func applyCardWithTransportPrompt(_ card: StudioCard) {
+        // Browser Recents (spec §16): every deliberate apply notes the look.
+        StudioLookLibraryStore.shared.noteApplied(card.id)
         let roomSnapshot = vm.selectedRoom
         guard case .composition = card.strategy else {
             Task { await vm.apply(card, roomOverride: roomSnapshot, preferEntertainmentOverride: nil) }
@@ -2453,16 +2512,21 @@ enum StudioRegionMode: Equatable {
 
 enum StudioMixerPresentation {
 
-    /// Arriving on a new room returns the region to the decks.
+    /// What arriving on a new room does to the region (Slice 2, spec §14.3).
     ///
-    /// The editor is not lost — `hasCurrentRoomEffect && regionMode == .decks`
-    /// shows the "Live Controls" pill that opens it. What is gained is that the
-    /// wheel keeps working: no tray over it, and no full-screen scrim between
-    /// the finger and the next scroll.
+    /// From the DECKS, a room change never opens customization — that
+    /// auto-open was the selector collision (a tray over the wheel, a scrim
+    /// eating the next scroll), and it stays dead.
     ///
-    /// Same rule and same reason as the old `collapsedOnRoomChange = true`,
-    /// stated in the new vocabulary.
-    static let modeOnRoomChange: StudioRegionMode = .decks
+    /// From CUSTOMIZATION, switching to another ACTIVE target keeps the
+    /// console open: selecting an active room in the session manager or on
+    /// the wheel is an instant switch to that room's real live controls — no
+    /// preview, no restart, no detour through the decks. Landing on an
+    /// IDLE room still returns to the decks (there is nothing to customize).
+    static func modeOnRoomChange(current: StudioRegionMode,
+                                 newTargetRunsALook: Bool) -> StudioRegionMode {
+        (current == .customization && newTargetRunsALook) ? .customization : .decks
+    }
 
     /// The rolodex is ALWAYS MOUNTED. `rolodexHidden` is deleted, and nothing
     /// replaces it.
@@ -3086,7 +3150,10 @@ struct StudioRegionWiring: ViewModifier {
             // room change the user can see — a bare-id key would leave the tray
             // open over the wheel for the arriving room.
             .onChange(of: vm.selectedRoom.map(StudioSelectionKey.init)) { _, _ in
-                regionMode = StudioMixerPresentation.modeOnRoomChange
+                vm.noteSelectionChanged()   // Apply-Current-Look source tracking
+                regionMode = StudioMixerPresentation.modeOnRoomChange(
+                    current: regionMode,
+                    newTargetRunsALook: vm.currentRoomEffect != nil)
             }
             // The effect the customization surface was editing is gone, so
             // there is nothing left to customize: return to the decks.

@@ -2037,9 +2037,11 @@ final class MultiBridgeRoutingTests: XCTestCase {
         }
 
         let orchestratorClosures = try enqueuedClosureBodies("HueHome/Core/Network/UnifiedOrchestrator.swift")
-        let studioClosures = try enqueuedClosureBodies("HueHome/UI/Studio/StudioViewModel.swift")
+        // Slice 2 moved the Studio send bodies into the customization-wiring
+        // extension (`performBridgeSend`) — the guard's remit follows the code.
+        let studioClosures = try enqueuedClosureBodies("HueHome/UI/Studio/StudioViewModel+CustomizationWiring.swift")
         XCTAssertFalse(orchestratorClosures.isEmpty, "UnifiedOrchestrator must still enqueue REST work")
-        XCTAssertFalse(studioClosures.isEmpty, "StudioViewModel must still enqueue REST work")
+        XCTAssertFalse(studioClosures.isEmpty, "the Studio customization wiring must still enqueue REST work")
 
         // (a) No enqueued closure may guard on Task.isCancelled.
         for (label, closures) in [("UnifiedOrchestrator", orchestratorClosures),

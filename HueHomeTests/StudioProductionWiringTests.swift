@@ -334,6 +334,64 @@ final class StudioProductionWiringTests: XCTestCase {
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 15)
     }
 
+    // ── Session manager (2C) ────────────────────────────────────
+
+    /// Apply Current Look copies the source's exact live values ONCE; the
+    /// two instances then diverge freely (spec §14.6/§14.7).
+    func testApplyCurrentLookCopiesOnceThenInstancesDiverge() {
+        let a = room("room-a"), b = room("room-b")
+        let card = partyCard()
+        startRunning(card, on: a)
+        edit(card, on: a, value: 33)
+
+        // Viewing A (active), then selecting idle B — A is the source.
+        vm.selectedRoom = a
+        vm.noteSelectionChanged()
+        vm.selectedRoom = b
+        vm.noteSelectionChanged()
+        XCTAssertEqual(vm.applyCurrentLookSource?.room.id, "room-a")
+
+        // The production copy-once seed, then the start apply() performs.
+        let seeded = vm.seedApplyCurrentLook()
+        XCTAssertEqual(seeded?.id, card.id)
+        startRunning(card, on: b)
+
+        XCTAssertEqual(displayedSpeed(card, on: b), 33, "the copy landed once")
+        edit(card, on: b, value: 77)
+        XCTAssertEqual(displayedSpeed(card, on: a), 33, "…and the source never links")
+        XCTAssertEqual(displayedSpeed(card, on: b), 77)
+    }
+
+    func testApplyCurrentLookOffersNoSourceWhenSelectedRoomIsActive() {
+        let a = room("room-a")
+        let card = partyCard()
+        startRunning(card, on: a)
+        vm.selectedRoom = a
+        vm.noteSelectionChanged()
+        XCTAssertNil(vm.applyCurrentLookSource,
+                     "an active selected room needs no Apply-Current-Look path")
+    }
+
+    /// The session-manager row stop: exact kind-aware key, sibling survives,
+    /// and the stopped target's session memory dies with it.
+    func testStopActiveTargetIsExactAndClearsItsWorkingMemory() async {
+        let asRoom = room("shared-id", kind: .room)
+        let asZone = room("shared-id", kind: .zone)
+        let card = partyCard()
+        let roomIdentity = startRunning(card, on: asRoom)
+        startRunning(card, on: asZone)
+        vm.sessionMemory.update(roomIdentity.targetKey) { $0.identityPanelOpen = true }
+
+        await vm.stopActiveTarget(StudioSelectionKey(room: asRoom))
+
+        XCTAssertNil(vm.runningEffect(for: asRoom), "the exact row stopped")
+        XCTAssertNotNil(vm.runningEffect(for: asZone), "the same-id zone twin survives")
+        XCTAssertFalse(vm.sessionMemory.state(for: roomIdentity.targetKey).identityPanelOpen,
+                       "the stopped target's expansions die with it")
+        XCTAssertFalse(vm.valueScopes.isCurrent(roomIdentity),
+                       "its pending writes are fenced")
+    }
+
     // ── Stop All ────────────────────────────────────────────────
 
     func testStopAllClearsEveryTargetAndPendingSendSlot() async {

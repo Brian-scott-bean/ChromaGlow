@@ -31,6 +31,10 @@ struct RoomRolodexView: View {
     /// never touches a playback API, so tapping an already-selected room still
     /// opens the surface.
     let onActivate: (RoomDisplayItem) -> Void
+    /// Slice 2 session manager: one-tap stop for an ACTIVE target from the
+    /// expanded picker (spec §15.3). Optional; the picker hides the affordance
+    /// when absent.
+    var onStopActive: ((StudioSelectionKey) -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -71,7 +75,8 @@ struct RoomRolodexView: View {
         selectedRoom: RoomDisplayItem?,
         runningEffects: [StudioSelectionKey: RunningEffect],
         onCommit: @escaping (RoomDisplayItem) -> Void,
-        onActivate: @escaping (RoomDisplayItem) -> Void
+        onActivate: @escaping (RoomDisplayItem) -> Void,
+        onStopActive: ((StudioSelectionKey) -> Void)? = nil
     ) {
         self.rooms = rooms
         self.zones = zones
@@ -79,6 +84,7 @@ struct RoomRolodexView: View {
         self.runningEffects = runningEffects
         self.onCommit = onCommit
         self.onActivate = onActivate
+        self.onStopActive = onStopActive
 
         let startAsZone = selectedRoom?.kind == .zone
         let r = rooms.firstIndex { $0.id == selectedRoom?.id } ?? 0
@@ -193,7 +199,8 @@ struct RoomRolodexView: View {
                 onSelect: { item in
                     select(item)
                     showListFallback = false
-                }
+                },
+                onStopActive: onStopActive
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)

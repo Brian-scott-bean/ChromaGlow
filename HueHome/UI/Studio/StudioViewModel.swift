@@ -1172,6 +1172,20 @@ final class StudioViewModel {
     /// cleared when the session ends. Never persisted.
     let sessionMemory = StudioSessionWorkingMemory()
 
+    /// The most recently viewed ACTIVE target — the source "Apply Current
+    /// Look" copies from when the selection moves to an idle room (spec
+    /// §14.6). Session-scoped, never persisted.
+    @ObservationIgnored var lastViewedActiveTarget: StudioSelectionKey?
+
+    /// Preview Live (spec §16.5): the snapshot/fence machine plus the room
+    /// the audition runs on. State only — audition, restore and commit all
+    /// execute through the normal `apply()` path.
+    @ObservationIgnored let previewLive = PreviewLiveMachine<Color>()
+    @ObservationIgnored var previewLiveRoom: RoomDisplayItem?
+    /// Observable mirror so the browser UI can render the preview state.
+    private(set) var isPreviewingLive = false
+    func setPreviewingLive(_ value: Bool) { isPreviewingLive = value }
+
     // ── Engine reference (set in configure()) ─────────────────
     // Getter internal so the customization-wiring extension (separate file)
     // can route sends; the setter stays private to `configure`.
@@ -3242,6 +3256,24 @@ final class StudioViewModel {
                                       outcomeReason: "explicitStopEntry selectedRoom=\(room.id)")
         isExplicitStop = true
         await stopEffect(on: StudioSelectionKey(room: room), context: context)
+        statusMessage = ""
+    }
+
+    /// Slice 2 session manager (spec §15.3): stop the ACTIVE target at an
+    /// exact kind-aware key, straight from the expanded list — no need to
+    /// navigate to its console first. Exact by construction: the key carries
+    /// bridge + group + kind, so a sibling room, a same-id zone, or another
+    /// bridge's twin is untouchable from here.
+    func stopActiveTarget(_ key: StudioSelectionKey) async {
+        guard let effect = runningEffects[key] else { return }
+        let context = UnifiedOrchestrator.StopAuditContext(
+            route: .explicitStop, cardOrEffectID: effect.cardID)
+        orchestrator?.recordStopAudit(context, operation: .stopRequested,
+                                      bridgeID: key.bridgeID, roomID: key.groupID,
+                                      cardOrEffectID: effect.cardID,
+                                      outcomeReason: "sessionManagerRow")
+        isExplicitStop = true
+        await stopEffect(on: key, context: context)
         statusMessage = ""
     }
 
