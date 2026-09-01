@@ -72,6 +72,21 @@
 #              not return, apply's teardown loops carry the same-bridge
 #              predicate, and the app-driven stop verifies exact bridge+room
 #              ownership before cancelling anything.
+#  13. build-47 device finding 3 / checklist row 36 — the Studio
+#              customization host is ONE CONTINUOUS SURFACE: no detached
+#              sheet from the host, the panel or any Slice 2 instrument
+#              surface, no disclosure gate in the host, exactly one vertical
+#              ScrollView in the host, and a live beat auto-anchor.
+#  14. Slice 2 R1 — the 3 Hz flash ceiling is a REALIZED-FRAME invariant:
+#              one pure BeatMath.FlashSafety API, plans that floor a whole
+#              safe cycle before splitting it, ENT loops that sleep the shared
+#              frame quantum, cap every beat lock at the realizable ceiling,
+#              never touch the raw beatsPerCycle, and delay their onsets
+#              through a ledger shared per BRIDGE that is never dropped.
+#  15. Slice 2 R2 — ONE board availability funnel: both StudioBoardView
+#              renderers (controls and colour) resolve through
+#              StudioBoardAvailability, the pre-funnel per-view verdicts stay
+#              gone, and the colour context reads the board's own snapshot.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -679,6 +694,12 @@ hc_room_rule=$(awk '/static func modeOnRoomChange\(/,/^    }/' "$HC_VIEW")
 if ! echo "$hc_room_rule" | grep -q 'current == .customization'; then
     fail "composer-hardware-convergence" "modeOnRoomChange no longer conditions on the CURRENT mode — a room change from the decks could auto-open the tray over the wheel again"
 fi
+# Conditioning alone is not the rule. A body that mentions the condition and
+# then returns .customization on BOTH branches reinstates the exact defect, so
+# the non-customization outcome must be present in the body as well.
+if ! echo "$hc_room_rule" | grep -qF '.decks'; then
+    fail "composer-hardware-convergence" "modeOnRoomChange never returns .decks — arriving on a room from the decks would open the tray over the wheel again"
+fi
 # The anchor tracks the handler, not one spelling of its key: Track A C1
 # re-keyed it from `vm.selectedRoom?.id` to the exact StudioSelectionKey, and a
 # pattern pinned to the old spelling would have matched nothing and passed
@@ -1019,14 +1040,24 @@ fi
 # room as well as the bridge, and the runtime's owning room must match —
 # the same exact-ownership proof stopAppDrivenStudioEffect carries.
 for sym in 'studioEngineRuntimesByBridge: [String: StudioEngineRuntime]' \
-           'studioRestScopesByBridge: [String: RestScope]' \
-           'bridgeID: String?, roomID: String'; do
+           'studioRestScopesByBridge: [String: RestScope]'; do
     if ! grep -qF "$sym" "$HC_ORCH"; then
         fail "composer-hardware-convergence" "'$sym' is missing from $HC_ORCH — the per-bridge app-driven engine runtime collapsed back toward a global slot"
     fi
 done
-hc_update_guard=$(awk '/func updateStudioParams\(/,/^    }/' "$HC_ORCH" | grep -cF 'runtime.roomID == roomID' || true)
-if [[ "$hc_update_guard" -lt 1 ]]; then
+# The signature claim is SCOPED to updateStudioParams. A file-wide grep for
+# 'bridgeID: String?, roomID: String' passes vacuously as soon as any unrelated
+# function happens to spell the same pair, so the literal is asserted against
+# the extracted body — and the body must also carry the exact-ownership
+# predicate stopAppDrivenStudioEffect carries.
+hc_update_body=$(awk '/func updateStudioParams\(/,/^    }/' "$HC_ORCH" 2>/dev/null || true)
+if [[ -z "$hc_update_body" ]]; then
+    fail "composer-hardware-convergence" "updateStudioParams is gone from $HC_ORCH — the live-edit target rule is unenforceable"
+fi
+if ! echo "$hc_update_body" | grep -qF 'bridgeID: String?, roomID: String'; then
+    fail "composer-hardware-convergence" "updateStudioParams no longer names the ROOM alongside the bridge — a live edit could land on a sibling room's engine on the same bridge"
+fi
+if ! echo "$hc_update_body" | grep -qF 'runtime.roomID == roomID'; then
     fail "composer-hardware-convergence" "updateStudioParams lost its runtime.roomID == roomID guard — a live edit could land on a sibling room's engine on the same bridge"
 fi
 hc_global_slots=$(grep -nE 'activeStudioTask|activeParamBox|activeStudioRestScope' "$HC_ORCH" "$HC_VM" \
@@ -1062,6 +1093,14 @@ HC_TESTS=(
     "HueHomeTests/CustomizationIdentityTests.swift"
     "HueHomeTests/CustomizationResolverTests.swift"
     "HueHomeTests/StudioProductionWiringTests.swift"
+    "HueHomeTests/PreviewLiveTests.swift"
+    "HueHomeTests/InstrumentControlMathTests.swift"
+    "HueHomeTests/EffectParameterProfilesTests.swift"
+    "HueHomeTests/StudioLookLibraryTests.swift"
+    "HueHomeTests/FlashSafetyTests.swift"
+    "HueHomeTests/StudioBoardAvailabilityTests.swift"
+    "HueHomeTests/StudioPreviewLiveProductionTests.swift"
+    "HueHomeTests/StudioLifecycleSerializationTests.swift"
 )
 for f in "${HC_TESTS[@]}"; do
     [[ -f "$f" ]] || continue
@@ -1088,10 +1127,28 @@ done
 R36_HOST="HueHome/UI/Studio/MixerTrayView.swift"
 R36_PANEL="HueHome/UI/Composer/CompositionEditorPanel.swift"
 
-# (a) No detached presentation from either file on this path. `StudioParamSheet`,
+# Slice 2 split the one surface across the instrument files: the board, the
+# look browser, the shared touch controls, the identity header, the color
+# editor and the beat section all render INSIDE the same scrolling column, so
+# the no-detached-presentation rule (a) covers them too. Only (a): (b)'s
+# `isExpanded` ban stays on the host + panel, because StageColorEditor owns a
+# caller-bound `isExpanded` BY DESIGN, and (c)'s one-vertical-ScrollView count
+# is a claim about the host alone.
+R36_SURFACES=(
+    "$R36_HOST"
+    "$R36_PANEL"
+    "HueHome/UI/Studio/StudioBoardView.swift"
+    "HueHome/UI/Studio/StudioLookBrowserView.swift"
+    "HueHome/UI/Components/StageInstrumentControls.swift"
+    "HueHome/UI/Studio/StudioIdentityHeader.swift"
+    "HueHome/UI/Components/StageColorEditor.swift"
+    "HueHome/UI/Components/StageBeatSection.swift"
+)
+
+# (a) No detached presentation from any file on this path. `StudioParamSheet`,
 # `ComposerLayerSheet` and `StageMoreButton` stay DEFINED — Track B owns them —
 # but nothing here may present them.
-for f in "$R36_HOST" "$R36_PANEL"; do
+for f in "${R36_SURFACES[@]}"; do
     [[ -f "$f" ]] || fail "studio-one-surface" "$f is missing — the row-36 rule is unenforceable"
     r36_present=$(grep -nE '\.sheet\(|\.fullScreenCover\(|StudioParamSheet\(|ComposerLayerSheet\(|StageMoreButton\(' "$f" 2>/dev/null \
         | grep -vE ':[[:space:]]*//' || true)
@@ -1127,6 +1184,160 @@ fi
 if ! grep -q '\.id("reactionBeatControls")' "$R36_PANEL"; then
     fail "studio-one-surface" "the \"reactionBeatControls\" anchor target is gone from $R36_PANEL — the host's scrollTo would resolve to nothing"
 fi
+
+# ──────────────────────────────────────────────────────────────
+# Guard 14 (Slice 2 R1): the 3 Hz flash ceiling is a REALIZED-FRAME invariant.
+#
+# The old loops clamped a REQUESTED rate and then floored each half of the
+# cycle independently against a hard-coded 0.02: `Int(onDuration / 0.02)` and
+# `Int(offDuration / 0.02)`. Two independent floors can shorten a safe total
+# below 1/3 s, a raw `binding.beatsPerCycle` can multiply an already-legal lock
+# past the ceiling, and a per-loop wall clock cannot see the onset another loop
+# on the same bridge just realized. Every one of those is invisible to a suite
+# that only checks the requested Hz.
+#
+# The invariant now lives in one pure place (BeatMath.FlashSafety): loops plan
+# a whole SAFE TOTAL and split it, sleep the shared frame quantum, cap their
+# beat lock at the realizable ceiling, and delay — never skip — an onset
+# through a ledger shared per BRIDGE across loop instances.
+# ──────────────────────────────────────────────────────────────
+
+HC_BEAT="HueHome/Core/Audio/BeatBinding.swift"
+
+# (a) The pure API exists. A missing symbol means the invariant was inlined
+#     back into a caller, where the next loop cannot reuse it.
+[[ -f "$HC_BEAT" ]] || fail "slice2-r1" "$HC_BEAT is missing — the flash-safety invariant has no home"
+for sym in entertainmentFrameDuration entertainmentFrameNanoseconds minOnsetPeriod \
+           slowestPlannedHz minCycleFrames entertainmentMaxLockHz cycleFrames splitFrames \
+           OnsetGate OnsetLedger StrobePlan PartyPlan ThunderstormPlan requestedGapFrames \
+           flashFrameRange afterglowFrameRange noteAmbient noteStrike gapFrames; do
+    grep -q "$sym" "$HC_BEAT" || fail "slice2-r1" "BeatMath.FlashSafety.$sym is gone from $HC_BEAT"
+done
+
+# (b) The plans compute a SAFE TOTAL first and split it. Flooring two halves
+#     independently is the exact arithmetic that produced sub-1/3 s cycles.
+hc_strobe_plan=$(awk '/struct StrobePlan/,/^        }$/' "$HC_BEAT" 2>/dev/null || true)
+hc_party_plan=$(awk '/struct PartyPlan/,/^        }$/' "$HC_BEAT" 2>/dev/null || true)
+for n in strobe party; do
+    eval "body=\$hc_${n}_plan"
+    echo "$body" | grep -q 'cycleFrames(' \
+        || fail "slice2-r1" "${n}Plan no longer plans a whole safe cycle via cycleFrames("
+    echo "$body" | grep -q 'splitFrames(' \
+        || fail "slice2-r1" "${n}Plan no longer splits its safe total via splitFrames("
+done
+
+# (c) Function-scoped: each ENT loop still routes through the math. Comment-only
+#     lines are stripped, because the prose above each fix necessarily quotes the
+#     literals the rule bans.
+hc_ent_loop() { awk "/private func $1\(/,/^    }\$/" "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' || true; }
+
+for loop in runStrobeEntertainment runPartyEntertainment runThunderstormEntertainment; do
+    body=$(hc_ent_loop "$loop")
+    [[ -n "$body" ]] || fail "slice2-r1" "$loop not found in $HC_ORCH"
+    echo "$body" | grep -q 'onsetLedger: BeatMath.FlashSafety.OnsetLedger' \
+        || fail "slice2-r1" "$loop no longer takes the bridge's shared onsetLedger"
+    echo "$body" | grep -q 'streamUntilOnsetAdmitted(' \
+        || fail "slice2-r1" "$loop no longer delays its onsets through streamUntilOnsetAdmitted("
+    echo "$body" | grep -q 'BeatMath.FlashSafety.entertainmentFrameNanoseconds' \
+        || fail "slice2-r1" "$loop no longer sleeps the shared 20 ms frame quantum"
+    echo "$body" | grep -qE 'Task\.sleep\(nanoseconds: [0-9_]+\)' \
+        && fail "slice2-r1" "$loop sleeps a hard-coded frame literal"
+    echo "$body" | grep -q '0\.02' \
+        && fail "slice2-r1" "$loop does frame arithmetic against a 0.02 literal instead of FlashSafety"
+    echo "$body" | grep -q 'binding\.beatsPerCycle' \
+        && fail "slice2-r1" "$loop uses the RAW binding.beatsPerCycle (R1-TB)"
+    hc_locks=$(echo "$body" | grep -c 'BeatMath.liveLock(' || true)
+    hc_capped=$(echo "$body" | grep -c 'BeatMath.liveLock(binding, maxHz: BeatMath.FlashSafety.entertainmentMaxLockHz)' || true)
+    [[ "$hc_locks" == "$hc_capped" ]] \
+        || fail "slice2-r1" "$loop has a liveLock( without maxHz: entertainmentMaxLockHz ($hc_capped of $hc_locks capped)"
+done
+
+hc_ent_loop runStrobeEntertainment | grep -q 'FlashSafety.StrobePlan.make(' \
+    || fail "slice2-r1" "runStrobeEntertainment no longer plans with StrobePlan.make("
+hc_ent_loop runPartyEntertainment | grep -q 'FlashSafety.PartyPlan.make(' \
+    || fail "slice2-r1" "runPartyEntertainment no longer plans with PartyPlan.make("
+
+# Thunderstorm has no fixed cycle to floor — its safety is the carried budget.
+hc_storm_body=$(hc_ent_loop runThunderstormEntertainment)
+for call in 'ThunderstormPlan.Budget()' 'noteAmbient(' 'noteStrike(' 'gapFrames(frequency:'; do
+    echo "$hc_storm_body" | grep -qF "$call" \
+        || fail "slice2-r1" "runThunderstormEntertainment lost its onset budget ($call missing)"
+done
+
+# (d) The ledger is per BRIDGE and is never dropped. Removing it mid-session
+#     re-bases the wall clock, which is precisely how two loops on one bridge
+#     realized two onsets less than 1/3 s apart.
+grep -q 'studioFlashOnsetLedgersByBridge' "$HC_ORCH" \
+    || fail "slice2-r1" "the per-bridge flash onset ledger is gone"
+hc_ledger_drop=$(grep -nE 'studioFlashOnsetLedgersByBridge\.(removeValue|removeAll)|studioFlashOnsetLedgersByBridge\[[^]]*\][[:space:]]*=[[:space:]]*nil' "$HC_ORCH" 2>/dev/null \
+    | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+if [[ -n "$hc_ledger_drop" ]]; then
+    fail "slice2-r1" $'a flash onset ledger is being removed:\n'"$hc_ledger_drop"
+fi
+
+# (e) The suite exists and is actually compiled.
+[[ -f HueHomeTests/FlashSafetyTests.swift ]] || fail "slice2-r1" "FlashSafetyTests.swift is gone"
+grep -q 'FlashSafetyTests.swift in Sources' HueHome.xcodeproj/project.pbxproj \
+    || fail "slice2-r1" "FlashSafetyTests.swift is not in the test target Sources phase"
+
+# ──────────────────────────────────────────────────────────────
+# Guard 15 (Slice 2 R2): ONE availability funnel governs every board control —
+# colour included.
+#
+# Colour used to answer "can this room do this?" for itself, in the view, while
+# every other control asked a separate per-view verdict (`showsEntOnlyHint`,
+# `param.entOnly`). Two answers to one question is how a knob ends up live on a
+# board whose colour swatch says the room cannot render it. `StudioBoardAvailability`
+# is now the single resolver, and BOTH renderers must consult it — a rule that
+# is only true inside those two function bodies, so the checks are scoped there
+# rather than to the file.
+# ──────────────────────────────────────────────────────────────
+
+R2_AVAIL="HueHome/Core/StudioBoardAvailability.swift"
+R2_BOARD="HueHome/UI/Studio/StudioBoardView.swift"
+R2_WIRING="HueHome/UI/Studio/StudioViewModel+CustomizationWiring.swift"
+
+# (a) The resolver exists and is in the app target.
+[[ -f "$R2_AVAIL" ]] || fail "slice2-r2" "$R2_AVAIL is missing — the board availability funnel has no home"
+grep -q 'StudioBoardAvailability.swift in Sources' HueHome.xcodeproj/project.pbxproj \
+    || fail "slice2-r2" "StudioBoardAvailability.swift is not in the app target Sources phase"
+
+# (b) Function-scoped: both renderers resolve through the funnel and take their
+#     interactivity from it. A file-wide grep would pass vacuously as soon as
+#     ONE of the two kept calling it.
+[[ -f "$R2_BOARD" ]] || fail "slice2-r2" "$R2_BOARD is missing — the R2 funnel rule is unenforceable"
+r2_board_fn() { awk "/private func $1\(/,/^    }\$/" "$R2_BOARD" 2>/dev/null | grep -vE '^[[:space:]]*//' || true; }
+
+for fn in boardControl colorSection; do
+    body=$(r2_board_fn "$fn")
+    [[ -n "$body" ]] || fail "slice2-r2" "$fn not found in $R2_BOARD"
+    echo "$body" | grep -q 'StudioBoardAvailability.resolve(' \
+        || fail "slice2-r2" "$fn no longer resolves through StudioBoardAvailability.resolve( — colour and the Live-card controls would answer the same question twice"
+    echo "$body" | grep -q 'StudioBoardAvailability.isInteractive(' \
+        || fail "slice2-r2" "$fn no longer takes its interactivity from StudioBoardAvailability.isInteractive("
+done
+
+# (c) The pre-funnel per-view verdicts stay gone. Comment-only lines are
+#     stripped so the history above the fix may keep naming them.
+r2_legacy=$(grep -nE 'showsEntOnlyHint|param\.entOnly' "$R2_BOARD" 2>/dev/null \
+    | grep -vE ':[[:space:]]*//' || true)
+if [[ -n "$r2_legacy" ]]; then
+    fail "slice2-r2" $'a per-view availability verdict is back in '"$R2_BOARD"$' — the funnel is no longer the only answer:\n'"$r2_legacy"
+fi
+
+# (d) The colour context reads the SAME snapshot the board resolves against.
+#     Scoped to the function: this file is edited elsewhere for unrelated wiring.
+r2_color_ctx=$(awk '/func colorCapabilityContext\(/,/^    }$/' "$R2_WIRING" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$r2_color_ctx" ]] || fail "slice2-r2" "colorCapabilityContext is gone from $R2_WIRING — colour would source its coverage somewhere the board never sees"
+echo "$r2_color_ctx" | grep -qF 'targetSnapshot(for: effect).color' \
+    || fail "slice2-r2" "colorCapabilityContext no longer takes its coverage from targetSnapshot(for: effect).color — colour would drift from the board's snapshot again"
+
+# (e) The suite exists and is actually compiled.
+[[ -f HueHomeTests/StudioBoardAvailabilityTests.swift ]] \
+    || fail "slice2-r2" "StudioBoardAvailabilityTests.swift is gone"
+grep -q 'StudioBoardAvailabilityTests.swift in Sources' HueHome.xcodeproj/project.pbxproj \
+    || fail "slice2-r2" "StudioBoardAvailabilityTests.swift is not in the test target Sources phase"
 
 # ──────────────────────────────────────────────────────────────
 
