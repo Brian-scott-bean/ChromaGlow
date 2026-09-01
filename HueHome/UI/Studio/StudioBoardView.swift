@@ -23,6 +23,12 @@ struct StudioBoardView: View {
         StudioBoardCatalog.descriptor(for: card)
     }
 
+    /// The capability snapshot every control on this board resolves against —
+    /// built once per render pass from CACHED lights only (spec §27).
+    private var snapshot: CustomizationTargetSnapshot {
+        vm.targetSnapshot(for: effect)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: HueSpacing.lg) {
             ForEach(Array(descriptor.sections.enumerated()), id: \.offset) { _, section in
@@ -45,12 +51,15 @@ struct StudioBoardView: View {
     private func controlsSection(_ section: BoardSection) -> some View {
         let hero = section.controls.filter { $0.prominence == .hero }
         let rest = section.controls.filter { $0.prominence != .hero }
+        // One snapshot for the whole section — the resolver is pure, so every
+        // control in it answers against the same instant of truth.
+        let snapshot = self.snapshot
 
         VStack(alignment: .leading, spacing: HueSpacing.md) {
             if !hero.isEmpty {
                 HStack(alignment: .top, spacing: HueSpacing.lg) {
                     ForEach(hero, id: \.paramID) { control in
-                        boardControl(control, isHero: true)
+                        boardControl(control, isHero: true, snapshot: snapshot)
                     }
                     Spacer(minLength: 0)
                 }
@@ -66,71 +75,38 @@ struct StudioBoardView: View {
                                              count: min(3, max(1, continuous.count))),
                               alignment: .leading, spacing: HueSpacing.lg) {
                         ForEach(continuous, id: \.paramID) { control in
-                            boardControl(control, isHero: false)
+                            boardControl(control, isHero: false, snapshot: snapshot)
                         }
                     }
                 }
                 ForEach(fullWidth, id: \.paramID) { control in
-                    boardControl(control, isHero: false)
+                    boardControl(control, isHero: false, snapshot: snapshot)
                 }
             }
         }
     }
 
-    /// Profile-driven availability for bridge-native controls (audit §7 +
-    /// resolver): `speed` has no legacy send path, so on a room whose lights
-    /// rejected `effects_v2` it renders DISABLED with a local reason — never
-    /// a knob that moves while doing nothing (spec §17). Live-engine params
-    /// stay governed by the entOnly transport hint.
-    private func resolution(for param: StudioParam) -> CustomizationResolution? {
-        guard case .bridgeNative(let effectName) = card.strategy,
-              let profile = EffectParameterProfiles.profile(effect: effectName,
-                                                            paramID: param.id) else { return nil }
-        let descriptor = CustomizationControlDescriptor(
-            id: CustomizationControlID(cardID: card.id, paramID: param.id),
-            requirement: profile.requirement,
-            liveBehavior: profile.liveBehavior)
-        return CustomizationResolver.resolve(control: descriptor,
-                                             on: vm.targetSnapshot(for: effect))
-    }
-
-    /// Human copy for a not-fully-live control — no API jargon.
-    private func availabilityNote(_ availability: CustomizationAvailability) -> String? {
-        switch availability {
-        case .active, .hidden:
-            return nil
-        case .partial(let supported, let total, _):
-            return "\(supported) OF \(total) LIGHTS RESPOND"
-        case .staged:
-            return "SAVED — APPLIES WHEN SUPPORT ARRIVES"
-        case .unavailable(let reason, _):
-            switch reason {
-            case .effectsV2Unavailable:
-                return "THESE LIGHTS CAN'T CHANGE THIS WHILE RUNNING"
-            case .noCTCapableLights:
-                return "NO WHITE-TONE LIGHTS HERE"
-            case .noColorCapableLights:
-                return "NO COLOR LIGHTS HERE"
-            case .capabilityUnknown, .capabilityUnreadable:
-                return "CHECKING WHAT THESE LIGHTS SUPPORT"
-            default:
-                return "NOT AVAILABLE FOR THESE LIGHTS"
-            }
-        }
-    }
-
+    /// ONE availability answer per control (R2): bridge-native params go
+    /// through the audit-§7 verified profile table, app-driven params through
+    /// their colour/transport requirement. `speed` has no legacy send path, so
+    /// on a room whose lights rejected `effects_v2` it renders DISABLED with a
+    /// local reason — never a knob that moves while doing nothing (spec §17) —
+    /// and a streaming-only param on a REST room renders STAGED: editable,
+    /// saved, and honest about not being live.
     @ViewBuilder
-    private func boardControl(_ control: BoardControl, isHero: Bool) -> some View {
+    private func boardControl(_ control: BoardControl,
+                              isHero: Bool,
+                              snapshot: CustomizationTargetSnapshot) -> some View {
         if let param = card.params.first(where: { $0.id == control.paramID }) {
-            let resolution = resolution(for: param)
-            let note = resolution.flatMap { availabilityNote($0.availability) }
-            let interactive: Bool = {
-                guard let resolution else { return true }
-                switch resolution.availability {
-                case .active, .partial: return true
-                case .staged, .unavailable, .hidden: return false
-                }
-            }()
+            let resolution = StudioBoardAvailability.resolve(card: card, param: param,
+                                                             snapshot: snapshot)
+            let note = resolution.flatMap {
+                StudioBoardAvailability.note(for: $0, isColor: false)
+            }
+            let interactive = resolution
+                .map { StudioBoardAvailability.isInteractive($0.availability) } ?? true
+            let opacity = resolution
+                .map { StudioBoardAvailability.opacity($0.availability) } ?? 1
             VStack(alignment: .leading, spacing: 3) {
                 switch control.primitive {
                 case .knob:
@@ -157,21 +133,17 @@ struct StudioBoardView: View {
                 if let note {
                     // Capability truth beside the control it affects — only
                     // where it materially changes what the control can do.
+                    // Exactly ONE note per control: the funnel already folded
+                    // the old separate entOnly hint into this line.
                     Text(note)
                         .font(HueFont.stageTag)
                         .tracking(0.8)
                         .foregroundStyle(HuePalette.amber.opacity(0.65))
                         .accessibilityLabel("\(param.label): \(note)")
                 }
-                if showsEntOnlyHint(for: param) {
-                    Text("STREAMING ONLY — INACTIVE IN ROOM MODE")
-                        .font(HueFont.stageTag)
-                        .tracking(0.8)
-                        .foregroundStyle(HuePalette.amber.opacity(0.65))
-                }
             }
             .disabled(!interactive)
-            .opacity(interactive ? 1 : 0.45)
+            .opacity(opacity)
         }
     }
 
@@ -194,28 +166,51 @@ struct StudioBoardView: View {
         )
     }
 
-    /// ENT-only params are ignored by the REST fallback loop — say so while
-    /// the card is actually running over REST.
-    private func showsEntOnlyHint(for param: StudioParam) -> Bool {
-        param.entOnly && !effect.isEntertainment
-    }
-
     // ── Color (inline B+) ───────────────────────────────────────
 
+    /// The colour editor goes through the SAME funnel as every numeric
+    /// control (R2). A colourless room disables it with "NO COLOR LIGHTS
+    /// HERE" instead of offering a live-looking swatch row that writes into
+    /// nothing; Strobe's streaming-only flash colour renders staged.
+    ///
+    /// The partial-coverage note is suppressed here on purpose — the editor
+    /// already badges "n OF m LIGHTS" beside its own chip (spec §13).
     @ViewBuilder
     private func colorSection(_ section: BoardSection) -> some View {
+        let snapshot = self.snapshot
+        let context = vm.colorCapabilityContext(for: effect)
         ForEach(section.controls, id: \.paramID) { control in
             if let param = card.params.first(where: { $0.id == control.paramID }) {
-                StageColorEditor(
-                    title: param.label,
-                    current: vm.paramColor(for: card.id, paramID: param.id),
-                    context: vm.colorCapabilityContext(for: effect),
-                    isExpanded: colorExpansionBinding(
-                        CustomizationControlID(cardID: card.id, paramID: param.id)),
-                    onApply: { color in
-                        vm.commitColorParam(cardID: card.id, paramID: param.id, color: color)
+                let resolution = StudioBoardAvailability.resolve(card: card, param: param,
+                                                                 snapshot: snapshot)
+                let note = resolution.flatMap {
+                    StudioBoardAvailability.note(for: $0, isColor: true)
+                }
+                let interactive = resolution
+                    .map { StudioBoardAvailability.isInteractive($0.availability) } ?? true
+                let opacity = resolution
+                    .map { StudioBoardAvailability.opacity($0.availability) } ?? 1
+                VStack(alignment: .leading, spacing: 3) {
+                    StageColorEditor(
+                        title: param.label,
+                        current: vm.paramColor(for: card.id, paramID: param.id),
+                        context: context,
+                        isExpanded: colorExpansionBinding(
+                            CustomizationControlID(cardID: card.id, paramID: param.id)),
+                        onApply: { color in
+                            vm.commitColorParam(cardID: card.id, paramID: param.id, color: color)
+                        }
+                    )
+                    if let note {
+                        Text(note)
+                            .font(HueFont.stageTag)
+                            .tracking(0.8)
+                            .foregroundStyle(HuePalette.amber.opacity(0.65))
+                            .accessibilityLabel("\(param.label): \(note)")
                     }
-                )
+                }
+                .disabled(!interactive)
+                .opacity(opacity)
             }
         }
     }

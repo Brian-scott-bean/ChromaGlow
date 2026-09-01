@@ -148,6 +148,7 @@
 		A1D00053D0D00053D0D00053 /* StudioLookLibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00054D0D00054D0D00054 /* StudioLookLibraryStore.swift */; };
 		A1D00051D0D00051D0D00051 /* CustomizationPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00052D0D00052D0D00052 /* CustomizationPreview.swift */; };
 		A1D00041D0D00041D0D00041 /* StudioBoardDescriptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00042D0D00042D0D00042 /* StudioBoardDescriptor.swift */; };
+		A1D00081D0D00081D0D00081 /* StudioBoardAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00082D0D00082D0D00082 /* StudioBoardAvailability.swift */; };
 		A1D00031D0D00031D0D00031 /* InstrumentControlMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00032D0D00032D0D00032 /* InstrumentControlMath.swift */; };
 		A1D00027D0D00027D0D00027 /* CustomizationSnapshotBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00028D0D00028D0D00028 /* CustomizationSnapshotBuilder.swift */; };
 		A1D00025D0D00025D0D00025 /* EffectParameterProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00026D0D00026D0D00026 /* EffectParameterProfiles.swift */; };
@@ -158,6 +159,7 @@
 		A1D00039D0D00039D0D00039 /* InstrumentControlMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0003AD0D0003AD0D0003A /* InstrumentControlMathTests.swift */; };
 		A1D00071D0D00071D0D00071 /* FlashSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00072D0D00072D0D00072 /* FlashSafetyTests.swift */; };
 		A1D00029D0D00029D0D00029 /* EffectParameterProfilesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0002AD0D0002AD0D0002A /* EffectParameterProfilesTests.swift */; };
+		A1D00083D0D00083D0D00083 /* StudioBoardAvailabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00084D0D00084D0D00084 /* StudioBoardAvailabilityTests.swift */; };
 		A1D00023D0D00023D0D00023 /* StudioProductionWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */; };
 		A1D0000BD0D0000BD0D0000B /* CustomizationResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */; };
 		A1C20003C2C20003C2C20003 /* Composer2DomainVocabularyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */; };
@@ -580,6 +582,7 @@
 		A1D00054D0D00054D0D00054 /* StudioLookLibraryStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StudioLookLibraryStore.swift"; path = "HueHome/Core/Effects/StudioLookLibraryStore.swift"; sourceTree = "<group>"; };
 		A1D00052D0D00052D0D00052 /* CustomizationPreview.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "CustomizationPreview.swift"; path = "HueHome/Core/CustomizationPreview.swift"; sourceTree = "<group>"; };
 		A1D00042D0D00042D0D00042 /* StudioBoardDescriptor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StudioBoardDescriptor.swift"; path = "HueHome/Core/StudioBoardDescriptor.swift"; sourceTree = "<group>"; };
+		A1D00082D0D00082D0D00082 /* StudioBoardAvailability.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StudioBoardAvailability.swift"; path = "HueHome/Core/StudioBoardAvailability.swift"; sourceTree = "<group>"; };
 		A1D00032D0D00032D0D00032 /* InstrumentControlMath.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "InstrumentControlMath.swift"; path = "HueHome/Core/InstrumentControlMath.swift"; sourceTree = "<group>"; };
 		A1D00028D0D00028D0D00028 /* CustomizationSnapshotBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationSnapshotBuilder.swift; path = HueHome/Core/CustomizationSnapshotBuilder.swift; sourceTree = "<group>"; };
 		A1D00026D0D00026D0D00026 /* EffectParameterProfiles.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EffectParameterProfiles.swift; path = HueHome/Core/EffectParameterProfiles.swift; sourceTree = "<group>"; };
@@ -589,6 +592,7 @@
 		A1D0003AD0D0003AD0D0003A /* InstrumentControlMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "InstrumentControlMathTests.swift"; path = "HueHomeTests/InstrumentControlMathTests.swift"; sourceTree = "<group>"; };
 		A1D00072D0D00072D0D00072 /* FlashSafetyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "FlashSafetyTests.swift"; path = "HueHomeTests/FlashSafetyTests.swift"; sourceTree = "<group>"; };
 		A1D0002AD0D0002AD0D0002A /* EffectParameterProfilesTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EffectParameterProfilesTests.swift; path = HueHomeTests/EffectParameterProfilesTests.swift; sourceTree = "<group>"; };
+		A1D00084D0D00084D0D00084 /* StudioBoardAvailabilityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioBoardAvailabilityTests.swift; path = HueHomeTests/StudioBoardAvailabilityTests.swift; sourceTree = "<group>"; };
 		A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioProductionWiringTests.swift; path = HueHomeTests/StudioProductionWiringTests.swift; sourceTree = "<group>"; };
 		A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationResolverTests.swift; path = HueHomeTests/CustomizationResolverTests.swift; sourceTree = "<group>"; };
 		A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2DomainVocabularyTests.swift; path = HueHomeTests/Composer2DomainVocabularyTests.swift; sourceTree = "<group>"; };
@@ -1503,6 +1507,7 @@
 				A1D0003AD0D0003AD0D0003A /* InstrumentControlMathTests.swift */,
 				A1D00072D0D00072D0D00072 /* FlashSafetyTests.swift */,
 				A1D0002AD0D0002AD0D0002A /* EffectParameterProfilesTests.swift */,
+				A1D00084D0D00084D0D00084 /* StudioBoardAvailabilityTests.swift */,
 				A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */,
 				A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */,
 				A1C30004C3C30004C3C30004 /* Composer2RegistrationTests.swift */,
@@ -1539,6 +1544,7 @@
 				A1D00054D0D00054D0D00054 /* StudioLookLibraryStore.swift */,
 				A1D00052D0D00052D0D00052 /* CustomizationPreview.swift */,
 				A1D00042D0D00042D0D00042 /* StudioBoardDescriptor.swift */,
+				A1D00082D0D00082D0D00082 /* StudioBoardAvailability.swift */,
 				A1D00032D0D00032D0D00032 /* InstrumentControlMath.swift */,
 				A1D00028D0D00028D0D00028 /* CustomizationSnapshotBuilder.swift */,
 				A1D00026D0D00026D0D00026 /* EffectParameterProfiles.swift */,
@@ -2085,6 +2091,7 @@
 				A1D00053D0D00053D0D00053 /* StudioLookLibraryStore.swift in Sources */,
 				A1D00051D0D00051D0D00051 /* CustomizationPreview.swift in Sources */,
 				A1D00041D0D00041D0D00041 /* StudioBoardDescriptor.swift in Sources */,
+				A1D00081D0D00081D0D00081 /* StudioBoardAvailability.swift in Sources */,
 				A1D00031D0D00031D0D00031 /* InstrumentControlMath.swift in Sources */,
 				A1D00027D0D00027D0D00027 /* CustomizationSnapshotBuilder.swift in Sources */,
 				A1D00025D0D00025D0D00025 /* EffectParameterProfiles.swift in Sources */,
@@ -2193,6 +2200,7 @@
 				A1D00039D0D00039D0D00039 /* InstrumentControlMathTests.swift in Sources */,
 				A1D00071D0D00071D0D00071 /* FlashSafetyTests.swift in Sources */,
 				A1D00029D0D00029D0D00029 /* EffectParameterProfilesTests.swift in Sources */,
+				A1D00083D0D00083D0D00083 /* StudioBoardAvailabilityTests.swift in Sources */,
 				A1D00023D0D00023D0D00023 /* StudioProductionWiringTests.swift in Sources */,
 				A1D0000BD0D0000BD0D0000B /* CustomizationResolverTests.swift in Sources */,
 				A1C30003C3C30003C3C30003 /* Composer2RegistrationTests.swift in Sources */,

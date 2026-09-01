@@ -526,5 +526,40 @@ final class CustomizationCatalogFactsTests: XCTestCase {
                        ["party.min_brightness", "party.speed",
                         "strobe.duty_cycle", "strobe.flash_color", "strobe.speed",
                         "thunderstorm.afterglow", "thunderstorm.flash_length"])
+
+        // The migration itself. `entOnly` is now catalog metadata only: the
+        // DECISION is made once, by `StudioBoardAvailability` translating the
+        // flag into `.transport(.entertainment)` for the resolver. Every
+        // flagged param must carry the requirement, and no unflagged one may.
+        var migrated: [String] = []
+        for card in vm.effectCards + vm.liveModeCards {
+            for param in card.params {
+                guard let descriptor = StudioBoardAvailability.descriptor(card: card,
+                                                                          param: param) else {
+                    XCTAssertFalse(param.entOnly,
+                                   "\(card.id).\(param.id) is entOnly but bypasses the funnel")
+                    continue
+                }
+                if Self.requiresEntertainmentTransport(descriptor.requirement) {
+                    migrated.append("\(card.id).\(param.id)")
+                }
+            }
+        }
+        XCTAssertEqual(migrated.sorted(), flagged.sorted(),
+                       "entOnly → .transport(.entertainment) migration is incomplete")
+    }
+
+    /// Does this requirement tree demand the Entertainment transport anywhere?
+    private static func requiresEntertainmentTransport(
+        _ requirement: CapabilityRequirement
+    ) -> Bool {
+        switch requirement {
+        case .transport(let transport):
+            return transport == .entertainment
+        case .all(let parts), .any(let parts):
+            return parts.contains { requiresEntertainmentTransport($0) }
+        default:
+            return false
+        }
     }
 }

@@ -255,18 +255,23 @@ extension StudioViewModel {
 
     /// Honest color context for the inline editor, from CACHED lights only
     /// (no fetch — spec §27): the known gamut when the target has exactly
-    /// one, the widest authoring gamut otherwise, plus partial coverage for
-    /// the local truth chip.
+    /// one, the widest authoring gamut otherwise, plus the coverage the local
+    /// truth chip renders.
+    ///
+    /// The coverage comes from `targetSnapshot(for:).color` — the SAME value
+    /// the resolver measures — so the chip can never claim `.known` coverage
+    /// on a target whose lights were never read. It previously built its own
+    /// `.known` coverage unconditionally, which made "we could not read these
+    /// lights" indistinguishable from "all of them do colour".
     func colorCapabilityContext(for effect: RunningEffect) -> ColorCapabilityContext {
         var context = ColorCapabilityContext()
+        context.coverage = targetSnapshot(for: effect).color
         guard let lights = orchestrator?.cachedRawLights(for: effect.room.bridgeID),
               !effect.lightIDs.isEmpty else { return context }
         let idSet = Set(effect.lightIDs)
         let scoped = lights.filter { idSet.contains($0.id) }
         guard !scoped.isEmpty else { return context }
         let colorCapable = scoped.filter { $0.color != nil }
-        context.coverage = CapabilityCoverage(
-            supported: colorCapable.count, total: scoped.count, evidence: .known)
         let gamuts = Set(colorCapable.compactMap {
             $0.color?.gamut_type?.uppercased()
         }.compactMap { HueColorUtils.Gamut(rawValue: $0) })
