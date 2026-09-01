@@ -597,6 +597,206 @@
 
 ---
 
+## 2026-09-01 - [Claude] Unified Customization Engine, Slice 1 — VALIDATED, exit gate CLEARED
+
+Branch `feat/unified-customization-instrument`, base `main` @ `9404686`, rollback tag
+`checkpoint/pre-unified-customization-instrument-2026-09-01`. Continues the previous entry, which
+recorded the foundation as BUILT BUT NEVER COMPILED. **It now compiles and every test passes.**
+Still **not merged**; PR open for review.
+
+**Environment repair — three stacked toolchain faults, none in app source.** The previous session's
+"zero available destinations" was not one problem but three, each masking the next:
+
+1. Stale `CoreSimulatorService` (framework 1051.55 vs job 1051.50) — cleared during diagnosis.
+2. **iOS 26.5 platform missing** — `xcodebuild -downloadPlatform iOS`, 8.52 GB, runtime 23F77.
+   Xcode 26.6 refused to offer *any* destination while its expected platform was absent, including
+   the 26.3/26.4 simulators `simctl` could already see.
+3. **watchOS 26.5 platform missing** — `xcodebuild -downloadPlatform watchOS`, 3.96 GB, runtime
+   23T570. The `HueHome 1` scheme embeds `LightShadeWatchApp`, so it cannot test without it:
+   *"This scheme builds an embedded Apple Watch app. watchOS 26.5 must be installed"* (exit 70).
+
+No app source was modified to work around any of this.
+
+**Destination — the repo convention is now ambiguous.** Three simulators are named `iPhone 17 Pro`
+(26.3.1, 26.4.1, 26.5), so the bare `name=iPhone 17 Pro` in `CLAUDE.md` resolves unpredictably.
+All runs below pin `id=005EBEC4-ECF0-4E2C-8A9C-5389006C2A36` (iPhone 17 Pro, iOS 26.5). Recommend
+`CLAUDE.md` and `run_tests.sh` adopt a UDID or an explicit `,OS=` qualifier.
+
+**Results, read from the xcresult bundles rather than exit status.**
+
+| Gate | Result |
+| --- | --- |
+| Compile | **0 errors** — first real compile of the Slice 1 foundation |
+| Slice 1 focused | **54/54**, then **57/57** after the same-bridge additions |
+| Full registered suite, run 1 | **1720 / 1720** passed, 0 failed, 0 skipped |
+| Full registered suite, run 2 | **1723 / 1723** passed, 0 failed, 0 skipped |
+| `./Scripts/hardening_guards.sh` | all guards passed |
+| `generate_capability_matrix.py --check` | up to date |
+| `git diff --check` | clean |
+
+**The registered-suite baseline is now 1723**, not the 1573 recorded in the Composer 2 entries.
+
+**One defect found by running — in a test fixture, not the foundation.**
+`testAnyRequirementSucceedsOnOneSatisfiedBranch` built a target with `colorTemperature: .all` but no
+`mirekRange`, so `.colorTemperature` resolved `.unknown` (CT claimed, range unreadable) and the
+`.any` had no satisfied branch at all. The resolver behaved exactly as designed — the same honesty
+rule `testCTCapableButRangelessTargetIsUnknownNotActive` locks. Fixed by supplying the range, and
+two companion tests now pin the distinction the broken fixture had blurred:
+`testAnyRequirementIsUnknownWhenNoBranchIsSatisfiedAndOneIsUnreadable` and
+`testAnyRequirementIsUnsupportedWhenEveryBranchIsAHardNo`. Every other CT fixture was audited for the
+same omission; this was the only instance.
+
+**Three tests added to close a gap the previous entry over-claimed.** The earlier round covered
+two-bridge independence but only *indirectly* covered **two rooms on one bridge** — which is the
+exact shape of the production defect, since `updateStudioParams` guards on `bridgeID` alone and that
+boolean cannot separate two rooms sharing a bridge. Now explicit:
+`testTwoRoomsOnTheSameBridgeHoldIndependentLiveValues`,
+`testWriteCapturedOnOneRoomDoesNotLandOnASiblingRoomOnTheSameBridge`, and
+`testStoppingOneRoomLeavesItsSiblingOnTheSameBridgeRunning`.
+
+**All 13 required re-verification cases now execute and pass**: same room id on two bridges; two
+rooms on one bridge; room vs zone; selection change during pending mutation; debounce after stop;
+reset defeating pending; card replacement during pending; reconnect/transport invalidating a stale
+generation; unknown vs unsupported; mixed-capability partial; `ambient.color` not colliding with
+`thunderstorm.ambient_color`; Beat only where consumption is proven; catalog/resolution determinism.
+No sleeps anywhere — every race is call ordering against the pure fence.
+
+**WHAT THIS DOES NOT CLAIM.** The Slice 1 foundation has **zero production consumers**. The live
+cross-room / cross-bridge routing defect recorded in audit §2A — card-global `paramValues`
+(`StudioViewModel.swift:1111`) and bridge-only routing in `updateStudioParams`
+(`UnifiedOrchestrator.swift:5156`) — is **NOT fixed**. Nothing in the shipping runtime calls any of
+the new types. What is proven is that the foundation is type-correct, deterministic, and safe to
+wire. Production routing fixes are Slice 2, and only then does the defect close.
+
+**Also still unproven:** all 45 bridge-native Effect controls remain `PENDING` in the matrix, awaiting
+the per-effect verified parameter profile required by audit §7. 23 of 68 controls have a proven
+runtime consumer.
+
+**Hardware: none run, none claimed.** Everything above is simulator and unit evidence. The §V-A Track
+A block in `docs/ios/master-on-device-checklist.md` remains UNPROVEN with zero rows executed, and
+this slice did not touch it. Slice 1 required no hardware gate.
+
+**Slice 2 was NOT started.** No Studio visual work, no production rewiring, no `ParamTier.advanced`
+retirement.
+
+**Rollback.** `git reset --hard checkpoint/pre-unified-customization-instrument-2026-09-01`, or
+delete the branch — `main` is untouched.
+
+---
+## 2026-09-01 - [Claude] Unified Customization Engine, Slice 1 — Truth Foundation (BUILT, NEVER COMPILED)
+
+Branch `feat/unified-customization-instrument`, base `main` @ `9404686` (the PR #62 merge; local ==
+`origin/main`, re-verified at branch time), rollback tag
+`checkpoint/pre-unified-customization-instrument-2026-09-01` (at `9404686`). Two commits.
+**Not merged, no PR opened.**
+
+**READ THIS FIRST: none of this code has been compiled or run.** `xcodebuild` on this machine
+reports **zero available destinations** for scheme `HueHome 1`. `xcrun simctl` lists iOS 17.0 /
+26.3 / 26.4 simulators including four `iPhone 17 Pro`, but `xcodebuild -showdestinations` offers
+none of them and rejects an explicit simulator UDID (`id=76B14B66-…`); the only destinations it
+knows are physical-device ones that require an **iOS 26.5 platform which is not installed**
+(Xcode 26.6, build 17F113). A stale `CoreSimulatorService` (framework 1051.55 vs job 1051.50) was
+cleared during diagnosis and did not restore destinations. Per the plan's §30 gate this is a
+pre-existing environment blocker, reported rather than worked around. The 52 tests below are
+written and registered; **their result is unknown.** The Slice 1 exit gate stays CLOSED.
+
+**What DID validate.** `git diff --check` clean. `./Scripts/hardening_guards.sh` — all guards
+passed. `xcrun swiftc -parse` succeeds on all four new sources (syntax only — no type checking, no
+name resolution). `Scripts/generate_capability_matrix.py --check` passes.
+
+**The audit finding this slice exists to fix.** `StudioViewModel.paramValues` is
+`[String: [String: Double]]` **keyed by card id alone** (`:1111`), and the orchestrator holds one
+live box **per bridge** (`studioEngineRuntimesByBridge`, `UnifiedOrchestrator.swift:3091`, written
+at `:5156`). Between them they serve all three of spec §18's scopes at once, which makes three
+things true on `main` today, all read in source rather than inferred:
+
+1. The same card on two bridges **cannot** hold different live values — one dictionary per card.
+   Audit §16 requires the opposite.
+2. `setParamValue` (`:1568`) routes by `currentRoomEffect?.room.bridgeID` read at call time and
+   `updateStudioParams` guards on `bridgeID` **alone**. Neither checks the room or card the gesture
+   began on, so two rooms on one bridge can cross-write.
+3. `resetParams` (`:1469`) nils the card-global dict, so a reset on one bridge blanks the other
+   bridge's displayed values.
+
+Neither existing key can fence this: `RoomEffectKey` (`:465`) is bridge+room with **no `kind`**, and
+`StudioSelectionKey` (`:500`) is bridge+group+kind with no look and no generation.
+
+**New types (4 files, 1,277 lines, all pure — no SwiftUI, no networking, no I/O).**
+
+| File | Introduces |
+| --- | --- |
+| `Core/CustomizationIdentity.swift` | `RunningLookIdentity` (bridge+group+kind+card+execution+generation), `RunningLookTargetKey`, `CustomizationExecution`, `CustomizationGeneration(+Counter)`, `CustomizationFence` |
+| `Core/CustomizationCapability.swift` | `CustomizationTargetSnapshot`, `CapabilityCoverage`, `CapabilityEvidence`, `MirekRange`, `CustomizationTransport`, `CapabilityRequirement` (composable predicates) |
+| `Core/CustomizationResolver.swift` | `CustomizationAvailability` (spec §17's five states), `CustomizationMutationBehavior`, `CustomizationControlID/Descriptor`, `CustomizationResolver` |
+| `Core/CustomizationValueScopes.swift` | `CustomizationValueScopes` — the three scopes kept apart, every crossing fenced |
+
+`RunningLookIdentity` **composes with** the existing keys (`.selectionKey`, `.effectKey`) rather
+than replacing them, so nothing existing had to change. **No production call site was rewired in
+this slice** — the foundation is additive and currently has zero runtime consumers, exactly like
+Composer 2 Phase 1. Slice 2 adopts it.
+
+**Hazards found and how each is fenced.** `CustomizationFence.verdict(captured:live:)` returns a
+typed drop reason, diagnosed in this order:
+
+| Hazard | Drop reason |
+| --- | --- |
+| Drag/debounce commits after selection moved to another room or bridge | `.targetChanged` |
+| Write lands after the card was replaced | `.lookReplaced` |
+| Write lands after Stop, Reset, transport change, capability refresh or bridge reconnect | `.staleGeneration` |
+| Write lands when nothing is running | `.nothingRunning` |
+
+`rekey(_:to:)` exists so a capability refresh / transport change / reconnect can invalidate
+in-flight writes **without** blanking the live values on screen — reseeding there would clear the
+UI for a reason the user cannot see.
+
+**Capability honesty.** `CapabilityEvidence` separates `known` / `absent` / `unsupported` /
+`unreadable` / `unknown`, and unknown outranks partial inside `.all` — the resolver cannot advertise
+coverage figures for a capability it could not read. An unverified `(effect, parameter)` pair is
+`.unknown`, never supported (audit §7). `entOnly` becomes
+`CapabilityRequirement.transport(.entertainment)`; a streaming-only control on Room REST while
+running resolves **staged**, not unavailable and never silently active.
+
+**Capability matrix.** `docs/ios/unified-customization-capability-matrix-2026-09-01.md`, generated
+from the shipping catalog by `Scripts/generate_capability_matrix.py` (`--check` fails if stale).
+**15 cards, 68 controls** — Effects 11/45, Live 4/23 — matching audit §6 and §8 exactly.
+**23 of 68 controls have a proven runtime consumer.** All 45 bridge-native Effect rows print
+`PENDING`: audit §7 requires a per-effect verified parameter profile and none exists, so Slice 1
+invented nothing.
+
+**Tests: 52 written, registered, NEVER RUN.** `CustomizationIdentityTests` (25) covers same room id
+on two bridges, room-vs-zone id collision, draft-then-selection-change, debounce-after-stop,
+reset-defeats-pending, card-replacement, reconnect/transport fencing, and per-bridge reset
+isolation. `CustomizationResolverTests` (27) covers the five availability states, unknown-vs-
+unsupported, unreadable-vs-unsupported, mixed-capability partial coverage, CT-without-range,
+transport staging, combinator precedence, determinism, and the `ambient.color` vs
+`thunderstorm.ambient_color` sentinel trap. `CustomizationCatalogFactsTests` locks the real catalog:
+no Live card declares a Beat param, the `entOnly` inventory is exactly the audited three,
+`thunderstorm.ambient_color` still ships, and the Ambient card has no colour control. No sleeps
+anywhere — every race is expressed by call ordering against the pure fence.
+
+**Xcode project.** Six files registered in `project.pbxproj` by script (4 entries each, Composer 2
+ID convention). The main app and test targets are **not** file-system-synchronized — only
+`HueHomeWidget` and the Watch targets are — so manual registration was required. No build/version
+bump: nothing is installable from this branch until it compiles.
+
+**Conflicts between the source-of-truth docs and current code.** One, unchanged and preserved:
+spec §2.3 forbids an Advanced concept, and `ParamTier.advanced` is live and load-bearing
+(`StudioParamControls.swift:300` partitions an `advancedParams` section; `.advanced` is applied to 7
+Live params plus `transition` on every bridge-native Effect). Per the standing instruction the spec
+wins on product behaviour, so this is recorded as Slice 2 implementation work, not a doc correction.
+
+**Composer 2 remains inert** — zero references outside its own four files; Slice 1 did not activate it.
+
+**Hardware: nothing run, nothing claimed.** The §V-A Track A block in
+`docs/ios/master-on-device-checklist.md` is still UNPROVEN with zero rows executed; untouched here.
+
+**Next.** Repair the toolchain (install the iOS 26.5 platform, or point the scheme at an available
+runtime), then run the 52 tests plus the full registered suite before Slice 2 begins.
+
+**Rollback.** `git reset --hard checkpoint/pre-unified-customization-instrument-2026-09-01`, or
+delete the branch — `main` is untouched.
+
+---
 ## 2026-09-01 - [Claude] Unified Customization Engine — finalized product/UX source of truth landed (docs only)
 
 Branch `docs/unified-customization-source-of-truth`, base `main` @ `8572b92` (local `main` ==

@@ -53,6 +53,123 @@ The 2026-08-05 CNVS packets remain historical engineering evidence only.
 
 ---
 
+## 2A. Slice 1 verified evidence (2026-09-01, `main` @ `9404686`)
+
+Read directly from the shipping source this session. Everything not listed here remains unproven.
+
+### Catalog totals
+
+| | Cards | Controls |
+| --- | ---: | ---: |
+| Effects (bridge-native) | 11 | 45 |
+| Live (app-driven) | 4 | 23 |
+| **Total** | **15** | **68** |
+
+These match §6 and §8's expected inventories exactly. The generated matrix is
+`docs/ios/unified-customization-capability-matrix-2026-09-01.md`
+(regenerate/verify with `Scripts/generate_capability_matrix.py [--check]`).
+
+### The central state defect
+
+`StudioViewModel.paramValues` is `[String: [String: Double]]` **keyed by card id alone**
+(`StudioViewModel.swift:1111-1112`), and the orchestrator holds one live box **per bridge**
+(`studioEngineRuntimesByBridge[bridgeID]?.paramBox`, `UnifiedOrchestrator.swift:3091`, updated at
+`:5156`). Between them those serve all three of spec §18's scopes at once. Consequences verified in
+source, not inferred:
+
+1. **The same card on two bridges cannot hold different live values** — there is one dictionary per
+   card. This is the invariant §16 requires and current `main` cannot satisfy.
+2. **A param write is routed by bridge only.** `setParamValue` (`:1568-1576`) reads
+   `currentRoomEffect?.room.bridgeID` at call time and `updateStudioParams` guards on `bridgeID`
+   alone — neither checks the room or card the gesture began on. Two rooms on one bridge can
+   therefore cross-write.
+3. **`resetParams` (`:1469`) nils the card-global dict**, so resetting on one bridge blanks the
+   other bridge's displayed values.
+
+### Identity coverage
+
+| Key | Fields | Gap |
+| --- | --- | --- |
+| `RoomEffectKey` (`:465`) | bridge, room | no `kind`; a room and zone sharing an id collide |
+| `StudioSelectionKey` (`:500`) | bridge, group, kind | no look, no generation |
+
+Neither carries the running look or a generation, so no existing key can answer "is this pending
+write still addressed to what the user was touching?".
+
+### Transport encoding
+
+`StudioParam.entOnly` (`StudioViewModel.swift:86`, consumed `StudioParamControls.swift:119`) is set
+on exactly three params — `strobe.speed`, `strobe.flash_color`, `strobe.duty_cycle` — locked by
+`CustomizationCatalogFactsTests.testEntOnlyInventoryMatchesTheAuditedThree`.
+
+### Beat
+
+No Live card declares a Beat param; Beat reaches engines through the orchestrator
+(`BeatBinding.swift` + 4 referencing files). Locked by
+`CustomizationCatalogFactsTests.testNoLiveCardDeclaresABeatParamYet`.
+
+### Composer 2
+
+**Confirmed inert.** `Composer2Domain`, `Composer2Registration`, `Composer2Resolver` and
+`Composer2ConsumerContracts` have zero references outside their own files — the only external
+mention is a doc comment. Slice 1 did not activate them.
+
+### `ParamTier.advanced`
+
+Live and load-bearing: `StudioParamControls.swift:300` partitions an `advancedParams` section, and
+`.advanced` is applied to 7 Live params plus the `transition` (Smoothness) param on every
+bridge-native Effect. Retiring it (spec §2.3) is Slice 2 work, not a Slice 1 correction.
+
+---
+
+## 2B. Slice 1 validation evidence (2026-09-01)
+
+The §2A findings were read from source before the foundation compiled. They are now **executed**.
+
+**Destination:** `iPhone 17 Pro`, iOS 26.5 (23F77), `005EBEC4-ECF0-4E2C-8A9C-5389006C2A36`.
+Three simulators share the name `iPhone 17 Pro`; pin the UDID.
+
+| Gate | Result |
+| --- | --- |
+| Compile | 0 errors |
+| Slice 1 tests | **57 / 57 passed** |
+| Full registered suite ×2 | **1720/1720**, then **1723/1723** — 0 failed, 0 skipped |
+| `hardening_guards.sh` | all guards passed |
+| `generate_capability_matrix.py --check` | up to date |
+| `git diff --check` | clean |
+
+Registered-suite baseline is now **1723** (older DEVLOG entries record 1573).
+
+### Audit claims now proven by an executing test
+
+| Claim (§2A / §9 / §17 / §20) | Test |
+| --- | --- |
+| Two bridges may share a room id and stay distinct | `testSameRoomIDOnTwoBridgesAreDistinctIdentities` |
+| Same card on two bridges holds independent live values | `testSameCardOnTwoBridgesHoldsIndependentLiveValues` |
+| **Two rooms on ONE bridge stay independent** | `testTwoRoomsOnTheSameBridgeHoldIndependentLiveValues` |
+| **A write on one room cannot reach a sibling room on the same bridge** | `testWriteCapturedOnOneRoomDoesNotLandOnASiblingRoomOnTheSameBridge` |
+| `RoomEffectKey` drops `kind`; the new identity does not | `testRoomAndZoneSharingAnIDAreDistinctEvenThoughEffectKeysCollide` |
+| Reset isolates to one instance | `testResettingOneInstanceDoesNotDisturbTheOther` |
+| Unknown ≠ unsupported | `testUnreadableCapabilityIsDistinctFromUnsupported` |
+| CT claimed without a readable range is unknown | `testCTCapableButRangelessTargetIsUnknownNotActive` |
+| `entOnly` inventory is exactly the audited three | `testEntOnlyInventoryMatchesTheAuditedThree` |
+| No Live card declares a Beat param | `testNoLiveCardDeclaresABeatParamYet` |
+| `ambient.color` ≠ `thunderstorm.ambient_color` | `testDeadAmbientColorSentinelIsNotTheLiveThunderstormAmbientColor` |
+| `thunderstorm.ambient_color` still ships | `testThunderstormAmbientColorIsStillAShippingControl` |
+| Resolution order is deterministic | `testResolveAllIsDeterministicAndStablySorted` |
+
+### What is still NOT proven
+
+- **The production defect is not fixed.** The foundation has zero production consumers; the
+  card-global `paramValues` and bridge-only `updateStudioParams` routing described in §2A are
+  untouched on this branch. The tests above prove the *foundation* behaves correctly, not that the
+  shipping app does.
+- **No bridge-native Effect row is proven.** All 45 remain `PENDING` pending the per-effect verified
+  parameter profile required by §7.
+- **No hardware was exercised.** Everything above is simulator/unit evidence.
+
+---
+
 ## 3. Mandatory current-main audit before production edits
 
 Before implementing, run and record:
