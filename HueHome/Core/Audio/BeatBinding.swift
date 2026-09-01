@@ -12,6 +12,10 @@
 //    slider math applies unchanged.
 //  • Flash-class loops (strobe) MUST pass their beatsPerCycle through
 //    BeatMath.wcagSafeBeatsPerCycle before use (≤3 Hz photosensitivity cap).
+//    On the 20 ms Entertainment grid the cap is stated in FRAMES, not Hz:
+//    ENT loops pass FlashSafety.entertainmentMaxLockHz and plan whole safe
+//    cycles through FlashSafety, because a requested rate under 3 Hz says
+//    nothing about the rate the grid actually realizes.
 
 import Foundation
 import QuartzCore
@@ -87,16 +91,271 @@ enum BeatMath {
         return BeatBinding.allowedSteps.last ?? snapped
     }
 
-    /// The free-running flash-rate ceiling as a REAL clamp (Slice 2). The
-    /// strobe/party speed curves used to stay under 3 Hz only by arithmetic
-    /// coincidence (0.5 + speed/100 × 2.5 tops out at 3.0) — a widened
-    /// catalog range would have silently raised the ceiling. Every
-    /// flash-class free-run Hz now passes through here; no exact typed
-    /// value, adaptive drag, or range change can bypass it (spec §24).
+    /// The free-running flash-rate ceiling as a REAL clamp (Slice 2), and the
+    /// frame-realizable safety math every flash-class Entertainment loop plans
+    /// with (Slice 2 remediation, R1).
+    ///
+    /// The strobe/party speed curves used to stay under 3 Hz only by arithmetic
+    /// coincidence (0.5 + speed/100 × 2.5 tops out at 3.0) — a widened catalog
+    /// range would have silently raised the ceiling. Worse, a *requested* Hz
+    /// under 3 says nothing about the *realized* rate: the loops floored each
+    /// half-cycle onto the 20 ms DTLS grid independently, so speed 100 rendered
+    /// 15–16 frames (3.13–3.33 Hz) and Thunderstorm rendered 9 + 1 = 10 frames
+    /// (5.0 Hz). The invariant is therefore stated in FRAMES, not in Hz:
+    ///
+    ///   **Realized onset-to-onset spacing ≥ `minCycleFrames()` (17) frames
+    ///   = 0.34 s on the 20 ms Entertainment grid, on every legal path.**
+    ///
+    /// Everything here is pure and total — no clock, no I/O, and no input
+    /// (including 0, negative, NaN and infinity) can make it trap. Loops plan
+    /// a whole SAFE TOTAL first and split it; they never floor two halves
+    /// independently, and they never sleep a hard-coded frame literal.
     enum FlashSafety {
         static let maxFlashHz = 3.0
         static func clampedHz(_ hz: Double) -> Double {
             min(maxFlashHz, max(0, hz))
+        }
+
+        // ── The Entertainment render grid ───────────────────────────
+
+        /// One DTLS frame = 20 ms (50 fps). Every ENT flash loop's time
+        /// quantum: nothing can be realized at a finer resolution than this.
+        static let entertainmentFrameDuration = 0.02
+
+        /// What ENT loops pass to `Task.sleep` — never a `20_000_000` literal,
+        /// so the grid and the math can never drift apart (Guard 14).
+        static var entertainmentFrameNanoseconds: UInt64 {
+            UInt64(entertainmentFrameDuration * 1_000_000_000)
+        }
+
+        /// Shortest legal wall-clock spacing between two flash onsets (1/3 s).
+        static let minOnsetPeriod = 1.0 / maxFlashHz
+
+        /// Planning floor for a requested rate. The catalog's slowest flash
+        /// speed is 0.5 Hz; this is well under it and exists only so a
+        /// degenerate request (0, −1, −inf) plans a finite cycle instead of
+        /// trapping on an Int conversion.
+        static let slowestPlannedHz = 0.1
+
+        /// Frames that `minOnsetPeriod` occupies on the given grid, rounded UP
+        /// — 17 on the 20 ms grid (0.34 s), because 16 frames is 0.32 s and
+        /// 0.32 s < 1/3 s. This is the invariant's unit.
+        static func minCycleFrames(frameDuration: Double = entertainmentFrameDuration) -> Int {
+            let fd = usableFrameDuration(frameDuration)
+            return max(1, Int((minOnsetPeriod / fd - 1e-9).rounded(.up)))
+        }
+
+        /// The fastest beat-lock rate that is REALIZABLE on the frame grid:
+        /// 1 / (17 × 0.02) = 2.9412 Hz.
+        ///
+        /// This is not a product preference — it is an implementation
+        /// consequence of the ≥ 17-frame realized-onset invariant. A 3.0 Hz
+        /// lock has a 333.3 ms period, which the 20 ms grid can only render as
+        /// 16 frames (0.32 s — unsafe) or 17 frames (0.34 s — safe but 6.7 ms
+        /// slow every cycle, i.e. unbounded lag against the beat). With a
+        /// period ≥ 340 ms, quantization alone can never produce fewer than 17
+        /// frames, so the lock stays honest AND safe. Cost: three 3.5-BPM
+        /// bands step to the next beat division (spec §24).
+        static var entertainmentMaxLockHz: Double {
+            1.0 / (Double(minCycleFrames()) * entertainmentFrameDuration)
+        }
+
+        // ── Whole-cycle planning ────────────────────────────────────
+
+        /// Frames in one SAFE cycle at the requested rate. Safety first: the
+        /// total is floored at `minCycleFrames` BEFORE any split, which is the
+        /// whole difference from the old per-half `Int(duration / 0.02)`.
+        /// Total, finite-guarded, never traps: NaN plans the fastest safe
+        /// cycle, and anything outside `slowestPlannedHz ... maxFlashHz`
+        /// (0 and negatives included) is clamped into it.
+        static func cycleFrames(hz: Double,
+                                frameDuration: Double = entertainmentFrameDuration) -> Int {
+            let fd = usableFrameDuration(frameDuration)
+            let requested = hz.isNaN ? maxFlashHz
+                                     : min(max(hz, slowestPlannedHz), maxFlashHz)
+            let planned = Int(((1.0 / requested) / fd - 1e-9).rounded(.up))
+            return max(minCycleFrames(frameDuration: fd), planned)
+        }
+
+        /// Splits a planned cycle into two parts that each render at least one
+        /// frame and together render the whole cycle — so the split can never
+        /// shorten the safe total. `firstFraction` is clamped to 0…1 (NaN
+        /// splits evenly); a total below 2 is raised to 2, because "two parts,
+        /// each ≥ 1 frame" is not expressible in fewer.
+        static func splitFrames(total: Int, firstFraction: Double) -> (first: Int, second: Int) {
+            let safeTotal = max(2, total)
+            let fraction = firstFraction.isFinite ? min(max(firstFraction, 0), 1) : 0.5
+            let raw = Int((Double(safeTotal) * fraction).rounded())
+            let first = min(max(raw, 1), safeTotal - 1)
+            return (first, safeTotal - first)
+        }
+
+        private static func usableFrameDuration(_ frameDuration: Double) -> Double {
+            (frameDuration.isFinite && frameDuration > 0) ? frameDuration
+                                                          : entertainmentFrameDuration
+        }
+
+        // ── Wall-clock backstop ─────────────────────────────────────
+
+        /// Pure decision half of the runtime gate: admits an onset only when
+        /// at least `minPeriod` has passed since the last admitted one.
+        /// A refusal means DELAY (stream a hold frame and ask again), never
+        /// "skip this flash" — skipping would change the look, delaying only
+        /// moves it by ≤ one frame.
+        struct OnsetGate {
+            private(set) var lastOnset: Double?
+
+            init(lastOnset: Double? = nil) { self.lastOnset = lastOnset }
+
+            /// `t` is a monotonic host time (CACurrentMediaTime). A NaN/infinite
+            /// time is refused outright — an unmeasurable interval is not a
+            /// proven-safe one. A time BEFORE the last onset cannot happen on a
+            /// monotonic clock; if it somehow does, the ledger re-bases on it.
+            mutating func tryOnset(at t: Double,
+                                   minPeriod: Double = FlashSafety.minOnsetPeriod) -> Bool {
+                guard t.isFinite else { return false }
+                let period = (minPeriod.isFinite && minPeriod > 0) ? minPeriod : FlashSafety.minOnsetPeriod
+                if let last = lastOnset, t >= last, t - last < period - 1e-9 { return false }
+                lastOnset = t
+                return true
+            }
+        }
+
+        /// Thread-safe, reference-typed ledger (mirrors `BeatBindingBox`): one
+        /// per BRIDGE in the orchestrator, held across loop instances. Stopping
+        /// a card and starting another, a session re-establishment, or a
+        /// transport flip all reuse the same ledger, so two *different* loops
+        /// can never realize two onsets less than 1/3 s apart on one bridge.
+        final class OnsetLedger: @unchecked Sendable {
+            private let lock = NSLock()
+            private var gate: OnsetGate
+
+            init(lastOnset: Double? = nil) { gate = OnsetGate(lastOnset: lastOnset) }
+
+            var lastOnset: Double? {
+                lock.lock(); defer { lock.unlock() }
+                return gate.lastOnset
+            }
+
+            func tryOnset(at t: Double,
+                          minPeriod: Double = FlashSafety.minOnsetPeriod) -> Bool {
+                lock.lock(); defer { lock.unlock() }
+                return gate.tryOnset(at: t, minPeriod: minPeriod)
+            }
+        }
+
+        // ── Per-effect free-run plans ───────────────────────────────
+
+        /// Strobe's free-run cycle: ON frames then OFF frames, planned as one
+        /// safe total. Legacy visual curve unchanged (speed 0…100 → 0.5…3 Hz,
+        /// duty splits the period); only the quantization is fixed.
+        struct StrobePlan: Equatable {
+            let onFrames: Int
+            let offFrames: Int
+            var totalFrames: Int { onFrames + offFrames }
+
+            /// Legacy speed→rate curve, clamped at both ends.
+            static func hz(speed: Double) -> Double {
+                let s = speed.isNaN ? 50 : min(max(speed, 0), 100)
+                return clampedHz(0.5 + (s / 100.0) * 2.5)
+            }
+
+            static func make(speed: Double, dutyCycle: Double,
+                             frameDuration: Double = entertainmentFrameDuration) -> StrobePlan {
+                let total = cycleFrames(hz: hz(speed: speed), frameDuration: frameDuration)
+                let split = splitFrames(total: total, firstFraction: dutyCycle)
+                return StrobePlan(onFrames: split.first, offFrames: split.second)
+            }
+        }
+
+        /// Party's free-run cycle: hold at peak, then fade to min. Same speed
+        /// curve as Strobe; `smoothness` is the fade's share of the cycle.
+        struct PartyPlan: Equatable {
+            let holdFrames: Int
+            let fadeFrames: Int
+            var totalFrames: Int { holdFrames + fadeFrames }
+
+            static func make(speed: Double, smoothness: Double,
+                             frameDuration: Double = entertainmentFrameDuration) -> PartyPlan {
+                let total = cycleFrames(hz: StrobePlan.hz(speed: speed), frameDuration: frameDuration)
+                let split = splitFrames(total: total, firstFraction: 1.0 - smoothness)
+                return PartyPlan(holdFrames: split.first, fadeFrames: split.second)
+            }
+        }
+
+        /// Thunderstorm plans differently from Strobe/Party: its strikes are
+        /// random in length and may be skipped entirely, so there is no fixed
+        /// cycle to floor. Instead a `Budget` carries "frames since the last
+        /// onset" across strikes, skipped strikes, and beat-alignment waits,
+        /// and the ambient gap is stretched by whatever the budget still owes.
+        enum ThunderstormPlan {
+            /// The legacy gap curve, preserved bit-for-bit including its IEEE
+            /// artefact: frequency 1.0 gives `2.0 − 1.8 = 0.19999999999999996`,
+            /// and `Int(… / 0.02)` truncates 9.999999999999998 to **9** frames.
+            /// Keeping it means the storm looks unchanged; the Budget — not
+            /// this curve — is what makes it safe.
+            static func requestedGapFrames(frequency: Double,
+                                           frameDuration: Double = entertainmentFrameDuration) -> Int {
+                let fd = usableFrameDuration(frameDuration)
+                let f = frequency.isNaN ? 0.5 : min(max(frequency, 0), 1)
+                let gapDuration = 2.0 - f * 1.8          // 0.2–2.0 seconds
+                return max(5, Int(gapDuration / fd))
+            }
+
+            /// Legacy organic jitter: `max(1, length − 1) ... length + 2`.
+            /// The catalog range is 1…8; the clamp only keeps a hand-edited or
+            /// corrupt value from forming an invalid (empty) range.
+            static func flashFrameRange(flashLength: Int) -> ClosedRange<Int> {
+                let fl = min(max(flashLength, 1), 60)
+                return max(1, fl - 1)...(fl + 2)
+            }
+
+            /// Legacy afterglow: 0 disables it outright, otherwise
+            /// `base ... base + 1`.
+            static func afterglowFrameRange(afterglow: Int) -> ClosedRange<Int> {
+                let base = min(max(afterglow, 0), 60)
+                return base == 0 ? 0...0 : base...(base + 1)
+            }
+
+            /// Frames rendered since the last strike's ONSET (its first flash
+            /// frame). Starts saturated so the first strike of a session is
+            /// never delayed, and saturates at the ceiling so it can neither
+            /// overflow nor bank credit.
+            struct Budget {
+                private(set) var framesSinceOnset: Int
+                private let ceilingFrames: Int
+
+                init(frameDuration: Double = entertainmentFrameDuration) {
+                    ceilingFrames = minCycleFrames(frameDuration: frameDuration)
+                    framesSinceOnset = ceilingFrames
+                }
+
+                /// One (or n) non-flash frame rendered: an ambient gap frame, a
+                /// beat-alignment wait frame, or a gate hold frame. All three
+                /// count — they are real time on the wire.
+                mutating func noteAmbient(frames: Int = 1) {
+                    guard frames > 0 else { return }
+                    framesSinceOnset = min(ceilingFrames,
+                                           framesSinceOnset + min(frames, ceilingFrames))
+                }
+
+                /// A strike finished: the onset was `flashFrames + afterglowFrames`
+                /// frames ago.
+                mutating func noteStrike(flashFrames: Int, afterglowFrames: Int) {
+                    let rendered = max(0, flashFrames) + max(0, afterglowFrames)
+                    framesSinceOnset = min(ceilingFrames, rendered)
+                }
+
+                /// Ambient frames to render before the next strike opportunity:
+                /// the legacy curve, stretched to whatever the invariant still
+                /// owes. A skipped strike does not reset the budget, so skips
+                /// only ever make the next spacing longer.
+                func gapFrames(frequency: Double,
+                               frameDuration: Double = entertainmentFrameDuration) -> Int {
+                    max(requestedGapFrames(frequency: frequency, frameDuration: frameDuration),
+                        ceilingFrames - framesSinceOnset)
+                }
+            }
         }
     }
 
@@ -141,6 +400,17 @@ enum BeatMath {
     }
 
     /// Convenience: nil when free-running, else the binding's cycle phase.
+    ///
+    /// ⚠️ **UNCAPPED — never call this from a flash-class loop.** It uses the
+    /// binding's RAW `beatsPerCycle`, so at 180 BPM × 1 beat it reports a
+    /// 3 Hz cycle that the 20 ms Entertainment grid realizes as 16 frames
+    /// (0.32 s) — below the photosensitivity floor. Flash-class loops must
+    /// take their cycle from `liveLock(_:maxHz:)` with
+    /// `FlashSafety.entertainmentMaxLockHz` and pass `lock.beatsPerCycle`
+    /// into `cyclePhase(at:snapshot:beatsPerCycle:phaseOffsetBeats:)`.
+    /// Kept only for tests and for non-flash callers that read a phase
+    /// without driving light output. (`FlashSafetyTests` pins the 16-frame
+    /// defect this signature would reintroduce.)
     static func cyclePhase(_ binding: BeatBinding, snapshot: BeatSnapshot, at t: Double) -> Double? {
         guard !isFreeRunning(binding, snapshot: snapshot) else { return nil }
         return cyclePhase(at: t, snapshot: snapshot,

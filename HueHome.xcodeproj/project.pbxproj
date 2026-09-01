@@ -156,6 +156,7 @@
 		A1D00059D0D00059D0D00059 /* StudioLookLibraryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0005AD0D0005AD0D0005A /* StudioLookLibraryTests.swift */; };
 		A1D00057D0D00057D0D00057 /* PreviewLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00058D0D00058D0D00058 /* PreviewLiveTests.swift */; };
 		A1D00039D0D00039D0D00039 /* InstrumentControlMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0003AD0D0003AD0D0003A /* InstrumentControlMathTests.swift */; };
+		A1D00071D0D00071D0D00071 /* FlashSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00072D0D00072D0D00072 /* FlashSafetyTests.swift */; };
 		A1D00029D0D00029D0D00029 /* EffectParameterProfilesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0002AD0D0002AD0D0002A /* EffectParameterProfilesTests.swift */; };
 		A1D00023D0D00023D0D00023 /* StudioProductionWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */; };
 		A1D0000BD0D0000BD0D0000B /* CustomizationResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */; };
@@ -586,6 +587,7 @@
 		A1D0005AD0D0005AD0D0005A /* StudioLookLibraryTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StudioLookLibraryTests.swift"; path = "HueHomeTests/StudioLookLibraryTests.swift"; sourceTree = "<group>"; };
 		A1D00058D0D00058D0D00058 /* PreviewLiveTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "PreviewLiveTests.swift"; path = "HueHomeTests/PreviewLiveTests.swift"; sourceTree = "<group>"; };
 		A1D0003AD0D0003AD0D0003A /* InstrumentControlMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "InstrumentControlMathTests.swift"; path = "HueHomeTests/InstrumentControlMathTests.swift"; sourceTree = "<group>"; };
+		A1D00072D0D00072D0D00072 /* FlashSafetyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "FlashSafetyTests.swift"; path = "HueHomeTests/FlashSafetyTests.swift"; sourceTree = "<group>"; };
 		A1D0002AD0D0002AD0D0002A /* EffectParameterProfilesTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EffectParameterProfilesTests.swift; path = HueHomeTests/EffectParameterProfilesTests.swift; sourceTree = "<group>"; };
 		A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioProductionWiringTests.swift; path = HueHomeTests/StudioProductionWiringTests.swift; sourceTree = "<group>"; };
 		A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationResolverTests.swift; path = HueHomeTests/CustomizationResolverTests.swift; sourceTree = "<group>"; };
@@ -1499,6 +1501,7 @@
 				A1D0005AD0D0005AD0D0005A /* StudioLookLibraryTests.swift */,
 				A1D00058D0D00058D0D00058 /* PreviewLiveTests.swift */,
 				A1D0003AD0D0003AD0D0003A /* InstrumentControlMathTests.swift */,
+				A1D00072D0D00072D0D00072 /* FlashSafetyTests.swift */,
 				A1D0002AD0D0002AD0D0002A /* EffectParameterProfilesTests.swift */,
 				A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */,
 				A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */,
@@ -2188,6 +2191,7 @@
 				A1D00059D0D00059D0D00059 /* StudioLookLibraryTests.swift in Sources */,
 				A1D00057D0D00057D0D00057 /* PreviewLiveTests.swift in Sources */,
 				A1D00039D0D00039D0D00039 /* InstrumentControlMathTests.swift in Sources */,
+				A1D00071D0D00071D0D00071 /* FlashSafetyTests.swift in Sources */,
 				A1D00029D0D00029D0D00029 /* EffectParameterProfilesTests.swift in Sources */,
 				A1D00023D0D00023D0D00023 /* StudioProductionWiringTests.swift in Sources */,
 				A1D0000BD0D0000BD0D0000B /* CustomizationResolverTests.swift in Sources */,

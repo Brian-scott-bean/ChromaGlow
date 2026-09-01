@@ -3090,6 +3090,27 @@ final class UnifiedOrchestrator {
     }
     @ObservationIgnored private var studioEngineRuntimesByBridge: [String: StudioEngineRuntime] = [:]
 
+    /// One flash-onset ledger per BRIDGE, outliving every engine loop instance
+    /// (Slice 2 remediation, R1). The frame plans inside each loop guarantee
+    /// ≥ 17 frames between onsets *within* one run; only something that
+    /// survives the run can guarantee it ACROSS runs — stop/start, a card
+    /// switch, a transport flip, or a session re-establishment would otherwise
+    /// each start a fresh loop that flashes on its very first frame, right on
+    /// top of the previous loop's last flash.
+    ///
+    /// Get-or-create, and **never removed**: the map holds one small object per
+    /// bridge the user has ever streamed to, and forgetting an entry is exactly
+    /// the unsafe act it exists to prevent.
+    @ObservationIgnored
+    private var studioFlashOnsetLedgersByBridge: [String: BeatMath.FlashSafety.OnsetLedger] = [:]
+
+    private func flashOnsetLedger(forBridge bridgeID: String) -> BeatMath.FlashSafety.OnsetLedger {
+        if let existing = studioFlashOnsetLedgersByBridge[bridgeID] { return existing }
+        let ledger = BeatMath.FlashSafety.OnsetLedger()
+        studioFlashOnsetLedgersByBridge[bridgeID] = ledger
+        return ledger
+    }
+
     /// Entertainment clients keyed by bridgeID — one per concurrent bridge session.
     /// Internal access so StudioViewModel can report transport mode in debug.
     var studioEntClients: [String: HueEntertainmentClient] = [:]
@@ -5346,6 +5367,12 @@ final class UnifiedOrchestrator {
             RestScope(roomID: studioRoomID, owner: .studio)
         noteRoomOwnershipChange(bridgeID: studioBridgeID, roomID: studioRoomID)
 
+        // The bridge's flash-onset ledger, resolved BEFORE any engine starts:
+        // every streaming engine on this bridge shares it, so a stop/start or a
+        // card switch cannot realize two flash onsets less than 1/3 s apart
+        // (Slice 2 remediation, R1 rule 3).
+        let flashLedger = flashOnsetLedger(forBridge: stopBid)
+
         // Create live param box (engine loop reads from this; the ViewModel
         // updates it through the bridge-keyed runtime installed below).
         let paramBox = StudioParamBox(values: params, colors: colors)
@@ -5391,7 +5418,8 @@ final class UnifiedOrchestrator {
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
                     Task {
-                        await self.runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs,
+                                                     paramBox: paramBox, onsetLedger: flashLedger)
                         await self.reconcileStudioSessionAfterLoop(
                             entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
                     }
@@ -5405,7 +5433,8 @@ final class UnifiedOrchestrator {
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
                     Task {
-                        await self.runPartyEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.runPartyEntertainment(entClient: entClient, channelIDs: channelIDs,
+                                                     paramBox: paramBox, onsetLedger: flashLedger)
                         await self.reconcileStudioSessionAfterLoop(
                             entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
                     }
@@ -5419,7 +5448,8 @@ final class UnifiedOrchestrator {
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
                     Task {
-                        await self.runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs,
+                                                     paramBox: paramBox, onsetLedger: flashLedger)
                         await self.reconcileStudioSessionAfterLoop(
                             entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
                     }
@@ -7936,14 +7966,59 @@ final class UnifiedOrchestrator {
     // MARK: - Strobe Engine
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    /// Streams hold frames on the 20 ms Entertainment grid until the bridge's
+    /// shared onset ledger admits a new flash onset, and returns how many hold
+    /// frames it had to stream (0 = admitted immediately). Returns nil only if
+    /// the task was cancelled while waiting.
+    ///
+    /// A refusal is a **delay, not a skip** (R1 rule 4): the flash still
+    /// happens, at most a frame or two later, and the DTLS stream never pauses
+    /// — pausing it would let the bridge fall back to its own light state
+    /// mid-effect. Because every caller's frame plan already guarantees
+    /// ≥ `minCycleFrames` frames between onsets within a single run, this loop
+    /// only ever spins across a run boundary (stop/start, card switch, session
+    /// re-establishment), and then for at most `minCycleFrames` frames.
+    private func streamUntilOnsetAdmitted(
+        entClient: HueEntertainmentClient,
+        channelIDs: [UInt8],
+        ledger: BeatMath.FlashSafety.OnsetLedger,
+        holdX: Double,
+        holdY: Double,
+        holdBrightness: Double
+    ) async -> Int? {
+        var heldFrames = 0
+        while !Task.isCancelled {
+            if ledger.tryOnset(at: CACurrentMediaTime()) { return heldFrames }
+            await entClient.sendUniform(channelIDs: channelIDs,
+                                        x: holdX, y: holdY, brightness: holdBrightness)
+            heldFrames += 1
+            try? await Task.sleep(nanoseconds: BeatMath.FlashSafety.entertainmentFrameNanoseconds)
+        }
+        return nil
+    }
+
     /// Strobe via Entertainment API — crisp on/off at 50fps streaming.
-    /// Speed capped at 3Hz (WCAG 2.3.1 compliance).
+    ///
+    /// Flash safety (Slice 2 remediation, R1): the cycle is planned as ONE safe
+    /// total (`StrobePlan`) and then split, so the ON and OFF halves can no
+    /// longer be floored independently onto the frame grid — the defect that
+    /// realized 15–16 frames (3.13–3.33 Hz) at speed 100. Beat locks are capped
+    /// at `entertainmentMaxLockHz`, and every rising edge passes the bridge's
+    /// wall-clock ledger before it is streamed.
     private func runStrobeEntertainment(
         entClient: HueEntertainmentClient,
         channelIDs: [UInt8],
-        paramBox: StudioParamBox
+        paramBox: StudioParamBox,
+        onsetLedger: BeatMath.FlashSafety.OnsetLedger
     ) async {
-        let frameInterval: UInt64 = 20_000_000  // 20ms = 50fps
+        let frameInterval = BeatMath.FlashSafety.entertainmentFrameNanoseconds
+
+        // Edge state lives OUTSIDE the while and is shared by both branches
+        // (R1 rule 5). Toggling beat lock on or off mid-cycle, a tempo tap, or
+        // a phase edit all re-enter the loop body; without a carried edge the
+        // new branch would treat its first bright frame as a fresh onset and
+        // could flash twice inside 1/3 s.
+        var isBright = false
 
         while !Task.isCancelled {
             // The session can die under us — the official Hue app reclaiming
@@ -7960,37 +8035,53 @@ final class UnifiedOrchestrator {
             let xy = extractXY(from: paramBox.colors["flash_color"]) ?? (x: 0.3127, y: 0.3290)
 
             // Beat-locked: ON/OFF derived purely from clock phase each 20 ms
-            // frame — zero drift, tempo changes land within one frame, and
-            // wcagSafeBeatsPerCycle keeps the flash rate ≤3 Hz.
+            // frame — zero drift, tempo changes land within one frame. The lock
+            // is capped at `entertainmentMaxLockHz` (2.94 Hz) rather than the
+            // nominal 3 Hz: that is an implementation consequence of the
+            // realized ≥ 1/3 s onset invariant on the 20 ms grid (a 333 ms
+            // period can only be rendered as 16 frames = 0.32 s, or as 17
+            // frames while lagging the beat by 6.7 ms every cycle), not a
+            // product preference.
             let binding = BeatBinding.fromStudioValues(p)
-            if let lock = BeatMath.liveLock(binding) {
+            if let lock = BeatMath.liveLock(binding, maxHz: BeatMath.FlashSafety.entertainmentMaxLockHz) {
                 let phase = BeatMath.cyclePhase(at: CACurrentMediaTime(),
                                                 snapshot: lock.snapshot,
                                                 beatsPerCycle: lock.beatsPerCycle,
                                                 phaseOffsetBeats: binding.phaseOffsetBeats)
-                let bri = phase < dutyCycle ? peakBri : minBri
+                let wantsBright = phase < dutyCycle
+                if wantsBright, !isBright {
+                    guard await streamUntilOnsetAdmitted(
+                        entClient: entClient, channelIDs: channelIDs, ledger: onsetLedger,
+                        holdX: xy.x, holdY: xy.y, holdBrightness: minBri) != nil
+                    else { return }
+                }
+                isBright = wantsBright
+                let bri = wantsBright ? peakBri : minBri
                 await entClient.sendUniform(channelIDs: channelIDs, x: xy.x, y: xy.y, brightness: bri)
                 try? await Task.sleep(nanoseconds: frameInterval)
                 continue
             }
 
-            // Speed 0–100 → 0.5–3.0 Hz (WCAG safe: never exceeds 3 flashes/sec)
-            let hz = BeatMath.FlashSafety.clampedHz(0.5 + (speed / 100.0) * 2.5)   // real clamp — a widened range cannot raise the ceiling
-            let period = 1.0 / hz
-            let onDuration = period * dutyCycle
-            let offDuration = period * (1.0 - dutyCycle)
+            // Free-run: speed 0–100 → 0.5–3.0 Hz, planned as a whole safe cycle
+            // and split by duty. Params are read once per cycle so both halves
+            // come from the same plan.
+            let plan = BeatMath.FlashSafety.StrobePlan.make(speed: speed, dutyCycle: dutyCycle)
 
-            // ON phase
-            let onFrames = max(1, Int(onDuration / 0.02))
-            for _ in 0..<onFrames {
+            // ON phase — its first frame is the onset.
+            guard await streamUntilOnsetAdmitted(
+                entClient: entClient, channelIDs: channelIDs, ledger: onsetLedger,
+                holdX: xy.x, holdY: xy.y, holdBrightness: minBri) != nil
+            else { return }
+            isBright = true
+            for _ in 0..<plan.onFrames {
                 guard !Task.isCancelled else { return }
                 await entClient.sendUniform(channelIDs: channelIDs, x: xy.x, y: xy.y, brightness: peakBri)
                 try? await Task.sleep(nanoseconds: frameInterval)
             }
 
             // OFF phase
-            let offFrames = max(1, Int(offDuration / 0.02))
-            for _ in 0..<offFrames {
+            isBright = false
+            for _ in 0..<plan.offFrames {
                 guard !Task.isCancelled else { return }
                 await entClient.sendUniform(channelIDs: channelIDs, x: xy.x, y: xy.y, brightness: minBri)
                 try? await Task.sleep(nanoseconds: frameInterval)
@@ -8000,6 +8091,9 @@ final class UnifiedOrchestrator {
 
     /// Strobe via REST — fallback when no entertainment config.
     /// Limited to ~1Hz by bridge rate limits. Shows toast suggesting entertainment setup.
+    /// Flash-safe by cadence, not by gate: the free-run sleep is 900 ms and the
+    /// beat lock is floored at `maxHz: 1.0/0.9`, so no two flips can land less
+    /// than 0.9 s apart — 2.7× the 1/3 s floor (R1: REST loops unchanged).
     private func runStrobeREST(
         roomID: String,
         bridgeID: String?,
@@ -8049,12 +8143,19 @@ final class UnifiedOrchestrator {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     /// Party via Entertainment — random color flashes at user-controlled speed.
+    ///
+    /// Flash safety (Slice 2 remediation, R1): one `PartyPlan` per cycle
+    /// replaces the independently floored hold/fade frame counts (which
+    /// realized 15–16 frames — 3.13 Hz at the shipped default smoothness 20 —
+    /// at speed 100). A palette step is this effect's onset, so every step
+    /// passes the bridge's wall-clock ledger first.
     private func runPartyEntertainment(
         entClient: HueEntertainmentClient,
         channelIDs: [UInt8],
-        paramBox: StudioParamBox
+        paramBox: StudioParamBox,
+        onsetLedger: BeatMath.FlashSafety.OnsetLedger
     ) async {
-        let frameInterval: UInt64 = 20_000_000  // 50fps
+        let frameInterval = BeatMath.FlashSafety.entertainmentFrameNanoseconds
 
         // Pre-built color palette: 8 vivid party colors (CIE xy)
         let palette: [(x: Double, y: Double)] = [
@@ -8068,6 +8169,14 @@ final class UnifiedOrchestrator {
             (0.5600, 0.4000),  // Orange
         ]
         var colorIndex = 0
+
+        // Edge state shared by both branches (R1 rule 5): which beat cycle has
+        // already been stepped, and the last frame actually streamed (the hold
+        // frame a refused onset repeats). `renderedIdx` is cleared whenever the
+        // free-run branch owns the palette, so re-locking always re-gates.
+        var renderedIdx: Int?
+        var lastColor: (x: Double, y: Double)?
+        var lastBri: Double?
 
         while !Task.isCancelled {
             // The session can die under us — the official Hue app reclaiming
@@ -8085,9 +8194,12 @@ final class UnifiedOrchestrator {
 
             // Beat-locked: color index AND hold/fade position both derived
             // from the clock each frame — the palette steps exactly on cycle
-            // boundaries and the fade tracks the cycle, drift-free.
+            // boundaries and the fade tracks the cycle, drift-free. The cap is
+            // `entertainmentMaxLockHz`, an implementation consequence of the
+            // realized ≥ 1/3 s onset invariant on the 20 ms grid rather than a
+            // product preference (a 3 Hz lock quantizes to 16 frames = 0.32 s).
             let binding = BeatBinding.fromStudioValues(p)
-            if let lock = BeatMath.liveLock(binding) {
+            if let lock = BeatMath.liveLock(binding, maxHz: BeatMath.FlashSafety.entertainmentMaxLockHz) {
                 let now = CACurrentMediaTime()
                 let idx = BeatMath.cycleIndex(at: now, snapshot: lock.snapshot,
                                               beatsPerCycle: lock.beatsPerCycle,
@@ -8104,32 +8216,53 @@ final class UnifiedOrchestrator {
                     let t = (phase - hold) / max(smoothness, 0.001)
                     bri = peakBri + (minBri - peakBri) * t
                 }
+                if idx != renderedIdx {
+                    guard await streamUntilOnsetAdmitted(
+                        entClient: entClient, channelIDs: channelIDs, ledger: onsetLedger,
+                        holdX: lastColor?.x ?? color.x, holdY: lastColor?.y ?? color.y,
+                        holdBrightness: lastBri ?? minBri) != nil
+                    else { return }
+                    renderedIdx = idx
+                }
+                lastColor = color
+                lastBri = bri
                 await entClient.sendUniform(channelIDs: channelIDs, x: color.x, y: color.y, brightness: bri)
                 try? await Task.sleep(nanoseconds: frameInterval)
                 continue
             }
 
-            // Speed 0–100 → 0.5–3.0 Hz
-            let hz = BeatMath.FlashSafety.clampedHz(0.5 + (speed / 100.0) * 2.5)   // real clamp — a widened range cannot raise the ceiling
-            let period = 1.0 / hz
-            let fadeFrames = max(1, Int(smoothness * period / 0.02))
-            let holdFrames = max(1, Int((1.0 - smoothness) * period / 0.02))
+            // Free-run: speed 0–100 → 0.5–3.0 Hz, planned as one safe cycle and
+            // split into hold + fade (both ≥ 1 frame, sum == the safe total).
+            let plan = BeatMath.FlashSafety.PartyPlan.make(speed: speed, smoothness: smoothness)
 
             let color = Self.partyTinted(palette[colorIndex % palette.count], tint: tint)
             colorIndex += 1
+            // Free-run owns the palette now; a later re-lock must re-gate.
+            renderedIdx = nil
+
+            // The palette step is the onset.
+            guard await streamUntilOnsetAdmitted(
+                entClient: entClient, channelIDs: channelIDs, ledger: onsetLedger,
+                holdX: lastColor?.x ?? color.x, holdY: lastColor?.y ?? color.y,
+                holdBrightness: lastBri ?? minBri) != nil
+            else { return }
 
             // Flash phase: hold at peak brightness
-            for _ in 0..<holdFrames {
+            for _ in 0..<plan.holdFrames {
                 guard !Task.isCancelled else { return }
+                lastColor = color
+                lastBri = peakBri
                 await entClient.sendUniform(channelIDs: channelIDs, x: color.x, y: color.y, brightness: peakBri)
                 try? await Task.sleep(nanoseconds: frameInterval)
             }
 
             // Fade phase: linear fade from peak to min
-            for i in 0..<fadeFrames {
+            for i in 0..<plan.fadeFrames {
                 guard !Task.isCancelled else { return }
-                let t = Double(i) / Double(fadeFrames)
+                let t = Double(i) / Double(plan.fadeFrames)
                 let bri = peakBri + (minBri - peakBri) * t
+                lastColor = color
+                lastBri = bri
                 await entClient.sendUniform(channelIDs: channelIDs, x: color.x, y: color.y, brightness: bri)
                 try? await Task.sleep(nanoseconds: frameInterval)
             }
@@ -8137,6 +8270,8 @@ final class UnifiedOrchestrator {
     }
 
     /// Party via REST — fallback. Cycles colors at ~1/sec.
+    /// Flash-safe by cadence, not by gate: 1 s free-run sleep and a `maxHz: 1.0`
+    /// beat lock put every palette step ≥ 1 s apart (R1: REST loops unchanged).
     private func runPartyREST(
         roomID: String,
         bridgeID: String?,
@@ -8200,14 +8335,30 @@ final class UnifiedOrchestrator {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     /// Thunderstorm via Entertainment — ambient blue glow + random lightning strikes.
+    ///
+    /// Flash safety (Slice 2 remediation, R1): a strike's length is random and
+    /// a strike may be skipped entirely, so there is no fixed cycle to floor.
+    /// Instead a `ThunderstormPlan.Budget` carries "frames since the last
+    /// onset" across gaps, skipped strikes and beat-alignment waits, and
+    /// stretches the ambient gap by whatever the ≥ 17-frame invariant still
+    /// owes. The legacy gap curve is untouched — including its IEEE artefact,
+    /// `Int(0.19999999999999996 / 0.02) == 9` at frequency 100, which with a
+    /// 1-frame flash and no afterglow used to realize 9 + 1 + 0 = 10 frames =
+    /// **5.0 Hz**. Now `since = 1`, the budget demands `17 − 1 = 16` gap
+    /// frames, and the realized spacing is 17 frames.
     private func runThunderstormEntertainment(
         entClient: HueEntertainmentClient,
         channelIDs: [UInt8],
-        paramBox: StudioParamBox
+        paramBox: StudioParamBox,
+        onsetLedger: BeatMath.FlashSafety.OnsetLedger
     ) async {
-        let frameInterval: UInt64 = 20_000_000  // 50fps
+        let frameInterval = BeatMath.FlashSafety.entertainmentFrameNanoseconds
         // Deep blue ambient default
         let ambientXY = (x: 0.1548, y: 0.1220)
+
+        // Onset accounting lives outside the while: a skipped strike must
+        // ACCUMULATE credit toward the next one, never reset it.
+        var budget = BeatMath.FlashSafety.ThunderstormPlan.Budget()
 
         while !Task.isCancelled {
             // The session can die under us — the official Hue app reclaiming
@@ -8219,35 +8370,41 @@ final class UnifiedOrchestrator {
             let flashIntensity = (p["flash_intensity"]  ?? 90) / 100.0
             let minBri         = (p["min_brightness"]   ?? 5) / 100.0
 
-            // Ambient glow phase (variable duration based on frequency)
-            // Higher frequency = shorter gaps between strikes
-            let gapDuration = 2.0 - frequency * 1.8  // 0.2–2.0 seconds
-            let gapFrames = max(5, Int(gapDuration / 0.02))
+            // Ambient glow phase (variable duration based on frequency).
+            // Higher frequency = shorter gaps between strikes — but never
+            // shorter than the invariant still owes.
+            let gapFrames = budget.gapFrames(frequency: frequency)
 
             for _ in 0..<gapFrames {
                 guard !Task.isCancelled else { return }
                 let ambientColor = extractXY(from: paramBox.colors["ambient_color"]) ?? ambientXY
                 await entClient.sendUniform(channelIDs: channelIDs, x: ambientColor.x, y: ambientColor.y, brightness: minBri)
+                budget.noteAmbient()
                 try? await Task.sleep(nanoseconds: frameInterval)
             }
 
             // Beat-locked: keep streaming ambient frames until the next cycle
             // boundary so every strike opportunity lands on the grid. The
             // DTLS stream must never pause — waiting means sending ambient.
+            // The lock is re-derived every frame from `liveLock` at the
+            // `entertainmentMaxLockHz` ceiling, and only `lock.beatsPerCycle`
+            // is used: reading the binding's RAW beats-per-cycle here (as this
+            // branch used to) threw the rate cap away entirely — defect R1-TB,
+            // the only raw-beatsPerCycle loop site in the repo.
             let binding = BeatBinding.fromStudioValues(p)
-            if BeatMath.liveLock(binding) != nil {
-                let entrySnap = BeatClock.snapshot()
-                let entryIdx = BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: entrySnap,
-                                                   beatsPerCycle: binding.beatsPerCycle,
+            if let entry = BeatMath.liveLock(binding, maxHz: BeatMath.FlashSafety.entertainmentMaxLockHz) {
+                let entryIdx = BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: entry.snapshot,
+                                                   beatsPerCycle: entry.beatsPerCycle,
                                                    phaseOffsetBeats: binding.phaseOffsetBeats)
                 while !Task.isCancelled {
-                    let snap = BeatClock.snapshot()
-                    guard snap.bpm > 0 else { break }
-                    if BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: snap,
-                                           beatsPerCycle: binding.beatsPerCycle,
+                    guard let live = BeatMath.liveLock(binding, maxHz: BeatMath.FlashSafety.entertainmentMaxLockHz)
+                    else { break }
+                    if BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: live.snapshot,
+                                           beatsPerCycle: live.beatsPerCycle,
                                            phaseOffsetBeats: binding.phaseOffsetBeats) != entryIdx { break }
                     let ambientColor = extractXY(from: paramBox.colors["ambient_color"]) ?? ambientXY
                     await entClient.sendUniform(channelIDs: channelIDs, x: ambientColor.x, y: ambientColor.y, brightness: minBri)
+                    budget.noteAmbient()
                     try? await Task.sleep(nanoseconds: frameInterval)
                 }
                 guard !Task.isCancelled else { return }
@@ -8261,31 +8418,51 @@ final class UnifiedOrchestrator {
             //   flash_color unset → D65 white, the old flash
             let strikeRate = (p["strike_rate"] ?? 50) / 100.0
             let strikeChance = 0.3 + strikeRate * 0.6  // 30%–90%
+            // A skipped strike falls through WITHOUT touching the budget, so
+            // the credit it accumulated carries into the next opportunity.
             guard Double.random(in: 0...1) < strikeChance else { continue }
 
             let flashXY = extractXY(from: paramBox.colors["flash_color"]) ?? (x: 0.3127, y: 0.3290)
 
             // Lightning flash: rapid bright frames with organic length jitter.
             let flashLength = Int(p["flash_length"] ?? 3)
-            let flashFrames = Int.random(in: max(1, flashLength - 1)...(flashLength + 2))
+            let flashFrames = Int.random(in: BeatMath.FlashSafety.ThunderstormPlan.flashFrameRange(flashLength: flashLength))
+
+            // Afterglow at 40% intensity; 0 disables it outright.
+            let afterglowBase = Int(p["afterglow"] ?? 1)
+            let afterglow = Int.random(in: BeatMath.FlashSafety.ThunderstormPlan.afterglowFrameRange(afterglow: afterglowBase))
+
+            // The strike's first flash frame is the onset. The budget already
+            // guaranteed the FRAME spacing; the ledger is the wall-clock
+            // backstop that outlives this loop instance. Hold frames it streams
+            // are ambient time on the wire, so they count toward the budget.
+            let ambientColor = extractXY(from: paramBox.colors["ambient_color"]) ?? ambientXY
+            guard let heldFrames = await streamUntilOnsetAdmitted(
+                entClient: entClient, channelIDs: channelIDs, ledger: onsetLedger,
+                holdX: ambientColor.x, holdY: ambientColor.y, holdBrightness: minBri)
+            else { return }
+            budget.noteAmbient(frames: heldFrames)
+
             for _ in 0..<flashFrames {
                 guard !Task.isCancelled else { return }
                 await entClient.sendUniform(channelIDs: channelIDs, x: flashXY.x, y: flashXY.y, brightness: flashIntensity)
                 try? await Task.sleep(nanoseconds: frameInterval)
             }
 
-            // Afterglow at 40% intensity; 0 disables it outright.
-            let afterglowBase = Int(p["afterglow"] ?? 1)
-            let afterglow = afterglowBase == 0 ? 0 : Int.random(in: afterglowBase...(afterglowBase + 1))
             for _ in 0..<afterglow {
                 guard !Task.isCancelled else { return }
                 await entClient.sendUniform(channelIDs: channelIDs, x: flashXY.x, y: flashXY.y, brightness: flashIntensity * 0.4)
                 try? await Task.sleep(nanoseconds: frameInterval)
             }
+
+            budget.noteStrike(flashFrames: flashFrames, afterglowFrames: afterglow)
         }
     }
 
     /// Thunderstorm via REST — fallback. Random brightness spikes.
+    /// Flash-safe by cadence, not by gate: the gap sleep is floored at 500 ms and
+    /// the strike is followed by a 200 ms hold before the next ambient write, so
+    /// consecutive strikes are ≥ 0.7 s apart (R1: REST loops unchanged).
     private func runThunderstormREST(
         roomID: String,
         bridgeID: String?,
