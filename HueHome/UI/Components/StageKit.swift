@@ -126,19 +126,10 @@ struct StageSlider: View {
     /// Parse a typed value and clamp it into range. Accepts a leading number
     /// and ignores whatever unit suffix the format added ("64%", "120 BPM",
     /// "2700K") so a user can edit the readout text as-is. Nil = not a number.
+    /// Slice 2: the implementation moved to `StageDraftMath` so the knob and
+    /// fader share exactly this behavior; this symbol stays for call sites.
     static func parseDraft(_ text: String, range: ClosedRange<Double>) -> Double? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        // Take the leading numeric run: digits, one decimal separator, optional minus.
-        var numeric = ""
-        var seenDot = false
-        for (i, ch) in trimmed.enumerated() {
-            if ch.isNumber { numeric.append(ch) }
-            else if (ch == "." || ch == ",") && !seenDot { numeric.append("."); seenDot = true }
-            else if ch == "-" && i == 0 { numeric.append(ch) }
-            else { break }
-        }
-        guard let parsed = Double(numeric) else { return nil }
-        return min(range.upperBound, max(range.lowerBound, parsed))
+        StageDraftMath.parseDraft(text, range: range)
     }
 
     var body: some View {

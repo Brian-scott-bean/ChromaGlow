@@ -75,7 +75,8 @@ enum BeatMath {
     /// Largest-frequency-safe beats-per-cycle: walks the allowed steps UP
     /// from `requested` until the cycle rate is ≤ maxHz. WCAG 2.3.1 flash
     /// cap for strobe-class loops (174 BPM × ½-beat → ×1, for example).
-    /// bpm ≤ 0 returns the snapped request (free-running loops self-cap).
+    /// bpm ≤ 0 returns the snapped request (free-running loops self-cap
+    /// through `FlashSafety.clampedHz`).
     static func wcagSafeBeatsPerCycle(requested: Double, bpm: Double, maxHz: Double = 3.0) -> Double {
         let snapped = BeatBinding.snappedStep(requested)
         guard bpm > 0, maxHz > 0 else { return snapped }
@@ -84,6 +85,19 @@ enum BeatMath {
             if beatsPerSecond / step <= maxHz { return step }
         }
         return BeatBinding.allowedSteps.last ?? snapped
+    }
+
+    /// The free-running flash-rate ceiling as a REAL clamp (Slice 2). The
+    /// strobe/party speed curves used to stay under 3 Hz only by arithmetic
+    /// coincidence (0.5 + speed/100 × 2.5 tops out at 3.0) — a widened
+    /// catalog range would have silently raised the ceiling. Every
+    /// flash-class free-run Hz now passes through here; no exact typed
+    /// value, adaptive drag, or range change can bypass it (spec §24).
+    enum FlashSafety {
+        static let maxFlashHz = 3.0
+        static func clampedHz(_ hz: Double) -> Double {
+            min(maxFlashHz, max(0, hz))
+        }
     }
 
     /// Continuous cycle position: whole part = cycle index, fraction = phase.

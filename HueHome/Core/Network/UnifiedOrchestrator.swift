@@ -7975,7 +7975,7 @@ final class UnifiedOrchestrator {
             }
 
             // Speed 0–100 → 0.5–3.0 Hz (WCAG safe: never exceeds 3 flashes/sec)
-            let hz = 0.5 + (speed / 100.0) * 2.5
+            let hz = BeatMath.FlashSafety.clampedHz(0.5 + (speed / 100.0) * 2.5)   // real clamp — a widened range cannot raise the ceiling
             let period = 1.0 / hz
             let onDuration = period * dutyCycle
             let offDuration = period * (1.0 - dutyCycle)
@@ -8110,7 +8110,7 @@ final class UnifiedOrchestrator {
             }
 
             // Speed 0–100 → 0.5–3.0 Hz
-            let hz = 0.5 + (speed / 100.0) * 2.5
+            let hz = BeatMath.FlashSafety.clampedHz(0.5 + (speed / 100.0) * 2.5)   // real clamp — a widened range cannot raise the ceiling
             let period = 1.0 / hz
             let fadeFrames = max(1, Int(smoothness * period / 0.02))
             let holdFrames = max(1, Int((1.0 - smoothness) * period / 0.02))
