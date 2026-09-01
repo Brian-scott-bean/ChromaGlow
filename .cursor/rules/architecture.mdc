@@ -1,0 +1,23 @@
+---
+description: Core architecture rules for the ChromaGlow Hue lighting app. Always active.
+globs:
+  - "**/*.swift"
+---
+
+# ChromaGlow Architecture Rules
+
+## Critical Hue Bridge Constraints
+1. **NEVER send `effects` field to `grouped_light`** — the bridge silently ignores it. Effects are per-light ONLY via `setLightNativeEffect()`.
+2. **Use `childResourceRefs` for room membership** — resolve lights from in-memory data, never call API at apply time.
+3. **Entertainment API (DTLS) is one session PER BRIDGE** — each bridge holds at most one session, and different bridges stream independently and simultaneously. Starting a new session on a bridge replaces that bridge's old one (with consent); it must never touch another bridge's. UX must communicate the same-bridge exclusivity.
+4. **Rate limits**: grouped_light = ~1 PUT/sec, individual light = ~10 PUT/sec. Use `RestSender.enqueue()` for all REST calls in render loops.
+
+## State Management
+5. **Generation counter pattern** — capture a task's generation count and verify before applying results to prevent zombie task corruption. The pattern has a named home: `CustomizationGenerationCounter` and `CustomizationFence` in `HueHome/Core/CustomizationIdentity.swift`. Use them; do not hand-roll a second counter.
+6. **`@Observable` + `@MainActor`** — all ViewModels use Swift Observation, not Combine. No `@Published`, no `ObservableObject`.
+7. **Multi-room effects** — `runningEffects` is `[StudioSelectionKey: RunningEffect]`, keyed by bridge + group + KIND, never by a bare room ID (spec §19). A room and a zone that share an identifier are two independent rows. Multiple targets can run independent effects simultaneously; callers holding only a bare id must resolve through the fail-closed unique-match helpers.
+
+## Code Style
+- Use `HuePalette` and `HueTypography` design tokens — never hardcode colors or fonts
+- Use `HapticManager.shared` for haptics — never raw `UIImpactFeedbackGenerator`
+- Print statements use `[Studio]` or `[Composer]` prefix for debug logs

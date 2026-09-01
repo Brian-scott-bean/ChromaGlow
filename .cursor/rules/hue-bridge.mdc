@@ -1,0 +1,43 @@
+---
+description: Rules for Hue bridge communication — API client, entertainment streaming, orchestrator.
+globs:
+  - "**/HueAPIClient.swift"
+  - "**/HueEntertainmentClient.swift"
+  - "**/UnifiedOrchestrator.swift"
+  - "**/EntertainmentConfigManager.swift"
+---
+
+# Hue Bridge Communication Rules
+
+## API Client
+- `HueAPIClient` handles REST calls to the bridge
+- `setGroupedLightState()` — on/off + brightness (1 PUT)
+- `setGroupedLightEffect()` — color + brightness + transition (1 PUT)
+- `setLightNativeEffect()` — per-light effect (candle, fire, etc.)
+- Never combine grouped_light + per-light in same call batch
+
+## Entertainment API (DTLS)
+- `HueEntertainmentClient` is an `actor` — all calls are `await`
+- `send(channels:)` — per-light CIE xy + brightness at 25-50fps
+- `sendUniform(channelIDs:x:y:brightness:)` — same color to all lights
+- Channel format: `(id: UInt8, x: Double, y: Double, brightness: Double)`
+- x, y = CIE 1931 coordinates (0.0–1.0), brightness = 0.0–1.0
+
+## Orchestrator
+- `startStudioMode(key:room:params:colors:capturedPlan:consent:preparedEntertainment:)` — existing effect engines (the last three have defaults)
+- `startCompositionMode(room:paramBox:)` — composition render loops
+- `stopStudioMode()` — cancels task + stops entertainment + clears state
+- `StudioParamBox` — live param relay for existing engines
+- `CompositionParamBox` — live param relay for compositions
+- Studio REST routing is PER BRIDGE: `studioRestScopesByBridge` (private) holds each bridge's studio `RestScope`. Route every studio REST write through `enqueueStudioRestWrite(roomID:bridgeID:)` — latest-wins mailbox, max 1 in-flight per scope
+
+## Color Conversion
+- `HueColorUtils.xyFrom(hue:saturation:brightness:)` → CIE xy
+- `CodableColor.from(color:)` — SwiftUI Color → CIE xy
+- D65 white point: `(0.3127, 0.3290)`
+- Mirek: 153 (cool/6500K) – 500 (warm/2000K) is the Hue SPAN, not a light's range. Use the device-reported `mirek_schema` per light, intersected across the target by `CustomizationSnapshotBuilder`; a capable-but-schemaless light downgrades the evidence rather than silently assuming 153–500
+
+## Rate Limit Safety
+- grouped_light: 1 PUT/sec max (bridge drops excess silently)
+- Per-light: batches of 5 with 150ms gaps via `sendPerLightBatched()`
+- REST render loops: use `enqueueStudioRestWrite(roomID:bridgeID:)` — NEVER direct `await api.set...()`

@@ -1,0 +1,30 @@
+---
+description: Build verification and testing requirements.
+globs:
+  - "**/*.swift"
+alwaysApply: false
+---
+
+# Build & Test Rules
+
+## After Every Code Change
+Run this build check before saying you're done:
+```bash
+PROJ=/Users/brianbean/Desktop/huehome-pro-v0.3.0
+xcodebuild -project "$PROJ/HueHome.xcodeproj" -scheme "HueHome 1" -destination 'generic/platform=iOS' build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
+```
+The scheme is `HueHome 1`, not `HueHome`. To build or test against a simulator,
+prefer `./run_tests.sh` (it picks a deterministic simulator) or pass an exact
+`-destination 'id=<UDID>'` — several installed simulators share the name
+`iPhone 17 Pro`, so a bare `name=` destination is ambiguous.
+
+## Commits
+Do NOT commit automatically after a green build. Commit only when Brian asks,
+and then as one shippable commit per fix — stage the exact files that fix
+touched, never `git add -A`. (Same discipline as the review overlay's
+review-only default, `.cursor/skills/chromaglow-code-quality-review/SKILL.md`.)
+
+## Common Build Errors
+- "Cannot find type 'X'" → File not added to pbxproj. See xcode-project.mdc.
+- "Argument passed to call that takes no arguments" → Check method signatures in existing code, don't guess.
+- "Type 'StudioStrategy' does not conform to 'Equatable'" → Already fixed. It's Equatable now.

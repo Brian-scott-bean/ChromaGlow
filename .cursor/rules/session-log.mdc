@@ -1,0 +1,44 @@
+---
+description: Session management — reading and updating the development log.
+globs:
+  - "**/DEVLOG.md"
+  - "**/CURSOR_KICKOFF.md"
+---
+
+# Session Management Rules
+
+## Start of Every Session
+1. Read `DEVLOG.md` — check what was done last and what's left
+2. Read `CURSOR_KICKOFF.md` — understand the full build plan
+3. Confirm your understanding before writing code
+
+## End of Every Session
+Append a new entry to `DEVLOG.md` with this format:
+
+```markdown
+## YYYY-MM-DD - [Codex|Claude|Cursor] Short title
+
+### What was built
+- File changes with brief descriptions
+
+### What's working
+- ✅ items that compile and function
+
+### What's left
+- [ ] remaining tasks
+
+### Gotchas
+- Any bugs, surprises, or non-obvious patterns discovered
+
+### Current state
+Build status and any blockers
+```
+
+The entry header above is the canonical form from `AGENTS.md` ("Handoff
+Discipline"); that section is the source of truth for the section list, so
+follow it if the two ever drift.
+
+## Commit Discipline
+- One shippable commit per fix, and only when Brian asks for a commit
+- Run build verification before every commit
+- Tag rollback points as `checkpoint/*` (e.g. `checkpoint/appstore-prep-2026-07-11`) before any multi-commit run

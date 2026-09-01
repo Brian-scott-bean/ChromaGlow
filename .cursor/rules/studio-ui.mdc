@@ -1,0 +1,47 @@
+---
+description: Rules for Studio UI — StudioView, mixer tray, card grid, deck system.
+globs:
+  - "**/Studio*.swift"
+  - "**/StudioView.swift"
+  - "**/StudioCardCanvas.swift"
+  - "**/RoomPickerSheetView.swift"
+---
+
+# Studio UI Rules
+
+## Deck System
+- Deck 0 = Effects (bridge-native: candle, fire, sparkle, etc.)
+- Deck 1 = Live Modes (app-driven: strobe, party, thunderstorm, ambient)
+- Deck 2 = Composer (composition presets + "+ Create" button) — SHIPPED; do not rebuild it
+
+## Card Grid Pattern
+Cards use `StudioCard` struct with: id, name, tagline, icon, accentColor, strategy.
+Composer cards come from `vm.composerStudioCards` (computed from `CompositionStore`).
+
+## Customization Host Pattern
+- The host is `StudioCustomizationHost`, which lives in `MixerTrayView.swift`
+  (the FILE rename is a queued `project.pbxproj` chore; there is no
+  `MixerTrayView` type)
+- `StudioView` mounts it INLINE when `vm.currentRoomEffect != nil` and the
+  region mode is `.customization`; the deck pager is unmounted in that mode
+- It is NOT a slide-up tray: no bottom-anchored overlay, no scrim, no fixed
+  height. One vertical scroll surface with a pinned header (the quiet identity
+  line + "Back to decks")
+- Content is the per-look `StudioBoardView(card:effect:vm:)` for engine/effect
+  cards, or `CompositionEditorPanel` for compositions
+- Compositions keep the 4 layer tabs (`CompositionLayerTab`: palette, motion,
+  envelope, reaction) and the save action
+
+## Running State
+- `vm.runningCardID` — which card shows as "running" on current room
+- `vm.currentRoomEffect` — `runningEffects[StudioSelectionKey(room:)]` for the selected room: an EXACT bridge + group + kind lookup, never a bare room-id match
+- `vm.hasAnyRunningEffect` — any room running anything
+- Card grid shows pulse animation on running card
+
+## Design Tokens
+- Background: `HuePalette.Noir.background`
+- Cards: `HuePalette.Noir.card`
+- Accent: card's own `accentColor`
+- Typography: `HueTypography.caption`, `.body`, `.title3`
+- Corner radius: 16 for cards, 20 for sheets
+- Glassmorphism: `.ultraThinMaterial` backgrounds
