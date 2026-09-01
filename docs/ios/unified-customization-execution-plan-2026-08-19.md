@@ -800,11 +800,14 @@ Before final PR:
 Do not assume an old test script/destination is valid without verifying current repo conventions.
 
 > **Verified 2026-09-01 — scheme name.** The iOS scheme is **`HueHome 1`**, not `HueHome`.
-> `run_tests.sh` still names the wrong scheme, so pass it explicitly:
+> **Correction (Slice 2, 2026-09-01):** `run_tests.sh` now targets the correct scheme and resolves a
+> deterministic destination (preferred model at the highest installed OS; `CHROMAGLOW_TEST_UDID` /
+> `CHROMAGLOW_TEST_MODEL` overrides). A bare `name=iPhone 17 Pro` destination is ambiguous — several
+> simulators share the name across OS runtimes — so invoke xcodebuild with an exact `id=`:
 >
 > ```bash
 > xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" \
->   -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+>   -destination "platform=iOS Simulator,id=<udid from run_tests.sh discovery or simctl>"
 > ```
 >
 > Also per repo convention: bump `CURRENT_PROJECT_VERSION` across all 12 `project.pbxproj` entries for
