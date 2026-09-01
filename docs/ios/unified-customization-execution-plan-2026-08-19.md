@@ -623,6 +623,23 @@ Check:
 
 Do not proceed until all Studio instrument behavior is stable and no known fake/dead control remains.
 
+### Slice 2 status — 2026-09-01: **IMPLEMENTED on `feat/unified-customization-studio-instrument` (PR open, unmerged)**
+
+| Deliverable | Status |
+| --- | --- |
+| Production truth wiring (§9 invariant) | **Done** — `CustomizationValueScopes` + generation fencing are production-active; card-global `paramValues`, bridge-only `updateStudioParams`, and the global debounce slot are deleted; `runningEffects` is kind-aware (`StudioSelectionKey`); gestures capture `StudioParamSession` identity |
+| Shared instrument primitives (§12) | **Done** — StageKnob/StageFader/StageSteppedEncoder + `InstrumentControlMath` (adaptive fine control, semantic ticks, clamps), StageColorEditor (B+ inline), StageBeatSection (BeatPanelView reuse) |
+| Per-look boards, no Advanced (§17/§18) | **Done** — `StudioBoardCatalog` descriptor with designed heroes for all 15 cards; `ParamTier.advanced` retired (→ `.support` prominence metadata); profile-driven availability on bridge-native boards; entOnly expanded 3→7 from the engine reverse-audit |
+| Rolodex/session manager (§13) | **Done** — PLAYING NOW-first picker with exact per-row Stop, instant active-target console switch (`modeOnRoomChange` policy fn), per-target session working memory, Apply Current Look copy-once |
+| Stop hierarchy (§14) | **Done** — always-visible Stop All octagon, header selected-target Stop, session-row Stop; pending writes fenced after every stop |
+| Look browser + Preview Live (§15/§16) | **Done** — Favorites/Recents band (local-first store), card star + long-press, INLINE Details & Setup (no sheet), `PreviewLiveMachine` exact fenced restore through the normal apply path |
+| Tests | Slice 1 57 + Slice 2 additions (production wiring 17, profiles 9, control math 14, preview 9, library/session 6, structural/probes updated); full registered suite ×2 recorded in DEVLOG |
+| Hardware | **NOT run** — master checklist §V-B rows 37–57 |
+
+Guard updates (deliberate, recorded): Guard 12 pins the stronger `bridgeID+roomID` update
+signature and the new room-change policy function; the customization suites joined the
+no-timing-wait lists. Guard 13 unchanged — the host file did not move.
+
 ---
 
 # SLICE 3 — Composer Convergence + Cleanup + Final Hardening

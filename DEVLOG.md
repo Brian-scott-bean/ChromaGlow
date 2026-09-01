@@ -597,6 +597,105 @@
 
 ---
 
+## 2026-09-01 - [Claude] Slice 2 — Studio Instrument: production truth wiring + the touch-native board
+
+**Branch:** `feat/unified-customization-studio-instrument` (base `main` @ `ca074b85`, PR #64 — DO NOT MERGE without Brian's explicit approval).
+**Rollback:** `git switch main` — nothing touched `main`; checkpoint tag `checkpoint/pre-unified-customization-slice2-2026-09-01` (at `ca074b85`).
+
+**Did.** The Slice 1 truth foundation is PRODUCTION-ACTIVE and the audit-§2A live routing defect is
+actually fixed, then the binding Studio instrument was built on top of it. Seven substantial commits:
+
+1. `db776d1` fix(tooling) — `run_tests.sh` deterministic destination discovery (preferred model at the
+   highest installed OS; `CHROMAGLOW_TEST_UDID`/`CHROMAGLOW_TEST_MODEL` overrides; no developer UDID in
+   repo config) + three stale "run_tests.sh names the wrong scheme" doc claims corrected (it was fixed
+   in `f3cac86`).
+2. `909dc47` fix(studio) — exact-state wiring. `CustomizationValueScopes<Color>` + the app's single
+   `CustomizationGenerationCounter` own live/default/draft state; card-global `paramValues`/`paramColors`,
+   the global `paramTask` debounce slot, and `setParamValue`/`sendParam`/`sendColorParam` are DELETED.
+   `runningEffects`/`activeCompositionBoxes` re-keyed by `StudioSelectionKey` (bridge+group+KIND — a room
+   and a zone sharing an id are two rows; kind-less records resolve fail-closed). Every gesture captures a
+   `StudioParamSession` (identity + API client + routing facts) at start; every tick and every debounced
+   send is fenced on it; debounce is per-target latest-wins. `updateStudioParams` gains `roomID:` + the
+   `runtime.roomID` guard the stop path has had since round 4g — the same-bridge cross-write is dead.
+   Reset/Stop are exact-instance with generation fencing; persisted last-used defaults keep the
+   `studio.lastParams.v1` shape (no migration).
+3. `8cf70f9` feat(studio) — audit-§7 verified effect profiles (`EffectParameterProfiles`: speed is live
+   v2-only with NO legacy branch → honestly unavailable on v1-only rooms; base_color/warmth live per-light
+   v2 with the long-shipping grouped fallbacks PRESERVED and classified approximations pending hardware;
+   brightness = grouped state write, visible scaling hardware-pending; transition = new honest
+   `.nextWrite` mutation class) + `CustomizationSnapshotBuilder` (per-light `mirek_schema` intersection;
+   CT-capable-but-schemaless → `.unreadable`, never a fake 153…500; failed reads → all-unreadable
+   snapshots). Matrix: 68/68 rows carry verified evidence, 0 PENDING; generator gained the lockstep
+   `EFFECT_PROFILES` table. Audit §2C records everything, including the per-engine Beat consumption table
+   read from the four engine loops.
+4. `d652ebe` feat(studio) — shared instrument primitives: `InstrumentControlMath` (adaptive fine control,
+   semantic ticks, clamp IN the math), StageKnob/StageFader/StageSteppedEncoder (direct drag, contextual
+   readout, exact entry via the shared parser, double-tap reset, adjustable accessibility + explicit
+   Reset action), `StageColorEditor` (B+ inline: swatches + My Colors + pad expanding in place, honest
+   gamut context), `StageBeatSection` (progressive reveal around the existing `BeatPanelView` — no fork),
+   and `BeatMath.FlashSafety` — the free-running ≤3 Hz ceiling is now a REAL clamp in the strobe/party
+   ENT loops instead of an arithmetic coincidence.
+5. `f0ab833` feat(studio) — per-look boards + Advanced retirement. `StudioBoardCatalog` composes each of
+   the 15 looks with a DESIGNED hero; `ParamTier.advanced` → `.support` prominence metadata (spec §2.3 —
+   no user-facing Advanced anything; caption, partition and reserved header metrics deleted with
+   tombstones; `StudioParamSheet` stays defined-but-unpresented, Track B owns it). The header is one quiet
+   line (`PARTY · LIVING ROOM ›`, `StudioIdentityHeader`) + exact selected-target Stop; the old badge
+   lane/action circles/status sentence live in the operational panel expanding from the identity, where
+   Reset to Defaults is now reachable for every effect/live look. Stop All is ALWAYS visible (toolbar
+   octagon, one tap, no confirmation, heavy haptic). Live transport honesty: the engine reverse-audit
+   proved `party.speed`, `party.min_brightness`, `thunderstorm.flash_length`, `thunderstorm.afterglow`
+   are Entertainment-only reads — entOnly inventory deliberately expanded 3 → 7 (the tripwire test was
+   the migration inventory and says so).
+6. `4a92391` feat(studio) — session manager + browser + Preview Live. Picker = PLAYING NOW first with
+   per-row exact Stop (`stopActiveTarget`); active-target switches keep the console open
+   (`modeOnRoomChange` policy function — decks-side auto-open defect still dead, both directions pinned);
+   per-target session working memory (expansions restored during the session, cleared at its end); Apply
+   Current Look copies the source's exact live values ONCE (`seedApplyCurrentLook`) then instances
+   diverge; Favorites/Recents band (`StudioLookLibraryStore`, local-first) + card star + long-press +
+   INLINE Details & Setup (never a sheet); Preview Live (`PreviewLiveMachine`) snapshots the previous
+   look + exact values and restores through the normal `apply()` path, fenced by `CustomizationFence`
+   on the audition's identity. No parallel runtime store anywhere.
+7. (docs) — — this entry, checklist §V-B (rows 37–57), execution-plan Slice 2 status. One full-suite defect was found
+   and fixed during validation, in a guard test rather than the product:
+   `testEveryEnqueuedClosureIsCooperativelyCancellable` scanned `StudioViewModel.swift` for the
+   enqueued Studio closures, which deliberately moved to the customization-wiring extension — the
+   guard's remit now follows the code (all three per-light loops still probe before every send).
+
+**Validation** (destination `iPhone 17 Pro`, iOS 26.5, `005EBEC4-ECF0-4E2C-8A9C-5389006C2A36`; verdicts
+read from the xcresult bundles):
+
+| Gate | Result |
+| --- | --- |
+| Slice 1 focused (57) | green throughout — every run |
+| Slice 2 focused suites | production wiring 17, profiles+snapshots 9, control math 14, preview 9, library/session 6, structural/probes updated — all green |
+| Full registered suite, run 1 | **1782/1782** passed, 0 failed, 0 skipped (baseline was 1723) |
+| Full registered suite, run 2 | **1782/1782** passed, 0 failed, 0 skipped |
+| `./Scripts/hardening_guards.sh` | all guards passed |
+| `generate_capability_matrix.py --check` | up to date (0 PENDING rows) |
+| build-metadata script tests | both pass |
+| `git diff --check` | clean |
+
+Guard changes (deliberate, strengthening): Guard 12 now pins the `bridgeID+roomID` update signature,
+the `runtime.roomID` guard inside `updateStudioParams`, and the room-change policy's decks-side rule;
+the customization suites joined the no-timing-wait lists. Guard 13 untouched (host file unchanged).
+
+**Hardware: none run, none claimed.** Master checklist §V-B rows 37–57 (the capability-matrix
+hardware-pending rows 37–39 gate re-classifying brightness and the legacy color/warmth fallbacks as
+fully live; row 44 is the spec-§5.2 adaptive-fine-control feel gate — the gesture must not ship if it
+feels unpredictable on device). §V-A's Track A debt is untouched and still UNPROVEN.
+
+**Boundaries.** Slice 3 NOT started; Composer's runtime model untouched (its editor panel renders in the
+new host unchanged); Composer 2 Phase 1 still inert (zero consumers); nothing merged, `main` untouched.
+
+**Gotchas for the next session.**
+- `CURRENT_PROJECT_VERSION` NOT bumped — bump all 12 pbxproj entries when Brian takes a device round.
+- `effectCoverage` (deck badges) still card-keyed with a selection guard; the resolver-grade
+  target-keyed context replaces it when the deck badges move to the resolver (deferred, noted in PR).
+- `""` vs `"legacy"` bridge-key sentinel split between the engine map and REST scopes remains (noted,
+  out of scope).
+- Preview Live treats navigating away mid-preview as keeping the audition (the snapshot restores only
+  from an explicit "Put It Back"); cancel is fenced against every identity change.
+
 ## 2026-09-01 - [Claude] Unified Customization Engine, Slice 1 — VALIDATED, exit gate CLEARED
 
 Branch `feat/unified-customization-instrument`, base `main` @ `9404686`, rollback tag

@@ -908,6 +908,52 @@ and can only be stopped from Scenes or the Hue app — if that is what produced 
 original unstoppable effect, the symptom is real but is not a reconciliation bug.
 Record which action was used.
 
+### V-B. Slice 2 — unified customization Studio instrument (2026-09-01)
+
+**Every row below is UNPROVEN. Nothing here has been on a device or a physical
+bridge.** Branch `feat/unified-customization-studio-instrument` (base `ca074b8`,
+rollback tag `checkpoint/pre-unified-customization-slice2-2026-09-01`).
+
+What the automated run does and does not prove: the registered suite, the
+hardening guards and the generated capability matrix prove the exact-identity
+state model, the fences, the board composition, and every code-proven send
+path — on simulator. None of that is evidence about firmware behaviour, radio
+timing, gesture feel, haptics, or VoiceOver. The render probes MIRROR
+`StudioView`'s composition order and must not be read as placement evidence.
+
+Rows 37–39 are the capability-matrix hardware-pending rows (audit §2C): until
+they run, `brightness` and the legacy color/warmth fallbacks stay classified
+as approximations, never full live mutation.
+
+| # | Test | Expected | Result |
+| --- | --- | --- | --- |
+| 37 | Each firmware effect running on effects_v2 lights: drag Speed, pick a Base Color, turn Warmth | The EFFECT itself visibly re-parameterizes per light (rate/tint/temperature), per effect and light model | **UNPROVEN** |
+| 38 | Any firmware effect running: drag Brightness | The grouped state write visibly scales the running effect's output (not a flicker-fight, not ignored) | **UNPROVEN** |
+| 39 | v1-only lights running an effect: pick Base Color / Warmth | The grouped xy/mirek fallback shifts the look without visibly fighting the firmware effect; if it fights, the control must be reclassified staged | **UNPROVEN** |
+| 40 | Room whose lights all reject effects_v2: open a firmware effect's board | Speed renders DISABLED with the local reason copy — no knob that moves while doing nothing | **UNPROVEN** |
+| 41 | ONE bridge, TWO rooms, same Live card on both | Independent values on switch; edit A never moves B; Reset A leaves B; Stop A leaves B playing | **UNPROVEN** |
+| 42 | [2-phone] TWO bridges sharing a Hue room id, same card on both | Selecting either shows ITS exact values; edits/reset/stop never cross bridges | **UNPROVEN** |
+| 43 | A room and a zone sharing an identifier, both active | Two rows in PLAYING NOW; each independently editable and stoppable | **UNPROVEN** |
+| 44 | **Adaptive fine control feel (spec §5.2 gate).** Drag a knob, slide the finger sideways, return | Precision increases predictably away, restores near; if it feels unpredictable, the gesture must NOT ship | **UNPROVEN** |
+| 45 | Double-tap a knob; long-press it; tap the readout and type 999 | Double-tap resets that one param; long-press/tap opens exact entry; typed value clamps into range | **UNPROVEN** |
+| 46 | Sweep a knob end to end slowly | Ticks ONLY at default/limits/steps — no continuous buzzing; Stop All's haptic clearly heavier | **UNPROVEN** |
+| 47 | Tap `PARTY · LIVING ROOM ›`; use the panel's Reset; tap the header's circular Stop | Panel expands inline (no sheet); Reset restores THIS room only; Stop stops THIS room only | **UNPROVEN** |
+| 48 | With looks on several rooms/bridges: tap the toolbar octagon | One tap, no confirmation, every ChromaGlow look stops everywhere; no debounced write lands afterwards | **UNPROVEN** |
+| 49 | Open the magnifier list with looks running | PLAYING NOW first (room + look + live dot); row Stop removes it immediately; tapping an active row switches the console instantly without closing it | **UNPROVEN** |
+| 50 | Idle room selected, another room playing: tap "Apply … here" | The look starts with the source's CURRENT values, once; edits afterwards never link the two rooms | **UNPROVEN** |
+| 51 | Long-press a deck card; tap its star; check FAVORITES/RECENTS bands | Context menu offers favorite + Details & Setup; star toggles in place; bands stay compact and current | **UNPROVEN** |
+| 52 | Details & Setup → PREVIEW LIVE over a running look → "Put It Back" | The previous look returns with its EXACT values; switching rooms mid-preview then cancelling restores NOTHING anywhere | **UNPROVEN** |
+| 53 | Beat: activation row only when off; enable on each engine; strobe beat-locked at high BPM | Full Beat instrument reveals inline; division/phase audibly land per engine; flashes never exceed 3 Hz | **UNPROVEN** |
+| 54 | Expand a color editor in room A, switch to active room B, back to A; stop A; restart | A's expansion is restored during the session, gone after its stop; a fresh session starts clean | **UNPROVEN** |
+| 55 | Exact entry on a knob with the keyboard up; scroll; switch rooms mid-entry | Host never collapses; the wheel never jumps; the typed value lands on the room the edit began on or drops | **UNPROVEN** |
+| 56 | Reduce Motion + largest Dynamic Type + VoiceOver over the board | No springs/decorative motion; labels/values/adjustable actions on every knob and fader; "Reset to default" action present; strobe refusal intact | **UNPROVEN** |
+| 57 | Party/Thunderstorm in Room mode (no streaming) | Speed, Fade Floor, Flash Length, Afterglow show STREAMING ONLY and genuinely change nothing until streaming starts | **UNPROVEN** |
+
+**Slice 2 is NOT hardware-complete until rows 37–57 are physically executed.**
+Row 36 above is SUPERSEDED by rows 45–47: the Advanced bucket, its disclosure,
+and the `StudioParamSheet` reveal it tested no longer exist as a product path —
+every control now lives on the one board (spec §2.3).
+
 ## Supersession notes
 
 - Build 18 items 1–5 (SSE/live cards) are covered by §B (build 20's master-bar + scene-SSE
