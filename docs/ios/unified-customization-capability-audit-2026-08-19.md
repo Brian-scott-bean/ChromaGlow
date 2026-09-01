@@ -170,6 +170,57 @@ Registered-suite baseline is now **1723** (older DEVLOG entries record 1573).
 
 ---
 
+## 2C. Slice 2 production-wiring evidence (2026-09-01, branch `feat/unified-customization-studio-instrument`)
+
+### The §2A central state defect is FIXED in production
+
+Verified by executing tests against the shipping paths (`StudioProductionWiringTests`, 14 tests):
+
+| §2A defect | Fix | Proof |
+| --- | --- | --- |
+| `paramValues` card-global | Deleted. `CustomizationValueScopes<Color>` owns three separated scopes; live values keyed by `RunningLookTargetKey` | `testSameCardOnTwoBridgesHoldsIndependentValuesThroughTheProductionPath` |
+| `updateStudioParams` bridge-only routing | Signature now `(values:colors:bridgeID:roomID:)` with a `runtime.roomID == roomID` guard (mirrors the round-4g stop path) | `testUpdateStudioParamsRefusesASiblingRoomOnTheSameBridge` |
+| `resetParams` card-global blanking | Resets only the exact selected instance under a new generation; clears persisted defaults per spec §22 | `testResetOnOneInstanceLeavesTheSameCardEverywhereElse` |
+| One global `paramTask` debounce | Per-target `[RunningLookTargetKey: Task]`, post-sleep re-fence on the captured identity | characterization test updated: `testCurrentStudioParamDebounceIsKeyedByExactRunningTarget` |
+| `RoomEffectKey` drops `kind` | `runningEffects` / `activeCompositionBoxes` re-keyed by `StudioSelectionKey` (bridge+group+kind); kind-less records resolve fail-closed | `testRoomAndZoneSharingAnIDRemainIndependentInProduction` |
+
+Every gesture captures a `StudioParamSession` (identity + API client + routing facts) at start; every
+tick and every debounced send is fenced on the captured `RunningLookIdentity`. The weaker place-level
+keys never decide at a mutation boundary.
+
+### §7 verified parameter profile — now exists
+
+`HueHome/Core/EffectParameterProfiles.swift` (mirrored by the generator's `EFFECT_PROFILES` table,
+locked by `EffectParameterProfilesTests`). Code-proven live paths: `speed` (v2-only, NO legacy
+branch — honestly unavailable on v1-only rooms), `base_color` / `warmth` (per-light v2; the grouped
+xy/mirek fallback for v2-incapable lights is PRESERVED shipping behavior classified as an
+approximation), `transition` (new mutation class `.nextWrite` — sends nothing, shapes the next
+write's `dynamics.duration`). Hardware-pending: visible brightness scaling during an active firmware
+effect; whether the grouped fallbacks visibly fight a running effect; per-effect visual response to
+live v2 speed. Prism / Color Loop tint/warmth (§6): investigated, no evidence, NOT exposed.
+
+### §19 CT honesty — mirek ranges now plumbed
+
+`CustomizationSnapshotBuilder` intersects per-light `color_temperature.mirek_schema` into
+`MirekRange`; a CT-capable light without a readable schema downgrades evidence to `.unreadable`
+(resolves unknown, never a fake 153…500 clamp). A failed capability read produces an all-
+`.unreadable` snapshot instead of leaving stale coverage standing.
+
+### §20 Beat — per-engine consumption PROVEN (read from the loops, 2026-09-01)
+
+All four engines materially derive output from `BeatBinding` via `BeatMath.liveLock`; the Beat
+instrument is justified for all four. Division and phase are genuinely consumed everywhere; Tap /
+Auto / Resync act on the shared `BeatClock` transport.
+
+| Engine | Exact consumer | What Beat materially changes | Transport difference | Safety |
+| --- | --- | --- | --- | --- |
+| Strobe | ENT `runStrobeEntertainment` (phase-derived ON/OFF per 20 ms frame); REST cycle flips | Flash cadence locks to the division; phase shifts alignment; duty cycle shapes the ON window inside each cycle | REST floors the lock at ~1.1 Hz cadence | `wcagSafeBeatsPerCycle` walks the division up until ≤3 Hz |
+| Party | ENT `runPartyEntertainment` (`cycleIndex` picks the palette slot, `cyclePhase` drives hold/fade); REST index-stepped colors + `sleepUntilNextCycle` | Palette steps exactly on cycle boundaries; smoothness fades track the cycle | REST floors at 1 Hz | ≤3 Hz via liveLock default |
+| Thunderstorm | ENT strike gating (streams ambient until the cycle boundary — DTLS never pauses); REST holds the strike to the next boundary | Strikes land on the beat grid; division sets strike-opportunity spacing | REST floors at 2 Hz | flash-class ≤3 Hz preserved |
+| Ambient | REST breathing phase from `cyclePhase` (trough on the boundary) | Breath length = the division; phase shifts the trough | REST-only engine, floors at 1 Hz | n/a (no flash) |
+
+---
+
 ## 3. Mandatory current-main audit before production edits
 
 Before implementing, run and record:

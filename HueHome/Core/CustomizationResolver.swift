@@ -91,13 +91,19 @@ enum CustomizationMutationBehavior: String, Hashable, Sendable {
     case requiresRestart
     /// Stored now, applied when the enabling condition arrives.
     case staged
+    /// Sends nothing itself — it shapes the NEXT write (Slice 2, for the
+    /// bridge-native `transition`/Smoothness parameter, which only feeds the
+    /// `dynamics.duration` of subsequent brightness/warmth/color sends).
+    /// The audit demanded an honest class for this instead of pretending it
+    /// is a live effect parameter.
+    case nextWrite
 
     /// Behaviours that can have a write in flight when the world changes.
     /// These are precisely the ones `CustomizationFence` must guard.
     var canLandLate: Bool {
         switch self {
-        case .debounced, .nextCycle, .requiresReapply: return true
-        case .immediate, .requiresRestart, .staged:    return false
+        case .debounced, .nextCycle, .requiresReapply:            return true
+        case .immediate, .requiresRestart, .staged, .nextWrite:   return false
         }
     }
 }

@@ -145,8 +145,11 @@
 		A1D00003D0D00003D0D00003 /* CustomizationCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00004D0D00004D0D00004 /* CustomizationCapability.swift */; };
 		A1D00005D0D00005D0D00005 /* CustomizationResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00006D0D00006D0D00006 /* CustomizationResolver.swift */; };
 		A1D00007D0D00007D0D00007 /* CustomizationValueScopes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00008D0D00008D0D00008 /* CustomizationValueScopes.swift */; };
+		A1D00027D0D00027D0D00027 /* CustomizationSnapshotBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00028D0D00028D0D00028 /* CustomizationSnapshotBuilder.swift */; };
+		A1D00025D0D00025D0D00025 /* EffectParameterProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00026D0D00026D0D00026 /* EffectParameterProfiles.swift */; };
 		A1D00021D0D00021D0D00021 /* StudioViewModel+CustomizationWiring.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00022D0D00022D0D00022 /* StudioViewModel+CustomizationWiring.swift */; };
 		A1D00009D0D00009D0D00009 /* CustomizationIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0000AD0D0000AD0D0000A /* CustomizationIdentityTests.swift */; };
+		A1D00029D0D00029D0D00029 /* EffectParameterProfilesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0002AD0D0002AD0D0002A /* EffectParameterProfilesTests.swift */; };
 		A1D00023D0D00023D0D00023 /* StudioProductionWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */; };
 		A1D0000BD0D0000BD0D0000B /* CustomizationResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */; };
 		A1C20003C2C20003C2C20003 /* Composer2DomainVocabularyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */; };
@@ -555,7 +558,10 @@
 		A1D00004D0D00004D0D00004 /* CustomizationCapability.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationCapability.swift; path = HueHome/Core/CustomizationCapability.swift; sourceTree = "<group>"; };
 		A1D00006D0D00006D0D00006 /* CustomizationResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationResolver.swift; path = HueHome/Core/CustomizationResolver.swift; sourceTree = "<group>"; };
 		A1D00008D0D00008D0D00008 /* CustomizationValueScopes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationValueScopes.swift; path = HueHome/Core/CustomizationValueScopes.swift; sourceTree = "<group>"; };
+		A1D00028D0D00028D0D00028 /* CustomizationSnapshotBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationSnapshotBuilder.swift; path = HueHome/Core/CustomizationSnapshotBuilder.swift; sourceTree = "<group>"; };
+		A1D00026D0D00026D0D00026 /* EffectParameterProfiles.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EffectParameterProfiles.swift; path = HueHome/Core/EffectParameterProfiles.swift; sourceTree = "<group>"; };
 		A1D0000AD0D0000AD0D0000A /* CustomizationIdentityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationIdentityTests.swift; path = HueHomeTests/CustomizationIdentityTests.swift; sourceTree = "<group>"; };
+		A1D0002AD0D0002AD0D0002A /* EffectParameterProfilesTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EffectParameterProfilesTests.swift; path = HueHomeTests/EffectParameterProfilesTests.swift; sourceTree = "<group>"; };
 		A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioProductionWiringTests.swift; path = HueHomeTests/StudioProductionWiringTests.swift; sourceTree = "<group>"; };
 		A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationResolverTests.swift; path = HueHomeTests/CustomizationResolverTests.swift; sourceTree = "<group>"; };
 		A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2DomainVocabularyTests.swift; path = HueHomeTests/Composer2DomainVocabularyTests.swift; sourceTree = "<group>"; };
@@ -1455,6 +1461,7 @@
 				A1C10002C1C10002C1C10002 /* Composer2SeamCharacterizationTests.swift */,
 				A1C20004C2C20004C2C20004 /* Composer2DomainVocabularyTests.swift */,
 				A1D0000AD0D0000AD0D0000A /* CustomizationIdentityTests.swift */,
+				A1D0002AD0D0002AD0D0002A /* EffectParameterProfilesTests.swift */,
 				A1D00024D0D00024D0D00024 /* StudioProductionWiringTests.swift */,
 				A1D0000CD0D0000CD0D0000C /* CustomizationResolverTests.swift */,
 				A1C30004C3C30004C3C30004 /* Composer2RegistrationTests.swift */,
@@ -1488,6 +1495,8 @@
 				A1D00004D0D00004D0D00004 /* CustomizationCapability.swift */,
 				A1D00006D0D00006D0D00006 /* CustomizationResolver.swift */,
 				A1D00008D0D00008D0D00008 /* CustomizationValueScopes.swift */,
+				A1D00028D0D00028D0D00028 /* CustomizationSnapshotBuilder.swift */,
+				A1D00026D0D00026D0D00026 /* EffectParameterProfiles.swift */,
 				A1C30002C3C30002C3C30002 /* Composer2Registration.swift */,
 				A1C40002C4C40002C4C40002 /* Composer2ConsumerContracts.swift */,
 				A1C50002C5C50002C5C50002 /* Composer2Resolver.swift */,
@@ -2021,6 +2030,8 @@
 				A1D00003D0D00003D0D00003 /* CustomizationCapability.swift in Sources */,
 				A1D00005D0D00005D0D00005 /* CustomizationResolver.swift in Sources */,
 				A1D00007D0D00007D0D00007 /* CustomizationValueScopes.swift in Sources */,
+				A1D00027D0D00027D0D00027 /* CustomizationSnapshotBuilder.swift in Sources */,
+				A1D00025D0D00025D0D00025 /* EffectParameterProfiles.swift in Sources */,
 				A1C30001C3C30001C3C30001 /* Composer2Registration.swift in Sources */,
 				A1C40001C4C40001C4C40001 /* Composer2ConsumerContracts.swift in Sources */,
 				A1C50001C5C50001C5C50001 /* Composer2Resolver.swift in Sources */,
@@ -2121,6 +2132,7 @@
 				A1C10001C1C10001C1C10001 /* Composer2SeamCharacterizationTests.swift in Sources */,
 				A1C20003C2C20003C2C20003 /* Composer2DomainVocabularyTests.swift in Sources */,
 				A1D00009D0D00009D0D00009 /* CustomizationIdentityTests.swift in Sources */,
+				A1D00029D0D00029D0D00029 /* EffectParameterProfilesTests.swift in Sources */,
 				A1D00023D0D00023D0D00023 /* StudioProductionWiringTests.swift in Sources */,
 				A1D0000BD0D0000BD0D0000B /* CustomizationResolverTests.swift in Sources */,
 				A1C30003C3C30003C3C30003 /* Composer2RegistrationTests.swift in Sources */,
