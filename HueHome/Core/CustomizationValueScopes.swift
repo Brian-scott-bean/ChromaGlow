@@ -205,6 +205,37 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
         if draft?.identity.targetKey == identity.targetKey { draft = nil }
     }
 
+    /// Stop every scope registered at ONE PHYSICAL PLACE, whatever card or
+    /// execution it names, and report which target keys were retired.
+    ///
+    /// The belt for the apply race (R4B). Serialization is the braces: one
+    /// lifecycle body runs at a time, so two applies cannot interleave their
+    /// installs. But a scope is keyed by `RunningLookTargetKey`, which carries
+    /// the CARD and the EXECUTION — so any path that installs a new look on a
+    /// place without routing through `stopEffect` first (a saved-look outcome,
+    /// a handoff replay, a strategy change under one card id) would leave the
+    /// predecessor's scope behind, `isCurrent`, with its pending sends still
+    /// passing the fence. `installRunningIdentity` calls this immediately
+    /// before `startRunning`, so a place can never hold two live scopes.
+    ///
+    /// Returns the retired keys so the caller can cancel exactly their pending
+    /// bridge sends — this type owns values, never tasks.
+    @discardableResult
+    func stopRunning(atPlace bridgeID: String?,
+                     groupID: String,
+                     kind: RoomDisplayItem.Kind) -> [RunningLookTargetKey] {
+        let matches = Set(runningValues.keys).union(runningGenerations.keys).filter {
+            $0.bridgeID == bridgeID && $0.groupID == groupID && $0.kind == kind
+        }
+        guard !matches.isEmpty else { return [] }
+        for key in matches {
+            runningValues[key] = nil
+            runningGenerations[key] = nil
+        }
+        if let draft, matches.contains(draft.identity.targetKey) { self.draft = nil }
+        return Array(matches)
+    }
+
     /// Stop everything (Stop All).
     func stopAll() {
         runningValues.removeAll()

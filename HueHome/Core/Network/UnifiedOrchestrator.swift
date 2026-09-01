@@ -800,6 +800,72 @@ final class UnifiedOrchestrator {
     /// @ObservationIgnored: infrastructure, never read by views.
     @ObservationIgnored var studioRecoveredHydrationHandler: (@MainActor () -> Void)?
 
+    // ── Runtime truth corrections (R4A) ───────────────────────────────
+    //
+    // Two runtime events used to change what the orchestrator knows without
+    // ever reaching Studio's mirror, so a row went on claiming a transport
+    // that no longer existed:
+    //
+    //   * a Studio Entertainment session dying mid-look — the orchestrator
+    //     removed the runtime and the Now-Playing entry, but `runningEffects`
+    //     kept a row with `isEntertainment: true` and no engine behind it;
+    //   * a composition failing over DTLS→REST — the orchestrator moved the
+    //     transport claim to `.rest`, but the row's `isEntertainment` was an
+    //     apply-time snapshot nothing ever re-set, so the customization
+    //     resolver kept resolving controls against `.entertainment`.
+
+    /// One of the two corrections above, named exactly.
+    enum StudioRuntimeEvent: Equatable, Sendable {
+        /// A Studio app-driven engine's Entertainment session was lost and the
+        /// orchestrator has already retired its runtime. Nothing streams there.
+        case entertainmentSessionLost(bridgeID: String?, roomID: String)
+        /// A composition's Entertainment session failed over to the REST
+        /// scheduler and the exact playback claim now reads `.rest`.
+        case compositionFellBackToREST(bridgeID: String?, roomID: String)
+    }
+
+    /// SYNCHRONOUS on purpose, and deliberately NOT routed through Studio's
+    /// lifecycle chain.
+    ///
+    /// The orchestrator emits each event inside the same actor turn as its own
+    /// fence — after the ownership guards have proven this exact client/claim
+    /// is the live one, and before the teardown suspends again. An `async`
+    /// handler, or one queued behind Studio's serialized lifecycle, could run
+    /// after a REPLACEMENT look had taken the room, and would then act on a
+    /// successor's row. Synchronous delivery is what makes "the row this event
+    /// describes is the row that exists right now" true at the call site.
+    ///
+    /// The handler itself still fails closed (exact key, matching strategy and
+    /// transport) — belt and braces, because the orchestrator cannot see
+    /// Studio's rows and Studio cannot see the orchestrator's guards.
+    /// @ObservationIgnored: infrastructure, never read by views.
+    @ObservationIgnored var studioRuntimeEventHandler: (@MainActor (StudioRuntimeEvent) -> Void)?
+
+    #if DEBUG
+    /// TEST SEAM: emit one runtime event exactly as the production seams do,
+    /// so the VM's fail-closed handler can be driven without a real DTLS
+    /// session or a real failover.
+    func testEmitStudioRuntimeEvent(_ event: StudioRuntimeEvent) {
+        studioRuntimeEventHandler?(event)
+    }
+
+    /// TEST SEAM: run the real post-loop reconciliation against the client
+    /// currently installed for `bridgeID`. Pairs with
+    /// `testForceStudioSessionTerminallyFailed` — the health verdict is the one
+    /// gate a test cannot stage, because it lives inside the DTLS actor.
+    func testReconcileStudioSessionAfterLoop(bridgeID: String, roomID: String) async {
+        guard let client = studioEntClients[bridgeID] else { return }
+        await reconcileStudioSessionAfterLoop(
+            entClient: client, bridgeID: bridgeID, roomID: roomID)
+    }
+
+    /// TEST SEAM: force the terminal-failure verdict the reconciliation gates
+    /// on. Read ONLY inside `reconcileStudioSessionAfterLoop`, and only in
+    /// DEBUG — the production read of `entClient.isTerminallyFailed` is
+    /// untouched.
+    @ObservationIgnored var testForceStudioSessionTerminallyFailed = false
+    #endif
+
     /// Stop from a non-Studio surface, routing on the ENTRY rather than a bare
     /// room id.
     ///
@@ -1831,7 +1897,13 @@ final class UnifiedOrchestrator {
     /// failed, so availability could never progress past `.unknown` there.
     /// Only ever fills — never clears — so it cannot race a live load into an
     /// empty state.
-    private func seedRawLightCache(bridgeID: String, lights: [HueLight]) {
+    ///
+    /// Internal (R4A): `apply()` fetches the same inventory whenever a room
+    /// carries non-light child refs, and used to drop it. That left the board
+    /// rendering CHECKING… on exactly the bridges whose first inventory had
+    /// not landed yet, for a look the user had already started — the R2
+    /// availability regression this guards.
+    func seedRawLightCache(bridgeID: String, lights: [HueLight]) {
         guard !isDemoMode, !lights.isEmpty else { return }
         lightsByBridge[bridgeID] = lights
     }
@@ -6138,6 +6210,24 @@ final class UnifiedOrchestrator {
             tier: tier,
             preset: nil
         )
+
+        // R4A: Studio's row carries `isEntertainment` as an APPLY-TIME
+        // snapshot that nothing ever re-set, so after this failover the
+        // customization resolver went on resolving controls against
+        // `.entertainment` for a room that is now on the REST scheduler.
+        //
+        // Gated on the EXACT playback claim rather than on "we ran the
+        // re-entry": the re-entry's own guards can bail, and telling Studio
+        // "you are on REST now" when nothing is running there would install a
+        // second lie in place of the first. `compositionTransportClaims` is
+        // the exact bridge+room authority — never the room-only aggregate,
+        // which answers nil precisely when two bridges disagree.
+        let failoverKey = CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID)
+        if compositionTransportClaims[failoverKey] == .rest {
+            studioRuntimeEventHandler?(
+                .compositionFellBackToREST(bridgeID: room.bridgeID, roomID: roomID))
+        }
+
         // Packet 5: record WHY this room is on Room mode, against the session
         // the re-entry above just opened. Written after the start (the start
         // clears any prior reason) and generation-fenced, so a late event from
@@ -7745,7 +7835,10 @@ final class UnifiedOrchestrator {
         // Same single await and the same outcomes as the original compound
         // guard — decomposed only so the DEBUG audit can say why this
         // invocation did (or did not) clean anything up.
-        let terminallyFailed = await entClient.isTerminallyFailed
+        var terminallyFailed = await entClient.isTerminallyFailed
+        #if DEBUG
+        if testForceStudioSessionTerminallyFailed { terminallyFailed = true }
+        #endif
         guard terminallyFailed, let bridgeID else {
             recordStopAudit(auditContext, operation: .reconcileCleanup,
                             bridgeID: bridgeID, roomID: roomID,
@@ -7782,6 +7875,17 @@ final class UnifiedOrchestrator {
         if studioEngineRuntimesByBridge[bridgeID]?.roomID == roomID {
             studioEngineRuntimesByBridge.removeValue(forKey: bridgeID)
         }
+
+        // R4A: tell Studio in THIS actor turn — after the guards above proved
+        // this exact client still owned the bridge and the runtime is gone,
+        // and BEFORE `stopSession()` suspends. Studio's row is the last place
+        // still claiming a stream; leaving it standing is what made a dead
+        // session look live (`isEntertainment: true` with no engine behind it)
+        // and left every live control resolving against a transport that no
+        // longer existed. Handed the exact bridge + room, never a bare room id.
+        studioRuntimeEventHandler?(
+            .entertainmentSessionLost(bridgeID: bridgeID, roomID: roomID))
+
         recordStopAudit(auditContext, operation: .clientStopSession,
                         bridgeID: bridgeID, roomID: roomID,
                         clientID: Self.stopAuditToken(entClient))
@@ -10213,6 +10317,20 @@ enum BridgeSaveCopy {
     /// made about what is or isn't playing now.
     static let savedNotConfirmedPreviousLookRemovedPlaybackChanged =
         "The previous bridge look was removed to make room. The new one is saved to your bridge, but it isn't confirmed running. Playback changed while the save completed — ChromaGlow preserved the newer state. You can stop the saved look from here."
+}
+
+/// User-facing copy for Preview Live (spec §16.5).
+///
+/// One sentence, one home, for the same reason every other prompt vocabulary
+/// in this file has one: the restore is fenced, so it CAN legitimately decline
+/// to put the previous look back, and a silent decline is indistinguishable
+/// from a broken button.
+enum PreviewLiveCopy {
+    /// The audition's target moved on — stopped, replaced, or rekeyed —
+    /// between the audition and "Put It Back", so the restore was dropped
+    /// rather than landed on whatever runs there now.
+    static let restoreDropped =
+        "The room changed while you were previewing, so the previous look wasn't put back."
 }
 
 /// Safety refusals shared between Studio and Perform.

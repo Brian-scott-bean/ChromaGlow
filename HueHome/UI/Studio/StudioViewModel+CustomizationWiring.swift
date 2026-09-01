@@ -52,6 +52,22 @@ struct StudioParamSession {
     let bridgeNativeEffectName: String?
 }
 
+/// Everything one debounce window accumulated for one exact target (R4D).
+///
+/// The routing facts come from the LATEST session in the window — they are
+/// re-captured on every tick from the same running instance, so "latest" and
+/// "first" are the same value; the fields are the union of what changed.
+struct PendingStudioSend {
+    /// The most recent gesture session for this target — its `identity` is the
+    /// fence the debounced task re-checks, and its api/room/light facts are
+    /// what the send routes on.
+    var session: StudioParamSession
+    /// Numeric params committed in this window, by param id.
+    var numbers: [String: Double] = [:]
+    /// Colour params committed in this window, by param id.
+    var colors: [String: Color] = [:]
+}
+
 extension StudioViewModel {
 
     // ── Identity install / teardown helpers ─────────────────────
@@ -63,6 +79,19 @@ extension StudioViewModel {
     func installRunningIdentity(room: RoomDisplayItem,
                                 card: StudioCard,
                                 execution: CustomizationExecution) -> RunningLookIdentity {
+        // BELT (R4B). Serialization is the braces — one lifecycle body at a
+        // time, so two applies cannot interleave their installs. This is the
+        // belt: a scope is keyed by card AND execution, so any install that did
+        // not route through `stopEffect` first (a saved-look outcome, a handoff
+        // replay, a card whose strategy changed under one id) would leave the
+        // predecessor's scope registered and `isCurrent` — an orphan whose
+        // debounced sends still pass the fence. A PLACE may hold exactly one
+        // live scope; retiring the predecessors here makes that structural
+        // rather than a property of the call order.
+        for retired in valueScopes.stopRunning(atPlace: room.bridgeID,
+                                               groupID: room.id, kind: room.kind) {
+            retirePendingSends(for: retired)
+        }
         let identity = RunningLookIdentity(
             bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
             cardID: card.id, execution: execution,
@@ -77,8 +106,7 @@ extension StudioViewModel {
     /// (saved-look outcomes, handoff replays).
     func stopRunningScopes(forRowAt key: StudioSelectionKey) {
         guard let effect = runningEffects[key] else { return }
-        paramSendTasks[effect.identity.targetKey]?.cancel()
-        paramSendTasks[effect.identity.targetKey] = nil
+        retirePendingSends(for: effect.identity.targetKey)
         valueScopes.stopRunning(effect.identity)
         sessionMemory.clear(for: effect.identity.targetKey)
         bumpLiveValuesTick()
@@ -128,8 +156,12 @@ extension StudioViewModel {
     /// the new instance under its own target key, so later edits on either
     /// side never link (spec §14.6/§14.7).
     func applyCurrentLook(to room: RoomDisplayItem) async {
+        await serialized { [weak self] in await self?.applyCurrentLookCore(to: room) }
+    }
+
+    private func applyCurrentLookCore(to room: RoomDisplayItem) async {
         guard let card = seedApplyCurrentLook() else { return }
-        await apply(card, roomOverride: room, preferEntertainmentOverride: nil)
+        await applyCore(card, roomOverride: room, preferEntertainmentOverride: nil)
     }
 
     /// Card lookup across every catalog the browser can apply.
@@ -143,53 +175,122 @@ extension StudioViewModel {
     /// Opt-in audition on the EXACT selected target: snapshot the previous
     /// running look and its exact live values, then start the candidate
     /// through the normal apply path.
+    ///
+    /// Serialized (R4B/R4C): the snapshot must describe the world the apply
+    /// then mutates, and nothing else may take the room in between.
     func beginPreviewLive(card: StudioCard) async {
+        await serialized { [weak self] in await self?.beginPreviewLiveCore(card: card) }
+    }
+
+    private func beginPreviewLiveCore(card: StudioCard) async {
         guard let room = selectedRoom else { return }
-        let previous = runningEffect(for: room)
-        _ = previewLive.begin(
-            previous: previous?.identity,
-            previousValues: previous.map { valueScopes.live(for: $0.identity) },
-            previousWasStreaming: previous?.isEntertainment ?? false)
-        previewLiveRoom = room
-        setPreviewingLive(true)
-        await apply(card, roomOverride: room, preferEntertainmentOverride: nil)
+
+        // A SECOND audition chains onto the ORIGINAL snapshot. Re-snapshotting
+        // here would capture the FIRST audition as "the previous look", so
+        // "Put It Back" would restore the thing the user had already rejected
+        // and the real previous look would be unrecoverable.
+        let hadSnapshot = previewLive.isPreviewing
+        if !hadSnapshot {
+            let previous = runningEffect(for: room)
+            _ = previewLive.begin(
+                previous: previous?.identity,
+                previousValues: previous.map { valueScopes.live(for: $0.identity) },
+                previousWasStreaming: previous?.isEntertainment ?? false)
+            previewLiveRoom = room
+        }
+
+        // The flag disables the button for the duration AND tells `stopEffect`
+        // that the replacement teardown about to run belongs to this audition,
+        // so it must not consume the snapshot the audition is chaining onto.
+        setAuditionInFlight(true)
+        await applyCore(card, roomOverride: room, preferEntertainmentOverride: nil)
+        setAuditionInFlight(false)
+
         if let started = runningEffect(for: room), started.cardID == card.id {
             previewLive.previewStarted(started.identity)
+            // Only NOW is there an audition to put back. Setting this before
+            // the apply meant a refusal (handoff prompt, Reduce Motion, an
+            // unsupported room) left the browser showing "Keep It / Put It
+            // Back" for a look that never started.
+            setPreviewingLive(true)
+            return
         }
-        // The apply refused (handoff prompt, unsupported room…): nothing was
-        // changed, so the machine holds a snapshot with no audition — cancel
-        // will correctly restore nothing.
+
+        // The apply refused and nothing changed. When this call took the
+        // snapshot, the machine now holds one with no audition — consume it, so
+        // a later cancel cannot fence against a stale identity.
+        //
+        // When an EARLIER audition owns the snapshot, it is still running and
+        // still restorable: leave the machine, the room, and the flag exactly
+        // as they were.
+        if !hadSnapshot {
+            _ = previewLive.cancelVerdict(live: nil)
+            previewLiveRoom = nil
+            setPreviewingLive(false)
+        }
     }
 
     /// Cancel: restore the previous look EXACTLY — fenced on the audition's
     /// identity, so a target change, stop, replacement, or generation bump
     /// in between drops the restore instead of crossing targets.
     func cancelPreviewLive() async {
-        defer { previewLiveRoom = nil; setPreviewingLive(false) }
-        guard let room = previewLiveRoom else { _ = previewLive.cancelVerdict(live: nil); return }
-        let live = runningEffects[StudioSelectionKey(room: room)]?.identity
+        await serialized { [weak self] in await self?.cancelPreviewLiveCore() }
+    }
+
+    private func cancelPreviewLiveCore() async {
+        // The verdict is computed INSIDE the serialized body, against the row
+        // as it is at this instant — not against a value read before queueing.
+        let room = previewLiveRoom
+        previewLiveRoom = nil
+        setPreviewingLive(false)
+        let live = room.flatMap { runningEffects[StudioSelectionKey(room: $0)]?.identity }
+        let hadAudition = previewLive.previewIdentity != nil
+
         switch previewLive.cancelVerdict(live: live) {
         case .drop:
-            return   // the world moved on — touch nothing
+            // The world moved on — touch nothing. But SAY so: a "Put It Back"
+            // that silently restores nothing is indistinguishable from a
+            // broken button. (`stopEffect` already spoke when it was the one
+            // that consumed the audition, which is why this is gated.)
+            if hadAudition {
+                studioNotice = StudioNotice(message: PreviewLiveCopy.restoreDropped)
+                statusMessage = "⚠ \(PreviewLiveCopy.restoreDropped)"
+            }
+            return
+
         case .restore(let snapshot):
-            if let previous = snapshot.previous,
-               let values = snapshot.previousValues,
-               let card = lookCard(forID: previous.cardID) {
-                // Reinstate the EXACT values by seeding the card's next-start
-                // defaults from the snapshot (the copy-once idiom), then
-                // restart through the normal path. Defaults tracking live
-                // values is the established last-used behavior, so this is
-                // consistent, not a corruption.
-                valueScopes.setDefaults(values, forCard: previous.cardID)
-                persistDefaults(immediately: false)
-                bumpLiveValuesTick()
-                await apply(card, roomOverride: room,
-                            preferEntertainmentOverride: snapshot.previousWasStreaming ? true : nil)
-            } else {
+            guard let room else { return }
+            guard let previous = snapshot.previous,
+                  let values = snapshot.previousValues,
+                  let card = lookCard(forID: previous.cardID) else {
                 // The target was idle before the audition — cancel just stops
                 // the preview and leaves the room as it was.
-                await stopActiveTarget(StudioSelectionKey(room: room))
+                await stopActiveTargetCore(StudioSelectionKey(room: room))
+                return
             }
+            // Reinstate the EXACT values by seeding the card's next-start
+            // defaults from the snapshot (the copy-once idiom), then restart
+            // through the normal path. Defaults tracking live values is the
+            // established last-used behavior, so this is consistent, not a
+            // corruption — PROVIDED the restart actually installs the card.
+            // It may not: the restore apply runs the full production path and
+            // can refuse (a handoff prompt, a third-party takeover, a room
+            // that lost its lights). Overwriting the user's persisted defaults
+            // for a look that was never put back is a silent corruption of
+            // state they will meet again next time they tap the card, so the
+            // pre-restore defaults are captured and rolled back on refusal.
+            let before = valueScopes.defaults(forCard: previous.cardID)
+            valueScopes.setDefaults(values, forCard: previous.cardID)
+            persistDefaults(immediately: false)
+            bumpLiveValuesTick()
+            await applyCore(card, roomOverride: room,
+                            preferEntertainmentOverride: snapshot.previousWasStreaming ? true : nil)
+            guard runningEffect(for: room)?.cardID != previous.cardID else { return }
+            valueScopes.setDefaults(before, forCard: previous.cardID)
+            persistDefaults(immediately: false)
+            bumpLiveValuesTick()
+            studioNotice = StudioNotice(message: PreviewLiveCopy.restoreDropped)
+            statusMessage = "⚠ \(PreviewLiveCopy.restoreDropped)"
         }
     }
 
@@ -287,8 +388,7 @@ extension StudioViewModel {
     func rekeyRunningInstance(at key: StudioSelectionKey,
                               reason: CustomizationInvalidationReason) {
         guard let effect = runningEffects[key] else { return }
-        paramSendTasks[effect.identity.targetKey]?.cancel()
-        paramSendTasks[effect.identity.targetKey] = nil
+        retirePendingSends(for: effect.identity.targetKey)
         if let newIdentity = valueScopes.rekey(
             effect.identity, to: generationCounter.bump(reason)) {
             runningEffects[key]?.identity = newIdentity
@@ -405,35 +505,97 @@ extension StudioViewModel {
         bumpLiveValuesTick()
     }
 
-    // ── Debounced bridge sends ──────────────────────────────────
+    // ── Debounced bridge sends (R4D) ────────────────────────────
+    //
+    // ONE task per exact running target, and one PendingStudioSend beside it
+    // accumulating what that window changed.
+    //
+    // THE DEFECT this replaces: the slot was keyed per target but carried a
+    // single (number|color) pair, so a second param committed inside the 150 ms
+    // window cancelled the first param's task and the first param's value never
+    // reached the bridge at all. Dragging Brightness and then Warmth left the
+    // room at the old brightness while the UI, the scopes and the persisted
+    // defaults all said otherwise.
+    //
+    // Per-PARAM tasks would not fix it: `RestSender` keeps a latest-wins
+    // mailbox per `RestScope`, so two closures enqueued for the same room in
+    // the same turn would still lose one. The fix has to COALESCE — one grouped
+    // PUT carrying every grouped field, then one `EffectsV2Body` per light
+    // carrying every v2 field.
 
-    /// One pending send per exact running target. A newer edit on the SAME
-    /// target replaces the older one (latest wins); another target's pending
-    /// send is untouched. After the debounce sleep the send re-fences on the
-    /// captured identity — Stop, Reset, replacement, or a rekey between
-    /// schedule and fire drops it. Inside the mailbox closure the existing
+    /// Cancel the pending send for one exact target and forget what it had
+    /// accumulated. The single idiom for every teardown path — `stopEffect`,
+    /// `stopRunningScopes`, `rekeyRunningInstance`, `resetParams`, and the
+    /// place-level belt in `installRunningIdentity`.
+    ///
+    /// Dropping the accumulated fields matters as much as cancelling the task:
+    /// a surviving `pendingParamSends` entry would be picked up by the NEXT
+    /// window on the same target key and re-send values the user authored
+    /// against a run that no longer exists.
+    func retirePendingSends(for key: RunningLookTargetKey) {
+        paramSendTasks[key]?.cancel()
+        paramSendTasks[key] = nil
+        pendingParamSends[key] = nil
+    }
+
+    /// Accumulate this commit into the target's window and (re)arm the single
+    /// debounced task. After the sleep the task re-fences on the captured
+    /// identity — Stop, Reset, replacement, or a rekey between schedule and
+    /// fire drops the whole window. Inside the mailbox closure the existing
     /// `stillCurrent()` epoch probes keep covering the post-enqueue window.
     private func scheduleBridgeSend(session: StudioParamSession,
                                     number: Double?, color: Color?) {
         let targetKey = session.identity.targetKey
+        var pending = pendingParamSends[targetKey] ?? PendingStudioSend(session: session)
+        pending.session = session
+        if let number { pending.numbers[session.control.paramID] = number }
+        if let color { pending.colors[session.control.paramID] = color }
+        pendingParamSends[targetKey] = pending
+
         paramSendTasks[targetKey]?.cancel()
         paramSendTasks[targetKey] = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled else { return }
-            guard let self else { return }
-            guard self.valueScopes.isCurrent(session.identity) else { return }
-            await self.performBridgeSend(session: session, number: number, color: color)
+            // Everything from here to the removal below is one synchronous
+            // main-actor stretch, so a replacement scheduled meanwhile either
+            // cancelled us before it (we return) or lands after it (its task
+            // and its window are installed after ours are cleared). There is no
+            // window in which this clears a SUCCESSOR's slot.
+            guard !Task.isCancelled, let self else { return }
+            guard let window = self.pendingParamSends.removeValue(forKey: targetKey) else { return }
+            self.paramSendTasks[targetKey] = nil
+            guard self.valueScopes.isCurrent(window.session.identity) else { return }
+            await self.performBridgeSend(window)
         }
     }
 
-    private func performBridgeSend(session: StudioParamSession,
-                                   number: Double?, color: Color?) async {
+    /// Emit ONE coalesced bridge write for everything the window accumulated.
+    ///
+    /// Routing per param is EXACTLY what it was before the coalescing — the
+    /// only change is that fields which used to travel in separate PUTs now
+    /// share one:
+    ///
+    ///   * `brightness` — grouped light only (there is no per-light v2 field
+    ///     for it); drops when the room has no room control.
+    ///   * `base_color` — v2 per-light re-parameterization when the look is a
+    ///     bridge-native effect with v2-capable lights; otherwise the legacy
+    ///     grouped `xy` fallback (preserved shipping behaviour, classified as
+    ///     an approximation rather than deleted).
+    ///   * `warmth` — same split, as `mirek`. A grouped mirek PUT fights a
+    ///     running firmware effect, which is why the v2 path is preferred.
+    ///   * `speed` — bridge-native AND v2-capable only. There is no legacy
+    ///     speed path; on a v1-only room this send does not exist and the
+    ///     capability layer says so rather than faking it.
+    ///   * `transition` shapes this send's `dynamics.duration` and issues no
+    ///     command of its own; `saturation` has no bridge-native consumer.
+    ///   * anything else is an app-driven engine tunable, already delivered by
+    ///     the committed box push.
+    private func performBridgeSend(_ window: PendingStudioSend) async {
+        let session = window.session
         // No orchestrator or no captured client: nothing to send — the
-        // committed value already reached the scopes and the engine box.
+        // committed values already reached the scopes and the engine box.
         guard let orchestrator, let api = session.api else { return }
         let roomID = session.room.id
         let bridgeID = session.room.bridgeID
-        let paramID = session.control.paramID
 
         // Transition (Smoothness) is read from the instance's CURRENT live
         // values at fire time — it shapes this send's dynamics.duration.
@@ -443,112 +605,103 @@ extension StudioViewModel {
             .params.first { $0.id == "transition" }?.defaultValue ?? 400
         let transitionMs = Int(live.numbers["transition"] ?? transitionDefault)
 
-        if let color {
-            // Color sends: only base_color re-parameterizes a bridge-native
-            // effect. Other color params (Live flash/ambient colors) reach
-            // their engines through the box push — no bridge call here.
-            guard paramID == "base_color", let effectName = session.bridgeNativeEffectName else { return }
+        let effectName = session.bridgeNativeEffectName
+        let capable = session.v2CapableLightIDs
+        let prefersV2 = effectName != nil && !capable.isEmpty
+
+        // Grouped PUT fields.
+        var groupedBrightness: Double? = window.numbers["brightness"]
+        var groupedXY: (Double, Double)? = nil
+        var groupedMirek: Int? = nil
+        // Per-light effects_v2 fields.
+        var v2Speed: Double? = nil
+        var v2ColorXY: CGPoint? = nil
+        var v2Mirek: Int? = nil
+
+        if let color = window.colors["base_color"] {
             let uiColor = UIColor(color)
-            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0
-            uiColor.getHue(&h, saturation: &s, brightness: &b, alpha: nil)
-            let xy = HueColorUtils.xyFrom(hue: Double(h), saturation: Double(s), brightness: Double(b))
-            if !session.v2CapableLightIDs.isEmpty {
-                let gate = orchestrator.commandGate(for: bridgeID)
-                let capable = session.v2CapableLightIDs
-                let point = CGPoint(x: xy.x, y: xy.y)
-                await orchestrator.enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { stillCurrent in
-                    // Cooperative cancellation before EVERY send, including the
-                    // first light (packet 3) — Task.isCancelled is inert inside
-                    // the mailbox's unstructured flush task.
-                    for id in capable {
-                        guard await stillCurrent() else { return }
-                        _ = await gate.send(retry: false) {
-                            try await api.setLightEffectV2(
-                                id: id, body: EffectsV2Body(effect: effectName, colorXY: point))
-                        }
-                    }
-                }
-            } else if let groupedLightID = session.groupedLightID {
-                // Legacy grouped fallback — PRESERVED shipping behavior for
-                // v2-incapable rooms. Whether it visibly fights the running
-                // firmware effect is a hardware-pending question; the control
-                // is classified as an approximation there, not deleted.
-                await orchestrator.enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { _ in
-                    try? await api.setGroupedLightEffect(
-                        id: groupedLightID, on: nil,
-                        brightness: nil, xy: (xy.x, xy.y), mirek: nil,
-                        duration: transitionMs)
-                }
+            var h: CGFloat = 0, sat: CGFloat = 0, b: CGFloat = 0
+            uiColor.getHue(&h, saturation: &sat, brightness: &b, alpha: nil)
+            let xy = HueColorUtils.xyFrom(hue: Double(h), saturation: Double(sat),
+                                          brightness: Double(b))
+            if prefersV2 {
+                v2ColorXY = CGPoint(x: xy.x, y: xy.y)
+            } else {
+                groupedXY = (xy.x, xy.y)
             }
-            return
         }
 
-        guard let number else { return }
-        switch paramID {
-        case "brightness":
-            guard let groupedLightID = session.groupedLightID else { return }
-            await orchestrator.enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { _ in
+        if let warmth = window.numbers["warmth"] {
+            let mirek = Int(warmth.rounded())
+            if prefersV2 {
+                v2Mirek = mirek
+            } else {
+                groupedMirek = mirek
+            }
+        }
+
+        if let speed = window.numbers["speed"], prefersV2 {
+            v2Speed = min(1.0, max(0.0, speed / 100.0))
+        }
+
+        let groupedLightID = session.groupedLightID
+        if groupedLightID == nil {
+            // No room control: the grouped fallbacks have nowhere to land.
+            groupedBrightness = nil
+            groupedXY = nil
+            groupedMirek = nil
+        }
+        let needsGrouped = groupedBrightness != nil || groupedXY != nil || groupedMirek != nil
+        let v2Body: EffectsV2Body? = {
+            guard let effectName, v2Speed != nil || v2ColorXY != nil || v2Mirek != nil else {
+                return nil
+            }
+            return EffectsV2Body(effect: effectName, speed: v2Speed,
+                                 colorXY: v2ColorXY, mirek: v2Mirek)
+        }()
+        guard needsGrouped || v2Body != nil else { return }
+
+        let gate = orchestrator.commandGate(for: bridgeID)
+        let brightness = groupedBrightness
+        let xy = groupedXY
+        let mirek = groupedMirek
+
+        await orchestrator.enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { stillCurrent in
+            // Cooperative cancellation before EVERY send, including the first
+            // (packet 3) — Task.isCancelled is inert inside the mailbox's
+            // unstructured flush task.
+            if needsGrouped, let groupedLightID {
+                guard await stillCurrent() else { return }
                 try? await api.setGroupedLightEffect(
                     id: groupedLightID, on: nil,
-                    brightness: number, xy: nil, mirek: nil,
+                    brightness: brightness, xy: xy, mirek: mirek,
                     duration: transitionMs)
             }
-
-        case "warmth":
-            let mirek = Int(number.rounded())
-            if let effectName = session.bridgeNativeEffectName,
-               !session.v2CapableLightIDs.isEmpty {
-                // Re-parameterize the EFFECT's color_temperature per-light —
-                // a grouped mirek PUT fights the running firmware effect (R5).
-                let gate = orchestrator.commandGate(for: bridgeID)
-                let capable = session.v2CapableLightIDs
-                await orchestrator.enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { stillCurrent in
-                    for id in capable {
-                        guard await stillCurrent() else { return }
-                        _ = await gate.send(retry: false) {
-                            try await api.setLightEffectV2(
-                                id: id, body: EffectsV2Body(effect: effectName, mirek: mirek))
-                        }
-                    }
-                }
-            } else if let groupedLightID = session.groupedLightID {
-                // Grouped v1 fallback — preserved; see the base_color note.
-                await orchestrator.enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { _ in
-                    try? await api.setGroupedLightEffect(
-                        id: groupedLightID, on: nil,
-                        brightness: nil, xy: nil, mirek: mirek,
-                        duration: transitionMs)
-                }
-            }
-
-        case "speed":
-            // Bridge-native only, v2-capable only: there is no legacy speed
-            // path — on v1-only rooms this send does not exist, and the
-            // capability layer must say so rather than fake it.
-            guard let effectName = session.bridgeNativeEffectName,
-                  !session.v2CapableLightIDs.isEmpty else { return }
-            let clamped = min(1.0, max(0.0, number / 100.0))
-            let gate = orchestrator.commandGate(for: bridgeID)
-            let capable = session.v2CapableLightIDs
-            await orchestrator.enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { stillCurrent in
+            if let v2Body {
                 for id in capable {
                     guard await stillCurrent() else { return }
                     _ = await gate.send(retry: false) {
-                        try await api.setLightEffectV2(
-                            id: id, body: EffectsV2Body(effect: effectName, speed: clamped))
+                        try await api.setLightEffectV2(id: id, body: v2Body)
                     }
                 }
             }
-
-        case "transition", "saturation":
-            // Transition shapes SUBSEQUENT sends' duration (no command of its
-            // own); saturation has no bridge-native runtime consumer.
-            break
-
-        default:
-            // App-driven engine tunables are read from the live box the
-            // committed push already updated — no bridge call.
-            break
         }
     }
+
+    #if DEBUG
+    /// TEST SEAM: fire the pending window for one exact target NOW, through the
+    /// production emit path, instead of waiting out the debounce.
+    ///
+    /// Exists because the alternative is a `Task.sleep` in a test, and a suite
+    /// that sleeps to observe a debounce is a suite that goes flaky on a loaded
+    /// CI machine. The task is cancelled first, so the real one cannot also
+    /// fire; every guard the real task runs is run here in the same order.
+    func testFlushPendingParamSends(for key: RunningLookTargetKey) async {
+        paramSendTasks[key]?.cancel()
+        paramSendTasks[key] = nil
+        guard let window = pendingParamSends.removeValue(forKey: key) else { return }
+        guard valueScopes.isCurrent(window.session.identity) else { return }
+        await performBridgeSend(window)
+    }
+    #endif
 }

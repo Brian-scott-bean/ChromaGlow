@@ -303,7 +303,11 @@ struct LookDetailsPanel: View {
                         .background(Capsule().fill(HuePalette.amber.opacity(0.12)))
                     }
                     .buttonStyle(.plain)
-                    .disabled(vm.selectedRoom == nil)
+                    // Disabled while an audition's apply is in flight (R4C):
+                    // a second tap would queue a second audition behind the
+                    // first and overwrite the identity "Put It Back" is fenced
+                    // on with a look the user never saw start.
+                    .disabled(vm.selectedRoom == nil || vm.isAuditionInFlight)
                     .accessibilityHint("Tries \(card.name) on the selected room; the previous look can be restored exactly")
                 }
                 Spacer(minLength: 0)

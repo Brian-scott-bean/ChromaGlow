@@ -2065,9 +2065,17 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let perLightClosures = studioClosures.filter { body in
             body.contains(where: { $0.contains("gate.send(") })
         }
-        XCTAssertEqual(perLightClosures.count, 3, """
-            the three paced per-light Studio loops (warmth, speed, base colour) \
-            are the cancellable ones — a new per-light site needs a guard too
+        // R4D coalesced the three separate paced sweeps (warmth, speed, base
+        // colour) into ONE: a single debounced window now emits one
+        // `EffectsV2Body` per light carrying every field that changed, so there
+        // is one per-light loop left instead of three. The safety property this
+        // guard exists for is UNCHANGED and still enforced below — every
+        // `gate.send` is immediately preceded by a `stillCurrent()` probe — and
+        // the count is still a tight pin: a new per-light site would make it 2
+        // and fail here.
+        XCTAssertEqual(perLightClosures.count, 1, """
+            the one paced per-light Studio loop (the coalesced v2 body) is the \
+            cancellable one — a new per-light site needs a guard too
             """)
         for body in perLightClosures {
             let sendLines = body.indices.filter { body[$0].hasPrefix("_ = await gate.send(") }
@@ -8221,8 +8229,13 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(vmSource.contains("foreignConsent: EntertainmentConsent? = nil"),
             "which is only safe because the parameter defaults to nil")
 
+        // R4B: `apply(_:roomOverride:…)` is now a thin `serialized { }` wrapper
+        // and the body it used to hold is `applyCore`. This guard is about that
+        // BODY — where the preflight sits and what may be gated on
+        // `skipHandoffConfirmation` — so it follows the code, exactly as the
+        // Slice 2 note above does for the enqueued Studio closures.
         let applyBody = try XCTUnwrap(
-            functionBody(vmSource, startingWith: "func apply(_ card: StudioCard, roomOverride:"))
+            functionBody(vmSource, startingWith: "func applyCore(_ card: StudioCard, roomOverride:"))
         let preflightIndex = try XCTUnwrap(
             applyBody.firstIndex { $0.contains("foreignTakeoverPreflight(") },
             "apply must still call the foreign preflight")
