@@ -597,6 +597,102 @@
 
 ---
 
+## 2026-09-01 - [Claude] Unified Customization Engine — finalized product/UX source of truth landed (docs only)
+
+Branch `docs/unified-customization-source-of-truth`, base `main` @ `8572b92` (local `main` ==
+`origin/main`, re-verified at branch time). **Docs only — zero source files, zero
+`project.pbxproj` change, no version/build/signing change, no test run, no hardware run.** No
+checkpoint tag: `main` is untouched and nothing here can alter runtime behavior. **Not merged.**
+
+**What landed.** The three finalized Unified Customization documents, supplied by Brian as the
+authoritative product/UX source and written verbatim except for the reference corrections listed
+below:
+
+| Path | Role |
+| --- | --- |
+| `UNIFIED_CUSTOMIZATION_SPEC.md` | Binding product/UX source of truth |
+| `docs/ios/unified-customization-capability-audit-2026-08-19.md` | Binding audit/evidence contract |
+| `docs/ios/unified-customization-execution-plan-2026-08-19.md` | Binding three-slice delivery plan |
+
+The `2026-08-19` filenames are deliberate compatibility names for the implementation handoff; the
+documents' own revision is 2026-09-01. That mismatch is intentional and recorded in each header.
+
+**Provenance, and what these documents are not.** The three files did not previously exist anywhere
+— not on `main`, not in any branch's history, not in any stash, not in any of the 19 worktrees, and
+not on disk. What does exist are two 2026-08-05 CNVS planning packets outside the repo
+(`next-prompt-unified-abundant-narwhal.md`, 74 KB, named by the Track A/C1 entry below as its source
+of truth; and `please-make-this-plan-playful-scott.md`, 56 KB, the Track B packet). Per Brian's
+explicit instruction those packets are **historical engineering evidence only** and were *not*
+promoted into these files. The binding product/UX decisions here come from the later
+design/questionnaire work and supersede the older Track A/B product assumptions where they conflict.
+
+**Stale assumptions corrected (references only — no product/UX decision was altered).**
+
+1. **Composer 2 file paths.** The four Phase 1c/1d files live directly in `HueHome/Core/`
+   (`Composer2Domain.swift` @ `b56988e`, `Composer2Registration.swift` @ `7e25e71`,
+   `Composer2Resolver.swift` @ `6ead505`, `Composer2ConsumerContracts.swift` @ `2b19eda`, all
+   2026-08-07) — **not** under `HueHome/Core/Composer/`, which is a separate older directory holding
+   six different files. Audit §2 now carries the paths, the landing SHAs, and the warning against
+   conflating the two.
+2. **`ambient.color` vs `ambient_color` — the one correction with real regression risk.** The dead
+   sentinel `ambient.color` (audit §9) is documentation notation for *the Ambient card's color
+   control*, which correctly does not exist. A distinct live param `ambient_color` is
+   **Thunderstorm's** "Ambient Color" and has a confirmed production consumer at
+   `UnifiedOrchestrator.swift:8219` and `:8239` (`paramBox.colors["ambient_color"]` →
+   `entClient.sendUniform`). A naive substring/regex check for `ambient.color` matches
+   `ambient_color` and would flag a live control as dead. Audit §9 now states the notation, the
+   verified status of all four sentinels (all four still dead), and the matching rule.
+3. **`StudioParam` / `ParamTier` location.** Both are declared in
+   `HueHome/UI/Studio/StudioViewModel.swift`, not in `HueHome/Core/Effects/StudioParamStore.swift`,
+   which owns persistence only. Recorded in audit §3 and plan §8.
+4. **`entOnly` scope.** Declared `StudioViewModel.swift:86`, consumed
+   `StudioParamControls.swift:119`, set on exactly three params today — `strobe.speed`,
+   `strobe.flash_color`, `strobe.duty_cycle`. This is the current encoding of the historical
+   "Streaming-only" claim and is the binary requirement plan §8 replaces. Recorded in audit §17.
+5. **Beat reaches Live engines through the orchestrator, not through `StudioParam`.** No Live card
+   in the current catalog declares a Beat param. `BeatBinding` is at
+   `HueHome/Core/Audio/BeatBinding.swift` with four referencing files. Audit §20 and plan §19 now
+   require proving per-engine consumption before any inline Beat affordance renders.
+6. **Superseded baselines.** `0b71ebd` and `320ebaf` replaced by `8572b92`; Track A is merged via
+   PR #61 and `8572b92` *is* that merge commit. Both documents state this; re-verified this session.
+7. **Test invocation.** Plan §30 now names the real scheme `HueHome 1` and the explicit `xcodebuild`
+   line, because `run_tests.sh` still names the wrong scheme.
+8. **Measured collision hotspots.** Plan §32 now carries real line counts:
+   `UnifiedOrchestrator.swift` >8,200, `StudioViewModel.swift` 4,085, `StudioView.swift` 3,145,
+   `RoomRolodexView.swift` 1,066.
+
+**One deliberate divergence, preserved rather than corrected.** Spec §2.3 states there is no
+"Advanced" product concept. Current `main` still has one: `StudioParam.ParamTier.advanced`
+(`StudioViewModel.swift:92`, commented "Advanced section of param sheet"), applied to seven params
+across `party`, `strobe` and `thunderstorm`. This is the spec intentionally changing product
+behavior, **not** a stale reference — so the spec text was left exactly as supplied and the conflict
+is recorded inline in §2.3 as a known product change for the implementation to carry out.
+
+**Current-main verification performed.** `git fetch --all --prune`; `main` and `origin/main` both
+`8572b92038de8f8298cdb8857ce074939a0aaea2`; working tree clean apart from pre-existing untracked
+`.cnvs/` and `.cursor/mcp.json`. Studio/Composer inventory: 22 Swift files. Live catalog confirmed as
+four cards (`party`, `strobe`, `thunderstorm`, `ambient`) built by `buildLiveModeCards()`; all
+expected Thunderstorm controls (8), Strobe (5) and Party (5) are present in the current catalog.
+
+**Composer 2 status as recorded.** Phase 1c/1d foundation files are present on `main`. Audit §13
+points at `composer2-architecture-review-2026-08-01.md`,
+`composer2-phase1-landing-record-2026-08-07.md`, and the outstanding **Phase 1 evidence debt**
+(`f9d640f`) — and forbids treating any inert seam as authoritative without a newer binding decision.
+
+**What is explicitly NOT proven by this entry.** No capability matrix was produced — that is the
+Slice 1 deliverable and the audit gate. No control was proven to have a production consumer beyond
+the two spot-checks named above. No test ran. No hardware ran. The §V-A Track A block in
+`docs/ios/master-on-device-checklist.md` remains **UNPROVEN with zero hardware rows executed**, and
+this docs lane did not touch it.
+
+**Next.** The implementation lane is plan §4: re-verify `main`, tag
+`checkpoint/pre-unified-customization-instrument-<date>`, branch
+`feat/unified-customization-instrument`, then clear the Slice 1 audit gate before any runtime or UI
+mutation.
+
+**Rollback.** Delete the branch; `main` is untouched. Nothing to revert.
+
+---
 ## 2026-08-05 - [Claude] Unified Customization Engine, Track A / C2 — RolodexSelectionMachine extraction
 
 Branch `fix/unified-rolodex-host`, rollback tag `checkpoint/pre-unified-rolodex-host` (at
