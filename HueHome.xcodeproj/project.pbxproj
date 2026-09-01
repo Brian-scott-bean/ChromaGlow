@@ -145,6 +145,7 @@
 		A1D00003D0D00003D0D00003 /* CustomizationCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00004D0D00004D0D00004 /* CustomizationCapability.swift */; };
 		A1D00005D0D00005D0D00005 /* CustomizationResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00006D0D00006D0D00006 /* CustomizationResolver.swift */; };
 		A1D00007D0D00007D0D00007 /* CustomizationValueScopes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00008D0D00008D0D00008 /* CustomizationValueScopes.swift */; };
+		A1D00041D0D00041D0D00041 /* StudioBoardDescriptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00042D0D00042D0D00042 /* StudioBoardDescriptor.swift */; };
 		A1D00031D0D00031D0D00031 /* InstrumentControlMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00032D0D00032D0D00032 /* InstrumentControlMath.swift */; };
 		A1D00027D0D00027D0D00027 /* CustomizationSnapshotBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00028D0D00028D0D00028 /* CustomizationSnapshotBuilder.swift */; };
 		A1D00025D0D00025D0D00025 /* EffectParameterProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00026D0D00026D0D00026 /* EffectParameterProfiles.swift */; };
@@ -322,6 +323,9 @@
 		E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */; };
 		EBD402E37AF2043D8391E87F /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A54B6A1F1A2CC5FAF3CEE /* SplashView.swift */; };
 		EC0B3D1FDBE6FE9085F580C0 /* StudioParamControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EE597477398E04B557EF134 /* StudioParamControls.swift */; };
+		A1D00047D0D00047D0D00047 /* StudioSessionMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00048D0D00048D0D00048 /* StudioSessionMemory.swift */; };
+		A1D00045D0D00045D0D00045 /* StudioIdentityHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00046D0D00046D0D00046 /* StudioIdentityHeader.swift */; };
+		A1D00043D0D00043D0D00043 /* StudioBoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00044D0D00044D0D00044 /* StudioBoardView.swift */; };
 		EC742CA724A515F49C4C0B41 /* StudioParamCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 726A550B251AB9F630BD6D11 /* StudioParamCatalogTests.swift */; };
 		F2903EB080E11603E73CED60 /* ShimmerComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 471A0EDBCE4C17624925EAB6 /* ShimmerComponents.swift */; };
 		F461CD4CAE6475D03D8C8FDE /* LightingPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E654DBE7E9915ECC497D13F /* LightingPreset.swift */; };
@@ -462,6 +466,9 @@
 		2A4E5AC65C9D7C704980C395 /* HueSSEService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueSSEService.swift; path = HueHome/Core/Network/HueSSEService.swift; sourceTree = "<group>"; };
 		2C4AB0E6E513C840212308AC /* SceneRoomSectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneRoomSectionView.swift; path = ./HueHome/UI/Scenes/SceneRoomSectionView.swift; sourceTree = "<group>"; };
 		2EE597477398E04B557EF134 /* StudioParamControls.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StudioParamControls.swift; path = ./HueHome/UI/Studio/StudioParamControls.swift; sourceTree = "<group>"; };
+		A1D00048D0D00048D0D00048 /* StudioSessionMemory.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StudioSessionMemory.swift"; path = "./HueHome/UI/Studio/StudioSessionMemory.swift"; sourceTree = "<group>"; };
+		A1D00046D0D00046D0D00046 /* StudioIdentityHeader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StudioIdentityHeader.swift"; path = "./HueHome/UI/Studio/StudioIdentityHeader.swift"; sourceTree = "<group>"; };
+		A1D00044D0D00044D0D00044 /* StudioBoardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StudioBoardView.swift"; path = "./HueHome/UI/Studio/StudioBoardView.swift"; sourceTree = "<group>"; };
 		A1D00022D0D00022D0D00022 /* StudioViewModel+CustomizationWiring.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StudioViewModel+CustomizationWiring.swift"; path = "./HueHome/UI/Studio/StudioViewModel+CustomizationWiring.swift"; sourceTree = "<group>"; };
 		2FF21DA93E891B1DDCFE009A /* HueZone.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Models/HueZone.swift; sourceTree = "<group>"; };
 		3000CEF6604AF34A2F38DA90 /* HueHome.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HueHome.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -563,6 +570,7 @@
 		A1D00004D0D00004D0D00004 /* CustomizationCapability.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationCapability.swift; path = HueHome/Core/CustomizationCapability.swift; sourceTree = "<group>"; };
 		A1D00006D0D00006D0D00006 /* CustomizationResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationResolver.swift; path = HueHome/Core/CustomizationResolver.swift; sourceTree = "<group>"; };
 		A1D00008D0D00008D0D00008 /* CustomizationValueScopes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationValueScopes.swift; path = HueHome/Core/CustomizationValueScopes.swift; sourceTree = "<group>"; };
+		A1D00042D0D00042D0D00042 /* StudioBoardDescriptor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StudioBoardDescriptor.swift"; path = "HueHome/Core/StudioBoardDescriptor.swift"; sourceTree = "<group>"; };
 		A1D00032D0D00032D0D00032 /* InstrumentControlMath.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "InstrumentControlMath.swift"; path = "HueHome/Core/InstrumentControlMath.swift"; sourceTree = "<group>"; };
 		A1D00028D0D00028D0D00028 /* CustomizationSnapshotBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomizationSnapshotBuilder.swift; path = HueHome/Core/CustomizationSnapshotBuilder.swift; sourceTree = "<group>"; };
 		A1D00026D0D00026D0D00026 /* EffectParameterProfiles.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EffectParameterProfiles.swift; path = HueHome/Core/EffectParameterProfiles.swift; sourceTree = "<group>"; };
@@ -1175,6 +1183,9 @@
 			isa = PBXGroup;
 			children = (
 				2EE597477398E04B557EF134 /* StudioParamControls.swift */,
+				A1D00048D0D00048D0D00048 /* StudioSessionMemory.swift */,
+				A1D00046D0D00046D0D00046 /* StudioIdentityHeader.swift */,
+				A1D00044D0D00044D0D00044 /* StudioBoardView.swift */,
 				A1D00022D0D00022D0D00022 /* StudioViewModel+CustomizationWiring.swift */,
 			);
 			name = Studio;
@@ -1509,6 +1520,7 @@
 				A1D00004D0D00004D0D00004 /* CustomizationCapability.swift */,
 				A1D00006D0D00006D0D00006 /* CustomizationResolver.swift */,
 				A1D00008D0D00008D0D00008 /* CustomizationValueScopes.swift */,
+				A1D00042D0D00042D0D00042 /* StudioBoardDescriptor.swift */,
 				A1D00032D0D00032D0D00032 /* InstrumentControlMath.swift */,
 				A1D00028D0D00028D0D00028 /* CustomizationSnapshotBuilder.swift */,
 				A1D00026D0D00026D0D00026 /* EffectParameterProfiles.swift */,
@@ -1977,6 +1989,9 @@
 				FFF8215FC86B7529C8791696 /* SceneCopyEngine.swift in Sources */,
 				0F0F1315A550084CFC7AED04 /* CopySceneSheet.swift in Sources */,
 				EC0B3D1FDBE6FE9085F580C0 /* StudioParamControls.swift in Sources */,
+				A1D00047D0D00047D0D00047 /* StudioSessionMemory.swift in Sources */,
+				A1D00045D0D00045D0D00045 /* StudioIdentityHeader.swift in Sources */,
+				A1D00043D0D00043D0D00043 /* StudioBoardView.swift in Sources */,
 				A1D00021D0D00021D0D00021 /* StudioViewModel+CustomizationWiring.swift in Sources */,
 				490529F81A5193DF91EF0836 /* ComposerLayerSheet.swift in Sources */,
 				337C09D50ECD05A4004456FC /* StudioParamStore.swift in Sources */,
@@ -2048,6 +2063,7 @@
 				A1D00003D0D00003D0D00003 /* CustomizationCapability.swift in Sources */,
 				A1D00005D0D00005D0D00005 /* CustomizationResolver.swift in Sources */,
 				A1D00007D0D00007D0D00007 /* CustomizationValueScopes.swift in Sources */,
+				A1D00041D0D00041D0D00041 /* StudioBoardDescriptor.swift in Sources */,
 				A1D00031D0D00031D0D00031 /* InstrumentControlMath.swift in Sources */,
 				A1D00027D0D00027D0D00027 /* CustomizationSnapshotBuilder.swift in Sources */,
 				A1D00025D0D00025D0D00025 /* EffectParameterProfiles.swift in Sources */,

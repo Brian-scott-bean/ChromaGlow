@@ -33,10 +33,10 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `party.speed` | Speed | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
+| `party.speed` | Speed | slider | essential | yes | party engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `party.brightness` | Brightness | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `party.color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8074,8148 | Entertainment + Room REST | immediate | active while running |
-| `party.min_brightness` | Fade Floor | slider | advanced |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
+| `party.min_brightness` | Fade Floor | slider | support | yes | party engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `party.smoothness` | Smoothness | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 
 ### `strobe`
@@ -46,8 +46,8 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | `strobe.speed` | Speed | slider | essential | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `strobe.brightness` | Brightness | slider | essential |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `strobe.flash_color` | Flash Color | colorPicker | color | yes | UnifiedOrchestrator.swift:7950 | Entertainment only | immediate | active while streaming / staged on Room REST |
-| `strobe.min_brightness` | Min Brightness | slider | advanced |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `strobe.duty_cycle` | Duty Cycle | slider | advanced | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
+| `strobe.min_brightness` | Min Brightness | slider | support |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
+| `strobe.duty_cycle` | Duty Cycle | slider | support | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 
 ### `thunderstorm`
 
@@ -57,10 +57,10 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | `thunderstorm.flash_intensity` | Flash Brightness | slider | essential |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.ambient_color` | Ambient Color | colorPicker | color |  | UnifiedOrchestrator.swift:8219,8239 | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.flash_color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8256,8295 | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.min_brightness` | Ambient Level | slider | advanced |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.strike_rate` | Strike Chance | slider | advanced |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.flash_length` | Flash Length | slider | advanced |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.afterglow` | Afterglow | slider | advanced |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.min_brightness` | Ambient Level | slider | support |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.strike_rate` | Strike Chance | slider | support |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.flash_length` | Flash Length | slider | support | yes | thunderstorm engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
+| `thunderstorm.afterglow` | Afterglow | slider | support | yes | thunderstorm engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 
 ### `ambient`
 
@@ -69,8 +69,8 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | `ambient.speed` | Speed | slider | essential |  | ambient engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `ambient.brightness` | Brightness | slider | essential |  | ambient engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `ambient.warmth` | Warmth | slider | color |  | ambient engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `ambient.smoothness` | Smoothness | slider | advanced |  | ambient engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `ambient.min_brightness` | Min Brightness | slider | advanced |  | ambient engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
+| `ambient.smoothness` | Smoothness | slider | support |  | ambient engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
+| `ambient.min_brightness` | Min Brightness | slider | support |  | ambient engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 
 ---
 
@@ -86,7 +86,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | `candle.speed` | Flicker Rate | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `candle.warmth` | Warmth | slider | color |  | performBridgeSend warmth case (code-proven per-light v2 mirek; grouped fallback preserved) | per-light effects_v2 / grouped mirek fallback | debounced | active on effects_v2 lights with readable mirek range / approximation on legacy (hardware-pending) |
 | `candle.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
-| `candle.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `candle.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `fire`
 
@@ -96,7 +96,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | `fire.speed` | Flicker Rate | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `fire.warmth` | Warmth | slider | color |  | performBridgeSend warmth case (code-proven per-light v2 mirek; grouped fallback preserved) | per-light effects_v2 / grouped mirek fallback | debounced | active on effects_v2 lights with readable mirek range / approximation on legacy (hardware-pending) |
 | `fire.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
-| `fire.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `fire.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `sparkle`
 
@@ -105,7 +105,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | `sparkle.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
 | `sparkle.speed` | Twinkle Rate | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `sparkle.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
-| `sparkle.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `sparkle.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `prism`
 
@@ -113,7 +113,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `prism.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
 | `prism.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `prism.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `prism.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `opal`
 
@@ -123,7 +123,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | `opal.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `opal.warmth` | Warmth | slider | color |  | performBridgeSend warmth case (code-proven per-light v2 mirek; grouped fallback preserved) | per-light effects_v2 / grouped mirek fallback | debounced | active on effects_v2 lights with readable mirek range / approximation on legacy (hardware-pending) |
 | `opal.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
-| `opal.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `opal.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `glisten`
 
@@ -132,7 +132,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | `glisten.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
 | `glisten.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `glisten.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
-| `glisten.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `glisten.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `cosmos`
 
@@ -141,7 +141,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | `cosmos.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
 | `cosmos.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `cosmos.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
-| `cosmos.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `cosmos.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `enchant`
 
@@ -150,7 +150,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | `enchant.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
 | `enchant.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `enchant.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
-| `enchant.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `enchant.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `sunbeam`
 
@@ -159,7 +159,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | `sunbeam.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
 | `sunbeam.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `sunbeam.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
-| `sunbeam.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `sunbeam.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `underwater`
 
@@ -168,7 +168,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | `underwater.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
 | `underwater.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `underwater.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
-| `underwater.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `underwater.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `colorloop`
 
@@ -176,7 +176,7 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `colorloop.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
 | `colorloop.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `colorloop.transition` | Smoothness | segmented | advanced |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
+| `colorloop.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ---
 

@@ -75,9 +75,13 @@ enum EffectParameterProfiles {
 
     private static let baseColorProfile = EffectParameterProfile(
         liveBehavior: .debounced,
-        requirement: .all([.color, .effectsV2]),
+        // Color capability is the honest gate: v2-capable lights get the
+        // per-light effect tint; v1-only lights keep the PRESERVED grouped
+        // xy fallback (an approximation, hardware-pending) — so the control
+        // is not unavailable there, just not fully live.
+        requirement: .color,
         evidence: .codeProven(citation:
-            "performBridgeSend base_color case — per-light EffectsV2Body(colorXY:)"))
+            "performBridgeSend base_color case — per-light EffectsV2Body(colorXY:), grouped xy fallback"))
 
     /// The grouped-xy fallback for v2-incapable lights: preserved shipping
     /// behavior, classified as an approximation until hardware answers
@@ -87,9 +91,11 @@ enum EffectParameterProfiles {
 
     private static let warmthProfile = EffectParameterProfile(
         liveBehavior: .debounced,
-        requirement: .all([.colorTemperature, .effectsV2]),
+        // Same gate logic as base_color: CT capability decides; the v2-vs-
+        // grouped difference is a transport note, not availability.
+        requirement: .colorTemperature,
         evidence: .codeProven(citation:
-            "performBridgeSend warmth case — per-light EffectsV2Body(mirek:)"))
+            "performBridgeSend warmth case — per-light EffectsV2Body(mirek:), grouped mirek fallback"))
 
     private static let brightnessProfile = EffectParameterProfile(
         liveBehavior: .debounced,

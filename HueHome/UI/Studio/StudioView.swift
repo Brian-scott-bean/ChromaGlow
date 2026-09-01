@@ -313,16 +313,29 @@ struct StudioView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                if vm.hasAnyRunningEffect {
-                    Button {
-                        Task { await vm.stopAll() }
-                        HapticManager.shared.medium()
-                    } label: {
-                        Image(systemName: "stop.circle.fill")
-                            .foregroundStyle(HuePalette.Noir.destructive)
-                    }
-                    .accessibilityLabel("Stop all running effects")
+                // STOP ALL — always visible (spec §15.1), one tap, no
+                // confirmation. Quiet at rest, in its own toolbar slot away
+                // from every board control so an accidental tap is unlikely;
+                // the octagon is its unique, unmistakable shape, distinct
+                // from the circular selected-target Stop. Safety comes from
+                // placement and shape, not confirmation friction.
+                Button {
+                    Task { await vm.stopAll() }
+                    HapticManager.shared.heavy()
+                } label: {
+                    Image(systemName: "octagon.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(vm.hasAnyRunningEffect
+                                         ? HuePalette.Noir.destructive
+                                         : HuePalette.Noir.destructive.opacity(0.45))
+                        .overlay(
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 6, weight: .black))
+                                .foregroundStyle(StagePalette.stage)
+                        )
                 }
+                .accessibilityLabel("Stop all rooms")
+                .accessibilityHint("Stops every running look in every room")
             }
             ToolbarItem(placement: .principal) {
                 studioNavTitle

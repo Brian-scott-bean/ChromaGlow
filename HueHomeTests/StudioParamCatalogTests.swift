@@ -258,51 +258,71 @@ final class StudioParamCatalogTests: XCTestCase {
     // the customization host has no height to compute. `inlineParams` /
     // `overflowParams` are still covered by the tests around this one.
 
-    // ── Three-row header ──────────────────────────────────────
+    // ── Board descriptor (Slice 2 — replaces the header/partition tests) ──
     //
-    // The tray header is icon/name/actions, then a badge lane, then (for
-    // composition cards) a transport status sentence. These heights are
-    // reserved, not measured, so if someone adds a row without paying for it
-    // here the tray silently clips it — which is exactly the squeeze that
-    // made the text wrap mid-word in the first place.
+    // The three-row header and the inline/overflow tier partition are
+    // retired. The board descriptor is now the layout truth: every declared
+    // param must appear on the one board exactly once, the designed hero
+    // must be a declared control, and the Beat section may exist only for
+    // engines with PROVEN material BeatBinding consumption.
 
-    /// The reserved header must cover the real intrinsic content: a 34pt
-    /// action circle, the tray's top/bottom padding, and each extra row plus
-    /// the 4pt spacing above it.
-    func testHeaderBlockReservesRoomForEveryRow() {
-        let actionCircle: CGFloat = 34
-        let padding = HueSpacing.md + HueSpacing.sm
-
-        let identityAndBadges = padding + actionCircle
-            + HueSpacing.xs + MixerTrayMetrics.badgeLaneHeight
-        XCTAssertGreaterThanOrEqual(
-            MixerTrayMetrics.headerBlockHeight(hasStatusLine: false), identityAndBadges,
-            "badge lane would be clipped")
-
-        let withStatus = identityAndBadges + HueSpacing.xs + MixerTrayMetrics.statusLineHeight
-        XCTAssertGreaterThanOrEqual(
-            MixerTrayMetrics.headerBlockHeight(hasStatusLine: true), withStatus,
-            "status sentence would be clipped")
-    }
-
-    /// A status line always costs height; engine cards never pay for one.
-    func testStatusLineCostsHeightAndCompositionTrayPaysIt() {
-        XCTAssertGreaterThan(MixerTrayMetrics.headerBlockHeight(hasStatusLine: true),
-                             MixerTrayMetrics.headerBlockHeight(hasStatusLine: false))
-
-        // The `compositionHeight` assertion that stood here died with the
-        // fixed-height tray in Track A C5; the header arithmetic above is the
-        // part that outlived it.
-    }
-
-    /// Inline + overflow must partition the catalog exactly — no param can
-    /// be orphaned (unreachable from both the tray and the sheet reveal).
-    func testInlineAndOverflowPartitionEveryCard() {
+    /// Every declared param renders exactly once on the board — no orphans
+    /// (a control unreachable from the board) and no duplicates.
+    func testBoardDescriptorPlacesEveryParamExactlyOnce() {
         for card in allCards {
-            let inline = MixerTrayMetrics.inlineParams(for: card).map(\.id)
-            let overflow = MixerTrayMetrics.overflowParams(for: card).map(\.id)
-            XCTAssertEqual(Set(inline + overflow), Set(card.params.map(\.id)), card.id)
-            XCTAssertTrue(Set(inline).isDisjoint(with: Set(overflow)), card.id)
+            let placed = StudioBoardCatalog.descriptor(for: card).allControls.map(\.paramID)
+            XCTAssertEqual(placed.sorted(), card.params.map(\.id).sorted(), card.id)
+            XCTAssertEqual(Set(placed).count, placed.count, "\(card.id): duplicate placement")
+        }
+    }
+
+    /// Each Effect/Live card has a DESIGNED hero, and it is a declared
+    /// control rendered at hero prominence.
+    func testEveryCardHasADeclaredHero() {
+        for card in allCards where !card.params.isEmpty {
+            let descriptor = StudioBoardCatalog.descriptor(for: card)
+            let hero = descriptor.heroParamID
+            XCTAssertNotNil(hero, "\(card.id) has no designed hero")
+            XCTAssertTrue(card.params.contains { $0.id == hero }, card.id)
+            XCTAssertTrue(descriptor.allControls.contains {
+                $0.paramID == hero && $0.prominence == .hero
+            }, card.id)
+        }
+    }
+
+    /// There is NO Advanced bucket: the descriptor has no section kind that
+    /// hides controls, and the retired tier name is gone from the enum.
+    func testNoAdvancedBucketSurvives() {
+        XCTAssertNil(StudioParam.ParamTier(rawValue: "advanced"),
+                     "the Advanced tier is retired (spec §2.3)")
+        for card in allCards {
+            for section in StudioBoardCatalog.descriptor(for: card).sections {
+                XCTAssertTrue([.controls, .color, .beat].contains(section.kind), card.id)
+            }
+        }
+    }
+
+    /// Beat renders only for engines with proven material consumption
+    /// (audit §2C) — and for NO bridge-native effect.
+    func testBeatSectionOnlyForProvenConsumingEngines() {
+        for card in allCards {
+            let hasBeat = StudioBoardCatalog.descriptor(for: card).sections
+                .contains { $0.kind == .beat }
+            switch card.strategy {
+            case .appDriven(let key):
+                XCTAssertEqual(hasBeat, StudioBoardCatalog.beatConsumingEngines.contains(key),
+                               card.id)
+            default:
+                XCTAssertFalse(hasBeat, "\(card.id): Beat on a non-engine card")
+            }
+        }
+    }
+
+    /// Deterministic: the descriptor is a pure function of the card.
+    func testBoardDescriptorIsDeterministic() {
+        for card in allCards {
+            XCTAssertEqual(StudioBoardCatalog.descriptor(for: card),
+                           StudioBoardCatalog.descriptor(for: card), card.id)
         }
     }
 

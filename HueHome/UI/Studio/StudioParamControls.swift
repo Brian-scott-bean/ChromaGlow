@@ -19,17 +19,12 @@ enum MixerTrayMetrics {
     /// job was "drag or tap to dismiss"; dismissal is a named destination now,
     /// so the gesture that competed with every child control is gone.
     static let backToDecksRowHeight: CGFloat = 36
-    /// Row 1 of the tray header: 40pt icon/action circles plus padding.
-    static let headerHeight: CGFloat = 66
-    /// Row 2: the horizontally scrolling badge lane (LIVE, coverage, beat,
-    /// transport, room count). Fixed so the tray height never depends on how
-    /// many badges happen to be showing.
+    /// The badge lane inside the operational panel (LIVE, coverage,
+    /// transport, room count). Fixed so the panel never resizes with badge
+    /// count. (Slice 2 moved the lane from the pinned header into the panel
+    /// that expands from the identity.)
     static let badgeLaneHeight: CGFloat = 28
-    /// Row 3: the transport status sentence. Reserved for composition cards
-    /// so the tray does not resize when the sentence appears or clears.
-    static let statusLineHeight: CGFloat = 26
     static let sliderRowHeight: CGFloat = 56
-    static let moreRowHeight: CGFloat = 44
     static let verticalPadding: CGFloat = 16
     /// Floating tab bar + home indicator — the clearance a bottom-anchored
     /// Studio surface owes when nothing else is clearing the bar for it.
@@ -51,40 +46,18 @@ enum MixerTrayMetrics {
         barMounted ? HueSpacing.sm : tabBarClearance(bottomInset: bottomInset)
     }
 
-    /// Total height of the three-row tray header: identity+actions, badge
-    /// lane, and — for composition cards — the transport status sentence.
-    /// The status line is *reserved* rather than measured so the tray does not
-    /// resize when a transport switch makes the sentence appear or clear.
-    static func headerBlockHeight(hasStatusLine: Bool) -> CGFloat {
-        var height = headerHeight + HueSpacing.xs + badgeLaneHeight
-        if hasStatusLine { height += HueSpacing.xs + statusLineHeight }
-        return height
-    }
-
-    /// Compact-tray params: essentials plus every color picker — color is
-    /// the most-hunted adjustment, worth one always-visible row.
-    static func inlineParams(for card: StudioCard) -> [StudioParam] {
-        let essentials = card.params.filter { $0.tier == .essential }
-        let colors = card.params.filter {
-            if case .colorPicker = $0.kind { return $0.tier != .essential }
-            return false
-        }
-        return essentials + colors
-    }
-
-    /// Everything else, revealed by "+N more" (sheet) or inline when the
-    /// tray is dragged up.
-    static func overflowParams(for card: StudioCard) -> [StudioParam] {
-        let inlineIDs = Set(inlineParams(for: card).map(\.id))
-        return card.params.filter { !inlineIDs.contains($0.id) }
-    }
-
     // DELETED in Track A C5: `engineHeight`, `compositionHeight` and
-    // `compactHeightCap`. They computed a FIXED height for a bottom-anchored
-    // box. The customization surface is now an inline region that takes the
-    // space the decks would have taken, so there is no height to compute and a
-    // stale one would only fight the layout. `bottomClearance` is NOT dead and
-    // stays — it is the build-46 double-count fix.
+    // `compactHeightCap` — they sized a fixed-height bottom-anchored box.
+    //
+    // DELETED in Slice 2: `headerHeight`, `statusLineHeight`,
+    // `headerBlockHeight`, `moreRowHeight`, and the `inlineParams` /
+    // `overflowParams` tier partition. The three-row pinned header became
+    // the one-line identity (`StudioIdentityHeader`) with its status inside
+    // the scrolling operational panel — nothing to reserve — and the board
+    // layout comes from `StudioBoardCatalog.descriptor(for:)`, which places
+    // EVERY declared param on the one board (hero / primary / supporting),
+    // with no Advanced bucket to partition into. `bottomClearance` is NOT
+    // dead and stays — it is the build-46 double-count fix.
 }
 
 // MARK: - StudioParamRow
@@ -315,7 +288,7 @@ struct StudioParamSheet: View {
 
     private var essentialParams: [StudioParam] { card.params.filter { $0.tier == .essential } }
     private var colorParams: [StudioParam]     { card.params.filter { $0.tier == .color } }
-    private var advancedParams: [StudioParam]   { card.params.filter { $0.tier == .advanced } }
+    private var advancedParams: [StudioParam]   { card.params.filter { $0.tier == .support } }
 
     var body: some View {
         StageSheetScaffold(title: card.name) {

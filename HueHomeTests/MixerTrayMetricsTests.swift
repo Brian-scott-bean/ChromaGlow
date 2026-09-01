@@ -14,23 +14,14 @@ final class MixerTrayMetricsTests: XCTestCase {
 
     func testHeaderRowFloors() {
         XCTAssertGreaterThanOrEqual(MixerTrayMetrics.backToDecksRowHeight, 36)
-        XCTAssertGreaterThanOrEqual(MixerTrayMetrics.headerHeight, 66,
-                                    "row 1 must cover the 40pt action circles plus padding")
         XCTAssertGreaterThanOrEqual(MixerTrayMetrics.badgeLaneHeight, 28)
-        XCTAssertGreaterThanOrEqual(MixerTrayMetrics.statusLineHeight, 26)
     }
 
-    func testHeaderBlockArithmetic() {
-        XCTAssertEqual(
-            MixerTrayMetrics.headerBlockHeight(hasStatusLine: false),
-            MixerTrayMetrics.headerHeight + HueSpacing.xs + MixerTrayMetrics.badgeLaneHeight
-        )
-        XCTAssertEqual(
-            MixerTrayMetrics.headerBlockHeight(hasStatusLine: true),
-            MixerTrayMetrics.headerHeight + HueSpacing.xs + MixerTrayMetrics.badgeLaneHeight
-                + HueSpacing.xs + MixerTrayMetrics.statusLineHeight
-        )
-    }
+    // DELETED in Slice 2: `testHeaderBlockArithmetic` and the headerHeight /
+    // statusLineHeight floors. The three-row pinned header became one quiet
+    // identity line (`StudioIdentityHeader`); the badge lane and status
+    // sentence scroll inside the operational panel, so there is no reserved
+    // header block left to add up.
 
     // MARK: - Bottom clearance
     //

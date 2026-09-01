@@ -80,7 +80,84 @@ extension StudioViewModel {
         paramSendTasks[effect.identity.targetKey]?.cancel()
         paramSendTasks[effect.identity.targetKey] = nil
         valueScopes.stopRunning(effect.identity)
+        sessionMemory.clear(for: effect.identity.targetKey)
         bumpLiveValuesTick()
+    }
+
+    // ── Board plumbing ──────────────────────────────────────────
+
+    /// Beat-panel edits routed through `commitParam`, so they land on the
+    /// exact running instance AND persist as the card's next-start defaults
+    /// AND push live to the engine box. One implementation for the header
+    /// shortcut and the inline board section alike.
+    func studioBeatBinding(forCardID cardID: String) -> Binding<BeatBinding> {
+        Binding(
+            get: { BeatBinding.fromStudioValues(self.paramNumbers(for: cardID)) },
+            set: { newValue in
+                for (key, value) in newValue.studioValues {
+                    self.commitParam(cardID: cardID, paramID: key, value: value)
+                }
+            }
+        )
+    }
+
+    /// The resolver snapshot for a running instance, from CACHED lights only
+    /// (no fetch — spec §27). A missing cache yields the all-`.unreadable`
+    /// snapshot, so controls resolve unavailable-with-retry instead of
+    /// standing on nothing.
+    func targetSnapshot(for effect: RunningEffect) -> CustomizationTargetSnapshot {
+        let transport: CustomizationTransport
+        switch effect.card.strategy {
+        case .bridgeNative:
+            transport = effect.v2CapableLightIDs.isEmpty ? .legacy : .bridgeEffectV2
+        case .appDriven, .composition:
+            transport = effect.isEntertainment ? .entertainment : .roomREST
+        }
+        guard let lights = orchestrator?.cachedRawLights(for: effect.room.bridgeID),
+              !effect.lightIDs.isEmpty else {
+            return CustomizationSnapshotBuilder.unreadable(
+                identity: effect.identity, totalLights: effect.lightIDs.count,
+                transport: transport, running: true)
+        }
+        let idSet = Set(effect.lightIDs)
+        let scoped = lights.filter { idSet.contains($0.id) }
+        guard !scoped.isEmpty else {
+            return CustomizationSnapshotBuilder.unreadable(
+                identity: effect.identity, totalLights: effect.lightIDs.count,
+                transport: transport, running: true)
+        }
+        var declared: [String: [String]] = [:]
+        if case .bridgeNative(let name) = effect.card.strategy {
+            declared[name] = effect.card.params.map(\.id)
+        }
+        return CustomizationSnapshotBuilder.snapshot(
+            identity: effect.identity, lights: scoped,
+            declaredEffectParams: declared,
+            entertainmentAvailable: .unknown,
+            transport: transport, running: true)
+    }
+
+    /// Honest color context for the inline editor, from CACHED lights only
+    /// (no fetch — spec §27): the known gamut when the target has exactly
+    /// one, the widest authoring gamut otherwise, plus partial coverage for
+    /// the local truth chip.
+    func colorCapabilityContext(for effect: RunningEffect) -> ColorCapabilityContext {
+        var context = ColorCapabilityContext()
+        guard let lights = orchestrator?.cachedRawLights(for: effect.room.bridgeID),
+              !effect.lightIDs.isEmpty else { return context }
+        let idSet = Set(effect.lightIDs)
+        let scoped = lights.filter { idSet.contains($0.id) }
+        guard !scoped.isEmpty else { return context }
+        let colorCapable = scoped.filter { $0.color != nil }
+        context.coverage = CapabilityCoverage(
+            supported: colorCapable.count, total: scoped.count, evidence: .known)
+        let gamuts = Set(colorCapable.compactMap {
+            $0.color?.gamut_type?.uppercased()
+        }.compactMap { HueColorUtils.Gamut(rawValue: $0) })
+        if gamuts.count == 1, let only = gamuts.first {
+            context.gamut = only
+        }
+        return context
     }
 
     /// Advance a running row's generation without disturbing its live values —

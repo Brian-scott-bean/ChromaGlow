@@ -507,7 +507,15 @@ final class CustomizationCatalogFactsTests: XCTestCase {
     /// `entOnly` is set on exactly the three params the audit recorded. When
     /// Slice 2 migrates these to `CapabilityRequirement.transport(.entertainment)`,
     /// this test is the inventory that says the migration is complete.
-    func testEntOnlyInventoryMatchesTheAuditedThree() {
+    func testEntOnlyInventoryMatchesTheAuditedSeven() {
+        // Slice 2 deliberately EXPANDED this inventory from the audited three:
+        // the engine-loop reverse-audit (audit §2C) proved four more params
+        // are read only by the Entertainment loops and silently ignored by
+        // the REST fallbacks — party.speed (REST runs a fixed 1 s cadence),
+        // party.min_brightness (REST sends peak brightness only), and
+        // thunderstorm.flash_length / afterglow (frame-level flash shaping
+        // that only the 50 fps stream can express). Flagging them is the
+        // transport honesty spec §17 demands; hiding the flag was the defect.
         var flagged: [String] = []
         for card in vm.effectCards + vm.liveModeCards {
             for param in card.params where param.entOnly {
@@ -515,6 +523,8 @@ final class CustomizationCatalogFactsTests: XCTestCase {
             }
         }
         XCTAssertEqual(flagged.sorted(),
-                       ["strobe.duty_cycle", "strobe.flash_color", "strobe.speed"])
+                       ["party.min_brightness", "party.speed",
+                        "strobe.duty_cycle", "strobe.flash_color", "strobe.speed",
+                        "thunderstorm.afterglow", "thunderstorm.flash_length"])
     }
 }

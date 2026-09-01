@@ -86,10 +86,15 @@ struct StudioParam: Identifiable {
     var entOnly: Bool = false
     var displayValue: String { "\(Int(defaultValue))" }
 
+    /// Prominence metadata for the board descriptor (Slice 2). The old
+    /// `.advanced` bucket — a user-facing "Advanced section" — is retired
+    /// per spec §2.3: there is no Advanced product concept. `.support`
+    /// marks quieter refinements that render smaller and later in the ONE
+    /// board, never hidden behind a disclosure.
     enum ParamTier: String {
-        case essential  // Always visible in compact mixer tray
-        case color      // Color section of param sheet
-        case advanced   // Advanced section of param sheet
+        case essential  // the look's everyday controls
+        case color      // color-semantic controls (inline B+ editor)
+        case support    // quieter refinements — visible, just not loud
     }
 }
 
@@ -1161,6 +1166,11 @@ final class StudioViewModel {
     /// single global `paramTask` did exactly that, and re-read `selectedRoom`
     /// after its sleep).
     @ObservationIgnored var paramSendTasks: [RunningLookTargetKey: Task<Void, Never>] = [:]
+
+    /// Per-target session working memory (spec §14.4): expansions and board
+    /// position per ACTIVE target, cleared on that target's stop and wholly
+    /// cleared when the session ends. Never persisted.
+    let sessionMemory = StudioSessionWorkingMemory()
 
     // ── Engine reference (set in configure()) ─────────────────
     // Getter internal so the customization-wiring extension (separate file)
@@ -2811,6 +2821,7 @@ final class StudioViewModel {
         paramSendTasks[effect.identity.targetKey]?.cancel()
         paramSendTasks[effect.identity.targetKey] = nil
         valueScopes.stopRunning(effect.identity)
+        sessionMemory.clear(for: effect.identity.targetKey)
         generationCounter.bump(.stopped)
         bumpLiveValuesTick()
         orchestrator.recordStopAudit(context, operation: .stopRequested,
@@ -2910,6 +2921,7 @@ final class StudioViewModel {
               current.cardID == stoppingCardID,
               current.bridgeNativeOwnership == ownership else { return }
         runningEffects.removeValue(forKey: rowKey)
+        if runningEffects.isEmpty { sessionMemory.clearAll() }   // session over
         orchestrator.recordStopAudit(context, operation: .rowRemoved,
                                      bridgeID: rowKey.bridgeID, roomID: roomID,
                                      cardOrEffectID: stoppingCardID)
@@ -3249,6 +3261,7 @@ final class StudioViewModel {
         for task in paramSendTasks.values { task.cancel() }
         paramSendTasks.removeAll()
         valueScopes.stopAll()
+        sessionMemory.clearAll()   // session over — a future one starts clean
         generationCounter.bump(.stopped)
         bumpLiveValuesTick()
         statusMessage = ""
@@ -3794,7 +3807,7 @@ final class StudioViewModel {
                     StudioParam(id: "speed", label: "Flicker Rate", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 366, tier: .color, format: StudioParamFormat.kelvin),
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "candle"),
                 compositionLayerActivity: nil
@@ -3811,7 +3824,7 @@ final class StudioViewModel {
                     StudioParam(id: "speed", label: "Flicker Rate", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 400, tier: .color, format: StudioParamFormat.kelvin),
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "fire"),
                 compositionLayerActivity: nil
@@ -3827,7 +3840,7 @@ final class StudioViewModel {
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
                     StudioParam(id: "speed", label: "Twinkle Rate", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "sparkle"),
                 compositionLayerActivity: nil
@@ -3842,7 +3855,7 @@ final class StudioViewModel {
                 params: [
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 1500, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 1500, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "prism"),
                 compositionLayerActivity: nil
@@ -3859,7 +3872,7 @@ final class StudioViewModel {
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 40, tier: .essential),
                     StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 300, tier: .color, format: StudioParamFormat.kelvin),
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "opal"),
                 compositionLayerActivity: nil
@@ -3875,7 +3888,7 @@ final class StudioViewModel {
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "base_color", label: "Base Color", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "glisten"),
                 compositionLayerActivity: nil
@@ -3891,7 +3904,7 @@ final class StudioViewModel {
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "base_color", label: "Tint", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "cosmos"),
                 compositionLayerActivity: nil
@@ -3907,7 +3920,7 @@ final class StudioViewModel {
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "base_color", label: "Tint", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "enchant"),
                 compositionLayerActivity: nil
@@ -3923,7 +3936,7 @@ final class StudioViewModel {
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 75, tier: .essential),
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 40, tier: .essential),
                     StudioParam(id: "base_color", label: "Tint", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "sunbeam"),
                 compositionLayerActivity: nil
@@ -3939,7 +3952,7 @@ final class StudioViewModel {
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
                     StudioParam(id: "base_color", label: "Tint", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 400, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "underwater"),
                 compositionLayerActivity: nil
@@ -3954,7 +3967,7 @@ final class StudioViewModel {
                 params: [
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential),
-                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 1500, tier: .advanced),
+                    StudioParam(id: "transition", label: "Smoothness", kind: .segmented(options: StudioParamFormat.transitionOptions), defaultValue: 1500, tier: .support),
                 ],
                 strategy: .bridgeNative(effect: "colorloop"),
                 compositionLayerActivity: nil
@@ -3972,10 +3985,10 @@ final class StudioViewModel {
                 accentColor: Color(hex: "#BF5AF2"),
                 requiresForeground: true,
                 params: [
-                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 60, tier: .essential, format: StudioParamFormat.flashHz),
+                    StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 60, tier: .essential, format: StudioParamFormat.flashHz, entOnly: true),
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 90, tier: .essential),
                     StudioParam(id: "color", label: "Flash Color", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "min_brightness", label: "Fade Floor", kind: .slider(min: 0, max: 50), defaultValue: 5, tier: .advanced),
+                    StudioParam(id: "min_brightness", label: "Fade Floor", kind: .slider(min: 0, max: 50), defaultValue: 5, tier: .support, entOnly: true),
                     StudioParam(id: "smoothness", label: "Smoothness", kind: .slider(min: 0, max: 100), defaultValue: 20, tier: .essential),
                 ],
                 strategy: .appDriven(engineKey: "party"),
@@ -3992,8 +4005,8 @@ final class StudioViewModel {
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .essential, format: StudioParamFormat.flashHz, entOnly: true),
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 100, tier: .essential),
                     StudioParam(id: "flash_color", label: "Flash Color", kind: .colorPicker, defaultValue: 0, tier: .color, entOnly: true),
-                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 0, max: 50), defaultValue: 0, tier: .advanced),
-                    StudioParam(id: "duty_cycle", label: "Duty Cycle", kind: .slider(min: 10, max: 90), defaultValue: 50, tier: .advanced, entOnly: true),
+                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 0, max: 50), defaultValue: 0, tier: .support),
+                    StudioParam(id: "duty_cycle", label: "Duty Cycle", kind: .slider(min: 10, max: 90), defaultValue: 50, tier: .support, entOnly: true),
                 ],
                 strategy: .appDriven(engineKey: "strobe"),
                 compositionLayerActivity: nil
@@ -4010,12 +4023,12 @@ final class StudioViewModel {
                     StudioParam(id: "flash_intensity", label: "Flash Brightness", kind: .slider(min: 20, max: 100), defaultValue: 90, tier: .essential),
                     StudioParam(id: "ambient_color", label: "Ambient Color", kind: .colorPicker, defaultValue: 0, tier: .color),
                     StudioParam(id: "flash_color", label: "Flash Color", kind: .colorPicker, defaultValue: 0, tier: .color),
-                    StudioParam(id: "min_brightness", label: "Ambient Level", kind: .slider(min: 1, max: 30), defaultValue: 5, tier: .advanced),
+                    StudioParam(id: "min_brightness", label: "Ambient Level", kind: .slider(min: 1, max: 30), defaultValue: 5, tier: .support),
                     // Every knob the engine has, exposed. Defaults reproduce the
                     // storm exactly as it behaved when these were literals.
-                    StudioParam(id: "strike_rate", label: "Strike Chance", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .advanced),
-                    StudioParam(id: "flash_length", label: "Flash Length", kind: .slider(min: 1, max: 8), defaultValue: 3, tier: .advanced),
-                    StudioParam(id: "afterglow", label: "Afterglow", kind: .slider(min: 0, max: 5), defaultValue: 1, tier: .advanced),
+                    StudioParam(id: "strike_rate", label: "Strike Chance", kind: .slider(min: 0, max: 100), defaultValue: 50, tier: .support),
+                    StudioParam(id: "flash_length", label: "Flash Length", kind: .slider(min: 1, max: 8), defaultValue: 3, tier: .support, entOnly: true),
+                    StudioParam(id: "afterglow", label: "Afterglow", kind: .slider(min: 0, max: 5), defaultValue: 1, tier: .support, entOnly: true),
                 ],
                 strategy: .appDriven(engineKey: "thunderstorm"),
                 compositionLayerActivity: nil
@@ -4031,8 +4044,8 @@ final class StudioViewModel {
                     StudioParam(id: "speed", label: "Speed", kind: .slider(min: 0, max: 100), defaultValue: 30, tier: .essential),
                     StudioParam(id: "brightness", label: "Brightness", kind: .slider(min: 1, max: 100), defaultValue: 70, tier: .essential),
                     StudioParam(id: "warmth", label: "Warmth", kind: .slider(min: 153, max: 500), defaultValue: 350, tier: .color, format: StudioParamFormat.kelvin),
-                    StudioParam(id: "smoothness", label: "Smoothness", kind: .slider(min: 0, max: 100), defaultValue: 70, tier: .advanced),
-                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 50), defaultValue: 15, tier: .advanced),
+                    StudioParam(id: "smoothness", label: "Smoothness", kind: .slider(min: 0, max: 100), defaultValue: 70, tier: .support),
+                    StudioParam(id: "min_brightness", label: "Min Brightness", kind: .slider(min: 1, max: 50), defaultValue: 15, tier: .support),
                 ],
                 strategy: .appDriven(engineKey: "ambient"),
                 compositionLayerActivity: nil
