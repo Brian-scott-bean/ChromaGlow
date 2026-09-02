@@ -239,6 +239,60 @@ class AndroidKeystoreBridgeCredentialStoreTest {
         }
     }
 
+    @Test
+    fun oversizedToken_isRejectedBeforeAnyKeystoreSideEffect() {
+        // L-33: the length precondition runs before key creation, so a rejected save leaves
+        // neither a Keystore key nor a blob behind (loadApiToken must report Absent, not Failure).
+        val bridgeId = syntheticBridgeId("oversize")
+        val store = AndroidKeystoreBridgeCredentialStore(context)
+        val oversized = "x".repeat(4096)
+
+        try {
+            try {
+                store.saveApiToken(bridgeId, oversized)
+                fail("expected IllegalArgumentException for an oversized token")
+            } catch (_: IllegalArgumentException) {
+                // expected
+            }
+            assertEquals(BridgeSecretResult.Absent, store.loadApiToken(bridgeId))
+            assertFalse(ciphertextPathForBridge(bridgeId).exists())
+            KeyStore.getInstance("AndroidKeyStore").apply {
+                load(null)
+                assertFalse(containsAlias(BridgeCredentialAlias.keystoreAlias(bridgeId)))
+            }
+        } finally {
+            store.deleteApiToken(bridgeId)
+        }
+    }
+
+    @Test
+    fun failedWriteAfterNewKey_leavesNoOrphanKey() {
+        // L-33: force the blob write to fail by planting a directory at the ciphertext path. The
+        // save must throw AND must not leave a freshly created Keystore key behind.
+        val bridgeId = syntheticBridgeId("orphan")
+        val store = AndroidKeystoreBridgeCredentialStore(context)
+        val path = ciphertextPathForBridge(bridgeId)
+        removeCiphertextPath(path)
+        path.parentFile?.mkdirs()
+        assertTrue(path.mkdir())
+
+        try {
+            try {
+                store.saveApiToken(bridgeId, syntheticToken("orphan"))
+                fail("expected the save to fail")
+            } catch (_: IllegalStateException) {
+                // expected: the ciphertext path is a directory
+            }
+            KeyStore.getInstance("AndroidKeyStore").apply {
+                load(null)
+                assertFalse(containsAlias(BridgeCredentialAlias.keystoreAlias(bridgeId)))
+            }
+        } finally {
+            removeCiphertextPath(path)
+            deleteKeystoreAliasIfPresent(bridgeId)
+        }
+    }
+
     private fun ciphertextPathForBridge(bridgeId: String): File =
         context.noBackupFilesDir
             .resolve("credentials")

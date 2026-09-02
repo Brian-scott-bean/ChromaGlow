@@ -30,6 +30,10 @@ class AndroidKeystoreBridgeCredentialStore(
     override fun saveApiToken(bridgeId: String, token: String) {
         val validatedBridgeId = BridgeCredentialAlias.validateBridgeId(bridgeId)
         require(token.isNotBlank()) { "token must not be blank" }
+        val plaintext = token.toByteArray(StandardCharsets.UTF_8)
+        // Precondition BEFORE any Keystore side effect (audit L-33): an oversize token would fail
+        // at blob encoding after the key had already been created.
+        require(plaintext.size <= MAX_TOKEN_BYTES) { "token length out of bounds" }
 
         synchronized(PROCESS_LOCK) {
             val blobPath = ciphertextFile(validatedBridgeId).toPath()
@@ -39,13 +43,29 @@ class AndroidKeystoreBridgeCredentialStore(
                 }
             }
 
+            // Atomic across key creation and blob write (audit L-33): if encrypt/write fails after a
+            // NEW key was generated, the orphan key is removed so the store never holds a bare key
+            // with no blob. A pre-existing key (overwrite path) is left untouched so a failed
+            // overwrite keeps the previous credential readable.
+            val keyExistedBefore = hasKeystoreKey(validatedBridgeId)
             val secretKey = loadOrCreateSecretKey(validatedBridgeId)
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-            val iv = cipher.iv
-            val ciphertext = cipher.doFinal(token.toByteArray(StandardCharsets.UTF_8))
-            val blob = encodeBlob(iv, ciphertext)
-            writeBlobAtomically(validatedBridgeId, blob)
+            try {
+                val cipher = Cipher.getInstance(TRANSFORMATION)
+                cipher.init(Cipher.ENCRYPT_MODE, secretKey)
+                val iv = cipher.iv
+                val ciphertext = cipher.doFinal(plaintext)
+                val blob = encodeBlob(iv, ciphertext)
+                writeBlobAtomically(validatedBridgeId, blob)
+            } catch (failure: Throwable) {
+                if (!keyExistedBefore) {
+                    try {
+                        deleteKeystoreKeyIfPresent(validatedBridgeId)
+                    } catch (_: Exception) {
+                        // Best-effort compensation; the original failure is what the caller sees.
+                    }
+                }
+                throw failure
+            }
         }
     }
 
@@ -247,6 +267,9 @@ class AndroidKeystoreBridgeCredentialStore(
         const val BLOB_VERSION = 1
         const val MAX_IV_LENGTH = 32
         const val MAX_CIPHERTEXT_LENGTH = 4096
+
+        /** Largest plaintext that still fits [MAX_CIPHERTEXT_LENGTH] with the 16-byte GCM tag. */
+        const val MAX_TOKEN_BYTES = MAX_CIPHERTEXT_LENGTH - GCM_TAG_BITS / 8
 
         private fun resolveCredentialsDir(context: Context): File {
             val dir = File(context.noBackupFilesDir, CREDENTIALS_DIR_NAME)
