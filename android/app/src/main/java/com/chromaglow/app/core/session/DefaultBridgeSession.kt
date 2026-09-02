@@ -30,6 +30,8 @@ class SessionEnvironment internal constructor(
     val requestRefresh: (RefreshReason) -> Unit,
     /** Report an explicit 401/403 seen on any path (REST only; SSE auth noise must NOT call this). */
     val reportUnauthorized: (status: Int) -> Unit,
+    /** Field-aware optimistic authority shared by this bridge's coordinator and its stream reducer. */
+    val authority: PendingAuthority = PendingAuthority(),
 )
 
 /** A per-session collaborator with a lifecycle bound to foreground/background. */

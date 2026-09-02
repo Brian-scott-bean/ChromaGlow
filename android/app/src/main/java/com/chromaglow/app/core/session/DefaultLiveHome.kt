@@ -26,7 +26,8 @@ class LiveHomeFactories(
     val transport: (record: PairedBridgeRecord, bridgeId: BridgeId, keys: ApplicationKeyProvider) -> HueClipClient,
     val cache: (bridgeId: BridgeId) -> BridgeSnapshotCache,
     val coordinator: (SessionEnvironment) -> MutationCoordinator,
-    val attachments: List<(SessionEnvironment) -> SessionAttachment> = emptyList(),
+    /** Per-session attachments (e.g. the event-stream runner) get the record + key provider too. */
+    val attachments: List<(SessionEnvironment, PairedBridgeRecord, ApplicationKeyProvider) -> SessionAttachment> = emptyList(),
     val probeBridgeIdentity: Boolean = true,
 )
 
@@ -98,7 +99,7 @@ class DefaultLiveHome(
             cache = factories.cache(bridgeId),
             clock = clock,
             coordinatorFactory = factories.coordinator,
-            attachmentFactories = factories.attachments,
+            attachmentFactories = factories.attachments.map { f -> { env: SessionEnvironment -> f(env, record, credentials) } },
             probeBridgeIdentity = factories.probeBridgeIdentity,
         )
         sessions[bridgeId] = session
