@@ -3520,14 +3520,19 @@ final class UnifiedOrchestrator {
         sweep: [(index: Int, x: Double, y: Double, brightness: Double)]
     ) -> Bool {
         let runtimeKey = CompositionPlaybackKey(bridgeKey: token.bridgeKey, roomID: token.scope.roomID)
+        // Both fences: the runtime's own generation AND the registry's — a
+        // stop bumps the registry first and removes the runtime only after
+        // its awaits (safety round 3, #5).
         guard let runtime = compositionRuntimes[runtimeKey],
-              runtime.generation == token.generation else { return false }
+              runtime.generation == token.generation,
+              compositionGenerations[runtimeKey] == token.generation else { return false }
         let ledger = flashOnsetLedger(forBridge: runtime.restBridgeIdentity ?? "")
         let projected = BeatMath.FlashSafety.projectedField(
             lastDelivered: runtime.lastDeliveredFrames,
             sweep: sweep.map { (index: $0.index, x: $0.x, y: $0.y, brightness: $0.brightness) })
         let reservation = ledger.admit(
             frame: BeatMath.FlashSafety.fieldFrame(channels: projected),
+            source: BeatMath.FlashSafety.restSource(roomID: token.scope.roomID),
             at: CACurrentMediaTime(),
             minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
         guard reservation.verdict.wasAdmitted else {
@@ -3543,14 +3548,23 @@ final class UnifiedOrchestrator {
     /// the field on the wire DID change, so the onset stands and the sweep's
     /// frames become the per-light wire state; nothing reached anything →
     /// the reservation is rolled back (stamp, wire state, trough).
-    private func settleFlashReservation(_ token: CompositionSendLedger.Token, delivered: Bool) {
+    /// `deliveredIndices` — the render channels whose PUT succeeded, from the
+    /// task groups' own outcomes; nil means "every index of the sweep" (the
+    /// grouped write). Only THOSE become wire state (safety round 3, #3): a
+    /// sweep that lit 1 of 20 lights must not leave the model claiming 20.
+    private func settleFlashReservation(_ token: CompositionSendLedger.Token,
+                                        delivered: Bool,
+                                        deliveredIndices: [Int]? = nil) {
         guard let flash = composerFlashReservations.removeValue(forKey: token) else { return }
         flash.ledger.commit(flash.reservation, delivered: delivered, at: CACurrentMediaTime())
         guard delivered else { return }
         let runtimeKey = CompositionPlaybackKey(bridgeKey: token.bridgeKey, roomID: token.scope.roomID)
         guard var runtime = compositionRuntimes[runtimeKey],
               runtime.generation == token.generation else { return }
-        for f in flash.sweep { runtime.lastDeliveredFrames[f.index] = (f.x, f.y, f.brightness) }
+        let landed = deliveredIndices.map(Set.init)
+        for f in flash.sweep where landed?.contains(f.index) ?? true {
+            runtime.lastDeliveredFrames[f.index] = (f.x, f.y, f.brightness)
+        }
         compositionRuntimes[runtimeKey] = runtime
     }
 
@@ -6200,6 +6214,7 @@ final class UnifiedOrchestrator {
         let reservation = flashLedger.admit(
             frame: BeatMath.FlashSafety.fieldFrame(
                 channels: [(x: xy.x, y: xy.y, brightness: firstFrame.brightness)]),
+            source: BeatMath.FlashSafety.restSource(roomID: roomID),
             at: CACurrentMediaTime(),
             minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
         guard reservation.verdict.wasAdmitted else {
@@ -6228,9 +6243,15 @@ final class UnifiedOrchestrator {
                 runtime.lastSentBri = bri
                 runtime.sendCount = 1
                 runtime.lastSentAt = CFAbsoluteTimeGetCurrent()
-                // The whole group now shows the prime frame.
-                for idx in 0..<max(1, runtime.lightIDs.count) {
-                    runtime.lastDeliveredFrames[idx] = (xy.x, xy.y, firstFrame.brightness)
+                // The whole group now shows the prime frame — over the RENDER
+                // channels (a gradient map has more of them than lights), and
+                // only onto an empty model: a sweep that dispatched during
+                // this PUT's await already knows better (safety round 3, #6).
+                if runtime.lastDeliveredFrames.isEmpty {
+                    let channels = runtime.gradientMap?.totalChannels ?? max(1, runtime.lightIDs.count)
+                    for idx in 0..<channels {
+                        runtime.lastDeliveredFrames[idx] = (xy.x, xy.y, firstFrame.brightness)
+                    }
                 }
                 compositionRuntimes[primeKey] = runtime
             }
@@ -6799,7 +6820,8 @@ final class UnifiedOrchestrator {
         failures: Int,
         sentX: Double? = nil,
         sentY: Double? = nil,
-        sentBri: Double? = nil
+        sentBri: Double? = nil,
+        deliveredIndices: [Int]? = nil
     ) {
         let terminalAt = compositionTelemetryNow()
         let sessionKey = ComposerTelemetrySessionKey(
@@ -6811,7 +6833,8 @@ final class UnifiedOrchestrator {
         // ledger below makes of the item; one in which nothing did is rolled
         // back. Independent of `accepted`: a duplicate or stale-generation
         // terminal still says something true about the wire.
-        settleFlashReservation(token, delivered: attemptedOperations > failures)
+        settleFlashReservation(token, delivered: attemptedOperations > failures,
+                               deliveredIndices: deliveredIndices)
 
         // ACCEPTANCE FIRST. A rejected terminal (absent token, stale
         // generation, completed-before-started, duplicate) must not mutate the
@@ -6926,12 +6949,17 @@ final class UnifiedOrchestrator {
             self?.composerWorkStarted(token)
             // The realized-frame gate, at dispatch (safety round 2): the
             // frame this sweep will put on each of its lights.
-            let sweep = entries.flatMap { entry in
-                entry.channelRange.compactMap { idx -> (index: Int, x: Double, y: Double, brightness: Double)? in
-                    guard idx < frames.count else { return nil }
-                    return (idx, frames[idx].x, frames[idx].y, frames[idx].brightness)
-                }
+            // A strip's PUT carries ONE averaged brightness for every point
+            // (safety round 3, #2): the model must project the frame the wire
+            // will show, not the per-point brightness the render produced.
+            let sweep = entries.flatMap { entry -> [(index: Int, x: Double, y: Double, brightness: Double)] in
+                let idxs = entry.channelRange.filter { $0 < frames.count }
+                guard !idxs.isEmpty else { return [] }
+                let stripBrightness = idxs.map { frames[$0].brightness }.reduce(0, +) / Double(idxs.count)
+                return idxs.map { (index: $0, x: frames[$0].x, y: frames[$0].y,
+                                   brightness: entry.isGradient ? stripBrightness : frames[$0].brightness) }
             }
+            var deliveredIndices: [Int] = []
             guard self?.admitComposerSweep(token: token, sweep: sweep) == true else {
                 self?.composerWorkTerminated(
                     token: token, kind: .cancelled, attemptedOperations: 0, failures: 0)
@@ -6945,15 +6973,15 @@ final class UnifiedOrchestrator {
                 guard await stillCurrent() else {
                     self?.composerWorkTerminated(
                         token: token, kind: .cancelled,
-                        attemptedOperations: attempted, failures: failures)
+                        attemptedOperations: attempted, failures: failures,
+                        deliveredIndices: deliveredIndices)
                     return
                 }
                 let batchEnd = min(batchStart + batchSize, entries.count)
-                let outcomes = await withTaskGroup(of: Bool.self) { group -> [Bool] in
+                let outcomes = await withTaskGroup(of: (indices: [Int], ok: Bool).self) { group -> [(indices: [Int], ok: Bool)] in
                     for entry in entries[batchStart..<batchEnd] {
-                        let entryFrames = entry.channelRange.compactMap { idx in
-                            idx < frames.count ? frames[idx] : nil
-                        }
+                        let entryIndices = entry.channelRange.filter { $0 < frames.count }
+                        let entryFrames = entryIndices.map { frames[$0] }
                         // Unreachable since packet 5: the whole room is
                         // rendered, so frames.count == map.totalChannels and
                         // every absolute channelRange is in bounds. It must
@@ -6992,13 +7020,13 @@ final class UnifiedOrchestrator {
                                         mirek: nil,
                                         duration: 200)
                                 }
-                                return true
+                                return (entryIndices, true)
                             } catch {
-                                return false
+                                return (entryIndices, false)
                             }
                         }
                     }
-                    var results: [Bool] = []
+                    var results: [(indices: [Int], ok: Bool)] = []
                     for await outcome in group { results.append(outcome) }
                     return results
                 }
@@ -7007,9 +7035,10 @@ final class UnifiedOrchestrator {
                 // failure taint. Advanced here, after the group returns and
                 // before the inter-batch sleep, never from a planned size.
                 let attemptedThisBatch = outcomes.count
-                let failuresThisBatch = outcomes.lazy.filter { !$0 }.count
+                let failuresThisBatch = outcomes.lazy.filter { !$0.ok }.count
                 attempted += attemptedThisBatch
                 failures += failuresThisBatch
+                for o in outcomes where o.ok { deliveredIndices += o.indices }
                 self?.composerRotationAdvanced(
                     token: token,
                     attemptedOperations: attemptedThisBatch,
@@ -7024,7 +7053,8 @@ final class UnifiedOrchestrator {
             self?.composerWorkTerminated(
                 token: token, kind: .completed,
                 attemptedOperations: attempted, failures: failures,
-                sentX: sentX, sentY: sentY, sentBri: sentBri)
+                sentX: sentX, sentY: sentY, sentBri: sentBri,
+                deliveredIndices: deliveredIndices)
         }
     }
 
@@ -7055,6 +7085,7 @@ final class UnifiedOrchestrator {
             }
             var attempted = 0
             var failures = 0
+            var deliveredIndices: [Int] = []
 
             // Send each light its unique color — batched with concurrent
             // sends (bridge handles ~10/sec individual)
@@ -7063,11 +7094,12 @@ final class UnifiedOrchestrator {
                 guard await stillCurrent() else {
                     self?.composerWorkTerminated(
                         token: token, kind: .cancelled,
-                        attemptedOperations: attempted, failures: failures)
+                        attemptedOperations: attempted, failures: failures,
+                        deliveredIndices: deliveredIndices)
                     return
                 }
                 let batchEnd = min(batchStart + batchSize, targets.count)
-                let outcomes = await withTaskGroup(of: Bool.self) { group -> [Bool] in
+                let outcomes = await withTaskGroup(of: (index: Int, ok: Bool).self) { group -> [(index: Int, ok: Bool)] in
                     for target in targets[batchStart..<batchEnd] {
                         // Unreachable since packet 5: the whole room is
                         // rendered, so frames.count == lightIDs.count and
@@ -7081,7 +7113,8 @@ final class UnifiedOrchestrator {
                             continue
                         }
                         let lightID = target.lightID
-                        let frame = frames[target.frameIndex]
+                        let frameIndex = target.frameIndex
+                        let frame = frames[frameIndex]
                         let xy = HueColorUtils.clampXYToGamut(
                             x: frame.x, y: frame.y, gamut: gamut
                         )
@@ -7095,22 +7128,23 @@ final class UnifiedOrchestrator {
                                     mirek: nil,
                                     duration: 200
                                 )
-                                return true
+                                return (frameIndex, true)
                             } catch {
-                                return false
+                                return (frameIndex, false)
                             }
                         }
                     }
-                    var results: [Bool] = []
+                    var results: [(index: Int, ok: Bool)] = []
                     for await outcome in group { results.append(outcome) }
                     return results
                 }
                 // Packet 5: same single piece of evidence as the gradient path
                 // — telemetry, cursor, and failure taint all derive from it.
                 let attemptedThisBatch = outcomes.count
-                let failuresThisBatch = outcomes.lazy.filter { !$0 }.count
+                let failuresThisBatch = outcomes.lazy.filter { !$0.ok }.count
                 attempted += attemptedThisBatch
                 failures += failuresThisBatch
+                for o in outcomes where o.ok { deliveredIndices.append(o.index) }
                 self?.composerRotationAdvanced(
                     token: token,
                     attemptedOperations: attemptedThisBatch,
@@ -7126,7 +7160,8 @@ final class UnifiedOrchestrator {
             self?.composerWorkTerminated(
                 token: token, kind: .completed,
                 attemptedOperations: attempted, failures: failures,
-                sentX: sentX, sentY: sentY, sentBri: sentBri)
+                sentX: sentX, sentY: sentY, sentBri: sentBri,
+                deliveredIndices: deliveredIndices)
         }
     }
 
@@ -7140,8 +7175,16 @@ final class UnifiedOrchestrator {
         // One request, no loop — nothing to cancel between dispatches, so this
         // path ignores the probe (packet 3). Scope invalidation still prevents
         // it from STARTING once the room is stopped.
-        return { [weak self] _ in
+        return { [weak self] stillCurrent in
             self?.composerWorkStarted(token)
+            // One probe before the one PUT (safety round 3, #5): a stop that
+            // began while this item waited in the mailbox must not be
+            // followed by a stale grouped write behind its group-off.
+            guard await stillCurrent() else {
+                self?.composerWorkTerminated(
+                    token: token, kind: .cancelled, attemptedOperations: 0, failures: 0)
+                return
+            }
             // The realized-frame gate, at dispatch (safety round 2): one
             // grouped write is the whole room at one colour — render channel 0.
             guard self?.admitComposerSweep(
@@ -8429,6 +8472,9 @@ final class UnifiedOrchestrator {
         // one this compares.
         let reservation = ledger.admit(
             frame: BeatMath.FlashSafety.WireFrame(x: x, y: y, brightness: brightness),
+            // One DTLS session per bridge ⇒ one frame SOURCE for the ledger's
+            // per-source wire state; REST rooms on the same bridge are their own.
+            source: BeatMath.FlashSafety.entertainmentSource,
             at: CACurrentMediaTime(),
             minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
         let onWire = reservation.frame
@@ -8493,6 +8539,7 @@ final class UnifiedOrchestrator {
         let reservation = ledger.admit(
             frame: BeatMath.FlashSafety.fieldFrame(
                 channels: channels.map { (x: $0.x, y: $0.y, brightness: $0.brightness) }),
+            source: BeatMath.FlashSafety.entertainmentSource,
             at: CACurrentMediaTime(),
             minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
         // A refusal streams the frame the bridge is ALREADY showing. On the very

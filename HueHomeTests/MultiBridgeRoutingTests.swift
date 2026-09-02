@@ -2849,9 +2849,15 @@ final class MultiBridgeRoutingTests: XCTestCase {
     //     larger than one sweep hands the closure a SUBSET.
     func testAttemptedOperationsCountOnlyDispatchedRequests() async {
         let clock = TelemetryTestClock(100)
+        // Slice 3 (safety round 3): every source on ONE bridge shares that
+        // bridge's onset clock — a second room brightening from dark inside
+        // the 0.34 s period is held, by design, however many lights it was
+        // handed. This test counts dispatched requests, so the second room
+        // lives on its own bridge and its own clock.
         stageTelemetrySession(room: "room-g", bridge: "bridge-a", clock: clock)
-        stageTelemetrySession(room: "room-p", bridge: "bridge-a", clock: clock)
+        stageTelemetrySession(room: "room-p", bridge: "bridge-b", clock: clock)
         let sender = orchestrator.testRestSender(for: "bridge-a")
+        let senderB = orchestrator.testRestSender(for: "bridge-b")
 
         // A four-light room rendered in full…
         let frames = (0..<4).map {
@@ -2882,23 +2888,25 @@ final class MultiBridgeRoutingTests: XCTestCase {
 
         // PER-LIGHT: a four-light room, two of them in this sweep's subset.
         _ = await orchestrator.testEnqueueComposerWork(
-            roomID: "room-p", bridgeID: "bridge-a", generation: 1
+            roomID: "room-p", bridgeID: "bridge-b", generation: 1
         ) { token in
             orch.testMakeComposerPerLightWork(
                 token: token,
                 targets: [(frameIndex: 0, lightID: "P1"), (frameIndex: 1, lightID: "P2")],
                 frames: frames,
-                api: self.bridgeA, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
+                api: self.bridgeB, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
         }
-        await drain(sender)
+        await drain(senderB)
 
-        let perLightSnap = telemetrySnap("room-p", "bridge-a")
+        let perLightSnap = telemetrySnap("room-p", "bridge-b")
         XCTAssertEqual(perLightSnap.attemptedOperations, 2, """
             the room has 4 lights but this sweep was handed 2 — never the \
             room's size
             """)
-        XCTAssertEqual(Set(bridgeA.lightEffectIDs), ["L1", "L2", "P1", "P2"],
-            "exactly the dispatched requests reached the API")
+        XCTAssertEqual(Set(bridgeA.lightEffectIDs), ["L1", "L2"],
+            "exactly the dispatched requests reached bridge A")
+        XCTAssertEqual(Set(bridgeB.lightEffectIDs), ["P1", "P2"],
+            "exactly the dispatched requests reached bridge B")
     }
 
     // 33b. Packet 5: a subset's ABSOLUTE frame indices are what pair a light

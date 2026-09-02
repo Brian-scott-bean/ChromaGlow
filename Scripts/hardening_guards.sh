@@ -1812,6 +1812,9 @@ hc_other_senders=$(grep -rlE '\.send[[:space:]]*\([[:space:]]*channels[[:space:]
 #     ledger the wire is unknown, AFTER its session is deactivated, with a
 #     ledger that refuses to restore a wire model a forget predates.
 hc_orch_code=$(grep -vE '^[[:space:]]*//' "$HC_ORCH" | sed -E 's#[[:space:]]*//.*$##; s#/\*.*\*/##g')
+hc_gate=$(awk '/struct OnsetGate \{/,/^        \}$/' "$HC_BEAT" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$hc_gate" ]] || fail "slice3-flash" "OnsetGate not found in $HC_BEAT"
+hc_rest_term=$(hc_ent_loop composerWorkTerminated)
 hc_rest=$(hc_ent_loop runCompositionScheduler)
 [[ -n "$hc_rest" ]] \
     || fail "slice3-flash" "runCompositionScheduler not found in $HC_ORCH — the REST flash rule is unenforceable"
@@ -1823,12 +1826,45 @@ for builder in makeComposerGradientWork makeComposerPerLightWork makeComposerGro
     [[ -n "$body" ]] || fail "slice3-flash" "$builder not found in $HC_ORCH"
     started=$(echo "$body" | grep -n 'composerWorkStarted(token)' | head -1 | cut -d: -f1)
     admit=$(echo "$body" | grep -n 'admitComposerSweep(' | head -1 | cut -d: -f1)
-    refusal=$(echo "$body" | grep -n 'kind: .cancelled, attemptedOperations: 0, failures: 0' | head -1 | cut -d: -f1)
+    refusal=$(echo "$body" | awk -v a="$admit" 'NR > a && /kind: .cancelled, attemptedOperations: 0, failures: 0/ { print NR; exit }')
     firstput=$(echo "$body" | grep -nE 'api\.(setGroupedLightEffect|setLight|put|setGradient)' | head -1 | cut -d: -f1)
     [[ -n "$started" && -n "$admit" && -n "$refusal" && -n "$firstput" ]] \
         || fail "slice3-flash" "$builder is missing its dispatch-time admit / refusal terminal / PUT (started=$started admit=$admit refusal=$refusal put=$firstput)"
     [[ "$started" -lt "$admit" && "$admit" -lt "$refusal" && "$refusal" -lt "$firstput" ]] \
         || fail "slice3-flash" "$builder's started/admit/refusal/PUT are out of order (started=$started admit=$admit refusal=$refusal put=$firstput) — a PUT before the admit is a frame the ledger never measured"
+    # (round 3, #4) The admit is a GUARD whose else-block RETURNS, and nothing
+    # reaches the API — through any helper — before it.
+    echo "$body" | grep -qE 'guard (self\?\.)?admitComposerSweep\(' \
+        || fail "slice3-flash" "$builder's admit is not a guard — a refused sweep would fall through to its PUT"
+    ret=$(echo "$body" | sed -n "$((refusal)),$((refusal + 3))p" | grep -c 'return' || true)
+    [[ "$ret" -ge 1 ]] \
+        || fail "slice3-flash" "$builder's refusal terminal is not followed by a return — a refused sweep would still PUT"
+    early_api=$(echo "$body" | sed -n "1,$((admit - 1))p" | grep -cE 'api\.|await self\?\.[A-Za-z]+\(api' || true)
+    [[ "$early_api" == "0" ]] \
+        || fail "slice3-flash" "$builder touches the API ($early_api line(s)) before its admit"
+    # The sweep the admit reserves on is built from the frames the closure
+    # will send — a strip projects the AVERAGED brightness its PUT carries.
+    case "$builder" in
+        makeComposerGradientWork)
+            echo "$body" | grep -q 'let sweep = entries.flatMap' \
+                || fail "slice3-flash" "$builder no longer builds its sweep from its entries"
+            echo "$body" | grep -q 'brightness: entry.isGradient ? stripBrightness : frames\[\$0\].brightness' \
+                || fail "slice3-flash" "$builder's strip projection is no longer the averaged brightness the PUT carries (round 3, #2)"
+            echo "$body" | grep -q 'for o in outcomes where o.ok { deliveredIndices += o.indices }' \
+                || fail "slice3-flash" "$builder no longer reports which channels were DELIVERED"
+            ;;
+        makeComposerPerLightWork)
+            echo "$body" | grep -q 'let sweep = targets.compactMap' \
+                || fail "slice3-flash" "$builder no longer builds its sweep from its targets"
+            echo "$body" | grep -q 'for o in outcomes where o.ok { deliveredIndices.append(o.index) }' \
+                || fail "slice3-flash" "$builder no longer reports which channels were DELIVERED"
+            ;;
+        makeComposerGroupedWork)
+            probe=$(echo "$body" | grep -n 'guard await stillCurrent() else' | head -1 | cut -d: -f1)
+            [[ -n "$probe" && "$probe" -lt "$admit" ]] \
+                || fail "slice3-flash" "$builder no longer probes before its admit — a stale grouped write behind a stop (round 3, #5)"
+            ;;
+    esac
 done
 # The admit itself: projected field, the bridge's ledger, the invariant's period, rollback on refusal, registration on admission.
 hc_admit=$(hc_ent_loop admitComposerSweep)
@@ -1850,6 +1886,12 @@ hc_ad_reg=$(echo "$hc_admit" | grep -n 'composerFlashReservations\[token\] = (le
     || fail "slice3-flash" "admitComposerSweep's admit / refusal-rollback / registration are missing or out of order (admit=$hc_ad_admit refuse=$hc_ad_refuse register=$hc_ad_reg)"
 echo "$hc_admit" | grep -q 'runtime.generation == token.generation' \
     || fail "slice3-flash" "admitComposerSweep no longer refuses a stale-generation token"
+echo "$hc_admit" | grep -q 'compositionGenerations\[runtimeKey\] == token.generation' \
+    || fail "slice3-flash" "admitComposerSweep no longer fences on the generation REGISTRY — the stop window would admit (round 3, #5)"
+echo "$hc_admit" | grep -q 'let runtimeKey = CompositionPlaybackKey(bridgeKey: token.bridgeKey, roomID: token.scope.roomID)' \
+    || fail "slice3-flash" "admitComposerSweep resolves its runtime by something other than the token's exact key"
+echo "$hc_admit" | grep -q 'source: BeatMath.FlashSafety.restSource(roomID: token.scope.roomID)' \
+    || fail "slice3-flash" "admitComposerSweep no longer names its room as the frame SOURCE — two rooms on one bridge would judge each other's fields (round 3, #1)"
 # The settle: commit on the transport's word; delivered frames become the per-light wire state.
 hc_settle=$(hc_ent_loop settleFlashReservation)
 [[ -n "$hc_settle" ]] || fail "slice3-flash" "settleFlashReservation is gone from $HC_ORCH"
@@ -1859,8 +1901,15 @@ echo "$hc_settle" | grep -q 'flash.ledger.commit(flash.reservation, delivered: d
     || fail "slice3-flash" "settleFlashReservation no longer commits on the transport's delivery answer"
 echo "$hc_settle" | grep -q 'runtime.lastDeliveredFrames\[f.index\] = (f.x, f.y, f.brightness)' \
     || fail "slice3-flash" "settleFlashReservation no longer records the delivered sweep as the per-light wire state — the next projection would be stale"
-hc_rest_term=$(hc_ent_loop composerWorkTerminated)
-echo "$hc_rest_term" | grep -q 'settleFlashReservation(token, delivered: attemptedOperations > failures)' \
+echo "$hc_settle" | grep -q 'for f in flash.sweep where landed?.contains(f.index) ?? true' \
+    || fail "slice3-flash" "settleFlashReservation records the whole sweep as delivered — a 1-of-20 sweep would leave the model claiming 20 (round 3, #3)"
+hc_st_merge=$(echo "$hc_settle" | grep -n 'runtime.lastDeliveredFrames\[f.index\]' | head -1 | cut -d: -f1)
+hc_st_write=$(echo "$hc_settle" | grep -n 'compositionRuntimes\[runtimeKey\] = runtime' | head -1 | cut -d: -f1)
+[[ -n "$hc_st_merge" && -n "$hc_st_write" && "$hc_st_merge" -lt "$hc_st_write" ]] \
+    || fail "slice3-flash" "settleFlashReservation merges into a copy it never writes back"
+echo "$hc_rest_term" | grep -q 'deliveredIndices: deliveredIndices)' \
+    || fail "slice3-flash" "composerWorkTerminated no longer forwards the delivered indices"
+echo "$hc_rest_term" | grep -q 'settleFlashReservation(token, delivered: attemptedOperations > failures,' \
     || fail "slice3-flash" "composerWorkTerminated no longer commits the flash reservation on the transport's word (attemptedOperations > failures)"
 hc_rest_enq=$(hc_ent_loop enqueueComposerWork)
 echo "$hc_rest_enq" | grep -qE 'composerFlashReservations|flash:' \
@@ -1882,6 +1931,25 @@ echo "$hc_prime" | grep -q 'flashOnsetLedger(forBridge: room.bridgeID ?? "")' \
     || fail "slice3-flash" "performCompositionPrime keys the ledger differently from the loops"
 echo "$hc_prime" | grep -qE 'guard reservation\.verdict\.wasAdmitted else \{' \
     || fail "slice3-flash" "performCompositionPrime no longer GUARDS on the verdict — a refused prime would still PUT"
+echo "$hc_prime" | grep -q 'source: BeatMath.FlashSafety.restSource(roomID: roomID)' \
+    || fail "slice3-flash" "performCompositionPrime no longer names its room as the frame source"
+echo "$hc_prime" | grep -q 'if runtime.lastDeliveredFrames.isEmpty {' \
+    || fail "slice3-flash" "performCompositionPrime overwrites a sweep that dispatched during its PUT (round 3, #6)"
+echo "$hc_prime" | grep -q 'runtime.gradientMap?.totalChannels ?? max(1, runtime.lightIDs.count)' \
+    || fail "slice3-flash" "performCompositionPrime records the prime over the wrong channel space"
+# (round 3, #1) The DTLS gates name the one Entertainment source; the ledger keeps per-source wire state.
+for g in emitGatedFrame emitGatedCompositionFrame; do
+    hc_ent_loop "$g" | grep -q 'source: BeatMath.FlashSafety.entertainmentSource' \
+        || fail "slice3-flash" "$g no longer names the Entertainment session as its frame source"
+done
+echo "$hc_gate" | grep -q 'private var wires: \[String: SourceWire\]' \
+    || fail "slice3-flash" "OnsetGate no longer keeps PER-SOURCE wire state — two frame sources on one bridge would judge each other's fields"
+echo "$hc_gate" | grep -q 'currentSource = source' \
+    || fail "slice3-flash" "OnsetGate.admit no longer switches to the reservation's source"
+echo "$hc_gate" | grep -q 'currentSource = reservation.source' \
+    || fail "slice3-flash" "OnsetGate.commit no longer restores into the reservation's source"
+echo "$hc_gate" | grep -q 'for key in wires.keys { wires\[key\]?.lastEmitted = nil }' \
+    || fail "slice3-flash" "OnsetGate.forgetWire no longer forgets EVERY source's wire"
 # (D-2) The wire is unknown after EVERY session stop, and after every composition stop — AFTER deactivation.
 hc_stop_sites=$(echo "$hc_orch_code" | grep -cE '\.stopSession\(\)' || true)
 hc_forget_after=$(echo "$hc_orch_code" | grep -A 3 -E '\.stopSession\(\)' | grep -c 'forgetWire()' || true)
@@ -1893,14 +1961,13 @@ hc_sc_forget=$(echo "$hc_stop_comp" | grep -n 'flashOnsetLedger(forBridge: bridg
 [[ -n "$hc_sc_deact" && -n "$hc_sc_forget" && "$hc_sc_deact" -lt "$hc_sc_forget" ]] \
     || fail "slice3-flash" "stopCompositionMode does not forget the wire AFTER deactivating its session (deactivate=$hc_sc_deact forget=$hc_sc_forget) — the pending rollback would restore the bright frame the stop just turned off"
 # The ledger refuses to restore a wire model a forget predates.
-hc_gate=$(awk '/struct OnsetGate \{/,/^        \}$/' "$HC_BEAT" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
 echo "$hc_gate" | grep -q 'if reservation.sequence > forgetSequence {' \
     || fail "slice3-flash" "OnsetGate.commit restores lastEmitted unconditionally on rollback again — a late cancelled 0/0 hands the ledger back the frame the stop turned off"
 echo "$hc_gate" | grep -q 'forgetSequence = sequence' \
     || fail "slice3-flash" "OnsetGate.forgetWire no longer records the forget's sequence"
 
 # The REST model and its regression tests exist in the flash suite.
-for t in emitRESTComposition testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten testAColdRefusalHoldsTheLastKnownChromaticity testALateRollbackCannotRestoreAWireAForgetPredates testAStaleSliceRiseIsMeasuredOnTheProjectedField testTheProjectedFieldIsWhatTheWireShows; do
+for t in emitRESTComposition testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten testAColdRefusalHoldsTheLastKnownChromaticity testALateRollbackCannotRestoreAWireAForgetPredates testAStaleSliceRiseIsMeasuredOnTheProjectedField testTheProjectedFieldIsWhatTheWireShows testTwoSourcesOnOneBridgeAreJudgedAgainstTheirOwnWires testEntertainmentAndRESTSourcesShareTheClockNotTheWire; do
     grep -q "$t" HueHomeTests/FlashSafetyTests.swift \
         || fail "slice3-flash" "FlashSafetyTests no longer carries $t"
 done

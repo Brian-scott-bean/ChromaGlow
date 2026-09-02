@@ -3311,6 +3311,82 @@ final class FlashSafetyTests: XCTestCase {
             "lighting two dark lights of five is a field rise inside the period — it must be refused")
     }
 
+    // ── Two frame sources on one bridge (safety round 3, #1) ──
+
+    /// The reviewer's scenario, on the production gate: room B (5 lights,
+    /// REST) and room A (3 lights, REST) alternate on one bridge's ledger.
+    /// With ONE wire model, A's bright field after B's bright field read as
+    /// "no rise" and went out unstamped 0.20 s after B's onset — 4 Hz in
+    /// room A. With per-source wire state, A's first bright frame is A's own
+    /// cold rise, measured against the SHARED onset clock: refused, and the
+    /// next admissible A onset is ≥ 0.34 s after B's.
+    func testTwoSourcesOnOneBridgeAreJudgedAgainstTheirOwnWires() {
+        let white = (x: 0.3127, y: 0.3290)
+        func field(_ bri: Double, lights: Int) -> BeatMath.FlashSafety.WireFrame {
+            BeatMath.FlashSafety.fieldFrame(channels: Array(repeating: (white.x, white.y, bri), count: lights))
+        }
+        let ledger = BeatMath.FlashSafety.OnsetLedger()
+        let a = BeatMath.FlashSafety.restSource(roomID: "room-a")
+        let b = BeatMath.FlashSafety.restSource(roomID: "room-b")
+        // B: dark, then bright at t = 0.00 (stamped, delivered at 0.06).
+        var r = ledger.admit(frame: field(0, lights: 5), source: b, at: -0.5)
+        ledger.commit(r, delivered: true, at: -0.44)
+        r = ledger.admit(frame: field(1, lights: 5), source: b, at: 0.00)
+        XCTAssertTrue(r.wasAdmitted); ledger.commit(r, delivered: true, at: 0.06)
+        // A's very first frame: bright, 0.20 s after B's onset. A's own wire
+        // is unknown — a cold candidate — and the shared clock refuses it.
+        r = ledger.admit(frame: field(1, lights: 3), source: a, at: 0.20)
+        XCTAssertFalse(r.wasAdmitted,
+            "room A's rise was judged against room B's bright field and went out unstamped — 4 Hz in room A")
+        ledger.commit(r, delivered: false, at: 0.20)   // REST refusal: nothing sent
+        // B falls; A retries at 0.45 — admissible against the shared clock.
+        r = ledger.admit(frame: field(0, lights: 5), source: b, at: 0.25)
+        ledger.commit(r, delivered: true, at: 0.31)
+        r = ledger.admit(frame: field(1, lights: 3), source: a, at: 0.45)
+        XCTAssertTrue(r.wasAdmitted, "0.45 s after B's onset, A's rise is admitted on the shared clock")
+        ledger.commit(r, delivered: true, at: 0.51)
+        // …and B's next bright frame at 0.60 is judged against B's OWN dark
+        // wire (a rise) and the shared clock (0.09 s after A's stamp): refused.
+        r = ledger.admit(frame: field(1, lights: 5), source: b, at: 0.60)
+        XCTAssertFalse(r.wasAdmitted, "B's rise inside A's period must be refused on the shared clock")
+        ledger.commit(r, delivered: false, at: 0.60)
+        // A's steady bright frame at 0.70 is NOT a candidate against A's own
+        // bright wire — emitted unstamped, as a non-flash should be.
+        r = ledger.admit(frame: field(1, lights: 3), source: a, at: 0.70)
+        XCTAssertTrue(r.wasAdmitted, "a source's unchanged field is not a rise against ITS OWN wire")
+        ledger.commit(r, delivered: true, at: 0.76)
+    }
+
+    /// The Entertainment session and a REST room share the clock, not the
+    /// wire: a Strobe's frame after a REST sweep is measured against the
+    /// Strobe's own last frame.
+    func testEntertainmentAndRESTSourcesShareTheClockNotTheWire() {
+        let white = (x: 0.3127, y: 0.3290)
+        let ledger = BeatMath.FlashSafety.OnsetLedger()
+        let ent = BeatMath.FlashSafety.entertainmentSource
+        let rest = BeatMath.FlashSafety.restSource(roomID: "room-a")
+        let dark = BeatMath.FlashSafety.WireFrame(x: white.x, y: white.y, brightness: 0)
+        let bright = BeatMath.FlashSafety.WireFrame(x: white.x, y: white.y, brightness: 1)
+        // Strobe ON at 0.00 (stamped), stays on.
+        var r = ledger.admit(frame: dark, source: ent, at: -0.5); ledger.commit(r, delivered: true, at: -0.5)
+        r = ledger.admit(frame: bright, source: ent, at: 0.00); XCTAssertTrue(r.wasAdmitted)
+        ledger.commit(r, delivered: true, at: 0.00)
+        // A REST sweep on another room, dark → its own cold non-candidate, emitted.
+        r = ledger.admit(frame: dark, source: rest, at: 0.10); XCTAssertTrue(r.wasAdmitted)
+        ledger.commit(r, delivered: true, at: 0.16)
+        // The Strobe's next ON frame at 0.12 is judged against ITS OWN bright
+        // wire: not a candidate, emitted — no blackout (round 2, #4).
+        r = ledger.admit(frame: bright, source: ent, at: 0.12)
+        XCTAssertTrue(r.wasAdmitted, "the Strobe's ON phase was cut black by the REST room's frame")
+        XCTAssertEqual(r.frame.brightness, 1, accuracy: 1e-9)
+        ledger.commit(r, delivered: true, at: 0.12)
+        // The REST room's bright frame at 0.20 IS a rise on its own wire and
+        // is inside the Strobe's period: refused on the shared clock.
+        r = ledger.admit(frame: bright, source: rest, at: 0.20)
+        XCTAssertFalse(r.wasAdmitted)
+        ledger.commit(r, delivered: false, at: 0.20)
+    }
+
     // ── Cold refusal chroma (review round, D-3) ──
 
     /// A cold refusal — no delivered per-channel frame to repeat — sends the

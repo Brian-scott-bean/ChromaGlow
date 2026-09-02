@@ -505,6 +505,11 @@ enum BeatMath {
         /// truer to read it as. Reserving on the whole-room RENDER instead
         /// let a stale slice's real rise (a dark light lit by a "non-
         /// candidate" frame) reach the wire unmeasured.
+        /// The ledger's frame SOURCES (per-source wire state). One DTLS session
+        /// per bridge ⇒ one Entertainment source; each REST room is its own.
+        static let entertainmentSource = "entertainment"
+        static func restSource(roomID: String) -> String { "rest:\(roomID)" }
+
         static func projectedField(
             lastDelivered: [Int: (x: Double, y: Double, brightness: Double)],
             sweep: [(index: Int, x: Double, y: Double, brightness: Double)]
@@ -595,6 +600,8 @@ enum BeatMath {
         struct Reservation {
             /// What the caller must put on the wire.
             let verdict: FrameVerdict
+            /// The frame source this reservation belongs to (per-source wire state).
+            fileprivate let source: String
             /// The lastOnset value this admit installed, if it stamped one.
             fileprivate let stampedAt: Double?
             /// The lastOnset value before this admit — the rollback target.
@@ -628,7 +635,30 @@ enum BeatMath {
             /// wire has been SILENT for a whole period (`lastDeliveredAt`), not
             /// merely that one send was refused. A refused send changed nothing
             /// on the wire, so it leaves this exactly as it was.
-            private(set) var lastEmitted: WireFrame?
+            /// PER-SOURCE wire state (safety round 3, #1). One bridge can carry
+            /// two frame sources at once — a REST composition on one room and
+            /// a DTLS look on another, or two REST rooms — driving DISJOINT
+            /// lights. One shared wire model judged each source's candidacy
+            /// against the OTHER source's last field: room A's bright frame
+            /// after room B's bright frame read as "no rise" and went out
+            /// unstamped, 0.25 s after B's onset. The onset CLOCK
+            /// (`lastOnset`, `lastDeliveredAt`, the sequence and the forget)
+            /// stays per bridge — one wire, one ≤3 Hz budget — while what each
+            /// source last put on ITS lights, and the trough it is measured
+            /// from, are the source's own.
+            private struct SourceWire {
+                var lastEmitted: WireFrame?
+                var trough: Double = 0
+                var lastKnown: WireFrame?
+            }
+            private var wires: [String: SourceWire] = [:]
+            /// The source the current `admit`/`commit` is about.
+            private var currentSource: String = ""
+
+            private(set) var lastEmitted: WireFrame? {
+                get { wires[currentSource]?.lastEmitted }
+                set { wires[currentSource, default: SourceWire()].lastEmitted = newValue }
+            }
 
             /// The LOWEST **relative luminance** EMITTED since the last admitted
             /// onset — the floor a rise is measured from, reset to the emitted
@@ -636,7 +666,10 @@ enum BeatMath {
             /// previous frame) is what makes a slow cumulative ramp a candidate:
             /// the ramp is judged against where the light last was, not against
             /// where it was 20 ms ago.
-            private(set) var luminanceTroughSinceOnset: Double
+            private(set) var luminanceTroughSinceOnset: Double {
+                get { wires[currentSource]?.trough ?? 0 }
+                set { wires[currentSource, default: SourceWire()].trough = newValue }
+            }
 
             /// When a frame — ANY frame, admitted or held — last reached the
             /// transport. Not the onset stamp: `lastOnset` answers "when did the
@@ -669,7 +702,10 @@ enum BeatMath {
             ///    frame after it is then stamped as a first onset — two red
             ///    flashes one frame apart (the in-catalog Thunderstorm
             ///    reproduction, fifth review round).
-            private(set) var lastKnownFrame: WireFrame?
+            private(set) var lastKnownFrame: WireFrame? {
+                get { wires[currentSource]?.lastKnown }
+                set { wires[currentSource, default: SourceWire()].lastKnown = newValue }
+            }
 
             private var sequence: UInt64 = 0
             /// The `sequence` at the last `forgetWire()` (safety round 2, #2):
@@ -681,9 +717,11 @@ enum BeatMath {
 
             init(lastOnset: Double? = nil, lastEmitted: WireFrame? = nil) {
                 self.lastOnset = lastOnset
-                self.lastEmitted = lastEmitted
-                self.luminanceTroughSinceOnset = lastEmitted?.relativeLuminance ?? 0
-                self.lastKnownFrame = lastEmitted
+                if let lastEmitted {
+                    wires[""] = SourceWire(lastEmitted: lastEmitted,
+                                           trough: lastEmitted.relativeLuminance,
+                                           lastKnown: lastEmitted)
+                }
             }
 
             /// `t` is a monotonic host time (CACurrentMediaTime). A NaN/infinite
@@ -858,8 +896,9 @@ enum BeatMath {
             /// so the first frame back is not a candidate and a fall-then-rise
             /// two frames later is measured from a fresh trough and admitted
             /// against the OLD stamp — two realized onsets 40 ms apart.
-            mutating func admit(frame: WireFrame, at t: Double,
+            mutating func admit(frame: WireFrame, source: String = "", at t: Double,
                                 minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Reservation {
+                currentSource = source
                 let tol = FlashSafety.onsetComparisonTolerance
                 let period = (minPeriod.isFinite && minPeriod > 0) ? minPeriod
                                                                    : FlashSafety.minOnsetLedgerPeriod
@@ -1005,6 +1044,7 @@ enum BeatMath {
             /// being inferred from a single refused send.
             mutating func commit(_ reservation: Reservation, delivered: Bool,
                                  at deliveredAt: Double) {
+                currentSource = reservation.source
                 guard delivered else {
                     // An interleaved admit (the un-awaited cancel window) means
                     // this reservation is no longer the gate's latest word about
@@ -1063,14 +1103,14 @@ enum BeatMath {
             ///    the outage — is covered where it belongs, in
             ///    `isColdOnsetCandidate`, which reads "unknown" as black.
             mutating func forgetWire() {
-                lastEmitted = nil
+                for key in wires.keys { wires[key]?.lastEmitted = nil }
                 forgetSequence = sequence
             }
 
             private func reservation(_ verdict: FrameVerdict, stampedAt: Double?,
                                      prior: (onset: Double?, emitted: WireFrame?,
                                              trough: Double)) -> Reservation {
-                Reservation(verdict: verdict, stampedAt: stampedAt,
+                Reservation(verdict: verdict, source: currentSource, stampedAt: stampedAt,
                             priorLastOnset: prior.onset,
                             priorLastEmitted: prior.emitted,
                             priorTrough: prior.trough,
@@ -1145,10 +1185,10 @@ enum BeatMath {
             /// measures rises from would then belong to neither loop. The record
             /// is provisional precisely so it can be conservative while the send
             /// is still in flight; `commit` settles it.
-            func admit(frame: WireFrame, at t: Double,
+            func admit(frame: WireFrame, source: String = "", at t: Double,
                        minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Reservation {
                 lock.lock(); defer { lock.unlock() }
-                return gate.admit(frame: frame, at: t, minPeriod: minPeriod)
+                return gate.admit(frame: frame, source: source, at: t, minPeriod: minPeriod)
             }
 
             /// Settle a reservation against what the transport did with it. Every
