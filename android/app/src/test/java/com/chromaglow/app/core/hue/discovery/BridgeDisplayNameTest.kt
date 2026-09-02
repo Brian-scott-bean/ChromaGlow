@@ -32,9 +32,20 @@ class BridgeDisplayNameTest {
     }
 
     @Test
-    fun controlCharacters_areStripped() {
-        assertEquals("Hue Bridge", BridgeDisplayName.sanitize("Hue\u0000\u0007Bridge", host))
+    fun nonWhitespaceControlCharacters_vanish() {
+        assertEquals("HueBridge", BridgeDisplayName.sanitize("Hue\u0000\u0007Bridge", host))
+    }
+
+    @Test
+    fun whitespaceControlCharacters_becomeOneSeparator() {
         assertEquals("Hue Bridge", BridgeDisplayName.sanitize("Hue\r\n\tBridge", host))
+        assertEquals("Hue Bridge", BridgeDisplayName.sanitize("Hue\u2028Bridge", host))
+    }
+
+    @Test
+    fun bidiMarkAdjacentToSpace_leavesExactlyOneSpace() {
+        assertEquals("Hue Bridge", BridgeDisplayName.sanitize("Hue \u200FBridge", host))
+        assertEquals("Hue Bridge", BridgeDisplayName.sanitize("Hue\u200F Bridge", host))
     }
 
     @Test

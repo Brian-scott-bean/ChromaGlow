@@ -24,15 +24,21 @@ internal object BridgeDisplayName {
             val codePoint = raw.codePointAt(index)
             index += Character.charCount(codePoint)
             when (Character.getType(codePoint).toByte()) {
-                Character.CONTROL,
+                // Whitespace-class controls (tab, CR, LF, ...) and Unicode line/paragraph
+                // separators act as a word separator; a run collapses to one space.
+                Character.LINE_SEPARATOR,
+                Character.PARAGRAPH_SEPARATOR,
+                Character.SPACE_SEPARATOR,
+                -> pendingSpace = cleaned.isNotEmpty()
+                // Non-whitespace controls, format characters (bidi overrides/isolates/marks,
+                // zero-width joiners), private-use, surrogates and unassigned code points are
+                // invisible or spoofing vectors: they vanish without leaving a separator.
+                Character.CONTROL -> if (Character.isWhitespace(codePoint)) pendingSpace = cleaned.isNotEmpty()
                 Character.FORMAT,
                 Character.PRIVATE_USE,
                 Character.SURROGATE,
                 Character.UNASSIGNED,
-                Character.LINE_SEPARATOR,
-                Character.PARAGRAPH_SEPARATOR,
-                -> pendingSpace = pendingSpace || cleaned.isNotEmpty()
-                Character.SPACE_SEPARATOR -> pendingSpace = cleaned.isNotEmpty()
+                -> Unit
                 else -> {
                     if (pendingSpace) {
                         cleaned.append(' ')
