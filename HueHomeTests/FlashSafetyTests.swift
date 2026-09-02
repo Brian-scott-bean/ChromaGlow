@@ -3156,11 +3156,14 @@ final class FlashSafetyTests: XCTestCase {
     func testEveryAuthoredEnvelopeShapeAtEveryTempoRespectsTheFloorOverREST() {
         for shape in EnvelopeConfig.Shape.allCases {
             for bpm in [20.0, 60, 137, 180, 240] {
-                let onsets = realizedOnsets(
-                    restCompositionWire(envelope: EnvelopeConfig(shape: shape, bpm: bpm, depth: 100,
-                                                                 minBrightness: 0, maxBrightness: 100),
-                                        seconds: 8).wire)
-                assertOnsetsRespectTheFloor(onsets, label: "REST \(shape) @ \(bpm) bpm", atLeast: 0)
+                let wire = restCompositionWire(envelope: EnvelopeConfig(shape: shape, bpm: bpm, depth: 100,
+                                                                        minBrightness: 0, maxBrightness: 100),
+                                               seconds: 8).wire
+                if shape != .steady {
+                    XCTAssertGreaterThan(luminanceSpan(wire), 0.1,
+                        "REST \(shape) @ \(bpm): the gated wire never moved")
+                }
+                assertOnsetsRespectTheFloor(realizedOnsets(wire), label: "REST \(shape) @ \(bpm) bpm", atLeast: 0)
             }
         }
     }
@@ -3468,14 +3471,25 @@ final class FlashSafetyTests: XCTestCase {
         assertOnsetsRespectTheFloor(onsets, label: "composition .flicker", atLeast: 1)
     }
 
+    /// A wire that never moved satisfies any floor vacuously (review round,
+    /// C-11): every shape here must actually MODULATE the wire.
+    private func luminanceSpan(_ wire: [Emission]) -> Double {
+        let lums = wire.map { $0.frame.relativeLuminance }
+        guard let lo = lums.min(), let hi = lums.max() else { return 0 }
+        return hi - lo
+    }
+
     func testEveryAuthoredEnvelopeShapeAtEveryTempoRespectsTheFloor() {
         for shape in EnvelopeConfig.Shape.allCases {
             for bpm in [20.0, 60, 137, 180, 240] {
-                let onsets = realizedOnsets(
-                    compositionWire(envelope: EnvelopeConfig(shape: shape, bpm: bpm, depth: 100,
-                                                             minBrightness: 0, maxBrightness: 100),
-                                    seconds: 8).wire)
-                assertOnsetsRespectTheFloor(onsets, label: "\(shape) @ \(bpm) bpm", atLeast: 0)
+                let wire = compositionWire(envelope: EnvelopeConfig(shape: shape, bpm: bpm, depth: 100,
+                                                                    minBrightness: 0, maxBrightness: 100),
+                                           seconds: 8).wire
+                if shape != .steady {
+                    XCTAssertGreaterThan(luminanceSpan(wire), 0.1,
+                        "\(shape) @ \(bpm): the gated wire never moved — a floor over a dark wire proves nothing")
+                }
+                assertOnsetsRespectTheFloor(realizedOnsets(wire), label: "\(shape) @ \(bpm) bpm", atLeast: 0)
             }
         }
     }

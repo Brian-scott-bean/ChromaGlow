@@ -195,6 +195,19 @@ struct ComposerAvailabilityContext {
 
     func resolve(_ controlID: String) -> StudioBoardResolution? {
         guard let cardID, let snapshot else { return nil }
+        // A row with no live box — a bridge-optimized one-shot, a recovered
+        // mirror — has nothing an edit could reach: read-only (spec §20),
+        // whatever its lights can do. Answering `.active` here rendered live
+        // instruments that wrote nothing (review round, C-5).
+        guard session != nil else {
+            return StudioBoardResolution(
+                resolution: CustomizationResolution(
+                    control: CustomizationControlID(cardID: cardID, paramID: controlID),
+                    availability: .unavailable(reason: .readOnlyComposition, remediation: nil),
+                    behavior: .staged),
+                isHardwareUnverified: false,
+                totalLights: snapshot.totalLights)
+        }
         return ComposerControlAvailability.resolve(cardID: cardID, controlID: controlID,
                                                    snapshot: snapshot)
     }

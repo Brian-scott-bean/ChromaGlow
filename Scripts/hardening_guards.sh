@@ -1170,6 +1170,7 @@ HC_TESTS=(
     "HueHomeTests/StudioBoardAvailabilityTests.swift"
     "HueHomeTests/StudioPreviewLiveProductionTests.swift"
     "HueHomeTests/StudioLifecycleSerializationTests.swift"
+    "HueHomeTests/ComposerControlAvailabilityTests.swift"
 )
 for f in "${HC_TESTS[@]}"; do
     # A skipped-because-missing suite is coverage silently dropped: rename or
@@ -1334,7 +1335,7 @@ fi
 # The supporting tier must be rendered INSIDE the panel's layer cards (the
 # thing that replaced the Advanced card), and the tab subtree may not regain
 # the `.id(tab)` split that gave the two tiers different identity lifetimes.
-if ! grep -q 'ComposerSupportingControls(vm: vm, orchestrator: orchestrator,' "$R36_PANEL"; then
+if ! grep -vE '^[[:space:]]*//' "$R36_PANEL" | grep -q 'ComposerSupportingControls(vm: vm, orchestrator: orchestrator,'; then
     fail "studio-one-surface" "$R36_PANEL no longer renders ComposerSupportingControls inside its layer cards — the supporting tier has no surface"
 fi
 r36_tab_id=$(grep -nE '\.id\(activeCompositionTab\)' "$R36_PANEL" 2>/dev/null \
@@ -1352,7 +1353,7 @@ fi
 r36_host_id=$(grep -nE '\.id\(' "$R36_HOST" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*//' || true)
 echo "$r36_host_id" | grep -qF 'identity.targetKey.stableID' \
     || fail "studio-one-surface" $'the customization host no longer keys its identity on the running target key (identity.targetKey.stableID) — the same look on two targets would share one view identity again:\n'"$r36_host_id"
-r36_card_id=$(echo "$r36_host_id" | grep -E 'currentRoomEffect\?\.cardID|\.id\(vm\.currentRoomEffect\?\.cardID' || true)
+r36_card_id=$(echo "$r36_host_id" | grep -E 'currentRoomEffect\?\.cardID|\.id\(vm\.currentRoomEffect\?\.cardID|\.id\(effect\.card\.id|\.id\(card\.id' || true)
 [[ -z "$r36_card_id" ]] || fail "studio-one-surface" $'the host keys on the bare cardID again:\n'"$r36_card_id"
 
 # (h) Slice 3 (S3-3): Composer colour is INLINE. The popover carve-out above
@@ -1392,7 +1393,7 @@ grep -vE '^[[:space:]]*//' HueHome/UI/Studio/StudioView.swift | grep -qF 'pendin
 grep -vE '^[[:space:]]*//' HueHome/UI/Studio/StudioViewModel.swift | grep -qE 'restoredHarmonyRule|harmonyEchoSuppressed' \
     && fail "studio-one-surface" "the global harmony restore slot is back — a StudioView-scoped chip fed by a global slot let one room's saved rule rewrite another room's palette" || true
 for f in "$R36_PANEL" "$R36_COMPOSER_SUPPORT" "$R36_COMPOSER_INSTRUMENTS"; do
-    r36_gen1=$(grep -nE 'StageSlider\(|[^A-Za-z]Toggle\(' "$f" 2>/dev/null \
+    r36_gen1=$(grep -nE 'StageSlider[[:space:]]*\(|[^A-Za-z]Toggle[[:space:]]*[(<]' "$f" 2>/dev/null \
         | grep -vE '^[0-9]+:[[:space:]]*//' || true)
     [[ -z "$r36_gen1" ]] || fail "studio-one-surface" $''"$f"$' uses a gen-1 slider or a raw Toggle — Composer controls are StageKnob / StageFader / StageSteppedEncoder / StageToggleRow:\n'"$r36_gen1"
     #     Not just assignments: ANY reference. `if let box = vm.activeCompositionBox

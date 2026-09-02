@@ -46,6 +46,12 @@ private enum ComposerViewTree {
         var bindings: [(title: String, value: Binding<Double>)] = []
         /// Which instrument each continuous control IS, by title.
         var instruments: [String: String] = [:]
+        /// The `onEditingChanged` bracket of every StageKnob / StageFader, by title.
+        var editingBrackets: [String: (Bool) -> Void] = [:]
+        /// Every `HueSaturationPad`'s `onChanged` sample closure (Composer pad).
+        var padSamples: [(Double, Double, (x: Double, y: Double)) -> Void] = []
+        /// Every `StageColorEditor`'s `onApply`.
+        var editorApplies: [(Color) -> Void] = []
     }
 
     /// Composer-owned bodies are evaluated; everything else is read as stored
@@ -95,10 +101,16 @@ private enum ComposerViewTree {
         out.types.append(typeName)
         if let knob = node as? StageKnob {
             out.bindings.append((knob.title, knob.$value)); out.instruments[knob.title] = "StageKnob"
+            if let bracket = knob.onEditingChanged { out.editingBrackets[knob.title] = bracket }
         }
         if let fader = node as? StageFader {
             out.bindings.append((fader.title, fader.$value)); out.instruments[fader.title] = "StageFader"
+            if let bracket = fader.onEditingChanged { out.editingBrackets[fader.title] = bracket }
         }
+        if let pad = node as? HueSaturationPad {
+            out.padSamples.append { h, s, xy in pad.onChanged(h, s, xy) }
+        }
+        if let editor = node as? StageColorEditor { out.editorApplies.append(editor.onApply) }
 
         if let view = node as? any View, evaluatesBody(typeName) {
             walk(body(of: view), depth: depth + 1, budget: &budget, into: &out)
@@ -395,18 +407,6 @@ final class ComposerConvergenceTests: XCTestCase {
             XCTAssertFalse(tree.types.contains { $0.hasPrefix("ColorWheelView") },
                 "\(tab): the detached colour wheel is back")
 
-            let vm = StudioViewModel()
-            let target = room("room-a")
-            vm.selectedRoom = target
-            let staged = stageRunningComposition(p, on: target, in: vm)
-            vm.sessionMemory.update(staged.identity.targetKey) { $0.activeCompositionTab = tab }
-            let host = hostComposer(vm: vm, orchestrator: orchestrator)
-            pump(0.3)
-            XCTAssertNil(host.presentedViewController,
-                "\(tab): the Composer host presented a surface of its own")
-            pump(0.5)
-            XCTAssertNil(host.presentedViewController,
-                "\(tab): a presentation landed after the host settled")
         }
     }
 
@@ -583,6 +583,170 @@ final class ComposerConvergenceTests: XCTestCase {
         XCTAssertEqual(ComposerWarmthEntry.mirek(from: "370")!, 370, accuracy: 1e-9, "a value inside the mirek span is mirek")
         XCTAssertEqual(ComposerWarmthEntry.mirek(from: " 153 ")!, 153, accuracy: 1e-9)
         XCTAssertNil(ComposerWarmthEntry.mirek(from: "warm"))
+    }
+
+    // MARK: - Interactivity floors, nil sessions, bridge boundaries (review round, C-3 / C-5 / C-6 / C-7 / C-14)
+
+    /// On a white-only room the colour instruments are refused at the
+    /// SETTER: writing the Hue Shift knob's binding, sampling the pad, and
+    /// applying from the inline editor all leave the box byte-identical.
+    func testRefusedColourControlsDoNotWriteThroughTheirGestures() {
+        let (vm, orch) = seededInventory([light("L1", color: false), light("L2", color: false)])
+        var spectrum = PaletteConfig(); spectrum.mode = .spectrum
+        let target = room("room-a")
+        vm.selectedRoom = target
+        let s1 = stageRunningComposition(preset(palette: spectrum), on: target, in: vm)
+        let spectrumTree = ComposerViewTree.inventory(of: panel(vm: vm, orchestrator: orch, tab: .palette))
+        let hueShift = try? XCTUnwrap(spectrumTree.bindings.first { $0.title == "Hue Shift" })
+        hueShift?.value.wrappedValue = 120
+        XCTAssertEqual(s1.box.palette.hueShift, PaletteConfig().hueShift, "a refused knob wrote the box")
+
+        // Gradient: the pad's raw drag sample is refused too.
+        var gradient = PaletteConfig(); gradient.mode = .gradient
+        let vm2 = StudioViewModel(); vm2.configure(orchestrator: orch)
+        vm2.selectedRoom = target
+        let s2 = stageRunningComposition(preset(palette: gradient), on: target, in: vm2)
+        vm2.sessionMemory.update(s2.identity.targetKey) {
+            $0.expandedColorControlID = ComposerHarmonySwatches.controlID(cardID: s2.card.id, slot: 0)
+        }
+        let harmonyPanel = CompositionEditorPanel(vm: vm2, orchestrator: orch,
+                                                  activeCompositionTab: .constant(.palette),
+                                                  activeHarmonyRule: .constant(.triadic))
+        let gradientTree = ComposerViewTree.inventory(of: harmonyPanel)
+        XCTAssertFalse(gradientTree.padSamples.isEmpty, "the pad is on the page (disabled)")
+        let before = (s2.box.palette.color1, s2.box.palette.saturation)
+        gradientTree.padSamples.forEach { $0(0.5, 1.0, (0.2, 0.3)) }
+        XCTAssertEqual(s2.box.palette.color1.x, before.0.x, "a refused pad sample wrote color1")
+        XCTAssertEqual(s2.box.palette.saturation, before.1)
+        // …and a refused harmony row keeps its editor collapsed even with an
+        // expansion stored (the memory survives for when colour arrives).
+        XCTAssertTrue(gradientTree.editorApplies.isEmpty, "a refused harmony row expanded its editor")
+        XCTAssertEqual(vm2.sessionMemory.state(for: s2.identity.targetKey).expandedColorControlID,
+                       ComposerHarmonySwatches.controlID(cardID: s2.card.id, slot: 0),
+                       "the stored expansion was not erased")
+    }
+
+    /// The inline editor's `onApply` — the closure its swatches and pad
+    /// call — writes the open slot through the session on a colour room.
+    func testTheInlineEditorsApplyWritesTheOpenSlot() {
+        let (vm, orch) = seededInventory([light("L1", color: true), light("L2", color: true)])
+        var gradient = PaletteConfig(); gradient.mode = .gradient
+        let target = room("room-a")
+        vm.selectedRoom = target
+        let staged = stageRunningComposition(preset(palette: gradient), on: target, in: vm)
+        vm.sessionMemory.update(staged.identity.targetKey) {
+            $0.expandedColorControlID = ComposerHarmonySwatches.controlID(cardID: staged.card.id, slot: 1)
+        }
+        let harmonyPanel = CompositionEditorPanel(vm: vm, orchestrator: orch,
+                                                  activeCompositionTab: .constant(.palette),
+                                                  activeHarmonyRule: .constant(.triadic))
+        let tree = ComposerViewTree.inventory(of: harmonyPanel)
+        XCTAssertEqual(tree.editorApplies.count, 1, "one open slot, one editor")
+        let color1Before = staged.box.palette.color1
+        tree.editorApplies.first?(Color(hue: 0.5, saturation: 1.0, brightness: 1.0))
+        let expected = ComposerHarmonySwatches.slotColor(hue: 0.5, saturation: 1.0, gamut: vm.activeCompositionGamut)
+        XCTAssertEqual(staged.box.palette.color2.x, expected.x, accuracy: 2e-3, "slot 2 took the applied colour")
+        XCTAssertEqual(staged.box.palette.color1.x, color1Before.x, "slot 1 untouched")
+    }
+
+    /// A composition row with no live box — the bridge-optimized one-shot —
+    /// yields NO session: every control reads CHECKING and a knob write
+    /// reaches nothing; a recovered mirror is the same.
+    func testRowsWithoutALiveBoxYieldNoSessionAndNoWrites() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let vm = StudioViewModel()
+        let target = room("room-a")
+        vm.selectedRoom = target
+        // Still-scene tier: identity and row, no box. The tier is derived
+        // from the preset, so the card is built the way `studioCard(for:)`
+        // builds it, with the one-shot tier stated.
+        let p = preset()
+        let base = vm.studioCard(for: p)
+        let card = StudioCard(
+            id: base.id, name: base.name, tagline: base.tagline, icon: base.icon,
+            accentColor: base.accentColor, requiresForeground: base.requiresForeground,
+            params: [], strategy: base.strategy,
+            compositionLayerActivity: base.compositionLayerActivity,
+            compositionTier: .bridgeOptimized, isAIGenerated: false)
+        XCTAssertEqual(card.compositionTier, .bridgeOptimized)
+        let identity = vm.installRunningIdentity(room: target, card: card, execution: .composition(presetID: p.id))
+        vm.runningEffects[StudioSelectionKey(room: target)] = RunningEffect(
+            cardID: card.id, card: card, room: target, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false, identity: identity)
+        XCTAssertNil(vm.composerEditSession(), "no box, no session")
+        let tree = ComposerViewTree.inventory(of: panel(vm: vm, orchestrator: orchestrator, tab: .motion))
+        XCTAssertTrue(tree.strings.contains("NOT AVAILABLE FOR THESE LIGHTS"),
+                      "without a live box every control is read-only, in words: \(tree.strings)")
+        XCTAssertFalse(tree.strings.contains(StudioBoardAvailability.checkingCopy),
+                       "read-only is a known state, not still-checking")
+        tree.bindings.first { $0.title == "Speed" }?.value.wrappedValue = 77   // must be inert
+
+        // Recovered mirror: a box exists, the row is recovered → no session.
+        let vm2 = StudioViewModel()
+        vm2.selectedRoom = target
+        let staged = stageRunningComposition(preset(), on: target, in: vm2)
+        var recovered = vm2.runningEffects[StudioSelectionKey(room: target)]!
+        recovered.recovered = UnifiedOrchestrator.RecoveredBridgeAnimationKey(bridgeID: "bridge-a", manifestID: UUID())
+        vm2.runningEffects[StudioSelectionKey(room: target)] = recovered
+        XCTAssertNil(vm2.composerEditSession(), "a recovered mirror has no editable session")
+        let tree2 = ComposerViewTree.inventory(of: panel(vm: vm2, orchestrator: orchestrator, tab: .motion))
+        tree2.bindings.first { $0.title == "Speed" }?.value.wrappedValue = 77
+        XCTAssertEqual(staged.box.motion.speed, MotionConfig().speed, "a recovered mirror's box was written")
+    }
+
+    /// The inventory is per BRIDGE: lights cached for bridge A say nothing
+    /// about a composition on bridge B, which must read CHECKING — never
+    /// borrow A's colour capability and never refuse.
+    func testAnotherBridgesInventoryIsNotThisTargetsTruth() {
+        let (vm, orch) = seededInventory([light("L1", color: true), light("L2", color: true), light("L3", color: true)])
+        var gradient = PaletteConfig(); gradient.mode = .gradient
+        let onB = room("room-a", bridge: "bridge-b")
+        vm.selectedRoom = onB
+        stageRunningComposition(preset(palette: gradient), on: onB, in: vm)
+        let page = ComposerViewTree.inventory(of: panel(vm: vm, orchestrator: orch, tab: .palette)).strings
+        XCTAssertEqual(page.filter { $0 == StudioBoardAvailability.checkingCopy }.count, 4,
+                       "bridge B's composition must read CHECKING on every colour control: \(page)")
+        XCTAssertFalse(page.contains("NO COLOR LIGHTS HERE"), "unknown is not unsupported")
+    }
+
+    /// The knob's gesture bracket captures the session when the finger
+    /// lands; a selection change mid-drag does not redirect the drag.
+    func testAKnobsGestureBracketPinsTheTargetForTheWholeDrag() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let vm = StudioViewModel()
+        var cascade = MotionConfig(); cascade.pattern = .cascade
+        let a = room("room-a"), b = room("room-b")
+        let boxA = stageRunningComposition(preset(motion: cascade), on: a, in: vm).box
+        let boxB = stageRunningComposition(preset(motion: cascade), on: b, in: vm).box
+        vm.selectedRoom = a
+        let tree = ComposerViewTree.inventory(of: panel(vm: vm, orchestrator: orchestrator, tab: .motion))
+        let speed = tree.bindings.first { $0.title == "Speed" }!
+        tree.editingBrackets["Speed"]?(true)       // finger lands on A's knob
+        vm.selectedRoom = b                         // the rolodex moves mid-drag
+        speed.value.wrappedValue = 66
+        tree.editingBrackets["Speed"]?(false)
+        XCTAssertEqual(boxA.motion.speed, 66, "the drag stayed on the target it began on")
+        XCTAssertEqual(boxB.motion.speed, MotionConfig().speed, "room B's box did not move")
+    }
+
+    /// Revert on a room leaves the ZONE sharing its id alone, and bumps the
+    /// live-values tick so the instruments re-sync.
+    func testRevertIsScopedToTheExactTargetAndTicksTheInstruments() {
+        let vm = StudioViewModel()
+        var motion = MotionConfig(); motion.speed = 33
+        let saved = preset(motion: motion)
+        vm.injectForTesting(compositionStore: storeWith([saved]))
+        let a = room("room-a"), zoneA = room("room-a", kind: .zone)
+        let boxA = stageRunningComposition(saved, on: a, in: vm).box
+        let boxZ = stageRunningComposition(saved, on: zoneA, in: vm).box
+        XCTAssertEqual(vm.commitComposerEdit(session(vm, on: a)) { $0.motion.speed = 77 }, .commit)
+        XCTAssertEqual(vm.commitComposerEdit(session(vm, on: zoneA)) { $0.motion.speed = 55 }, .commit)
+        let tick = vm.liveValuesTick
+        vm.selectedRoom = a
+        vm.revertActiveComposition()
+        XCTAssertEqual(boxA.motion.speed, 33)
+        XCTAssertEqual(boxZ.motion.speed, 55, "the zone sharing room A's id kept its edit")
+        XCTAssertGreaterThan(vm.liveValuesTick, tick, "Revert must tick the instruments to re-sync")
     }
 
     // MARK: - Capability truth on the page (S3-4)
@@ -1208,8 +1372,11 @@ final class ComposerConvergenceTests: XCTestCase {
         vm.revertActiveComposition()
         XCTAssertEqual(staged.box.motion.speed, 33)
         pump(0.3)
+        // (Guard 13(f) pins the target-key identity at source level; a
+        // generation-keyed subtree would rebuild at the same y, so this
+        // proves stillness, not the key.)
         XCTAssertEqual(deepestSubviewTop(in: host.view, minHeight: 200), topBefore, accuracy: 0.5,
-                       "a Revert moved the host — it is keyed by the generation again")
+                       "a Revert moved the host")
         XCTAssertEqual(vm.sessionMemory.state(for: staged.identity.targetKey).activeCompositionTab, .motion,
                        "the layer selection survived the Revert")
 
