@@ -147,7 +147,6 @@ struct StudioView: View {
 
     // ── Harmony Engine ────────────────────────────────────────
     @State private var activeHarmonyRule: HarmonyRule = .none
-    @State private var editingSwatch: SwatchEditItem? = nil
     /// Which region is showing below the rolodex. Exactly the bit the old
     /// `isMixerCollapsed` carried (`.decks` == collapsed), under an honest name.
     /// C4 renames it and nothing else — the tray is still a bottom-anchored
@@ -656,7 +655,6 @@ struct StudioView: View {
                 vm: vm,
                 performVM: $performVM,
                 activeHarmonyRule: $activeHarmonyRule,
-                editingSwatch: $editingSwatch,
                 onBackToDecks: {
                     hideKeyboard()
                     collapseMixer()

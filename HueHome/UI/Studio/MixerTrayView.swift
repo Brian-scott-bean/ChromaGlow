@@ -41,7 +41,6 @@ struct StudioCustomizationHost: View {
     let vm: StudioViewModel
     @Binding var performVM: PerformanceViewModel?
     @Binding var activeHarmonyRule: HarmonyRule
-    @Binding var editingSwatch: SwatchEditItem?
     /// Return to the card decks. Owned by StudioView (it also owns the
     /// "Live Controls" pill that comes back here).
     let onBackToDecks: () -> Void
@@ -477,7 +476,6 @@ struct StudioCustomizationHost: View {
                         activeCompositionTab: vm.sessionMemory.binding(
                             for: effect.identity.targetKey, \.activeCompositionTab),
                         activeHarmonyRule: $activeHarmonyRule,
-                        editingSwatch: $editingSwatch,
                         onDismissKeyboard: hideMixerKeyboard
                     )
                     .padding(.horizontal, HueSpacing.screenH)

@@ -282,6 +282,7 @@
 		C0DEC0DE0137000000000001 /* SequencePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0137000000000000 /* SequencePlayer.swift */; };
 		C0DEC0DE0138000000000001 /* CompositionEditorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0138000000000000 /* CompositionEditorPanel.swift */; };
 		91ADEEE4A5C7491CB8325C61 /* ComposerInstrumentControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96B54B75FEA046CDBAC4C76B /* ComposerInstrumentControls.swift */; };
+		1F1A279730A94E388300B3C0 /* ComposerColorSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FA3B26B221A448BAF662456 /* ComposerColorSection.swift */; };
 		C0DEC0DE0139000000000001 /* MixerTrayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE0139000000000000 /* MixerTrayView.swift */; };
 		C0DEC0DE013A000000000001 /* StageKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DE013A000000000000 /* StageKit.swift */; };
 		A1D00037D0D00037D0D00037 /* StageBeatSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00038D0D00038D0D00038 /* StageBeatSection.swift */; };
@@ -703,6 +704,7 @@
 		C0DEC0DE0137000000000000 /* SequencePlayer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SequencePlayer.swift; path = HueHome/Core/Composer/SequencePlayer.swift; sourceTree = "<group>"; };
 		C0DEC0DE0138000000000000 /* CompositionEditorPanel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionEditorPanel.swift; path = HueHome/UI/Composer/CompositionEditorPanel.swift; sourceTree = "<group>"; };
 		96B54B75FEA046CDBAC4C76B /* ComposerInstrumentControls.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ComposerInstrumentControls.swift; path = HueHome/UI/Composer/ComposerInstrumentControls.swift; sourceTree = "<group>"; };
+		7FA3B26B221A448BAF662456 /* ComposerColorSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ComposerColorSection.swift; path = HueHome/UI/Composer/ComposerColorSection.swift; sourceTree = "<group>"; };
 		C0DEC0DE0139000000000000 /* MixerTrayView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MixerTrayView.swift; path = HueHome/UI/Studio/MixerTrayView.swift; sourceTree = "<group>"; };
 		C0DEC0DE013A000000000000 /* StageKit.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StageKit.swift; path = HueHome/UI/Components/StageKit.swift; sourceTree = "<group>"; };
 		A1D00038D0D00038D0D00038 /* StageBeatSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "StageBeatSection.swift"; path = "./HueHome/UI/Components/StageBeatSection.swift"; sourceTree = "<group>"; };
@@ -1329,6 +1331,7 @@
 			children = (
 				C0DEC0DE0138000000000000 /* CompositionEditorPanel.swift */,
 				96B54B75FEA046CDBAC4C76B /* ComposerInstrumentControls.swift */,
+				7FA3B26B221A448BAF662456 /* ComposerColorSection.swift */,
 				EFC0CA6833BC4EC5140FFD63 /* ComposerLayerSheet.swift */,
 			);
 			name = Composer;
@@ -1990,6 +1993,7 @@
 				C0DEC0DE0137000000000001 /* SequencePlayer.swift in Sources */,
 				C0DEC0DE0138000000000001 /* CompositionEditorPanel.swift in Sources */,
 				91ADEEE4A5C7491CB8325C61 /* ComposerInstrumentControls.swift in Sources */,
+				1F1A279730A94E388300B3C0 /* ComposerColorSection.swift in Sources */,
 				C0DEC0DE0139000000000001 /* MixerTrayView.swift in Sources */,
 				C0DEC0DE013A000000000001 /* StageKit.swift in Sources */,
 				A1D00037D0D00037D0D00037 /* StageBeatSection.swift in Sources */,

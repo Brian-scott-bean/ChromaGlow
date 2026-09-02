@@ -1212,11 +1212,16 @@ R36_COMPOSER_SUPPORT="HueHome/UI/Composer/ComposerLayerSheet.swift"
 # …and the Composer's instrument wrappers (S3-2), which render inside the
 # same cards.
 R36_COMPOSER_INSTRUMENTS="HueHome/UI/Composer/ComposerInstrumentControls.swift"
+# …and the Composer's inline colour section (S3-3), which owns the one
+# legitimate `isExpanded` (caller-bound, the editor's own) the same way the
+# board does — so it is on (a) and deliberately NOT on (b).
+R36_COMPOSER_COLOR="HueHome/UI/Composer/ComposerColorSection.swift"
 R36_SURFACES=(
     "$R36_HOST"
     "$R36_PANEL"
     "$R36_COMPOSER_SUPPORT"
     "$R36_COMPOSER_INSTRUMENTS"
+    "$R36_COMPOSER_COLOR"
     "HueHome/UI/Studio/StudioBoardView.swift"
     "HueHome/UI/Studio/StudioLookBrowserView.swift"
     "HueHome/UI/Components/StageInstrumentControls.swift"
@@ -1240,15 +1245,10 @@ for f in "${R36_SURFACES[@]}"; do
     # made the rule a naming convention rather than a rule.
     r36_present=$(grep -nE '\.sheet\(|\.fullScreenCover\(|\.popover\(|StudioParamSheet\(|ComposerLayerSheet\(|StageMoreButton\(' "$f" 2>/dev/null \
         | grep -vE '^[0-9]+:[[:space:]]*//' || true)
-    # ACCEPTED DEBT, anchored so it cannot widen. The Composer panel's harmony
-    # swatch editor has shipped as a `.popover(item: $editingSwatch)` since
-    # before this rule existed, and rewriting it in place is a Track-B change,
-    # not a guard change. Exactly that one binding is exempt, in exactly that
-    # one file: any OTHER popover — a different binding, an `isPresented:`
-    # form, the same call moved to another surface — still fails.
-    if [[ "$f" == "$R36_PANEL" ]]; then
-        r36_present=$(echo "$r36_present" | grep -vF '.popover(item: $editingSwatch)' || true)
-    fi
+    # The Composer panel's `.popover(item: $editingSwatch)` carve-out is
+    # GONE (Slice 3, S3-3): per-swatch colour editing expands the shared
+    # StageColorEditor inline (`ComposerColorSection.swift`). No popover is
+    # exempt anywhere on this path any more.
     # PERMITTED, anchored so it cannot widen: the Entertainment-area BUILDER
     # (`EntertainmentConfigBuilderView`) is a multi-step creation workflow that
     # POSTs a new bridge resource — a genuine destination, not a place where a
@@ -1352,6 +1352,22 @@ echo "$r36_host_id" | grep -qF 'identity.targetKey.stableID' \
     || fail "studio-one-surface" $'the customization host no longer keys its identity on the running target key (identity.targetKey.stableID) — the same look on two targets would share one view identity again:\n'"$r36_host_id"
 r36_card_id=$(echo "$r36_host_id" | grep -E 'currentRoomEffect\?\.cardID|\.id\(vm\.currentRoomEffect\?\.cardID' || true)
 [[ -z "$r36_card_id" ]] || fail "studio-one-surface" $'the host keys on the bare cardID again:\n'"$r36_card_id"
+
+# (h) Slice 3 (S3-3): Composer colour is INLINE. The popover carve-out above
+# is gone, so (a) already refuses any `.popover(` on the panel; these pin the
+# replacement so the popover cannot come back under another spelling.
+r36_swatch=$(grep -nE 'editingSwatch|SwatchEditItem|ColorWheelView\(' "$R36_PANEL" "$R36_HOST" "$R36_COMPOSER_COLOR" 2>/dev/null \
+    | grep -vE '^[^:]*:[0-9]+:[[:space:]]*//' || true)
+[[ -z "$r36_swatch" ]] || fail "studio-one-surface" $'the detached swatch editor is back on the Composer path:\n'"$r36_swatch"
+r36_color_src=$(grep -vE '^[[:space:]]*//' "$R36_COMPOSER_COLOR")
+echo "$r36_color_src" | grep -qF 'StageColorEditor(' \
+    || fail "studio-one-surface" "$R36_COMPOSER_COLOR no longer renders the shared StageColorEditor — Composer colour has its own editor again"
+echo "$r36_color_src" | grep -qF 'expandedColorControlID' \
+    || fail "studio-one-surface" "$R36_COMPOSER_COLOR no longer keeps its expansion in session memory (expandedColorControlID)"
+echo "$r36_color_src" | grep -qF 'vm.commitComposerEdit(session)' \
+    || fail "studio-one-surface" "$R36_COMPOSER_COLOR no longer writes the palette through the edit session"
+grep -vE '^[[:space:]]*//' "$R36_PANEL" | grep -qF 'ComposerHarmonySwatches(' \
+    || fail "studio-one-surface" "$R36_PANEL no longer renders ComposerHarmonySwatches — the swatch editor has no inline surface"
 
 # (g) Slice 3 (S3-2): the Composer speaks the shared instrument vocabulary.
 # No gen-1 `StageSlider` and no raw `Toggle(` in any Composer file — every

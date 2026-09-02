@@ -60,6 +60,7 @@ private enum ComposerViewTree {
             || typeName.hasPrefix("ComposerChoiceControl<")
             || typeName.hasPrefix("ComposerToggleControl")
             || typeName.hasPrefix("ComposerTargetPads")
+            || typeName.hasPrefix("ComposerHarmonySwatches")
             || typeName.hasPrefix("StageCard<")
     }
 
@@ -185,8 +186,7 @@ final class ComposerConvergenceTests: XCTestCase {
             vm: vm,
             orchestrator: orchestrator,
             activeCompositionTab: .constant(tab),
-            activeHarmonyRule: .constant(HarmonyRule.none),
-            editingSwatch: .constant(nil))
+            activeHarmonyRule: .constant(HarmonyRule.none))
     }
 
     private func inventory(of preset: CompositionPreset, tab: CompositionLayerTab,
@@ -390,6 +390,10 @@ final class ComposerConvergenceTests: XCTestCase {
                 "\(tab): a StageSheetScaffold is in the Composer tree — that is a detached customization sheet")
             XCTAssertFalse(tree.types.contains { $0.hasPrefix("ComposerLayerSheet") },
                 "\(tab): the retired ComposerLayerSheet is back")
+            XCTAssertFalse(tree.types.contains { $0.localizedCaseInsensitiveContains("popover") },
+                "\(tab): a popover modifier is in the Composer tree — colour editing is inline")
+            XCTAssertFalse(tree.types.contains { $0.hasPrefix("ColorWheelView") },
+                "\(tab): the detached colour wheel is back")
 
             let vm = StudioViewModel()
             let target = room("room-a")
@@ -404,6 +408,107 @@ final class ComposerConvergenceTests: XCTestCase {
             XCTAssertNil(host.presentedViewController,
                 "\(tab): a presentation landed after the host settled")
         }
+    }
+
+    // MARK: - Inline colour (S3-3)
+
+    /// With a harmony rule active the swatch row renders and tapping a slot
+    /// expands the SHARED StageColorEditor inline — in the evaluated tree,
+    /// under the swatches, with no popover and no wheel.
+    func testHarmonySwatchExpandsTheSharedEditorInline() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let (vm, orch) = seededInventory([light("L1", color: true), light("L2", color: true)])
+        _ = orchestrator
+        var gradient = PaletteConfig(); gradient.mode = .gradient
+        let target = room("room-a")
+        vm.selectedRoom = target
+        let staged = stageRunningComposition(preset(palette: gradient), on: target, in: vm)
+        let harmonyPanel = CompositionEditorPanel(
+            vm: vm, orchestrator: orch,
+            activeCompositionTab: .constant(.palette),
+            activeHarmonyRule: .constant(.triadic))
+
+        let collapsed = ComposerViewTree.inventory(of: harmonyPanel)
+        XCTAssertTrue(collapsed.types.contains { $0.hasPrefix("ComposerHarmonySwatches") })
+        XCTAssertFalse(collapsed.types.contains { $0.hasPrefix("StageColorEditor") },
+            "nothing is expanded yet")
+
+        // Tap slot 2: expansion lands in THIS target's session memory.
+        vm.sessionMemory.update(staged.identity.targetKey) {
+            $0.expandedColorControlID = ComposerHarmonySwatches.controlID(cardID: staged.card.id, slot: 1)
+        }
+        let expanded = ComposerViewTree.inventory(of: harmonyPanel)
+        XCTAssertTrue(expanded.types.contains { $0.hasPrefix("StageColorEditor") },
+            "the shared inline editor is on the page for the open slot")
+        XCTAssertTrue(expanded.strings.contains("Color 2"))
+        XCTAssertFalse(expanded.types.contains { $0.localizedCaseInsensitiveContains("popover") })
+        XCTAssertFalse(expanded.types.contains { $0.hasPrefix("ColorWheelView") })
+    }
+
+    /// A per-swatch edit writes ONE slot of the palette — the popover's write,
+    /// unchanged — through the edit session, gamut-clamped, leaving the other
+    /// slots and every other target alone.
+    func testSwatchEditWritesOnlyItsSlotThroughTheSession() {
+        let vm = StudioViewModel()
+        let a = room("room-a"), b = room("room-b")
+        let boxA = stageRunningComposition(preset(), on: a, in: vm).box
+        let boxB = stageRunningComposition(preset(), on: b, in: vm).box
+        let before = (boxA.palette.color1, boxA.palette.color3)
+        let beforeB = boxB.palette.color2
+        let s = session(vm, on: a)
+        XCTAssertEqual(ComposerHarmonySwatches.commit(slot: 1, hue: 0.5, saturation: 1.0,
+                                                      gamut: .c, session: s, vm: vm), .commit)
+        let expected = ComposerHarmonySwatches.slotColor(hue: 0.5, saturation: 1.0, gamut: .c)
+        XCTAssertEqual(boxA.palette.color2.x, expected.x, accuracy: 1e-9)
+        XCTAssertEqual(boxA.palette.color2.y, expected.y, accuracy: 1e-9)
+        XCTAssertEqual(boxA.palette.color1.x, before.0.x, "slot 1 untouched")
+        XCTAssertEqual(boxA.palette.color3?.x, before.1?.x, "slot 3 untouched")
+        XCTAssertEqual(boxB.palette.color2.x, beforeB.x, "room B's palette did not move")
+        XCTAssertEqual(boxB.palette.color2.y, beforeB.y)
+        // Fenced like every other write.
+        vm.stopRunningScopes(forRowAt: StudioSelectionKey(room: a))
+        XCTAssertEqual(ComposerHarmonySwatches.commit(slot: 0, hue: 0.1, saturation: 1.0,
+                                                      gamut: .c, session: s, vm: vm), .drop(.nothingRunning))
+    }
+
+    /// The editor hands back a SwiftUI `Color`; the slot receives an xy. The
+    /// round trip hue → Color → HSB → xy lands within a hair of the direct
+    /// hue → xy conversion the popover made.
+    func testInlineColourRoundTripIsLossless() {
+        for hue in stride(from: 0.0, through: 0.95, by: 0.05) {
+            for sat in [0.35, 0.7, 1.0] {
+                let direct = ComposerHarmonySwatches.slotColor(hue: hue, saturation: sat, gamut: .c)
+                let ui = UIColor(Color(hue: hue, saturation: sat, brightness: 1.0))
+                var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0
+                ui.getHue(&h, saturation: &s, brightness: &b, alpha: nil)
+                let viaEditor = ComposerHarmonySwatches.slotColor(hue: Double(h), saturation: Double(s), gamut: .c)
+                XCTAssertEqual(viaEditor.x, direct.x, accuracy: 1e-3, "hue \(hue) sat \(sat)")
+                XCTAssertEqual(viaEditor.y, direct.y, accuracy: 1e-3, "hue \(hue) sat \(sat)")
+            }
+        }
+    }
+
+    /// Expansion is per target: opening slot 1 on room A leaves room B (and
+    /// the zone sharing A's id) collapsed, and a stopped target's expansion
+    /// dies with its memory.
+    func testColorExpansionIsPerTarget() {
+        let vm = StudioViewModel()
+        let p = preset()
+        let a = room("room-a"), b = room("room-b"), zoneA = room("room-a", kind: .zone)
+        let sa = stageRunningComposition(p, on: a, in: vm)
+        let sb = stageRunningComposition(p, on: b, in: vm)
+        let sz = stageRunningComposition(p, on: zoneA, in: vm)
+        let slot1 = ComposerHarmonySwatches.controlID(cardID: sa.card.id, slot: 0)
+        vm.sessionMemory.update(sa.identity.targetKey) { $0.expandedColorControlID = slot1 }
+        XCTAssertEqual(vm.sessionMemory.state(for: sa.identity.targetKey).expandedColorControlID, slot1)
+        XCTAssertNil(vm.sessionMemory.state(for: sb.identity.targetKey).expandedColorControlID, "room B stays collapsed")
+        XCTAssertNil(vm.sessionMemory.state(for: sz.identity.targetKey).expandedColorControlID, "the zone stays collapsed")
+        // One slot at a time.
+        let slot3 = ComposerHarmonySwatches.controlID(cardID: sa.card.id, slot: 2)
+        vm.sessionMemory.update(sa.identity.targetKey) { $0.expandedColorControlID = slot3 }
+        XCTAssertEqual(vm.sessionMemory.state(for: sa.identity.targetKey).expandedColorControlID, slot3)
+        vm.sessionMemory.clear(for: sa.identity.targetKey)
+        XCTAssertNil(vm.sessionMemory.state(for: sa.identity.targetKey).expandedColorControlID)
     }
 
     // MARK: - The layer tab is per-target session memory
@@ -902,7 +1007,6 @@ final class ComposerConvergenceTests: XCTestCase {
                 vm: vm,
                 performVM: .constant(nil),
                 activeHarmonyRule: .constant(HarmonyRule.none),
-                editingSwatch: .constant(nil),
                 onBackToDecks: {},
                 onSaveComposition: { _ in },
                 onTransportSwitch: { _, _ in }

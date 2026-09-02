@@ -16,9 +16,12 @@
 //     (`TargetWorkingState.activeCompositionTab`, spec §14.4 / plan §24): two
 //     rooms running compositions no longer share one tab, and a stopped
 //     target's tab dies with it. The host hands the binding in.
-//   - StudioView keeps @State for activeHarmonyRule / editingSwatch because the
-//     harmony-restore onChange chain runs at StudioView scope even while the
+//   - StudioView keeps @State for activeHarmonyRule because the harmony-
+//     restore onChange chain runs at StudioView scope even while the
 //     customization region is closed.
+//   - Per-swatch colour editing is INLINE (`ComposerHarmonySwatches`, S3-3):
+//     the shared StageColorEditor expands in place under the swatch row, its
+//     expansion in per-target session memory — no popover, no Done.
 //
 // One surface (Guard 13): each layer is ONE StageCard holding its essential
 // controls and, directly below them in the same column, its supporting tier
@@ -63,8 +66,6 @@ enum CompositionLayerTab: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-struct SwatchEditItem: Identifiable { let id: Int }
-
 // MARK: - CompositionEditorPanel
 
 struct CompositionEditorPanel: View {
@@ -78,7 +79,6 @@ struct CompositionEditorPanel: View {
     let orchestrator: UnifiedOrchestrator
     @Binding var activeCompositionTab: CompositionLayerTab
     @Binding var activeHarmonyRule: HarmonyRule
-    @Binding var editingSwatch: SwatchEditItem?
     /// Resign the keyboard BEFORE a programmatic layer change, so a typed
     /// exact-entry draft commits (or drops) deterministically instead of
     /// dying inside the torn-down subtree. Owned by the host.
@@ -317,10 +317,8 @@ struct CompositionEditorPanel: View {
                     prominence: .chips)
 
                 if activeHarmonyRule != .none {
-                    harmonySwatchPreview(availability, interactive: interactive)
-                        .popover(item: $editingSwatch) { item in
-                            swatchEditPopover(availability, index: item.id, interactive: interactive)
-                        }
+                    ComposerHarmonySwatches(vm: vm, availability: availability,
+                                            isInteractive: interactive)
 
                     // Hint for static motion
                     if availability.session?.box.motion.pattern == .static {
@@ -332,131 +330,6 @@ struct CompositionEditorPanel: View {
                 }
             }
             }
-        }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Harmony Preview Swatches
-    // ──────────────────────────────────────────────
-
-    private func harmonySwatchPreview(_ availability: ComposerAvailabilityContext,
-                                      interactive: Bool) -> some View {
-        // Spacing 0: each swatch sits centered in its own 44pt hit frame, so
-        // the hit boxes tile edge-to-edge without overlapping.
-        HStack(spacing: 0) {
-            ForEach(0..<3, id: \.self) { index in
-                let color = harmonySwatchColor(availability, at: index)
-                let isEditing = editingSwatch?.id == index
-                Circle()
-                    .fill(color)
-                    .frame(width: 28, height: 28)
-                    .overlay(Circle().strokeBorder(.white.opacity(isEditing ? 0.9 : 0.5), lineWidth: isEditing ? 2.5 : 1.5))
-                    .shadow(color: color.opacity(isEditing ? 0.7 : 0.4), radius: isEditing ? 8 : 4)
-                    .frame(width: HueHit.min, height: HueHit.min)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        // A tap gesture is not a Control: `.disabled` does not
-                        // close it, so the funnel's verdict is applied here.
-                        guard interactive else { return }
-                        editingSwatch = (editingSwatch?.id == index) ? nil : SwatchEditItem(id: index)
-                        HapticManager.shared.selection()
-                    }
-                    .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.7), value: isEditing)
-            }
-            Spacer()
-            Text("Tap to fine-tune")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.30))
-        }
-    }
-
-    private func harmonySwatchColor(_ availability: ComposerAvailabilityContext, at index: Int) -> Color {
-        guard let box = availability.session?.box else { return .gray }
-        let c: CodableColor
-        switch index {
-        case 0: c = box.palette.color1
-        case 1: c = box.palette.color2
-        case 2: c = box.palette.color3 ?? box.palette.color2
-        default: c = box.palette.color1
-        }
-        return HueColorUtils.color(fromX: c.x, y: c.y, brightness: 100)
-    }
-
-    private func swatchEditPopover(_ availability: ComposerAvailabilityContext,
-                                   index: Int, interactive: Bool) -> some View {
-        VStack(spacing: 12) {
-            Text("Color \(index + 1)")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-            ColorWheelView(
-                hue: composerGuarded(interactive, swatchHueBinding(availability, index)),
-                saturation: composerGuarded(interactive, swatchSatBinding(availability, index))
-            ) { h, s in
-                guard interactive else { return }
-                commitSwatchEdit(availability, index: index, hue: h, saturation: s)
-            }
-            .frame(width: 180, height: 180)
-        }
-        .padding(16)
-        .background(Color(red: 0.10, green: 0.10, blue: 0.13))
-        .preferredColorScheme(.dark)
-        .presentationCompactAdaptation(.popover)
-    }
-
-    private func swatchHueBinding(_ availability: ComposerAvailabilityContext, _ index: Int) -> Binding<Double> {
-        Binding(
-            get: {
-                guard let box = availability.session?.box else { return 0 }
-                let c: CodableColor
-                switch index {
-                case 0: c = box.palette.color1
-                case 1: c = box.palette.color2
-                case 2: c = box.palette.color3 ?? box.palette.color2
-                default: c = box.palette.color1
-                }
-                return HueColorUtils.hsb(fromX: c.x, y: c.y, brightness: 100).h
-            },
-            set: { newHue in
-                let sat = swatchSatBinding(availability, index).wrappedValue
-                commitSwatchEdit(availability, index: index, hue: newHue, saturation: sat)
-            }
-        )
-    }
-
-    private func swatchSatBinding(_ availability: ComposerAvailabilityContext, _ index: Int) -> Binding<Double> {
-        Binding(
-            get: {
-                guard let box = availability.session?.box else { return 1 }
-                let c: CodableColor
-                switch index {
-                case 0: c = box.palette.color1
-                case 1: c = box.palette.color2
-                case 2: c = box.palette.color3 ?? box.palette.color2
-                default: c = box.palette.color1
-                }
-                return HueColorUtils.hsb(fromX: c.x, y: c.y, brightness: 100).s
-            },
-            set: { newSat in
-                let hue = swatchHueBinding(availability, index).wrappedValue
-                commitSwatchEdit(availability, index: index, hue: hue, saturation: newSat)
-            }
-        )
-    }
-
-    private func commitSwatchEdit(_ availability: ComposerAvailabilityContext,
-                                  index: Int, hue: Double, saturation: Double) {
-        guard let session = availability.session else { return }
-        let xy = HueColorUtils.xyFrom(hue: hue, saturation: saturation, brightness: 1.0)
-        let clamped = HueColorUtils.clampXYToGamut(x: xy.x, y: xy.y, gamut: vm.activeCompositionGamut)
-        let color = CodableColor(x: clamped.x, y: clamped.y)
-        vm.commitComposerEdit(session) { box in
-            switch index {
-            case 0: box.palette.color1 = color
-            case 1: box.palette.color2 = color
-            case 2: box.palette.color3 = color
-            default: break
-            }
-            box.triggerRESTBurst()
         }
     }
 
