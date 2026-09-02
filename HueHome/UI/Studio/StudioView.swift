@@ -959,7 +959,14 @@ struct StudioView: View {
                 .opacity(0.5)
                 .allowsHitTesting(false)
 
+            // Slice 3 reassessment after the idle-card quieting (1533d04): with
+            // every idle Composer card now static, this 20 fps full-saturation
+            // sweep was the one continuous motion left on the deck and read
+            // louder than any Effects/Live card's static border. Damped here
+            // only — the AI composer panel's sweep marks an active generation
+            // and keeps its full strength.
             AIHeroBorderSweep(paused: !visible || !isTabActive || reduceMotion)
+                .opacity(0.55)
 
             HStack(spacing: HueSpacing.md) {
                 Button {
