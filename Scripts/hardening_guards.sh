@@ -1064,7 +1064,9 @@ for body_name in hc_apply_stop hc_apply_save; do
     body=${!body_name}
     fence_line=$(echo "$body" | grep -n 'presentationFenceHolds(' | head -1 | cut -d: -f1)
     row_line=$(echo "$body" | grep -n 'runningEffects\.removeValue' | head -1 | cut -d: -f1)
-    box_line=$(echo "$body" | grep -n 'activeCompositionBoxes\.removeValue' | head -1 | cut -d: -f1)
+    # The box removal is the eviction funnel since Slice 3 (`evictCompositionState(at:)`
+    # forgets the box AND its gamut in one place); the rule — fence FIRST — is unchanged.
+    box_line=$(echo "$body" | grep -nE 'activeCompositionBoxes\.removeValue|evictCompositionState\(at:' | head -1 | cut -d: -f1)
     if [[ -z "$fence_line" || -z "$row_line" || -z "$box_line" ]] \
         || [[ "$fence_line" -ge "$row_line" ]] || [[ "$fence_line" -ge "$box_line" ]]; then
         fail "composer-hardware-convergence" "$body_name mutates a running row or composition box without first revalidating the presentation fence — a look that started after the outcome returned would be erased"
@@ -1376,6 +1378,19 @@ grep -vE '^[[:space:]]*//' "$R36_PANEL" | grep -qF 'ComposerHarmonySwatches(' \
 # `StageToggleRow`, every discrete choice a `StageSteppedEncoder`. And no
 # Composer write re-resolves the box: `activeCompositionBox?.<field> = …`
 # (S3-5) is exactly the pattern the edit session replaced.
+# The re-resolution ban covers every Composer WRITER, not only the Composer
+# files (review round, A-1 / C-2): the host's Perform/auto-anchor, StudioView's
+# save sheet and the Now Playing bar's album-colours path all address the
+# running composition through the edit session now.
+for f in "$R36_HOST" "HueHome/UI/Studio/StudioView.swift" "HueHome/UI/Music/NowPlayingBar.swift"; do
+    r36_direct=$(grep -nE 'activeCompositionBox' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    [[ -z "$r36_direct" ]] || fail "studio-one-surface" $''"$f"$' reaches for activeCompositionBox — the box re-resolved from the selection — instead of the edit session:\n'"$r36_direct"
+done
+grep -vE '^[[:space:]]*//' HueHome/UI/Studio/StudioView.swift | grep -qF 'pendingComposerSaveSession = vm.composerEditSession()' \
+    || fail "studio-one-surface" "StudioView's save sheet no longer captures the edit session when it opens — a room switch while the sheet is up would save the other room's box"
+grep -vE '^[[:space:]]*//' HueHome/UI/Studio/StudioViewModel.swift | grep -qE 'restoredHarmonyRule|harmonyEchoSuppressed' \
+    && fail "studio-one-surface" "the global harmony restore slot is back — a StudioView-scoped chip fed by a global slot let one room's saved rule rewrite another room's palette" || true
 for f in "$R36_PANEL" "$R36_COMPOSER_SUPPORT" "$R36_COMPOSER_INSTRUMENTS"; do
     r36_gen1=$(grep -nE 'StageSlider\(|[^A-Za-z]Toggle\(' "$f" 2>/dev/null \
         | grep -vE '^[0-9]+:[[:space:]]*//' || true)

@@ -25,6 +25,14 @@ struct TargetWorkingState: Equatable {
     /// Per target, so two rooms running compositions keep their own layer;
     /// a stopped target's selection dies with its memory.
     var activeCompositionTab: CompositionLayerTab = .palette
+    /// The harmony rule the Composer's chip row shows for this target
+    /// (review round, A-1/A-2). Per target: seeded from the running preset's
+    /// saved rule at apply and at Revert, changed only by the user's chip tap
+    /// through `StudioViewModel.setHarmonyRule` (which rewrites the palette
+    /// through the edit fence) — so room A's lit chip can never feed room B's
+    /// pad, and a programmatic clear (album colours) never fires the
+    /// destructive palette echo.
+    var activeHarmonyRule: HarmonyRule = .none
 }
 
 @MainActor

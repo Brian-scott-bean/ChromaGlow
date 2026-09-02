@@ -246,7 +246,8 @@ struct CompositionEditorPanel: View {
                     if newMode != .solid && newMode != .gradient && activeHarmonyRule != .none {
                         activeHarmonyRule = .none
                     }
-                })
+                },
+                onDismissKeyboard: onDismissKeyboard)
 
             if (availability.session?.box.palette.mode ?? .gradient) == .temperature {
                 // Temperature mode ignores color1/saturation — the pad was a
@@ -452,7 +453,8 @@ struct CompositionEditorPanel: View {
                 prominence: .chips,
                 fallback: .cascade,
                 read: { $0.motion.pattern },
-                write: { $0.motion.pattern = $1 })
+                write: { $0.motion.pattern = $1 },
+                onDismissKeyboard: onDismissKeyboard)
 
             // .static ignores speed/forward/spread/offset/mirror entirely —
             // showing them would be dead controls (the engine returns a
@@ -510,7 +512,8 @@ struct CompositionEditorPanel: View {
                 prominence: .chips,
                 fallback: .breathe,
                 read: { $0.envelope.shape },
-                write: { $0.envelope.shape = $1 })
+                write: { $0.envelope.shape = $1 },
+                onDismissKeyboard: onDismissKeyboard)
 
             // .steady returns max brightness only — bpm/depth are no-ops.
             if (availability.session?.box.envelope.shape ?? .breathe) != .steady {
@@ -555,7 +558,8 @@ struct CompositionEditorPanel: View {
                 prominence: .chips,
                 fallback: .none,
                 read: { $0.reaction.source },
-                write: { $0.reaction.source = $1 })
+                write: { $0.reaction.source = $1 },
+                onDismissKeyboard: onDismissKeyboard)
 
             let source = availability.session?.box.reaction.source ?? .none
             if source != .none {

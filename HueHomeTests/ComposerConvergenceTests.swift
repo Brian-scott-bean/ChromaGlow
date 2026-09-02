@@ -911,12 +911,17 @@ final class ComposerConvergenceTests: XCTestCase {
         }, .commit)
 
         vm.selectedRoom = a
+        let sessionA = session(vm, on: a)
+        // The sheet captured the session when it OPENED; the rolodex moved
+        // to room B before Save was tapped (C-2).
+        vm.selectedRoom = b
         let saved = try XCTUnwrap(vm.saveActiveComposition(
+            session: sessionA,
             name: "   ", icon: "definitely.not.a.symbol", preferredTransport: nil, category: .all))
         XCTAssertEqual(saved.name, "My Composition", "an empty name gets the default")
         XCTAssertEqual(saved.icon, "sparkles", "an unknown symbol falls back")
         XCTAssertEqual(saved.category, .myCreations, "`.all` is a filter, never a preset's category")
-        XCTAssertEqual(saved.motion.speed, 88)
+        XCTAssertEqual(saved.motion.speed, 88, "room A's values — the session's box — not room B's")
         XCTAssertEqual(saved.envelope.shape, .pulse)
         XCTAssertEqual(saved.reaction.source, .beat)
         XCTAssertTrue(store.presets.contains { $0.id == saved.id }, "persisted")
@@ -924,6 +929,90 @@ final class ComposerConvergenceTests: XCTestCase {
         XCTAssertEqual(boxB.motion.speed, MotionConfig().speed, "…or another target's")
         XCTAssertTrue(vm.valueScopes.isCurrent(vm.runningEffect(for: a)!.identity),
                       "save does not restart or rekey the running look")
+    }
+
+    // MARK: - Harmony rule is per target and writes through the fence (A-1 / A-2 / A-3)
+
+    /// The chip is THIS target's memory: choosing a rule on room A rewrites
+    /// room A's palette through the fence and leaves room B's box AND chip
+    /// alone.
+    func testHarmonyRuleIsPerTargetAndRewritesOnlyItsOwnPalette() {
+        let vm = StudioViewModel()
+        let a = room("room-a"), b = room("room-b")
+        let sa = stageRunningComposition(preset(), on: a, in: vm)
+        let sb = stageRunningComposition(preset(), on: b, in: vm)
+        let bBefore = (color2: sb.box.palette.color2, rule: sb.box.palette.harmonyRule, mode: sb.box.palette.mode)
+
+        vm.selectedRoom = a
+        vm.setHarmonyRule(.triadic)
+        XCTAssertEqual(vm.harmonyRule(for: vm.runningEffect(for: a)!), .triadic)
+        XCTAssertEqual(sa.box.palette.harmonyRule, HarmonyRule.triadic.rawValue, "the document carries the rule")
+        XCTAssertEqual(sa.box.palette.mode, .gradient, "a rule forces gradient mode")
+        XCTAssertNotNil(sa.box.palette.color3, "color3 is derived under a three-colour rule")
+        XCTAssertEqual(vm.harmonyRule(for: vm.runningEffect(for: b)!), .none, "room B's chip did not light")
+        XCTAssertEqual(sb.box.palette.harmonyRule, bBefore.rule, "room B's document is untouched")
+        XCTAssertEqual(sb.box.palette.mode, bBefore.mode)
+        XCTAssertEqual(sb.box.palette.color2.x, bBefore.color2.x, "room B's palette is untouched")
+
+        // The user turns harmony off: the derived slots clear on A only.
+        vm.setHarmonyRule(.none)
+        XCTAssertNil(sa.box.palette.color3)
+        XCTAssertNil(sa.box.palette.harmonyRule)
+        XCTAssertEqual(vm.harmonyRule(for: vm.runningEffect(for: a)!), .none)
+        XCTAssertEqual(sb.box.palette.color2.x, bBefore.color2.x)
+    }
+
+    /// A saved rule seeds the chip for the target it is applied to — and
+    /// only that target — however the selection sits at apply time (the
+    /// transport-prompt shape that reached room B before this round).
+    func testASavedRuleSeedsOnlyTheTargetItWasAppliedTo() {
+        let vm = StudioViewModel()
+        var palette = PaletteConfig(); palette.harmonyRule = HarmonyRule.analogous.rawValue
+        let a = room("room-a"), b = room("room-b")
+        let sb = stageRunningComposition(preset(), on: b, in: vm)
+        vm.selectedRoom = b                              // the rolodex sits on B…
+        let p2 = preset(palette: palette)
+        let sa = stageRunningComposition(p2, on: a, in: vm)
+        vm.seedHarmonyRule(for: sa.identity, from: p2)   // …while P2 lands on A
+        XCTAssertEqual(vm.harmonyRule(for: vm.runningEffect(for: a)!), .analogous)
+        XCTAssertEqual(vm.harmonyRule(for: vm.runningEffect(for: b)!), .none, "B's chip did not light")
+        XCTAssertNil(sb.box.palette.harmonyRule, "B's document is untouched")
+        XCTAssertEqual(sb.box.palette.mode, PaletteConfig().mode, "B's mode was not forced to gradient")
+    }
+
+    /// A programmatic clear (album colours) darkens the chip WITHOUT the
+    /// destructive palette echo the user's own `.none` tap performs.
+    func testAProgrammaticClearHasNoPaletteEcho() {
+        let vm = StudioViewModel()
+        let a = room("room-a")
+        let sa = stageRunningComposition(preset(), on: a, in: vm)
+        vm.selectedRoom = a
+        vm.setHarmonyRule(.triadic)
+        let color2 = sa.box.palette.color2, color3 = sa.box.palette.color3
+        vm.clearHarmonyRuleWithoutEcho()
+        XCTAssertEqual(vm.harmonyRule(for: vm.runningEffect(for: a)!), .none)
+        XCTAssertEqual(sa.box.palette.color2.x, color2.x, "no echo: color2 untouched")
+        XCTAssertEqual(sa.box.palette.color3?.x, color3?.x, "no echo: color3 untouched")
+    }
+
+    /// Revert restores the chip from the saved document (A-3) — a rule set
+    /// after the save is gone with the values it produced — and a stopped
+    /// target's chip refuses to write at all.
+    func testRevertRestoresTheHarmonyChipFromTheSavedDocument() {
+        let vm = StudioViewModel()
+        let saved = preset()                              // no rule saved
+        vm.injectForTesting(compositionStore: storeWith([saved]))
+        let a = room("room-a")
+        let sa = stageRunningComposition(saved, on: a, in: vm)
+        vm.selectedRoom = a
+        vm.setHarmonyRule(.triadic)
+        XCTAssertEqual(sa.box.palette.harmonyRule, HarmonyRule.triadic.rawValue)
+        vm.revertActiveComposition()
+        XCTAssertNil(sa.box.palette.harmonyRule)
+        XCTAssertEqual(vm.harmonyRule(for: vm.runningEffect(for: a)!), .none, "the chip followed the document")
+        vm.stopRunningScopes(forRowAt: StudioSelectionKey(room: a))
+        vm.setHarmonyRule(.triadic)
+        XCTAssertNil(sa.box.palette.harmonyRule, "a stopped target's chip cannot rewrite its palette")
     }
 
     // MARK: - Perform
@@ -1022,7 +1111,6 @@ final class ComposerConvergenceTests: XCTestCase {
                 StudioCustomizationHost(
                     vm: vm,
                     performVM: .constant(nil),
-                    activeHarmonyRule: .constant(HarmonyRule.none),
                     onBackToDecks: {},
                     onSaveComposition: { _ in },
                     onTransportSwitch: { _, _ in }
@@ -1110,7 +1198,6 @@ final class ComposerConvergenceTests: XCTestCase {
             StudioCustomizationHost(
                 vm: vm,
                 performVM: .constant(nil),
-                activeHarmonyRule: .constant(HarmonyRule.none),
                 onBackToDecks: {},
                 onSaveComposition: { _ in },
                 onTransportSwitch: { _, _ in }

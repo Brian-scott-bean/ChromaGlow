@@ -40,7 +40,6 @@ struct StudioCustomizationHost: View {
 
     let vm: StudioViewModel
     @Binding var performVM: PerformanceViewModel?
-    @Binding var activeHarmonyRule: HarmonyRule
     /// Return to the card decks. Owned by StudioView (it also owns the
     /// "Live Controls" pill that comes back here).
     let onBackToDecks: () -> Void
@@ -78,7 +77,7 @@ struct StudioCustomizationHost: View {
             .scrollDismissesKeyboard(.interactively)
             // Auto-anchor: enabling a beat source scrolls the beat controls
             // into view. It now scrolls the REAL surface, not an inner box.
-            .onChange(of: vm.activeCompositionBox?.reaction.source) { _, newSource in
+            .onChange(of: vm.composerEditSession()?.box.reaction.source) { _, newSource in
                 guard let newSource,
                       newSource == .beat || newSource == .onset || newSource == .tapTempo
                 else { return }
@@ -275,6 +274,10 @@ struct StudioCustomizationHost: View {
                     // Revert live edits back to the saved preset.
                     // (One-shots have no live box — nothing to revert.)
                     Button {
+                        // A typed draft commits on focus loss; resigning the
+                        // keyboard FIRST makes the order deterministic — the
+                        // draft lands, then the Revert wins (review round, A-4).
+                        hideMixerKeyboard()
                         vm.revertActiveComposition()
                         HapticManager.shared.light()
                     } label: {
@@ -288,6 +291,7 @@ struct StudioCustomizationHost: View {
                     .stageTapTarget(visual: 40)
                     .fixedSize()
                     .accessibilityLabel("Revert to saved")
+                    .accessibilityHint("Restores the saved composition on this room")
                 }
 
                 if case .composition = card.strategy,
@@ -295,7 +299,9 @@ struct StudioCustomizationHost: View {
                     // Perform + Save need the live box and render loop a
                     // bridge-optimized one-shot never has.
                     Button {
-                        guard let box = vm.activeCompositionBox else { return }
+                        // The session's box — the exact running instance this
+                        // header belongs to — never the selection's (A-9).
+                        guard let box = vm.composerEditSession(for: effect)?.box else { return }
                         // R4-7: thread the backing preset so sequences can
                         // persist. The "+ Create" draft sentinel counts as
                         // unsaved.
@@ -475,7 +481,11 @@ struct StudioCustomizationHost: View {
                         orchestrator: orchestrator,
                         activeCompositionTab: vm.sessionMemory.binding(
                             for: effect.identity.targetKey, \.activeCompositionTab),
-                        activeHarmonyRule: $activeHarmonyRule,
+                        // The chip is THIS target's memory; a user tap rewrites
+                        // the palette through the fence (A-1 / A-2).
+                        activeHarmonyRule: Binding(
+                            get: { vm.harmonyRule(for: effect) },
+                            set: { vm.setHarmonyRule($0) }),
                         onDismissKeyboard: hideMixerKeyboard
                     )
                     .padding(.horizontal, HueSpacing.screenH)

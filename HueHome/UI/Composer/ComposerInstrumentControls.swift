@@ -80,11 +80,13 @@ struct ComposerContinuousControl: View {
                 // it worked (the drag, the typed draft and the accessibility
                 // adjust action all write through here).
                 guard interactive else { return }
-                localValue = newValue
                 // The session captured when the gesture began; a one-shot
                 // write (accessibility adjust brackets itself) falls back to
-                // the render's own session. Never `activeCompositionBox`.
+                // the render's own session. Never `activeCompositionBox`. No
+                // session, no movement: a knob that moves and writes nothing
+                // is the defect (review round, B-16).
                 guard let session = editSession ?? availability.session else { return }
+                localValue = newValue
                 vm.commitComposerEdit(session) { write($0, newValue) }
             }
         )
@@ -92,6 +94,12 @@ struct ComposerContinuousControl: View {
             guard interactive else { return }
             isAdjusting = editing
             editSession = editing ? vm.composerEditSession() : nil
+            // Lift: re-seed from the box. A Revert (or a fenced drop) during
+            // the drag left `localValue` following the finger while the box
+            // stayed put (review round, A-8).
+            if !editing, let session = availability.session {
+                localValue = read(session.box)
+            }
         }
         switch style {
         case .knob:
@@ -126,6 +134,11 @@ struct ComposerChoiceControl<Value: Hashable>: View {
     /// Runs after a committed change — the palette-mode row uses it to
     /// dismiss harmony when the new mode ignores colour fields.
     var afterCommit: ((Value) -> Void)? = nil
+    /// Resign the keyboard BEFORE a choice that can remove controls from the
+    /// page (a pattern, shape, source or mode change): a knob removed
+    /// mid-draft would drop the draft and leave the keyboard up with no
+    /// first responder (review round, B-12).
+    var onDismissKeyboard: () -> Void = {}
 
     var body: some View {
         let resolution = availability.resolve(controlID)
@@ -138,6 +151,7 @@ struct ComposerChoiceControl<Value: Hashable>: View {
                     get: { availability.session.map { read($0.box) } ?? fallback },
                     set: { newValue in
                         guard interactive, let session = availability.session else { return }
+                        onDismissKeyboard()
                         guard vm.commitComposerEdit(session, { write($0, newValue) }).isCommit else { return }
                         afterCommit?(newValue)
                     }
