@@ -8,6 +8,11 @@ data class BridgeEndpoint(
     init {
         require(name.isNotBlank())
         require(host.isNotBlank())
+        // An IPv6 zone id ("fe80::1%wlan0") is not a routable URL host: OkHttp rejects it with an
+        // IllegalArgumentException far from the discovery boundary (audit L-38). Refuse it here so
+        // no endpoint carrying one can ever reach the transport.
+        require(!host.contains('%'))
+        require(host.none { it.isWhitespace() })
         require(port in 1..65535)
     }
 

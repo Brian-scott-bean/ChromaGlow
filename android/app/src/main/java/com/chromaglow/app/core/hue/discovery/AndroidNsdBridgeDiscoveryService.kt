@@ -305,6 +305,9 @@ class AndroidNsdBridgeDiscoveryService(
         port: Int,
     ): BridgeEndpoint? {
         val host = address.hostAddress?.takeIf { it.isNotBlank() } ?: return null
+        // Drop link-local/zone-scoped literals at the discovery boundary (audit L-38); the
+        // BridgeEndpoint guard is the backstop.
+        if (host.contains('%') || host.any { it.isWhitespace() }) return null
         if (port !in 1..65535) return null
         val name = serviceName?.takeIf { it.isNotBlank() } ?: host
         return try {

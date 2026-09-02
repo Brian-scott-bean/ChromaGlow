@@ -65,6 +65,24 @@ class LivePairingWorkflowTest {
         assertNull(client.lastHint)
     }
 
+    @Test
+    fun pair_transportThrows_becomesTypedFailure_andPersistsNothing() = runTest {
+        // L-38: a defect below the (contractually non-throwing) transport must degrade to a typed,
+        // UI-safe outcome rather than crashing the caller's coroutine scope.
+        val throwing = object : HuePairingClient {
+            override fun pair(endpoint: BridgeEndpoint, expectedBridgeId: String?): HuePairingResult =
+                throw IllegalArgumentException("unexpected host")
+        }
+        val store = FakeCredentialStore()
+        val registry = FakeBridgeRegistry()
+
+        val outcome = LivePairingWorkflow(throwing, store, registry, io).pair(selected)
+
+        assertEquals(PairingOutcome.Failed(PairingErrorReason.UNTRUSTED_OR_UNREACHABLE), outcome)
+        assertTrue(store.tokens.isEmpty())
+        assertTrue(registry.records.isEmpty())
+    }
+
     // --- pair: retryable + terminal mapping ---------------------------------------------------
 
     @Test

@@ -9,6 +9,7 @@ import com.chromaglow.app.core.hue.discovery.BridgeEndpoint
 import com.chromaglow.app.core.hue.pairing.transport.HuePairingClient
 import com.chromaglow.app.core.hue.pairing.transport.HuePairingResult
 import com.chromaglow.app.core.hue.pairing.transport.PairingFailureReason
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -46,8 +47,17 @@ class LivePairingWorkflow(
 
         // Blocking transport call off the main thread. No hint is supplied; the transport
         // authenticates the canonical id from the CA-validated leaf across both legs.
+        // runCatching (audit L-38): the transport is contractually non-throwing, but a defect
+        // below it must degrade to a typed, UI-safe failure instead of crashing the caller's scope.
+        // CancellationException is rethrown so structured cancellation is preserved.
         val result = withContext(ioDispatcher) {
-            pairingClient.pair(endpoint, expectedBridgeId = null)
+            try {
+                pairingClient.pair(endpoint, expectedBridgeId = null)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                HuePairingResult.Failure(PairingFailureReason.TransportError)
+            }
         }
 
         return when (result) {

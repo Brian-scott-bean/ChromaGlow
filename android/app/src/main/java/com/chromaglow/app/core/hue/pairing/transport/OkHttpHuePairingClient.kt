@@ -147,9 +147,12 @@ class OkHttpHuePairingClient(
      * missing/non-X.509 leaf).
      */
     private fun fetchConfig(client: OkHttpClient, endpoint: BridgeEndpoint): Step<ConfigProbe> {
-        val url = httpsUrl(endpoint).addPathSegment("api").addPathSegment("0").addPathSegment("config").build()
-        val request = Request.Builder().url(url).get().build()
         return try {
+            // URL/request construction lives inside the try (audit L-38): OkHttp throws an
+            // IllegalArgumentException for an unroutable host, which must surface as a typed
+            // transport failure rather than escaping the client.
+            val url = httpsUrl(endpoint).addPathSegment("api").addPathSegment("0").addPathSegment("config").build()
+            val request = Request.Builder().url(url).get().build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     return failed(PairingFailureReason.UnexpectedHttpStatus(PairingStage.CONFIG, response.code))
@@ -162,6 +165,8 @@ class OkHttpHuePairingClient(
             }
         } catch (_: IOException) {
             failed(PairingFailureReason.TransportError)
+        } catch (_: IllegalArgumentException) {
+            failed(PairingFailureReason.TransportError)
         }
     }
 
@@ -172,10 +177,10 @@ class OkHttpHuePairingClient(
      * non-2xx, oversized body, or a missing/non-X.509 leaf).
      */
     private fun createUser(client: OkHttpClient, endpoint: BridgeEndpoint): Step<CreateUserResponse> {
-        val url = httpsUrl(endpoint).addPathSegment("api").build()
-        val body = PairingRequest.createUserBody().toRequestBody(JSON_MEDIA_TYPE)
-        val request = Request.Builder().url(url).post(body).build()
         return try {
+            val url = httpsUrl(endpoint).addPathSegment("api").build()
+            val body = PairingRequest.createUserBody().toRequestBody(JSON_MEDIA_TYPE)
+            val request = Request.Builder().url(url).post(body).build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     return failed(PairingFailureReason.UnexpectedHttpStatus(PairingStage.CREATE_USER, response.code))
@@ -187,6 +192,8 @@ class OkHttpHuePairingClient(
                 Step.Ok(CreateUserResponse(body = responseBody, leaf = leaf))
             }
         } catch (_: IOException) {
+            failed(PairingFailureReason.TransportError)
+        } catch (_: IllegalArgumentException) {
             failed(PairingFailureReason.TransportError)
         }
     }

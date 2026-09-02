@@ -255,6 +255,20 @@ class OkHttpHuePairingClientTest {
     }
 
     @Test
+    fun unroutableHost_failsClosedAsTransportError_withoutThrowing() {
+        // L-38: OkHttp's HttpUrl.Builder throws IllegalArgumentException for a host it cannot
+        // encode. That must surface as a typed TransportError, never escape the client, and never
+        // issue a request.
+        val f = fixture(leafCommonName = bridgeId)
+        val unroutable = BridgeEndpoint(name = "Bridge", host = "bad<host>", port = f.endpoint.port)
+
+        val result = f.client.pair(unroutable)
+
+        assertEquals(PairingFailureReason.TransportError, failureReason(result))
+        assertEquals(0, f.server.requestCount)
+    }
+
+    @Test
     fun stalledResponse_exceedingCallTimeout_failsClosed() {
         val f = fixture(leafCommonName = bridgeId, callTimeoutMillis = 1_000L)
         // Handshake completes immediately, then headers are withheld well past the call timeout.
