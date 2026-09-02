@@ -1209,10 +1209,14 @@ R36_PANEL="HueHome/UI/Composer/CompositionEditorPanel.swift"
 # (historical filename ComposerLayerSheet.swift — no sheet lives there any
 # more) renders INSIDE each layer's card, so it is on the one-surface path.
 R36_COMPOSER_SUPPORT="HueHome/UI/Composer/ComposerLayerSheet.swift"
+# …and the Composer's instrument wrappers (S3-2), which render inside the
+# same cards.
+R36_COMPOSER_INSTRUMENTS="HueHome/UI/Composer/ComposerInstrumentControls.swift"
 R36_SURFACES=(
     "$R36_HOST"
     "$R36_PANEL"
     "$R36_COMPOSER_SUPPORT"
+    "$R36_COMPOSER_INSTRUMENTS"
     "HueHome/UI/Studio/StudioBoardView.swift"
     "HueHome/UI/Studio/StudioLookBrowserView.swift"
     "HueHome/UI/Components/StageInstrumentControls.swift"
@@ -1348,6 +1352,34 @@ echo "$r36_host_id" | grep -qF 'identity.targetKey.stableID' \
     || fail "studio-one-surface" $'the customization host no longer keys its identity on the running target key (identity.targetKey.stableID) — the same look on two targets would share one view identity again:\n'"$r36_host_id"
 r36_card_id=$(echo "$r36_host_id" | grep -E 'currentRoomEffect\?\.cardID|\.id\(vm\.currentRoomEffect\?\.cardID' || true)
 [[ -z "$r36_card_id" ]] || fail "studio-one-surface" $'the host keys on the bare cardID again:\n'"$r36_card_id"
+
+# (g) Slice 3 (S3-2): the Composer speaks the shared instrument vocabulary.
+# No gen-1 `StageSlider` and no raw `Toggle(` in any Composer file — every
+# continuous control is a `StageKnob`/`StageFader` (exact entry, double-tap,
+# adjustable accessibility, semantic haptics come with it), every on/off is a
+# `StageToggleRow`, every discrete choice a `StageSteppedEncoder`. And no
+# Composer write re-resolves the box: `activeCompositionBox?.<field> = …`
+# (S3-5) is exactly the pattern the edit session replaced.
+for f in "$R36_PANEL" "$R36_COMPOSER_SUPPORT" "$R36_COMPOSER_INSTRUMENTS"; do
+    r36_gen1=$(grep -nE 'StageSlider\(|[^A-Za-z]Toggle\(' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    [[ -z "$r36_gen1" ]] || fail "studio-one-surface" $''"$f"$' uses a gen-1 slider or a raw Toggle — Composer controls are StageKnob / StageFader / StageSteppedEncoder / StageToggleRow:\n'"$r36_gen1"
+    #     Not just assignments: ANY reference. `if let box = vm.activeCompositionBox
+    #     { write(box, v) }` is the same re-resolution wearing a different
+    #     spelling, and reads belong on `availability.session?.box` too — one
+    #     box per render, captured with its identity.
+    r36_direct=$(grep -nE 'activeCompositionBox' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    [[ -z "$r36_direct" ]] || fail "studio-one-surface" $''"$f"$' reaches for activeCompositionBox — the box re-resolved from the selection — instead of the render'"'"'s captured session:\n'"$r36_direct"
+done
+for f in "$R36_PANEL" "$R36_COMPOSER_SUPPORT" "$R36_COMPOSER_INSTRUMENTS"; do
+    grep -vE '^[[:space:]]*//' "$f" | grep -qF 'commitComposerEdit(' \
+        || fail "studio-one-surface" "$f no longer commits through the Composer edit session"
+done
+grep -vE '^[[:space:]]*//' "$R36_COMPOSER_INSTRUMENTS" | grep -qF 'StageKnob(' \
+    || fail "studio-one-surface" "$R36_COMPOSER_INSTRUMENTS no longer renders a StageKnob"
+grep -vE '^[[:space:]]*//' "$R36_COMPOSER_INSTRUMENTS" | grep -qF 'StageFader(' \
+    || fail "studio-one-surface" "$R36_COMPOSER_INSTRUMENTS no longer renders a StageFader"
 
 # The migration proof exists and runs: the render test that walks every
 # catalog control id per layer/gating state and asserts each one is on the
@@ -2075,13 +2107,18 @@ echo "$r2_avail_src" | grep -qF 'guard let range = snapshot?.mirekRange else { r
 #     resolve through the context, and the gate APPLIES the verdict the
 #     15(k) way — bound to the adapter's non-nil-tolerant wrappers, never to a
 #     literal.
-for f in "$R2_COMPOSER_PANEL" "$R2_COMPOSER_SUPPORT"; do
-    grep -vE '^[[:space:]]*//' "$f" | grep -qF 'availability.resolve("' \
+R2_COMPOSER_INSTRUMENTS="HueHome/UI/Composer/ComposerInstrumentControls.swift"
+[[ -f "$R2_COMPOSER_INSTRUMENTS" ]] || fail "slice2-r2" "$R2_COMPOSER_INSTRUMENTS is missing"
+for f in "$R2_COMPOSER_PANEL" "$R2_COMPOSER_SUPPORT" "$R2_COMPOSER_INSTRUMENTS"; do
+    grep -vE '^[[:space:]]*//' "$f" | grep -qE 'availability\.resolve\(' \
         || fail "slice2-r2" "$f no longer resolves its controls through ComposerAvailabilityContext"
     r2_unresolved=$(grep -nE 'unresolvedIsInteractive|StudioBoardAvailability\.isInteractive\(resolution:' "$f" 2>/dev/null \
         | grep -vE '^[0-9]+:[[:space:]]*//' || true)
     [[ -z "$r2_unresolved" ]] || fail "slice2-r2" $''"$f"$' reaches for the strategy-qualified overloads — for compositions those fail OPEN:\n'"$r2_unresolved"
 done
+#     The instrument wrappers carry the setter-level floor too.
+grep -vE '^[[:space:]]*//' "$R2_COMPOSER_INSTRUMENTS" | grep -qF 'guard interactive else { return }' \
+    || fail "slice2-r2" "$R2_COMPOSER_INSTRUMENTS has no setter-level `guard interactive` — a knob's drag would write through a refused verdict"
 r2_gate=$(awk '/^struct ComposerControlGate</,/^}$/' "$R2_COMPOSER_SUPPORT" 2>/dev/null \
     | grep -vE '^[[:space:]]*//' || true)
 [[ -n "$r2_gate" ]] || fail "slice2-r2" "ComposerControlGate not found in $R2_COMPOSER_SUPPORT"

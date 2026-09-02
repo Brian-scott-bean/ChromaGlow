@@ -342,13 +342,42 @@ struct StageFader: View {
 
 /// Discrete selector: prominent decisions render as tactile pads, quiet ones
 /// as the shared chip row — one primitive per semantic class (spec §9).
-struct StageSteppedEncoder: View {
+///
+/// Generic over the selection's type (Slice 3): the board's `.segmented`
+/// params are `Double`-valued, the Composer's are typed enums (palette mode,
+/// motion pattern, envelope shape, reaction source, harmony rule, the layer
+/// tab) — one primitive, whatever the domain calls the choice. `items` carry
+/// the chip row's icon / curve thumbnail so a pattern keeps its signature
+/// and a brightness shape keeps its waveform.
+struct StageSteppedEncoder<Value: Hashable>: View {
     enum Prominence { case pads, chips }
 
     let title: String
-    let options: [(label: String, value: Double)]
-    @Binding var selection: Double
+    let items: [ChipPickerRow<Value>.Item]
+    @Binding var selection: Value
     var prominence: Prominence = .chips
+
+    /// The board's form: label/value pairs.
+    init(title: String,
+         options: [(label: String, value: Value)],
+         selection: Binding<Value>,
+         prominence: Prominence = .chips) {
+        self.title = title
+        self.items = options.map { ChipPickerRow<Value>.Item(value: $0.value, label: $0.label) }
+        self._selection = selection
+        self.prominence = prominence
+    }
+
+    /// The Composer's form: chip items with icons / curve thumbnails.
+    init(title: String,
+         items: [ChipPickerRow<Value>.Item],
+         selection: Binding<Value>,
+         prominence: Prominence = .chips) {
+        self.title = title
+        self.items = items
+        self._selection = selection
+        self.prominence = prominence
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -357,31 +386,34 @@ struct StageSteppedEncoder: View {
                 .foregroundStyle(.white.opacity(0.60))
             switch prominence {
             case .chips:
-                ChipPickerRow(
-                    items: options.map { ChipPickerRow<Double>.Item(value: $0.value, label: $0.label) },
-                    selection: $selection
-                )
+                ChipPickerRow(items: items, selection: $selection)
             case .pads:
                 HStack(spacing: 8) {
-                    ForEach(options, id: \.value) { option in
+                    ForEach(items, id: \.value) { item in
                         Button {
-                            selection = option.value
+                            selection = item.value
                             HapticManager.shared.selection()
                         } label: {
-                            Text(option.label)
-                                .font(HueFont.stageControl)
-                                .foregroundStyle(selection == option.value
-                                                 ? StagePalette.stage : StagePalette.ink)
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(selection == option.value
-                                              ? HuePalette.amber
-                                              : StagePalette.raised)
-                                )
+                            HStack(spacing: 4) {
+                                if let icon = item.icon {
+                                    Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                                }
+                                Text(item.label)
+                                    .font(HueFont.stageControl)
+                            }
+                            .foregroundStyle(selection == item.value
+                                             ? StagePalette.stage : StagePalette.ink)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(selection == item.value
+                                          ? HuePalette.amber
+                                          : StagePalette.raised)
+                            )
                         }
                         .buttonStyle(.plain)
-                        .accessibilityAddTraits(selection == option.value ? .isSelected : [])
+                        .accessibilityLabel(item.label)
+                        .accessibilityAddTraits(selection == item.value ? .isSelected : [])
                     }
                 }
             }

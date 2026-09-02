@@ -477,7 +477,8 @@ struct StudioCustomizationHost: View {
                         activeCompositionTab: vm.sessionMemory.binding(
                             for: effect.identity.targetKey, \.activeCompositionTab),
                         activeHarmonyRule: $activeHarmonyRule,
-                        editingSwatch: $editingSwatch
+                        editingSwatch: $editingSwatch,
+                        onDismissKeyboard: hideMixerKeyboard
                     )
                     .padding(.horizontal, HueSpacing.screenH)
                     .padding(.top, HueSpacing.md)

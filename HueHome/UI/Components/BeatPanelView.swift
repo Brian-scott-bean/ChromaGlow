@@ -353,58 +353,65 @@ struct BeatPanelView: View {
     // through to the live CompositionParamBox via the outer binding).
     @ViewBuilder
     private func reactionSection(_ reaction: Binding<ReactionConfig>) -> some View {
+        // Slice 3: the shared instruments by meaning — punch decay is a RATE
+        // (knob), colour step is an AMOUNT (fader), the two beat divisions
+        // are discrete decisions (pads). The bindings are unchanged: whole-
+        // struct writes through the outer binding, which the Composer panel
+        // commits through its fence.
         if capabilities.contains(.punchDecay) {
-            StageSlider(
-                title: "Punch Decay",
-                value: Binding(
-                    get: { reaction.wrappedValue.punchDecay },
-                    set: { reaction.wrappedValue.punchDecay = $0 }
-                ),
-                range: 0...100
-            )
+            HStack(alignment: .top, spacing: HueSpacing.lg) {
+                StageKnob(
+                    title: "Punch Decay",
+                    value: Binding(
+                        get: { reaction.wrappedValue.punchDecay },
+                        set: { reaction.wrappedValue.punchDecay = $0 }
+                    ),
+                    range: 0...100,
+                    defaultValue: ReactionConfig().punchDecay,
+                    diameter: 60
+                )
+                if capabilities.contains(.colorStep), reaction.wrappedValue.targets.contains(.color) {
+                    StageFader(
+                        title: "Color Step",
+                        value: Binding(
+                            get: { reaction.wrappedValue.colorStepPerTrigger * 100 },
+                            set: { reaction.wrappedValue.colorStepPerTrigger = $0 / 100.0 }
+                        ),
+                        range: 0...100,
+                        defaultValue: ReactionConfig().colorStepPerTrigger * 100,
+                        format: { "\(Int($0.rounded()))%" },
+                        trackHeight: 128
+                    )
+                }
+                Spacer(minLength: 0)
+            }
         }
 
         if capabilities.contains(.colorStep), reaction.wrappedValue.targets.contains(.color) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Color step every")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.6))
-                ChipPickerRow(
-                    items: [0.25, 0.5, 1.0, 2.0, 4.0].map {
-                        ChipPickerRow<Double>.Item(value: $0, label: Self.stepLabel($0))
-                    },
-                    selection: Binding(
-                        get: { reaction.wrappedValue.quantizeBeats },
-                        set: { reaction.wrappedValue.quantizeBeats = $0 }
-                    )
-                )
-            }
-            StageSlider(
-                title: "Color Step %",
-                value: Binding(
-                    get: { reaction.wrappedValue.colorStepPerTrigger * 100 },
-                    set: { reaction.wrappedValue.colorStepPerTrigger = $0 / 100.0 }
+            StageSteppedEncoder(
+                title: "Color step every",
+                items: [0.25, 0.5, 1.0, 2.0, 4.0].map {
+                    ChipPickerRow<Double>.Item(value: $0, label: Self.stepLabel($0))
+                },
+                selection: Binding(
+                    get: { reaction.wrappedValue.quantizeBeats },
+                    set: { reaction.wrappedValue.quantizeBeats = $0 }
                 ),
-                range: 0...100
-            )
+                prominence: .pads)
         }
 
         if capabilities.contains(.motionLock) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Lock motion cycle to")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.6))
-                ChipPickerRow(
-                    items: [ChipPickerRow<Double>.Item(value: 0, label: "Off")]
-                        + [1.0, 2.0, 4.0, 8.0].map {
-                            ChipPickerRow<Double>.Item(value: $0, label: Self.stepLabel($0))
-                        },
-                    selection: Binding(
-                        get: { reaction.wrappedValue.motionBeatsPerCycle },
-                        set: { reaction.wrappedValue.motionBeatsPerCycle = $0 }
-                    )
-                )
-            }
+            StageSteppedEncoder(
+                title: "Lock motion cycle to",
+                items: [ChipPickerRow<Double>.Item(value: 0, label: "Off")]
+                    + [1.0, 2.0, 4.0, 8.0].map {
+                        ChipPickerRow<Double>.Item(value: $0, label: Self.stepLabel($0))
+                    },
+                selection: Binding(
+                    get: { reaction.wrappedValue.motionBeatsPerCycle },
+                    set: { reaction.wrappedValue.motionBeatsPerCycle = $0 }
+                ),
+                prominence: .pads)
         }
     }
 

@@ -42,6 +42,10 @@ private enum ComposerViewTree {
     struct Inventory {
         var strings: [String] = []
         var types: [String] = []
+        /// The `value` binding of every StageKnob / StageFader found, by title.
+        var bindings: [(title: String, value: Binding<Double>)] = []
+        /// Which instrument each continuous control IS, by title.
+        var instruments: [String: String] = [:]
     }
 
     /// Composer-owned bodies are evaluated; everything else is read as stored
@@ -52,6 +56,10 @@ private enum ComposerViewTree {
         typeName.hasPrefix("CompositionEditorPanel")
             || typeName.hasPrefix("ComposerSupportingControls")
             || typeName.hasPrefix("ComposerControlGate<")
+            || typeName.hasPrefix("ComposerContinuousControl")
+            || typeName.hasPrefix("ComposerChoiceControl<")
+            || typeName.hasPrefix("ComposerToggleControl")
+            || typeName.hasPrefix("ComposerTargetPads")
             || typeName.hasPrefix("StageCard<")
     }
 
@@ -84,6 +92,12 @@ private enum ComposerViewTree {
 
         let typeName = String(describing: type(of: node))
         out.types.append(typeName)
+        if let knob = node as? StageKnob {
+            out.bindings.append((knob.title, knob.$value)); out.instruments[knob.title] = "StageKnob"
+        }
+        if let fader = node as? StageFader {
+            out.bindings.append((fader.title, fader.$value)); out.instruments[fader.title] = "StageFader"
+        }
 
         if let view = node as? any View, evaluatesBody(typeName) {
             walk(body(of: view), depth: depth + 1, budget: &budget, into: &out)
@@ -190,11 +204,11 @@ final class ComposerConvergenceTests: XCTestCase {
     /// area exists and the inline "Create Entertainment Area" row when not).
     private static let spokenNames: [String: [String]] = [
         "mode": ["Mode"], "temperature": ["Warmth"], "colorPad": ["Hue", "Fine Tune", "Color"],
-        "harmony": ["HARMONY", "No harmony"],
+        "harmony": ["Harmony"],
         "hueShift": ["Hue Shift"], "saturation": ["Saturation"], "randomize": ["Randomize"],
         "dynamicSceneExport": ["Save as Hue dynamic scene"],
         "pattern": ["Pattern"], "speed": ["Speed"], "forward": ["Forward"],
-        "direction": ["DIRECTION", "Create Entertainment Area"],
+        "direction": ["Direction", "Create Entertainment Area"],
         "spread": ["Spread"], "offset": ["Offset", "Heads", "Density"], "mirror": ["Mirror"],
         "shape": ["Shape"], "bpm": ["BPM"], "depth": ["Depth"],
         "attack": ["Attack"], "decay": ["Decay"], "dutyCycle": ["Duty Cycle"],
@@ -290,7 +304,7 @@ final class ComposerConvergenceTests: XCTestCase {
         var beat = ReactionConfig(); beat.source = .beat
 
         let staticMotion = inventory(of: preset(motion: still), tab: .motion, orchestrator: orchestrator)
-        for absent in ["Speed", "Spread", "Mirror", "Forward", "DIRECTION"] {
+        for absent in ["Speed", "Spread", "Mirror", "Forward", "Direction"] {
             XCTAssertFalse(staticMotion.strings.contains(absent),
                 "motion/static renders `\(absent)` — the engine returns a fixed phase; the control is dead")
         }
@@ -472,7 +486,7 @@ final class ComposerConvergenceTests: XCTestCase {
         // Colour lights: nothing to caveat.
         let (vmC, orchC) = seededInventory([light("L1", color: true), light("L2", color: true), light("L3", color: true)])
         let colourPage = pageStrings(vm: vmC, orchestrator: orchC, preset: preset(palette: gradient), tab: .palette)
-        XCTAssertTrue(colourPage.contains("HARMONY"))
+        XCTAssertTrue(colourPage.contains("Harmony"), "the harmony row is on a colour room: \(colourPage)")
         XCTAssertFalse(colourPage.contains(StudioBoardAvailability.checkingCopy),
             "a fully colour-capable room reads CHECKING: \(colourPage)")
         XCTAssertFalse(colourPage.contains("NO COLOR LIGHTS HERE"))
@@ -480,7 +494,7 @@ final class ComposerConvergenceTests: XCTestCase {
         // White-only lights: rendered, refused in words, not hidden.
         let (vmW, orchW) = seededInventory([light("L1", color: false), light("L2", color: false), light("L3", color: false)])
         let whitePage = pageStrings(vm: vmW, orchestrator: orchW, preset: preset(palette: gradient), tab: .palette)
-        XCTAssertTrue(whitePage.contains("HARMONY"), "the harmony row is DISABLED on a white room, not removed")
+        XCTAssertTrue(whitePage.contains("Harmony"), "the harmony row is DISABLED on a white room, not removed")
         // ONE note per colour-gated control on the gradient page — the pad,
         // the harmony row, Randomize, and the dynamic-scene export — so one
         // gated neighbour cannot vouch for an ungated one.
@@ -536,6 +550,63 @@ final class ComposerConvergenceTests: XCTestCase {
         let schemaless = ComposerAvailabilityContext(vm: vmS)
         XCTAssertNil(schemaless.warmthRange)
         XCTAssertFalse(schemaless.isInteractive("temperature"))
+    }
+
+    // MARK: - Semantic vocabulary (S3-2)
+
+    /// Every continuous Composer control is a knob or a fader — no gen-1
+    /// slider, no raw Toggle — and the instrument matches the meaning: rates
+    /// and character on knobs, levels and amounts on faders.
+    func testComposerSpeaksTheInstrumentVocabulary() async {
+        let orchestrator = await makeDemoOrchestrator()
+        var swell = EnvelopeConfig(); swell.shape = .swell
+        var spectrum = PaletteConfig(); spectrum.mode = .spectrum
+        var mic = ReactionConfig(); mic.source = .micBass
+        var cascade = MotionConfig(); cascade.pattern = .cascade
+        let expectations: [(String, CompositionLayerTab, CompositionPreset, [String: String])] = [
+            ("motion", .motion, preset(motion: cascade), ["Speed": "StageKnob", "Spread": "StageKnob", "Offset": "StageKnob"]),
+            ("envelope", .envelope, preset(envelope: swell), ["BPM": "StageKnob", "Depth": "StageFader", "Attack": "StageKnob",
+                                                            "Min Brightness": "StageFader", "Max Brightness": "StageFader"]),
+            ("palette", .palette, preset(palette: spectrum), ["Hue Shift": "StageKnob", "Saturation": "StageFader"]),
+            ("reaction", .reaction, preset(reaction: mic), ["Sensitivity": "StageKnob", "Smoothing": "StageKnob",
+                                                           "Threshold": "StageKnob", "Intensity": "StageFader"]),
+        ]
+        for (name, tab, p, instruments) in expectations {
+            let tree = inventory(of: p, tab: tab, orchestrator: orchestrator)
+            XCTAssertFalse(tree.types.contains { $0.hasPrefix("StageSlider") }, "\(name): a gen-1 StageSlider is on the page")
+            XCTAssertFalse(tree.types.contains { $0.hasPrefix("Toggle<") }, "\(name): a raw Toggle is on the page")
+            for (title, instrument) in instruments {
+                XCTAssertEqual(tree.instruments[title], instrument,
+                    "\(name): `\(title)` is a \(tree.instruments[title] ?? "missing control"), not a \(instrument)")
+            }
+            XCTAssertTrue(tree.types.contains { $0.hasPrefix("StageSteppedEncoder<") }, "\(name): the discrete choice is not a stepped encoder")
+        }
+    }
+
+    /// PRODUCTION WIRING through the instrument: the knob's own `value`
+    /// binding — the one its drag, its typed draft and its accessibility
+    /// adjust action all write — reaches the running composition's box
+    /// through the edit session, and only that target's box.
+    func testAKnobsBindingWritesTheCapturedTargetThroughTheSession() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let vm = StudioViewModel()
+        var cascade = MotionConfig(); cascade.pattern = .cascade
+        let p = preset(motion: cascade)
+        let a = room("room-a"), b = room("room-b")
+        let boxA = stageRunningComposition(p, on: a, in: vm).box
+        let boxB = stageRunningComposition(p, on: b, in: vm).box
+        vm.selectedRoom = a
+        let tree = ComposerViewTree.inventory(of: panel(vm: vm, orchestrator: orchestrator, tab: .motion))
+        let speedKnobs = tree.bindings.filter { $0.title == "Speed" }
+        XCTAssertEqual(speedKnobs.count, 1, "exactly one Speed knob on the Motion layer")
+        guard let speed = speedKnobs.first else { return }
+
+        // The selection moves to B before the write lands — the write was
+        // authored against A and must land on A.
+        vm.selectedRoom = b
+        speed.value.wrappedValue = 77
+        XCTAssertEqual(boxA.motion.speed, 77, "the knob wrote the box it was rendered for")
+        XCTAssertEqual(boxB.motion.speed, MotionConfig().speed, "room B's box did not move")
     }
 
     // MARK: - Exact-state fencing (S3-5): the Composer edit session
