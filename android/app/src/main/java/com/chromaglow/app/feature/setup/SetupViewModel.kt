@@ -9,13 +9,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.chromaglow.app.core.bridge.DataStoreBridgeRegistry
-import com.chromaglow.app.core.credentials.AndroidKeystoreBridgeCredentialStore
+import com.chromaglow.app.app.LiveAppGraph
 import com.chromaglow.app.core.hue.discovery.AndroidNsdBridgeDiscoveryService
 import com.chromaglow.app.core.hue.discovery.BridgeDiscoveryService
 import com.chromaglow.app.core.hue.discovery.BridgeEndpoint
 import com.chromaglow.app.core.hue.discovery.ManualBridgeEndpointParser
-import com.chromaglow.app.core.hue.pairing.transport.OkHttpHuePairingClient
 import com.chromaglow.app.core.hue.pairing.workflow.ForgetResult
 import com.chromaglow.app.core.hue.pairing.workflow.LivePairingWorkflow
 import com.chromaglow.app.core.hue.pairing.workflow.PairingErrorReason
@@ -42,6 +40,21 @@ class SetupViewModel internal constructor(
 
     init {
         // Startup reconciliation: restore a paired session only when record + readable token exist.
+        viewModelScope.launch {
+            uiState = uiState.copy(pairing = workflow.restore().toPairingState())
+        }
+    }
+
+    /**
+     * Re-classify the saved bridge from persisted truth. The shell calls this every time Setup
+     * is (re)entered: this view model is Activity-scoped, so after a local Forget from Settings
+     * its last state could otherwise still read Paired. Classify-only, never deletes. The
+     * transition passes through [BridgePairingUiState.None] so an observer sees the fresh
+     * None → Paired edge rather than a stale Paired value.
+     */
+    fun restoreSavedBridges() {
+        if (uiState.pairing is BridgePairingUiState.Pairing) return
+        uiState = uiState.copy(pairing = BridgePairingUiState.None)
         viewModelScope.launch {
             uiState = uiState.copy(pairing = workflow.restore().toPairingState())
         }
@@ -230,11 +243,8 @@ class SetupViewModel internal constructor(
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val appContext = context.applicationContext
-                val workflow = LivePairingWorkflow(
-                    pairingClient = OkHttpHuePairingClient.fromContext(appContext),
-                    credentialStore = AndroidKeystoreBridgeCredentialStore(appContext),
-                    bridgeRegistry = DataStoreBridgeRegistry.create(appContext),
-                )
+                // Shared with the live shell: same registry instance, same credential store.
+                val workflow = LiveAppGraph.get(appContext).pairingWorkflow
                 SetupViewModel(
                     workflow = workflow,
                     discovery = AndroidNsdBridgeDiscoveryService(appContext),
