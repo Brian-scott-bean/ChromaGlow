@@ -79,6 +79,31 @@ class PairingResponseParserTest {
     }
 
     @Test
+    fun error_quotedNumericType_failsClosed() {
+        // L-32: a JSON string "101" must not satisfy the numeric `type` contract, so it can never
+        // be classified as the retryable link-button outcome.
+        val outcome = parse("""[{"error":{"type":"101","address":"/","description":"link button not pressed"}}]""")
+        assertTrue("expected Malformed but was $outcome", outcome is CreateUserOutcome.Malformed)
+        assertFalse(outcome.isRetryable)
+    }
+
+    @Test
+    fun error_fractionalNumericType_failsClosed() {
+        assertMalformed("""[{"error":{"type":101.5,"address":"/","description":"x"}}]""")
+    }
+
+    @Test
+    fun success_toString_redactsUsername() {
+        // L-31: a Success rendered through toString() (logs, assertion messages) never reveals the key.
+        val outcome = parse("""[{"success":{"username":"abc123KEY"}}]""")
+        val rendered = outcome.toString()
+        assertFalse(rendered.contains("abc123KEY"))
+        assertTrue(rendered.contains("***"))
+        // Equality still works on the real value.
+        assertEquals(CreateUserOutcome.Success("abc123KEY"), outcome)
+    }
+
+    @Test
     fun malformedJson_failsClosed() {
         assertMalformed("""[{"success":{"username":"abc""")
     }

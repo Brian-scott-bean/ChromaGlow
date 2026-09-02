@@ -38,7 +38,9 @@ internal fun JsonObject.stringField(name: String): String? =
     (this[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
 /**
- * Returns the value of [name] when it is present as a JSON integer, else `null`.
+ * Returns the value of [name] when it is present as a JSON *number* that is an integer, else
+ * `null`. A quoted numeric string (`"101"`) is NOT accepted, mirroring [stringField]'s strictness
+ * so the numeric protocol contract cannot be satisfied by a string (audit L-32).
  */
 internal fun JsonObject.intField(name: String): Int? =
-    (this[name] as? JsonPrimitive)?.intOrNull
+    (this[name] as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull
