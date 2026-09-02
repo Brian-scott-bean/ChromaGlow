@@ -23,6 +23,9 @@ sealed interface CreateUserOutcome {
         init {
             require(username.isNotBlank()) { "username must not be blank" }
         }
+
+        /** Redacted: the application key never appears in diagnostics or logs (audit L-31). */
+        override fun toString(): String = "Success(username=***)"
     }
 
     /**

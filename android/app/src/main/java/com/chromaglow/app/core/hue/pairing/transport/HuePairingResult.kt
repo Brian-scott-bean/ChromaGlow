@@ -101,7 +101,13 @@ sealed interface HuePairingResult {
      * @property username the bridge application key. It is never logged or persisted by this
      *   client; any `clientkey` the bridge may have returned was dropped by the protocol layer.
      */
-    data class Success(val bridgeId: String, val username: String) : HuePairingResult
+    data class Success(val bridgeId: String, val username: String) : HuePairingResult {
+        /**
+         * Redacted: the application key never appears in diagnostics, logs, or test output
+         * (audit L-31). The non-secret bridge id remains visible.
+         */
+        override fun toString(): String = "Success(bridgeId=$bridgeId, username=***)"
+    }
 
     /**
      * Hue error type `101`: the link button has not been pressed yet. This is the ONLY retryable

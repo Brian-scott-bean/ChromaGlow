@@ -59,8 +59,8 @@ Config/Secrets.xcconfig
 # Local-only Xcode husks at the repo root (an old rename experiment:
 # ChromaGlow/ holds only .DS_Store, ChromaGlow.xcodeproj only xcuserdata).
 # The live project is HueHome.xcodeproj.
-ChromaGlow/
-ChromaGlow.xcodeproj/
+/ChromaGlow/
+/ChromaGlow.xcodeproj/
 
 # Developer-local / generated — never committed.
 # `.cursor/rules/*.mdc` AND `.cursor/skills/*/SKILL.md` ARE tracked (they are
