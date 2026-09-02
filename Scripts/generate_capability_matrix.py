@@ -97,10 +97,10 @@ ENGINE_READS_PROOF = ("HueHomeTests/StudioParamCatalogTests.swift",
 # the line numbers; run `--refresh-citations` after touching the run* loops.
 # BEGIN CITED_CONSUMERS
 CITED_CONSUMERS = {
-    ("strobe", "flash_color"): "UnifiedOrchestrator.swift:8420",
-    ("party", "color"): "UnifiedOrchestrator.swift:8581,8677",
-    ("thunderstorm", "ambient_color"): "UnifiedOrchestrator.swift:8773,8814,8923",
-    ("thunderstorm", "flash_color"): "UnifiedOrchestrator.swift:8837,8924",
+    ("strobe", "flash_color"): "UnifiedOrchestrator.swift:8730",
+    ("party", "color"): "UnifiedOrchestrator.swift:8891,8987",
+    ("thunderstorm", "ambient_color"): "UnifiedOrchestrator.swift:9083,9124,9233",
+    ("thunderstorm", "flash_color"): "UnifiedOrchestrator.swift:9147,9234",
 }
 # END CITED_CONSUMERS
 

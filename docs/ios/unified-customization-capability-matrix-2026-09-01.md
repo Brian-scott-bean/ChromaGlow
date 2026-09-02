@@ -50,7 +50,7 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `party.speed` | Speed | slider | essential | yes | party engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `party.brightness` | Brightness | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `party.color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8581,8677 | Entertainment + Room REST | immediate | active while running |
+| `party.color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8891,8987 | Entertainment + Room REST | immediate | active while running |
 | `party.min_brightness` | Fade Floor | slider | support | yes | party engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `party.smoothness` | Smoothness | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 
@@ -60,7 +60,7 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `strobe.speed` | Speed | slider | essential | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `strobe.brightness` | Brightness | slider | essential |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `strobe.flash_color` | Flash Color | colorPicker | color | yes | UnifiedOrchestrator.swift:8420 | Entertainment only | immediate | active while streaming / staged on Room REST |
+| `strobe.flash_color` | Flash Color | colorPicker | color | yes | UnifiedOrchestrator.swift:8730 | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `strobe.min_brightness` | Min Brightness | slider | support |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `strobe.duty_cycle` | Duty Cycle | slider | support | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 
@@ -70,8 +70,8 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `thunderstorm.frequency` | Storm Intensity | slider | essential |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.flash_intensity` | Flash Brightness | slider | essential |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.ambient_color` | Ambient Color | colorPicker | color |  | UnifiedOrchestrator.swift:8773,8814,8923 | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.flash_color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8837,8924 | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.ambient_color` | Ambient Color | colorPicker | color |  | UnifiedOrchestrator.swift:9083,9124,9233 | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.flash_color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:9147,9234 | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.min_brightness` | Ambient Level | slider | support |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.strike_rate` | Strike Chance | slider | support |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.flash_length` | Flash Length | slider | support | yes | thunderstorm engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
