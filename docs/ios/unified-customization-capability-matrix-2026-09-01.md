@@ -50,7 +50,7 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `party.speed` | Speed | slider | essential | yes | party engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `party.brightness` | Brightness | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `party.color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8492,8588 | Entertainment + Room REST | immediate | active while running |
+| `party.color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8581,8677 | Entertainment + Room REST | immediate | active while running |
 | `party.min_brightness` | Fade Floor | slider | support | yes | party engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `party.smoothness` | Smoothness | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 
@@ -60,7 +60,7 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `strobe.speed` | Speed | slider | essential | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `strobe.brightness` | Brightness | slider | essential |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `strobe.flash_color` | Flash Color | colorPicker | color | yes | UnifiedOrchestrator.swift:8331 | Entertainment only | immediate | active while streaming / staged on Room REST |
+| `strobe.flash_color` | Flash Color | colorPicker | color | yes | UnifiedOrchestrator.swift:8420 | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `strobe.min_brightness` | Min Brightness | slider | support |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `strobe.duty_cycle` | Duty Cycle | slider | support | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 
@@ -70,8 +70,8 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `thunderstorm.frequency` | Storm Intensity | slider | essential |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.flash_intensity` | Flash Brightness | slider | essential |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.ambient_color` | Ambient Color | colorPicker | color |  | UnifiedOrchestrator.swift:8684,8725,8834 | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.flash_color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8748,8835 | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.ambient_color` | Ambient Color | colorPicker | color |  | UnifiedOrchestrator.swift:8773,8814,8923 | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.flash_color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8837,8924 | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.min_brightness` | Ambient Level | slider | support |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.strike_rate` | Strike Chance | slider | support |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.flash_length` | Flash Length | slider | support | yes | thunderstorm engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
@@ -208,7 +208,7 @@ Written as card + param pairs. A substring check for `ambient.color` also matche
 
 ## Not covered by this matrix
 
-- Composer controls: Composer keeps its own semantic model and is outside generic `StudioParam` ownership (spec §20). Slice 3 covers convergence.
+- Composer controls: Composer keeps its own semantic model and is outside generic `StudioParam` ownership (spec §20), so it declares no rows here. Since Slice 3 its controls resolve through the SAME funnel via `ComposerControlAvailability` (`HueHome/Core/ComposerControlAvailability.swift`): catalog control ids, the resolver's requirements (`.color` for the palette's colour writes, `.colorTemperature` for Warmth, `.none` otherwise), `targetSnapshot(for:)`, the board's copy. Pinned by Guard 15(l) and `ComposerControlAvailabilityTests`.
 - Beat: no Live card declares a Beat param; Beat reaches engines through the orchestrator. Per-engine consumption must be proven before any inline Beat control (spec §21).
 - Per-effect differences in a bridge-native parameter: the profile table is keyed by paramID only, mirroring `profile(effect:paramID:)`, which ignores its `effect:` argument. Recorded Slice 3 debt.
 - Hardware validation: nothing in this matrix has been validated on a physical bridge in this slice.

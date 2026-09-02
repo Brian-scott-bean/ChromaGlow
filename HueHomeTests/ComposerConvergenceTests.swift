@@ -51,6 +51,7 @@ private enum ComposerViewTree {
     private static func evaluatesBody(_ typeName: String) -> Bool {
         typeName.hasPrefix("CompositionEditorPanel")
             || typeName.hasPrefix("ComposerSupportingControls")
+            || typeName.hasPrefix("ComposerControlGate<")
             || typeName.hasPrefix("StageCard<")
     }
 
@@ -422,6 +423,119 @@ final class ComposerConvergenceTests: XCTestCase {
         vm.sessionMemory.clear(for: sa.identity.targetKey)   // what stopEffect does
         XCTAssertEqual(tabA.wrappedValue, .palette, "a stopped target's layer selection died with it")
         XCTAssertEqual(tabZ.wrappedValue, .motion, "…without touching the zone's")
+    }
+
+    // MARK: - Capability truth on the page (S3-4)
+
+    private func light(_ id: String, color: Bool, ct: (Int, Int)? = nil) -> HueLight {
+        HueLight(
+            id: id,
+            metadata: LightMetadata(name: id, archetype: nil),
+            on: OnState(on: true),
+            dimming: DimmingState(brightness: 100),
+            color: color ? LightColor(xy: CIExy(x: 0.3, y: 0.3), gamut_type: "C") : nil,
+            color_temperature: ct.map {
+                LightColorTemp(mirek: nil,
+                               mirek_schema: MirekSchema(mirek_minimum: $0.0, mirek_maximum: $0.1),
+                               mirek_valid: nil)
+            },
+            owner: nil, effects: nil, effects_v2: nil, timed_effects: nil, gradient: nil)
+    }
+
+    /// A real (non-demo) orchestrator whose light cache is seeded — the same
+    /// seam the inventory fill uses — so `targetSnapshot(for:)` reads KNOWN
+    /// capability for the composition's lights.
+    private func seededInventory(_ lights: [HueLight]) -> (StudioViewModel, UnifiedOrchestrator) {
+        let orchestrator = UnifiedOrchestrator()
+        XCTAssertTrue(orchestrator.seedRawLightCache(bridgeID: "bridge-a", lights: lights, replace: true))
+        let vm = StudioViewModel()
+        vm.configure(orchestrator: orchestrator)
+        return (vm, orchestrator)
+    }
+
+    private func pageStrings(vm: StudioViewModel, orchestrator: UnifiedOrchestrator,
+                             preset p: CompositionPreset, tab: CompositionLayerTab) -> [String] {
+        let target = room("room-a")
+        vm.selectedRoom = target
+        stageRunningComposition(p, on: target, in: vm)
+        return ComposerViewTree.inventory(of: panel(vm: vm, orchestrator: orchestrator, tab: tab)).strings
+    }
+
+    /// PRODUCTION WIRING: the panel's colour controls answer against the
+    /// running composition's real light inventory through the one funnel.
+    /// Colour lights → the pad and harmony row are live and say nothing;
+    /// white-only lights → they are on the page, refused in words; an unread
+    /// inventory → CHECKING, never a refusal. Motion stays live throughout.
+    func testColourControlsResolveAgainstTheTargetsRealInventory() async {
+        var gradient = PaletteConfig(); gradient.mode = .gradient
+
+        // Colour lights: nothing to caveat.
+        let (vmC, orchC) = seededInventory([light("L1", color: true), light("L2", color: true), light("L3", color: true)])
+        let colourPage = pageStrings(vm: vmC, orchestrator: orchC, preset: preset(palette: gradient), tab: .palette)
+        XCTAssertTrue(colourPage.contains("HARMONY"))
+        XCTAssertFalse(colourPage.contains(StudioBoardAvailability.checkingCopy),
+            "a fully colour-capable room reads CHECKING: \(colourPage)")
+        XCTAssertFalse(colourPage.contains("NO COLOR LIGHTS HERE"))
+
+        // White-only lights: rendered, refused in words, not hidden.
+        let (vmW, orchW) = seededInventory([light("L1", color: false), light("L2", color: false), light("L3", color: false)])
+        let whitePage = pageStrings(vm: vmW, orchestrator: orchW, preset: preset(palette: gradient), tab: .palette)
+        XCTAssertTrue(whitePage.contains("HARMONY"), "the harmony row is DISABLED on a white room, not removed")
+        // ONE note per colour-gated control on the gradient page — the pad,
+        // the harmony row, Randomize, and the dynamic-scene export — so one
+        // gated neighbour cannot vouch for an ungated one.
+        let colourGatedOnGradientPage = 4
+        XCTAssertEqual(whitePage.filter { $0 == "NO COLOR LIGHTS HERE" }.count, colourGatedOnGradientPage,
+            "a white-only room does not refuse EVERY colour control in words: \(whitePage)")
+        XCTAssertFalse(whitePage.contains(StudioBoardAvailability.checkingCopy),
+            "a READ inventory with no colour lights is a known no, not still-checking")
+
+        // Unread inventory (demo orchestrator vends no raw lights): CHECKING.
+        let demo = await makeDemoOrchestrator()
+        let unreadPage = inventory(of: preset(palette: gradient), tab: .palette, orchestrator: demo).strings
+        XCTAssertEqual(unreadPage.filter { $0 == StudioBoardAvailability.checkingCopy }.count,
+                       colourGatedOnGradientPage,
+            "an unread inventory must read CHECKING on every colour control: \(unreadPage)")
+        XCTAssertFalse(unreadPage.contains("NO COLOR LIGHTS HERE"),
+            "unknown is NOT unsupported — an unread room must never be refused")
+
+        // Motion has no hardware precondition: live on the white room.
+        var cascade = MotionConfig(); cascade.pattern = .cascade
+        let (vmM, orchM) = seededInventory([light("L1", color: false), light("L2", color: false)])
+        let motionPage = pageStrings(vm: vmM, orchestrator: orchM, preset: preset(motion: cascade), tab: .motion)
+        XCTAssertTrue(motionPage.contains("Speed"))
+        XCTAssertFalse(motionPage.contains("NO COLOR LIGHTS HERE"))
+        XCTAssertFalse(motionPage.contains(StudioBoardAvailability.checkingCopy),
+            "motion controls carry no capability caveat on a read white room: \(motionPage)")
+    }
+
+    /// Warmth authors the target's INTERSECTED mirek range (row 58): two CT
+    /// lights of 153…454 and 200…500 give a 200…454 control; a CT light with
+    /// no readable schema leaves the control CHECKING and disabled.
+    func testWarmthRangeIsTheTargetsIntersectionAndNeverAFakeSpan() {
+        var temperature = PaletteConfig(); temperature.mode = .temperature
+
+        let (vmR, orchR) = seededInventory([light("L1", color: true, ct: (153, 454)),
+                                            light("L2", color: true, ct: (200, 500))])
+        let target = room("room-a")
+        vmR.selectedRoom = target
+        stageRunningComposition(preset(palette: temperature), on: target, in: vmR)
+        let context = ComposerAvailabilityContext(vm: vmR)
+        XCTAssertEqual(context.warmthRange, 200...454)
+        XCTAssertTrue(context.isInteractive("temperature"))
+
+        // The same page, reflected: the Warmth control carries no caveat.
+        let page = ComposerViewTree.inventory(of: panel(vm: vmR, orchestrator: orchR, tab: .palette)).strings
+        XCTAssertTrue(page.contains("Warmth"))
+        XCTAssertFalse(page.contains(StudioBoardAvailability.checkingCopy), "\(page)")
+
+        // Schemaless CT: unknown, disabled, no authoring range.
+        let (vmS, _) = seededInventory([light("L1", color: false, ct: nil)])
+        vmS.selectedRoom = target
+        stageRunningComposition(preset(palette: temperature), on: target, in: vmS)
+        let schemaless = ComposerAvailabilityContext(vm: vmS)
+        XCTAssertNil(schemaless.warmthRange)
+        XCTAssertFalse(schemaless.isInteractive("temperature"))
     }
 
     // MARK: - Hosting (for the presentation probe)

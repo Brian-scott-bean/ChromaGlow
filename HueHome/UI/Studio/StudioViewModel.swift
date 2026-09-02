@@ -1521,7 +1521,12 @@ final class StudioViewModel {
     var isGeneratingAIComposition = false
     var aiGenerationErrorMessage: String?
     var activeCompositionGamut: HueColorUtils.Gamut = .c
-    var roomHasColorLights: Bool = true
+    // `roomHasColorLights` is GONE (Slice 3, S3-4). It was a two-state answer
+    // to a three-state question — a default of `true` collapsed "not read yet"
+    // into "yes" — held in ONE slot for every running composition. Composer
+    // colour controls now resolve per target through
+    // `ComposerControlAvailability` against `targetSnapshot(for:)`, the same
+    // funnel the Studio board uses.
     var restoredHarmonyRule: HarmonyRule? = nil
     /// One-shot guard for programmatic harmony-chip clears (album colors,
     /// a rule-less preset restore): StudioView's activeHarmonyRule onChange
@@ -2364,18 +2369,13 @@ final class StudioViewModel {
             }
         }
 
-        guard !roomLights.isEmpty else {
-            await MainActor.run { roomHasColorLights = false }
-            return .c
-        }
+        guard !roomLights.isEmpty else { return .c }
         var counts: [HueColorUtils.Gamut: Int] = [.a: 0, .b: 0, .c: 0]
         for light in roomLights {
             guard let raw = light.color?.gamut_type?.uppercased(),
                   let gamut = HueColorUtils.Gamut(rawValue: raw) else { continue }
             counts[gamut, default: 0] += 1
         }
-        let totalColorLights = counts.values.reduce(0, +)
-        await MainActor.run { roomHasColorLights = totalColorLights > 0 }
         return counts.max(by: { $0.value < $1.value })?.key ?? .c
     }
 

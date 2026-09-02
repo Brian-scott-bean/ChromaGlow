@@ -1328,7 +1328,7 @@ fi
 # The supporting tier must be rendered INSIDE the panel's layer cards (the
 # thing that replaced the Advanced card), and the tab subtree may not regain
 # the `.id(tab)` split that gave the two tiers different identity lifetimes.
-if ! grep -q 'ComposerSupportingControls(vm: vm, orchestrator: orchestrator, tab: tab)' "$R36_PANEL"; then
+if ! grep -q 'ComposerSupportingControls(vm: vm, orchestrator: orchestrator,' "$R36_PANEL"; then
     fail "studio-one-surface" "$R36_PANEL no longer renders ComposerSupportingControls inside its layer cards — the supporting tier has no surface"
 fi
 r36_tab_id=$(grep -nE '\.id\(activeCompositionTab\)' "$R36_PANEL" 2>/dev/null \
@@ -2013,10 +2013,98 @@ echo "$r2_setup_body" | grep -qF 'guard interactive else { return }' \
     || fail "slice2-r2" "setupSliderRow's StageSlider setter has no interactivity floor — StageSlider's track is a raw drag surface, so the wrapper's .disabled cannot be the only gate"
 r2_applied_check "$r2_setup_body" "$R2_BROWSER:setupSliderRow"
 
+# (l) Slice 3 (S3-4): the COMPOSER resolves through the same funnel.
+#
+#     The Composer answered "may the user touch this?" with one boolean,
+#     `roomHasColorLights`, defaulting to TRUE, written once per apply into a
+#     single view-model slot shared by every running composition. Every other
+#     Composer control had no answer at all. `ComposerControlAvailability` is
+#     the adapter: catalog control ids, the resolver's own requirements,
+#     `targetSnapshot(for:)`, the board's own copy. It ALWAYS returns a
+#     resolution, so the Composer calls the non-strategy overloads
+#     (`isInteractive(_:)`, `opacity(_:)`, `note(for:isColor:)`) through
+#     nil-tolerant wrappers that FAIL CLOSED — that is not a bypass of (g),
+#     which exists because the board's `resolve` can return nil.
+R2_COMPOSER_AVAIL="HueHome/Core/ComposerControlAvailability.swift"
+R2_COMPOSER_PANEL="HueHome/UI/Composer/CompositionEditorPanel.swift"
+R2_COMPOSER_SUPPORT="HueHome/UI/Composer/ComposerLayerSheet.swift"
+R2_COMPOSER_TESTS="HueHomeTests/ComposerControlAvailabilityTests.swift"
+[[ -f "$R2_COMPOSER_AVAIL" ]] || fail "slice2-r2" "$R2_COMPOSER_AVAIL is missing — the Composer has no adapter into the availability funnel"
+grep -q 'ComposerControlAvailability.swift in Sources' HueHome.xcodeproj/project.pbxproj \
+    || fail "slice2-r2" "ComposerControlAvailability.swift exists but is not in the app target"
+[[ -f "$R2_COMPOSER_TESTS" ]] || fail "slice2-r2" "$R2_COMPOSER_TESTS is missing — the Composer adapter is unproven"
+grep -q 'ComposerControlAvailabilityTests.swift in Sources' HueHome.xcodeproj/project.pbxproj \
+    || fail "slice2-r2" "ComposerControlAvailabilityTests.swift exists but is not in the test target — it never runs"
+
+#     The two-state boolean may not return, anywhere.
+r2_bool=$(grep -rnE 'roomHasColorLights' HueHome --include='*.swift' 2>/dev/null \
+    | grep -vE '^[^:]*:[0-9]+:[[:space:]]*//' || true)
+[[ -z "$r2_bool" ]] || fail "slice2-r2" $'roomHasColorLights is back — a boolean that defaults to yes is the Composer\'s original capability lie:\n'"$r2_bool"
+
+#     The adapter's requirement table is the resolver's vocabulary — colour
+#     controls need `.color`, Warmth needs `.colorTemperature` (which is what
+#     makes a schemaless CT fixture read CHECKING instead of a fake 153…500).
+r2_avail_src=$(grep -vE '^[[:space:]]*//' "$R2_COMPOSER_AVAIL")
+echo "$r2_avail_src" | grep -qF 'if colorControlIDs.contains(controlID) { return .color }' \
+    || fail "slice2-r2" "ComposerControlAvailability no longer maps its colour controls to .color"
+echo "$r2_avail_src" | grep -qF 'if colorTemperatureControlIDs.contains(controlID) { return .colorTemperature }' \
+    || fail "slice2-r2" "ComposerControlAvailability no longer maps Warmth to .colorTemperature"
+echo "$r2_avail_src" | grep -qF 'CustomizationResolver.resolve(' \
+    || fail "slice2-r2" "ComposerControlAvailability no longer resolves through CustomizationResolver — a parallel availability system"
+echo "$r2_avail_src" | grep -qF 'guard let resolution else { return false }' \
+    || fail "slice2-r2" "ComposerControlAvailability.isInteractive no longer fails closed on a nil resolution"
+echo "$r2_avail_src" | grep -qF 'guard let resolution else { return StudioBoardAvailability.checkingCopy }' \
+    || fail "slice2-r2" "ComposerControlAvailability.note no longer reads CHECKING on a nil resolution"
+echo "$r2_avail_src" | grep -qF 'guard let range = snapshot?.mirekRange else { return nil }' \
+    || fail "slice2-r2" "ComposerControlAvailability.warmthRange no longer comes from the snapshot's mirek range"
+
+#     Every Composer control is gated: the panel and the supporting tier
+#     resolve through the context, and the gate APPLIES the verdict the
+#     15(k) way — bound to the adapter's non-nil-tolerant wrappers, never to a
+#     literal.
+for f in "$R2_COMPOSER_PANEL" "$R2_COMPOSER_SUPPORT"; do
+    grep -vE '^[[:space:]]*//' "$f" | grep -qF 'availability.resolve("' \
+        || fail "slice2-r2" "$f no longer resolves its controls through ComposerAvailabilityContext"
+    r2_unresolved=$(grep -nE 'unresolvedIsInteractive|StudioBoardAvailability\.isInteractive\(resolution:' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    [[ -z "$r2_unresolved" ]] || fail "slice2-r2" $''"$f"$' reaches for the strategy-qualified overloads — for compositions those fail OPEN:\n'"$r2_unresolved"
+done
+r2_gate=$(awk '/^struct ComposerControlGate</,/^}$/' "$R2_COMPOSER_SUPPORT" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$r2_gate" ]] || fail "slice2-r2" "ComposerControlGate not found in $R2_COMPOSER_SUPPORT"
+#     The same three "applied" checks as (k), with the COMPOSER adapter as the
+#     callee the bindings must read from (`r2_applied_check` pins the board's
+#     `StudioBoardAvailability.` callee, which for the Composer would be the
+#     fail-open path).
+echo "$r2_gate" | grep -qF '.disabled(!interactive)' \
+    || fail "slice2-r2" "ComposerControlGate does not disable on the funnel's verdict (.disabled(!interactive))"
+echo "$r2_gate" | grep -qF '.opacity(opacity)' \
+    || fail "slice2-r2" "ComposerControlGate does not apply the funnel's opacity (.opacity(opacity))"
+echo "$r2_gate" | grep -qF 'if let note' \
+    || fail "slice2-r2" "ComposerControlGate does not render the funnel's note (if let note)"
+r2_binding_pin "$r2_gate" "ComposerControlGate" interactive 'ComposerControlAvailability.isInteractive('
+r2_binding_pin "$r2_gate" "ComposerControlGate" opacity 'ComposerControlAvailability.opacity('
+echo "$r2_gate" | grep -qF 'ComposerControlAvailability.rendersControl(resolution)' \
+    || fail "slice2-r2" "ComposerControlGate no longer honours .hidden through rendersControl"
+#     Gestures `.disabled` does not close (the pad's drag, a chip's tap) carry
+#     the verdict at the setter.
+grep -vE '^[[:space:]]*//' "$R2_COMPOSER_PANEL" | grep -qF 'guard interactive else { return }' \
+    || fail "slice2-r2" "$R2_COMPOSER_PANEL has no setter-level `guard interactive` — the pad's drag would write through a refused verdict"
+grep -vE '^[[:space:]]*//' "$R2_COMPOSER_SUPPORT" | grep -qF 'func composerGuarded<Value>(_ interactive: Bool, _ binding: Binding<Value>) -> Binding<Value>' \
+    || fail "slice2-r2" "composerGuarded is gone from $R2_COMPOSER_SUPPORT — Composer bindings have no setter-level floor"
+#     Warmth authors the snapshot's range, never a literal one on a live control.
+r2_warmth=$(grep -nE 'range: 153\.\.\.500' "$R2_COMPOSER_PANEL" 2>/dev/null \
+    | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+[[ -z "$r2_warmth" ]] || fail "slice2-r2" $'the Composer Warmth control authors a literal 153…500 again (checklist row 58):\n'"$r2_warmth"
+grep -vE '^[[:space:]]*//' "$R2_COMPOSER_PANEL" | grep -qF 'range: availability.warmthRange ?? ComposerControlAvailability.fallbackWarmthRange' \
+    || fail "slice2-r2" "the Composer Warmth control no longer reads its range from the snapshot"
+
+
 # ──────────────────────────────────────────────────────────────
 
 if [[ $FAILURES -gt 0 ]]; then
     echo "hardening_guards: $FAILURES guard(s) failed." >&2
     exit 1
 fi
+
 echo "hardening_guards: all guards passed."

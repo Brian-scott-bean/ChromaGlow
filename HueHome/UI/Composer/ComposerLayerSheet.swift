@@ -145,6 +145,114 @@ enum ComposerControlCatalog {
     }
 }
 
+// MARK: - Capability truth (Slice 3, S3-4)
+
+/// One instant of capability truth for the Composer surface: the running
+/// composition's card, its exact target, and the resolver snapshot built from
+/// CACHED lights (`targetSnapshot(for:)` — no fetch, spec §27; it also reads
+/// the orchestrator's inventory generation, so the surface re-resolves when
+/// the bridge finally answers).
+///
+/// Built ONCE per panel render and handed down, so every control on the page
+/// answers against the same instant — never one control against a snapshot
+/// and its neighbour against a fresh one.
+///
+/// No running composition ⇒ no snapshot ⇒ every resolution is nil ⇒ every
+/// control reads CHECKING and is not interactive. Nil never means yes.
+@MainActor
+struct ComposerAvailabilityContext {
+    let cardID: String?
+    /// The EXACT target the running composition addresses — not the room
+    /// selector's current value re-read at each use.
+    let room: RoomDisplayItem?
+    let snapshot: CustomizationTargetSnapshot?
+
+    init(vm: StudioViewModel) {
+        if let effect = vm.currentRoomEffect {
+            cardID = effect.card.id
+            room = effect.room
+            snapshot = vm.targetSnapshot(for: effect)
+        } else {
+            cardID = nil
+            room = vm.selectedRoom
+            snapshot = nil
+        }
+    }
+
+    func resolve(_ controlID: String) -> StudioBoardResolution? {
+        guard let cardID, let snapshot else { return nil }
+        return ComposerControlAvailability.resolve(cardID: cardID, controlID: controlID,
+                                                   snapshot: snapshot)
+    }
+
+    func isInteractive(_ controlID: String) -> Bool {
+        ComposerControlAvailability.isInteractive(resolve(controlID))
+    }
+
+    /// The Warmth control's authoring range: the target's intersected mirek
+    /// range, or nil (the control then resolves CHECKING and is disabled).
+    var warmthRange: ClosedRange<Double>? {
+        ComposerControlAvailability.warmthRange(snapshot: snapshot)
+    }
+}
+
+/// A setter that drops its write unless the funnel said the control is
+/// interactive — the setter-level floor beneath `.disabled`, which does not
+/// close raw gestures (a pad drag, a chip's tap gesture) the way it closes
+/// a `Control`.
+func composerGuarded<Value>(_ interactive: Bool, _ binding: Binding<Value>) -> Binding<Value> {
+    Binding(
+        get: { binding.wrappedValue },
+        set: { newValue in
+            guard interactive else { return }
+            binding.wrappedValue = newValue
+        }
+    )
+}
+
+/// The funnel's answer, APPLIED, around one Composer control — the shape
+/// Guard 15(k) pins for the Studio board: `.disabled` on the verdict, the
+/// verdict's opacity on the control (not on the note), and the note beside
+/// it in words a VoiceOver user hears with the control's name.
+///
+/// `.hidden` renders nothing (an orphaned control id). A nil resolution —
+/// no snapshot — renders the control DISABLED under CHECKING, because a
+/// control that vanishes while the bridge is still being asked is the silent
+/// removal the honesty rule forbids.
+struct ComposerControlGate<Content: View>: View {
+    let label: String
+    let resolution: StudioBoardResolution?
+    var isColor: Bool = false
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if ComposerControlAvailability.rendersControl(resolution) {
+            let interactive = ComposerControlAvailability.isInteractive(resolution)
+            let opacity = ComposerControlAvailability.opacity(resolution)
+            let note = ComposerControlAvailability.note(for: resolution, isColor: isColor)
+            VStack(alignment: .leading, spacing: 3) {
+                // Opacity belongs to the CONTROL, not the pair: a note nested
+                // inside a dimmed wrapper is the least legible thing on the
+                // page, and it is the sentence explaining why the control is
+                // dead.
+                content()
+                    .disabled(!interactive)
+                    .opacity(opacity)
+                if let note {
+                    Text(note)
+                        .font(HueFont.stageTag)
+                        .foregroundStyle(HuePalette.amber.opacity(0.65))
+                        .tracking(0.6)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.85)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("\(label): \(note)")
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Supporting Controls
 
 /// The supporting tier of one layer tab, rendered by the editor panel INSIDE
@@ -156,6 +264,8 @@ struct ComposerSupportingControls: View {
     let vm: StudioViewModel
     /// Explicit, not `@Environment`: see `CompositionEditorPanel`.
     let orchestrator: UnifiedOrchestrator
+    /// The panel's one instant of capability truth for this render.
+    let availability: ComposerAvailabilityContext
     let tab: CompositionLayerTab
 
     @State private var showEntertainmentBuilder = false
@@ -176,8 +286,8 @@ struct ComposerSupportingControls: View {
         // opened without ever visiting Studio, which is the only other surface
         // that warms — without this the controls would hide themselves on a cold
         // launch and tell the user to create an area they already have.
-        .task(id: vm.selectedRoom?.id) {
-            await orchestrator.warmEntertainmentCaches(for: vm.selectedRoom)
+        .task(id: availability.room?.id) {
+            await orchestrator.warmEntertainmentCaches(for: availability.room)
         }
     }
 
@@ -186,41 +296,55 @@ struct ComposerSupportingControls: View {
     @ViewBuilder
     private var paletteSupporting: some View {
         if (vm.activeCompositionBox?.palette.mode ?? .gradient) == .spectrum {
-            StageSlider(
-                title: "Hue Shift",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.palette.hueShift ?? 0 },
-                    set: { vm.activeCompositionBox?.palette.hueShift = $0 }
-                ),
-                range: -180...180,
-                format: { "\(Int($0.rounded()))°" }
-            )
+            let hueShift = availability.resolve("hueShift")
+            ComposerControlGate(label: "Hue Shift", resolution: hueShift) {
+                StageSlider(
+                    title: "Hue Shift",
+                    value: composerGuarded(ComposerControlAvailability.isInteractive(hueShift), Binding(
+                        get: { vm.activeCompositionBox?.palette.hueShift ?? 0 },
+                        set: { vm.activeCompositionBox?.palette.hueShift = $0 }
+                    )),
+                    range: -180...180,
+                    format: { "\(Int($0.rounded()))°" }
+                )
+            }
             // Spectrum consumes saturation directly; before this slider it was
             // only settable as a side effect of the hue pad (which also wrote
             // an ignored color1 in spectrum mode).
-            StageSlider(
-                title: "Saturation",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.palette.saturation ?? 100 },
-                    set: { vm.activeCompositionBox?.palette.saturation = $0 }
-                ),
-                range: 0...100,
-                format: { "\(Int($0.rounded()))%" }
+            let saturation = availability.resolve("saturation")
+            ComposerControlGate(label: "Saturation", resolution: saturation) {
+                StageSlider(
+                    title: "Saturation",
+                    value: composerGuarded(ComposerControlAvailability.isInteractive(saturation), Binding(
+                        get: { vm.activeCompositionBox?.palette.saturation ?? 100 },
+                        set: { vm.activeCompositionBox?.palette.saturation = $0 }
+                    )),
+                    range: 0...100,
+                    format: { "\(Int($0.rounded()))%" }
+                )
+            }
+        }
+
+        let randomize = availability.resolve("randomize")
+        ComposerControlGate(label: "Randomize", resolution: randomize) {
+            StageToggleRow(
+                title: "Randomize",
+                isOn: composerGuarded(ComposerControlAvailability.isInteractive(randomize), Binding(
+                    get: { vm.activeCompositionBox?.palette.randomize ?? false },
+                    set: { vm.activeCompositionBox?.palette.randomize = $0 }
+                ))
             )
         }
 
-        StageToggleRow(
-            title: "Randomize",
-            isOn: Binding(
-                get: { vm.activeCompositionBox?.palette.randomize ?? false },
-                set: { vm.activeCompositionBox?.palette.randomize = $0 }
-            )
-        )
-
         // Round 3 (E): export this palette as a NATIVE Hue dynamic scene —
         // the bridge cycles it forever with the app closed. An ACTION, not a
-        // control — it closes the card, below the last control row.
+        // control — it closes the card, below the last control row. Gated
+        // like the colour controls: a dynamic scene of a palette no light
+        // here can render is a bridge write with nothing to show for it.
+        let export = availability.resolve("dynamicSceneExport")
+        ComposerControlGate(label: "Save as Hue dynamic scene", resolution: export) {
         Button {
+            guard ComposerControlAvailability.isInteractive(export) else { return }
             dynamicSceneName = ""
             showDynamicScenePrompt = true
             HapticManager.shared.selection()
@@ -254,12 +378,13 @@ struct ComposerSupportingControls: View {
         } message: {
             Text("The bridge cycles this palette on its own — no phone needed. It appears in your Scenes tab.")
         }
+        }
     }
 
     /// Builds a native dynamic scene from the live palette layer and POSTs
     /// it to the room's own bridge. One POST — no loops, no session.
     private func exportDynamicScene(named name: String) async {
-        guard let room = vm.selectedRoom,
+        guard let room = availability.room,
               let groupedLightID = room.groupedLightID,
               let api = orchestrator.hueClient(for: room.bridgeID),
               let box = vm.activeCompositionBox else {
@@ -329,43 +454,57 @@ struct ComposerSupportingControls: View {
         let pattern = vm.activeCompositionBox?.motion.pattern ?? .cascade
 
         if ComposerControlCatalog.isSpatialPattern(pattern) {
-            // Directional motion needs the area that actually contains THIS room's
-            // lights — a different room's area on the same bridge would aim the
-            // motion at the wrong lights. The warm below is what lets the answer
-            // come from real membership rather than a cold cache.
-            if orchestrator.activeEntertainmentConfig(for: vm.selectedRoom) != nil {
-                directionControl
-            } else {
-                entertainmentAreaPrompt
+            // Directional motion needs the area that actually contains THIS
+            // target's lights — a different room's area on the same bridge
+            // would aim the motion at the wrong lights. MEMBERSHIP is the
+            // gate (not "can this bridge stream": forward/mirror work on REST
+            // index positions), answered for the exact running target. The
+            // warm below is what lets the answer come from real membership
+            // rather than a cold cache.
+            ComposerControlGate(label: "Direction", resolution: availability.resolve("direction")) {
+                if orchestrator.activeEntertainmentConfig(for: availability.room) != nil {
+                    directionControl
+                } else {
+                    entertainmentAreaPrompt
+                }
             }
         }
 
-        StageSlider(
-            title: "Spread",
-            value: Binding(
-                get: { vm.activeCompositionBox?.motion.spread ?? 70 },
-                set: { vm.activeCompositionBox?.motion.spread = $0 }
-            ),
-            range: 0...100
-        )
+        let spread = availability.resolve("spread")
+        ComposerControlGate(label: "Spread", resolution: spread) {
+            StageSlider(
+                title: "Spread",
+                value: composerGuarded(ComposerControlAvailability.isInteractive(spread), Binding(
+                    get: { vm.activeCompositionBox?.motion.spread ?? 70 },
+                    set: { vm.activeCompositionBox?.motion.spread = $0 }
+                )),
+                range: 0...100
+            )
+        }
 
-        StageSlider(
-            title: ComposerControlCatalog.offsetLabel(for: pattern),
-            value: Binding(
-                get: { vm.activeCompositionBox?.motion.offset ?? 50 },
-                set: { vm.activeCompositionBox?.motion.offset = $0 }
-            ),
-            range: 0...100
-        )
+        let offset = availability.resolve("offset")
+        ComposerControlGate(label: ComposerControlCatalog.offsetLabel(for: pattern), resolution: offset) {
+            StageSlider(
+                title: ComposerControlCatalog.offsetLabel(for: pattern),
+                value: composerGuarded(ComposerControlAvailability.isInteractive(offset), Binding(
+                    get: { vm.activeCompositionBox?.motion.offset ?? 50 },
+                    set: { vm.activeCompositionBox?.motion.offset = $0 }
+                )),
+                range: 0...100
+            )
+        }
 
         if ComposerControlCatalog.isSpatialPattern(pattern) {
-            StageToggleRow(
-                title: "Mirror",
-                isOn: Binding(
-                    get: { vm.activeCompositionBox?.motion.mirror ?? false },
-                    set: { vm.activeCompositionBox?.motion.mirror = $0 }
+            let mirror = availability.resolve("mirror")
+            ComposerControlGate(label: "Mirror", resolution: mirror) {
+                StageToggleRow(
+                    title: "Mirror",
+                    isOn: composerGuarded(ComposerControlAvailability.isInteractive(mirror), Binding(
+                        get: { vm.activeCompositionBox?.motion.mirror ?? false },
+                        set: { vm.activeCompositionBox?.motion.mirror = $0 }
+                    ))
                 )
-            )
+            }
         }
     }
 
@@ -381,52 +520,67 @@ struct ComposerSupportingControls: View {
 
         // Shape-specific controls (the engine has always consumed these).
         if shape == .swell {
-            StageSlider(
-                title: "Attack",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.attack ?? 50 },
-                    set: { vm.activeCompositionBox?.envelope.attack = $0 }
-                ),
-                range: 0...100
-            )
-            StageSlider(
-                title: "Decay",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.decay ?? 50 },
-                    set: { vm.activeCompositionBox?.envelope.decay = $0 }
-                ),
-                range: 0...100
-            )
+            let attack = availability.resolve("attack")
+            ComposerControlGate(label: "Attack", resolution: attack) {
+                StageSlider(
+                    title: "Attack",
+                    value: composerGuarded(ComposerControlAvailability.isInteractive(attack), Binding(
+                        get: { vm.activeCompositionBox?.envelope.attack ?? 50 },
+                        set: { vm.activeCompositionBox?.envelope.attack = $0 }
+                    )),
+                    range: 0...100
+                )
+            }
+            let decay = availability.resolve("decay")
+            ComposerControlGate(label: "Decay", resolution: decay) {
+                StageSlider(
+                    title: "Decay",
+                    value: composerGuarded(ComposerControlAvailability.isInteractive(decay), Binding(
+                        get: { vm.activeCompositionBox?.envelope.decay ?? 50 },
+                        set: { vm.activeCompositionBox?.envelope.decay = $0 }
+                    )),
+                    range: 0...100
+                )
+            }
         }
         if shape == .pulse {
-            StageSlider(
-                title: "Duty Cycle",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.dutyCycle ?? 50 },
-                    set: { vm.activeCompositionBox?.envelope.dutyCycle = $0 }
-                ),
-                range: 10...90
-            )
+            let duty = availability.resolve("dutyCycle")
+            ComposerControlGate(label: "Duty Cycle", resolution: duty) {
+                StageSlider(
+                    title: "Duty Cycle",
+                    value: composerGuarded(ComposerControlAvailability.isInteractive(duty), Binding(
+                        get: { vm.activeCompositionBox?.envelope.dutyCycle ?? 50 },
+                        set: { vm.activeCompositionBox?.envelope.dutyCycle = $0 }
+                    )),
+                    range: 10...90
+                )
+            }
         }
 
         if shape != .steady {
+            let minB = availability.resolve("minBrightness")
+            ComposerControlGate(label: "Min Brightness", resolution: minB) {
+                StageSlider(
+                    title: "Min Brightness",
+                    value: composerGuarded(ComposerControlAvailability.isInteractive(minB), Binding(
+                        get: { vm.activeCompositionBox?.envelope.minBrightness ?? 10 },
+                        set: { vm.activeCompositionBox?.envelope.minBrightness = $0 }
+                    )),
+                    range: 0...50
+                )
+            }
+        }
+        let maxB = availability.resolve("maxBrightness")
+        ComposerControlGate(label: "Max Brightness", resolution: maxB) {
             StageSlider(
-                title: "Min Brightness",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.minBrightness ?? 10 },
-                    set: { vm.activeCompositionBox?.envelope.minBrightness = $0 }
-                ),
-                range: 0...50
+                title: "Max Brightness",
+                value: composerGuarded(ComposerControlAvailability.isInteractive(maxB), Binding(
+                    get: { vm.activeCompositionBox?.envelope.maxBrightness ?? 100 },
+                    set: { vm.activeCompositionBox?.envelope.maxBrightness = $0 }
+                )),
+                range: 50...100
             )
         }
-        StageSlider(
-            title: "Max Brightness",
-            value: Binding(
-                get: { vm.activeCompositionBox?.envelope.maxBrightness ?? 100 },
-                set: { vm.activeCompositionBox?.envelope.maxBrightness = $0 }
-            ),
-            range: 50...100
-        )
     }
 
     // ── Reaction ──────────────────────────────────────────────
@@ -439,33 +593,42 @@ struct ComposerSupportingControls: View {
             // The level meter renders ONCE, with the essentials above.
             // The engine has consumed smoothing (one-pole response lag) all
             // along — this is its first slider.
-            StageSlider(
-                title: "Smoothing",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.reaction.smoothing ?? 30 },
-                    set: { vm.activeCompositionBox?.reaction.smoothing = $0 }
-                ),
-                range: 0...100
-            )
-            StageSlider(
-                title: "Threshold",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.reaction.threshold ?? 10 },
-                    set: { vm.activeCompositionBox?.reaction.threshold = $0 }
-                ),
-                range: 0...100
-            )
+            let smoothing = availability.resolve("smoothing")
+            ComposerControlGate(label: "Smoothing", resolution: smoothing) {
+                StageSlider(
+                    title: "Smoothing",
+                    value: composerGuarded(ComposerControlAvailability.isInteractive(smoothing), Binding(
+                        get: { vm.activeCompositionBox?.reaction.smoothing ?? 30 },
+                        set: { vm.activeCompositionBox?.reaction.smoothing = $0 }
+                    )),
+                    range: 0...100
+                )
+            }
+            let threshold = availability.resolve("threshold")
+            ComposerControlGate(label: "Threshold", resolution: threshold) {
+                StageSlider(
+                    title: "Threshold",
+                    value: composerGuarded(ComposerControlAvailability.isInteractive(threshold), Binding(
+                        get: { vm.activeCompositionBox?.reaction.threshold ?? 10 },
+                        set: { vm.activeCompositionBox?.reaction.threshold = $0 }
+                    )),
+                    range: 0...100
+                )
+            }
         }
 
         if source != .none {
-            StageSlider(
-                title: "Intensity",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.reaction.intensity ?? 70 },
-                    set: { vm.activeCompositionBox?.reaction.intensity = $0 }
-                ),
-                range: 0...100
-            )
+            let intensity = availability.resolve("intensity")
+            ComposerControlGate(label: "Intensity", resolution: intensity) {
+                StageSlider(
+                    title: "Intensity",
+                    value: composerGuarded(ComposerControlAvailability.isInteractive(intensity), Binding(
+                        get: { vm.activeCompositionBox?.reaction.intensity ?? 70 },
+                        set: { vm.activeCompositionBox?.reaction.intensity = $0 }
+                    )),
+                    range: 0...100
+                )
+            }
         }
     }
 
@@ -642,7 +805,7 @@ struct ComposerSupportingControls: View {
             )
 
             // Light position dots
-            if let config = orchestrator.activeEntertainmentConfig(for: vm.selectedRoom) {
+            if let config = orchestrator.activeEntertainmentConfig(for: availability.room) {
                 let channels = config.channels
                 // Normalize positions to fit in map
                 let xs = channels.map { $0.position.x }
@@ -727,7 +890,7 @@ struct ComposerSupportingControls: View {
                 // enough: whether it belongs to THIS room is decided by the
                 // entertainment-service → device → light map, which only the
                 // bridge can answer. Re-warm, then recompute from the selection.
-                let room = vm.selectedRoom
+                let room = availability.room
                 Task {
                     await orchestrator.warmEntertainmentCaches(for: room, force: true)
                     recomputeSpatialPositions(angle: max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0))
@@ -742,7 +905,7 @@ struct ComposerSupportingControls: View {
     /// exactly once per user edit (CompositionParamBox is @Observable, but an
     /// onChange would also fire on programmatic writes like preset loads).
     private func recomputeSpatialPositions(angle: Double) {
-        guard let config = orchestrator.activeEntertainmentConfig(for: vm.selectedRoom),
+        guard let config = orchestrator.activeEntertainmentConfig(for: availability.room),
               let box = vm.activeCompositionBox else { return }
         box.motion.motionAngle = angle
         let newPositions = CompositionEngine.computeSpatialPositionsForEntertainment(

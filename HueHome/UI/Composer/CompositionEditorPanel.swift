@@ -127,12 +127,16 @@ struct CompositionEditorPanel: View {
             // swap without an `.id(tab)` that would ALSO have torn down a
             // knob's in-flight exact-entry draft on every programmatic tab
             // change (the beat quick-toggle jumps here).
+            // ONE instant of capability truth for the whole page (S3-4):
+            // built here, handed to every layer, so no control answers
+            // against a different snapshot than its neighbour.
+            let availability = ComposerAvailabilityContext(vm: vm)
             Group {
                 switch activeCompositionTab {
-                case .palette: compositionPaletteControls
-                case .motion: compositionMotionControls
-                case .envelope: compositionEnvelopeControls
-                case .reaction: compositionReactionControls
+                case .palette: compositionPaletteControls(availability)
+                case .motion: compositionMotionControls(availability)
+                case .envelope: compositionEnvelopeControls(availability)
+                case .reaction: compositionReactionControls(availability)
                 }
             }
             .transition(.opacity.combined(with: .scale(scale: 0.985)))
@@ -144,12 +148,14 @@ struct CompositionEditorPanel: View {
     /// that layer's card. A hairline — not a caption — marks where the
     /// essentials end; there is nothing to tap and nothing to open.
     @ViewBuilder
-    private func supportingTier(_ tab: CompositionLayerTab) -> some View {
+    private func supportingTier(_ tab: CompositionLayerTab,
+                                _ availability: ComposerAvailabilityContext) -> some View {
         Rectangle()
             .fill(StagePalette.line)
             .frame(height: 1)
             .padding(.top, 2)
-        ComposerSupportingControls(vm: vm, orchestrator: orchestrator, tab: tab)
+        ComposerSupportingControls(vm: vm, orchestrator: orchestrator,
+                                   availability: availability, tab: tab)
     }
 
     /// One-tap beat enable for the whole composition: flips the Reaction
@@ -210,11 +216,12 @@ struct CompositionEditorPanel: View {
         }
     }
 
-    private func reactionTargetToggleBinding(_ target: ReactionConfig.Target) -> Binding<Bool> {
+    private func reactionTargetToggleBinding(_ target: ReactionConfig.Target,
+                                             interactive: Bool) -> Binding<Bool> {
         Binding(
             get: { vm.activeCompositionBox?.reaction.targets.contains(target) ?? false },
             set: { on in
-                guard let box = vm.activeCompositionBox else { return }
+                guard interactive, let box = vm.activeCompositionBox else { return }
                 var targets = box.reaction.targets
                 if on {
                     if !targets.contains(target) { targets.append(target) }
@@ -227,10 +234,14 @@ struct CompositionEditorPanel: View {
         )
     }
 
-    /// Harmony chips visible only in solid/gradient mode AND when room has color lights.
+    /// Harmony chips belong to solid/gradient mode. Whether the target's
+    /// lights can render them is the funnel's answer (`harmony`), applied by
+    /// the gate around the row — a colourless room sees the row DISABLED
+    /// under "NO COLOR LIGHTS HERE", an unread room under CHECKING; neither
+    /// silently loses it.
     private var showHarmonyControls: Bool {
         let mode = vm.activeCompositionBox?.palette.mode ?? .gradient
-        return (mode == .solid || mode == .gradient) && vm.roomHasColorLights
+        return mode == .solid || mode == .gradient
     }
 
     /// Rules exposed in the chip row — excludes 4-color rules until color4 is added.
@@ -238,10 +249,12 @@ struct CompositionEditorPanel: View {
         [.none, .complementary, .triadic, .analogous, .splitComplementary, .monochromatic]
     }
 
-    private var compositionPaletteControls: some View {
+    private func compositionPaletteControls(_ availability: ComposerAvailabilityContext) -> some View {
         StageCard(icon: "paintpalette.fill", title: "Color", subtitle: "Palette every light reads before motion and envelope.") {
             VStack(spacing: HueSpacing.sm) {
 
+            let mode = availability.resolve("mode")
+            ComposerControlGate(label: "Mode", resolution: mode) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Mode")
                     .font(HueFont.stageControl)
@@ -251,7 +264,7 @@ struct CompositionEditorPanel: View {
                         ChipPickerRow<PaletteConfig.Mode>.Item(
                             value: mode, label: mode.rawValue.capitalized)
                     },
-                    selection: Binding(
+                    selection: composerGuarded(ComposerControlAvailability.isInteractive(mode), Binding(
                         get: { vm.activeCompositionBox?.palette.mode ?? .gradient },
                         set: { newMode in
                             vm.activeCompositionBox?.palette.mode = newMode
@@ -260,31 +273,44 @@ struct CompositionEditorPanel: View {
                                 activeHarmonyRule = .none
                             }
                         }
-                    )
+                    ))
                 )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if (vm.activeCompositionBox?.palette.mode ?? .gradient) == .temperature {
                 // Temperature mode ignores color1/saturation — the pad was a
                 // fully dead control surface here. Warmth is what the engine
                 // reads (spectrum approximation live, real mirek one-shot).
-                StageSlider(
-                    title: "Warmth",
-                    value: Binding(
-                        get: { Double(vm.activeCompositionBox?.palette.temperature ?? 366) },
-                        set: { vm.activeCompositionBox?.palette.temperature = Int($0.rounded()) }
-                    ),
-                    range: 153...500,
-                    format: StudioParamFormat.kelvin
-                )
+                //
+                // The range is the TARGET's intersected mirek range (row 58):
+                // on a narrower fixture the control travels exactly as far as
+                // the lights can go. With no readable range the funnel answers
+                // CHECKING and the control is disabled — the fallback span is
+                // only somewhere for the stored value to sit while disabled.
+                let temperature = availability.resolve("temperature")
+                ComposerControlGate(label: "Warmth", resolution: temperature) {
+                    StageSlider(
+                        title: "Warmth",
+                        value: composerGuarded(ComposerControlAvailability.isInteractive(temperature), Binding(
+                            get: { Double(vm.activeCompositionBox?.palette.temperature ?? 366) },
+                            set: { vm.activeCompositionBox?.palette.temperature = Int($0.rounded()) }
+                        )),
+                        range: availability.warmthRange ?? ComposerControlAvailability.fallbackWarmthRange,
+                        format: StudioParamFormat.kelvin
+                    )
+                }
             } else {
-                hueSaturationPad
+                let colorPad = availability.resolve("colorPad")
+                ComposerControlGate(label: "Color", resolution: colorPad, isColor: true) {
+                    hueSaturationPad(interactive: ComposerControlAvailability.isInteractive(colorPad))
+                }
             }
 
-            harmonyChipRow
+            harmonyChipRow(availability)
 
-            supportingTier(.palette)
+            supportingTier(.palette, availability)
         }
             }
     }
@@ -294,8 +320,11 @@ struct CompositionEditorPanel: View {
     // ──────────────────────────────────────────────
 
     @ViewBuilder
-    private var harmonyChipRow: some View {
+    private func harmonyChipRow(_ availability: ComposerAvailabilityContext) -> some View {
         if showHarmonyControls {
+            let harmony = availability.resolve("harmony")
+            let interactive = ComposerControlAvailability.isInteractive(harmony)
+            ComposerControlGate(label: "Harmony", resolution: harmony, isColor: true) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("HARMONY")
                     .font(HueFont.stageTag)
@@ -305,15 +334,15 @@ struct CompositionEditorPanel: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(filteredHarmonyRules) { rule in
-                            harmonyChipButton(rule)
+                            harmonyChipButton(rule, interactive: interactive)
                         }
                     }
                 }
 
                 if activeHarmonyRule != .none {
-                    harmonySwatchPreview
+                    harmonySwatchPreview(interactive: interactive)
                         .popover(item: $editingSwatch) { item in
-                            swatchEditPopover(index: item.id)
+                            swatchEditPopover(index: item.id, interactive: interactive)
                         }
 
                     // Hint for static motion
@@ -325,12 +354,14 @@ struct CompositionEditorPanel: View {
                     }
                 }
             }
+            }
         }
     }
 
-    private func harmonyChipButton(_ rule: HarmonyRule) -> some View {
+    private func harmonyChipButton(_ rule: HarmonyRule, interactive: Bool) -> some View {
         let isSelected = activeHarmonyRule == rule
         return Button {
+            guard interactive else { return }
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                 activeHarmonyRule = rule
             }
@@ -375,7 +406,7 @@ struct CompositionEditorPanel: View {
     // MARK: - Harmony Preview Swatches
     // ──────────────────────────────────────────────
 
-    private var harmonySwatchPreview: some View {
+    private func harmonySwatchPreview(interactive: Bool) -> some View {
         // Spacing 0: each swatch sits centered in its own 44pt hit frame, so
         // the hit boxes tile edge-to-edge without overlapping.
         HStack(spacing: 0) {
@@ -390,6 +421,9 @@ struct CompositionEditorPanel: View {
                     .frame(width: HueHit.min, height: HueHit.min)
                     .contentShape(Rectangle())
                     .onTapGesture {
+                        // A tap gesture is not a Control: `.disabled` does not
+                        // close it, so the funnel's verdict is applied here.
+                        guard interactive else { return }
                         editingSwatch = (editingSwatch?.id == index) ? nil : SwatchEditItem(id: index)
                         HapticManager.shared.selection()
                     }
@@ -414,15 +448,16 @@ struct CompositionEditorPanel: View {
         return HueColorUtils.color(fromX: c.x, y: c.y, brightness: 100)
     }
 
-    private func swatchEditPopover(index: Int) -> some View {
+    private func swatchEditPopover(index: Int, interactive: Bool) -> some View {
         VStack(spacing: 12) {
             Text("Color \(index + 1)")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
             ColorWheelView(
-                hue: swatchHueBinding(index),
-                saturation: swatchSatBinding(index)
+                hue: composerGuarded(interactive, swatchHueBinding(index)),
+                saturation: composerGuarded(interactive, swatchSatBinding(index))
             ) { h, s in
+                guard interactive else { return }
                 commitSwatchEdit(index: index, hue: h, saturation: s)
             }
             .frame(width: 180, height: 180)
@@ -490,7 +525,7 @@ struct CompositionEditorPanel: View {
     /// The pad itself is the shared StageKit `HueSaturationPad`; what stays
     /// here is what makes it the COMPOSER's pad — writing the live palette
     /// (harmony-aware) and pacing the REST burst per drag sample.
-    private var hueSaturationPad: some View {
+    private func hueSaturationPad(interactive: Bool) -> some View {
         let canonicalHSB: (h: Double, s: Double) = {
             guard let c = vm.activeCompositionBox?.palette.color1 else { return (0.0, 1.0) }
             let clampedXY = HueColorUtils.clampXYToGamut(
@@ -508,6 +543,10 @@ struct CompositionEditorPanel: View {
             gamut: vm.activeCompositionGamut,
             height: isCompactStudio ? 118 : 156,
             onChanged: { hue, sat, xy in
+                // The pad's drag is a raw gesture that `.disabled` does not
+                // close: the funnel's verdict is the floor here (same rule as
+                // StageColorEditor).
+                guard interactive else { return }
                 // Per-sample: keep the REST mailbox in burst pacing while the
                 // finger moves (repeated calls extend the burst window).
                 vm.activeCompositionBox?.triggerRESTBurst()
@@ -533,6 +572,7 @@ struct CompositionEditorPanel: View {
                 vm.activeCompositionBox?.palette.saturation = sat * 100
             },
             onDragStateChanged: { dragging in
+                guard interactive else { return }
                 vm.activeCompositionBox?.isColorPadInteracting = dragging
                 if !dragging { vm.activeCompositionBox?.triggerRESTBurst() }
             }
@@ -570,7 +610,7 @@ struct CompositionEditorPanel: View {
         "onset":         "bolt.fill",
     ]
 
-    private var compositionMotionControls: some View {
+    private func compositionMotionControls(_ availability: ComposerAvailabilityContext) -> some View {
         StageCard(icon: "wind", title: "Motion", subtitle: "How color travels across lights over time.") {
             VStack(spacing: HueSpacing.sm) {
 
@@ -581,6 +621,8 @@ struct CompositionEditorPanel: View {
 
             // One-tap pattern pills: every pattern visible at once (was a
             // 2-tap menu). Icons give each motion a recognizable signature.
+            let patternRes = availability.resolve("pattern")
+            ComposerControlGate(label: "Pattern", resolution: patternRes) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Pattern")
                     .font(HueFont.stageControl)
@@ -593,36 +635,43 @@ struct CompositionEditorPanel: View {
                                 .replacingOccurrences(of: "_", with: " ").capitalized,
                             icon: Self.patternIcons[pattern.rawValue])
                     },
-                    selection: Binding(
+                    selection: composerGuarded(ComposerControlAvailability.isInteractive(patternRes), Binding(
                         get: { vm.activeCompositionBox?.motion.pattern ?? .cascade },
                         set: { vm.activeCompositionBox?.motion.pattern = $0 }
-                    )
+                    ))
                 )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             // .static ignores speed/forward/spread/offset/mirror entirely —
             // showing them would be dead controls (the engine returns a
             // fixed phase). Direction and the rest are the supporting tier.
             let pattern = vm.activeCompositionBox?.motion.pattern ?? .cascade
             if pattern != .static {
-                StageSlider(
-                    title: "Speed",
-                    value: Binding(
-                        get: { vm.activeCompositionBox?.motion.speed ?? 40 },
-                        set: { vm.activeCompositionBox?.motion.speed = $0 }
-                    ),
-                    range: 0...100
-                )
+                let speed = availability.resolve("speed")
+                ComposerControlGate(label: "Speed", resolution: speed) {
+                    StageSlider(
+                        title: "Speed",
+                        value: composerGuarded(ComposerControlAvailability.isInteractive(speed), Binding(
+                            get: { vm.activeCompositionBox?.motion.speed ?? 40 },
+                            set: { vm.activeCompositionBox?.motion.speed = $0 }
+                        )),
+                        range: 0...100
+                    )
+                }
 
                 if ComposerControlCatalog.isSpatialPattern(pattern) {
-                    StageToggleRow(
-                        title: "Forward",
-                        isOn: Binding(
-                            get: { vm.activeCompositionBox?.motion.forward ?? true },
-                            set: { vm.activeCompositionBox?.motion.forward = $0 }
+                    let forward = availability.resolve("forward")
+                    ComposerControlGate(label: "Forward", resolution: forward) {
+                        StageToggleRow(
+                            title: "Forward",
+                            isOn: composerGuarded(ComposerControlAvailability.isInteractive(forward), Binding(
+                                get: { vm.activeCompositionBox?.motion.forward ?? true },
+                                set: { vm.activeCompositionBox?.motion.forward = $0 }
+                            ))
                         )
-                    )
+                    }
                 }
             } else {
                 Text("Static holds every light on its palette color — pick a moving pattern to unlock speed and direction.")
@@ -632,19 +681,21 @@ struct CompositionEditorPanel: View {
             }
 
             if pattern != .static {
-                supportingTier(.motion)
+                supportingTier(.motion, availability)
             }
         }
             }
     }
 
-    private var compositionEnvelopeControls: some View {
+    private func compositionEnvelopeControls(_ availability: ComposerAvailabilityContext) -> some View {
         StageCard(icon: "waveform.path.ecg", title: "Brightness Shape", subtitle: "How brightness moves over time.") {
             VStack(spacing: HueSpacing.sm) {
 
             // The configured curve, live — what these controls actually do.
             EnvelopeStripView(envelope: vm.activeCompositionBox?.envelope ?? EnvelopeConfig())
 
+            let shapeRes = availability.resolve("shape")
+            ComposerControlGate(label: "Shape", resolution: shapeRes) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Shape")
                     .font(HueFont.stageControl)
@@ -655,44 +706,53 @@ struct CompositionEditorPanel: View {
                             value: shape, label: shape.rawValue.capitalized,
                             curveSamples: EnvelopeStripMath.thumbnail(for: shape))
                     },
-                    selection: Binding(
+                    selection: composerGuarded(ComposerControlAvailability.isInteractive(shapeRes), Binding(
                         get: { vm.activeCompositionBox?.envelope.shape ?? .breathe },
                         set: { vm.activeCompositionBox?.envelope.shape = $0 }
-                    )
+                    ))
                 )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             // .steady returns max brightness only — bpm/depth are no-ops.
             if (vm.activeCompositionBox?.envelope.shape ?? .breathe) != .steady {
-                StageSlider(
-                    title: "BPM",
-                    value: Binding(
-                        get: { vm.activeCompositionBox?.envelope.bpm ?? 60 },
-                        set: { vm.activeCompositionBox?.envelope.bpm = $0 }
-                    ),
-                    range: 20...240
-                )
+                let bpm = availability.resolve("bpm")
+                ComposerControlGate(label: "BPM", resolution: bpm) {
+                    StageSlider(
+                        title: "BPM",
+                        value: composerGuarded(ComposerControlAvailability.isInteractive(bpm), Binding(
+                            get: { vm.activeCompositionBox?.envelope.bpm ?? 60 },
+                            set: { vm.activeCompositionBox?.envelope.bpm = $0 }
+                        )),
+                        range: 20...240
+                    )
+                }
 
-                StageSlider(
-                    title: "Depth",
-                    value: Binding(
-                        get: { vm.activeCompositionBox?.envelope.depth ?? 50 },
-                        set: { vm.activeCompositionBox?.envelope.depth = $0 }
-                    ),
-                    range: 0...100
-                )
+                let depth = availability.resolve("depth")
+                ComposerControlGate(label: "Depth", resolution: depth) {
+                    StageSlider(
+                        title: "Depth",
+                        value: composerGuarded(ComposerControlAvailability.isInteractive(depth), Binding(
+                            get: { vm.activeCompositionBox?.envelope.depth ?? 50 },
+                            set: { vm.activeCompositionBox?.envelope.depth = $0 }
+                        )),
+                        range: 0...100
+                    )
+                }
             }
 
-            supportingTier(.envelope)
+            supportingTier(.envelope, availability)
         }
             }
     }
 
-    private var compositionReactionControls: some View {
+    private func compositionReactionControls(_ availability: ComposerAvailabilityContext) -> some View {
         StageCard(icon: "bolt.fill", title: "React", subtitle: "Audio and responsiveness layered on top.") {
             VStack(spacing: HueSpacing.sm) {
 
+            let sourceRes = availability.resolve("source")
+            ComposerControlGate(label: "Source", resolution: sourceRes) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Source")
                     .font(HueFont.stageControl)
@@ -705,21 +765,40 @@ struct CompositionEditorPanel: View {
                                 ?? source.rawValue.replacingOccurrences(of: "_", with: " ").capitalized,
                             icon: Self.sourceIcons[source.rawValue])
                     },
-                    selection: Binding(
+                    selection: composerGuarded(ComposerControlAvailability.isInteractive(sourceRes), Binding(
                         get: { vm.activeCompositionBox?.reaction.source ?? .none },
                         set: { vm.activeCompositionBox?.reaction.source = $0 }
-                    )
+                    ))
                 )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if (vm.activeCompositionBox?.reaction.source ?? .none) != .none {
+                let targetsRes = availability.resolve("targets")
+                // The `.color` target modulates a colour no light here may
+                // render — it carries its own colour requirement.
+                let targetColorRes = availability.resolve("targetColor")
+                ComposerControlGate(label: "Targets", resolution: targetsRes) {
                 VStack(alignment: .leading, spacing: 8) {
                     compositionSectionHeader("Targets", subtitle: "Which outputs the reaction modulates.")
                     ForEach(ReactionConfig.Target.allCases, id: \.self) { target in
-                        Toggle(reactionTargetLabel(target), isOn: reactionTargetToggleBinding(target))
+                        let res = target == .color ? targetColorRes : targetsRes
+                        let interactive = ComposerControlAvailability.isInteractive(res)
+                        Toggle(reactionTargetLabel(target),
+                               isOn: reactionTargetToggleBinding(target, interactive: interactive))
                             .tint(HuePalette.amber)
+                            .disabled(!interactive)
+                            .opacity(ComposerControlAvailability.opacity(res))
                     }
+                    if let note = ComposerControlAvailability.note(for: targetColorRes, isColor: false) {
+                        Text(note)
+                            .font(HueFont.stageTag)
+                            .foregroundStyle(HuePalette.amber.opacity(0.65))
+                            .tracking(0.6)
+                            .accessibilityLabel("Color target: \(note)")
+                    }
+                }
                 }
             }
 
@@ -732,18 +811,21 @@ struct CompositionEditorPanel: View {
                 // Live level meter (polls the analysis engine, never starts
                 // the mic) with the noise-gate threshold ticked on the bar.
                 MicLevelMeterView(threshold: vm.activeCompositionBox?.reaction.threshold)
-                StageSlider(
-                    title: "Sensitivity",
-                    value: Binding(
-                        get: { vm.activeCompositionBox?.reaction.sensitivity ?? 70 },
-                        set: { vm.activeCompositionBox?.reaction.sensitivity = $0 }
-                    ),
-                    range: 0...100
-                )
+                let sensitivity = availability.resolve("sensitivity")
+                ComposerControlGate(label: "Sensitivity", resolution: sensitivity) {
+                    StageSlider(
+                        title: "Sensitivity",
+                        value: composerGuarded(ComposerControlAvailability.isInteractive(sensitivity), Binding(
+                            get: { vm.activeCompositionBox?.reaction.sensitivity ?? 70 },
+                            set: { vm.activeCompositionBox?.reaction.sensitivity = $0 }
+                        )),
+                        range: 0...100
+                    )
+                }
             }
 
             if (vm.activeCompositionBox?.reaction.source ?? .none) != .none {
-                supportingTier(.reaction)
+                supportingTier(.reaction, availability)
             }
         }
             }
